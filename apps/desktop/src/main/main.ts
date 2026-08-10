@@ -162,8 +162,8 @@ function createDesktopWindow(): void {
 }
 
 function bootstrapDesktop(): void {
+  const dataPath = configureDataPath();
   void app.whenReady().then(() => {
-    const dataPath = process.env.LNWJUD_DATA_PATH ?? app.getPath('userData');
     const runtime = createDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     registerIpcHandlers(() => mainWindow, runtime.services);
@@ -179,6 +179,15 @@ function bootstrapDesktop(): void {
     desktopRuntime?.close();
     desktopRuntime = null;
   });
+}
+
+function configureDataPath(): string {
+  const configuredDataPath = process.env.LNWJUD_DATA_PATH;
+  if (typeof configuredDataPath === 'string' && configuredDataPath.trim().length > 0) {
+    app.setPath('userData', configuredDataPath);
+    return configuredDataPath;
+  }
+  return app.getPath('userData');
 }
 
 bootstrapDesktop();

@@ -21,5 +21,7 @@ describe('Windows desktop packaging', () => {
     const mainBundle = await readFile(path.join(desktopRoot, 'dist', 'main', 'main.js'), 'utf8');
     expect(mainBundle).toContain('webSecurity: true');
     expect(mainBundle).not.toContain('webSecurity: false');
+    expect(mainBundle).toContain('LNWJUD_DATA_PATH');
+    expect(mainBundle).toContain('setPath("userData"');
   });
 });
