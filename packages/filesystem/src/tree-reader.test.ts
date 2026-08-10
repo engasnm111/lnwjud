@@ -34,4 +34,22 @@ describe('TreeReader', () => {
       },
     });
   });
+
+  it('marks the result when the entry cap is reached', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tree-'));
+    temporaryRoots.push(root);
+    await writeFile(path.join(root, 'a.txt'), 'a', 'utf8');
+    await writeFile(path.join(root, 'b.txt'), 'b', 'utf8');
+    await writeFile(path.join(root, 'c.txt'), 'c', 'utf8');
+
+    const result = await new TreeReader().read(root, { maxDepth: 1, maxEntries: 2 });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        entries: [{ path: 'a.txt', type: 'file' }, { path: 'b.txt', type: 'file' }],
+        truncated: true,
+      },
+    });
+  });
 });

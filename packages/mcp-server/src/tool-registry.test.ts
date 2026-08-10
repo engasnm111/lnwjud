@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appError, err } from '@lnwjud/domain';
+import { appError, err, ok } from '@lnwjud/domain';
 import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
 
 const actor = { clientId: 'client-1', clientName: 'test' };
@@ -46,5 +46,27 @@ describe('MCP tool registry', () => {
 
     expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'INTERNAL_ERROR', recoverable: true } } });
     expect(response.content[0]?.text).not.toContain('stack');
+  });
+
+  it('maps thrown application exceptions to INTERNAL_ERROR and sends redacted diagnostics', async () => {
+    const diagnostics: unknown[] = [];
+    const services: McpApplicationServices = {
+      search: {
+        async searchText(): Promise<never> {
+          throw new Error('Authorization: Bearer secret-token');
+        },
+        async searchFiles() {
+          return ok({ paths: [], truncated: false });
+        },
+      },
+    };
+
+    const response = await new ToolRegistry(services, actor, { diagnostic: (event: unknown): void => { diagnostics.push(event); } })
+      .invoke('search_text', { workspaceId: 'workspace-1', query: 'needle' });
+
+    expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'INTERNAL_ERROR', message: 'Operation failed' } } });
+    expect(response.content[0]?.text).not.toContain('secret-token');
+    expect(JSON.stringify(diagnostics)).not.toContain('secret-token');
+    expect(diagnostics).toHaveLength(1);
   });
 });

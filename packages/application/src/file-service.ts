@@ -1,5 +1,5 @@
 import { lstat, readdir, rename, rmdir, unlink } from 'node:fs/promises';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, MAX_MULTI_FILE_BYTES, ok, type Result } from '@lnwjud/domain';
 import {
   AtomicFileWriter,
   MAX_FILE_WRITE_BYTES,
@@ -115,7 +115,7 @@ export class FileService {
       const result = await this.readFile(actor, workspaceId, fileRequest);
       if (!result.ok) return result;
       totalBytes += Buffer.byteLength(result.value.content, 'utf8');
-      if (totalBytes > 4 * 1024 * 1024) return err(appError('FILE_TOO_LARGE', 'Combined file response exceeds the maximum size'));
+      if (totalBytes > MAX_MULTI_FILE_BYTES) return err(appError('FILE_TOO_LARGE', 'Combined file response exceeds the maximum size'));
       files.push(result.value);
     }
     return ok({ files });

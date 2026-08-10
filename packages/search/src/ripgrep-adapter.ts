@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { err, ok, type Result } from '@lnwjud/domain';
+import { DEFAULT_SEARCH_RESULTS, err, MAX_PROCESS_LOG_BYTES, MAX_SEARCH_RESULTS, ok, type Result } from '@lnwjud/domain';
 import { PathExecutableResolver, type ExecutableResolver } from './executable-resolver.js';
 
 export interface ProcessRunResult {
@@ -18,7 +18,7 @@ export class DirectProcessRunner implements ProcessRunner {
       const child = spawn(command, [...args], { cwd, shell: false, windowsHide: true });
       let stdout = '';
       let stderr = '';
-      const append = (current: string, chunk: Buffer): string => `${current}${chunk.toString('utf8')}`.slice(-8 * 1024 * 1024);
+      const append = (current: string, chunk: Buffer): string => Buffer.from(`${current}${chunk.toString('utf8')}`, 'utf8').subarray(-MAX_PROCESS_LOG_BYTES).toString('utf8');
       child.stdout?.on('data', (chunk: Buffer) => { stdout = append(stdout, chunk); });
       child.stderr?.on('data', (chunk: Buffer) => { stderr = append(stderr, chunk); });
       child.on('error', (error: Error) => resolve({ exitCode: -1, stdout, stderr: `${stderr}${error.message}` }));
@@ -63,8 +63,8 @@ export class RipgrepAdapter {
   ) {}
 
   public async searchText(request: SearchTextRequest): Promise<Result<SearchTextResult>> {
-    const maxResults = request.maxResults ?? 200;
-    if (request.query.length === 0 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > 500) {
+    const maxResults = request.maxResults ?? DEFAULT_SEARCH_RESULTS;
+    if (request.query.length === 0 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
       return err({ code: 'INVALID_INPUT', message: 'Search query or result limit is invalid', recoverable: false });
     }
     const executable = await this.resolver.resolve('rg');
@@ -87,8 +87,8 @@ export class RipgrepAdapter {
   }
 
   public async searchFiles(request: SearchFilesRequest): Promise<Result<SearchFilesResult>> {
-    const maxResults = request.maxResults ?? 500;
-    if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 500) {
+    const maxResults = request.maxResults ?? DEFAULT_SEARCH_RESULTS;
+    if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
       return err({ code: 'INVALID_INPUT', message: 'Search result limit is invalid', recoverable: false });
     }
     const executable = await this.resolver.resolve('rg');

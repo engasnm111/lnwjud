@@ -1,6 +1,6 @@
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { err, ok, type Result } from '@lnwjud/domain';
+import { DEFAULT_TREE_DEPTH, DEFAULT_TREE_ENTRIES, err, MAX_TREE_DEPTH, MAX_TREE_ENTRIES, ok, type Result } from '@lnwjud/domain';
 import { isWithin } from '@lnwjud/workspace';
 
 const IGNORED_DIRECTORIES = new Set(['.git', '.next', 'build', 'coverage', 'dist', 'node_modules', 'vendor']);
@@ -22,9 +22,9 @@ export interface TreeResult {
 
 export class TreeReader {
   public async read(rootPath: string, options: TreeOptions = {}): Promise<Result<TreeResult>> {
-    const maxDepth = options.maxDepth ?? 4;
-    const maxEntries = options.maxEntries ?? 2000;
-    if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 8 || !Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > 5000) {
+    const maxDepth = options.maxDepth ?? DEFAULT_TREE_DEPTH;
+    const maxEntries = options.maxEntries ?? DEFAULT_TREE_ENTRIES;
+    if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > MAX_TREE_DEPTH || !Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > MAX_TREE_ENTRIES) {
       return err({ code: 'INVALID_INPUT', message: 'Tree bounds are invalid', recoverable: false });
     }
 

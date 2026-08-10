@@ -1,4 +1,4 @@
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, MAX_MULTI_FILE_BYTES, ok, type Result } from '@lnwjud/domain';
 
 export interface FilePatch {
   readonly path: string;
@@ -24,7 +24,7 @@ export class PatchApplier {
       if (paths.has(normalizedPath)) return err(appError('INVALID_INPUT', 'Patch contains duplicate paths'));
       paths.add(normalizedPath);
       totalBytes += Buffer.byteLength(file.content, 'utf8');
-      if (totalBytes > 4 * 1024 * 1024) return err(appError('FILE_TOO_LARGE', 'Patch exceeds the maximum total size'));
+      if (totalBytes > MAX_MULTI_FILE_BYTES) return err(appError('FILE_TOO_LARGE', 'Patch exceeds the maximum total size'));
     }
     return ok(undefined);
   }

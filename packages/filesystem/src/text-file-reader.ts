@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
-import { err, ok, type Result } from '@lnwjud/domain';
+import { err, MAX_FILE_READ_BYTES, ok, type Result } from '@lnwjud/domain';
 
-export const MAX_FILE_READ_BYTES = 2 * 1024 * 1024;
+export { MAX_FILE_READ_BYTES } from '@lnwjud/domain';
 
 export interface LineRange {
   readonly startLine?: number;

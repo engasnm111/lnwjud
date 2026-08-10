@@ -1,6 +1,7 @@
+import { MAX_PROCESS_LOG_BYTES } from '@lnwjud/domain';
 import type { LogQuery, ProcessLogEntry, ProcessLogResult, ProcessLogStream } from './process-types.js';
 
-const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = MAX_PROCESS_LOG_BYTES;
 
 export class LogRingBuffer {
   private readonly entries: ProcessLogEntry[] = [];

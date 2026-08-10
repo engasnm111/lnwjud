@@ -1,0 +1,9 @@
+export const MAX_FILE_READ_BYTES = 2 * 1024 * 1024;
+export const MAX_MULTI_FILE_BYTES = 4 * 1024 * 1024;
+export const MAX_PROCESS_LOG_BYTES = 10 * 1024 * 1024;
+export const DEFAULT_SEARCH_RESULTS = 200;
+export const MAX_SEARCH_RESULTS = 500;
+export const DEFAULT_TREE_DEPTH = 4;
+export const MAX_TREE_DEPTH = 8;
+export const DEFAULT_TREE_ENTRIES = 2000;
+export const MAX_TREE_ENTRIES = 5000;

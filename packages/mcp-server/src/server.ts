@@ -1,14 +1,15 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
-import type { FileActor } from '@lnwjud/application';
+import type { DiagnosticLogger, FileActor } from '@lnwjud/application';
 import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
 
 export interface McpServerOptions {
   readonly services: McpApplicationServices;
   readonly actor: FileActor;
+  readonly diagnostic?: DiagnosticLogger;
 }
 
 export function createMcpServer(options: McpServerOptions): McpServer {
-  const registry = new ToolRegistry(options.services, options.actor);
+  const registry = new ToolRegistry(options.services, options.actor, options.diagnostic === undefined ? {} : { diagnostic: options.diagnostic });
   const server = new McpServer({ name: 'lnwjud', version: '0.1.0' }, { capabilities: { tools: {} } });
   for (const tool of registry.list()) {
     server.registerTool(tool.name, {
