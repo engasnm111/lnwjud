@@ -1,0 +1,23 @@
+appId: com.lnwjud.desktop
+productName: lnwjud
+asar: true
+directories:
+  output: dist/installers
+  buildResources: build
+files:
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/renderer/**/*
+  - package.json
+win:
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: lnwjud-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: true

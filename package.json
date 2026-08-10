@@ -9,6 +9,8 @@
     "typecheck": "tsc --build",
     "test": "pnpm -r --if-present test",
     "test:integration": "vitest run tests/integration/mcp-development-flow.test.ts tests/integration/codex-review-flow.test.ts",
+    "test:packaging": "vitest run tests/packaging/desktop-packaging.test.ts",
+    "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
     "test:e2e": "corepack pnpm@10.15.0 -r --if-present test:e2e",
     "build": "pnpm -r --if-present build"
   },
