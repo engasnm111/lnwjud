@@ -14,12 +14,21 @@ importers:
       '@lnwjud/application':
         specifier: workspace:*
         version: link:packages/application
+      '@lnwjud/audit':
+        specifier: workspace:*
+        version: link:packages/audit
+      '@lnwjud/codex':
+        specifier: workspace:*
+        version: link:packages/codex
       '@lnwjud/domain':
         specifier: workspace:*
         version: link:packages/domain
       '@lnwjud/mcp-server':
         specifier: workspace:*
         version: link:packages/mcp-server
+      '@lnwjud/process':
+        specifier: workspace:*
+        version: link:packages/process
       '@lnwjud/storage':
         specifier: workspace:*
         version: link:packages/storage

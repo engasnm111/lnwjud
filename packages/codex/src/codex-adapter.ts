@@ -1,7 +1,7 @@
 import { err, ok, type Result } from '@lnwjud/domain';
 import { ProcessManager, type LogQuery, type ManagedProcess, type ManagedProcessStart, type ProcessLogResult } from '@lnwjud/process';
 import { CodexDiscovery } from './codex-discovery.js';
-import { CodexInvocationBuilder, type CodexDiscoveryResult, type CodexStatus } from './codex-capabilities.js';
+import { CodexInvocationBuilder, type CodexDiscoveryResult, type CodexInvocation, type CodexStatus } from './codex-capabilities.js';
 
 export interface CodexDiscoveryPort {
   discover(): Promise<Result<CodexDiscoveryResult>>;
@@ -14,13 +14,20 @@ export interface CodexProcessManagerPort {
   stop(processId: string): Promise<Result<void>>;
 }
 
+export interface CodexInvocationBuilderPort {
+  build(executable: string, capabilities: CodexDiscoveryResult['capabilities'], instruction: string): Result<CodexInvocation>;
+}
+
 export class CodexAdapter {
-  private readonly builder = new CodexInvocationBuilder();
+  private readonly builder: CodexInvocationBuilderPort;
 
   public constructor(
     private readonly discovery: CodexDiscoveryPort = new CodexDiscovery(),
     private readonly processManager: CodexProcessManagerPort = new ProcessManager(),
-  ) {}
+    builder: CodexInvocationBuilderPort = new CodexInvocationBuilder(),
+  ) {
+    this.builder = builder;
+  }
 
   public async status(): Promise<Result<CodexStatus>> {
     const discovered = await this.discovery.discover();
