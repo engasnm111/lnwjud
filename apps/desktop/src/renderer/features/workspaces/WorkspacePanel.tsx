@@ -36,6 +36,7 @@ export function WorkspacePanel({ selectedWorkspace, workspaces, onAddWorkspace }
       {selectedWorkspace === null ? <p>No workspace selected.</p> : (
         <dl className="workspace-details">
           <div><dt>Name</dt><dd>{selectedWorkspace.displayName}</dd></div>
+          <div><dt>Workspace ID</dt><dd data-testid="workspace-id">{selectedWorkspace.id}</dd></div>
           <div><dt>Configured path</dt><dd>{selectedWorkspace.rootPath}</dd></div>
           <div><dt>Canonical path</dt><dd data-testid="workspace-real-root">{selectedWorkspace.realRootPath}</dd></div>
         </dl>

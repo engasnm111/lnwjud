@@ -111,6 +111,9 @@ importers:
         specifier: 19.1.1
         version: 19.1.1(react@19.1.1)
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.0.0
+        version: 2.0.0
       '@playwright/test':
         specifier: 1.55.0
         version: 1.55.0

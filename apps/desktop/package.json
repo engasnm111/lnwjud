@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.55.0",
+    "@modelcontextprotocol/client": "2.0.0",
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
