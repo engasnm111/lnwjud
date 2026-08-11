@@ -38,6 +38,15 @@ test('dashboard supports workspace, permissions, fixture process, and doctor jou
     await page.getByRole('button', { name: 'Add workspace' }).click();
     await expect(page.getByTestId('workspace-real-root')).toHaveText(fixtureRoot);
     await expect(page.getByTestId('git-summary')).toContainText('Not a Git repository');
+    await expect(page.getByTestId('mcp-status')).toHaveText('Stopped');
+    await page.getByRole('button', { name: 'Start Connection' }).click();
+    await expect(page.getByTestId('mcp-status')).toHaveText('Running');
+    await expect(page.getByTestId('mcp-endpoint')).toContainText('http://127.0.0.1:');
+    await page.getByRole('button', { name: 'Copy MCP endpoint' }).click();
+    await expect(page.getByTestId('mcp-copy-status')).toHaveText('Copied');
+    await page.getByRole('button', { name: 'Stop Connection' }).click();
+    await expect(page.getByTestId('mcp-status')).toHaveText('Stopped');
+    await expect(page.getByTestId('mcp-endpoint')).toHaveText('No local endpoint active');
 
     await page.getByLabel('Permission profile').selectOption('balanced');
     await expect(page.getByTestId('permission-profile')).toHaveText('Balanced');

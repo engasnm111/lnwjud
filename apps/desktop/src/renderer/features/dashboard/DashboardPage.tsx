@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import type { DashboardSnapshot, PermissionProfileName, ProcessSummary, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { PermissionPanel } from '../permissions/PermissionPanel.js';
 import { ProcessPanel } from '../processes/ProcessPanel.js';
+import { McpPanel } from '../mcp/McpPanel.js';
 import { WorkspacePanel } from '../workspaces/WorkspacePanel.js';
 
 interface DashboardPageProps {
@@ -13,6 +14,8 @@ interface DashboardPageProps {
   readonly onPermissionProfileChange: (profile: PermissionProfileName) => Promise<void>;
   readonly onStartFixtureProcess: () => Promise<void>;
   readonly onStopProcess: (processId: string) => Promise<void>;
+  readonly onStartMcp: () => Promise<void>;
+  readonly onStopMcp: () => Promise<void>;
 }
 
 export function DashboardPage(props: DashboardPageProps): ReactElement {
@@ -31,17 +34,18 @@ export function DashboardPage(props: DashboardPageProps): ReactElement {
         workspaces={props.workspaces}
         onAddWorkspace={props.onAddWorkspace}
       />
+      <McpPanel
+        status={dashboard.mcp}
+        selectedWorkspace={dashboard.selectedWorkspace}
+        onStart={props.onStartMcp}
+        onStop={props.onStopMcp}
+      />
       <section className="card-grid" aria-label="Gateway status">
         <article className="card">
           <p className="card-label">Git</p>
           <strong data-testid="git-summary">{dashboard.gitSummary.message}</strong>
           <p>{dashboard.gitSummary.branch === null ? 'Branch unavailable' : dashboard.gitSummary.branch}</p>
           <p>{dashboard.gitSummary.changedFiles} changed · {dashboard.gitSummary.stagedFiles} staged</p>
-        </article>
-        <article className="card">
-          <p className="card-label">MCP local status</p>
-          <strong>{dashboard.mcp.running ? 'Running' : 'Not running'}</strong>
-          <p>{dashboard.mcp.url ?? 'No local endpoint active'}</p>
         </article>
         <article className="card">
           <p className="card-label">Codex CLI</p>

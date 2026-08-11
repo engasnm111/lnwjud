@@ -75,6 +75,29 @@ export function App(): ReactElement {
     setDoctor(await window.lnwjud.runDoctor());
   }
 
+  async function startMcp(): Promise<void> {
+    const workspaceId = dashboard?.selectedWorkspace?.id;
+    if (workspaceId === undefined) {
+      setError('Select a workspace before starting MCP');
+      return;
+    }
+    try {
+      await window.lnwjud.startMcp({ workspaceId });
+      await refresh();
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : 'MCP connection could not be started');
+    }
+  }
+
+  async function stopMcp(): Promise<void> {
+    try {
+      await window.lnwjud.stopMcp();
+      await refresh();
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : 'MCP connection could not be stopped');
+    }
+  }
+
   const selectedProcess = processes[processes.length - 1] ?? null;
 
   return (
@@ -100,6 +123,8 @@ export function App(): ReactElement {
           onPermissionProfileChange={setPermissionProfile}
           onStartFixtureProcess={startFixtureProcess}
           onStopProcess={stopProcess}
+          onStartMcp={startMcp}
+          onStopMcp={stopMcp}
         />
       ) : null}
       {screen === 'doctor' ? <DoctorPanel report={doctor} onRunDoctor={runDoctor} /> : null}

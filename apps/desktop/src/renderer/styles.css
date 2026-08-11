@@ -31,6 +31,12 @@ h2 { margin-bottom: 0; font-size: 17px; }
 .workspace-details div { display: contents; }
 dt { color: #7f91ae; font-size: 12px; }
 dd { margin: 0; overflow-wrap: anywhere; }
+.mcp-status-row { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.mcp-actions, .mcp-copy-row { display: flex; align-items: center; gap: 9px; }
+.mcp-endpoint-label { margin: 18px 0 6px; color: #7f91ae; font-size: 12px; }
+.mcp-endpoint { display: block; overflow-wrap: anywhere; padding: 10px; color: #b8d8cb; background: #09101e; border-radius: 8px; }
+.mcp-copy-row { margin-top: 12px; }
+.mcp-copy-row [role="status"] { color: #93d9ba; font-size: 13px; }
 .card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .card-grid .card { margin-bottom: 0; min-height: 128px; }
 .card strong { display: block; margin-bottom: 9px; }
