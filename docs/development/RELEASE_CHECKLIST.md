@@ -25,3 +25,11 @@ Record command names, pass/fail results, OS architecture, installer path, and re
 ## Known host limitation
 
 If Electron cannot start a BrowserWindow because the test host's Chromium GPU process fails, preserve the failure output and rerun the launch/install/uninstall portion on a clean Windows account or VM. Do not add `--disable-gpu-sandbox`, disable `contextIsolation`, disable `sandbox`, or weaken `webSecurity` to make the gate pass.
+
+## Verification record — 2026-08-11
+
+- Windows process/runtime architecture: x64; Electron `37.2.6` Windows x64 archive hash matched the pinned release.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1`: install, lint, typecheck, full tests and integration passed; fail-fast stopped at `test:e2e` because both desktop tests had no renderer page.
+- Direct unpackaged and packaged launch diagnostics: Chromium GPU subprocess exited with `0xC0000135` (`-1073741515`); no Electron security setting was weakened.
+- Installer: `apps/desktop/dist/installers/lnwjud-Setup-0.1.0.exe`; scoped install smoke created `lnwjud.sqlite`, but dashboard interaction and clean-account uninstall evidence remain pending.
+- `codex.exe doctor`: unavailable on this host with `Access is denied`; no credential files were read.
