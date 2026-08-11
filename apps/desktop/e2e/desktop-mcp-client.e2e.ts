@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
 const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('desktop serves the real MCP client development workflow', async () => {
   test.setTimeout(90_000);
@@ -25,7 +26,11 @@ test('desktop serves the real MCP client development workflow', async () => {
 
   try {
     const devToolsPort = await findEphemeralPort();
-    electronProcess = spawn(electronExecutable, [`--remote-debugging-port=${devToolsPort}`, mainEntry], {
+    const launchExecutable = packagedExecutable ?? electronExecutable;
+    const launchArguments = packagedExecutable === undefined
+      ? [`--remote-debugging-port=${devToolsPort}`, mainEntry]
+      : [`--remote-debugging-port=${devToolsPort}`];
+    electronProcess = spawn(launchExecutable, launchArguments, {
       cwd: desktopRoot,
       shell: false,
       windowsHide: true,
