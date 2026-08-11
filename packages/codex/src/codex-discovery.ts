@@ -44,7 +44,7 @@ export class PathCodexExecutableResolver implements CodexExecutableResolver {
   private withWindowsExtensions(candidate: string): string[] {
     if (process.platform !== 'win32') return [candidate];
     const extensions = (this.environment.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';');
-    return [candidate, ...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`)];
+    return [...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`), candidate];
   }
 }
 

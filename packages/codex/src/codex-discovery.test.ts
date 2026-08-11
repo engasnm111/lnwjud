@@ -1,8 +1,9 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { err, ok, type Result } from '@lnwjud/domain';
-import { CodexDiscovery, DirectCodexCommandRunner, formatCodexDiscoveryError, type CodexCommandResult, type CodexCommandRunner, type CodexExecutableResolver } from './codex-discovery.js';
+import { CodexDiscovery, DirectCodexCommandRunner, formatCodexDiscoveryError, PathCodexExecutableResolver, type CodexCommandResult, type CodexCommandRunner, type CodexExecutableResolver } from './codex-discovery.js';
 
 describe('CodexDiscovery', () => {
   it('discovers version and supported instruction capabilities without reading credentials', async () => {
@@ -126,6 +127,20 @@ describe('CodexDiscovery', () => {
     const result = await new DirectCodexCommandRunner().run(missingExecutable, ['--version']);
 
     expect(result).toMatchObject({ exitCode: -1, spawnErrorCode: 'ENOENT' });
+  });
+
+  it('prefers Windows executable extensions over an extensionless shim', async () => {
+    if (process.platform !== 'win32') return;
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-codex-resolver-'));
+    try {
+      await writeFile(path.join(root, 'codex'), '#!/usr/bin/env bash\n', 'utf8');
+      await writeFile(path.join(root, 'codex.cmd'), '@echo off\r\n', 'utf8');
+      const resolver = new PathCodexExecutableResolver({ Path: root, PATHEXT: '.CMD' });
+
+      await expect(resolver.resolve()).resolves.toMatchObject({ ok: true, value: expect.stringMatching(/\.cmd$/i) });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('formats only the allowlisted discovery diagnostics for a user-facing error', () => {
