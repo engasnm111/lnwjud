@@ -42,6 +42,22 @@ describe('CodexService', () => {
     expect(audit.calls).toBe(0);
   });
 
+  it('reads the current permission profile for later Codex tasks', async () => {
+    const workspace = await createWorkspace();
+    const adapter = fakeAdapter();
+    let profile = permissionProfiles.safe;
+    const service = new CodexService(repository(workspace), {
+      adapter,
+      profileProvider: (): typeof profile => profile,
+    });
+
+    await expect(service.run({ clientId: 'client-1', clientName: 'test' }, workspace.id, 'blocked first'))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
+    profile = permissionProfiles.balanced;
+    await expect(service.run({ clientId: 'client-1', clientName: 'test' }, workspace.id, 'allowed second'))
+      .resolves.toMatchObject({ ok: true, value: { processId: 'process-1' } });
+  });
+
   it('exposes bounded task status/logs and cancellation only to the owning client', async () => {
     const workspace = await createWorkspace();
     const adapter = fakeAdapter();

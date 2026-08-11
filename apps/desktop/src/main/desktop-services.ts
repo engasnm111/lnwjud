@@ -84,7 +84,10 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
     workspaceQuery: workspaceQueryService,
     processService,
   });
-  const codexService = new CodexService(workspaceRepository, { auditService });
+  const codexService = new CodexService(workspaceRepository, {
+    auditService,
+    profileProvider: (): typeof permissionProfiles[PermissionProfileName] => permissionProfiles[profileName],
+  });
   const mcpServices: McpApplicationServices = {
     workspaceInfo: workspaceInfoService,
     workspaceQuery: workspaceQueryService,

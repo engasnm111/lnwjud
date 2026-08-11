@@ -26,6 +26,7 @@ export interface CodexServiceDependencies {
   readonly guard?: WorkspacePathGuard;
   readonly permissionEngine?: PermissionEngine;
   readonly profile?: PermissionProfile;
+  readonly profileProvider?: () => PermissionProfile;
   readonly auditService?: CodexAuditPort;
   readonly taskIdFactory?: () => string;
   readonly diagnostic?: (message: string) => void;
@@ -46,7 +47,7 @@ export class CodexService {
   private readonly adapter: CodexAdapterPort;
   private readonly guard: WorkspacePathGuard;
   private readonly permissionEngine: PermissionEngine;
-  private readonly profile: PermissionProfile;
+  private readonly profileProvider: () => PermissionProfile;
   private readonly auditService: CodexAuditPort | undefined;
   private readonly taskIdFactory: () => string;
   private readonly diagnostic: (message: string) => void;
@@ -59,7 +60,7 @@ export class CodexService {
     this.adapter = dependencies.adapter ?? new CodexAdapter();
     this.guard = dependencies.guard ?? new WorkspacePathGuard();
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.profile = dependencies.profile ?? permissionProfiles.balanced;
+    this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
     this.auditService = dependencies.auditService;
     this.taskIdFactory = dependencies.taskIdFactory ?? randomUUID;
     this.diagnostic = dependencies.diagnostic ?? ((message: string): void => { console.error(message); });
@@ -67,7 +68,7 @@ export class CodexService {
 
   public async status(actor: FileActor): Promise<Result<CodexStatus>> {
     void actor;
-    const permission = this.permissionEngine.decide(this.profile, { action: 'codex_status', level: 'READ', workspaceId: 'system', destructive: false });
+    const permission = this.permissionEngine.decide(this.profileProvider(), { action: 'codex_status', level: 'READ', workspaceId: 'system', destructive: false });
     if (permission === 'DENY') return err(appError('PERMISSION_DENIED', 'Codex status is denied'));
     if (permission === 'ASK') return err(appError('PERMISSION_REQUIRED', 'Codex status requires permission'));
     return this.adapter.status();
@@ -80,7 +81,7 @@ export class CodexService {
     if (!workspace.ok) return workspace;
     const root = await this.guard.resolveForRead(workspace.value, '.');
     if (!root.ok) return root;
-    const permission = this.permissionEngine.decide(this.profile, { action: 'codex_run', level: 'EXECUTE', workspaceId, target: '.', destructive: false });
+    const permission = this.permissionEngine.decide(this.profileProvider(), { action: 'codex_run', level: 'EXECUTE', workspaceId, target: '.', destructive: false });
     if (permission === 'DENY') return err(appError('PERMISSION_DENIED', 'Codex execution is denied'));
     if (permission === 'ASK') return err(appError('PERMISSION_REQUIRED', 'Codex execution requires permission'));
 
