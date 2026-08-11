@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { PathExecutableResolver, type ExecutableResolver } from './executable-resolver.js';
 import { LogRingBuffer } from './ring-buffer.js';
 import type { ProcessTreeTerminator } from './windows-process-tree.js';
 import { WindowsProcessTree } from './windows-process-tree.js';
@@ -25,17 +26,25 @@ interface ManagedRecord {
 export class ProcessManager {
   private readonly records = new Map<string, ManagedRecord>();
 
-  public constructor(private readonly terminator: ProcessTreeTerminator = new WindowsProcessTree()) {}
+  public constructor(
+    private readonly terminator: ProcessTreeTerminator = new WindowsProcessTree(),
+    private readonly executableResolver: ExecutableResolver = new PathExecutableResolver(),
+  ) {}
 
-  public start(spec: ManagedProcessStart): Promise<Result<ManagedProcess>> {
+  public async start(spec: ManagedProcessStart): Promise<Result<ManagedProcess>> {
     const validation = this.validateSpec(spec);
-    if (!validation.ok) return Promise.resolve(validation);
+    if (!validation.ok) return validation;
+    const resolvedExecutable = await this.executableResolver.resolve(spec.executable);
+    if (!resolvedExecutable.ok) return resolvedExecutable;
+    const invocation = toSpawnInvocation(resolvedExecutable.value, spec.args);
+    if (!invocation.ok) return invocation;
     const processId = randomUUID();
-    const child = spawn(spec.executable, [...spec.args], {
+    const child = spawn(invocation.value.executable, [...invocation.value.args], {
       cwd: spec.cwd,
       env: createSafeEnvironment(process.env),
       shell: false,
       windowsHide: true,
+      ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
     });
     const record: ManagedRecord = {
       processId,
@@ -144,6 +153,28 @@ export class ProcessManager {
       ...(record.exitCode === undefined ? {} : { exitCode: record.exitCode }),
     };
   }
+}
+
+interface SpawnInvocation {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly windowsVerbatimArguments?: boolean;
+}
+
+function toSpawnInvocation(executable: string, args: readonly string[]): Result<SpawnInvocation> {
+  if (process.platform !== 'win32' || !['.cmd', '.bat'].includes(path.extname(executable).toLowerCase())) {
+    return ok({ executable, args });
+  }
+  const values = [executable, ...args];
+  if (values.some((value) => /[\r\n&|<>^%!"]/.test(value))) {
+    return err(appError('INVALID_INPUT', 'Windows command shim arguments contain unsupported shell metacharacters'));
+  }
+  const commandLine = `"${values.map(quoteWindowsCommandArgument).join(' ')}"`;
+  return ok({ executable: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', commandLine], windowsVerbatimArguments: true });
+}
+
+function quoteWindowsCommandArgument(value: string): string {
+  return /\s/.test(value) ? `"${value}"` : value;
 }
 
 function isTerminal(state: ManagedProcessState): boolean {
