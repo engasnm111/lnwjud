@@ -39,4 +39,18 @@ describe('MCP localhost HTTP transport', () => {
       await client.close();
     }
   });
+
+  it('serves legacy 2025-11-25 clients for Codex compatibility', async () => {
+    const client = new Client({ name: 'codex-compatible-http-test-client', version: '0.1.0' });
+    const transport = new StreamableHTTPClientTransport(handle.endpoint);
+
+    try {
+      await client.connect(transport);
+      const tools = await client.listTools();
+
+      expect(tools.tools.map((tool) => tool.name)).toHaveLength(28);
+    } finally {
+      await client.close();
+    }
+  });
 });

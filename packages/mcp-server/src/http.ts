@@ -156,7 +156,7 @@ export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHt
 
   const handler = createMcpHandler(
     () => createMcpServer(options),
-    { legacy: 'reject', onerror: writeDiagnostic },
+    { legacy: 'stateless', onerror: writeDiagnostic },
   );
   const originPolicy = options.originPolicy ?? createOriginPolicy();
   const server = createServer((request, response) => {
