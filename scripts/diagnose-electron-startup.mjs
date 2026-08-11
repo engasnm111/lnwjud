@@ -1,10 +1,11 @@
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { fileURLToPath } from 'node:url';
+import { removeTemporaryDirectory, waitForProcessExit } from './electron-startup-cleanup.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const desktopRoot = path.join(repositoryRoot, 'apps', 'desktop');
@@ -48,7 +49,7 @@ try {
   log(stderr);
   if (!result.timedOut && (result.exitCode ?? 1) !== 0) process.exitCode = 1;
 } finally {
-  await rm(dataRoot, { recursive: true, force: true });
+  await removeTemporaryDirectory(dataRoot);
 }
 
 async function waitForStartup(process, timeout) {
@@ -76,9 +77,10 @@ async function terminateProcessTree(childProcess) {
       killer.once('error', resolve);
       killer.once('close', resolve);
     });
-    return;
+  } else {
+    childProcess.kill('SIGTERM');
   }
-  childProcess.kill('SIGTERM');
+  await waitForProcessExit(childProcess, 5_000);
 }
 
 function formatCode(value) {
