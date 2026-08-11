@@ -5,9 +5,11 @@ import {
   type DashboardSnapshot,
   type DoctorReport,
   type IpcResponseMap,
+  type McpConnectionStatus,
   type ProcessSummary,
   type PermissionProfileName,
   type SetPermissionProfileRequest,
+  type StartMcpRequest,
   type StartProcessRequest,
   type StopProcessRequest,
   type WorkspaceSummary,
@@ -23,6 +25,8 @@ export interface DesktopIpcServices {
   listProcesses(): Promise<IpcResponseMap[typeof ipcChannels.listProcesses]>;
   startProcess(request: StartProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.startProcess]>;
   stopProcess(request: StopProcessRequest): Promise<{ readonly stopped: boolean }>;
+  startMcp(request: StartMcpRequest): Promise<McpConnectionStatus>;
+  stopMcp(): Promise<McpConnectionStatus>;
   runDoctor(): Promise<DoctorReport>;
 }
 
@@ -36,7 +40,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   getDashboard: async (): Promise<DashboardSnapshot> => ({
     selectedWorkspace: null,
     gitSummary: { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' },
-    mcp: { running: false, url: null },
+    mcp: { running: false, url: null, workspaceId: null },
     codex: { installed: false, version: null },
     managedProcessCount: 0,
     auditEventCount: 0,
@@ -49,6 +53,8 @@ const defaultDesktopServices: DesktopIpcServices = {
     throw new Error('Desktop services are not configured');
   },
   stopProcess: async (): Promise<{ readonly stopped: boolean }> => ({ stopped: false }),
+  startMcp: async (): Promise<McpConnectionStatus> => ({ running: false, url: null, workspaceId: null }),
+  stopMcp: async (): Promise<McpConnectionStatus> => ({ running: false, url: null, workspaceId: null }),
   runDoctor: async (): Promise<DoctorReport> => ({
     checks: [{ id: 'desktop', required: true, status: 'fail', message: 'Desktop services are not configured' }],
     exitCode: 1,
@@ -97,6 +103,15 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     return services.stopProcess(parseStopProcessRequest(payload));
   });
+  ipcMain.handle(ipcChannels.startMcp, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.startMcp(parseStartMcpRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.stopMcp, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return services.stopMcp();
+  });
   ipcMain.handle(ipcChannels.runDoctor, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
@@ -134,6 +149,11 @@ function parseStartProcessRequest(payload: unknown): StartProcessRequest {
   return { workspaceId: payload.workspaceId, mode: payload.mode };
 }
 
+function parseStartMcpRequest(payload: unknown): StartMcpRequest {
+  if (!isRecord(payload) || !isNonEmptyString(payload.workspaceId)) throw new Error('Invalid IPC payload: workspaceId');
+  return { workspaceId: payload.workspaceId };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -153,6 +173,7 @@ function isPermissionProfile(value: unknown): value is PermissionProfileName {
 
 let mainWindow: BrowserWindow | null = null;
 let desktopRuntime: DesktopRuntime | null = null;
+let shutdownStarted = false;
 
 function createDesktopWindow(): void {
   mainWindow = createMainWindow();
@@ -175,10 +196,23 @@ function bootstrapDesktop(): void {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
-  app.on('will-quit', () => {
-    desktopRuntime?.close();
-    desktopRuntime = null;
+  app.on('will-quit', (event) => {
+    if (shutdownStarted) return;
+    event.preventDefault();
+    shutdownStarted = true;
+    void closeDesktopRuntimeAndQuit();
   });
+}
+
+async function closeDesktopRuntimeAndQuit(): Promise<void> {
+  try {
+    await desktopRuntime?.close();
+  } catch (error: unknown) {
+    console.error(`Desktop shutdown failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+  } finally {
+    desktopRuntime = null;
+    app.quit();
+  }
 }
 
 function configureDataPath(): string {

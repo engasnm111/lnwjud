@@ -6,8 +6,10 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type LnwjudApi,
+  type McpConnectionStatus,
   type PermissionProfileName,
   type ProcessSummary,
+  type StartMcpRequest,
   type SetPermissionProfileRequest,
   type StartProcessRequest,
   type StopProcessRequest,
@@ -79,13 +81,23 @@ function dashboard(value: unknown): DashboardSnapshot {
       stagedFiles: numberField(value.gitSummary, 'stagedFiles'),
       message: stringField(value.gitSummary, 'message'),
     },
-    mcp: { running: booleanField(value.mcp, 'running'), url },
+    mcp: mcpStatus(value.mcp),
     codex: { installed: booleanField(value.codex, 'installed'), version },
     managedProcessCount: numberField(value, 'managedProcessCount'),
     auditEventCount: numberField(value, 'auditEventCount'),
     recentAuditEvents: auditEventSummaries(value.recentAuditEvents),
     permissionProfile: permissionProfile(value.permissionProfile),
   };
+}
+
+function mcpStatus(value: unknown): McpConnectionStatus {
+  if (!isRecord(value)) throw new Error('Invalid IPC response');
+  const url = value.url;
+  const workspaceId = value.workspaceId;
+  if ((url !== null && typeof url !== 'string') || (workspaceId !== null && typeof workspaceId !== 'string')) {
+    throw new Error('Invalid IPC response');
+  }
+  return { running: booleanField(value, 'running'), url, workspaceId };
 }
 
 function auditEventSummaries(value: unknown): DashboardSnapshot['recentAuditEvents'] {
@@ -179,6 +191,17 @@ function startProcess(request: StartProcessRequest): Promise<ProcessSummary> {
   return invoke(ipcChannels.startProcess, { workspaceId: request.workspaceId, mode: request.mode }).then(processSummary);
 }
 
+function startMcp(request: StartMcpRequest): Promise<McpConnectionStatus> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.startMcp, { workspaceId: request.workspaceId }).then(mcpStatus);
+}
+
+function stopMcp(): Promise<McpConnectionStatus> {
+  return invoke(ipcChannels.stopMcp).then(mcpStatus);
+}
+
 const api: LnwjudApi = {
   listWorkspaces: () => invoke(ipcChannels.listWorkspaces).then(workspaceList),
   addWorkspace,
@@ -187,6 +210,8 @@ const api: LnwjudApi = {
   listProcesses: () => invoke(ipcChannels.listProcesses).then(processList),
   startProcess,
   stopProcess,
+  startMcp,
+  stopMcp,
   runDoctor: () => invoke(ipcChannels.runDoctor).then(doctorReport),
 };
 

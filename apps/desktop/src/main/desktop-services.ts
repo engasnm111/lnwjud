@@ -2,18 +2,27 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 import {
   DoctorService,
+  CheckpointService,
+  CodexService,
+  FileService,
   GitService,
+  ProjectService,
+  ProjectSnapshotService,
   ProcessService,
+  SearchService,
+  WorkspaceInfoService,
+  WorkspaceQueryService,
   type FileActor,
   type DoctorProbeResult,
 } from '@lnwjud/application';
-import type { AuditEventRepository } from '@lnwjud/audit';
+import { AuditService, type AuditEventRepository } from '@lnwjud/audit';
 import { CodexDiscovery, formatCodexDiscoveryError } from '@lnwjud/codex';
 import type { Result } from '@lnwjud/domain';
+import type { McpApplicationServices, McpHttpServerOptions } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfileName } from '@lnwjud/permissions';
 import type { ManagedProcess } from '@lnwjud/process';
 import { PathExecutableResolver } from '@lnwjud/search';
-import { SqliteAuditRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
+import { SqliteAuditRepository, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
 import { WorkspaceService } from '@lnwjud/workspace';
 import {
@@ -21,21 +30,25 @@ import {
   type AuditEventSummary,
   type DashboardSnapshot,
   type DoctorReport,
+  type McpConnectionStatus,
   type PermissionProfileName as IpcPermissionProfileName,
   type ProcessSummary,
   type SetPermissionProfileRequest,
+  type StartMcpRequest,
   type StartProcessRequest,
   type StopProcessRequest,
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import type { DesktopIpcServices } from './main.js';
+import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: 'lnwjud desktop' };
+const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: 'lnwjud desktop MCP' };
 const permissionSettingKey = 'permission_profile';
 
 export interface DesktopRuntime {
   readonly services: DesktopIpcServices;
-  close(): void;
+  close(): Promise<void>;
 }
 
 export function createDesktopRuntime(dataPath: string): DesktopRuntime {
@@ -43,13 +56,50 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
   const auditRepository: AuditEventRepository = new SqliteAuditRepository(database);
+  const auditService = new AuditService(auditRepository);
+  const checkpointRepository = new SqliteCheckpointRepository(database);
   const workspaceService = new WorkspaceService(workspaceRepository);
   const gitService = new GitService(workspaceRepository);
   const codexDiscovery = new CodexDiscovery();
   const executableResolver = new PathExecutableResolver();
   let profileName = readPermissionProfile(settingsRepository.get(permissionSettingKey));
+  const projectService = new ProjectService(workspaceRepository);
   const processService = new ProcessService(workspaceRepository, {
+    projectService,
     profileProvider: (): typeof permissionProfiles[PermissionProfileName] => permissionProfiles[profileName],
+  });
+  const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
+    profile: permissionProfiles[profileName],
+  });
+  const fileService = new FileService(workspaceRepository, undefined, undefined, {
+    checkpointService,
+    profile: permissionProfiles[profileName],
+  });
+  const workspaceInfoService = new WorkspaceInfoService(workspaceRepository);
+  const workspaceQueryService = new WorkspaceQueryService(workspaceRepository);
+  const searchService = new SearchService(workspaceRepository);
+  const projectSnapshotService = new ProjectSnapshotService(workspaceRepository, {
+    projectService,
+    gitService,
+    workspaceQuery: workspaceQueryService,
+    processService,
+  });
+  const codexService = new CodexService(workspaceRepository, { auditService });
+  const mcpServices: McpApplicationServices = {
+    workspaceInfo: workspaceInfoService,
+    workspaceQuery: workspaceQueryService,
+    projectSnapshot: projectSnapshotService,
+    project: projectService,
+    file: fileService,
+    search: searchService,
+    git: gitService,
+    process: processService,
+    codex: codexService,
+  };
+  const mcpPort = readMcpPort(process.env.LNWJUD_MCP_PORT);
+  const mcpLifecycle = new DesktopMcpLifecycle({
+    workspaceExists: async (workspaceId: string): Promise<boolean> => (await workspaceRepository.get(workspaceId)) !== null,
+    createServerOptions: (): McpHttpServerOptions => ({ port: mcpPort, services: mcpServices, actor: mcpActor }),
   });
   const trackedProcesses = new Map<string, string>();
   const doctorService = new DoctorService({
@@ -77,10 +127,11 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
       const codex = await buildCodexSummary(codexDiscovery);
       const recentAuditEvents = await buildAuditSummary(auditRepository);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
+      const mcp = mcpLifecycle.status();
       return {
         selectedWorkspace: selectedWorkspace === undefined ? null : toWorkspaceSummary(selectedWorkspace),
         gitSummary,
-        mcp: { running: false, url: null },
+        mcp,
         codex,
         managedProcessCount: processSummaries.length,
         auditEventCount: recentAuditEvents.length,
@@ -115,12 +166,20 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
       unwrap(await processService.stop(actor, workspaceId, request.processId), 'Process could not be stopped');
       return { stopped: true };
     },
+    startMcp: async (request: StartMcpRequest): Promise<McpConnectionStatus> => mcpLifecycle.start(request.workspaceId),
+    stopMcp: (): Promise<McpConnectionStatus> => mcpLifecycle.stop(),
     runDoctor: (): Promise<DoctorReport> => doctorService.run(),
   };
 
   return {
     services,
-    close: (): void => database.close(),
+    close: async (): Promise<void> => {
+      try {
+        await mcpLifecycle.close();
+      } finally {
+        database.close();
+      }
+    },
   };
 }
 
@@ -196,6 +255,13 @@ async function buildAuditSummary(repository: AuditEventRepository): Promise<read
 
 function readPermissionProfile(value: string | null): PermissionProfileName {
   return value === 'safe' || value === 'balanced' || value === 'full' || value === 'custom' ? value : 'safe';
+}
+
+function readMcpPort(value: string | undefined): number {
+  if (value === undefined || value.trim().length === 0) return 0;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error('LNWJUD_MCP_PORT must be an integer from 0 to 65535');
+  return port;
 }
 
 function unwrap<T>(result: Result<T>, fallback: string): T {

@@ -9,7 +9,7 @@
     "build:main": "tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --outfile=dist/main/main.js",
     "build:renderer": "vite build --config vite.config.ts",
     "package:windows": "corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --win nsis --x64",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --config vitest.config.ts --passWithNoTests",
     "typecheck": "tsc -b",
     "test:e2e": "tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --outfile=dist/main/main.js && esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --conditions=development --external:electron --outfile=dist/preload/index.cjs && vite build --config vite.config.ts && playwright test --config playwright.config.ts"
   },
@@ -19,6 +19,7 @@
     "@lnwjud/codex": "workspace:*",
     "@lnwjud/domain": "workspace:*",
     "@lnwjud/ipc-contracts": "workspace:*",
+    "@lnwjud/mcp-server": "workspace:*",
     "@lnwjud/permissions": "workspace:*",
     "@lnwjud/process": "workspace:*",
     "@lnwjud/search": "workspace:*",

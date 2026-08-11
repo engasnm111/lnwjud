@@ -6,6 +6,8 @@ export const ipcChannels = {
   listProcesses: 'lnwjud:list-processes',
   startProcess: 'lnwjud:start-process',
   stopProcess: 'lnwjud:stop-process',
+  startMcp: 'lnwjud:start-mcp',
+  stopMcp: 'lnwjud:stop-mcp',
   runDoctor: 'lnwjud:run-doctor',
 } as const;
 
@@ -31,6 +33,7 @@ export interface DashboardSnapshot {
   readonly mcp: {
     readonly running: boolean;
     readonly url: string | null;
+    readonly workspaceId: string | null;
   };
   readonly codex: {
     readonly installed: boolean;
@@ -89,6 +92,16 @@ export interface StopProcessRequest {
   readonly processId: string;
 }
 
+export interface StartMcpRequest {
+  readonly workspaceId: string;
+}
+
+export interface McpConnectionStatus {
+  readonly running: boolean;
+  readonly url: string | null;
+  readonly workspaceId: string | null;
+}
+
 export interface IpcRequestMap {
   readonly [ipcChannels.listWorkspaces]: undefined;
   readonly [ipcChannels.addWorkspace]: AddWorkspaceRequest;
@@ -97,6 +110,8 @@ export interface IpcRequestMap {
   readonly [ipcChannels.listProcesses]: undefined;
   readonly [ipcChannels.startProcess]: StartProcessRequest;
   readonly [ipcChannels.stopProcess]: StopProcessRequest;
+  readonly [ipcChannels.startMcp]: StartMcpRequest;
+  readonly [ipcChannels.stopMcp]: undefined;
   readonly [ipcChannels.runDoctor]: undefined;
 }
 
@@ -108,6 +123,8 @@ export interface IpcResponseMap {
   readonly [ipcChannels.listProcesses]: readonly ProcessSummary[];
   readonly [ipcChannels.startProcess]: ProcessSummary;
   readonly [ipcChannels.stopProcess]: { readonly stopped: boolean };
+  readonly [ipcChannels.startMcp]: McpConnectionStatus;
+  readonly [ipcChannels.stopMcp]: McpConnectionStatus;
   readonly [ipcChannels.runDoctor]: DoctorReport;
 }
 
@@ -119,5 +136,7 @@ export interface LnwjudApi {
   listProcesses(): Promise<IpcResponseMap[typeof ipcChannels.listProcesses]>;
   startProcess(request: StartProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.startProcess]>;
   stopProcess(request: StopProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.stopProcess]>;
+  startMcp(request: StartMcpRequest): Promise<IpcResponseMap[typeof ipcChannels.startMcp]>;
+  stopMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopMcp]>;
   runDoctor(): Promise<IpcResponseMap[typeof ipcChannels.runDoctor]>;
 }

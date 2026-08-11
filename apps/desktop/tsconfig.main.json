@@ -9,6 +9,7 @@
   "include": ["src/main/**/*.ts", "src/preload/**/*.ts"],
   "references": [
     { "path": "../../packages/ipc-contracts" },
+    { "path": "../../packages/mcp-server" },
     { "path": "../../packages/application" },
     { "path": "../../packages/audit" },
     { "path": "../../packages/codex" },
