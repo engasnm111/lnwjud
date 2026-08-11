@@ -72,6 +72,16 @@ test('desktop serves the real MCP client development workflow', async () => {
       'codex_task_status', 'codex_task_logs', 'codex_stop',
     ]);
 
+    const codexStatus = await callTool(client, 'codex_status', {});
+    const codexRecord = toolRecord(codexStatus);
+    if (typeof codexRecord.installed === 'boolean') {
+      expect(codexRecord.capabilities).toEqual(expect.any(Array));
+    } else {
+      expect(codexStatus).toMatchObject({ isError: true });
+      expect(codexRecord).toMatchObject({ error: { code: 'CODEX_NOT_AVAILABLE' } });
+    }
+    expect(JSON.stringify(codexStatus)).not.toMatch(/password|token|credential|api[_-]?key/i);
+
     const info = await callTool(client, 'workspace_info', { workspaceId });
     expect(toolRecord(info)).toMatchObject({ id: workspaceId, realRootPath: fixtureRoot });
 
