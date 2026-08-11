@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 describe('Codex review flow', () => {
-  it('delegates to a fake Codex executable, reviews the diff, and runs the project test', async () => {
+  it('delegates to a fake Codex executable, reviews the diff, runs the project test, and stops an owned task', async () => {
     const fixtureRoot = await createFixture();
     const stateRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-codex-flow-state-'));
     temporaryRoots.push(stateRoot);
@@ -55,10 +55,11 @@ describe('Codex review flow', () => {
         },
       },
     });
+    let taskSequence = 0;
     const codex = new CodexService(workspaces, {
       adapter: fakeCodexAdapter(fakeCodexPath),
       auditService: new AuditService(auditRepository),
-      taskIdFactory: (): string => 'codex-review-task',
+      taskIdFactory: (): string => taskSequence++ === 0 ? 'codex-review-task' : 'codex-stop-task',
     });
     const git = new GitService(workspaces);
     const services: McpApplicationServices = {
@@ -93,9 +94,17 @@ describe('Codex review flow', () => {
       const projectLogs = await registry.invoke('process_logs', { workspaceId, processId: projectProcessId, tailLines: 20 });
       expect(projectLogs).toMatchObject({ structuredContent: { entries: [{ text: expect.stringContaining('project-test-pass') }] } });
 
+      const stopRun = await registry.invoke('codex_run', { workspaceId, instruction: 'hold this task open for stop verification' });
+      expect(stopRun).toMatchObject({ structuredContent: { codexTaskId: 'codex-stop-task', processId: expect.any(String) } });
+      const stopTaskId = stringField(stopRun, 'codexTaskId');
+      expect(await registry.invoke('codex_task_status', { workspaceId, codexTaskId: stopTaskId })).toMatchObject({ structuredContent: { state: 'running' } });
+      const stop = await registry.invoke('codex_stop', { workspaceId, codexTaskId: stopTaskId });
+      expect(stop.isError).not.toBe(true);
+      expect((await waitForCodexTerminal(registry, workspaceId, stopTaskId)).state).toBe('stopped');
+
       const events = await auditRepository.list();
-      expect(events).toHaveLength(1);
-      expect(events[0]?.action).toBe('codex_run');
+      expect(events).toHaveLength(2);
+      expect(events.every((event) => event.action === 'codex_run')).toBe(true);
       expect(JSON.stringify(events)).not.toContain('Review the fixture and update the permitted review file.');
       expect(await readFile(path.join(fixtureRoot, 'src', 'reviewed.ts'), 'utf8')).toBe('export const reviewed = true;\n');
     } finally {
@@ -143,6 +152,7 @@ function fakeCodexSource(): string {
     "import path from 'node:path';",
     "process.stdout.write('fake-codex-started\\n');",
     "await writeFile(path.join(process.cwd(), 'src', 'reviewed.ts'), 'export const reviewed = true;\\n', 'utf8');",
+    "if (process.argv[2]?.includes('hold')) await new Promise(() => {});",
   ].join('\n');
 }
 
