@@ -73,7 +73,7 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
   });
   const fileService = new FileService(workspaceRepository, undefined, undefined, {
     checkpointService,
-    profile: permissionProfiles[profileName],
+    profileProvider: (): typeof permissionProfiles[PermissionProfileName] => permissionProfiles[profileName],
   });
   const workspaceInfoService = new WorkspaceInfoService(workspaceRepository);
   const workspaceQueryService = new WorkspaceQueryService(workspaceRepository);

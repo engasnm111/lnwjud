@@ -66,6 +66,22 @@ describe('FileService writes', () => {
     await expect(readFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'utf8')).resolves.toBe('after');
   });
 
+  it('reads the current permission profile for later writes', async () => {
+    const workspace = await createWorkspace();
+    const checkpoints = checkpointService();
+    let profile = permissionProfiles.safe;
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      checkpointService: checkpoints,
+      profileProvider: (): typeof profile => profile,
+    });
+
+    await expect(service.writeFile(actor, workspace.id, { path: 'src\\dynamic.txt', content: 'blocked' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
+    profile = permissionProfiles.balanced;
+    await expect(service.writeFile(actor, workspace.id, { path: 'src\\dynamic.txt', content: 'allowed' }))
+      .resolves.toMatchObject({ ok: true, value: { path: 'src\\dynamic.txt' } });
+  });
+
   it('validates every patch path before changing the first file', async () => {
     const workspace = await createWorkspace();
     await writeFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'before', 'utf8');

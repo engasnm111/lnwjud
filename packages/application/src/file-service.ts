@@ -42,6 +42,7 @@ export interface FileServiceDependencies {
   readonly checkpointService?: CheckpointServicePort;
   readonly permissionEngine?: PermissionEngine;
   readonly profile?: PermissionProfile;
+  readonly profileProvider?: () => PermissionProfile;
 }
 
 export interface WriteFileRequest {
@@ -78,7 +79,7 @@ export class FileService {
   private readonly patchApplier: PatchApplier;
   private readonly checkpointService: CheckpointServicePort | undefined;
   private readonly permissionEngine: PermissionEngine;
-  private readonly profile: PermissionProfile;
+  private readonly profileProvider: () => PermissionProfile;
 
   public constructor(
     private readonly workspaces: WorkspaceRepository,
@@ -90,7 +91,7 @@ export class FileService {
     this.patchApplier = dependencies.patchApplier ?? new PatchApplier();
     this.checkpointService = dependencies.checkpointService;
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.profile = dependencies.profile ?? permissionProfiles.balanced;
+    this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
   }
 
   public async readFile(actor: FileActor, workspaceId: string, request: ReadFileRequest): Promise<Result<ReadFileResult>> {
@@ -255,7 +256,7 @@ export class FileService {
     destructive: boolean,
   ): Result<void> {
     const operation = { action, level, workspaceId, destructive, ...(target === undefined ? {} : { target }) };
-    const decision = this.permissionEngine.decide(this.profile, operation);
+    const decision = this.permissionEngine.decide(this.profileProvider(), operation);
     if (decision === 'DENY') return err(appError('PERMISSION_DENIED', `${action} is denied`));
     if (decision === 'ASK') return err(appError('PERMISSION_REQUIRED', `${action} requires permission`));
     return ok(undefined);
