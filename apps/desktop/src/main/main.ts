@@ -182,6 +182,7 @@ function bootstrapDesktop(): void {
 }
 
 function configureDataPath(): string {
+  app.setName('lnwjud');
   const configuredDataPath = process.env.LNWJUD_DATA_PATH;
   if (typeof configuredDataPath === 'string' && configuredDataPath.trim().length > 0) {
     app.setPath('userData', configuredDataPath);
