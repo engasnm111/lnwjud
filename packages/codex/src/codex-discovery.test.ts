@@ -1,6 +1,8 @@
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { err, ok, type Result } from '@lnwjud/domain';
-import { CodexDiscovery, type CodexCommandResult, type CodexCommandRunner, type CodexExecutableResolver } from './codex-discovery.js';
+import { CodexDiscovery, DirectCodexCommandRunner, formatCodexDiscoveryError, type CodexCommandResult, type CodexCommandRunner, type CodexExecutableResolver } from './codex-discovery.js';
 
 describe('CodexDiscovery', () => {
   it('discovers version and supported instruction capabilities without reading credentials', async () => {
@@ -42,5 +44,105 @@ describe('CodexDiscovery', () => {
 
     expect(result).toEqual({ ok: true, value: { status: { installed: false, capabilities: [] }, capabilities: { instructionMode: null, names: [] } } });
     expect(runs).toBe(0);
+  });
+
+  it('reports a sanitized spawn error and the version discovery stage', async () => {
+    const resolver: CodexExecutableResolver = { async resolve(): Promise<Result<string>> { return ok('C:\\Users\\ABCz\\tools\\codex.exe'); } };
+    const runner: CodexCommandRunner = {
+      async run(): Promise<CodexCommandResult> {
+        return Object.assign(
+          { exitCode: -1, stdout: '', stderr: '' },
+          { spawnErrorCode: 'EACCES' as const },
+        );
+      },
+    };
+
+    const result = await new CodexDiscovery(resolver, runner).discover();
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'CODEX_NOT_AVAILABLE',
+        message: 'Codex --version check failed',
+        recoverable: true,
+        details: {
+          stage: '--version',
+          executablePath: '%USERPROFILE%\\tools\\codex.exe',
+          spawnErrorCode: 'EACCES',
+          exitCode: -1,
+        },
+      },
+    });
+  });
+
+  it('reports the help discovery stage when help invocation cannot start', async () => {
+    const resolver: CodexExecutableResolver = { async resolve(): Promise<Result<string>> { return ok('C:\\tools\\codex.exe'); } };
+    let invocation = 0;
+    const runner: CodexCommandRunner = {
+      async run(): Promise<CodexCommandResult> {
+        invocation += 1;
+        return invocation === 1
+          ? { exitCode: 0, stdout: 'codex 0.42.1\n', stderr: '' }
+          : Object.assign(
+            { exitCode: -1, stdout: '', stderr: '' },
+            { spawnErrorCode: 'EPERM' as const },
+          );
+      },
+    };
+
+    const result = await new CodexDiscovery(resolver, runner).discover();
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'CODEX_NOT_AVAILABLE',
+        message: 'Codex --help check failed',
+        details: {
+          stage: '--help',
+          executablePath: 'codex.exe',
+          spawnErrorCode: 'EPERM',
+          exitCode: -1,
+        },
+      },
+    });
+  });
+
+  it('marks resolver failures with the resolve discovery stage', async () => {
+    const resolver: CodexExecutableResolver = {
+      async resolve(): Promise<Result<string>> {
+        return err({ code: 'INTERNAL_ERROR', message: 'resolver failed', recoverable: true });
+      },
+    };
+    const runner: CodexCommandRunner = { async run(): Promise<CodexCommandResult> { throw new Error('must not run'); } };
+
+    const result = await new CodexDiscovery(resolver, runner).discover();
+
+    expect(result).toMatchObject({ ok: false, error: { details: { stage: 'resolve' } } });
+  });
+
+  it('preserves ENOENT from a direct spawn failure', async () => {
+    const missingExecutable = path.join(os.tmpdir(), `lnwjud-missing-codex-${process.pid}-${Date.now()}.exe`);
+
+    const result = await new DirectCodexCommandRunner().run(missingExecutable, ['--version']);
+
+    expect(result).toMatchObject({ exitCode: -1, spawnErrorCode: 'ENOENT' });
+  });
+
+  it('formats only the allowlisted discovery diagnostics for a user-facing error', () => {
+    const message = formatCodexDiscoveryError({
+      code: 'CODEX_NOT_AVAILABLE',
+      message: 'Codex --version check failed',
+      recoverable: true,
+      details: {
+        stage: '--version',
+        executablePath: '%USERPROFILE%\\tools\\codex.exe',
+        spawnErrorCode: 'EACCES',
+        exitCode: -1,
+        secret: 'must-not-display',
+      },
+    });
+
+    expect(message).toBe('Codex --version check failed (stage=--version, executable=%USERPROFILE%\\tools\\codex.exe, spawnErrorCode=EACCES, exitCode=-1)');
+    expect(message).not.toContain('must-not-display');
   });
 });

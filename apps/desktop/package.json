@@ -32,8 +32,8 @@
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
+    "electron": "43.2.0",
     "electron-builder": "26.0.12",
-    "electron": "37.2.6",
     "esbuild": "0.25.12",
     "vite": "7.1.2"
   }

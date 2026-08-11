@@ -8,7 +8,7 @@ import {
   type DoctorProbeResult,
 } from '@lnwjud/application';
 import type { AuditEventRepository } from '@lnwjud/audit';
-import { CodexDiscovery } from '@lnwjud/codex';
+import { CodexDiscovery, formatCodexDiscoveryError } from '@lnwjud/codex';
 import type { Result } from '@lnwjud/domain';
 import { permissionProfiles, type PermissionProfileName } from '@lnwjud/permissions';
 import type { ManagedProcess } from '@lnwjud/process';
@@ -210,7 +210,7 @@ async function checkExecutable(resolver: PathExecutableResolver, executable: str
 
 async function checkCodex(discovery: CodexDiscovery): Promise<{ readonly status: 'pass' | 'warn'; readonly message: string }> {
   const result = await discovery.discover();
-  if (!result.ok) return { status: 'warn', message: 'Codex is not available' };
+  if (!result.ok) return { status: 'warn', message: formatCodexDiscoveryError(result.error) };
   return result.value.status.installed ? { status: 'pass', message: `Codex ${result.value.status.version ?? 'installed'}` } : { status: 'warn', message: 'Codex is not installed' };
 }
 

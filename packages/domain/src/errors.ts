@@ -19,6 +19,7 @@ export interface AppError {
   readonly code: AppErrorCode;
   readonly message: string;
   readonly recoverable: boolean;
+  readonly details?: Readonly<Record<string, string | number>>;
 }
 
 export type Result<T> =

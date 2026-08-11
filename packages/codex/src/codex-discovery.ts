@@ -1,14 +1,19 @@
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { access, constants, stat } from 'node:fs/promises';
-import { err, ok, type Result } from '@lnwjud/domain';
+import { err, ok, type AppError, type Result } from '@lnwjud/domain';
 import { capabilitiesFromHelp, type CodexDiscoveryResult } from './codex-capabilities.js';
 
 export interface CodexCommandResult {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly spawnErrorCode?: CodexSpawnErrorCode;
 }
+
+export type CodexSpawnErrorCode = 'EACCES' | 'EPERM' | 'ENOENT' | 'UNKNOWN';
+export type CodexDiscoveryStage = 'resolve' | '--version' | '--help';
 
 export interface CodexCommandRunner {
   run(executable: string, args: readonly string[]): Promise<CodexCommandResult>;
@@ -51,7 +56,12 @@ export class DirectCodexCommandRunner implements CodexCommandRunner {
       let stderr = '';
       child.stdout?.on('data', (chunk: Buffer) => { stdout = `${stdout}${chunk.toString('utf8')}`.slice(-1024 * 1024); });
       child.stderr?.on('data', (chunk: Buffer) => { stderr = `${stderr}${chunk.toString('utf8')}`.slice(-1024 * 1024); });
-      child.once('error', (error: Error & { code?: string }) => resolve({ exitCode: error.code === 'ENOENT' ? -1 : -2, stdout, stderr }));
+      child.once('error', (error: NodeJS.ErrnoException) => resolve({
+        exitCode: -1,
+        stdout,
+        stderr,
+        spawnErrorCode: sanitizeSpawnErrorCode(error.code),
+      }));
       child.once('close', (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
     });
   }
@@ -69,12 +79,12 @@ export class CodexDiscovery {
       if (resolved.error.code === 'EXECUTABLE_NOT_FOUND') {
         return ok({ status: { installed: false, capabilities: [] }, capabilities: { instructionMode: null, names: [] } });
       }
-      return resolved;
+      return err({ ...resolved.error, details: { ...(resolved.error.details ?? {}), stage: 'resolve' } });
     }
     const versionResult = await this.runner.run(resolved.value, ['--version']);
-    if (versionResult.exitCode !== 0) return err({ code: 'CODEX_NOT_AVAILABLE', message: 'Codex version check failed', recoverable: true });
+    if (versionResult.exitCode !== 0) return commandFailure(resolved.value, '--version', versionResult);
     const helpResult = await this.runner.run(resolved.value, ['--help']);
-    if (helpResult.exitCode !== 0) return err({ code: 'CODEX_NOT_AVAILABLE', message: 'Codex help check failed', recoverable: true });
+    if (helpResult.exitCode !== 0) return commandFailure(resolved.value, '--help', helpResult);
     const helpText = `${helpResult.stdout}\n${helpResult.stderr}`;
     const capabilities = capabilitiesFromHelp(helpText);
     const statusCapabilities = ['version', 'help', ...capabilities.names];
@@ -89,6 +99,54 @@ export class CodexDiscovery {
       capabilities,
     });
   }
+}
+
+export function formatCodexDiscoveryError(error: AppError): string {
+  const details = error.details;
+  if (details === undefined) return error.message;
+  const fields: string[] = [];
+  appendStringField(fields, details, 'stage');
+  appendStringField(fields, details, 'executablePath', 'executable');
+  appendStringField(fields, details, 'spawnErrorCode');
+  if (typeof details.exitCode === 'number') fields.push(`exitCode=${details.exitCode}`);
+  return fields.length === 0 ? error.message : `${error.message} (${fields.join(', ')})`;
+}
+
+function commandFailure(executable: string, stage: Exclude<CodexDiscoveryStage, 'resolve'>, result: CodexCommandResult): Result<never> {
+  return err({
+    code: 'CODEX_NOT_AVAILABLE',
+    message: `Codex ${stage} check failed`,
+    recoverable: true,
+    details: {
+      stage,
+      executablePath: sanitizeExecutablePath(executable),
+      exitCode: result.exitCode,
+      ...(result.spawnErrorCode === undefined ? {} : { spawnErrorCode: result.spawnErrorCode }),
+    },
+  });
+}
+
+function sanitizeSpawnErrorCode(value: string | undefined): CodexSpawnErrorCode {
+  return value === 'EACCES' || value === 'EPERM' || value === 'ENOENT' ? value : 'UNKNOWN';
+}
+
+function sanitizeExecutablePath(value: string): string {
+  const home = os.homedir();
+  const relative = path.relative(home, value);
+  if (relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+    return `%USERPROFILE%${path.sep}${relative}`;
+  }
+  const windowsBaseName = path.win32.basename(value);
+  return windowsBaseName === value ? path.basename(value) : windowsBaseName;
+}
+
+function appendStringField(
+  fields: string[],
+  details: Readonly<Record<string, string | number>>,
+  key: string,
+  label = key,
+): void {
+  if (typeof details[key] === 'string') fields.push(`${label}=${details[key]}`);
 }
 
 function parseVersion(value: string): string | undefined {

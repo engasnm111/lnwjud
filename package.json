@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
   "type": "module",
   "scripts": {
     "lint": "eslint .",
@@ -13,11 +16,11 @@
     "test:release-gate": "vitest run tests/release/release-gate.test.ts",
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
     "test:e2e": "corepack pnpm@10.15.0 -r --if-present test:e2e",
+    "diagnose:electron": "node scripts/diagnose-electron-startup.mjs",
     "build": "corepack pnpm@10.15.0 -r --if-present build"
   },
   "devDependencies": {
     "@eslint/js": "9.33.0",
-    "@types/node": "^24.0.0",
     "@lnwjud/application": "workspace:*",
     "@lnwjud/audit": "workspace:*",
     "@lnwjud/codex": "workspace:*",
@@ -26,8 +29,9 @@
     "@lnwjud/process": "workspace:*",
     "@lnwjud/storage": "workspace:*",
     "@lnwjud/workspace": "workspace:*",
+    "@types/node": "^24.0.0",
     "eslint": "9.33.0",
-    "typescript": "6.0.0-dev.20250819",
+    "typescript": "6.0.2",
     "typescript-eslint": "8.39.0",
     "vitest": "3.2.4"
   }

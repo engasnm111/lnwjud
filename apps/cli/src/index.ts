@@ -1,5 +1,5 @@
 import { appError, err, ok, type Result } from '@lnwjud/domain';
-import type { CodexDiscoveryResult } from '@lnwjud/codex';
+import { formatCodexDiscoveryError, type CodexDiscoveryResult } from '@lnwjud/codex';
 import type { DoctorReport } from '@lnwjud/application';
 import type { Workspace } from '@lnwjud/workspace';
 import { formatDoctorReport } from './commands/doctor.js';
@@ -84,7 +84,7 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     case 'codex-doctor': {
       const result = await dependencies.codexDoctor();
       if (!result.ok) {
-        writeError(result.error.message);
+        writeError(formatCodexDiscoveryError(result.error));
         return 1;
       }
       write(result.value.status.installed ? 'Codex available' : 'Codex not installed (optional)');
