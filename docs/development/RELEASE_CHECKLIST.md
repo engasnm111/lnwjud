@@ -28,8 +28,17 @@ If Electron cannot start a BrowserWindow because the test host's Chromium GPU pr
 
 ## Verification record — 2026-08-11
 
-- Windows process/runtime architecture: x64; Electron `37.2.6` Windows x64 archive hash matched the pinned release.
-- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1`: install, lint, typecheck, full tests and integration passed; fail-fast stopped at `test:e2e` because both desktop tests had no renderer page.
-- Direct unpackaged and packaged launch diagnostics: Chromium GPU subprocess exited with `0xC0000135` (`-1073741515`); no Electron security setting was weakened.
-- Installer: `apps/desktop/dist/installers/lnwjud-Setup-0.1.0.exe`; scoped install smoke created `lnwjud.sqlite`, but dashboard interaction and clean-account uninstall evidence remain pending.
-- `codex.exe doctor`: unavailable on this host with `Access is denied`; no credential files were read.
+- Windows process/runtime architecture: x64; Node `v24.16.0`; Electron `43.2.0`.
+- `corepack pnpm@10.15.0 diagnose:electron`: exit `0`; the unpackaged app survived the diagnostic timeout with no Electron child exit and no GPU exit code.
+- `corepack pnpm@10.15.0 lint`: exit `0`.
+- `corepack pnpm@10.15.0 typecheck`: exit `0`.
+- `corepack pnpm@10.15.0 test`: exit `0`.
+- `corepack pnpm@10.15.0 test:integration`: exit `0`.
+- `corepack pnpm@10.15.0 --filter @lnwjud/desktop test:e2e`: exit `0`; 3/3 tests passed, including the real local MCP client workflow and Electron security checks.
+- `corepack pnpm@10.15.0 build`: exit `0`.
+- `corepack pnpm@10.15.0 test:packaging`: exit `0`.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1`: exit `0`; the pinned install, all automated release checks, packaging, and `git diff --check` passed.
+- Installer: `apps/desktop/dist/installers/lnwjud-Setup-0.1.0.exe`.
+- No Electron security setting was weakened: `sandbox`, `contextIsolation`, and `webSecurity` remain enabled; no `--no-sandbox` or `--disable-gpu-sandbox` was committed.
+- An earlier restricted-host diagnostic reported GPU `0xC0000135`; the normal Windows user-context diagnostic now passes without that failure.
+- Clean-account/VM installed launch, disposable-workspace Doctor flow, uninstall verification, and one real Codex delegation remain manual evidence not captured by this run. No Codex credentials were read.
