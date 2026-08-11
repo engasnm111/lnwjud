@@ -13,9 +13,11 @@
     }
   },
   "dependencies": {
-    "@lnwjud/domain": "workspace:*"
+    "@lnwjud/domain": "workspace:*",
+    "@lnwjud/process": "workspace:*"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc --outDir dist"
   }

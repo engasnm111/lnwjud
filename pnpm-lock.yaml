@@ -77,6 +77,9 @@ importers:
       '@lnwjud/audit':
         specifier: workspace:*
         version: link:../../packages/audit
+      '@lnwjud/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
       '@lnwjud/codex':
         specifier: workspace:*
         version: link:../../packages/codex
@@ -179,6 +182,9 @@ importers:
       '@lnwjud/domain':
         specifier: workspace:*
         version: link:../domain
+      '@lnwjud/process':
+        specifier: workspace:*
+        version: link:../process
 
   packages/codex:
     dependencies:

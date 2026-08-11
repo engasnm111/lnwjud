@@ -108,7 +108,7 @@ export const visionCapabilitySchema = z.object({
 }).strict();
 
 export const windowCapabilitySchema = z.object({
-  operation: z.enum(['list', 'get_active', 'get_bounds', 'get_display', 'activate', 'close', 'minimize', 'maximize', 'restore', 'move', 'resize']),
+  operation: z.enum(['list', 'get_active', 'get_bounds', 'get_display', 'activate', 'close', 'minimize', 'maximize', 'restore', 'move', 'resize', 'set_window_frame']),
   parameters: capabilityParametersSchema.optional(),
   timeout_seconds: z.number().min(0.1).max(600).optional(),
   ...capabilityRequestSchema,

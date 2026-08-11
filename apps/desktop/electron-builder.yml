@@ -9,6 +9,9 @@ files:
   - dist/preload/**/*
   - dist/renderer/**/*
   - package.json
+extraResources:
+  - from: ../../packages/capabilities/src/windows-capability-bridge.ps1
+    to: windows-capability-bridge.ps1
 win:
   signAndEditExecutable: false
   target:

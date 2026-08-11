@@ -75,7 +75,17 @@ test('desktop serves the real MCP client development workflow', async () => {
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build', 'codex_status', 'codex_run',
       'codex_task_status', 'codex_task_logs', 'codex_stop',
+      'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health',
     ]);
+
+    if (process.platform === 'win32') {
+      const nativeHealth = await callTool(client, 'health', { operation: 'check_tool', tool: 'accessibility' });
+      expect(toolRecord(nativeHealth)).toMatchObject({ tool: 'accessibility', available: true });
+      const nativeWindows = await callTool(client, 'window', { operation: 'list' });
+      expect(toolRecord(nativeWindows)).toMatchObject({ windows: expect.any(Array) });
+      const nativeVision = await callTool(client, 'vision', { action: 'capture_region', region: { x: 0, y: 0, width: 64, height: 64 } });
+      expect(toolRecord(nativeVision)).toMatchObject({ format: 'png', width: 64, height: 64 });
+    }
 
     const codexStatus = await callTool(client, 'codex_status', {});
     const codexRecord = toolRecord(codexStatus);

@@ -29,6 +29,7 @@ describe('MCP tool registry', () => {
     expect(byName.get('input_event')?.parse({ operation: 'click', parameters: { x: 1, y: 2 } })).toMatchObject({ ok: true });
     expect(byName.get('vision')?.parse({ action: 'capture_display' })).toMatchObject({ ok: true });
     expect(byName.get('window')?.parse({ operation: 'list' })).toMatchObject({ ok: true });
+    expect(byName.get('window')?.parse({ operation: 'set_window_frame', parameters: { x: 0, y: 0, width: 800, height: 600 } })).toMatchObject({ ok: true });
     expect(byName.get('health')?.parse({ operation: 'check_all' })).toMatchObject({ ok: true });
   });
 

@@ -87,7 +87,27 @@ function dashboard(value: unknown): DashboardSnapshot {
     auditEventCount: numberField(value, 'auditEventCount'),
     recentAuditEvents: auditEventSummaries(value.recentAuditEvents),
     permissionProfile: permissionProfile(value.permissionProfile),
+    capabilities: capabilitySummaries(value.capabilities),
   };
+}
+
+function capabilitySummaries(value: unknown): DashboardSnapshot['capabilities'] {
+  if (!Array.isArray(value)) throw new Error('Invalid IPC response');
+  return value.map((entry) => {
+    if (!isRecord(entry) || !isCapabilityToolName(entry.name)) throw new Error('Invalid IPC response');
+    return {
+      name: entry.name,
+      title: stringField(entry, 'title'),
+      description: stringField(entry, 'description'),
+      available: booleanField(entry, 'available'),
+      ready: booleanField(entry, 'ready'),
+    };
+  });
+}
+
+function isCapabilityToolName(value: unknown): value is DashboardSnapshot['capabilities'][number]['name'] {
+  return value === 'shell' || value === 'dom_cdp' || value === 'accessibility' || value === 'input_event'
+    || value === 'vision' || value === 'window' || value === 'health';
 }
 
 function mcpStatus(value: unknown): McpConnectionStatus {

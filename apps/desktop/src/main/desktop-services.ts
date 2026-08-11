@@ -40,6 +40,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import type { DesktopIpcServices } from './main.js';
+import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: 'lnwjud desktop' };
@@ -88,7 +89,11 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
     auditService,
     profileProvider: (): typeof permissionProfiles[PermissionProfileName] => permissionProfiles[profileName],
   });
+  const capabilityRuntime = createLocalCapabilityRuntime(dataPath, async (): Promise<readonly string[]> => (
+    (await workspaceRepository.list()).map((workspace) => workspace.realRootPath)
+  ));
   const mcpServices: McpApplicationServices = {
+    capabilities: capabilityRuntime.service,
     workspaceInfo: workspaceInfoService,
     workspaceQuery: workspaceQueryService,
     projectSnapshot: projectSnapshotService,
@@ -130,6 +135,7 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
       const codex = await buildCodexSummary(codexDiscovery);
       const recentAuditEvents = await buildAuditSummary(auditRepository);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
+      const capabilities = await buildCapabilitySummary(capabilityRuntime.health);
       const mcp = mcpLifecycle.status();
       return {
         selectedWorkspace: selectedWorkspace === undefined ? null : toWorkspaceSummary(selectedWorkspace),
@@ -140,6 +146,7 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
         auditEventCount: recentAuditEvents.length,
         recentAuditEvents,
         permissionProfile: profileName,
+        capabilities,
       };
     },
     setPermissionProfile: async (request: SetPermissionProfileRequest): Promise<{ readonly profile: IpcPermissionProfileName }> => {

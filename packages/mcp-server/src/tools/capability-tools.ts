@@ -1,4 +1,5 @@
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
+import type { Result } from '@lnwjud/domain';
 import {
   accessibilityCapabilitySchema,
   domCdpCapabilitySchema,
@@ -10,9 +11,9 @@ import {
 } from './schemas.js';
 
 export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
-  const execute = (tool: Parameters<NonNullable<McpToolContext['services']['capabilities']>['execute']>[0], input: unknown) => (
+  const execute = (tool: Parameters<NonNullable<McpToolContext['services']['capabilities']>['execute']>[0], input: unknown): Promise<Result<unknown>> => (
     context.services.capabilities === undefined
-      ? missingService()
+      ? Promise.resolve(missingService())
       : context.services.capabilities.execute(tool, input)
   );
 

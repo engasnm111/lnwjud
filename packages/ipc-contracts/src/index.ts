@@ -22,6 +22,16 @@ export interface WorkspaceSummary {
   readonly createdAt: string;
 }
 
+export type CapabilityToolName = 'shell' | 'dom_cdp' | 'accessibility' | 'input_event' | 'vision' | 'window' | 'health';
+
+export interface CapabilitySummary {
+  readonly name: CapabilityToolName;
+  readonly title: string;
+  readonly description: string;
+  readonly available: boolean;
+  readonly ready: boolean;
+}
+
 export interface DashboardSnapshot {
   readonly selectedWorkspace: WorkspaceSummary | null;
   readonly gitSummary: {
@@ -43,6 +53,7 @@ export interface DashboardSnapshot {
   readonly auditEventCount: number;
   readonly recentAuditEvents: readonly AuditEventSummary[];
   readonly permissionProfile: PermissionProfileName;
+  readonly capabilities: readonly CapabilitySummary[];
 }
 
 export interface AuditEventSummary {

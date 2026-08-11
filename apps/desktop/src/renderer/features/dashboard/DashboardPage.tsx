@@ -4,6 +4,7 @@ import { PermissionPanel } from '../permissions/PermissionPanel.js';
 import { ProcessPanel } from '../processes/ProcessPanel.js';
 import { McpPanel } from '../mcp/McpPanel.js';
 import { WorkspacePanel } from '../workspaces/WorkspacePanel.js';
+import { CapabilityPanel } from '../capabilities/CapabilityPanel.js';
 
 interface DashboardPageProps {
   readonly dashboard: DashboardSnapshot;
@@ -42,6 +43,7 @@ export function DashboardPage(props: DashboardPageProps): ReactElement {
         onStop={props.onStopMcp}
         busy={props.mcpBusy}
       />
+      <CapabilityPanel capabilities={dashboard.capabilities} />
       <section className="card-grid" aria-label="Gateway status">
         <article className="card">
           <p className="card-label">Git</p>

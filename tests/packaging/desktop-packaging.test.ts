@@ -14,6 +14,8 @@ describe('Windows desktop packaging', () => {
     expect(config).toContain('target: nsis');
     expect(config).toContain('- x64');
     expect(config).toContain('signAndEditExecutable: false');
+    expect(config).toContain('extraResources:');
+    expect(config).toContain('windows-capability-bridge.ps1');
     await access(path.join(desktopRoot, 'dist', 'main', 'main.js'));
     await access(path.join(desktopRoot, 'dist', 'preload', 'index.cjs'));
     await access(path.join(desktopRoot, 'dist', 'renderer', 'index.html'));

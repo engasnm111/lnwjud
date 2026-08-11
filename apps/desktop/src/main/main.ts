@@ -46,6 +46,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     auditEventCount: 0,
     recentAuditEvents: [],
     permissionProfile: 'safe',
+    capabilities: [],
   }),
   setPermissionProfile: async (request): Promise<{ readonly profile: PermissionProfileName }> => ({ profile: request.profile }),
   listProcesses: async (): Promise<readonly ProcessSummary[]> => [],

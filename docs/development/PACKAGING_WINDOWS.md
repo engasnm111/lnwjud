@@ -13,7 +13,7 @@ corepack pnpm@10.15.0 package:windows
 
 The script builds the main/preload/renderer bundles and writes the installer to `apps/desktop/dist/installers/`.
 
-The package configuration keeps `asar` enabled, includes only the three built runtime bundles and the desktop package manifest, and targets x64 NSIS. The installer is per-user, allows the install directory to be selected, and removes application data when the user explicitly uninstalls.
+The package configuration keeps `asar` enabled, includes the three built runtime bundles, the desktop package manifest, and the Windows capability bridge resource, and targets x64 NSIS. The installer is per-user, allows the install directory to be selected, and removes application data when the user explicitly uninstalls.
 
 The MVP installer is unsigned and does not edit the executable icon. `signAndEditExecutable: false` avoids requiring a Windows symlink privilege for electron-builder's signing cache; production signing can be enabled when a project-owned certificate and CI secret policy are available.
 

@@ -16,6 +16,7 @@
   "dependencies": {
     "@lnwjud/application": "workspace:*",
     "@lnwjud/audit": "workspace:*",
+    "@lnwjud/capabilities": "workspace:*",
     "@lnwjud/codex": "workspace:*",
     "@lnwjud/domain": "workspace:*",
     "@lnwjud/ipc-contracts": "workspace:*",

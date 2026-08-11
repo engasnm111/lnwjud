@@ -6,7 +6,7 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "references": [{ "path": "../domain" }],
+  "references": [{ "path": "../domain" }, { "path": "../process" }],
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

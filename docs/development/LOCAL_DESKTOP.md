@@ -1,6 +1,6 @@
 # Local desktop workflow
 
-lnwjud is a Windows-first local development gateway. It exposes an explicitly authorized workspace to an MCP client for bounded file, search, Git, project-process, and optional local Codex operations.
+lnwjud is a Windows-first local development gateway. It exposes an explicitly authorized workspace to an MCP client for bounded file, search, Git, project-process, optional local Codex operations, and local desktop capabilities.
 
 ## Quick start
 
@@ -20,7 +20,7 @@ In the dashboard:
 3. Select `Start Connection`, then copy the `http://127.0.0.1:<port>/mcp` endpoint into the local MCP client.
 4. Pass the workspace ID explicitly to MCP tools. Select `Stop Connection` when finished.
 
-The MCP server is loopback-only and uses the same application services as the desktop UI. Renderer code has no direct filesystem or process access; Electron keeps `sandbox`, `contextIsolation`, and `webSecurity` enabled. Codex discovery checks only the executable, `--version`, and `--help`; it does not inspect credentials. Codex is optional and reports a degraded/unavailable state when absent.
+The MCP server is loopback-only and uses the same application services as the desktop UI. The local capability extension adds shell, managed-browser CDP, Windows UI Automation, input events, screen capture, native window management, and health diagnostics for the current Windows session. Renderer code has no direct filesystem or process access; Electron keeps `sandbox`, `contextIsolation`, and `webSecurity` enabled. Codex discovery checks only the executable, `--version`, and `--help`; it does not inspect credentials. Codex and host tools are optional and report a degraded/unavailable state when absent.
 
 ## Verification
 
