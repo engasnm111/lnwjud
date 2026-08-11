@@ -2,6 +2,7 @@ import { appError } from '@lnwjud/domain';
 import { sanitizeException, type DiagnosticLogger, type FileActor } from '@lnwjud/application';
 import { mapError, mapResult, type McpToolResponse } from './result-mapper.js';
 import { codexTools } from './tools/codex-tools.js';
+import { capabilityTools } from './tools/capability-tools.js';
 import { fileTools } from './tools/file-tools.js';
 import { gitTools } from './tools/git-tools.js';
 import { processTools } from './tools/process-tools.js';
@@ -32,6 +33,7 @@ export class ToolRegistry {
       ...files.slice(2),
       ...processTools(context),
       ...codexTools(context),
+      ...capabilityTools(context),
     ];
   }
 

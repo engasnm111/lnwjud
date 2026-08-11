@@ -15,7 +15,21 @@ describe('MCP tool registry', () => {
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build', 'codex_status', 'codex_run',
       'codex_task_status', 'codex_task_logs', 'codex_stop',
+      'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health',
     ]);
+  });
+
+  it('exposes the Khai-Hub-compatible local capability contract', () => {
+    const registry = new ToolRegistry({}, actor);
+    const byName = new Map(registry.list().map((tool) => [tool.name, tool]));
+
+    expect(byName.get('shell')?.parse({ operation: 'run', executable: 'node', arguments: [] })).toMatchObject({ ok: true });
+    expect(byName.get('dom_cdp')?.parse({ action: 'query', parameters: { selector: '#app' } })).toMatchObject({ ok: true });
+    expect(byName.get('accessibility')?.parse({})).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    expect(byName.get('input_event')?.parse({ operation: 'click', parameters: { x: 1, y: 2 } })).toMatchObject({ ok: true });
+    expect(byName.get('vision')?.parse({ action: 'capture_display' })).toMatchObject({ ok: true });
+    expect(byName.get('window')?.parse({ operation: 'list' })).toMatchObject({ ok: true });
+    expect(byName.get('health')?.parse({ operation: 'check_all' })).toMatchObject({ ok: true });
   });
 
   it('rejects invalid workspace IDs, line ranges, oversized results, and process log queries at the schema boundary', async () => {

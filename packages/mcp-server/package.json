@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@lnwjud/application": "workspace:*",
+    "@lnwjud/capabilities": "workspace:*",
     "@lnwjud/domain": "workspace:*",
     "@modelcontextprotocol/server": "2.0.0",
     "zod": "4.2.0"
@@ -22,7 +23,7 @@
     "@modelcontextprotocol/client": "2.0.0"
   },
   "scripts": {
-    "test": "corepack pnpm@10.15.0 --filter @lnwjud/domain build && corepack pnpm@10.15.0 build && vitest run",
+    "test": "corepack pnpm@10.15.0 --filter @lnwjud/domain build && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && corepack pnpm@10.15.0 build && vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc --outDir dist"
   }

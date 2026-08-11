@@ -4,6 +4,7 @@
     { "path": "./apps/cli" },
     { "path": "./apps/desktop" },
     { "path": "./packages/domain" },
+    { "path": "./packages/capabilities" },
     { "path": "./packages/shared" },
     { "path": "./packages/workspace" },
     { "path": "./packages/permissions" },

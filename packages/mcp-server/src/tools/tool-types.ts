@@ -1,4 +1,5 @@
 import { err, ok, type Result } from '@lnwjud/domain';
+import type { CapabilityService } from '@lnwjud/capabilities';
 import type {
   ApplyPatchRequest,
   CodexService,
@@ -26,6 +27,7 @@ export interface ProjectSnapshotPort {
 }
 
 export interface McpApplicationServices {
+  readonly capabilities?: CapabilityService;
   readonly workspaceInfo?: WorkspaceInfoPort;
   readonly workspaceQuery?: Pick<WorkspaceQueryService, 'tree'>;
   readonly projectSnapshot?: ProjectSnapshotPort;

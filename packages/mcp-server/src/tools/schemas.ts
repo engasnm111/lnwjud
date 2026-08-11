@@ -33,3 +33,89 @@ export const codexStatusSchema = z.object({}).strict();
 export const codexRunSchema = z.object({ workspaceId: workspaceIdSchema, instruction: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_INSTRUCTION_BYTES, 'Instruction is too large') }).strict();
 export const codexTaskHandleSchema = z.object({ workspaceId: workspaceIdSchema, codexTaskId: z.string().trim().min(1).max(128) }).strict();
 export const codexTaskLogsSchema = codexTaskHandleSchema.extend({ tailLines: z.number().int().min(1).max(10_000).optional(), sinceSequence: z.number().int().min(0).optional() }).strict();
+
+const capabilityMetadataSchema = z.record(z.string(), z.unknown());
+const capabilityParametersSchema = z.record(z.string(), z.unknown());
+const capabilityApprovalSchema = z.enum(['use_policy', 'always_ask', 'skip']).default('use_policy');
+const capabilityRequestSchema = {
+  request_id: z.string().trim().min(1).max(128).optional(),
+  metadata: capabilityMetadataSchema.optional(),
+  dry_run: z.boolean().default(false),
+};
+
+export const shellCapabilitySchema = z.object({
+  operation: z.enum(['run', 'status', 'wait', 'logs', 'result', 'cancel', 'resume', 'approve', 'deny']).default('run'),
+  executable: z.string().trim().min(1).max(1024).optional(),
+  arguments: z.array(z.string().max(32_768)).max(128).optional(),
+  privilege: z.enum(['user', 'admin']).default('user'),
+  cwd: pathSchema.optional(),
+  execution: z.enum(['foreground', 'background', 'auto']).default('auto'),
+  task_id: z.string().trim().min(1).max(128).optional(),
+  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  max_output_bytes: z.number().int().min(1).max(8 * 1024 * 1024).optional(),
+  tail_lines: z.number().int().min(0).max(10_000).optional(),
+  include_stdout: z.boolean().default(true),
+  include_stderr: z.boolean().default(true),
+  approval: capabilityApprovalSchema,
+  ...capabilityRequestSchema,
+}).strict();
+
+const domStepSchema = z.object({
+  action: z.string().trim().min(1).max(128),
+  parameters: capabilityParametersSchema.optional(),
+}).strict();
+
+export const domCdpCapabilitySchema = z.object({
+  action: z.enum(['launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot']).optional(),
+  parameters: capabilityParametersSchema.optional(),
+  steps: z.array(domStepSchema).min(1).max(100).optional(),
+  tab_id: z.string().trim().min(1).max(256).optional(),
+  display_id: z.string().trim().min(1).max(128).optional(),
+  timeout_seconds: z.number().min(0.1).max(300).optional(),
+  approval: capabilityApprovalSchema,
+  ...capabilityRequestSchema,
+}).strict();
+
+export const accessibilityCapabilitySchema = z.object({
+  action: z.enum(['status', 'launch_app', 'activate_app', 'list_windows', 'observe', 'observe_summary', 'observe_changes', 'inspect_elements', 'find_element', 'click', 'focus', 'read_value', 'set_value', 'select_item', 'menu_select', 'close_window', 'minimize_window', 'maximize_window', 'restore_window', 'set_window_frame']),
+  parameters: capabilityParametersSchema.optional(),
+  display_id: z.string().trim().min(1).max(128).optional(),
+  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  approval: capabilityApprovalSchema,
+  ...capabilityRequestSchema,
+}).strict();
+
+export const inputEventCapabilitySchema = z.object({
+  operation: z.enum(['type_text', 'paste_text', 'press_key', 'hotkey', 'key_down', 'key_up', 'mouse_move', 'click', 'double_click', 'right_click', 'drag', 'scroll', 'button_down', 'button_up', 'release_all', 'sequence']),
+  parameters: capabilityParametersSchema.optional(),
+  display_id: z.string().trim().min(1).max(128).optional(),
+  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  approval: capabilityApprovalSchema,
+  ...capabilityRequestSchema,
+}).strict();
+
+export const visionCapabilitySchema = z.object({
+  action: z.enum(['capture_display', 'capture_region', 'capture_window', 'ocr']),
+  region: capabilityParametersSchema.optional(),
+  app: capabilityParametersSchema.optional(),
+  window_index: z.number().int().min(0).optional(),
+  text: z.string().max(32_768).optional(),
+  exact: z.boolean().default(false),
+  min_confidence: z.number().min(0).max(1).optional(),
+  display_id: z.string().trim().min(1).max(128).optional(),
+  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const windowCapabilitySchema = z.object({
+  operation: z.enum(['list', 'get_active', 'get_bounds', 'get_display', 'activate', 'close', 'minimize', 'maximize', 'restore', 'move', 'resize']),
+  parameters: capabilityParametersSchema.optional(),
+  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const healthCapabilitySchema = z.object({
+  operation: z.enum(['check_all', 'check_tool']).default('check_all'),
+  tool: z.enum(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health']).optional(),
+  request_id: z.string().trim().min(1).max(128).optional(),
+}).strict();
