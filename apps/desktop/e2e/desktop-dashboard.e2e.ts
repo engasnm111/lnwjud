@@ -34,6 +34,9 @@ test('dashboard supports workspace, permissions, fixture process, and doctor jou
     if (page === undefined) throw new Error('Electron did not create a renderer page');
 
     await expect(page.getByRole('heading', { name: 'Gateway dashboard' })).toBeVisible();
+    await page.getByLabel('Workspace root').fill(path.join(fixtureRoot, 'missing-workspace'));
+    await page.getByRole('button', { name: 'Add workspace' }).click();
+    await expect(page.getByRole('alert')).toHaveText('Workspace could not be added');
     await page.getByLabel('Workspace root').fill(fixtureRoot);
     await page.getByRole('button', { name: 'Add workspace' }).click();
     await expect(page.getByTestId('workspace-real-root')).toHaveText(fixtureRoot);

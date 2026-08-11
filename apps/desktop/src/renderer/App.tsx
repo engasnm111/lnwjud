@@ -18,6 +18,7 @@ export function App(): ReactElement {
   const [processes, setProcesses] = useState<readonly ProcessSummary[]>([]);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mcpBusy, setMcpBusy] = useState(false);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -50,29 +51,49 @@ export function App(): ReactElement {
   }, [refresh, refreshProcesses]);
 
   async function addWorkspace(rootPath: string): Promise<void> {
-    await window.lnwjud.addWorkspace({ rootPath });
-    await refresh();
+    try {
+      await window.lnwjud.addWorkspace({ rootPath });
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Workspace could not be added'));
+    }
   }
 
   async function setPermissionProfile(profile: PermissionProfileName): Promise<void> {
-    await window.lnwjud.setPermissionProfile({ profile });
-    await refresh();
+    try {
+      await window.lnwjud.setPermissionProfile({ profile });
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Permission profile could not be changed'));
+    }
   }
 
   async function startFixtureProcess(): Promise<void> {
     const workspaceId = dashboard?.selectedWorkspace?.id;
     if (workspaceId === undefined) return;
-    await window.lnwjud.startProcess({ workspaceId, mode: 'fixture' });
-    await refreshProcesses();
+    try {
+      await window.lnwjud.startProcess({ workspaceId, mode: 'fixture' });
+      await refreshProcesses();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Process could not be started'));
+    }
   }
 
   async function stopProcess(processId: string): Promise<void> {
-    await window.lnwjud.stopProcess({ processId });
-    await refreshProcesses();
+    try {
+      await window.lnwjud.stopProcess({ processId });
+      await refreshProcesses();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Process could not be stopped'));
+    }
   }
 
   async function runDoctor(): Promise<void> {
-    setDoctor(await window.lnwjud.runDoctor());
+    try {
+      setDoctor(await window.lnwjud.runDoctor());
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Doctor could not run'));
+    }
   }
 
   async function startMcp(): Promise<void> {
@@ -81,20 +102,26 @@ export function App(): ReactElement {
       setError('Select a workspace before starting MCP');
       return;
     }
+    setMcpBusy(true);
     try {
       await window.lnwjud.startMcp({ workspaceId });
       await refresh();
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : 'MCP connection could not be started');
+      setError(errorMessage(cause, 'MCP connection could not be started'));
+    } finally {
+      setMcpBusy(false);
     }
   }
 
   async function stopMcp(): Promise<void> {
+    setMcpBusy(true);
     try {
       await window.lnwjud.stopMcp();
       await refresh();
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : 'MCP connection could not be stopped');
+      setError(errorMessage(cause, 'MCP connection could not be stopped'));
+    } finally {
+      setMcpBusy(false);
     }
   }
 
@@ -125,10 +152,16 @@ export function App(): ReactElement {
           onStopProcess={stopProcess}
           onStartMcp={startMcp}
           onStopMcp={stopMcp}
+          mcpBusy={mcpBusy}
         />
       ) : null}
       {screen === 'doctor' ? <DoctorPanel report={doctor} onRunDoctor={runDoctor} /> : null}
       {screen === 'dashboard' && dashboard === null && error === null ? <p>Loading dashboard…</p> : null}
     </main>
   );
+}
+
+function errorMessage(cause: unknown, fallback: string): string {
+  if (!(cause instanceof Error) || cause.message.trim().length === 0 || cause.message.startsWith('Error invoking remote method')) return fallback;
+  return cause.message;
 }

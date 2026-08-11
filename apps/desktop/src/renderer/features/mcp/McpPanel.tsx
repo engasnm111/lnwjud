@@ -6,9 +6,10 @@ interface McpPanelProps {
   readonly selectedWorkspace: WorkspaceSummary | null;
   readonly onStart: () => Promise<void>;
   readonly onStop: () => Promise<void>;
+  readonly busy: boolean;
 }
 
-export function McpPanel({ status, selectedWorkspace, onStart, onStop }: McpPanelProps): ReactElement {
+export function McpPanel({ status, selectedWorkspace, onStart, onStop, busy }: McpPanelProps): ReactElement {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,12 +40,12 @@ export function McpPanel({ status, selectedWorkspace, onStart, onStop }: McpPane
         <div className="mcp-actions">
           <button
             type="button"
-            disabled={status.running || selectedWorkspace === null}
+            disabled={busy || status.running || selectedWorkspace === null}
             onClick={() => { void onStart(); }}
           >
             Start Connection
           </button>
-          <button type="button" disabled={!status.running} onClick={() => { void onStop(); }}>
+          <button type="button" disabled={busy || !status.running} onClick={() => { void onStop(); }}>
             Stop Connection
           </button>
         </div>

@@ -16,6 +16,7 @@ interface DashboardPageProps {
   readonly onStopProcess: (processId: string) => Promise<void>;
   readonly onStartMcp: () => Promise<void>;
   readonly onStopMcp: () => Promise<void>;
+  readonly mcpBusy: boolean;
 }
 
 export function DashboardPage(props: DashboardPageProps): ReactElement {
@@ -39,6 +40,7 @@ export function DashboardPage(props: DashboardPageProps): ReactElement {
         selectedWorkspace={dashboard.selectedWorkspace}
         onStart={props.onStartMcp}
         onStop={props.onStopMcp}
+        busy={props.mcpBusy}
       />
       <section className="card-grid" aria-label="Gateway status">
         <article className="card">
