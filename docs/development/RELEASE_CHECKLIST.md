@@ -35,7 +35,7 @@ If Electron cannot start a BrowserWindow because the test host's Chromium GPU pr
 - `corepack pnpm@10.15.0 test`: exit `0`.
 - `corepack pnpm@10.15.0 test:integration`: exit `0`.
 - `corepack pnpm@10.15.0 --filter @lnwjud/desktop test:e2e`: exit `0`; 3/3 tests passed, including the real local MCP client workflow and Electron security checks.
-- Packaged workflow: `LNWJUD_PACKAGED_EXECUTABLE=apps/desktop/dist/installers/win-unpacked/lnwjud.exe corepack pnpm@10.15.0 exec playwright test --config playwright.config.ts e2e/desktop-mcp-client.e2e.ts`: exit `0`; packaged app launched, created isolated SQLite user data, served MCP, completed the client workflow, and stopped cleanly.
+- Packaged workflow from `apps\desktop`: set `$env:LNWJUD_PACKAGED_EXECUTABLE = (Resolve-Path '.\dist\installers\win-unpacked\lnwjud.exe').Path`, then run `corepack pnpm@10.15.0 exec playwright test --config playwright.config.ts e2e/desktop-mcp-client.e2e.ts`: exit `0`; packaged app launched, created isolated SQLite user data, served MCP, completed the client workflow, and stopped cleanly.
 - `corepack pnpm@10.15.0 build`: exit `0`.
 - `corepack pnpm@10.15.0 test:packaging`: exit `0`.
 - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1`: exit `0`; the pinned install, all automated release checks, packaging, and `git diff --check` passed.
