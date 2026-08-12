@@ -1,0 +1,11 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# เข้าถึงไฟล์นอก workspace ได้หมด + รันคำสั่งทั้งเครื่องแบบไร้ขอบเขต
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+
+[windows]
+# ยกระดับ Administrator อัตโนมัติ
+sandbox = "elevated"
+# แสดงวินโดว์ของคำสั่งให้เห็น (ไม่ใช้ private desktop)
+sandbox_private_desktop = false
