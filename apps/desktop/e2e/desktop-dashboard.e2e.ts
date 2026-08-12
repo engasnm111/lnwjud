@@ -9,13 +9,18 @@ import { chromium, expect, test } from '@playwright/test';
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
 const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('dashboard supports workspace, permissions, fixture process, and doctor journey', async () => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-'));
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-data-'));
   await writeFile(path.join(fixtureRoot, '.env'), 'SECRET_NOT_FOR_UI=do-not-display\n', 'utf8');
   const devToolsPort = await findEphemeralPort();
-  const electronProcess = spawn(electronExecutable, [`--remote-debugging-port=${devToolsPort}`, mainEntry], {
+  const launchExecutable = packagedExecutable ?? electronExecutable;
+  const launchArguments = packagedExecutable === undefined
+    ? [`--remote-debugging-port=${devToolsPort}`, mainEntry]
+    : [`--remote-debugging-port=${devToolsPort}`];
+  const electronProcess = spawn(launchExecutable, launchArguments, {
     cwd: desktopRoot,
     shell: false,
     windowsHide: true,
@@ -34,6 +39,11 @@ test('dashboard supports workspace, permissions, fixture process, and doctor jou
     if (page === undefined) throw new Error('Electron did not create a renderer page');
 
     await expect(page.getByRole('heading', { name: 'Gateway dashboard' })).toBeVisible();
+    if (process.platform === 'win32') {
+      await expect(page.getByText('AVAILABLE', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Launch managed Chrome' }).click();
+      await expect(page.getByText('7/7 ready')).toBeVisible();
+    }
     await page.getByLabel('Workspace root').fill(path.join(fixtureRoot, 'missing-workspace'));
     await page.getByRole('button', { name: 'Add workspace' }).click();
     await expect(page.getByRole('alert')).toHaveText('Workspace could not be added');

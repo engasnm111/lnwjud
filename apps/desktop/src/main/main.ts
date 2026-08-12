@@ -5,6 +5,7 @@ import {
   type DashboardSnapshot,
   type DoctorReport,
   type IpcResponseMap,
+  type ManagedBrowserStatus,
   type McpConnectionStatus,
   type ProcessSummary,
   type PermissionProfileName,
@@ -27,6 +28,7 @@ export interface DesktopIpcServices {
   stopProcess(request: StopProcessRequest): Promise<{ readonly stopped: boolean }>;
   startMcp(request: StartMcpRequest): Promise<McpConnectionStatus>;
   stopMcp(): Promise<McpConnectionStatus>;
+  launchManagedBrowser(): Promise<ManagedBrowserStatus>;
   runDoctor(): Promise<DoctorReport>;
 }
 
@@ -56,6 +58,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   stopProcess: async (): Promise<{ readonly stopped: boolean }> => ({ stopped: false }),
   startMcp: async (): Promise<McpConnectionStatus> => ({ running: false, url: null, workspaceId: null }),
   stopMcp: async (): Promise<McpConnectionStatus> => ({ running: false, url: null, workspaceId: null }),
+  launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => ({ ready: false, port: 9222, launched: false }),
   runDoctor: async (): Promise<DoctorReport> => ({
     checks: [{ id: 'desktop', required: true, status: 'fail', message: 'Desktop services are not configured' }],
     exitCode: 1,
@@ -112,6 +115,11 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.stopMcp();
+  });
+  ipcMain.handle(ipcChannels.launchManagedBrowser, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return services.launchManagedBrowser();
   });
   ipcMain.handle(ipcChannels.runDoctor, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());

@@ -43,8 +43,10 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .capability-row strong { display: block; margin-bottom: 4px; color: #dce8fb; font-family: Consolas, monospace; font-size: 13px; }
 .capability-row p { margin: 0 0 3px; color: #aabbd5; font-size: 12px; }
 .capability-row small { color: #7f91ae; font-size: 11px; }
-.capability-ready, .capability-unavailable { flex: 0 0 auto; font-size: 10px; letter-spacing: .08em; }
+.capability-row button { margin-top: 9px; padding: 6px 9px; font-size: 11px; }
+.capability-ready, .capability-available, .capability-unavailable { flex: 0 0 auto; font-size: 10px; letter-spacing: .08em; }
 .capability-ready { color: #93d9ba; }
+.capability-available { color: #8ec7f2; }
 .capability-unavailable { color: #d9b66e; }
 .card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .card-grid .card { margin-bottom: 0; min-height: 128px; }

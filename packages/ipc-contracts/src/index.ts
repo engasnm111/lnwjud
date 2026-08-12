@@ -8,6 +8,7 @@ export const ipcChannels = {
   stopProcess: 'lnwjud:stop-process',
   startMcp: 'lnwjud:start-mcp',
   stopMcp: 'lnwjud:stop-mcp',
+  launchManagedBrowser: 'lnwjud:launch-managed-browser',
   runDoctor: 'lnwjud:run-doctor',
 } as const;
 
@@ -113,6 +114,12 @@ export interface McpConnectionStatus {
   readonly workspaceId: string | null;
 }
 
+export interface ManagedBrowserStatus {
+  readonly ready: boolean;
+  readonly port: number;
+  readonly launched: boolean;
+}
+
 export interface IpcRequestMap {
   readonly [ipcChannels.listWorkspaces]: undefined;
   readonly [ipcChannels.addWorkspace]: AddWorkspaceRequest;
@@ -123,6 +130,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.stopProcess]: StopProcessRequest;
   readonly [ipcChannels.startMcp]: StartMcpRequest;
   readonly [ipcChannels.stopMcp]: undefined;
+  readonly [ipcChannels.launchManagedBrowser]: undefined;
   readonly [ipcChannels.runDoctor]: undefined;
 }
 
@@ -136,6 +144,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.stopProcess]: { readonly stopped: boolean };
   readonly [ipcChannels.startMcp]: McpConnectionStatus;
   readonly [ipcChannels.stopMcp]: McpConnectionStatus;
+  readonly [ipcChannels.launchManagedBrowser]: ManagedBrowserStatus;
   readonly [ipcChannels.runDoctor]: DoctorReport;
 }
 
@@ -149,5 +158,6 @@ export interface LnwjudApi {
   stopProcess(request: StopProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.stopProcess]>;
   startMcp(request: StartMcpRequest): Promise<IpcResponseMap[typeof ipcChannels.startMcp]>;
   stopMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopMcp]>;
+  launchManagedBrowser(): Promise<IpcResponseMap[typeof ipcChannels.launchManagedBrowser]>;
   runDoctor(): Promise<IpcResponseMap[typeof ipcChannels.runDoctor]>;
 }

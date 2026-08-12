@@ -17,6 +17,8 @@ interface DashboardPageProps {
   readonly onStopProcess: (processId: string) => Promise<void>;
   readonly onStartMcp: () => Promise<void>;
   readonly onStopMcp: () => Promise<void>;
+  readonly onLaunchManagedBrowser: () => Promise<void>;
+  readonly browserBusy: boolean;
   readonly mcpBusy: boolean;
 }
 
@@ -43,7 +45,11 @@ export function DashboardPage(props: DashboardPageProps): ReactElement {
         onStop={props.onStopMcp}
         busy={props.mcpBusy}
       />
-      <CapabilityPanel capabilities={dashboard.capabilities} />
+      <CapabilityPanel
+        capabilities={dashboard.capabilities}
+        onLaunchManagedBrowser={props.onLaunchManagedBrowser}
+        browserBusy={props.browserBusy}
+      />
       <section className="card-grid" aria-label="Gateway status">
         <article className="card">
           <p className="card-label">Git</p>

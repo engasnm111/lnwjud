@@ -17,8 +17,9 @@ In the dashboard:
 
 1. Add a workspace directory and note its displayed workspace ID.
 2. Select `Balanced` when the MCP client needs write or execute operations; `Safe` prompts for those operations.
-3. Select `Start Connection`, then copy the `http://127.0.0.1:<port>/mcp` endpoint into the local MCP client.
-4. Pass the workspace ID explicitly to MCP tools. Select `Stop Connection` when finished.
+3. If `dom_cdp` shows `AVAILABLE`, select `Launch managed Chrome` to start the dedicated local browser session; it should change to `READY`.
+4. Select `Start Connection`, then copy the `http://127.0.0.1:<port>/mcp` endpoint into the local MCP client.
+5. Pass the workspace ID explicitly to MCP tools. Select `Stop Connection` when finished.
 
 The MCP server is loopback-only and uses the same application services as the desktop UI. The local capability extension adds shell, managed-browser CDP, Windows UI Automation, input events, screen capture, native window management, and health diagnostics for the current Windows session. Renderer code has no direct filesystem or process access; Electron keeps `sandbox`, `contextIsolation`, and `webSecurity` enabled. Codex discovery checks only the executable, `--version`, and `--help`; it does not inspect credentials. Codex and host tools are optional and report a degraded/unavailable state when absent.
 

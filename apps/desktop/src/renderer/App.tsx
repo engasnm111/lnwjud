@@ -19,6 +19,7 @@ export function App(): ReactElement {
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
+  const [browserBusy, setBrowserBusy] = useState(false);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -125,6 +126,18 @@ export function App(): ReactElement {
     }
   }
 
+  async function launchManagedBrowser(): Promise<void> {
+    setBrowserBusy(true);
+    try {
+      await window.lnwjud.launchManagedBrowser();
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Managed Chrome could not be started'));
+    } finally {
+      setBrowserBusy(false);
+    }
+  }
+
   const selectedProcess = processes[processes.length - 1] ?? null;
 
   return (
@@ -152,6 +165,8 @@ export function App(): ReactElement {
           onStopProcess={stopProcess}
           onStartMcp={startMcp}
           onStopMcp={stopMcp}
+          onLaunchManagedBrowser={launchManagedBrowser}
+          browserBusy={browserBusy}
           mcpBusy={mcpBusy}
         />
       ) : null}

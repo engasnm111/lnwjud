@@ -30,6 +30,7 @@ import {
   type AuditEventSummary,
   type DashboardSnapshot,
   type DoctorReport,
+  type ManagedBrowserStatus,
   type McpConnectionStatus,
   type PermissionProfileName as IpcPermissionProfileName,
   type ProcessSummary,
@@ -178,6 +179,10 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
     },
     startMcp: async (request: StartMcpRequest): Promise<McpConnectionStatus> => mcpLifecycle.start(request.workspaceId),
     stopMcp: (): Promise<McpConnectionStatus> => mcpLifecycle.stop(),
+    launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => {
+      const result = await capabilityRuntime.service.execute('dom_cdp', { action: 'launch' });
+      return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
+    },
     runDoctor: (): Promise<DoctorReport> => doctorService.run(),
   };
 
@@ -279,6 +284,14 @@ function unwrap<T>(result: Result<T>, fallback: string): T {
   throw new Error(result.error.message || fallback);
 }
 
+function toManagedBrowserStatus(value: unknown): ManagedBrowserStatus {
+  if (!isRecord(value) || typeof value.ready !== 'boolean' || typeof value.port !== 'number' || !Number.isInteger(value.port)
+    || typeof value.launched !== 'boolean') {
+    throw new Error('Managed Chrome returned an invalid status');
+  }
+  return { ready: value.ready, port: value.port, launched: value.launched };
+}
+
 async function checkExecutable(resolver: PathExecutableResolver, executable: string): Promise<{ readonly status: 'pass' | 'warn'; readonly message: string }> {
   const result = await resolver.resolve(executable);
   return result.ok ? { status: 'pass', message: `${executable} is available` } : { status: 'warn', message: `${executable} is not available` };
@@ -313,4 +326,8 @@ function redactDisplayText(value: string): string {
   return value
     .replace(/(\bauthorization\s*:\s*bearer\s+)[^\s]+/gi, '$1[redacted]')
     .replace(/\b(token|secret|password|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s]+/gi, '$1=[redacted]');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

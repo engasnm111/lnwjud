@@ -6,6 +6,7 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type LnwjudApi,
+  type ManagedBrowserStatus,
   type McpConnectionStatus,
   type PermissionProfileName,
   type ProcessSummary,
@@ -120,6 +121,14 @@ function mcpStatus(value: unknown): McpConnectionStatus {
   return { running: booleanField(value, 'running'), url, workspaceId };
 }
 
+function managedBrowserStatus(value: unknown): ManagedBrowserStatus {
+  if (!isRecord(value) || typeof value.ready !== 'boolean' || typeof value.port !== 'number'
+    || !Number.isInteger(value.port) || typeof value.launched !== 'boolean') {
+    throw new Error('Invalid IPC response');
+  }
+  return { ready: value.ready, port: value.port, launched: value.launched };
+}
+
 function auditEventSummaries(value: unknown): DashboardSnapshot['recentAuditEvents'] {
   if (!Array.isArray(value)) throw new Error('Invalid IPC response');
   return value.map((entry) => {
@@ -222,6 +231,10 @@ function stopMcp(): Promise<McpConnectionStatus> {
   return invoke(ipcChannels.stopMcp).then(mcpStatus);
 }
 
+function launchManagedBrowser(): Promise<ManagedBrowserStatus> {
+  return invoke(ipcChannels.launchManagedBrowser).then(managedBrowserStatus);
+}
+
 const api: LnwjudApi = {
   listWorkspaces: () => invoke(ipcChannels.listWorkspaces).then(workspaceList),
   addWorkspace,
@@ -232,6 +245,7 @@ const api: LnwjudApi = {
   stopProcess,
   startMcp,
   stopMcp,
+  launchManagedBrowser,
   runDoctor: () => invoke(ipcChannels.runDoctor).then(doctorReport),
 };
 
