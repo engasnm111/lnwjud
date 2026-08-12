@@ -4,14 +4,10 @@
     "composite": true,
     "declaration": true,
     "rootDir": "src",
-    "outDir": "dist",
-    "types": ["node"]
+    "outDir": "dist"
   },
   "references": [
-    { "path": "../application" },
-    { "path": "../capabilities" },
-    { "path": "../domain" },
-    { "path": "../extensions" }
+    { "path": "../domain" }
   ],
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]

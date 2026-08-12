@@ -25,7 +25,14 @@ export const gitLogSchema = z.object({ workspaceId: workspaceIdSchema, maxCommit
 export const writeFileSchema = z.object({ workspaceId: workspaceIdSchema, path: pathSchema, content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'File is too large') }).strict();
 export const applyPatchSchema = z.object({ workspaceId: workspaceIdSchema, files: z.array(z.object({ path: pathSchema, content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'File is too large') }).strict()).min(1).max(20) }).strict();
 export const moveFileSchema = z.object({ workspaceId: workspaceIdSchema, sourcePath: pathSchema, destinationPath: pathSchema }).strict();
-export const deleteFileSchema = z.object({ workspaceId: workspaceIdSchema, path: pathSchema }).strict();
+export const deleteFileSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  path: pathSchema,
+  /** Must be true after the human confirms deletion in chat. Silent deletes are blocked. */
+  userConfirmed: z.boolean().optional(),
+}).strict();
+
+export const workspaceListSchema = z.object({}).strict();
 export const processStartSchema = z.object({ workspaceId: workspaceIdSchema, executable: z.string().trim().min(1).max(1024), args: z.array(z.string().max(32_768)).max(128), cwd: pathSchema.optional(), timeoutMs: z.number().int().min(1).max(30 * 60 * 1000).optional() }).strict();
 export const processHandleSchema = z.object({ workspaceId: workspaceIdSchema, processId: z.string().trim().min(1).max(128) }).strict();
 export const processLogsSchema = processHandleSchema.extend({ tailLines: z.number().int().min(1).max(10_000).optional(), sinceSequence: z.number().int().min(0).optional() }).strict();
@@ -118,4 +125,26 @@ export const healthCapabilitySchema = z.object({
   operation: z.enum(['check_all', 'check_tool']).default('check_all'),
   tool: z.enum(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health']).optional(),
   request_id: z.string().trim().min(1).max(128).optional(),
+}).strict();
+
+export const skillsListSchema = z.object({
+  query: z.string().max(1024).optional(),
+  source: z.string().trim().min(1).max(256).optional(),
+}).strict();
+
+export const skillsReadSchema = z.object({
+  skillId: z.string().trim().min(1).max(512),
+  relativePath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
+}).strict();
+
+export const mcpListSchema = z.object({}).strict();
+
+export const mcpDescribeSchema = z.object({
+  server: z.string().trim().min(1).max(256),
+}).strict();
+
+export const mcpCallSchema = z.object({
+  server: z.string().trim().min(1).max(256),
+  tool: z.string().trim().min(1).max(256),
+  arguments: z.record(z.string(), z.unknown()).optional(),
 }).strict();

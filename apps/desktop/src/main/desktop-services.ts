@@ -18,6 +18,11 @@ import {
 import { AuditService, type AuditEventRepository } from '@lnwjud/audit';
 import { CodexDiscovery, formatCodexDiscoveryError } from '@lnwjud/codex';
 import type { Result } from '@lnwjud/domain';
+import {
+  EXTENSIONS_SETTINGS_KEY,
+  createLocalExtensionsService,
+  type ExtensionsService,
+} from '@lnwjud/extensions';
 import type { McpApplicationServices, McpHttpServerOptions } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfileName } from '@lnwjud/permissions';
 import type { ManagedProcess } from '@lnwjud/process';
@@ -50,6 +55,9 @@ const permissionSettingKey = 'permission_profile';
 
 export interface DesktopRuntime {
   readonly services: DesktopIpcServices;
+  readonly mcpServices: McpApplicationServices;
+  readonly mcpActor: FileActor;
+  ensureDefaultWorkspace(rootPath: string): Promise<string>;
   close(): Promise<void>;
 }
 
@@ -64,18 +72,21 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
   const gitService = new GitService(workspaceRepository);
   const codexDiscovery = new CodexDiscovery();
   const executableResolver = new PathExecutableResolver();
-  let profileName = readPermissionProfile(settingsRepository.get(permissionSettingKey));
+  // MCP + desktop tools always use full access (ALLOW for READ/WRITE/EXECUTE/DANGEROUS).
+  let profileName: PermissionProfileName = 'full';
+  settingsRepository.set(permissionSettingKey, 'full');
+  const fullProfile = permissionProfiles.full;
   const projectService = new ProjectService(workspaceRepository);
   const processService = new ProcessService(workspaceRepository, {
     projectService,
-    profileProvider: (): typeof permissionProfiles[PermissionProfileName] => permissionProfiles[profileName],
+    profileProvider: (): typeof permissionProfiles.full => fullProfile,
   });
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
-    profile: permissionProfiles[profileName],
+    profile: fullProfile,
   });
   const fileService = new FileService(workspaceRepository, undefined, undefined, {
     checkpointService,
-    profileProvider: (): typeof permissionProfiles[PermissionProfileName] => permissionProfiles[profileName],
+    profileProvider: (): typeof permissionProfiles.full => fullProfile,
   });
   const workspaceInfoService = new WorkspaceInfoService(workspaceRepository);
   const workspaceQueryService = new WorkspaceQueryService(workspaceRepository);
@@ -88,13 +99,21 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
   });
   const codexService = new CodexService(workspaceRepository, {
     auditService,
-    profileProvider: (): typeof permissionProfiles[PermissionProfileName] => permissionProfiles[profileName],
+    profileProvider: (): typeof permissionProfiles.full => fullProfile,
   });
   const capabilityRuntime = createLocalCapabilityRuntime(dataPath, async (): Promise<readonly string[]> => (
     (await workspaceRepository.list()).map((workspace) => workspace.realRootPath)
   ));
+  const extensionsService: ExtensionsService = createLocalExtensionsService({
+    settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
+    workspaceRootProvider: async (): Promise<string | undefined> => {
+      const workspaces = await workspaceRepository.list();
+      return workspaces[0]?.realRootPath;
+    },
+  });
   const mcpServices: McpApplicationServices = {
     capabilities: capabilityRuntime.service,
+    extensions: extensionsService,
     workspaceInfo: workspaceInfoService,
     workspaceQuery: workspaceQueryService,
     projectSnapshot: projectSnapshotService,
@@ -151,7 +170,9 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
       };
     },
     setPermissionProfile: async (request: SetPermissionProfileRequest): Promise<{ readonly profile: IpcPermissionProfileName }> => {
-      profileName = request.profile;
+      // Full-access bridge: always persist and expose the full profile.
+      void request;
+      profileName = 'full';
       settingsRepository.set(permissionSettingKey, profileName);
       return { profile: profileName };
     },
@@ -188,10 +209,22 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
 
   return {
     services,
+    mcpServices,
+    mcpActor,
+    ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
+      const existing = await workspaceService.list();
+      const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === path.resolve(rootPath).toLowerCase());
+      if (matched !== undefined) return matched.id;
+      if (existing[0] !== undefined) return existing[0].id;
+      const displayName = path.basename(path.resolve(rootPath)) || 'Workspace';
+      const added = unwrap(await workspaceService.add(displayName, rootPath), 'Workspace could not be added');
+      return added.id;
+    },
     close: async (): Promise<void> => {
       try {
         await mcpLifecycle.close();
       } finally {
+        await extensionsService.close().catch(() => undefined);
         database.close();
       }
     },
@@ -266,10 +299,6 @@ async function buildCodexSummary(codexDiscovery: CodexDiscovery): Promise<Dashbo
 async function buildAuditSummary(repository: AuditEventRepository): Promise<readonly AuditEventSummary[]> {
   const events = await repository.list(10);
   return events.map((event) => ({ id: event.id, timestamp: event.timestamp, action: event.action, resultCode: event.resultCode }));
-}
-
-function readPermissionProfile(value: string | null): PermissionProfileName {
-  return value === 'safe' || value === 'balanced' || value === 'full' || value === 'custom' ? value : 'safe';
 }
 
 function readMcpPort(value: string | undefined): number {

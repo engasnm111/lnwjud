@@ -72,6 +72,8 @@ export interface MoveFileRequest {
 
 export interface DeleteFileRequest {
   readonly path: string;
+  /** After the human confirms in chat, callers must set this true. */
+  readonly userConfirmed?: boolean;
 }
 
 export class FileService {
@@ -225,6 +227,12 @@ export class FileService {
   public async deleteFile(actor: FileActor, workspaceId: string, request: DeleteFileRequest): Promise<Result<void>> {
     void actor;
     if (typeof request?.path !== 'string') return err(appError('INVALID_INPUT', 'Delete request is invalid'));
+    if (request.userConfirmed !== true) {
+      return err(appError(
+        'PERMISSION_REQUIRED',
+        'Deletion requires the user to confirm in chat first, then retry delete_file with userConfirmed: true',
+      ));
+    }
     const workspaceResult = await this.getWorkspace(workspaceId);
     if (!workspaceResult.ok) return workspaceResult;
     const resolved = await this.guard.resolveForRead(workspaceResult.value, request.path);

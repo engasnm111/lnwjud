@@ -33,7 +33,7 @@ describe('MCP localhost HTTP transport', () => {
       const first = await client.listTools();
       const second = await client.listTools();
 
-      expect(first.tools.map((tool) => tool.name)).toHaveLength(35);
+      expect(first.tools.map((tool) => tool.name)).toHaveLength(41);
       expect(second.tools.map((tool) => tool.name)).toEqual(first.tools.map((tool) => tool.name));
     } finally {
       await client.close();
@@ -48,7 +48,7 @@ describe('MCP localhost HTTP transport', () => {
       await client.connect(transport);
       const tools = await client.listTools();
 
-      expect(tools.tools.map((tool) => tool.name)).toHaveLength(35);
+      expect(tools.tools.map((tool) => tool.name)).toHaveLength(41);
     } finally {
       await client.close();
     }

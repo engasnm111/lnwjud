@@ -1,8 +1,20 @@
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
-import { projectSnapshotSchema, workspaceInfoSchema, workspaceTreeSchema } from './schemas.js';
+import { projectSnapshotSchema, workspaceInfoSchema, workspaceListSchema, workspaceTreeSchema } from './schemas.js';
 
 export function workspaceTools(context: McpToolContext): McpToolDefinition[] {
   return [
+    defineTool({
+      name: 'workspace_list',
+      description: 'List all registered workspaces/drive roots available to lnwjud. Call this first to discover workspace IDs.',
+      permission: 'DANGEROUS',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: workspaceListSchema,
+      handler: async () => context.services.workspaceInfo === undefined
+        ? missingService()
+        : context.services.workspaceInfo.list === undefined
+          ? missingService()
+          : context.services.workspaceInfo.list(context.actor),
+    }),
     defineTool({
       name: 'workspace_info',
       description: 'Return the configured workspace summary.',

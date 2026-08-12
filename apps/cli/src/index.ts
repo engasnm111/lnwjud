@@ -4,6 +4,9 @@ import type { DoctorReport } from '@lnwjud/application';
 import type { Workspace } from '@lnwjud/workspace';
 import { formatDoctorReport } from './commands/doctor.js';
 
+export { formatDoctorReport } from './commands/doctor.js';
+export { createStdioMcpRuntime, type StdioMcpRuntime } from './runtime/stdio-mcp-runtime.js';
+
 export type CliCommand =
   | { readonly kind: 'status' }
   | { readonly kind: 'workspace-add'; readonly rootPath: string }

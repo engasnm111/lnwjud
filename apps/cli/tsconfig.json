@@ -9,8 +9,12 @@
   },
   "references": [
     { "path": "../../packages/application" },
+    { "path": "../../packages/audit" },
     { "path": "../../packages/codex" },
     { "path": "../../packages/domain" },
+    { "path": "../../packages/extensions" },
+    { "path": "../../packages/permissions" },
+    { "path": "../../packages/storage" },
     { "path": "../../packages/workspace" },
     { "path": "../../packages/mcp-server" }
   ],

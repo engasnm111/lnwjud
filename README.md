@@ -155,8 +155,10 @@ escapes, and applies the secret policy after resolution.
 | full | allow | allow | allow | allow | Explicitly trusted local automation |
 | custom | configured | configured | configured | configured | Host-defined policy |
 
-Full Access is not an administrator bypass. Path validation, secret-file
-policy, shell-host blocking, process ownership, Windows privilege limits, and
+Desktop MCP and stdio MCP runtimes force the **full** profile so every tool
+(including skills/MCP bridge meta-tools) runs with full access. Full Access is
+still not an administrator bypass: path validation, secret-file policy,
+shell-host blocking, process ownership, Windows privilege limits, and
 destructive Git hard blocks still apply.
 
 ### Optional local capability roots
@@ -165,11 +167,11 @@ The local desktop capability layer can receive additional roots through the
 semicolon-separated environment variable LNWJUD_CAPABILITY_ROOTS:
 
 ```powershell
-$env:LNWJUD_CAPABILITY_ROOTS = 'D:/work;C:/Users/<WindowsUser>/Documents/projects'
+$env:LNWJUD_CAPABILITY_ROOTS = 'E:/work;E:/projects'
 ```
 
-Only configure roots that the user intentionally wants the local capability
-layer to use. Core file tools still require a registered workspace.
+Only configure roots under drive **E:**. Paths on other drives are ignored.
+Core file tools still require a registered workspace.
 
 ### Start the local HTTP connection
 
@@ -194,9 +196,13 @@ Local Codex clients can use stdio directly; they do not need Secure MCP Tunnel.
 Point the entry at the stdio-capable installed executable:
 
 ```powershell
-codex mcp add lnwjud -- "C:/Users/<WindowsUser>/AppData/Local/Programs/lnwjud/lnwjud.exe" --mcp-stdio
+codex mcp add lnwjud -- "$env:LOCALAPPDATA\Programs\lnwjud\lnwjud-mcp-stdio.cmd" --workspace E:\lnwjud
 codex mcp list
 ```
+
+The stdio launcher is the Node-based `lnwjud-mcp-stdio.cmd` shipped next to the
+desktop app (not the GUI `lnwjud.exe`). It exposes the full tool catalog,
+including skills/MCP bridge meta-tools. Requires Node.js 24+.
 
 The same server can be added in ChatGPT desktop or an IDE extension under
 Settings → MCP servers → Add server → STDIO. Restart the host after saving.
@@ -206,11 +212,10 @@ Example user-scoped or trusted project-scoped config.toml:
 
 ```toml
 [mcp_servers.lnwjud]
-command = "C:/Users/<WindowsUser>/AppData/Local/Programs/lnwjud/lnwjud.exe"
-args = ["--mcp-stdio"]
+command = "C:/Users/<WindowsUser>/AppData/Local/Programs/lnwjud/lnwjud-mcp-stdio.cmd"
+args = ["--workspace", "E:/lnwjud"]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
-default_tools_approval_mode = "writes"
 ```
 
 Use prompt approval while testing an unfamiliar workspace. No OpenAI API key
@@ -299,6 +304,8 @@ log:
   level: info
   format: json
 mcp:
+  # tunnel-client defaults to 10m and tears down long ChatGPT sessions if unset
+  connection_max_ttl: 24h
   commands:
     - channel: main
       command: "C:/Users/<WindowsUser>/AppData/Local/Programs/lnwjud/lnwjud.exe --mcp-stdio"
@@ -448,8 +455,8 @@ start a new chat.
 
 ## Complete MCP tool catalog
 
-The current V1 catalog contains 28 workspace/project tools and 7 local desktop
-capability tools.
+The current catalog contains 28 workspace/project tools, 7 local desktop
+capability tools, and 5 skills/MCP bridge meta-tools (40 total).
 
 ### Workspace and project inspection
 
@@ -471,7 +478,9 @@ the workspace tools above:
 | workspace_register | WRITE | parentWorkspaceId, path, optional displayName | Registers an existing project directory below an approved machine root |
 
 The extension still validates the parent ID, canonical path, reparse points,
-and secret policy. It does not turn a path into an unrestricted filesystem
+and secret policy. Machine-root discovery is limited to drive **E:** (`E:\`);
+other fixed drives are not registered and existing non-E machine roots are
+pruned on startup. It does not turn a path into an unrestricted filesystem
 handle. If your build does not advertise these two tools, register the
 workspace from the desktop dashboard and use its workspace ID.
 
@@ -547,6 +556,39 @@ Typical flow: codex_run → poll task status/logs → inspect git_diff → run c
 Use dom_cdp for web pages, accessibility for semantic native controls, and
 input_event only as a low-level fallback. shell remains direct executable
 invocation, not an unrestricted PowerShell or CMD gateway.
+
+### Skills and local MCP bridge
+
+These meta-tools discover local agent skills and other MCP servers on the
+machine (Cursor `mcp.json`, Claude Desktop config, plus lnwjud settings). They
+do not flatten every child tool into the lnwjud catalog. Default mode enables
+all discovered servers except lnwjud itself (recursion guard).
+
+| Tool | Permission | What it does |
+| --- | --- | --- |
+| skills_list | DANGEROUS | Lists discovered skills from Cursor/Claude/Agents/workspace roots |
+| skills_read | DANGEROUS | Reads a skill `SKILL.md` or a relative file inside that skill folder |
+| mcp_list | DANGEROUS | Lists discovered local MCP servers and enabled/connected state |
+| mcp_describe | DANGEROUS | Connects if needed and returns child tool names/schemas |
+| mcp_call | DANGEROUS | Forwards a tool call to a child MCP server |
+
+**Security note:** These tools are available on every transport, including the
+Secure MCP Tunnel. Combined with the forced full permission profile, a remote
+ChatGPT session can invoke local desktop/browser MCP servers if lnwjud and the
+tunnel are running. Disable individual servers through the lnwjud `extensions`
+settings JSON (`disabledServers`) when needed.
+
+Settings key `extensions` (SQLite) example:
+
+```json
+{
+  "mode": "enable_all",
+  "disabledServers": [],
+  "disabledSkillRoots": [],
+  "extraSkillRoots": [],
+  "extraMcpServers": {}
+}
+```
 
 The exact schemas and defaults are maintained in
 [docs/mcp/MCP_TOOL_CATALOG.md](docs/mcp/MCP_TOOL_CATALOG.md) and
@@ -695,6 +737,7 @@ packages/audit/        Sanitized audit events
 packages/storage/      SQLite repositories and migrations
 packages/mcp-server/   MCP registry plus stdio/HTTP transports
 packages/capabilities/ Local shell/browser/UI/vision/window capabilities
+packages/extensions/   Local skills catalog and MCP server bridge
 packages/ipc-contracts/Typed Electron IPC contracts
 docs/                  Architecture, development, MCP, testing, and release docs
 ```

@@ -15,6 +15,7 @@ import {
   type StopProcessRequest,
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
+import { startMcpStdio } from '@lnwjud/mcp-server';
 import { createDesktopRuntime, type DesktopRuntime } from './desktop-services.js';
 import { createMainWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
 
@@ -191,6 +192,60 @@ function createDesktopWindow(): void {
   });
 }
 
+function readArgValue(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function wantsMcpStdio(): boolean {
+  return process.argv.includes('--mcp-stdio');
+}
+
+function redirectConsoleToStderr(): void {
+  const write = (stream: NodeJS.WriteStream, args: unknown[]): void => {
+    stream.write(`${args.map((entry) => typeof entry === 'string' ? entry : JSON.stringify(entry)).join(' ')}\n`);
+  };
+  console.log = (...args: unknown[]): void => write(process.stderr, args);
+  console.info = (...args: unknown[]): void => write(process.stderr, args);
+  console.warn = (...args: unknown[]): void => write(process.stderr, args);
+  console.error = (...args: unknown[]): void => write(process.stderr, args);
+}
+
+function bootstrapMcpStdio(): void {
+  redirectConsoleToStderr();
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-software-rasterizer');
+  const dataPath = configureDataPath();
+  void app.whenReady().then(async () => {
+    const runtime = createDesktopRuntime(dataPath);
+    desktopRuntime = runtime;
+    const workspacePath = readArgValue('--workspace')
+      ?? process.env.LNWJUD_WORKSPACE
+      ?? process.cwd();
+    try {
+      const workspaceId = await runtime.ensureDefaultWorkspace(workspacePath);
+      process.stderr.write(`lnwjud MCP stdio ready workspace=${workspaceId}\n`);
+    } catch (error: unknown) {
+      process.stderr.write(`lnwjud MCP stdio workspace warning: ${error instanceof Error ? error.message : 'unknown'}\n`);
+    }
+    startMcpStdio({
+      services: runtime.mcpServices,
+      actor: runtime.mcpActor,
+      onError: (error): void => {
+        process.stderr.write(`lnwjud MCP stdio error: ${error.message}\n`);
+      },
+    });
+  });
+  app.on('window-all-closed', () => {
+    // Keep the stdio MCP process alive without a BrowserWindow.
+  });
+  app.on('before-quit', () => {
+    void desktopRuntime?.close();
+  });
+}
+
 function bootstrapDesktop(): void {
   const dataPath = configureDataPath();
   void app.whenReady().then(() => {
@@ -234,4 +289,8 @@ function configureDataPath(): string {
   return app.getPath('userData');
 }
 
-bootstrapDesktop();
+if (wantsMcpStdio()) {
+  bootstrapMcpStdio();
+} else {
+  bootstrapDesktop();
+}

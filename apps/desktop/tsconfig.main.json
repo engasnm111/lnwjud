@@ -15,6 +15,7 @@
     { "path": "../../packages/capabilities" },
     { "path": "../../packages/codex" },
     { "path": "../../packages/domain" },
+    { "path": "../../packages/extensions" },
     { "path": "../../packages/permissions" },
     { "path": "../../packages/process" },
     { "path": "../../packages/search" },

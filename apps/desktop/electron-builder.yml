@@ -12,6 +12,10 @@ files:
 extraResources:
   - from: ../../packages/capabilities/src/windows-capability-bridge.ps1
     to: windows-capability-bridge.ps1
+  - from: build/lnwjud-mcp-stdio.cjs
+    to: lnwjud-mcp-stdio.cjs
+  - from: build/lnwjud-mcp-stdio.cmd
+    to: lnwjud-mcp-stdio.cmd
 win:
   signAndEditExecutable: false
   target:

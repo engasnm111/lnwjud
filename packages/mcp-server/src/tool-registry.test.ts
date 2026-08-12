@@ -9,13 +9,14 @@ describe('MCP tool registry', () => {
     const registry = new ToolRegistry({}, actor);
 
     expect(registry.list().map((tool) => tool.name)).toEqual([
-      'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
+      'workspace_list', 'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
       'search_files', 'search_text', 'git_status', 'git_diff', 'git_log', 'write_file',
       'apply_patch', 'move_file', 'delete_file', 'process_start', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build', 'codex_status', 'codex_run',
       'codex_task_status', 'codex_task_logs', 'codex_stop',
       'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health',
+      'skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call',
     ]);
   });
 
@@ -49,6 +50,8 @@ describe('MCP tool registry', () => {
     expect(byName.get('read_file')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(byName.get('delete_file')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(byName.get('write_file')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(byName.get('skills_list')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(byName.get('mcp_call')?.permission).toBe('DANGEROUS');
     expect(registry.list().some((tool) => ['run_shell', 'powershell', 'cmd', 'git_reset', 'git_clean', 'kill_pid'].includes(tool.name))).toBe(false);
   });
 

@@ -18,6 +18,11 @@ describe('CommandPolicy', () => {
     expect(policy.decide(permissionProfiles.full, 'cmd.exe', 'project')).toBe('DENY');
   });
 
+  it('denies delete/remove executables', () => {
+    expect(policy.decide(permissionProfiles.full, 'rm.exe', 'client', ['-rf', 'tmp'])).toBe('DENY');
+    expect(policy.decide(permissionProfiles.full, 'del', 'client', ['file.txt'])).toBe('DENY');
+  });
+
   it('asks before every execute operation in Safe', () => {
     expect(policy.decide(permissionProfiles.safe, 'pnpm', 'project')).toBe('ASK');
   });

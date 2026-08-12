@@ -1,5 +1,6 @@
 import { err, ok, type Result } from '@lnwjud/domain';
 import type { CapabilityService } from '@lnwjud/capabilities';
+import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   ApplyPatchRequest,
   CodexService,
@@ -20,6 +21,7 @@ import type { z } from 'zod';
 
 export interface WorkspaceInfoPort {
   info(actor: FileActor, workspaceId: string): Promise<Result<unknown>>;
+  list?(actor: FileActor): Promise<Result<unknown>>;
 }
 
 export interface ProjectSnapshotPort {
@@ -28,6 +30,7 @@ export interface ProjectSnapshotPort {
 
 export interface McpApplicationServices {
   readonly capabilities?: CapabilityService;
+  readonly extensions?: ExtensionsService;
   readonly workspaceInfo?: WorkspaceInfoPort;
   readonly workspaceQuery?: Pick<WorkspaceQueryService, 'tree'>;
   readonly projectSnapshot?: ProjectSnapshotPort;

@@ -5,8 +5,10 @@ import { codexTools } from './tools/codex-tools.js';
 import { capabilityTools } from './tools/capability-tools.js';
 import { fileTools } from './tools/file-tools.js';
 import { gitTools } from './tools/git-tools.js';
+import { mcpBridgeTools } from './tools/mcp-bridge-tools.js';
 import { processTools } from './tools/process-tools.js';
 import { searchTools } from './tools/search-tools.js';
+import { skillTools } from './tools/skill-tools.js';
 import { workspaceTools } from './tools/workspace-tools.js';
 import type { McpApplicationServices, McpToolContext, McpToolDefinition } from './tools/tool-types.js';
 
@@ -34,6 +36,8 @@ export class ToolRegistry {
       ...processTools(context),
       ...codexTools(context),
       ...capabilityTools(context),
+      ...skillTools(context),
+      ...mcpBridgeTools(context),
     ];
   }
 

@@ -65,13 +65,16 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'delete_file',
-      description: 'Delete one file or an empty directory in the workspace.',
+      description: 'Delete one file or an empty directory. Blocked until the user confirms in chat; then pass userConfirmed: true.',
       permission: 'DANGEROUS',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: deleteFileSchema,
       handler: async (input) => context.services.file === undefined
         ? missingService()
-        : context.services.file.deleteFile(context.actor, input.workspaceId, { path: input.path }),
+        : context.services.file.deleteFile(context.actor, input.workspaceId, {
+          path: input.path,
+          ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
+        }),
     }),
   ];
 }

@@ -13,6 +13,12 @@ export interface WorkspaceInfo {
 export class WorkspaceInfoService {
   public constructor(private readonly workspaces: WorkspaceRepository) {}
 
+  public async list(actor: FileActor): Promise<Result<readonly WorkspaceInfo[]>> {
+    void actor;
+    const workspaces = await this.workspaces.list();
+    return ok(workspaces.map(toWorkspaceInfo));
+  }
+
   public async info(actor: FileActor, workspaceId: string): Promise<Result<WorkspaceInfo>> {
     void actor;
     const workspace = await this.workspaces.get(workspaceId);

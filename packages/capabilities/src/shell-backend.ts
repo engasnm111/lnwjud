@@ -104,6 +104,12 @@ export class ShellCapabilityBackend implements CapabilityBackend {
   private async run(request: ShellRequest): Promise<Result<unknown>> {
     if (request.executable === undefined) return err(appError('INVALID_INPUT', 'Executable is required'));
     if (request.privilege === 'admin') return err(appError('PERMISSION_DENIED', 'Administrator access is not available to the local runner'));
+    if (isDeleteLikeShellCommand(request.executable, request.arguments)) {
+      return err(appError(
+        'PERMISSION_REQUIRED',
+        'Delete/remove commands are blocked. Ask the user to confirm, then use delete_file with userConfirmed: true',
+      ));
+    }
 
     const cwd = await this.resolveCwd(request.cwd);
     if (!cwd.ok) return cwd;
@@ -349,6 +355,20 @@ function redactText(value: string): string {
 
 function clampNumber(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function isDeleteLikeShellCommand(executable: string, args: readonly string[]): boolean {
+  const basename = path.win32.basename(executable).toLowerCase();
+  const deleteNames = new Set(['del', 'del.exe', 'erase', 'erase.exe', 'rm', 'rm.exe', 'rmdir', 'rmdir.exe', 'rd', 'rd.exe', 'unlink', 'unlink.exe']);
+  if (deleteNames.has(basename)) return true;
+  const joined = args.map((entry) => entry.toLowerCase()).join(' ');
+  if (basename === 'powershell.exe' || basename === 'powershell' || basename === 'pwsh.exe' || basename === 'pwsh') {
+    return /\bremove-item\b/.test(joined) || /\brm\b/.test(joined) || /\bdel\b/.test(joined);
+  }
+  if (basename === 'cmd.exe' || basename === 'cmd') {
+    return /(^|[\s&|])(del|erase|rd|rmdir)\b/.test(joined);
+  }
+  return false;
 }
 
 function delay(milliseconds: number): Promise<void> {

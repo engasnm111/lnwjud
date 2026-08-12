@@ -115,7 +115,7 @@ export class ProcessService {
     if (!cwd.ok) return cwd;
 
     const profile = this.profileProvider();
-    const commandDecision = this.commandPolicy.decide(profile, request.executable, source);
+    const commandDecision = this.commandPolicy.decide(profile, request.executable, source, request.args);
     if (commandDecision === 'DENY') return err(appError('PERMISSION_DENIED', 'Executable is not permitted'));
     const permissionDecision = this.permissionEngine.decide(profile, {
       action: 'process_start',

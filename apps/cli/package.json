@@ -5,9 +5,13 @@
   "type": "module",
   "dependencies": {
     "@lnwjud/application": "workspace:*",
+    "@lnwjud/audit": "workspace:*",
     "@lnwjud/codex": "workspace:*",
     "@lnwjud/domain": "workspace:*",
+    "@lnwjud/extensions": "workspace:*",
     "@lnwjud/mcp-server": "workspace:*",
+    "@lnwjud/permissions": "workspace:*",
+    "@lnwjud/storage": "workspace:*",
     "@lnwjud/workspace": "workspace:*"
   },
   "scripts": {

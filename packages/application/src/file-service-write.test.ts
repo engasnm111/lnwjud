@@ -100,8 +100,10 @@ describe('FileService writes', () => {
     await writeFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'before', 'utf8');
 
     await expect(new FileService(repository(workspace), undefined, undefined, { profile: permissionProfiles.full })
-      .deleteFile(actor, workspace.id, { path: 'src' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+      .deleteFile(actor, workspace.id, { path: 'src', userConfirmed: true })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     await expect(new FileService(repository(workspace), undefined, undefined, { profile: permissionProfiles.full })
-      .deleteFile(actor, workspace.id, { path: '.' })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+      .deleteFile(actor, workspace.id, { path: '.', userConfirmed: true })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    await expect(new FileService(repository(workspace), undefined, undefined, { profile: permissionProfiles.full })
+      .deleteFile(actor, workspace.id, { path: 'src/file.txt' })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
   });
 });
