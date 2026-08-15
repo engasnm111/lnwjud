@@ -92,8 +92,11 @@ try {
   Write-Host "lnwjud tunnel: unrestricted mode = ON, data path = $env:LNWJUD_DATA_PATH"
 
   if (-not $NoViewer -and (Test-Path $LnwjudPath)) {
-    $viewerArgs = if ($OpenDashboard) { @() } else { @('--log-viewer') }
-    Start-Process -FilePath $LnwjudPath -ArgumentList $viewerArgs
+    if ($OpenDashboard) {
+      Start-Process -FilePath $LnwjudPath
+    } else {
+      Start-Process -FilePath $LnwjudPath -ArgumentList @('--log-viewer')
+    }
   }
 
   # Keep the tunnel alive: restart automatically when it exits unexpectedly.
