@@ -170,6 +170,48 @@ export const webFetchCapabilitySchema = z.object({
   ...capabilityRequestSchema,
 }).strict();
 
+export const audioCapabilitySchema = z.object({
+  action: z.enum(['record', 'play', 'stop']),
+  output_path: z.string().max(MAX_PATH_LENGTH).optional(),
+  file_path: z.string().max(MAX_PATH_LENGTH).optional(),
+  duration_seconds: z.number().int().min(1).max(600).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const screenRecordCapabilitySchema = z.object({
+  action: z.enum(['start', 'stop', 'status']),
+  output_path: z.string().max(MAX_PATH_LENGTH).optional(),
+  offset_x: z.number().int().min(-16_384).max(16_384).optional(),
+  offset_y: z.number().int().min(-16_384).max(16_384).optional(),
+  width: z.number().int().min(1).max(7_680).optional(),
+  height: z.number().int().min(1).max(4_320).optional(),
+  fps: z.number().int().min(1).max(60).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const officeCapabilitySchema = z.object({
+  app: z.enum(['excel', 'word']),
+  action: z.enum(['read', 'write', 'read_text', 'replace', 'save_as']),
+  file_path: z.string().max(MAX_PATH_LENGTH),
+  target_path: z.string().max(MAX_PATH_LENGTH).optional(),
+  sheet: z.string().max(256).optional(),
+  range: z.string().max(256).optional(),
+  values: capabilityParametersSchema.optional(),
+  find: z.string().max(32_768).optional(),
+  replace_with: z.string().max(32_768).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const schedulerCapabilitySchema = z.object({
+  action: z.enum(['list', 'create', 'delete', 'run']).default('list'),
+  task_name: z.string().regex(/^[\w .-]{1,200}$/).optional(),
+  command: z.string().max(2_048).optional(),
+  arguments: z.array(z.string().max(2_048)).max(64).optional(),
+  schedule: z.string().regex(/^[A-Z]{1,16}$/i).optional(),
+  start_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
 export const skillsListSchema = z.object({
   query: z.string().max(1024).optional(),
   source: z.string().trim().min(1).max(256).optional(),

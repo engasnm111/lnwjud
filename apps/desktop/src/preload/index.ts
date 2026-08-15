@@ -205,7 +205,8 @@ function capabilitySummaries(value: unknown): DashboardSnapshot['capabilities'] 
 function isCapabilityToolName(value: unknown): value is DashboardSnapshot['capabilities'][number]['name'] {
   return value === 'shell' || value === 'dom_cdp' || value === 'accessibility' || value === 'input_event'
     || value === 'vision' || value === 'window' || value === 'health' || value === 'system_info'
-    || value === 'notification' || value === 'file_dialog' || value === 'clipboard' || value === 'web_fetch';
+    || value === 'notification' || value === 'file_dialog' || value === 'clipboard' || value === 'web_fetch'
+    || value === 'audio' || value === 'screen_record' || value === 'office' || value === 'scheduler';
 }
 
 function mcpStatus(value: unknown): McpConnectionStatus {

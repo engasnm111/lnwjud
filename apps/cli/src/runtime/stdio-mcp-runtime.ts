@@ -21,6 +21,7 @@ import {
   LocalCapabilityService,
   NodeBrowserCdpProtocol,
   PowerShellWindowsCapabilityBridge,
+  SchedulerCapabilityBackend,
   ShellCapabilityBackend,
   WebFetchCapabilityBackend,
   WindowsNativeCapabilityBackend,
@@ -165,6 +166,7 @@ function createStdioCapabilityService(
     launcher: (url: string | undefined): Promise<Result<unknown>> => browserProtocol.launch(url),
   });
   const windowsBridge = new PowerShellWindowsCapabilityBridge({ scriptPath: capabilityBridgeScriptPath() });
+  const nativeOptions = { allowedRootsProvider: workspaceRootsProvider, unrestricted };
   const health = new HealthCapabilityBackend({
     domCdp: browserBackend,
     accessibility: new WindowsNativeCapabilityBackend('accessibility', windowsBridge),
@@ -182,6 +184,10 @@ function createStdioCapabilityService(
     fileDialog: new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
     clipboard: new WindowsNativeCapabilityBackend('clipboard', windowsBridge),
     webFetch: new WebFetchCapabilityBackend(),
+    audio: new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions),
+    screenRecord: new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions),
+    office: new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions),
+    scheduler: new SchedulerCapabilityBackend(),
   });
 }
 

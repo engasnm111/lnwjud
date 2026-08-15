@@ -34,8 +34,9 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   }
 
   private async check(tool: CapabilityToolName): Promise<Record<string, unknown>> {
-    if (tool === 'shell' || tool === 'health' || tool === 'web_fetch') return { available: true, ready: true, local: true };
-    if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard') {
+    if (tool === 'shell' || tool === 'health' || tool === 'web_fetch' || tool === 'scheduler') return { available: true, ready: true, local: true };
+    if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard'
+      || tool === 'audio' || tool === 'screen_record' || tool === 'office') {
       return { available: this.platform === 'win32', ready: this.platform === 'win32', local: true };
     }
     if (tool === 'input_event' || tool === 'vision' || tool === 'window') return { available: this.platform === 'win32', ready: this.platform === 'win32', local: true };

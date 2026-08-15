@@ -8,6 +8,7 @@ import {
   LocalCapabilityService,
   NodeBrowserCdpProtocol,
   PowerShellWindowsCapabilityBridge,
+  SchedulerCapabilityBackend,
   ShellCapabilityBackend,
   WebFetchCapabilityBackend,
   WindowsNativeCapabilityBackend,
@@ -44,6 +45,7 @@ export function createLocalCapabilityRuntime(
     launcher: (url: string | undefined): Promise<Result<unknown>> => browserProtocol.launch(url),
   });
   const windowsBridge = new PowerShellWindowsCapabilityBridge({ scriptPath: capabilityBridgeScriptPath() });
+  const nativeOptions = { allowedRootsProvider: workspaceRootsProvider, unrestricted };
   const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
   const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge);
   const visionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
@@ -52,7 +54,11 @@ export function createLocalCapabilityRuntime(
   const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge);
   const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
   const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
+  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions);
+  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions);
+  const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions);
   const webFetchBackend = new WebFetchCapabilityBackend();
+  const schedulerBackend = new SchedulerCapabilityBackend();
   const health = new HealthCapabilityBackend({ domCdp: browserBackend, accessibility: accessibilityBackend });
   const service = new LocalCapabilityService({
     shell: shellBackend,
@@ -67,6 +73,10 @@ export function createLocalCapabilityRuntime(
     fileDialog: fileDialogBackend,
     clipboard: clipboardBackend,
     webFetch: webFetchBackend,
+    audio: audioBackend,
+    screenRecord: screenRecordBackend,
+    office: officeBackend,
+    scheduler: schedulerBackend,
   });
   return { service, health };
 }
@@ -114,6 +124,10 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
   file_dialog: 'Native file open/save dialogs',
   clipboard: 'Read and write the clipboard',
   web_fetch: 'Fetch http/https URLs',
+  audio: 'Record and play audio',
+  screen_record: 'Record the screen to MP4',
+  office: 'Automate Excel and Word',
+  scheduler: 'Manage Windows scheduled tasks',
 };
 
 const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[number], string>> = {
@@ -129,6 +143,10 @@ const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[numbe
   file_dialog: 'Windows open/save dialog returning chosen paths',
   clipboard: 'Clipboard text and PNG image access',
   web_fetch: 'Bounded HTTP requests with text or base64 responses',
+  audio: 'Microphone recording and local audio playback',
+  screen_record: 'ffmpeg gdigrab screen capture with start/stop/status',
+  office: 'Excel range read/write and Word text operations via COM',
+  scheduler: 'schtasks.exe list/create/run/delete operations',
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -18,6 +18,7 @@ describe('MCP tool registry', () => {
       'codex_task_status', 'codex_task_logs', 'codex_stop',
       'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health',
       'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
+      'audio', 'screen_record', 'office', 'scheduler',
       'skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call',
     ]);
   });

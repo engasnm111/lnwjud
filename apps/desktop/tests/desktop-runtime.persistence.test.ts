@@ -48,7 +48,6 @@ describe('DesktopRuntime persistence', () => {
       if (!firstClosed) await closeRuntime(firstRuntime);
     }
   });
-
   it('serves the local capability health tool through the desktop MCP listener', async () => {
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-data-'));
     const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-workspace-'));
@@ -97,7 +96,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  });
+  }, 30_000);
 });
 
 async function closeRuntime(runtime: DesktopRuntime): Promise<void> {

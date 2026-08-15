@@ -426,6 +426,224 @@ function Invoke-ClipboardAction {
   }
 }
 
+$audioSource = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class LnwjudAudio
+{
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+    private static extern int mciSendString(string command, StringBuilder buffer, int bufferSize, IntPtr callback);
+
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+    private static extern int mciGetErrorString(int errorCode, StringBuilder buffer, int bufferSize);
+
+    public static void Mci(string command)
+    {
+        var buffer = new StringBuilder(512);
+        int code = mciSendString(command, buffer, buffer.Capacity, IntPtr.Zero);
+        if (code != 0)
+        {
+            var error = new StringBuilder(256);
+            mciGetErrorString(code, error, error.Capacity);
+            throw new InvalidOperationException("MCI command failed: " + error.ToString());
+        }
+    }
+}
+'@
+try { Add-Type -TypeDefinition $audioSource -ErrorAction Stop | Out-Null } catch { }
+
+function Invoke-AudioAction {
+  param([string]$Action, [object]$Parameters)
+  switch ($Action) {
+    'record' {
+      $path = [string](Get-Field $Parameters 'output_path')
+      if ($path.Length -eq 0) { throw 'output_path is required' }
+      $parent = Split-Path -Parent $path
+      if (-not (Test-Path $parent -PathType Container)) { throw 'Output directory does not exist' }
+      $duration = Get-Field $Parameters 'duration_seconds'; if ($null -eq $duration) { $duration = 10 }
+      if ([int]$duration -lt 1 -or [int]$duration -gt 600) { throw 'duration_seconds must be from 1 to 600' }
+      [LnwjudAudio]::Mci('open new type waveaudio alias lnwjudrec')
+      [LnwjudAudio]::Mci('record lnwjudrec')
+      Start-Sleep -Seconds ([int]$duration)
+      [LnwjudAudio]::Mci('stop lnwjudrec')
+      [LnwjudAudio]::Mci(('save lnwjudrec "' + $path + '"'))
+      [LnwjudAudio]::Mci('close lnwjudrec')
+      return [ordered]@{ recorded = $true; output_path = $path; duration_seconds = [int]$duration }
+    }
+    'play' {
+      $path = [string](Get-Field $Parameters 'file_path')
+      if ($path.Length -eq 0) { throw 'file_path is required' }
+      if (-not (Test-Path $path -PathType Leaf)) { throw 'Audio file was not found' }
+      $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+      $mciType = 'mpegvideo'
+      if ($extension -eq '.wav') { $mciType = 'waveaudio' }
+      elseif ($extension -eq '.mid' -or $extension -eq '.midi') { $mciType = 'sequencer' }
+      [LnwjudAudio]::Mci(('open "' + $path + '" type ' + $mciType + ' alias lnwjudplay'))
+      [LnwjudAudio]::Mci('play lnwjudplay wait')
+      [LnwjudAudio]::Mci('close lnwjudplay')
+      return [ordered]@{ played = $true; file_path = $path }
+    }
+    'stop' {
+      foreach ($command in @('stop lnwjudrec', 'stop lnwjudplay', 'close lnwjudrec', 'close lnwjudplay')) {
+        try { [LnwjudAudio]::Mci($command) } catch { }
+      }
+      return [ordered]@{ stopped = $true }
+    }
+    default { throw "Unsupported audio action: $Action" }
+  }
+}
+
+function Invoke-ScreenRecordAction {
+  param([string]$Action, [object]$Parameters)
+  $statePath = Join-Path $env:TEMP 'lnwjud-screen-record-state.json'
+  switch ($Action) {
+    'start' {
+      $ffmpeg = (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source
+      if ($null -eq $ffmpeg) { throw 'ffmpeg is not installed; install ffmpeg to use screen_record' }
+      $out = [string](Get-Field $Parameters 'output_path')
+      if ($out.Length -eq 0) { throw 'output_path is required' }
+      $parent = Split-Path -Parent $out
+      if (-not (Test-Path $parent -PathType Container)) { throw 'Output directory does not exist' }
+      $x = Get-Field $Parameters 'offset_x'; if ($null -eq $x) { $x = 0 }
+      $y = Get-Field $Parameters 'offset_y'; if ($null -eq $y) { $y = 0 }
+      $w = Get-Field $Parameters 'width'; if ($null -eq $w) { $w = 1920 }
+      $h = Get-Field $Parameters 'height'; if ($null -eq $h) { $h = 1080 }
+      $fps = Get-Field $Parameters 'fps'; if ($null -eq $fps) { $fps = 10 }
+      if ([int]$w -lt 1 -or [int]$h -lt 1 -or [int]$w -gt 7680 -or [int]$h -gt 4320) { throw 'Capture size is invalid' }
+      if ([int]$fps -lt 1 -or [int]$fps -gt 60) { throw 'fps must be from 1 to 60' }
+      $process = Start-Process -FilePath $ffmpeg -ArgumentList @('-y', '-loglevel', 'error', '-f', 'gdigrab', '-framerate', [string][int]$fps, '-offset_x', [string][int]$x, '-offset_y', [string][int]$y, '-video_size', ([string][int]$w + 'x' + [string][int]$h), '-i', 'desktop', '-t', '3600', '-pix_fmt', 'yuv420p', $out) -WindowStyle Hidden -PassThru
+      @{ pid = [int]$process.Id; output_path = $out; started_at = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Set-Content $statePath
+      return [ordered]@{ recording = $true; pid = [int]$process.Id; output_path = $out; max_duration_seconds = 3600 }
+    }
+    'stop' {
+      if (-not (Test-Path $statePath)) { return [ordered]@{ recording = $false; reason = 'No active recording' } }
+      $state = Get-Content $statePath -Raw | ConvertFrom-Json
+      $process = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue
+      if ($null -ne $process) { Stop-Process -Id ([int]$state.pid) -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500 }
+      Remove-Item $statePath -Force -ErrorAction SilentlyContinue
+      return [ordered]@{ recording = $false; output_path = [string]$state.output_path; exists = (Test-Path $state.output_path) }
+    }
+    'status' {
+      if (-not (Test-Path $statePath)) { return [ordered]@{ recording = $false } }
+      $state = Get-Content $statePath -Raw | ConvertFrom-Json
+      $alive = $null -ne (Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue)
+      return [ordered]@{ recording = $alive; pid = [int]$state.pid; output_path = [string]$state.output_path }
+    }
+    default { throw "Unsupported screen_record action: $Action" }
+  }
+}
+
+function Release-ComObject {
+  param([object]$Object)
+  if ($null -eq $Object) { return }
+  try {
+    while ($true) {
+      $refCount = [Runtime.InteropServices.Marshal]::ReleaseComObject($Object)
+      if ($refCount -le 0) { break }
+    }
+  } catch { }
+}
+
+function Invoke-OfficeAction {
+  param([string]$App, [string]$Action, [object]$Parameters)
+  $filePath = [string](Get-Field $Parameters 'file_path')
+  if ($App -eq 'excel') {
+    $excel = $null
+    try {
+      $excel = New-Object -ComObject Excel.Application
+      $excel.Visible = $false
+      $excel.DisplayAlerts = $false
+      switch ($Action) {
+        'read' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = Get-Field $Parameters 'sheet'
+            $range = [string](Get-Field $Parameters 'range')
+            if ($range.Length -eq 0) { throw 'range is required (for example A1:D10)' }
+            $worksheet = if ($null -eq $sheetName -or $sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $values = $worksheet.Range($range).Value2
+            return [ordered]@{ app = 'excel'; action = 'read'; file_path = $filePath; range = $range; values = @($values) }
+          } finally { $workbook.Close($false) }
+        }
+        'write' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $range = [string](Get-Field $Parameters 'range'); if ($range.Length -eq 0) { throw 'range is required' }
+          $values = Get-Field $Parameters 'values'; if ($null -eq $values) { throw 'values is required' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $sheetName = Get-Field $Parameters 'sheet'
+            $worksheet = if ($null -eq $sheetName -or $sheetName.Length -eq 0) { $workbook.Worksheets.Item(1) } else { $workbook.Worksheets.Item($sheetName) }
+            $null = $worksheet.Range($range).Value2 = $values
+            $workbook.Save()
+            return [ordered]@{ app = 'excel'; action = 'write'; file_path = $filePath; range = $range; saved = $true }
+          } finally { $workbook.Close($true) }
+        }
+        'save_as' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Excel file was not found' }
+          $workbook = $excel.Workbooks.Open($filePath)
+          try {
+            $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+            $workbook.SaveAs($target)
+            return [ordered]@{ app = 'excel'; action = 'save_as'; source = $filePath; target = $target; saved = $true }
+          } finally { $workbook.Close($false) }
+        }
+        default { throw "Unsupported excel action: $Action" }
+      }
+    } finally {
+      if ($null -ne $excel) { try { $excel.Quit() } catch { }; Release-ComObject $excel }
+    }
+  }
+  if ($App -eq 'word') {
+    $word = $null
+    try {
+      $word = New-Object -ComObject Word.Application
+      $word.Visible = $false
+      switch ($Action) {
+        'read_text' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try { return [ordered]@{ app = 'word'; action = 'read_text'; file_path = $filePath; text = [string]$document.Content.Text } }
+          finally { $document.Close($false) }
+        }
+        'replace' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $find = [string](Get-Field $Parameters 'find'); if ($find.Length -eq 0) { throw 'find is required' }
+          $replaceWith = [string](Get-Field $Parameters 'replace_with')
+          $document = $word.Documents.Open($filePath)
+          try {
+            $findObject = $document.Content.Find
+            $found = $findObject.Execute($find, $false, $false, $false, $false, $false, $true, 1, $false, $replaceWith, 2)
+            $document.Save()
+            return [ordered]@{ app = 'word'; action = 'replace'; file_path = $filePath; replaced = [bool]$found; saved = $true }
+          } finally { $document.Close($true) }
+        }
+        'save_as' {
+          if ($filePath.Length -eq 0) { throw 'file_path is required' }
+          if (-not (Test-Path $filePath -PathType Leaf)) { throw 'Word file was not found' }
+          $document = $word.Documents.Open($filePath, $false, $true)
+          try {
+            $target = [string](Get-Field $Parameters 'target_path'); if ($target.Length -eq 0) { throw 'target_path is required' }
+            $document.SaveAs($target)
+            return [ordered]@{ app = 'word'; action = 'save_as'; source = $filePath; target = $target; saved = $true }
+          } finally { $document.Close($false) }
+        }
+        default { throw "Unsupported word action: $Action" }
+      }
+    } finally {
+      if ($null -ne $word) { try { $word.Quit() } catch { }; Release-ComObject $word }
+    }
+  }
+  throw "Unsupported office app: $App"
+}
+
 try {
   $raw = ($input | Out-String).Trim()
   $request = $raw | ConvertFrom-Json
@@ -441,6 +659,9 @@ try {
     'notification' { Invoke-NotificationAction ([string](Get-Field $payload 'action')) $parameters }
     'file_dialog' { Invoke-FileDialogAction ([string](Get-Field $payload 'action')) $parameters }
     'clipboard' { Invoke-ClipboardAction ([string](Get-Field $payload 'action')) $parameters }
+    'audio' { Invoke-AudioAction ([string](Get-Field $payload 'action')) $parameters }
+    'screen_record' { Invoke-ScreenRecordAction ([string](Get-Field $payload 'action')) $parameters }
+    'office' { Invoke-OfficeAction ([string](Get-Field $payload 'app')) ([string](Get-Field $payload 'action')) $parameters }
     default { throw 'Unsupported Windows capability' }
   }
   $result = Success $value

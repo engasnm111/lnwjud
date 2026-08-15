@@ -18,6 +18,10 @@ export interface LocalCapabilityBackends {
   readonly fileDialog?: CapabilityBackend;
   readonly clipboard?: CapabilityBackend;
   readonly webFetch?: CapabilityBackend;
+  readonly audio?: CapabilityBackend;
+  readonly screenRecord?: CapabilityBackend;
+  readonly office?: CapabilityBackend;
+  readonly scheduler?: CapabilityBackend;
 }
 
 export class LocalCapabilityService implements CapabilityService {
@@ -44,6 +48,10 @@ export class LocalCapabilityService implements CapabilityService {
       case 'file_dialog': return this.backends.fileDialog;
       case 'clipboard': return this.backends.clipboard;
       case 'web_fetch': return this.backends.webFetch;
+      case 'audio': return this.backends.audio;
+      case 'screen_record': return this.backends.screenRecord;
+      case 'office': return this.backends.office;
+      case 'scheduler': return this.backends.scheduler;
     }
   }
 }

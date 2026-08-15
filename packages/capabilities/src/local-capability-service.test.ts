@@ -18,6 +18,10 @@ describe('LocalCapabilityService', () => {
       fileDialog: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('file_dialog'); return ok({ value: 'dialog' }); } },
       clipboard: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('clipboard'); return ok({ value: 'clipboard' }); } },
       webFetch: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('web_fetch'); return ok({ value: 'fetch' }); } },
+      audio: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('audio'); return ok({ value: 'audio' }); } },
+      screenRecord: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('screen_record'); return ok({ value: 'screen' }); } },
+      office: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('office'); return ok({ value: 'office' }); } },
+      scheduler: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('scheduler'); return ok({ value: 'scheduler' }); } },
     });
 
     await expect(service.execute('shell', {})).resolves.toMatchObject({ ok: true, value: { value: 'shell' } });
@@ -32,7 +36,11 @@ describe('LocalCapabilityService', () => {
     await expect(service.execute('file_dialog', {})).resolves.toMatchObject({ ok: true, value: { value: 'dialog' } });
     await expect(service.execute('clipboard', {})).resolves.toMatchObject({ ok: true, value: { value: 'clipboard' } });
     await expect(service.execute('web_fetch', {})).resolves.toMatchObject({ ok: true, value: { value: 'fetch' } });
-    expect(calls).toEqual(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health', 'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch']);
+    await expect(service.execute('audio', {})).resolves.toMatchObject({ ok: true, value: { value: 'audio' } });
+    await expect(service.execute('screen_record', {})).resolves.toMatchObject({ ok: true, value: { value: 'screen' } });
+    await expect(service.execute('office', {})).resolves.toMatchObject({ ok: true, value: { value: 'office' } });
+    await expect(service.execute('scheduler', {})).resolves.toMatchObject({ ok: true, value: { value: 'scheduler' } });
+    expect(calls).toEqual(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health', 'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch', 'audio', 'screen_record', 'office', 'scheduler']);
   });
 
   it('reports an unsupported capability without throwing', async () => {
