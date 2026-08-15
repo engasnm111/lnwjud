@@ -379,9 +379,23 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
     },
     autoStartMcp: async (): Promise<McpConnectionStatus> => {
       await machineRootReady;
+      const envWorkspacePath = process.env.LNWJUD_WORKSPACE?.trim();
+      if (envWorkspacePath !== undefined && envWorkspacePath.length > 0) {
+        if (!unrestricted && !isUnderEDrive(envWorkspacePath)) {
+          throw new Error('Workspace path must be under E:\\');
+        }
+        const resolvedPath = path.resolve(envWorkspacePath);
+        const existing = await workspaceService.list();
+        const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedPath.toLowerCase());
+        const workspaceId = matched === undefined
+          ? unwrap(await workspaceService.add(path.basename(resolvedPath) || 'Workspace', resolvedPath), 'Workspace could not be added').id
+          : matched.id;
+        settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
+        return mcpLifecycle.start(workspaceId);
+      }
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       if (selected === null) {
-        const workspacePath = process.env.LNWJUD_WORKSPACE?.trim() || process.cwd();
+        const workspacePath = process.cwd();
         if (!unrestricted && !isUnderEDrive(workspacePath)) {
           throw new Error('Workspace path must be under E:\\');
         }

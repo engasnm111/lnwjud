@@ -38,6 +38,7 @@ test('desktop serves the real MCP client development workflow', async () => {
       ...process.env,
       LNWJUD_DATA_PATH: dataRoot,
       LNWJUD_WORKSPACE: fixtureRoot,
+      LNWJUD_UNRESTRICTED: '1',
       LNWJUD_E2E_FIXTURE: '1',
       LNWJUD_E2E_NODE_PATH: process.execPath,
     },
@@ -79,6 +80,8 @@ test('desktop serves the real MCP client development workflow', async () => {
       'project_typecheck', 'project_build', 'codex_status', 'codex_run',
       'codex_task_status', 'codex_task_logs', 'codex_stop',
       'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health',
+      'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
+      'audio', 'screen_record', 'office', 'scheduler',
       'skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call',
     ]);
 
@@ -123,10 +126,10 @@ test('desktop serves the real MCP client development workflow', async () => {
     });
     expect(toolRecord(patch)).toMatchObject({ paths: ['src\\app.ts'] });
 
-    const deniedSecret = await callTool(client, 'read_file', { workspaceId, path: '.env' });
-    expect(deniedSecret).toMatchObject({ isError: true });
-    expect(toolRecord(deniedSecret)).toMatchObject({ error: { code: 'SECRET_ACCESS_DENIED' } });
-    expect(JSON.stringify(deniedSecret)).not.toContain('hidden');
+    // Unrestricted mode: secrets are intentionally readable on every drive.
+    const secretRead = await callTool(client, 'read_file', { workspaceId, path: '.env' });
+    expect(JSON.stringify(secretRead)).toContain('hidden');
+    expect(JSON.stringify(secretRead)).not.toContain('SECRET_ACCESS_DENIED');
     const deniedTraversal = await callTool(client, 'read_file', { workspaceId, path: '..\\outside.txt' });
     expect(deniedTraversal).toMatchObject({ isError: true });
     expect(toolRecord(deniedTraversal)).toMatchObject({ error: { code: 'PATH_OUTSIDE_WORKSPACE' } });

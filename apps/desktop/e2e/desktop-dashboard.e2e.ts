@@ -29,6 +29,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
       ...process.env,
       LNWJUD_DATA_PATH: dataRoot,
       LNWJUD_WORKSPACE: fixtureRoot,
+      LNWJUD_UNRESTRICTED: '1',
       LNWJUD_E2E_FIXTURE: '1',
       LNWJUD_E2E_NODE_PATH: process.execPath,
     },

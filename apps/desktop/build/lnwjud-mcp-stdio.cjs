@@ -35,7 +35,7 @@ var require_windows = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs2 = require("fs");
-    function checkPathExt(path23, options) {
+    function checkPathExt(path24, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
         return true;
@@ -46,25 +46,25 @@ var require_windows = __commonJS({
       }
       for (var i = 0; i < pathext.length; i++) {
         var p = pathext[i].toLowerCase();
-        if (p && path23.substr(-p.length).toLowerCase() === p) {
+        if (p && path24.substr(-p.length).toLowerCase() === p) {
           return true;
         }
       }
       return false;
     }
-    function checkStat(stat11, path23, options) {
+    function checkStat(stat11, path24, options) {
       if (!stat11.isSymbolicLink() && !stat11.isFile()) {
         return false;
       }
-      return checkPathExt(path23, options);
+      return checkPathExt(path24, options);
     }
-    function isexe(path23, options, cb) {
-      fs2.stat(path23, function(er, stat11) {
-        cb(er, er ? false : checkStat(stat11, path23, options));
+    function isexe(path24, options, cb) {
+      fs2.stat(path24, function(er, stat11) {
+        cb(er, er ? false : checkStat(stat11, path24, options));
       });
     }
-    function sync(path23, options) {
-      return checkStat(fs2.statSync(path23), path23, options);
+    function sync(path24, options) {
+      return checkStat(fs2.statSync(path24), path24, options);
     }
   }
 });
@@ -75,13 +75,13 @@ var require_mode = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs2 = require("fs");
-    function isexe(path23, options, cb) {
-      fs2.stat(path23, function(er, stat11) {
+    function isexe(path24, options, cb) {
+      fs2.stat(path24, function(er, stat11) {
         cb(er, er ? false : checkStat(stat11, options));
       });
     }
-    function sync(path23, options) {
-      return checkStat(fs2.statSync(path23), options);
+    function sync(path24, options) {
+      return checkStat(fs2.statSync(path24), options);
     }
     function checkStat(stat11, options) {
       return stat11.isFile() && checkMode(stat11, options);
@@ -114,7 +114,7 @@ var require_isexe = __commonJS({
     }
     module2.exports = isexe;
     isexe.sync = sync;
-    function isexe(path23, options, cb) {
+    function isexe(path24, options, cb) {
       if (typeof options === "function") {
         cb = options;
         options = {};
@@ -124,7 +124,7 @@ var require_isexe = __commonJS({
           throw new TypeError("callback not provided");
         }
         return new Promise(function(resolve, reject) {
-          isexe(path23, options || {}, function(er, is) {
+          isexe(path24, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
@@ -133,7 +133,7 @@ var require_isexe = __commonJS({
           });
         });
       }
-      core(path23, options || {}, function(er, is) {
+      core(path24, options || {}, function(er, is) {
         if (er) {
           if (er.code === "EACCES" || options && options.ignoreErrors) {
             er = null;
@@ -143,9 +143,9 @@ var require_isexe = __commonJS({
         cb(er, is);
       });
     }
-    function sync(path23, options) {
+    function sync(path24, options) {
       try {
-        return core.sync(path23, options || {});
+        return core.sync(path24, options || {});
       } catch (er) {
         if (options && options.ignoreErrors || er.code === "EACCES") {
           return false;
@@ -161,7 +161,7 @@ var require_isexe = __commonJS({
 var require_which = __commonJS({
   "../../node_modules/.pnpm/which@2.0.2/node_modules/which/which.js"(exports2, module2) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-    var path23 = require("path");
+    var path24 = require("path");
     var COLON = isWindows ? ";" : ":";
     var isexe = require_isexe();
     var getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
@@ -199,7 +199,7 @@ var require_which = __commonJS({
           return opt.all && found.length ? resolve(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path23.join(pathPart, cmd);
+        const pCmd = path24.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         resolve(subStep(p, i, 0));
       });
@@ -226,7 +226,7 @@ var require_which = __commonJS({
       for (let i = 0; i < pathEnv.length; i++) {
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path23.join(pathPart, cmd);
+        const pCmd = path24.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         for (let j = 0; j < pathExt.length; j++) {
           const cur = p + pathExt[j];
@@ -274,7 +274,7 @@ var require_path_key = __commonJS({
 var require_resolveCommand = __commonJS({
   "../../node_modules/.pnpm/cross-spawn@7.0.6/node_modules/cross-spawn/lib/util/resolveCommand.js"(exports2, module2) {
     "use strict";
-    var path23 = require("path");
+    var path24 = require("path");
     var which = require_which();
     var getPathKey = require_path_key();
     function resolveCommandAttempt(parsed, withoutPathExt) {
@@ -292,7 +292,7 @@ var require_resolveCommand = __commonJS({
       try {
         resolved = which.sync(parsed.command, {
           path: env[getPathKey({ env })],
-          pathExt: withoutPathExt ? path23.delimiter : void 0
+          pathExt: withoutPathExt ? path24.delimiter : void 0
         });
       } catch (e) {
       } finally {
@@ -301,7 +301,7 @@ var require_resolveCommand = __commonJS({
         }
       }
       if (resolved) {
-        resolved = path23.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+        resolved = path24.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
       }
       return resolved;
     }
@@ -355,8 +355,8 @@ var require_shebang_command = __commonJS({
       if (!match) {
         return null;
       }
-      const [path23, argument] = match[0].replace(/#! ?/, "").split(" ");
-      const binary = path23.split("/").pop();
+      const [path24, argument] = match[0].replace(/#! ?/, "").split(" ");
+      const binary = path24.split("/").pop();
       if (binary === "env") {
         return argument;
       }
@@ -391,7 +391,7 @@ var require_readShebang = __commonJS({
 var require_parse = __commonJS({
   "../../node_modules/.pnpm/cross-spawn@7.0.6/node_modules/cross-spawn/lib/parse.js"(exports2, module2) {
     "use strict";
-    var path23 = require("path");
+    var path24 = require("path");
     var resolveCommand = require_resolveCommand();
     var escape2 = require_escape();
     var readShebang = require_readShebang();
@@ -416,7 +416,7 @@ var require_parse = __commonJS({
       const needsShell = !isExecutableRegExp.test(commandFile);
       if (parsed.options.forceShell || needsShell) {
         const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-        parsed.command = path23.normalize(parsed.command);
+        parsed.command = path24.normalize(parsed.command);
         parsed.command = escape2.command(parsed.command);
         parsed.args = parsed.args.map((arg) => escape2.argument(arg, needsDoubleEscapeMetaChars));
         const shellCommand = [parsed.command].concat(parsed.args).join(" ");
@@ -529,7 +529,7 @@ var require_cross_spawn = __commonJS({
 // ../cli/src/bin/mcp-stdio.ts
 var import_node_fs5 = __toESM(require("node:fs"), 1);
 var import_node_os5 = __toESM(require("node:os"), 1);
-var import_node_path22 = __toESM(require("node:path"), 1);
+var import_node_path23 = __toESM(require("node:path"), 1);
 
 // ../../packages/application/dist/file-service.js
 var import_promises7 = require("node:fs/promises");
@@ -3952,10 +3952,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path23) {
-  if (!path23)
+function getElementAtPath(obj, path24) {
+  if (!path24)
     return obj;
-  return path23.reduce((acc, key) => acc?.[key], obj);
+  return path24.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -4321,11 +4321,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path23, issues) {
+function prefixIssues(path24, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path23);
+    iss.path.unshift(path24);
     return iss;
   });
 }
@@ -4487,7 +4487,7 @@ function formatError(error46, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error46, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error47, path23 = []) => {
+  const processError = (error47, path24 = []) => {
     var _a2, _b;
     for (const issue2 of error47.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -4497,7 +4497,7 @@ function treeifyError(error46, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path23, ...issue2.path];
+        const fullpath = [...path24, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -4529,8 +4529,8 @@ function treeifyError(error46, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path23 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path23) {
+  const path24 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path24) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -16124,13 +16124,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path23 = ref.slice(1).split("/").filter(Boolean);
-  if (path23.length === 0) {
+  const path24 = ref.slice(1).split("/").filter(Boolean);
+  if (path24.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path23[0] === defsKey) {
-    const key = path23[1];
+  if (path24[0] === defsKey) {
+    const key = path24[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -20070,9 +20070,9 @@ var rev2026Codec = {
     });
     const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
     if (!parsed.success) for (const issue2 of parsed.error.issues) {
-      const path23 = issue2.path.map(String);
-      const key = path23.length > 0 ? path23.join(".") : "_meta";
-      if (path23.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+      const path24 = issue2.path.map(String);
+      const key = path24.length > 0 ? path24.join(".") : "_meta";
+      if (path24.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
       issues.push({
         key,
         problem: issue2.message
@@ -20393,29 +20393,29 @@ var PERMITTED_X_MCP_HEADER_TYPES = /* @__PURE__ */ new Set([
 function scanXMcpHeaderDeclarations(inputSchema) {
   const declarations = [];
   const seenLower = /* @__PURE__ */ new Map();
-  const visit = (node, path23, reachable) => {
+  const visit = (node, path24, reachable) => {
     if (node === null || typeof node !== "object") return void 0;
     const schema = node;
     if (X_MCP_HEADER_KEY in schema) {
-      if (!reachable || path23.length === 0) return `${pathName(path23)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      if (!reachable || path24.length === 0) return `${pathName(path24)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
       const raw = schema[X_MCP_HEADER_KEY];
-      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path23)}: x-mcp-header MUST be a non-empty string`;
-      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path23)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path24)}: x-mcp-header MUST be a non-empty string`;
+      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path24)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
       const type = typeof schema.type === "string" ? schema.type : void 0;
-      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path23)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
+      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path24)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
       const lower = raw.toLowerCase();
       const prior = seenLower.get(lower);
       if (prior !== void 0) return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
       seenLower.set(lower, raw);
       declarations.push({
-        path: path23,
+        path: path24,
         headerName: raw,
         type
       });
     }
     const properties = schema.properties;
     if (properties !== null && typeof properties === "object") for (const [key, child] of Object.entries(properties)) {
-      const fault$1 = visit(child, [...path23, key], reachable);
+      const fault$1 = visit(child, [...path24, key], reachable);
       if (fault$1 !== void 0) return fault$1;
     }
     for (const k of NON_REACHABLE_SUBSCHEMA_KEYWORDS) {
@@ -20423,7 +20423,7 @@ function scanXMcpHeaderDeclarations(inputSchema) {
       if (sub === void 0) continue;
       const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === "object" && OBJECT_VALUED_SUBSCHEMA_KEYWORDS.has(k) ? Object.values(sub) : [sub];
       for (const branch of branches) {
-        const fault$1 = visit(branch, [...path23, `<${k}>`], false);
+        const fault$1 = visit(branch, [...path24, `<${k}>`], false);
         if (fault$1 !== void 0) return fault$1;
       }
     }
@@ -20463,8 +20463,8 @@ var OBJECT_VALUED_SUBSCHEMA_KEYWORDS = /* @__PURE__ */ new Set([
   "$defs",
   "definitions"
 ]);
-function pathName(path23) {
-  return path23.length === 0 ? "<root>" : path23.join(".");
+function pathName(path24) {
+  return path24.length === 0 ? "<root>" : path24.join(".");
 }
 var HEADER_MISMATCH_ERROR_CODE = -32020;
 var INBOUND_VALIDATION_LADDER = [
@@ -20753,7 +20753,7 @@ var PROPERTY_KEYS_BY_TYPE = {
   array: shapeKeys([UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema])
 };
 var SUPPORTED_STRING_FORMATS = new Set(StringSchemaSchema.shape.format.unwrap().options);
-function walkProperty(node, path23, vendor, unsupported) {
+function walkProperty(node, path24, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -20761,8 +20761,8 @@ function walkProperty(node, path23, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path23}.${key}`);
-  } else unsupported.push(`${path23}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path24}.${key}`);
+  } else unsupported.push(`${path24}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -20779,11 +20779,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path23 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path23}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path24 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path24}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path23 ? `${path23}.${key}` : key;
+    const childPath = path24 ? `${path24}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -24861,8 +24861,8 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports2, module2) => {
     for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
     return ind;
   }
-  function removeDotSegments(path23) {
-    let input = path23;
+  function removeDotSegments(path24) {
+    let input = path24;
     const output = [];
     let nextSlash = -1;
     let len = 0;
@@ -25015,8 +25015,8 @@ var require_schemes = /* @__PURE__ */ __commonJSMin(((exports2, module2) => {
       wsComponent.secure = void 0;
     }
     if (wsComponent.resourceName) {
-      const [path23, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
+      const [path24, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path24 && path24 !== "/" ? path24 : void 0;
       wsComponent.query = query;
       wsComponent.resourceName = void 0;
     }
@@ -30832,8 +30832,79 @@ var windowCapabilitySchema = external_exports.object({
 }).strict();
 var healthCapabilitySchema = external_exports.object({
   operation: external_exports.enum(["check_all", "check_tool"]).default("check_all"),
-  tool: external_exports.enum(["shell", "dom_cdp", "accessibility", "input_event", "vision", "window", "health"]).optional(),
+  tool: external_exports.enum(["shell", "dom_cdp", "accessibility", "input_event", "vision", "window", "health", "system_info", "notification", "file_dialog", "clipboard", "web_fetch"]).optional(),
   request_id: external_exports.string().trim().min(1).max(128).optional()
+}).strict();
+var systemInfoCapabilitySchema = external_exports.object({
+  operation: external_exports.enum(["all", "cpu", "memory", "disks", "battery", "uptime", "os", "processes"]).default("all"),
+  top_count: external_exports.number().int().min(1).max(50).optional(),
+  ...capabilityRequestSchema
+}).strict();
+var notificationCapabilitySchema = external_exports.object({
+  action: external_exports.enum(["show"]).default("show"),
+  title: external_exports.string().trim().min(1).max(120),
+  message: external_exports.string().min(1).max(2e3),
+  ...capabilityRequestSchema
+}).strict();
+var fileDialogCapabilitySchema = external_exports.object({
+  action: external_exports.enum(["open", "save"]),
+  initial_directory: external_exports.string().max(MAX_PATH_LENGTH).optional(),
+  filter: external_exports.string().max(512).optional(),
+  multi_select: external_exports.boolean().optional(),
+  file_name: external_exports.string().max(MAX_PATH_LENGTH).optional(),
+  ...capabilityRequestSchema
+}).strict();
+var clipboardCapabilitySchema = external_exports.object({
+  action: external_exports.enum(["get_text", "set_text", "get_image"]),
+  text: external_exports.string().max(1e6).optional(),
+  ...capabilityRequestSchema
+}).strict();
+var webFetchCapabilitySchema = external_exports.object({
+  url: external_exports.string().trim().min(1).max(8192),
+  method: external_exports.enum(["GET", "POST", "PUT", "DELETE", "HEAD"]).default("GET"),
+  headers: external_exports.array(external_exports.object({ name: external_exports.string().min(1).max(256), value: external_exports.string().max(4096) }).strict()).max(64).optional(),
+  body: external_exports.string().max(1e6).optional(),
+  max_bytes: external_exports.number().int().min(1).max(10 * 1024 * 1024).optional(),
+  timeout_seconds: external_exports.number().min(1).max(600).optional(),
+  ...capabilityRequestSchema
+}).strict();
+var audioCapabilitySchema = external_exports.object({
+  action: external_exports.enum(["record", "play", "stop"]),
+  output_path: external_exports.string().max(MAX_PATH_LENGTH).optional(),
+  file_path: external_exports.string().max(MAX_PATH_LENGTH).optional(),
+  duration_seconds: external_exports.number().int().min(1).max(600).optional(),
+  ...capabilityRequestSchema
+}).strict();
+var screenRecordCapabilitySchema = external_exports.object({
+  action: external_exports.enum(["start", "stop", "status"]),
+  output_path: external_exports.string().max(MAX_PATH_LENGTH).optional(),
+  offset_x: external_exports.number().int().min(-16384).max(16384).optional(),
+  offset_y: external_exports.number().int().min(-16384).max(16384).optional(),
+  width: external_exports.number().int().min(1).max(7680).optional(),
+  height: external_exports.number().int().min(1).max(4320).optional(),
+  fps: external_exports.number().int().min(1).max(60).optional(),
+  ...capabilityRequestSchema
+}).strict();
+var officeCapabilitySchema = external_exports.object({
+  app: external_exports.enum(["excel", "word"]),
+  action: external_exports.enum(["read", "write", "read_text", "replace", "save_as"]),
+  file_path: external_exports.string().max(MAX_PATH_LENGTH),
+  target_path: external_exports.string().max(MAX_PATH_LENGTH).optional(),
+  sheet: external_exports.string().max(256).optional(),
+  range: external_exports.string().max(256).optional(),
+  values: capabilityParametersSchema.optional(),
+  find: external_exports.string().max(32768).optional(),
+  replace_with: external_exports.string().max(32768).optional(),
+  ...capabilityRequestSchema
+}).strict();
+var schedulerCapabilitySchema = external_exports.object({
+  action: external_exports.enum(["list", "create", "delete", "run"]).default("list"),
+  task_name: external_exports.string().regex(/^[\w .-]{1,200}$/).optional(),
+  command: external_exports.string().max(2048).optional(),
+  arguments: external_exports.array(external_exports.string().max(2048)).max(64).optional(),
+  schedule: external_exports.string().regex(/^[A-Z]{1,16}$/i).optional(),
+  start_time: external_exports.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  ...capabilityRequestSchema
 }).strict();
 var skillsListSchema = external_exports.object({
   query: external_exports.string().max(1024).optional(),
@@ -30961,6 +31032,78 @@ function capabilityTools(context) {
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: healthCapabilitySchema,
       handler: async (input) => execute("health", input)
+    }),
+    defineTool({
+      name: "system_info",
+      description: "Read-only system information: OS, CPU, memory, disks, battery, uptime, and top processes by memory. Use for environment checks and diagnostics.",
+      permission: "READ",
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: systemInfoCapabilitySchema,
+      handler: async (input) => execute("system_info", input)
+    }),
+    defineTool({
+      name: "notification",
+      description: "Show a Windows notification (toast when BurntToast is installed, balloon otherwise). Use to tell the user when a long task finishes.",
+      permission: "EXECUTE",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: notificationCapabilitySchema,
+      handler: async (input) => execute("notification", input)
+    }),
+    defineTool({
+      name: "file_dialog",
+      description: "Open a native Windows file open/save dialog and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards.",
+      permission: "EXECUTE",
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: fileDialogCapabilitySchema,
+      handler: async (input) => execute("file_dialog", input)
+    }),
+    defineTool({
+      name: "clipboard",
+      description: "Read or write the Windows clipboard (text, or PNG image as base64). Use get_text/get_image to read and set_text to write.",
+      permission: "DANGEROUS",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: clipboardCapabilitySchema,
+      handler: async (input) => execute("clipboard", input)
+    }),
+    defineTool({
+      name: "web_fetch",
+      description: "Fetch an http/https URL (GET/POST/PUT/DELETE/HEAD) with bounded size and timeout. Returns status, headers, and text or base64 body. Use for docs, APIs, and downloads.",
+      permission: "DANGEROUS",
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: webFetchCapabilitySchema,
+      handler: async (input) => execute("web_fetch", input)
+    }),
+    defineTool({
+      name: "audio",
+      description: "Record the microphone to a WAV file or play a local audio file through MCI. record is synchronous and limited to 600 seconds. Use stop to abort an ongoing record/play.",
+      permission: "DANGEROUS",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: audioCapabilitySchema,
+      handler: async (input) => execute("audio", input)
+    }),
+    defineTool({
+      name: "screen_record",
+      description: "Record the screen to an MP4 using ffmpeg gdigrab (requires ffmpeg on PATH). start spawns a background capture, status checks it, stop finalizes the file. Recording stops automatically after 3600 seconds.",
+      permission: "DANGEROUS",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: screenRecordCapabilitySchema,
+      handler: async (input) => execute("screen_record", input)
+    }),
+    defineTool({
+      name: "office",
+      description: "Automate Excel or Word through COM. excel: read/write cell ranges and save_as. word: read_text, find/replace, and save_as. Requires Microsoft Office installed.",
+      permission: "DANGEROUS",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: officeCapabilitySchema,
+      handler: async (input) => execute("office", input)
+    }),
+    defineTool({
+      name: "scheduler",
+      description: "Manage Windows scheduled tasks with schtasks.exe. list enumerates tasks, create registers a new task, run starts one immediately, and delete removes one. Windows only.",
+      permission: "DANGEROUS",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: schedulerCapabilitySchema,
+      handler: async (input) => execute("scheduler", input)
     })
   ];
 }
@@ -31240,7 +31383,7 @@ function workspaceTools(context) {
     }),
     defineTool({
       name: "workspace_register",
-      description: "Register an existing project directory under the E:\\ machine root. parentWorkspaceId must be the E:\\ machine root from workspace_list. Idempotent for the same path.",
+      description: "Register an existing project directory under a machine root (E:\\ by default; any drive root in unrestricted mode). parentWorkspaceId must be a machine root from workspace_list. Idempotent for the same path.",
       permission: "WRITE",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: workspaceRegisterSchema,
@@ -32123,7 +32266,7 @@ var SqliteWorkspaceRepository = class {
 
 // ../cli/src/runtime/stdio-mcp-runtime.ts
 var import_node_fs4 = require("node:fs");
-var import_node_path21 = __toESM(require("node:path"), 1);
+var import_node_path22 = __toESM(require("node:path"), 1);
 var import_node_url = require("node:url");
 
 // ../../packages/audit/dist/audit-service.js
@@ -32249,6 +32392,24 @@ var LocalCapabilityService = class {
         return this.backends.window;
       case "health":
         return this.backends.health;
+      case "system_info":
+        return this.backends.systemInfo;
+      case "notification":
+        return this.backends.notification;
+      case "file_dialog":
+        return this.backends.fileDialog;
+      case "clipboard":
+        return this.backends.clipboard;
+      case "web_fetch":
+        return this.backends.webFetch;
+      case "audio":
+        return this.backends.audio;
+      case "screen_record":
+        return this.backends.screenRecord;
+      case "office":
+        return this.backends.office;
+      case "scheduler":
+        return this.backends.scheduler;
     }
   }
 };
@@ -32990,8 +33151,11 @@ var HealthCapabilityBackend = class {
     return ok({ capabilities });
   }
   async check(tool) {
-    if (tool === "shell" || tool === "health")
+    if (tool === "shell" || tool === "health" || tool === "web_fetch" || tool === "scheduler")
       return { available: true, ready: true, local: true };
+    if (tool === "system_info" || tool === "notification" || tool === "file_dialog" || tool === "clipboard" || tool === "audio" || tool === "screen_record" || tool === "office") {
+      return { available: this.platform === "win32", ready: this.platform === "win32", local: true };
+    }
     if (tool === "input_event" || tool === "vision" || tool === "window")
       return { available: this.platform === "win32", ready: this.platform === "win32", local: true };
     if (tool === "dom_cdp")
@@ -33015,35 +33179,363 @@ function isRecord7(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// ../../packages/capabilities/dist/windows-native-backend.js
-var WindowsNativeCapabilityBackend = class {
-  capability;
-  bridge;
-  platform;
-  constructor(capability, bridge, platform = process.platform) {
-    this.capability = capability;
-    this.bridge = bridge;
-    this.platform = platform;
+// ../../packages/capabilities/dist/web-fetch-backend.js
+var DEFAULT_MAX_BYTES2 = 5 * 1024 * 1024;
+var MAX_MAX_BYTES = 10 * 1024 * 1024;
+var DEFAULT_TIMEOUT_SECONDS3 = 60;
+var MAX_TIMEOUT_SECONDS3 = 600;
+var TEXT_SAFE_CTYPES = /* @__PURE__ */ new Set(["application/json", "application/javascript", "application/xml", "application/x-www-form-urlencoded"]);
+var WebFetchCapabilityBackend = class {
+  fetchImpl;
+  constructor(options = {}) {
+    this.fetchImpl = options.fetchImpl ?? fetch;
   }
-  execute(input) {
-    if (this.platform !== "win32")
-      return Promise.resolve(err(appError("INTERNAL_ERROR", "Windows capability is unavailable on this platform", true)));
-    if (!isRecord8(input))
-      return Promise.resolve(err(appError("INVALID_INPUT", "Native capability input must be an object")));
-    if (input.dry_run === true)
-      return Promise.resolve(ok({ dry_run: true, capability: this.capability }));
-    return this.bridge.execute({ capability: this.capability, input });
+  async execute(input) {
+    const parsed = parseRequest(input);
+    if (!parsed.ok)
+      return parsed;
+    const request = parsed.value;
+    let url2;
+    try {
+      url2 = new URL(request.url);
+    } catch {
+      return err(appError("INVALID_INPUT", "URL is invalid"));
+    }
+    if (url2.protocol !== "http:" && url2.protocol !== "https:") {
+      return err(appError("INVALID_INPUT", "Only http and https URLs are supported"));
+    }
+    const headers = {};
+    for (const entry of request.headers ?? []) {
+      if (typeof entry.name !== "string" || typeof entry.value !== "string") {
+        return err(appError("INVALID_INPUT", "Header entries must be name/value strings"));
+      }
+      headers[entry.name] = entry.value;
+    }
+    let body;
+    if (request.body !== void 0) {
+      if (request.method === "GET" || request.method === "HEAD") {
+        return err(appError("INVALID_INPUT", "GET and HEAD requests cannot have a body"));
+      }
+      body = request.body;
+    }
+    const signal = AbortSignal.timeout(request.timeoutSeconds * 1e3);
+    let response;
+    try {
+      response = await this.fetchImpl(url2.toString(), {
+        method: request.method,
+        headers,
+        ...body === void 0 ? {} : { body },
+        redirect: "follow",
+        signal
+      });
+    } catch (error46) {
+      const reason = error46 instanceof Error && error46.name === "TimeoutError" ? "Request timed out" : "Request failed";
+      return err(appError("INTERNAL_ERROR", reason, true));
+    }
+    let bytes;
+    let truncated = false;
+    try {
+      if (response.body === null) {
+        bytes = Buffer.alloc(0);
+      } else {
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done)
+            break;
+          const remaining = request.maxBytes - total;
+          if (remaining <= 0) {
+            truncated = true;
+            await reader.cancel().catch(() => void 0);
+            break;
+          }
+          const slice = chunk.value.subarray(0, remaining);
+          chunks.push(slice);
+          total += slice.byteLength;
+          if (slice.byteLength < chunk.value.byteLength) {
+            truncated = true;
+            await reader.cancel().catch(() => void 0);
+            break;
+          }
+        }
+        bytes = Buffer.concat(chunks);
+      }
+    } catch {
+      return err(appError("INTERNAL_ERROR", "Response body could not be read", true));
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    const isText = contentType.startsWith("text/") || TEXT_SAFE_CTYPES.has(contentType.split(";")[0]?.trim().toLowerCase() ?? "");
+    const value = {
+      status: response.status,
+      status_text: response.statusText,
+      url: response.url,
+      content_type: contentType,
+      byte_length: bytes.byteLength,
+      truncated,
+      ...isText ? { text: bytes.toString("utf8") } : { data_base64: bytes.toString("base64") }
+    };
+    return ok(value);
   }
 };
+function parseRequest(value) {
+  if (!isRecord8(value))
+    return err(appError("INVALID_INPUT", "web_fetch input must be an object"));
+  const url2 = value.url;
+  if (typeof url2 !== "string" || url2.trim().length === 0)
+    return err(appError("INVALID_INPUT", "URL is required"));
+  const methodValue = value.method === void 0 ? "GET" : value.method;
+  if (methodValue !== "GET" && methodValue !== "POST" && methodValue !== "PUT" && methodValue !== "DELETE" && methodValue !== "HEAD") {
+    return err(appError("INVALID_INPUT", "Method is invalid"));
+  }
+  const headers = value.headers === void 0 ? [] : value.headers;
+  if (!Array.isArray(headers) || headers.length > 64)
+    return err(appError("INVALID_INPUT", "Headers are invalid"));
+  const body = value.body === void 0 ? void 0 : value.body;
+  if (body !== void 0 && typeof body !== "string")
+    return err(appError("INVALID_INPUT", "Body must be a string"));
+  const maxBytes = value.max_bytes === void 0 ? DEFAULT_MAX_BYTES2 : value.max_bytes;
+  if (typeof maxBytes !== "number" || !Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_MAX_BYTES) {
+    return err(appError("INVALID_INPUT", "max_bytes is invalid"));
+  }
+  const timeoutSeconds = value.timeout_seconds === void 0 ? DEFAULT_TIMEOUT_SECONDS3 : value.timeout_seconds;
+  if (typeof timeoutSeconds !== "number" || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > MAX_TIMEOUT_SECONDS3) {
+    return err(appError("INVALID_INPUT", "timeout_seconds is invalid"));
+  }
+  return ok({
+    url: url2.trim(),
+    method: methodValue,
+    headers,
+    ...body === void 0 ? {} : { body },
+    maxBytes,
+    timeoutSeconds
+  });
+}
 function isRecord8(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// ../../packages/capabilities/dist/windows-bridge.js
+// ../../packages/capabilities/dist/scheduler-backend.js
 var import_node_child_process8 = require("node:child_process");
+var import_node_util = require("node:util");
+var execFileAsync = (0, import_node_util.promisify)(import_node_child_process8.execFile);
+var TASK_NAME_PATTERN = /^[\w .-]{1,200}$/;
+var SchedulerCapabilityBackend = class {
+  platform;
+  executable;
+  runImpl;
+  constructor(options = {}) {
+    this.platform = options.platform ?? process.platform;
+    this.executable = options.executable ?? "schtasks.exe";
+    this.runImpl = options.runImpl ?? (async (executable, args) => {
+      const result = await execFileAsync(executable, [...args], { windowsHide: true, encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+      return { stdout: typeof result.stdout === "string" ? result.stdout : "", stderr: typeof result.stderr === "string" ? result.stderr : "" };
+    });
+  }
+  async execute(input) {
+    if (this.platform !== "win32")
+      return err(appError("INTERNAL_ERROR", "Scheduled tasks are unavailable on this platform", true));
+    const parsed = parseRequest2(input);
+    if (!parsed.ok)
+      return parsed;
+    const request = parsed.value;
+    try {
+      switch (request.action) {
+        case "list":
+          return ok({ tasks: await this.list() });
+        case "create":
+          return ok(await this.create(request.taskName, request.command, request.arguments ?? [], request.schedule ?? "DAILY", request.startTime ?? "09:00"));
+        case "delete":
+          return ok(await this.delete(request.taskName));
+        case "run":
+          return ok(await this.run(request.taskName));
+      }
+    } catch (error46) {
+      const detail = extractDetail(error46);
+      return err(appError("INTERNAL_ERROR", detail.length > 0 ? detail : "Scheduled task operation failed", true));
+    }
+  }
+  async list() {
+    const result = await this.runImpl(this.executable, ["/Query", "/FO", "LIST"]);
+    const lines = result.stdout.split(/\r?\n/);
+    const tasks = [];
+    let current = null;
+    for (const raw of lines) {
+      const separator = raw.indexOf(":");
+      if (separator < 0) {
+        if (current !== null) {
+          tasks.push(current);
+          current = null;
+        }
+        continue;
+      }
+      const key = raw.slice(0, separator).trim();
+      const value = raw.slice(separator + 1).trim();
+      if (key.length === 0 || value.length === 0)
+        continue;
+      if (key === "TaskName") {
+        if (current !== null)
+          tasks.push(current);
+        current = { name: value };
+      } else if (current !== null) {
+        current[key.toLowerCase().replace(/[^a-z0-9]/g, "_")] = value;
+      }
+    }
+    if (current !== null)
+      tasks.push(current);
+    return tasks;
+  }
+  async create(taskName, command, args, schedule, startTime) {
+    const taskRun = buildTaskRun(command, args);
+    await this.runImpl(this.executable, [
+      "/Create",
+      "/TN",
+      taskName,
+      "/TR",
+      taskRun,
+      "/SC",
+      schedule.toUpperCase(),
+      "/ST",
+      startTime,
+      "/F"
+    ]);
+    return { created: true, task_name: taskName, schedule, start_time: startTime };
+  }
+  async delete(taskName) {
+    await this.runImpl(this.executable, ["/Delete", "/TN", taskName, "/F"]);
+    return { deleted: true, task_name: taskName };
+  }
+  async run(taskName) {
+    await this.runImpl(this.executable, ["/Run", "/TN", taskName]);
+    return { started: true, task_name: taskName };
+  }
+};
+function parseRequest2(value) {
+  if (!isRecord9(value))
+    return err(appError("INVALID_INPUT", "scheduler input must be an object"));
+  const action = value.action === void 0 ? "list" : value.action;
+  if (action !== "list" && action !== "create" && action !== "delete" && action !== "run") {
+    return err(appError("INVALID_INPUT", "scheduler action is invalid"));
+  }
+  const taskName = value.task_name === void 0 ? "" : value.task_name;
+  if (action !== "list" && (typeof taskName !== "string" || !TASK_NAME_PATTERN.test(taskName.trim()))) {
+    return err(appError("INVALID_INPUT", "task_name must be 1-200 letters, digits, spaces, dots, dashes, or underscores"));
+  }
+  const command = value.command === void 0 ? "" : value.command;
+  if (action === "create" && (typeof command !== "string" || command.trim().length === 0 || command.length > 2048)) {
+    return err(appError("INVALID_INPUT", "command is required (at most 2048 characters)"));
+  }
+  const argumentsValue = value.arguments === void 0 ? [] : value.arguments;
+  if (action === "create" && (!Array.isArray(argumentsValue) || argumentsValue.length > 64 || !argumentsValue.every((entry) => typeof entry === "string" && entry.length <= 2048))) {
+    return err(appError("INVALID_INPUT", "arguments must be at most 64 strings"));
+  }
+  const schedule = value.schedule === void 0 ? "DAILY" : value.schedule;
+  if (action === "create" && (typeof schedule !== "string" || !/^[A-Z]{1,16}$/.test(schedule.toUpperCase()))) {
+    return err(appError("INVALID_INPUT", "schedule must be a short uppercase schedule name (e.g. DAILY)"));
+  }
+  const startTime = value.start_time === void 0 ? "09:00" : value.start_time;
+  if (action === "create" && (typeof startTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime))) {
+    return err(appError("INVALID_INPUT", "start_time must be HH:MM"));
+  }
+  return ok({
+    action,
+    taskName: typeof taskName === "string" ? taskName.trim() : "",
+    command: typeof command === "string" ? command.trim() : "",
+    arguments: action === "create" && Array.isArray(argumentsValue) ? argumentsValue.filter((entry) => typeof entry === "string") : [],
+    schedule: typeof schedule === "string" ? schedule.toUpperCase() : "DAILY",
+    startTime: typeof startTime === "string" ? startTime : "09:00"
+  });
+}
+function buildTaskRun(command, args) {
+  const quoted = [command, ...args].map((entry) => /[\s"]/.test(entry) ? `"${entry.replaceAll('"', '\\"')}"` : entry).join(" ");
+  return quoted.length > 250 ? quoted.slice(0, 250) : quoted;
+}
+function extractDetail(error46) {
+  if (typeof error46 !== "object" || error46 === null)
+    return "";
+  const record2 = error46;
+  const stderr = typeof record2.stderr === "string" ? record2.stderr.trim() : "";
+  if (stderr.length > 0)
+    return stderr.slice(0, 500);
+  return typeof record2.message === "string" ? record2.message.slice(0, 500) : "";
+}
+function isRecord9(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ../../packages/capabilities/dist/windows-native-backend.js
 var import_node_path18 = __toESM(require("node:path"), 1);
-var DEFAULT_TIMEOUT_SECONDS3 = 600;
-var MAX_TIMEOUT_SECONDS3 = 14400;
+var PATH_FIELDS = {
+  accessibility: [],
+  input_event: [],
+  vision: [],
+  window: [],
+  system_info: [],
+  notification: [],
+  file_dialog: [],
+  clipboard: [],
+  audio: ["file_path", "output_path"],
+  screen_record: ["output_path"],
+  office: ["file_path", "target_path"]
+};
+var WindowsNativeCapabilityBackend = class {
+  capability;
+  bridge;
+  platform;
+  options;
+  constructor(capability, bridge, platform = process.platform, options = {}) {
+    this.capability = capability;
+    this.bridge = bridge;
+    this.platform = platform;
+    this.options = options;
+  }
+  async execute(input) {
+    if (this.platform !== "win32")
+      return err(appError("INTERNAL_ERROR", "Windows capability is unavailable on this platform", true));
+    if (!isRecord10(input))
+      return err(appError("INVALID_INPUT", "Native capability input must be an object"));
+    if (input.dry_run === true)
+      return ok({ dry_run: true, capability: this.capability });
+    const pathCheck = await this.assertPathsAllowed(input);
+    if (!pathCheck.ok)
+      return pathCheck;
+    return this.bridge.execute({ capability: this.capability, input });
+  }
+  async assertPathsAllowed(input) {
+    if (this.options.unrestricted === true)
+      return ok(void 0);
+    const fields = PATH_FIELDS[this.capability];
+    const targets = [];
+    for (const field of fields) {
+      const value = input[field];
+      if (typeof value === "string" && value.trim().length > 0)
+        targets.push(import_node_path18.default.resolve(value.trim()));
+    }
+    if (targets.length === 0)
+      return ok(void 0);
+    const roots = this.options.allowedRootsProvider === void 0 ? [] : (await this.options.allowedRootsProvider()).map((root) => import_node_path18.default.resolve(root));
+    for (const target of targets) {
+      const within = roots.some((root) => isWithin3(root, target));
+      if (!within)
+        return err(appError("PATH_OUTSIDE_WORKSPACE", `${this.capability} target path is outside configured local roots`));
+    }
+    return ok(void 0);
+  }
+};
+function isWithin3(root, candidate) {
+  const relative = import_node_path18.default.relative(root, candidate);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${import_node_path18.default.sep}`) && !import_node_path18.default.isAbsolute(relative);
+}
+function isRecord10(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ../../packages/capabilities/dist/windows-bridge.js
+var import_node_child_process9 = require("node:child_process");
+var import_node_path19 = __toESM(require("node:path"), 1);
+var DEFAULT_TIMEOUT_SECONDS4 = 600;
+var MAX_TIMEOUT_SECONDS4 = 14400;
 var DEFAULT_MAX_OUTPUT_BYTES2 = 8 * 1024 * 1024;
 var APP_ERROR_CODES = [
   "INVALID_INPUT",
@@ -33069,7 +33561,7 @@ var PowerShellWindowsCapabilityBridge = class {
   maxOutputBytes;
   terminator;
   constructor(options) {
-    this.scriptPath = import_node_path18.default.resolve(options.scriptPath);
+    this.scriptPath = import_node_path19.default.resolve(options.scriptPath);
     this.powershellPath = options.powershellPath ?? powershellExecutable();
     this.platform = options.platform ?? process.platform;
     this.maxOutputBytes = Math.max(1, Math.min(options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES2, DEFAULT_MAX_OUTPUT_BYTES2));
@@ -33078,7 +33570,7 @@ var PowerShellWindowsCapabilityBridge = class {
   execute(request) {
     if (this.platform !== "win32")
       return Promise.resolve(err(appError("INTERNAL_ERROR", "Windows bridge is unavailable on this platform", true)));
-    if (!import_node_path18.default.isAbsolute(this.scriptPath))
+    if (!import_node_path19.default.isAbsolute(this.scriptPath))
       return Promise.resolve(err(appError("INVALID_INPUT", "Windows bridge script path must be absolute")));
     let serialized;
     try {
@@ -33090,7 +33582,7 @@ var PowerShellWindowsCapabilityBridge = class {
       let stdout = "";
       let timedOut = false;
       let settled = false;
-      const child = (0, import_node_child_process8.spawn)(this.powershellPath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", this.scriptPath], {
+      const child = (0, import_node_child_process9.spawn)(this.powershellPath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", this.scriptPath], {
         shell: false,
         windowsHide: false,
         stdio: ["pipe", "pipe", "pipe"]
@@ -33147,25 +33639,25 @@ function parseBridgeResult(value) {
   } catch {
     return void 0;
   }
-  if (!isRecord9(parsed) || typeof parsed.ok !== "boolean")
+  if (!isRecord11(parsed) || typeof parsed.ok !== "boolean")
     return void 0;
   if (parsed.ok)
     return ok(parsed.value);
   const error46 = parsed.error;
-  if (!isRecord9(error46) || typeof error46.code !== "string" || typeof error46.message !== "string" || typeof error46.recoverable !== "boolean")
+  if (!isRecord11(error46) || typeof error46.code !== "string" || typeof error46.message !== "string" || typeof error46.recoverable !== "boolean")
     return void 0;
   const code = APP_ERROR_CODES.find((candidate) => candidate === error46.code) ?? "INTERNAL_ERROR";
   return err(appError(code, error46.message, error46.recoverable));
 }
 function readTimeout(value) {
-  if (!isRecord9(value) || typeof value.timeout_seconds !== "number" || !Number.isFinite(value.timeout_seconds))
-    return DEFAULT_TIMEOUT_SECONDS3;
-  return Math.min(MAX_TIMEOUT_SECONDS3, Math.max(0.1, value.timeout_seconds));
+  if (!isRecord11(value) || typeof value.timeout_seconds !== "number" || !Number.isFinite(value.timeout_seconds))
+    return DEFAULT_TIMEOUT_SECONDS4;
+  return Math.min(MAX_TIMEOUT_SECONDS4, Math.max(0.1, value.timeout_seconds));
 }
 function powershellExecutable() {
-  return process.platform === "win32" && process.env.SystemRoot !== void 0 ? import_node_path18.default.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "powershell.exe";
+  return process.platform === "win32" && process.env.SystemRoot !== void 0 ? import_node_path19.default.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "powershell.exe";
 }
-function isRecord9(value) {
+function isRecord11(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -33177,7 +33669,16 @@ var capabilityToolNames = Object.freeze([
   "input_event",
   "vision",
   "window",
-  "health"
+  "health",
+  "system_info",
+  "notification",
+  "file_dialog",
+  "clipboard",
+  "web_fetch",
+  "audio",
+  "screen_record",
+  "office",
+  "scheduler"
 ]);
 
 // ../../packages/extensions/dist/types.js
@@ -33264,7 +33765,7 @@ function normalizePathKey(value) {
 // ../../packages/extensions/dist/skill-catalog.js
 var import_promises16 = require("node:fs/promises");
 var import_node_os3 = __toESM(require("node:os"), 1);
-var import_node_path19 = __toESM(require("node:path"), 1);
+var import_node_path20 = __toESM(require("node:path"), 1);
 var SkillCatalog = class {
   options;
   constructor(options) {
@@ -33289,11 +33790,11 @@ var SkillCatalog = class {
     if (skill === void 0)
       return err(appError("FILE_NOT_FOUND", `Skill not found: ${input.skillId}`));
     const relativePath = input.relativePath?.trim() || "SKILL.md";
-    if (relativePath.includes("\0") || import_node_path19.default.isAbsolute(relativePath)) {
+    if (relativePath.includes("\0") || import_node_path20.default.isAbsolute(relativePath)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Skill relative path must stay inside the skill folder"));
     }
-    const skillDir = import_node_path19.default.dirname(skill.skillPath);
-    const resolved = import_node_path19.default.resolve(skillDir, relativePath);
+    const skillDir = import_node_path20.default.dirname(skill.skillPath);
+    const resolved = import_node_path20.default.resolve(skillDir, relativePath);
     if (!isPathInside(skillDir, resolved)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Skill relative path must stay inside the skill folder"));
     }
@@ -33302,7 +33803,7 @@ var SkillCatalog = class {
       if (Buffer.byteLength(content, "utf8") > 2 * 1024 * 1024) {
         return err(appError("FILE_TOO_LARGE", "Skill file exceeds 2 MiB"));
       }
-      const meta3 = parseSkillMarkdown(content, import_node_path19.default.basename(skillDir));
+      const meta3 = parseSkillMarkdown(content, import_node_path20.default.basename(skillDir));
       return ok({
         id: skill.id,
         name: meta3.name,
@@ -33325,7 +33826,7 @@ var SkillCatalog = class {
       for (const skillPath of skillFiles) {
         try {
           const content = await (0, import_promises16.readFile)(skillPath, "utf8");
-          const fallbackName = import_node_path19.default.basename(import_node_path19.default.dirname(skillPath));
+          const fallbackName = import_node_path20.default.basename(import_node_path20.default.dirname(skillPath));
           const meta3 = parseSkillMarkdown(content, fallbackName);
           skills.push({
             id: `${root.source}/${meta3.name}`,
@@ -33345,17 +33846,17 @@ var SkillCatalog = class {
   roots() {
     const home = this.options.homeDir ?? import_node_os3.default.homedir();
     const defaults = [
-      { source: "cursor-skills-cursor", path: import_node_path19.default.join(home, ".cursor", "skills-cursor") },
-      { source: "cursor-skills", path: import_node_path19.default.join(home, ".cursor", "skills") },
-      { source: "claude-skills", path: import_node_path19.default.join(home, ".claude", "skills") },
-      { source: "agents-skills", path: import_node_path19.default.join(home, ".agents", "skills") }
+      { source: "cursor-skills-cursor", path: import_node_path20.default.join(home, ".cursor", "skills-cursor") },
+      { source: "cursor-skills", path: import_node_path20.default.join(home, ".cursor", "skills") },
+      { source: "claude-skills", path: import_node_path20.default.join(home, ".claude", "skills") },
+      { source: "agents-skills", path: import_node_path20.default.join(home, ".agents", "skills") }
     ];
     const workspaceRoot = this.options.workspaceRoot?.trim();
     if (workspaceRoot !== void 0 && workspaceRoot.length > 0) {
-      defaults.push({ source: "workspace-cursor-skills", path: import_node_path19.default.join(workspaceRoot, ".cursor", "skills") }, { source: "workspace-claude-skills", path: import_node_path19.default.join(workspaceRoot, ".claude", "skills") });
+      defaults.push({ source: "workspace-cursor-skills", path: import_node_path20.default.join(workspaceRoot, ".cursor", "skills") }, { source: "workspace-claude-skills", path: import_node_path20.default.join(workspaceRoot, ".claude", "skills") });
     }
     for (const extra of [...this.options.settings.extraSkillRoots, ...this.options.extraRoots ?? []]) {
-      defaults.push({ source: `extra:${import_node_path19.default.basename(extra)}`, path: import_node_path19.default.resolve(extra) });
+      defaults.push({ source: `extra:${import_node_path20.default.basename(extra)}`, path: import_node_path20.default.resolve(extra) });
     }
     return defaults;
   }
@@ -33437,7 +33938,7 @@ async function findSkillFiles(root, maxDepth) {
 async function walkForSkills(current, depth, maxDepth, results) {
   if (depth > maxDepth)
     return;
-  const skillPath = import_node_path19.default.join(current, "SKILL.md");
+  const skillPath = import_node_path20.default.join(current, "SKILL.md");
   if (depth > 0 && await isFile(skillPath)) {
     results.push(skillPath);
     return;
@@ -33445,7 +33946,7 @@ async function walkForSkills(current, depth, maxDepth, results) {
   if (depth === maxDepth)
     return;
   for (const entry of await safeReaddir(current)) {
-    await walkForSkills(import_node_path19.default.join(current, entry), depth + 1, maxDepth, results);
+    await walkForSkills(import_node_path20.default.join(current, entry), depth + 1, maxDepth, results);
   }
 }
 async function safeReaddir(root) {
@@ -33464,8 +33965,8 @@ async function isFile(filePath) {
   }
 }
 function isPathInside(root, candidate) {
-  const relative = import_node_path19.default.relative(import_node_path19.default.resolve(root), import_node_path19.default.resolve(candidate));
-  return relative === "" || !relative.startsWith("..") && !import_node_path19.default.isAbsolute(relative);
+  const relative = import_node_path20.default.relative(import_node_path20.default.resolve(root), import_node_path20.default.resolve(candidate));
+  return relative === "" || !relative.startsWith("..") && !import_node_path20.default.isAbsolute(relative);
 }
 function dedupeById(skills) {
   const seen = /* @__PURE__ */ new Set();
@@ -33482,7 +33983,7 @@ function dedupeById(skills) {
 // ../../packages/extensions/dist/mcp-config-loader.js
 var import_promises17 = require("node:fs/promises");
 var import_node_os4 = __toESM(require("node:os"), 1);
-var import_node_path20 = __toESM(require("node:path"), 1);
+var import_node_path21 = __toESM(require("node:path"), 1);
 var McpConfigLoader = class {
   options;
   constructor(options) {
@@ -33490,10 +33991,10 @@ var McpConfigLoader = class {
   }
   async discover() {
     const home = this.options.homeDir ?? import_node_os4.default.homedir();
-    const appData = this.options.appDataDir ?? process.env.APPDATA ?? import_node_path20.default.join(home, "AppData", "Roaming");
+    const appData = this.options.appDataDir ?? process.env.APPDATA ?? import_node_path21.default.join(home, "AppData", "Roaming");
     const discovered = [];
-    await this.loadFile(discovered, import_node_path20.default.join(home, ".cursor", "mcp.json"), "cursor");
-    await this.loadFile(discovered, import_node_path20.default.join(appData, "Claude", "claude_desktop_config.json"), "claude-desktop");
+    await this.loadFile(discovered, import_node_path21.default.join(home, ".cursor", "mcp.json"), "cursor");
+    await this.loadFile(discovered, import_node_path21.default.join(appData, "Claude", "claude_desktop_config.json"), "claude-desktop");
     for (const [name, config2] of Object.entries(this.options.settings.extraMcpServers)) {
       discovered.push(this.toServer(name, "lnwjud-settings", config2));
     }
@@ -33552,7 +34053,7 @@ function exclusionReason(name, config2) {
   if (lowered === "lnwjud" || lowered.startsWith("lnwjud-")) {
     return "Refusing to aggregate lnwjud itself";
   }
-  const command = import_node_path20.default.basename(config2.command).toLowerCase();
+  const command = import_node_path21.default.basename(config2.command).toLowerCase();
   if (command === "lnwjud" || command === "lnwjud.exe" || command.includes("lnwjud")) {
     return "Refusing to aggregate lnwjud itself";
   }
@@ -36202,9 +36703,9 @@ var rev2026Codec2 = {
     });
     const parsed = buildSchemas20262().RequestMetaEnvelopeSchema.safeParse(meta3);
     if (!parsed.success) for (const issue2 of parsed.error.issues) {
-      const path23 = issue2.path.map(String);
-      const key = path23.length > 0 ? path23.join(".") : "_meta";
-      if (path23.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+      const path24 = issue2.path.map(String);
+      const key = path24.length > 0 ? path24.join(".") : "_meta";
+      if (path24.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
       issues.push({
         key,
         problem: issue2.message
@@ -36501,29 +37002,29 @@ var PERMITTED_X_MCP_HEADER_TYPES2 = /* @__PURE__ */ new Set([
 function scanXMcpHeaderDeclarations2(inputSchema) {
   const declarations = [];
   const seenLower = /* @__PURE__ */ new Map();
-  const visit = (node, path23, reachable) => {
+  const visit = (node, path24, reachable) => {
     if (node === null || typeof node !== "object") return void 0;
     const schema = node;
     if (X_MCP_HEADER_KEY2 in schema) {
-      if (!reachable || path23.length === 0) return `${pathName2(path23)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      if (!reachable || path24.length === 0) return `${pathName2(path24)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
       const raw = schema[X_MCP_HEADER_KEY2];
-      if (typeof raw !== "string" || raw.length === 0) return `${pathName2(path23)}: x-mcp-header MUST be a non-empty string`;
-      if (!RFC9110_TOKEN2.test(raw)) return `${pathName2(path23)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      if (typeof raw !== "string" || raw.length === 0) return `${pathName2(path24)}: x-mcp-header MUST be a non-empty string`;
+      if (!RFC9110_TOKEN2.test(raw)) return `${pathName2(path24)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
       const type = typeof schema.type === "string" ? schema.type : void 0;
-      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES2.has(type)) return `${pathName2(path23)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
+      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES2.has(type)) return `${pathName2(path24)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
       const lower = raw.toLowerCase();
       const prior = seenLower.get(lower);
       if (prior !== void 0) return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
       seenLower.set(lower, raw);
       declarations.push({
-        path: path23,
+        path: path24,
         headerName: raw,
         type
       });
     }
     const properties = schema.properties;
     if (properties !== null && typeof properties === "object") for (const [key, child] of Object.entries(properties)) {
-      const fault$1 = visit(child, [...path23, key], reachable);
+      const fault$1 = visit(child, [...path24, key], reachable);
       if (fault$1 !== void 0) return fault$1;
     }
     for (const k of NON_REACHABLE_SUBSCHEMA_KEYWORDS2) {
@@ -36531,7 +37032,7 @@ function scanXMcpHeaderDeclarations2(inputSchema) {
       if (sub === void 0) continue;
       const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === "object" && OBJECT_VALUED_SUBSCHEMA_KEYWORDS2.has(k) ? Object.values(sub) : [sub];
       for (const branch of branches) {
-        const fault$1 = visit(branch, [...path23, `<${k}>`], false);
+        const fault$1 = visit(branch, [...path24, `<${k}>`], false);
         if (fault$1 !== void 0) return fault$1;
       }
     }
@@ -36571,8 +37072,8 @@ var OBJECT_VALUED_SUBSCHEMA_KEYWORDS2 = /* @__PURE__ */ new Set([
   "$defs",
   "definitions"
 ]);
-function pathName2(path23) {
-  return path23.length === 0 ? "<root>" : path23.join(".");
+function pathName2(path24) {
+  return path24.length === 0 ? "<root>" : path24.join(".");
 }
 var BASE64_SENTINEL_PREFIX = "=?base64?";
 var BASE64_SENTINEL_SUFFIX = "?=";
@@ -36605,9 +37106,9 @@ function utf8ToBase64(s) {
 function encodeMcpParamValue(value) {
   return needsBase64(value) ? `${BASE64_SENTINEL_PREFIX}${utf8ToBase64(value)}${BASE64_SENTINEL_SUFFIX}` : value;
 }
-function valueAtPath(root, path23) {
+function valueAtPath(root, path24) {
   let node = root;
-  for (const key of path23) {
+  for (const key of path24) {
     if (node === null || typeof node !== "object") return void 0;
     node = node[key];
   }
@@ -36862,7 +37363,7 @@ var PROPERTY_KEYS_BY_TYPE2 = {
   array: shapeKeys2([UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema])
 };
 var SUPPORTED_STRING_FORMATS2 = new Set(StringSchemaSchema.shape.format.unwrap().options);
-function walkProperty2(node, path23, vendor, unsupported) {
+function walkProperty2(node, path24, vendor, unsupported) {
   if (!isJsonObject2(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE2, node.type) ? PROPERTY_KEYS_BY_TYPE2[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -36870,8 +37371,8 @@ function walkProperty2(node, path23, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword2(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS2.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern2(node.format, value, vendor)) unsupported.push(`${path23}.${key}`);
-  } else unsupported.push(`${path23}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern2(node.format, value, vendor)) unsupported.push(`${path24}.${key}`);
+  } else unsupported.push(`${path24}.${key}`);
   return pruned;
 }
 function walkRequestedSchema2(converted, vendor) {
@@ -36888,11 +37389,11 @@ function describeUnsupportedProperties2(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema2(PrimitiveSchemaDefinitionSchema, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths2(original, parsed, path23 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths2(item, parsed[index], `${path23}[${index}]`));
+function findDroppedConstraintPaths2(original, parsed, path24 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths2(item, parsed[index], `${path24}[${index}]`));
   if (!isJsonObject2(original) || !isJsonObject2(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path23 ? `${path23}.${key}` : key;
+    const childPath = path24 ? `${path24}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword2(key) ? [] : [childPath];
     return findDroppedConstraintPaths2(value, parsed[key], childPath);
   });
@@ -41043,8 +41544,8 @@ var require_utils2 = /* @__PURE__ */ __commonJSMin2(((exports2, module2) => {
     for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
     return ind;
   }
-  function removeDotSegments(path23) {
-    let input = path23;
+  function removeDotSegments(path24) {
+    let input = path24;
     const output = [];
     let nextSlash = -1;
     let len = 0;
@@ -41197,8 +41698,8 @@ var require_schemes2 = /* @__PURE__ */ __commonJSMin2(((exports2, module2) => {
       wsComponent.secure = void 0;
     }
     if (wsComponent.resourceName) {
-      const [path23, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
+      const [path24, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path24 && path24 !== "/" ? path24 : void 0;
       wsComponent.query = query;
       wsComponent.resourceName = void 0;
     }
@@ -48214,7 +48715,7 @@ function createLocalExtensionsService(options = {}) {
 // ../cli/src/runtime/stdio-mcp-runtime.ts
 var import_meta = {};
 function createStdioMcpRuntime(dataPath, workspace, unrestricted = false) {
-  const database = new SqliteDatabase(import_node_path21.default.join(dataPath, "lnwjud.sqlite"));
+  const database = new SqliteDatabase(import_node_path22.default.join(dataPath, "lnwjud.sqlite"));
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
   const auditRepository = new SqliteAuditRepository(database);
@@ -48311,12 +48812,13 @@ function createStdioCapabilityService(dataPath, workspaceRootsProvider, unrestri
     },
     unrestricted
   });
-  const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: import_node_path21.default.join(dataPath, "browser-profile") });
+  const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: import_node_path22.default.join(dataPath, "browser-profile") });
   const browserBackend = new BrowserCdpBackend({
     protocol: browserProtocol,
     launcher: (url2) => browserProtocol.launch(url2)
   });
   const windowsBridge = new PowerShellWindowsCapabilityBridge({ scriptPath: capabilityBridgeScriptPath() });
+  const nativeOptions = { allowedRootsProvider: workspaceRootsProvider, unrestricted };
   const health = new HealthCapabilityBackend({
     domCdp: browserBackend,
     accessibility: new WindowsNativeCapabilityBackend("accessibility", windowsBridge)
@@ -48328,26 +48830,35 @@ function createStdioCapabilityService(dataPath, workspaceRootsProvider, unrestri
     inputEvent: new WindowsNativeCapabilityBackend("input_event", windowsBridge),
     vision: new WindowsNativeCapabilityBackend("vision", windowsBridge),
     window: new WindowsNativeCapabilityBackend("window", windowsBridge),
-    health
+    health,
+    systemInfo: new WindowsNativeCapabilityBackend("system_info", windowsBridge),
+    notification: new WindowsNativeCapabilityBackend("notification", windowsBridge),
+    fileDialog: new WindowsNativeCapabilityBackend("file_dialog", windowsBridge),
+    clipboard: new WindowsNativeCapabilityBackend("clipboard", windowsBridge),
+    webFetch: new WebFetchCapabilityBackend(),
+    audio: new WindowsNativeCapabilityBackend("audio", windowsBridge, process.platform, nativeOptions),
+    screenRecord: new WindowsNativeCapabilityBackend("screen_record", windowsBridge, process.platform, nativeOptions),
+    office: new WindowsNativeCapabilityBackend("office", windowsBridge, process.platform, nativeOptions),
+    scheduler: new SchedulerCapabilityBackend()
   });
 }
 function readCapabilityRoots(value) {
   if (value === void 0 || value.trim().length === 0) return [];
-  return value.split(";").map((root) => root.trim()).filter((root) => root.length > 0).map((root) => import_node_path21.default.resolve(root));
+  return value.split(";").map((root) => root.trim()).filter((root) => root.length > 0).map((root) => import_node_path22.default.resolve(root));
 }
 function capabilityBridgeScriptPath() {
   const configured = process.env.LNWJUD_CAPABILITY_BRIDGE_SCRIPT;
-  if (configured !== void 0 && configured.trim().length > 0) return import_node_path21.default.resolve(configured);
+  if (configured !== void 0 && configured.trim().length > 0) return import_node_path22.default.resolve(configured);
   const scriptDir = resolveScriptDirectory();
   const resourcesPath = process.resourcesPath;
   const candidates = [
-    scriptDir === void 0 ? void 0 : import_node_path21.default.join(scriptDir, "windows-capability-bridge.ps1"),
-    scriptDir === void 0 ? void 0 : import_node_path21.default.join(scriptDir, "resources", "windows-capability-bridge.ps1"),
-    import_node_path21.default.resolve(process.cwd(), "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
-    import_node_path21.default.resolve(process.cwd(), "..", "..", "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
-    resourcesPath === void 0 ? void 0 : import_node_path21.default.join(resourcesPath, "windows-capability-bridge.ps1"),
-    import_node_path21.default.join(import_node_path21.default.dirname(process.execPath), "windows-capability-bridge.ps1"),
-    import_node_path21.default.join(import_node_path21.default.dirname(process.execPath), "resources", "windows-capability-bridge.ps1")
+    scriptDir === void 0 ? void 0 : import_node_path22.default.join(scriptDir, "windows-capability-bridge.ps1"),
+    scriptDir === void 0 ? void 0 : import_node_path22.default.join(scriptDir, "resources", "windows-capability-bridge.ps1"),
+    import_node_path22.default.resolve(process.cwd(), "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
+    import_node_path22.default.resolve(process.cwd(), "..", "..", "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
+    resourcesPath === void 0 ? void 0 : import_node_path22.default.join(resourcesPath, "windows-capability-bridge.ps1"),
+    import_node_path22.default.join(import_node_path22.default.dirname(process.execPath), "windows-capability-bridge.ps1"),
+    import_node_path22.default.join(import_node_path22.default.dirname(process.execPath), "resources", "windows-capability-bridge.ps1")
   ].filter((candidate) => candidate !== void 0);
   return candidates.find((candidate) => (0, import_node_fs4.existsSync)(candidate)) ?? candidates[0];
 }
@@ -48355,14 +48866,14 @@ function resolveScriptDirectory() {
   const arg1 = process.argv[1];
   if (typeof arg1 === "string" && arg1.trim().length > 0) {
     try {
-      return import_node_path21.default.dirname(import_node_path21.default.resolve(arg1));
+      return import_node_path22.default.dirname(import_node_path22.default.resolve(arg1));
     } catch {
     }
   }
   try {
     const metaUrl = import_meta.url;
     if (typeof metaUrl === "string" && metaUrl.length > 0) {
-      return import_node_path21.default.dirname((0, import_node_url.fileURLToPath)(metaUrl));
+      return import_node_path22.default.dirname((0, import_node_url.fileURLToPath)(metaUrl));
     }
   } catch {
   }
@@ -48382,7 +48893,7 @@ function hasFlag(flag) {
 function resolveDataPath() {
   const configured = process.env.LNWJUD_DATA_PATH?.trim();
   if (configured) return configured;
-  return import_node_path22.default.join(process.env.APPDATA ?? import_node_path22.default.join(import_node_os5.default.homedir(), "AppData", "Roaming"), "lnwjud");
+  return import_node_path23.default.join(process.env.APPDATA ?? import_node_path23.default.join(import_node_os5.default.homedir(), "AppData", "Roaming"), "lnwjud");
 }
 async function main() {
   const eRoot = machineRootPath();
@@ -48392,13 +48903,13 @@ async function main() {
   }
   const dataPath = resolveDataPath();
   import_node_fs5.default.mkdirSync(dataPath, { recursive: true });
-  const database = new SqliteDatabase(import_node_path22.default.join(dataPath, "lnwjud.sqlite"));
+  const database = new SqliteDatabase(import_node_path23.default.join(dataPath, "lnwjud.sqlite"));
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
   const workspaceService = new WorkspaceService(workspaceRepository);
   const unrestricted = isUnrestricted(process.env, settingsRepository.get(UNRESTRICTED_SETTING_KEY));
   const requestedRaw = readArg("--workspace") ?? process.env.LNWJUD_WORKSPACE;
-  const requestedPath = import_node_path22.default.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : eRoot);
+  const requestedPath = import_node_path23.default.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : eRoot);
   if (!import_node_fs5.default.existsSync(requestedPath)) {
     process.stderr.write(`lnwjud MCP stdio: workspace path does not exist: ${requestedPath}
 `);
@@ -48426,7 +48937,7 @@ async function main() {
   const workspaces = await workspaceService.list();
   let workspace = workspaces.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === requestedNorm) ?? workspaces.find((entry) => requestedNorm.startsWith(normalizeWorkspaceRoot(entry.realRootPath).toLowerCase()));
   if (workspace === void 0 && requestedNorm !== normalizeWorkspaceRoot(eRoot).toLowerCase()) {
-    const displayName = import_node_path22.default.basename(requestedPath) || "Workspace";
+    const displayName = import_node_path23.default.basename(requestedPath) || "Workspace";
     const added = await workspaceService.add(displayName, requestedPath);
     if (!added.ok) {
       process.stderr.write(`lnwjud MCP stdio: could not register ${requestedPath} (${added.error.message})
