@@ -128,8 +128,46 @@ export const windowCapabilitySchema = z.object({
 
 export const healthCapabilitySchema = z.object({
   operation: z.enum(['check_all', 'check_tool']).default('check_all'),
-  tool: z.enum(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health']).optional(),
+  tool: z.enum(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health', 'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch']).optional(),
   request_id: z.string().trim().min(1).max(128).optional(),
+}).strict();
+
+export const systemInfoCapabilitySchema = z.object({
+  operation: z.enum(['all', 'cpu', 'memory', 'disks', 'battery', 'uptime', 'os', 'processes']).default('all'),
+  top_count: z.number().int().min(1).max(50).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const notificationCapabilitySchema = z.object({
+  action: z.enum(['show']).default('show'),
+  title: z.string().trim().min(1).max(120),
+  message: z.string().min(1).max(2_000),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const fileDialogCapabilitySchema = z.object({
+  action: z.enum(['open', 'save']),
+  initial_directory: z.string().max(MAX_PATH_LENGTH).optional(),
+  filter: z.string().max(512).optional(),
+  multi_select: z.boolean().optional(),
+  file_name: z.string().max(MAX_PATH_LENGTH).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const clipboardCapabilitySchema = z.object({
+  action: z.enum(['get_text', 'set_text', 'get_image']),
+  text: z.string().max(1_000_000).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
+export const webFetchCapabilitySchema = z.object({
+  url: z.string().trim().min(1).max(8_192),
+  method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'HEAD']).default('GET'),
+  headers: z.array(z.object({ name: z.string().min(1).max(256), value: z.string().max(4_096) }).strict()).max(64).optional(),
+  body: z.string().max(1_000_000).optional(),
+  max_bytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
+  timeout_seconds: z.number().min(1).max(600).optional(),
+  ...capabilityRequestSchema,
 }).strict();
 
 export const skillsListSchema = z.object({

@@ -34,7 +34,10 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   }
 
   private async check(tool: CapabilityToolName): Promise<Record<string, unknown>> {
-    if (tool === 'shell' || tool === 'health') return { available: true, ready: true, local: true };
+    if (tool === 'shell' || tool === 'health' || tool === 'web_fetch') return { available: true, ready: true, local: true };
+    if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard') {
+      return { available: this.platform === 'win32', ready: this.platform === 'win32', local: true };
+    }
     if (tool === 'input_event' || tool === 'vision' || tool === 'window') return { available: this.platform === 'win32', ready: this.platform === 'win32', local: true };
     if (tool === 'dom_cdp') return this.checkDelegated(this.domCdp, { action: 'status' });
     return this.checkDelegated(this.accessibility, { action: 'status' });

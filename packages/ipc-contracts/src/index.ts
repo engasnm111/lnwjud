@@ -44,7 +44,7 @@ export interface WorkspaceSummary {
   readonly createdAt: string;
 }
 
-export type CapabilityToolName = 'shell' | 'dom_cdp' | 'accessibility' | 'input_event' | 'vision' | 'window' | 'health';
+export type CapabilityToolName = 'shell' | 'dom_cdp' | 'accessibility' | 'input_event' | 'vision' | 'window' | 'health' | 'system_info' | 'notification' | 'file_dialog' | 'clipboard' | 'web_fetch';
 
 export interface CapabilitySummary {
   readonly name: CapabilityToolName;

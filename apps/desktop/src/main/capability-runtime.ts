@@ -9,6 +9,7 @@ import {
   NodeBrowserCdpProtocol,
   PowerShellWindowsCapabilityBridge,
   ShellCapabilityBackend,
+  WebFetchCapabilityBackend,
   WindowsNativeCapabilityBackend,
 } from '@lnwjud/capabilities';
 import type { Result } from '@lnwjud/domain';
@@ -47,6 +48,11 @@ export function createLocalCapabilityRuntime(
   const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge);
   const visionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
   const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge);
+  const systemInfoBackend = new WindowsNativeCapabilityBackend('system_info', windowsBridge);
+  const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge);
+  const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
+  const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
+  const webFetchBackend = new WebFetchCapabilityBackend();
   const health = new HealthCapabilityBackend({ domCdp: browserBackend, accessibility: accessibilityBackend });
   const service = new LocalCapabilityService({
     shell: shellBackend,
@@ -56,6 +62,11 @@ export function createLocalCapabilityRuntime(
     vision: visionBackend,
     window: windowBackend,
     health,
+    systemInfo: systemInfoBackend,
+    notification: notificationBackend,
+    fileDialog: fileDialogBackend,
+    clipboard: clipboardBackend,
+    webFetch: webFetchBackend,
   });
   return { service, health };
 }
@@ -98,6 +109,11 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
   vision: 'Capture and inspect the screen',
   window: 'Manage native desktop windows',
   health: 'Check tool readiness',
+  system_info: 'Read system information',
+  notification: 'Show Windows notifications',
+  file_dialog: 'Native file open/save dialogs',
+  clipboard: 'Read and write the clipboard',
+  web_fetch: 'Fetch http/https URLs',
 };
 
 const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[number], string>> = {
@@ -108,6 +124,11 @@ const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[numbe
   vision: 'Local screen, monitor, region, and window capture',
   window: 'List, focus, move, resize, minimize, restore, and close windows',
   health: 'Readiness and capability diagnostics',
+  system_info: 'OS, CPU, memory, disks, battery, uptime, and top processes',
+  notification: 'Toast or balloon notifications for the local user',
+  file_dialog: 'Windows open/save dialog returning chosen paths',
+  clipboard: 'Clipboard text and PNG image access',
+  web_fetch: 'Bounded HTTP requests with text or base64 responses',
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,11 +2,16 @@ import { defineTool, missingService, type McpToolContext, type McpToolDefinition
 import type { Result } from '@lnwjud/domain';
 import {
   accessibilityCapabilitySchema,
+  clipboardCapabilitySchema,
   domCdpCapabilitySchema,
+  fileDialogCapabilitySchema,
   healthCapabilitySchema,
   inputEventCapabilitySchema,
+  notificationCapabilitySchema,
   shellCapabilitySchema,
+  systemInfoCapabilitySchema,
   visionCapabilitySchema,
+  webFetchCapabilitySchema,
   windowCapabilitySchema,
 } from './schemas.js';
 
@@ -73,6 +78,46 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: healthCapabilitySchema,
       handler: async (input) => execute('health', input),
+    }),
+    defineTool({
+      name: 'system_info',
+      description: 'Read-only system information: OS, CPU, memory, disks, battery, uptime, and top processes by memory. Use for environment checks and diagnostics.',
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: systemInfoCapabilitySchema,
+      handler: async (input) => execute('system_info', input),
+    }),
+    defineTool({
+      name: 'notification',
+      description: 'Show a Windows notification (toast when BurntToast is installed, balloon otherwise). Use to tell the user when a long task finishes.',
+      permission: 'EXECUTE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: notificationCapabilitySchema,
+      handler: async (input) => execute('notification', input),
+    }),
+    defineTool({
+      name: 'file_dialog',
+      description: 'Open a native Windows file open/save dialog and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards.',
+      permission: 'EXECUTE',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: fileDialogCapabilitySchema,
+      handler: async (input) => execute('file_dialog', input),
+    }),
+    defineTool({
+      name: 'clipboard',
+      description: 'Read or write the Windows clipboard (text, or PNG image as base64). Use get_text/get_image to read and set_text to write.',
+      permission: 'DANGEROUS',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: clipboardCapabilitySchema,
+      handler: async (input) => execute('clipboard', input),
+    }),
+    defineTool({
+      name: 'web_fetch',
+      description: 'Fetch an http/https URL (GET/POST/PUT/DELETE/HEAD) with bounded size and timeout. Returns status, headers, and text or base64 body. Use for docs, APIs, and downloads.',
+      permission: 'DANGEROUS',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      inputSchema: webFetchCapabilitySchema,
+      handler: async (input) => execute('web_fetch', input),
     }),
   ];
 }

@@ -22,6 +22,7 @@ import {
   NodeBrowserCdpProtocol,
   PowerShellWindowsCapabilityBridge,
   ShellCapabilityBackend,
+  WebFetchCapabilityBackend,
   WindowsNativeCapabilityBackend,
 } from '@lnwjud/capabilities';
 import type { Result } from '@lnwjud/domain';
@@ -176,6 +177,11 @@ function createStdioCapabilityService(
     vision: new WindowsNativeCapabilityBackend('vision', windowsBridge),
     window: new WindowsNativeCapabilityBackend('window', windowsBridge),
     health,
+    systemInfo: new WindowsNativeCapabilityBackend('system_info', windowsBridge),
+    notification: new WindowsNativeCapabilityBackend('notification', windowsBridge),
+    fileDialog: new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
+    clipboard: new WindowsNativeCapabilityBackend('clipboard', windowsBridge),
+    webFetch: new WebFetchCapabilityBackend(),
   });
 }
 

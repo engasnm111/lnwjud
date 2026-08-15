@@ -326,6 +326,106 @@ function Invoke-VisionAction {
   return [ordered]@{ format = 'png'; mime_type = 'image/png'; data_base64 = [Convert]::ToBase64String($bytes); width = $width; height = $height; source = $source; backend = 'Win32/System.Drawing screen capture' }
 }
 
+function Invoke-SystemInfoAction {
+  param([string]$Operation, [object]$Parameters)
+  if ($Operation -eq '' -or $null -eq $Operation) { $Operation = 'all' }
+  switch ($Operation) {
+    'cpu' { $cpus = @(Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue); return [ordered]@{ model = [string]$cpus[0].Name; cores = [int]$cpus[0].NumberOfCores; logical_processors = [int]$cpus[0].NumberOfLogicalProcessors; load_percent = [int](Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average } }
+    'memory' { $os = Get-CimInstance Win32_OperatingSystem; return [ordered]@{ total_bytes = [int64]$os.TotalVisibleMemorySize * 1KB; free_bytes = [int64]$os.FreePhysicalMemory * 1KB; used_percent = [int][Math]::Round((1 - ($os.FreePhysicalMemory / $os.TotalVisibleMemorySize)) * 100) } }
+    'disks' { return [ordered]@{ drives = @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType = 3" | ForEach-Object { [ordered]@{ device = [string]$_.DeviceID; volume = [string]$_.VolumeName; filesystem = [string]$_.FileSystem; total_bytes = [int64]$_.Size; free_bytes = [int64]$_.FreeSpace } }) } }
+    'battery' { $battery = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -eq $battery) { return [ordered]@{ present = $false } }; return [ordered]@{ present = $true; percent = [int]$battery.EstimatedChargeRemaining; status = [string]$battery.Status } }
+    'uptime' { $os = Get-CimInstance Win32_OperatingSystem; return [ordered]@{ boot_time = [string]$os.LastBootUpTime; uptime_seconds = [int64][Math]::Round(((Get-Date) - $os.LastBootUpTime).TotalSeconds) } }
+    'os' { $os = Get-CimInstance Win32_OperatingSystem; $cs = Get-CimInstance Win32_ComputerSystem; return [ordered]@{ name = [string]$os.Caption; version = [string]$os.Version; build = [string]$os.BuildNumber; architecture = [string]$os.OSArchitecture; computer_name = [string]$cs.Name; manufacturer = [string]$cs.Manufacturer; model = [string]$cs.Model } }
+    'processes' { $topCount = Get-Field $Parameters 'top_count'; if ($null -eq $topCount) { $topCount = 10 }; if ([int]$topCount -lt 1 -or [int]$topCount -gt 50) { throw 'top_count must be from 1 to 50' }; $limit = [int]$topCount; return [ordered]@{ processes = @(Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First $limit | ForEach-Object { $cpu = 0; try { $cpu = [int64][Math]::Round($_.TotalProcessorTime.TotalSeconds) } catch { }; [ordered]@{ name = [string]$_.ProcessName; pid = [int]$_.Id; memory_bytes = [int64]$_.WorkingSet64; cpu_time_seconds = $cpu } }) } }
+    'all' {
+      return [ordered]@{
+        os = (Invoke-SystemInfoAction 'os' $null)
+        cpu = (Invoke-SystemInfoAction 'cpu' $null)
+        memory = (Invoke-SystemInfoAction 'memory' $null)
+        disks = (Invoke-SystemInfoAction 'disks' $null)
+        battery = (Invoke-SystemInfoAction 'battery' $null)
+        uptime = (Invoke-SystemInfoAction 'uptime' $null)
+        top_processes = (Invoke-SystemInfoAction 'processes' $Parameters)
+      }
+    }
+    default { throw "Unsupported system_info operation: $Operation" }
+  }
+}
+
+function Invoke-NotificationAction {
+  param([string]$Action, [object]$Parameters)
+  if ($Action -ne 'show') { throw "Unsupported notification action: $Action" }
+  $title = [string](Get-Field $Parameters 'title')
+  $message = [string](Get-Field $Parameters 'message')
+  if ($title.Length -gt 120 -or $message.Length -gt 2000) { throw 'Notification text is too long' }
+  $usedToast = $false
+  if (Get-Command New-BurntToastNotification -ErrorAction SilentlyContinue) {
+    try { New-BurntToastNotification -Text $title, $message -ErrorAction Stop | Out-Null; $usedToast = $true } catch { }
+  }
+  if (-not $usedToast) {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $notify = New-Object System.Windows.Forms.NotifyIcon
+    $notify.Icon = [System.Drawing.SystemIcons]::Information
+    $notify.Visible = $true
+    $notify.ShowBalloonTip(5000, $title, $message, [System.Windows.Forms.ToolTipIcon]::Info)
+    Start-Sleep -Milliseconds 1200
+    $notify.Dispose()
+  }
+  return [ordered]@{ shown = $true; toast = $usedToast }
+}
+
+function Invoke-FileDialogAction {
+  param([string]$Action, [object]$Parameters)
+  Add-Type -AssemblyName System.Windows.Forms
+  $initialDirectory = Get-Field $Parameters 'initial_directory'
+  $filter = Get-Field $Parameters 'filter'
+  $multiSelect = Get-Field $Parameters 'multi_select'
+  if ($Action -eq 'open') {
+    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+    if ($null -ne $initialDirectory -and (Test-Path $initialDirectory -PathType Container)) { $dialog.InitialDirectory = $initialDirectory }
+    if ($null -ne $filter -and $filter -is [string]) { $dialog.Filter = $filter }
+    if ($null -ne $multiSelect) { $dialog.Multiselect = [bool]$multiSelect }
+    $result = $dialog.ShowDialog()
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) { return [ordered]@{ canceled = $true; paths = @() } }
+    $paths = if ($dialog.Multiselect) { @($dialog.FileNames) } else { @($dialog.FileName) }
+    return [ordered]@{ canceled = $false; paths = @($paths) }
+  }
+  if ($Action -eq 'save') {
+    $dialog = New-Object System.Windows.Forms.SaveFileDialog
+    if ($null -ne $initialDirectory -and (Test-Path $initialDirectory -PathType Container)) { $dialog.InitialDirectory = $initialDirectory }
+    if ($null -ne $filter -and $filter -is [string]) { $dialog.Filter = $filter }
+    $fileName = Get-Field $Parameters 'file_name'
+    if ($null -ne $fileName -and $fileName -is [string] -and $fileName.Length -gt 0) { $dialog.FileName = $fileName }
+    $result = $dialog.ShowDialog()
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) { return [ordered]@{ canceled = $true; path = $null } }
+    return [ordered]@{ canceled = $false; path = [string]$dialog.FileName }
+  }
+  throw "Unsupported file_dialog action: $Action"
+}
+
+function Invoke-ClipboardAction {
+  param([string]$Action, [object]$Parameters)
+  Add-Type -AssemblyName System.Windows.Forms
+  switch ($Action) {
+    'get_text' { return [ordered]@{ text = [string][System.Windows.Forms.Clipboard]::GetText() } }
+    'set_text' { $text = Get-Field $Parameters 'text'; if ($null -eq $text -or -not ($text -is [string]) -or $text.Length -gt 1000000) { throw 'Clipboard text must be a string of at most 1000000 characters' }; [System.Windows.Forms.Clipboard]::SetText($text); return [ordered]@{ set = $true; length = $text.Length } }
+    'get_image' {
+      Add-Type -AssemblyName System.Drawing
+      if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) { return [ordered]@{ present = $false } }
+      $bitmap = [System.Windows.Forms.Clipboard]::GetImage()
+      try {
+        $stream = New-Object System.IO.MemoryStream
+        $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bytes = $stream.ToArray()
+        if ($bytes.Length -gt 16MB) { throw 'Clipboard image is too large' }
+        return [ordered]@{ present = $true; format = 'png'; mime_type = 'image/png'; width = [int]$bitmap.Width; height = [int]$bitmap.Height; data_base64 = [Convert]::ToBase64String($bytes) }
+      } finally { $bitmap.Dispose() }
+    }
+    default { throw "Unsupported clipboard action: $Action" }
+  }
+}
+
 try {
   $raw = ($input | Out-String).Trim()
   $request = $raw | ConvertFrom-Json
@@ -337,6 +437,10 @@ try {
     'accessibility' { Invoke-AccessibilityAction ([string](Get-Field $payload 'action')) $parameters }
     'input_event' { Invoke-InputAction ([string](Get-Field $payload 'operation')) $parameters }
     'vision' { Invoke-VisionAction ([string](Get-Field $payload 'action')) $payload }
+    'system_info' { Invoke-SystemInfoAction ([string](Get-Field $payload 'operation')) $parameters }
+    'notification' { Invoke-NotificationAction ([string](Get-Field $payload 'action')) $parameters }
+    'file_dialog' { Invoke-FileDialogAction ([string](Get-Field $payload 'action')) $parameters }
+    'clipboard' { Invoke-ClipboardAction ([string](Get-Field $payload 'action')) $parameters }
     default { throw 'Unsupported Windows capability' }
   }
   $result = Success $value

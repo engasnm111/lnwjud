@@ -13,6 +13,11 @@ describe('LocalCapabilityService', () => {
       vision: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('vision'); return ok({ value: 'vision' }); } },
       window: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('window'); return ok({ value: 'window' }); } },
       health: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('health'); return ok({ value: 'health' }); } },
+      systemInfo: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('system_info'); return ok({ value: 'system' }); } },
+      notification: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('notification'); return ok({ value: 'notify' }); } },
+      fileDialog: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('file_dialog'); return ok({ value: 'dialog' }); } },
+      clipboard: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('clipboard'); return ok({ value: 'clipboard' }); } },
+      webFetch: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('web_fetch'); return ok({ value: 'fetch' }); } },
     });
 
     await expect(service.execute('shell', {})).resolves.toMatchObject({ ok: true, value: { value: 'shell' } });
@@ -22,6 +27,26 @@ describe('LocalCapabilityService', () => {
     await expect(service.execute('vision', {})).resolves.toMatchObject({ ok: true, value: { value: 'vision' } });
     await expect(service.execute('window', {})).resolves.toMatchObject({ ok: true, value: { value: 'window' } });
     await expect(service.execute('health', {})).resolves.toMatchObject({ ok: true, value: { value: 'health' } });
-    expect(calls).toEqual(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health']);
+    await expect(service.execute('system_info', {})).resolves.toMatchObject({ ok: true, value: { value: 'system' } });
+    await expect(service.execute('notification', {})).resolves.toMatchObject({ ok: true, value: { value: 'notify' } });
+    await expect(service.execute('file_dialog', {})).resolves.toMatchObject({ ok: true, value: { value: 'dialog' } });
+    await expect(service.execute('clipboard', {})).resolves.toMatchObject({ ok: true, value: { value: 'clipboard' } });
+    await expect(service.execute('web_fetch', {})).resolves.toMatchObject({ ok: true, value: { value: 'fetch' } });
+    expect(calls).toEqual(['shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health', 'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch']);
+  });
+
+  it('reports an unsupported capability without throwing', async () => {
+    const service = new LocalCapabilityService({
+      shell: { execute: async (): Promise<ReturnType<typeof ok>> => ok({}) },
+      domCdp: { execute: async (): Promise<ReturnType<typeof ok>> => ok({}) },
+      accessibility: { execute: async (): Promise<ReturnType<typeof ok>> => ok({}) },
+      inputEvent: { execute: async (): Promise<ReturnType<typeof ok>> => ok({}) },
+      vision: { execute: async (): Promise<ReturnType<typeof ok>> => ok({}) },
+      window: { execute: async (): Promise<ReturnType<typeof ok>> => ok({}) },
+      health: { execute: async (): Promise<ReturnType<typeof ok>> => ok({}) },
+    });
+
+    const result = await service.execute('clipboard', {});
+    expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
   });
 });

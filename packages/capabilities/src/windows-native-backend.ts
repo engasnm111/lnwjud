@@ -1,7 +1,18 @@
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
 
-export type WindowsCapabilityName = 'accessibility' | 'input_event' | 'vision' | 'window';
+export type WindowsCapabilityName =
+  | 'accessibility'
+  | 'input_event'
+  | 'vision'
+  | 'window'
+  | 'system_info'
+  | 'notification'
+  | 'file_dialog'
+  | 'clipboard'
+  | 'audio'
+  | 'screen_record'
+  | 'office';
 
 export interface WindowsCapabilityBridge {
   execute(request: { readonly capability: WindowsCapabilityName; readonly input: unknown }): Promise<Result<unknown>>;

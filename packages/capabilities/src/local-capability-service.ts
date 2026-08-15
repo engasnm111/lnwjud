@@ -13,6 +13,11 @@ export interface LocalCapabilityBackends {
   readonly vision: CapabilityBackend;
   readonly window: CapabilityBackend;
   readonly health: CapabilityBackend;
+  readonly systemInfo?: CapabilityBackend;
+  readonly notification?: CapabilityBackend;
+  readonly fileDialog?: CapabilityBackend;
+  readonly clipboard?: CapabilityBackend;
+  readonly webFetch?: CapabilityBackend;
 }
 
 export class LocalCapabilityService implements CapabilityService {
@@ -34,6 +39,11 @@ export class LocalCapabilityService implements CapabilityService {
       case 'vision': return this.backends.vision;
       case 'window': return this.backends.window;
       case 'health': return this.backends.health;
+      case 'system_info': return this.backends.systemInfo;
+      case 'notification': return this.backends.notification;
+      case 'file_dialog': return this.backends.fileDialog;
+      case 'clipboard': return this.backends.clipboard;
+      case 'web_fetch': return this.backends.webFetch;
     }
   }
 }

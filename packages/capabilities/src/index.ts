@@ -8,6 +8,11 @@ export const capabilityToolNames = Object.freeze([
   'vision',
   'window',
   'health',
+  'system_info',
+  'notification',
+  'file_dialog',
+  'clipboard',
+  'web_fetch',
 ] as const);
 
 export type CapabilityToolName = (typeof capabilityToolNames)[number];
@@ -21,5 +26,6 @@ export { ShellCapabilityBackend, type ShellCapabilityOptions } from './shell-bac
 export { BrowserCdpBackend, type BrowserCdpProtocol, type BrowserCdpTab } from './browser-cdp-backend.js';
 export { NodeBrowserCdpProtocol } from './browser-cdp-protocol.js';
 export { HealthCapabilityBackend } from './health-backend.js';
+export { WebFetchCapabilityBackend } from './web-fetch-backend.js';
 export { WindowsNativeCapabilityBackend, type WindowsCapabilityBridge, type WindowsCapabilityName } from './windows-native-backend.js';
 export { PowerShellWindowsCapabilityBridge, type PowerShellWindowsBridgeOptions } from './windows-bridge.js';
