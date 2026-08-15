@@ -41,10 +41,12 @@ import {
   type AddWorkspaceRequest,
   type AgentState,
   type AuditEventSummary,
+  type ClearLogBufferRequest,
   type ConnectionModes,
   type DashboardSnapshot,
   type DoctorReport,
   type InFlightWorkItem,
+  type LogSnapshot,
   type ManagedBrowserStatus,
   type McpConnectionStatus,
   type PermissionProfileName as IpcPermissionProfileName,
@@ -65,6 +67,7 @@ import {
 } from '@lnwjud/ipc-contracts';
 import type { DesktopIpcServices } from './main.js';
 import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
+import { LogHub } from './log-hub.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { CLIENT_PATH_SETTING, TunnelController } from './tunnel-controller.js';
 
@@ -81,6 +84,7 @@ export interface DesktopRuntime {
   readonly mcpServices: McpApplicationServices;
   readonly mcpActor: FileActor;
   readonly activityTracker: ActivityTracker;
+  readonly logHub: LogHub;
   ensureDefaultWorkspace(rootPath: string): Promise<string>;
   autoStartMcp(): Promise<McpConnectionStatus>;
   close(): Promise<void>;
@@ -186,6 +190,7 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
     getClientPath: (): string | null => settingsRepository.get(CLIENT_PATH_SETTING),
     setClientPath: (value: string): void => { settingsRepository.set(CLIENT_PATH_SETTING, value); },
   });
+  const logHub = new LogHub({ tunnelLogPath: tunnelController.logPath() });
   const trackedProcesses = new Map<string, string>();
   const doctorService = new DoctorService({
     os: async (): Promise<DoctorProbeResult> => ({ status: process.platform === 'win32' ? 'pass' : 'warn', message: `${process.platform} ${process.arch}` }),
@@ -242,6 +247,14 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
       const workLog = await buildWorkLog(auditRepository, settingsRepository);
       const inFlight = activityTracker.listInFlight().map(toInFlightItem);
       const tunnel = await tunnelController.status();
+      logHub.syncWorkLog(workLog, inFlight.map((item) => ({ callId: item.callId, toolName: item.toolName, targetSummary: item.targetSummary })));
+      logHub.syncProcesses(processSummaries.map((summary) => ({
+        id: summary.id,
+        executable: summary.executable,
+        args: summary.args,
+        state: summary.state,
+        logSummary: summary.logSummary,
+      })));
       return {
         selectedWorkspace: selectedWorkspace === null ? null : toWorkspaceSummary(selectedWorkspace),
         gitSummary,
@@ -326,6 +339,11 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
     runDoctor: (): Promise<DoctorReport> => doctorService.run(),
+    getLogSnapshot: async (): Promise<LogSnapshot> => logHub.snapshot(),
+    clearLogBuffer: async (request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }> => {
+      logHub.clear(request.source);
+      return { cleared: true };
+    },
   };
 
   return {
@@ -333,6 +351,7 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
     mcpServices,
     mcpActor,
     activityTracker,
+    logHub,
     ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
       await machineRootReady;
       if (!unrestricted && !isUnderEDrive(rootPath)) {
@@ -381,6 +400,7 @@ export function createDesktopRuntime(dataPath: string): DesktopRuntime {
     },
     close: async (): Promise<void> => {
       try {
+        logHub.stop();
         await mcpLifecycle.close();
         await tunnelController.stop().catch(() => undefined);
       } finally {

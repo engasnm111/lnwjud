@@ -3,7 +3,7 @@ import type { UiLocale } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import type { MessageKey } from '../../i18n/messages.js';
 
-export type Screen = 'home' | 'projects' | 'git' | 'worklog' | 'settings' | 'doctor';
+export type Screen = 'home' | 'projects' | 'git' | 'worklog' | 'live' | 'settings' | 'doctor';
 
 interface AppShellProps {
   readonly locale: UiLocale;
@@ -20,6 +20,7 @@ const navItems: ReadonlyArray<{ readonly screen: Screen; readonly key: MessageKe
   { screen: 'projects', key: 'nav.projects' },
   { screen: 'git', key: 'nav.git' },
   { screen: 'worklog', key: 'nav.workLog' },
+  { screen: 'live', key: 'nav.live' },
   { screen: 'settings', key: 'nav.settings' },
   { screen: 'doctor', key: 'nav.doctor' },
 ];

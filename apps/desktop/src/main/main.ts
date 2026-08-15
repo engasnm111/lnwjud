@@ -1,10 +1,15 @@
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import {
   ipcChannels,
+  pushChannels,
   type AddWorkspaceRequest,
+  type ClearLogBufferRequest,
   type DashboardSnapshot,
   type DoctorReport,
+  type ExportLogsRequest,
   type IpcResponseMap,
+  type LogSnapshot,
   type ManagedBrowserStatus,
   type McpConnectionStatus,
   type ProcessSummary,
@@ -48,6 +53,8 @@ export interface DesktopIpcServices {
   setLocale(request: SetLocaleRequest): Promise<{ readonly locale: UiLocale }>;
   launchManagedBrowser(): Promise<ManagedBrowserStatus>;
   runDoctor(): Promise<DoctorReport>;
+  getLogSnapshot(): Promise<LogSnapshot>;
+  clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }>;
 }
 
 export type MainWindowProvider = () => BrowserWindow | null;
@@ -114,6 +121,12 @@ const defaultDesktopServices: DesktopIpcServices = {
     checks: [{ id: 'desktop', required: true, status: 'fail', message: 'Desktop services are not configured' }],
     exitCode: 1,
   }),
+  getLogSnapshot: async (): Promise<LogSnapshot> => ({
+    lines: [],
+    tunnelLogPath: null,
+    tunnelLogExists: false,
+  }),
+  clearLogBuffer: async (): Promise<{ readonly cleared: boolean }> => ({ cleared: false }),
 };
 
 export function isTrustedIpcSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow): boolean {
@@ -222,6 +235,24 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     return services.runDoctor();
   });
+  ipcMain.handle(ipcChannels.getLogSnapshot, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return services.getLogSnapshot();
+  });
+  ipcMain.handle(ipcChannels.clearLogBuffer, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.clearLogBuffer(parseClearLogBufferRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.exportLogs, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return exportLogsToFile(getMainWindow(), services, parseExportLogsRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.openLogViewer, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return { opened: false };
+  });
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow | null): void {
@@ -250,6 +281,56 @@ function parseSetPermissionProfileRequest(payload: unknown): SetPermissionProfil
 function parseSetUnrestrictedModeRequest(payload: unknown): SetUnrestrictedModeRequest {
   if (!isRecord(payload) || typeof payload.enabled !== 'boolean') throw new Error('Invalid IPC payload: enabled');
   return { enabled: payload.enabled };
+}
+
+function parseClearLogBufferRequest(payload: unknown): ClearLogBufferRequest {
+  if (!isRecord(payload) || !isLogSource(payload.source)) throw new Error('Invalid IPC payload: source');
+  return { source: payload.source };
+}
+
+function parseExportLogsRequest(payload: unknown): ExportLogsRequest {
+  if (!isRecord(payload) || !isLogSource(payload.source)) {
+    throw new Error('Invalid IPC payload');
+  }
+  return {
+    source: payload.source,
+    filePath: typeof payload.filePath === 'string' ? payload.filePath : '',
+  };
+}
+
+function isLogSource(value: unknown): value is 'tunnel' | 'mcp' | 'process' {
+  return value === 'tunnel' || value === 'mcp' || value === 'process';
+}
+
+async function exportLogsToFile(
+  window: BrowserWindow | null,
+  services: DesktopIpcServices,
+  request: ExportLogsRequest,
+): Promise<{ readonly exported: boolean }> {
+  if (window === null) return { exported: false };
+  const result = await dialog.showSaveDialog(window, {
+    title: 'Export lnwjud logs',
+    defaultPath: `lnwjud-${request.source}-logs.txt`,
+    filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+  });
+  if (result.canceled || result.filePath === undefined || result.filePath.length === 0) {
+    return { exported: false };
+  }
+  const snapshot = await services.getLogSnapshot();
+  const content = snapshot.lines
+    .filter((line) => line.source === request.source)
+    .map((line) => `[${line.timestamp}] [${line.level.toUpperCase()}] ${line.text}`)
+    .join('\r\n');
+  await writeFile(result.filePath, content.length === 0 ? '' : `${content}\r\n`, 'utf8');
+  return { exported: true };
+}
+
+function broadcastToAllWindows(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(channel, payload);
+    }
+  }
 }
 
 function parseStopProcessRequest(payload: unknown): StopProcessRequest {
@@ -388,6 +469,8 @@ function bootstrapDesktop(): void {
   void app.whenReady().then(async () => {
     const runtime = createDesktopRuntime(dataPath);
     desktopRuntime = runtime;
+    runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
+    runtime.logHub.start();
     registerIpcHandlers(() => mainWindow, runtime.services);
     try {
       await runtime.autoStartMcp();

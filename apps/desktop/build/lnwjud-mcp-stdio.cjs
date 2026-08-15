@@ -35,7 +35,7 @@ var require_windows = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs2 = require("fs");
-    function checkPathExt(path22, options) {
+    function checkPathExt(path23, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
         return true;
@@ -46,25 +46,25 @@ var require_windows = __commonJS({
       }
       for (var i = 0; i < pathext.length; i++) {
         var p = pathext[i].toLowerCase();
-        if (p && path22.substr(-p.length).toLowerCase() === p) {
+        if (p && path23.substr(-p.length).toLowerCase() === p) {
           return true;
         }
       }
       return false;
     }
-    function checkStat(stat11, path22, options) {
+    function checkStat(stat11, path23, options) {
       if (!stat11.isSymbolicLink() && !stat11.isFile()) {
         return false;
       }
-      return checkPathExt(path22, options);
+      return checkPathExt(path23, options);
     }
-    function isexe(path22, options, cb) {
-      fs2.stat(path22, function(er, stat11) {
-        cb(er, er ? false : checkStat(stat11, path22, options));
+    function isexe(path23, options, cb) {
+      fs2.stat(path23, function(er, stat11) {
+        cb(er, er ? false : checkStat(stat11, path23, options));
       });
     }
-    function sync(path22, options) {
-      return checkStat(fs2.statSync(path22), path22, options);
+    function sync(path23, options) {
+      return checkStat(fs2.statSync(path23), path23, options);
     }
   }
 });
@@ -75,13 +75,13 @@ var require_mode = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs2 = require("fs");
-    function isexe(path22, options, cb) {
-      fs2.stat(path22, function(er, stat11) {
+    function isexe(path23, options, cb) {
+      fs2.stat(path23, function(er, stat11) {
         cb(er, er ? false : checkStat(stat11, options));
       });
     }
-    function sync(path22, options) {
-      return checkStat(fs2.statSync(path22), options);
+    function sync(path23, options) {
+      return checkStat(fs2.statSync(path23), options);
     }
     function checkStat(stat11, options) {
       return stat11.isFile() && checkMode(stat11, options);
@@ -114,7 +114,7 @@ var require_isexe = __commonJS({
     }
     module2.exports = isexe;
     isexe.sync = sync;
-    function isexe(path22, options, cb) {
+    function isexe(path23, options, cb) {
       if (typeof options === "function") {
         cb = options;
         options = {};
@@ -124,7 +124,7 @@ var require_isexe = __commonJS({
           throw new TypeError("callback not provided");
         }
         return new Promise(function(resolve, reject) {
-          isexe(path22, options || {}, function(er, is) {
+          isexe(path23, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
@@ -133,7 +133,7 @@ var require_isexe = __commonJS({
           });
         });
       }
-      core(path22, options || {}, function(er, is) {
+      core(path23, options || {}, function(er, is) {
         if (er) {
           if (er.code === "EACCES" || options && options.ignoreErrors) {
             er = null;
@@ -143,9 +143,9 @@ var require_isexe = __commonJS({
         cb(er, is);
       });
     }
-    function sync(path22, options) {
+    function sync(path23, options) {
       try {
-        return core.sync(path22, options || {});
+        return core.sync(path23, options || {});
       } catch (er) {
         if (options && options.ignoreErrors || er.code === "EACCES") {
           return false;
@@ -161,7 +161,7 @@ var require_isexe = __commonJS({
 var require_which = __commonJS({
   "../../node_modules/.pnpm/which@2.0.2/node_modules/which/which.js"(exports2, module2) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-    var path22 = require("path");
+    var path23 = require("path");
     var COLON = isWindows ? ";" : ":";
     var isexe = require_isexe();
     var getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
@@ -199,7 +199,7 @@ var require_which = __commonJS({
           return opt.all && found.length ? resolve(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path22.join(pathPart, cmd);
+        const pCmd = path23.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         resolve(subStep(p, i, 0));
       });
@@ -226,7 +226,7 @@ var require_which = __commonJS({
       for (let i = 0; i < pathEnv.length; i++) {
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path22.join(pathPart, cmd);
+        const pCmd = path23.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         for (let j = 0; j < pathExt.length; j++) {
           const cur = p + pathExt[j];
@@ -274,7 +274,7 @@ var require_path_key = __commonJS({
 var require_resolveCommand = __commonJS({
   "../../node_modules/.pnpm/cross-spawn@7.0.6/node_modules/cross-spawn/lib/util/resolveCommand.js"(exports2, module2) {
     "use strict";
-    var path22 = require("path");
+    var path23 = require("path");
     var which = require_which();
     var getPathKey = require_path_key();
     function resolveCommandAttempt(parsed, withoutPathExt) {
@@ -292,7 +292,7 @@ var require_resolveCommand = __commonJS({
       try {
         resolved = which.sync(parsed.command, {
           path: env[getPathKey({ env })],
-          pathExt: withoutPathExt ? path22.delimiter : void 0
+          pathExt: withoutPathExt ? path23.delimiter : void 0
         });
       } catch (e) {
       } finally {
@@ -301,7 +301,7 @@ var require_resolveCommand = __commonJS({
         }
       }
       if (resolved) {
-        resolved = path22.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+        resolved = path23.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
       }
       return resolved;
     }
@@ -355,8 +355,8 @@ var require_shebang_command = __commonJS({
       if (!match) {
         return null;
       }
-      const [path22, argument] = match[0].replace(/#! ?/, "").split(" ");
-      const binary = path22.split("/").pop();
+      const [path23, argument] = match[0].replace(/#! ?/, "").split(" ");
+      const binary = path23.split("/").pop();
       if (binary === "env") {
         return argument;
       }
@@ -391,7 +391,7 @@ var require_readShebang = __commonJS({
 var require_parse = __commonJS({
   "../../node_modules/.pnpm/cross-spawn@7.0.6/node_modules/cross-spawn/lib/parse.js"(exports2, module2) {
     "use strict";
-    var path22 = require("path");
+    var path23 = require("path");
     var resolveCommand = require_resolveCommand();
     var escape2 = require_escape();
     var readShebang = require_readShebang();
@@ -416,7 +416,7 @@ var require_parse = __commonJS({
       const needsShell = !isExecutableRegExp.test(commandFile);
       if (parsed.options.forceShell || needsShell) {
         const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-        parsed.command = path22.normalize(parsed.command);
+        parsed.command = path23.normalize(parsed.command);
         parsed.command = escape2.command(parsed.command);
         parsed.args = parsed.args.map((arg) => escape2.argument(arg, needsDoubleEscapeMetaChars));
         const shellCommand = [parsed.command].concat(parsed.args).join(" ");
@@ -527,9 +527,9 @@ var require_cross_spawn = __commonJS({
 });
 
 // ../cli/src/bin/mcp-stdio.ts
-var import_node_fs4 = __toESM(require("node:fs"), 1);
+var import_node_fs5 = __toESM(require("node:fs"), 1);
 var import_node_os5 = __toESM(require("node:os"), 1);
-var import_node_path21 = __toESM(require("node:path"), 1);
+var import_node_path22 = __toESM(require("node:path"), 1);
 
 // ../../packages/application/dist/file-service.js
 var import_promises7 = require("node:fs/promises");
@@ -659,6 +659,7 @@ var import_promises5 = require("node:fs/promises");
 var import_node_path6 = __toESM(require("node:path"), 1);
 
 // ../../packages/workspace/dist/machine-root.js
+var import_node_fs = require("node:fs");
 var import_node_path2 = __toESM(require("node:path"), 1);
 var MACHINE_ROOT_LETTER = "E";
 function coerceWindowsPath(rootPath) {
@@ -688,6 +689,15 @@ function isUnderEDrive(rootPath) {
 }
 function machineRootPath() {
   return `${MACHINE_ROOT_LETTER}:\\`;
+}
+function allFixedDriveRoots() {
+  const roots = [];
+  for (let code = 65; code <= 90; code += 1) {
+    const root = `${String.fromCharCode(code)}:\\`;
+    if ((0, import_node_fs.existsSync)(root))
+      roots.push(root);
+  }
+  return roots;
 }
 
 // ../../packages/workspace/dist/path-containment.js
@@ -720,8 +730,10 @@ var import_promises3 = require("node:fs/promises");
 var import_node_path4 = __toESM(require("node:path"), 1);
 var WorkspacePathGuard = class {
   secretPolicy;
-  constructor(secretPolicy = new SecretPolicy()) {
+  options;
+  constructor(secretPolicy = new SecretPolicy(), options = {}) {
     this.secretPolicy = secretPolicy;
+    this.options = options;
   }
   async resolveForRead(workspace, inputPath) {
     const inputValidation = this.validateInput(inputPath);
@@ -809,7 +821,7 @@ var WorkspacePathGuard = class {
     });
   }
   assertSecretReadable(workspace, relativePath) {
-    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+    if (this.options.unrestricted === true || isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
       return ok(void 0);
     }
     return this.secretPolicy.assertReadable(relativePath);
@@ -1043,9 +1055,13 @@ var DELETE_EXECUTABLES = /* @__PURE__ */ new Set([
   "remove-item"
 ]);
 var CommandPolicy = class {
+  options;
+  constructor(options = {}) {
+    this.options = options;
+  }
   decide(profile, executable, source, args = []) {
     const basename = import_node_path8.default.win32.basename(executable).toLowerCase();
-    if (SHELL_HOSTS.has(basename))
+    if (this.options.unrestricted !== true && SHELL_HOSTS.has(basename))
       return "DENY";
     if (DELETE_EXECUTABLES.has(basename) || looksLikeDeleteInvocation(basename, args))
       return "DENY";
@@ -1144,6 +1160,7 @@ var FileService = class {
   permissionEngine;
   profileProvider;
   unboundedReader;
+  unrestricted;
   constructor(workspaces, guard = new WorkspacePathGuard(), reader = new TextFileReader(), dependencies = {}) {
     this.workspaces = workspaces;
     this.guard = guard;
@@ -1154,6 +1171,10 @@ var FileService = class {
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
     this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
     this.unboundedReader = dependencies.unboundedReader ?? new UnboundedFileReader();
+    this.unrestricted = dependencies.unrestricted === true;
+  }
+  isTrustedWorkspace(workspace) {
+    return this.unrestricted || isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath);
   }
   async readFile(actor, workspaceId, request) {
     void actor;
@@ -1165,7 +1186,7 @@ var FileService = class {
     if (!resolved.ok)
       return resolved;
     const absolute = resolved.value.realPath ?? resolved.value.absolutePath;
-    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+    if (this.isTrustedWorkspace(workspace)) {
       if (request.startLine !== void 0 || request.endLine !== void 0) {
         const textResult = await this.reader.read(absolute, request);
         if (textResult.ok) {
@@ -1198,7 +1219,7 @@ var FileService = class {
     const workspaceResult = await this.getWorkspace(workspaceId);
     if (!workspaceResult.ok)
       return workspaceResult;
-    const trustedE = isUnderEDrive(workspaceResult.value.realRootPath) || isUnderEDrive(workspaceResult.value.rootPath);
+    const trustedE = this.isTrustedWorkspace(workspaceResult.value);
     const files = [];
     let totalBytes = 0;
     for (const fileRequest of request.files) {
@@ -1635,8 +1656,8 @@ var WindowsProcessTree = class {
 };
 
 // ../../packages/process/dist/process-manager.js
-var DEFAULT_TIMEOUT_MS = 5 * 60 * 1e3;
-var MAX_TIMEOUT_MS = 30 * 60 * 1e3;
+var DEFAULT_TIMEOUT_MS = 60 * 60 * 1e3;
+var MAX_TIMEOUT_MS = 4 * 60 * 60 * 1e3;
 var ProcessManager = class {
   terminator;
   executableResolver;
@@ -2317,7 +2338,7 @@ var GitService = class {
 };
 
 // ../../packages/application/dist/machine-root-sync.js
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 async function syncEMachineRoot(workspaceService) {
   const existing = await workspaceService.list();
   for (const workspace of existing) {
@@ -2326,7 +2347,7 @@ async function syncEMachineRoot(workspaceService) {
     }
   }
   const root = machineRootPath();
-  if (!(0, import_node_fs.existsSync)(root))
+  if (!(0, import_node_fs2.existsSync)(root))
     return null;
   const afterPrune = await workspaceService.list();
   const target = normalizeWorkspaceRoot(root).toLowerCase();
@@ -2335,6 +2356,32 @@ async function syncEMachineRoot(workspaceService) {
     return found;
   const added = await workspaceService.add("Local Disk E:", root);
   return added.ok ? added.value : null;
+}
+async function syncAllDriveRoots(workspaceService) {
+  const roots = allFixedDriveRoots();
+  if (roots.length === 0)
+    return null;
+  const existing = await workspaceService.list();
+  let primary = null;
+  for (const root of roots) {
+    const target = normalizeWorkspaceRoot(root).toLowerCase();
+    const found = existing.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target);
+    if (found !== void 0) {
+      if (primary === null)
+        primary = found;
+      continue;
+    }
+    const added = await workspaceService.add(`Local Disk ${root[0]}:`, root);
+    if (added.ok && primary === null)
+      primary = added.value;
+  }
+  if (primary !== null)
+    return primary;
+  const after = await workspaceService.list();
+  return after.find((entry) => isDriveRoot(entry.realRootPath)) ?? after[0] ?? null;
+}
+function syncMachineRoots(workspaceService, unrestricted) {
+  return unrestricted ? syncAllDriveRoots(workspaceService) : syncEMachineRoot(workspaceService);
 }
 
 // ../../packages/project/dist/js-command-detector.js
@@ -2494,6 +2541,7 @@ var ProjectService = class {
 
 // ../../packages/application/dist/process-service.js
 var import_promises12 = require("node:fs/promises");
+var import_node_path13 = __toESM(require("node:path"), 1);
 var ProcessService = class {
   workspaces;
   processManager;
@@ -2502,6 +2550,7 @@ var ProcessService = class {
   permissionEngine;
   commandPolicy;
   profileProvider;
+  unrestricted;
   owners = /* @__PURE__ */ new Map();
   constructor(workspaces, dependencies = {}) {
     this.workspaces = workspaces;
@@ -2509,7 +2558,8 @@ var ProcessService = class {
     this.projectService = dependencies.projectService ?? new ProjectService(workspaces, new ProjectDetector(), new JsCommandDetector());
     this.guard = dependencies.guard ?? new WorkspacePathGuard();
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy();
+    this.unrestricted = dependencies.unrestricted === true;
+    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy({ unrestricted: this.unrestricted });
     this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
   }
   start(actor, workspaceId, request) {
@@ -2586,6 +2636,16 @@ var ProcessService = class {
     return started;
   }
   async resolveCwd(workspace, requestedCwd) {
+    if (this.unrestricted && requestedCwd !== void 0 && import_node_path13.default.isAbsolute(requestedCwd)) {
+      try {
+        const canonical = await (0, import_promises12.realpath)(requestedCwd);
+        if (!(await (0, import_promises12.stat)(canonical)).isDirectory())
+          return err(appError("INVALID_INPUT", "Process cwd must be a directory"));
+        return ok(canonical);
+      } catch {
+        return err(appError("FILE_NOT_FOUND", "Process cwd was not found"));
+      }
+    }
     const resolved = await this.guard.resolveForRead(workspace, requestedCwd ?? ".");
     if (!resolved.ok)
       return resolved;
@@ -2727,7 +2787,7 @@ function redactProcessError(value) {
 
 // ../../packages/search/dist/executable-resolver.js
 var import_promises13 = require("node:fs/promises");
-var import_node_path13 = __toESM(require("node:path"), 1);
+var import_node_path14 = __toESM(require("node:path"), 1);
 var PathExecutableResolver2 = class {
   environment;
   constructor(environment = process.env) {
@@ -2736,8 +2796,8 @@ var PathExecutableResolver2 = class {
   async resolve(executable) {
     if (executable.trim().length === 0)
       return err({ code: "INVALID_INPUT", message: "Executable is required", recoverable: false });
-    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? "").split(import_node_path13.default.delimiter).filter(Boolean);
-    const candidates = import_node_path13.default.isAbsolute(executable) || executable.includes(import_node_path13.default.sep) || executable.includes("/") ? [executable] : pathEntries.flatMap((entry) => this.withWindowsExtensions(import_node_path13.default.join(entry, executable)));
+    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? "").split(import_node_path14.default.delimiter).filter(Boolean);
+    const candidates = import_node_path14.default.isAbsolute(executable) || executable.includes(import_node_path14.default.sep) || executable.includes("/") ? [executable] : pathEntries.flatMap((entry) => this.withWindowsExtensions(import_node_path14.default.join(entry, executable)));
     for (const candidate of candidates) {
       try {
         await (0, import_promises13.access)(candidate, import_promises13.constants.F_OK);
@@ -2750,7 +2810,7 @@ var PathExecutableResolver2 = class {
     return err({ code: "EXECUTABLE_NOT_FOUND", message: `Executable '${executable}' was not found`, recoverable: true });
   }
   withWindowsExtensions(candidate) {
-    if (import_node_path13.default.extname(candidate).length > 0)
+    if (import_node_path14.default.extname(candidate).length > 0)
       return [candidate];
     const extensions = (this.environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
     return [candidate, ...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`)];
@@ -2899,23 +2959,36 @@ var SearchService = class {
 };
 
 // ../../packages/application/dist/workspace-info-service.js
-var import_node_path14 = __toESM(require("node:path"), 1);
+var import_node_path15 = __toESM(require("node:path"), 1);
 var WorkspaceInfoService = class {
   workspaces;
   workspaceService;
-  constructor(workspaces, workspaceService) {
+  unrestricted;
+  constructor(workspaces, workspaceService, unrestricted = false) {
     this.workspaces = workspaces;
     this.workspaceService = workspaceService;
+    this.unrestricted = unrestricted;
   }
   async list(actor) {
     void actor;
     const workspaces = await this.workspaces.list();
-    return ok(workspaces.map(toWorkspaceInfo));
+    return ok(workspaces.map((workspace) => this.toWorkspaceInfo(workspace)));
   }
   async info(actor, workspaceId) {
     void actor;
     const workspace = await this.workspaces.get(workspaceId);
-    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(toWorkspaceInfo(workspace));
+    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(this.toWorkspaceInfo(workspace));
+  }
+  toWorkspaceInfo(workspace) {
+    const isRoot = this.unrestricted ? isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath) : isEMachineRoot(workspace.realRootPath) || isEMachineRoot(workspace.rootPath);
+    return {
+      id: workspace.id,
+      displayName: workspace.displayName,
+      rootPath: workspace.rootPath,
+      realRootPath: workspace.realRootPath,
+      createdAt: workspace.createdAt,
+      kind: isRoot ? "machine_root" : "project"
+    };
   }
   async register(actor, request) {
     void actor;
@@ -2926,39 +2999,33 @@ var WorkspaceInfoService = class {
     if (parent === null) {
       return err(appError("WORKSPACE_NOT_FOUND", "Parent workspace was not found"));
     }
-    if (!isEMachineRoot(parent.realRootPath) && !isEMachineRoot(parent.rootPath)) {
+    if (this.unrestricted) {
+      if (!isDriveRoot(parent.realRootPath) && !isDriveRoot(parent.rootPath)) {
+        return err(appError("INVALID_INPUT", "parentWorkspaceId must be a drive-root machine root"));
+      }
+    } else if (!isEMachineRoot(parent.realRootPath) && !isEMachineRoot(parent.rootPath)) {
       return err(appError("INVALID_INPUT", "parentWorkspaceId must be the E:\\ machine root"));
     }
-    const absolutePath = import_node_path14.default.isAbsolute(request.path) ? import_node_path14.default.resolve(request.path) : import_node_path14.default.resolve(parent.rootPath, request.path);
-    if (!isUnderEDrive(absolutePath)) {
+    const absolutePath = import_node_path15.default.isAbsolute(request.path) ? import_node_path15.default.resolve(request.path) : import_node_path15.default.resolve(parent.rootPath, request.path);
+    if (!this.unrestricted && !isUnderEDrive(absolutePath)) {
       return err(appError("INVALID_INPUT", "Registered path must be under E:\\"));
     }
     const existing = await this.workspaces.list();
     const normalizedTarget = normalizeCompare(absolutePath);
     const duplicate = existing.find((entry) => normalizeCompare(entry.realRootPath) === normalizedTarget || normalizeCompare(entry.rootPath) === normalizedTarget);
     if (duplicate !== void 0) {
-      return ok(toWorkspaceInfo(duplicate));
+      return ok(this.toWorkspaceInfo(duplicate));
     }
-    const displayName = request.displayName?.trim() || import_node_path14.default.basename(absolutePath) || "Workspace";
+    const displayName = request.displayName?.trim() || import_node_path15.default.basename(absolutePath) || "Workspace";
     const added = await this.workspaceService.add(displayName, absolutePath);
     if (!added.ok)
       return added;
-    return ok(toWorkspaceInfo(added.value));
+    return ok(this.toWorkspaceInfo(added.value));
   }
 };
-function toWorkspaceInfo(workspace) {
-  return {
-    id: workspace.id,
-    displayName: workspace.displayName,
-    rootPath: workspace.rootPath,
-    realRootPath: workspace.realRootPath,
-    createdAt: workspace.createdAt,
-    kind: isEMachineRoot(workspace.realRootPath) || isEMachineRoot(workspace.rootPath) ? "machine_root" : "project"
-  };
-}
 function normalizeCompare(rootPath) {
-  const resolved = import_node_path14.default.resolve(rootPath);
-  const withSep = resolved.endsWith(import_node_path14.default.sep) ? resolved : `${resolved}${import_node_path14.default.sep}`;
+  const resolved = import_node_path15.default.resolve(rootPath);
+  const withSep = resolved.endsWith(import_node_path15.default.sep) ? resolved : `${resolved}${import_node_path15.default.sep}`;
   return withSep.toLowerCase();
 }
 
@@ -3885,10 +3952,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path22) {
-  if (!path22)
+function getElementAtPath(obj, path23) {
+  if (!path23)
     return obj;
-  return path22.reduce((acc, key) => acc?.[key], obj);
+  return path23.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -4254,11 +4321,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path22, issues) {
+function prefixIssues(path23, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path22);
+    iss.path.unshift(path23);
     return iss;
   });
 }
@@ -4420,7 +4487,7 @@ function formatError(error46, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error46, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error47, path22 = []) => {
+  const processError = (error47, path23 = []) => {
     var _a2, _b;
     for (const issue2 of error47.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -4430,7 +4497,7 @@ function treeifyError(error46, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path22, ...issue2.path];
+        const fullpath = [...path23, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -4462,8 +4529,8 @@ function treeifyError(error46, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path22 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path22) {
+  const path23 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path23) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -16057,13 +16124,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path22 = ref.slice(1).split("/").filter(Boolean);
-  if (path22.length === 0) {
+  const path23 = ref.slice(1).split("/").filter(Boolean);
+  if (path23.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path22[0] === defsKey) {
-    const key = path22[1];
+  if (path23[0] === defsKey) {
+    const key = path23[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -20003,9 +20070,9 @@ var rev2026Codec = {
     });
     const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
     if (!parsed.success) for (const issue2 of parsed.error.issues) {
-      const path22 = issue2.path.map(String);
-      const key = path22.length > 0 ? path22.join(".") : "_meta";
-      if (path22.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+      const path23 = issue2.path.map(String);
+      const key = path23.length > 0 ? path23.join(".") : "_meta";
+      if (path23.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
       issues.push({
         key,
         problem: issue2.message
@@ -20326,29 +20393,29 @@ var PERMITTED_X_MCP_HEADER_TYPES = /* @__PURE__ */ new Set([
 function scanXMcpHeaderDeclarations(inputSchema) {
   const declarations = [];
   const seenLower = /* @__PURE__ */ new Map();
-  const visit = (node, path22, reachable) => {
+  const visit = (node, path23, reachable) => {
     if (node === null || typeof node !== "object") return void 0;
     const schema = node;
     if (X_MCP_HEADER_KEY in schema) {
-      if (!reachable || path22.length === 0) return `${pathName(path22)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      if (!reachable || path23.length === 0) return `${pathName(path23)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
       const raw = schema[X_MCP_HEADER_KEY];
-      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path22)}: x-mcp-header MUST be a non-empty string`;
-      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path22)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path23)}: x-mcp-header MUST be a non-empty string`;
+      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path23)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
       const type = typeof schema.type === "string" ? schema.type : void 0;
-      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path22)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
+      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path23)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
       const lower = raw.toLowerCase();
       const prior = seenLower.get(lower);
       if (prior !== void 0) return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
       seenLower.set(lower, raw);
       declarations.push({
-        path: path22,
+        path: path23,
         headerName: raw,
         type
       });
     }
     const properties = schema.properties;
     if (properties !== null && typeof properties === "object") for (const [key, child] of Object.entries(properties)) {
-      const fault$1 = visit(child, [...path22, key], reachable);
+      const fault$1 = visit(child, [...path23, key], reachable);
       if (fault$1 !== void 0) return fault$1;
     }
     for (const k of NON_REACHABLE_SUBSCHEMA_KEYWORDS) {
@@ -20356,7 +20423,7 @@ function scanXMcpHeaderDeclarations(inputSchema) {
       if (sub === void 0) continue;
       const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === "object" && OBJECT_VALUED_SUBSCHEMA_KEYWORDS.has(k) ? Object.values(sub) : [sub];
       for (const branch of branches) {
-        const fault$1 = visit(branch, [...path22, `<${k}>`], false);
+        const fault$1 = visit(branch, [...path23, `<${k}>`], false);
         if (fault$1 !== void 0) return fault$1;
       }
     }
@@ -20396,8 +20463,8 @@ var OBJECT_VALUED_SUBSCHEMA_KEYWORDS = /* @__PURE__ */ new Set([
   "$defs",
   "definitions"
 ]);
-function pathName(path22) {
-  return path22.length === 0 ? "<root>" : path22.join(".");
+function pathName(path23) {
+  return path23.length === 0 ? "<root>" : path23.join(".");
 }
 var HEADER_MISMATCH_ERROR_CODE = -32020;
 var INBOUND_VALIDATION_LADDER = [
@@ -20686,7 +20753,7 @@ var PROPERTY_KEYS_BY_TYPE = {
   array: shapeKeys([UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema])
 };
 var SUPPORTED_STRING_FORMATS = new Set(StringSchemaSchema.shape.format.unwrap().options);
-function walkProperty(node, path22, vendor, unsupported) {
+function walkProperty(node, path23, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -20694,8 +20761,8 @@ function walkProperty(node, path22, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path22}.${key}`);
-  } else unsupported.push(`${path22}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path23}.${key}`);
+  } else unsupported.push(`${path23}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -20712,11 +20779,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path22 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path22}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path23 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path23}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path22 ? `${path22}.${key}` : key;
+    const childPath = path23 ? `${path23}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -24794,8 +24861,8 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports2, module2) => {
     for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
     return ind;
   }
-  function removeDotSegments(path22) {
-    let input = path22;
+  function removeDotSegments(path23) {
+    let input = path23;
     const output = [];
     let nextSlash = -1;
     let len = 0;
@@ -24948,8 +25015,8 @@ var require_schemes = /* @__PURE__ */ __commonJSMin(((exports2, module2) => {
       wsComponent.secure = void 0;
     }
     if (wsComponent.resourceName) {
-      const [path22, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
+      const [path23, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
       wsComponent.query = query;
       wsComponent.resourceName = void 0;
     }
@@ -31803,6 +31870,19 @@ function startMcpStdio(options) {
   return serveStdio(() => createMcpServer(options), { legacy: "reject", onerror: options.onError ?? writeStdioDiagnostic });
 }
 
+// ../../packages/shared/dist/unrestricted.js
+var UNRESTRICTED_SETTING_KEY = "unrestricted_mode";
+var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "on", "yes"]);
+function unrestrictedFromEnv(env = process.env) {
+  return unrestrictedFromSetting(env.LNWJUD_UNRESTRICTED);
+}
+function unrestrictedFromSetting(value) {
+  return TRUE_VALUES.has(value?.trim().toLowerCase() ?? "");
+}
+function isUnrestricted(env, settingValue) {
+  return unrestrictedFromEnv(env) || unrestrictedFromSetting(settingValue);
+}
+
 // ../../packages/storage/dist/audit-repository.js
 var SqliteAuditRepository = class {
   database;
@@ -32042,8 +32122,8 @@ var SqliteWorkspaceRepository = class {
 };
 
 // ../cli/src/runtime/stdio-mcp-runtime.ts
-var import_node_fs3 = require("node:fs");
-var import_node_path20 = __toESM(require("node:path"), 1);
+var import_node_fs4 = require("node:fs");
+var import_node_path21 = __toESM(require("node:path"), 1);
 var import_node_url = require("node:url");
 
 // ../../packages/audit/dist/audit-service.js
@@ -32176,7 +32256,7 @@ var LocalCapabilityService = class {
 // ../../packages/capabilities/dist/shell-backend.js
 var import_node_child_process6 = require("node:child_process");
 var import_promises14 = require("node:fs/promises");
-var import_node_path15 = __toESM(require("node:path"), 1);
+var import_node_path16 = __toESM(require("node:path"), 1);
 var import_node_crypto9 = require("node:crypto");
 var SHELL_OPERATIONS = ["run", "status", "wait", "logs", "result", "cancel", "resume", "approve", "deny"];
 var DEFAULT_TIMEOUT_SECONDS = 3600;
@@ -32193,16 +32273,18 @@ var ShellCapabilityBackend = class {
   defaultTimeoutSeconds;
   autoWaitSeconds;
   maxOutputBytes;
+  unrestricted;
   constructor(options) {
     if (options.allowedRoots.length === 0)
       throw new Error("At least one local capability root is required");
-    this.allowedRoots = options.allowedRoots.map((root) => import_node_path15.default.resolve(root));
+    this.allowedRoots = options.allowedRoots.map((root) => import_node_path16.default.resolve(root));
     this.allowedRootsProvider = options.allowedRootsProvider;
     this.executableResolver = options.executableResolver ?? new PathExecutableResolver();
     this.terminator = options.terminator ?? new WindowsProcessTree();
     this.defaultTimeoutSeconds = clampNumber(options.defaultTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, 0.1, MAX_TIMEOUT_SECONDS);
     this.autoWaitSeconds = clampNumber(options.autoWaitSeconds ?? DEFAULT_AUTO_WAIT_SECONDS, 0, DEFAULT_TIMEOUT_SECONDS);
     this.maxOutputBytes = Math.floor(clampNumber(options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES, 1, MAX_OUTPUT_BYTES));
+    this.unrestricted = options.unrestricted === true;
   }
   async execute(input) {
     const parsed = parseShellRequest(input, this.defaultTimeoutSeconds, this.maxOutputBytes);
@@ -32241,7 +32323,7 @@ var ShellCapabilityBackend = class {
     const executable = await this.executableResolver.resolve(request.executable);
     if (!executable.ok)
       return executable;
-    const invocation = toSpawnInvocation2(executable.value, request.arguments);
+    const invocation = toSpawnInvocation2(executable.value, request.arguments, this.unrestricted);
     if (!invocation.ok)
       return invocation;
     if (request.dryRun) {
@@ -32251,7 +32333,7 @@ var ShellCapabilityBackend = class {
     try {
       child = (0, import_node_child_process6.spawn)(invocation.value.executable, [...invocation.value.args], {
         cwd: cwd.value,
-        env: createSafeEnvironment2(process.env),
+        env: createSafeEnvironment2(process.env, this.unrestricted),
         shell: false,
         windowsHide: false,
         ...invocation.value.windowsVerbatimArguments === void 0 ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }
@@ -32339,6 +32421,16 @@ var ShellCapabilityBackend = class {
     return task === void 0 ? err(appError("PROCESS_NOT_FOUND", "Task was not found")) : ok(task);
   }
   async resolveCwd(requestedCwd) {
+    if (this.unrestricted && requestedCwd !== void 0 && import_node_path16.default.isAbsolute(requestedCwd)) {
+      try {
+        const canonical = await (0, import_promises14.realpath)(requestedCwd);
+        if (!(await (0, import_promises14.stat)(canonical)).isDirectory())
+          return err(appError("INVALID_INPUT", "Working directory must be a directory"));
+        return ok(canonical);
+      } catch {
+        return err(appError("FILE_NOT_FOUND", "Working directory was not found"));
+      }
+    }
     const configuredRoots = this.allowedRootsProvider === void 0 ? this.allowedRoots : await this.allowedRootsProvider();
     const canonicalRoots = [];
     for (const root of configuredRoots) {
@@ -32351,7 +32443,7 @@ var ShellCapabilityBackend = class {
     }
     if (canonicalRoots.length === 0)
       return err(appError("FILE_NOT_FOUND", "No local capability root is available"));
-    const candidate = import_node_path15.default.resolve(requestedCwd ?? canonicalRoots[0]);
+    const candidate = import_node_path16.default.resolve(requestedCwd ?? canonicalRoots[0]);
     let canonicalCandidate;
     try {
       canonicalCandidate = await (0, import_promises14.realpath)(candidate);
@@ -32469,19 +32561,21 @@ function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function isWithin2(root, candidate) {
-  const relative = import_node_path15.default.relative(root, candidate);
-  return relative === "" || relative !== ".." && !relative.startsWith(`..${import_node_path15.default.sep}`) && !import_node_path15.default.isAbsolute(relative);
+  const relative = import_node_path16.default.relative(root, candidate);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${import_node_path16.default.sep}`) && !import_node_path16.default.isAbsolute(relative);
 }
-function toSpawnInvocation2(executable, args) {
-  if (process.platform !== "win32" || ![".cmd", ".bat"].includes(import_node_path15.default.extname(executable).toLowerCase()))
+function toSpawnInvocation2(executable, args, unrestricted) {
+  if (process.platform !== "win32" || ![".cmd", ".bat"].includes(import_node_path16.default.extname(executable).toLowerCase()))
     return ok({ executable, args });
   const values = [executable, ...args];
-  if (values.some((value) => /[\r\n&|<>^%!]/.test(value) || value.includes('"')))
+  if (!unrestricted && values.some((value) => /[\r\n&|<>^%!]/.test(value) || value.includes('"')))
     return err(appError("INVALID_INPUT", "Windows command shim arguments contain unsupported shell metacharacters"));
   const commandLine = values.map((value) => /\s/.test(value) ? `"${value}"` : value).join(" ");
   return ok({ executable: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", commandLine], windowsVerbatimArguments: true });
 }
-function createSafeEnvironment2(source) {
+function createSafeEnvironment2(source, unrestricted) {
+  if (unrestricted)
+    return { ...source };
   const allowed = new Set(["PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "LANG", "LC_ALL", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ComSpec"].map((key) => process.platform === "win32" ? key.toLowerCase() : key));
   return Object.fromEntries(Object.entries(source).filter(([key, entry]) => {
     const normalizedKey = process.platform === "win32" ? key.toLowerCase() : key;
@@ -32495,7 +32589,7 @@ function clampNumber(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 function isDeleteLikeShellCommand(executable, args) {
-  const basename = import_node_path15.default.win32.basename(executable).toLowerCase();
+  const basename = import_node_path16.default.win32.basename(executable).toLowerCase();
   const deleteNames = /* @__PURE__ */ new Set(["del", "del.exe", "erase", "erase.exe", "rm", "rm.exe", "rmdir", "rmdir.exe", "rd", "rd.exe", "unlink", "unlink.exe"]);
   if (deleteNames.has(basename))
     return true;
@@ -32514,9 +32608,9 @@ function delay(milliseconds) {
 
 // ../../packages/capabilities/dist/browser-cdp-protocol.js
 var import_promises15 = require("node:fs/promises");
-var import_node_fs2 = require("node:fs");
+var import_node_fs3 = require("node:fs");
 var import_node_os2 = __toESM(require("node:os"), 1);
-var import_node_path16 = __toESM(require("node:path"), 1);
+var import_node_path17 = __toESM(require("node:path"), 1);
 var import_node_child_process7 = require("node:child_process");
 var NodeBrowserCdpProtocol = class {
   port;
@@ -32524,7 +32618,7 @@ var NodeBrowserCdpProtocol = class {
   chromeExecutable;
   constructor(options = {}) {
     this.port = options.port ?? readPort(process.env.LNWJUD_BROWSER_CDP_PORT);
-    this.profileDir = options.profileDir ?? process.env.LNWJUD_BROWSER_PROFILE ?? import_node_path16.default.join(import_node_os2.default.tmpdir(), "lnwjud-browser-profile");
+    this.profileDir = options.profileDir ?? process.env.LNWJUD_BROWSER_PROFILE ?? import_node_path17.default.join(import_node_os2.default.tmpdir(), "lnwjud-browser-profile");
     this.chromeExecutable = options.chromeExecutable ?? process.env.LNWJUD_BROWSER_EXECUTABLE;
   }
   async status() {
@@ -32614,14 +32708,14 @@ var NodeBrowserCdpProtocol = class {
     const programFiles = process.env.ProgramFiles;
     const programFilesX86 = process.env["ProgramFiles(x86)"];
     const candidates = [
-      localAppData === void 0 ? void 0 : import_node_path16.default.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
-      programFiles === void 0 ? void 0 : import_node_path16.default.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
-      programFilesX86 === void 0 ? void 0 : import_node_path16.default.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
-      localAppData === void 0 ? void 0 : import_node_path16.default.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
-      programFiles === void 0 ? void 0 : import_node_path16.default.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
-      programFilesX86 === void 0 ? void 0 : import_node_path16.default.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe")
+      localAppData === void 0 ? void 0 : import_node_path17.default.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+      programFiles === void 0 ? void 0 : import_node_path17.default.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      programFilesX86 === void 0 ? void 0 : import_node_path17.default.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+      localAppData === void 0 ? void 0 : import_node_path17.default.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
+      programFiles === void 0 ? void 0 : import_node_path17.default.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+      programFilesX86 === void 0 ? void 0 : import_node_path17.default.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe")
     ];
-    return candidates.find((candidate) => candidate !== void 0 && (0, import_node_fs2.existsSync)(candidate));
+    return candidates.find((candidate) => candidate !== void 0 && (0, import_node_fs3.existsSync)(candidate));
   }
 };
 function toTab(value) {
@@ -32947,7 +33041,7 @@ function isRecord8(value) {
 
 // ../../packages/capabilities/dist/windows-bridge.js
 var import_node_child_process8 = require("node:child_process");
-var import_node_path17 = __toESM(require("node:path"), 1);
+var import_node_path18 = __toESM(require("node:path"), 1);
 var DEFAULT_TIMEOUT_SECONDS3 = 600;
 var MAX_TIMEOUT_SECONDS3 = 14400;
 var DEFAULT_MAX_OUTPUT_BYTES2 = 8 * 1024 * 1024;
@@ -32975,7 +33069,7 @@ var PowerShellWindowsCapabilityBridge = class {
   maxOutputBytes;
   terminator;
   constructor(options) {
-    this.scriptPath = import_node_path17.default.resolve(options.scriptPath);
+    this.scriptPath = import_node_path18.default.resolve(options.scriptPath);
     this.powershellPath = options.powershellPath ?? powershellExecutable();
     this.platform = options.platform ?? process.platform;
     this.maxOutputBytes = Math.max(1, Math.min(options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES2, DEFAULT_MAX_OUTPUT_BYTES2));
@@ -32984,7 +33078,7 @@ var PowerShellWindowsCapabilityBridge = class {
   execute(request) {
     if (this.platform !== "win32")
       return Promise.resolve(err(appError("INTERNAL_ERROR", "Windows bridge is unavailable on this platform", true)));
-    if (!import_node_path17.default.isAbsolute(this.scriptPath))
+    if (!import_node_path18.default.isAbsolute(this.scriptPath))
       return Promise.resolve(err(appError("INVALID_INPUT", "Windows bridge script path must be absolute")));
     let serialized;
     try {
@@ -33069,7 +33163,7 @@ function readTimeout(value) {
   return Math.min(MAX_TIMEOUT_SECONDS3, Math.max(0.1, value.timeout_seconds));
 }
 function powershellExecutable() {
-  return process.platform === "win32" && process.env.SystemRoot !== void 0 ? import_node_path17.default.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "powershell.exe";
+  return process.platform === "win32" && process.env.SystemRoot !== void 0 ? import_node_path18.default.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "powershell.exe";
 }
 function isRecord9(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -33170,7 +33264,7 @@ function normalizePathKey(value) {
 // ../../packages/extensions/dist/skill-catalog.js
 var import_promises16 = require("node:fs/promises");
 var import_node_os3 = __toESM(require("node:os"), 1);
-var import_node_path18 = __toESM(require("node:path"), 1);
+var import_node_path19 = __toESM(require("node:path"), 1);
 var SkillCatalog = class {
   options;
   constructor(options) {
@@ -33195,11 +33289,11 @@ var SkillCatalog = class {
     if (skill === void 0)
       return err(appError("FILE_NOT_FOUND", `Skill not found: ${input.skillId}`));
     const relativePath = input.relativePath?.trim() || "SKILL.md";
-    if (relativePath.includes("\0") || import_node_path18.default.isAbsolute(relativePath)) {
+    if (relativePath.includes("\0") || import_node_path19.default.isAbsolute(relativePath)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Skill relative path must stay inside the skill folder"));
     }
-    const skillDir = import_node_path18.default.dirname(skill.skillPath);
-    const resolved = import_node_path18.default.resolve(skillDir, relativePath);
+    const skillDir = import_node_path19.default.dirname(skill.skillPath);
+    const resolved = import_node_path19.default.resolve(skillDir, relativePath);
     if (!isPathInside(skillDir, resolved)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Skill relative path must stay inside the skill folder"));
     }
@@ -33208,7 +33302,7 @@ var SkillCatalog = class {
       if (Buffer.byteLength(content, "utf8") > 2 * 1024 * 1024) {
         return err(appError("FILE_TOO_LARGE", "Skill file exceeds 2 MiB"));
       }
-      const meta3 = parseSkillMarkdown(content, import_node_path18.default.basename(skillDir));
+      const meta3 = parseSkillMarkdown(content, import_node_path19.default.basename(skillDir));
       return ok({
         id: skill.id,
         name: meta3.name,
@@ -33231,7 +33325,7 @@ var SkillCatalog = class {
       for (const skillPath of skillFiles) {
         try {
           const content = await (0, import_promises16.readFile)(skillPath, "utf8");
-          const fallbackName = import_node_path18.default.basename(import_node_path18.default.dirname(skillPath));
+          const fallbackName = import_node_path19.default.basename(import_node_path19.default.dirname(skillPath));
           const meta3 = parseSkillMarkdown(content, fallbackName);
           skills.push({
             id: `${root.source}/${meta3.name}`,
@@ -33251,17 +33345,17 @@ var SkillCatalog = class {
   roots() {
     const home = this.options.homeDir ?? import_node_os3.default.homedir();
     const defaults = [
-      { source: "cursor-skills-cursor", path: import_node_path18.default.join(home, ".cursor", "skills-cursor") },
-      { source: "cursor-skills", path: import_node_path18.default.join(home, ".cursor", "skills") },
-      { source: "claude-skills", path: import_node_path18.default.join(home, ".claude", "skills") },
-      { source: "agents-skills", path: import_node_path18.default.join(home, ".agents", "skills") }
+      { source: "cursor-skills-cursor", path: import_node_path19.default.join(home, ".cursor", "skills-cursor") },
+      { source: "cursor-skills", path: import_node_path19.default.join(home, ".cursor", "skills") },
+      { source: "claude-skills", path: import_node_path19.default.join(home, ".claude", "skills") },
+      { source: "agents-skills", path: import_node_path19.default.join(home, ".agents", "skills") }
     ];
     const workspaceRoot = this.options.workspaceRoot?.trim();
     if (workspaceRoot !== void 0 && workspaceRoot.length > 0) {
-      defaults.push({ source: "workspace-cursor-skills", path: import_node_path18.default.join(workspaceRoot, ".cursor", "skills") }, { source: "workspace-claude-skills", path: import_node_path18.default.join(workspaceRoot, ".claude", "skills") });
+      defaults.push({ source: "workspace-cursor-skills", path: import_node_path19.default.join(workspaceRoot, ".cursor", "skills") }, { source: "workspace-claude-skills", path: import_node_path19.default.join(workspaceRoot, ".claude", "skills") });
     }
     for (const extra of [...this.options.settings.extraSkillRoots, ...this.options.extraRoots ?? []]) {
-      defaults.push({ source: `extra:${import_node_path18.default.basename(extra)}`, path: import_node_path18.default.resolve(extra) });
+      defaults.push({ source: `extra:${import_node_path19.default.basename(extra)}`, path: import_node_path19.default.resolve(extra) });
     }
     return defaults;
   }
@@ -33343,7 +33437,7 @@ async function findSkillFiles(root, maxDepth) {
 async function walkForSkills(current, depth, maxDepth, results) {
   if (depth > maxDepth)
     return;
-  const skillPath = import_node_path18.default.join(current, "SKILL.md");
+  const skillPath = import_node_path19.default.join(current, "SKILL.md");
   if (depth > 0 && await isFile(skillPath)) {
     results.push(skillPath);
     return;
@@ -33351,7 +33445,7 @@ async function walkForSkills(current, depth, maxDepth, results) {
   if (depth === maxDepth)
     return;
   for (const entry of await safeReaddir(current)) {
-    await walkForSkills(import_node_path18.default.join(current, entry), depth + 1, maxDepth, results);
+    await walkForSkills(import_node_path19.default.join(current, entry), depth + 1, maxDepth, results);
   }
 }
 async function safeReaddir(root) {
@@ -33370,8 +33464,8 @@ async function isFile(filePath) {
   }
 }
 function isPathInside(root, candidate) {
-  const relative = import_node_path18.default.relative(import_node_path18.default.resolve(root), import_node_path18.default.resolve(candidate));
-  return relative === "" || !relative.startsWith("..") && !import_node_path18.default.isAbsolute(relative);
+  const relative = import_node_path19.default.relative(import_node_path19.default.resolve(root), import_node_path19.default.resolve(candidate));
+  return relative === "" || !relative.startsWith("..") && !import_node_path19.default.isAbsolute(relative);
 }
 function dedupeById(skills) {
   const seen = /* @__PURE__ */ new Set();
@@ -33388,7 +33482,7 @@ function dedupeById(skills) {
 // ../../packages/extensions/dist/mcp-config-loader.js
 var import_promises17 = require("node:fs/promises");
 var import_node_os4 = __toESM(require("node:os"), 1);
-var import_node_path19 = __toESM(require("node:path"), 1);
+var import_node_path20 = __toESM(require("node:path"), 1);
 var McpConfigLoader = class {
   options;
   constructor(options) {
@@ -33396,10 +33490,10 @@ var McpConfigLoader = class {
   }
   async discover() {
     const home = this.options.homeDir ?? import_node_os4.default.homedir();
-    const appData = this.options.appDataDir ?? process.env.APPDATA ?? import_node_path19.default.join(home, "AppData", "Roaming");
+    const appData = this.options.appDataDir ?? process.env.APPDATA ?? import_node_path20.default.join(home, "AppData", "Roaming");
     const discovered = [];
-    await this.loadFile(discovered, import_node_path19.default.join(home, ".cursor", "mcp.json"), "cursor");
-    await this.loadFile(discovered, import_node_path19.default.join(appData, "Claude", "claude_desktop_config.json"), "claude-desktop");
+    await this.loadFile(discovered, import_node_path20.default.join(home, ".cursor", "mcp.json"), "cursor");
+    await this.loadFile(discovered, import_node_path20.default.join(appData, "Claude", "claude_desktop_config.json"), "claude-desktop");
     for (const [name, config2] of Object.entries(this.options.settings.extraMcpServers)) {
       discovered.push(this.toServer(name, "lnwjud-settings", config2));
     }
@@ -33458,7 +33552,7 @@ function exclusionReason(name, config2) {
   if (lowered === "lnwjud" || lowered.startsWith("lnwjud-")) {
     return "Refusing to aggregate lnwjud itself";
   }
-  const command = import_node_path19.default.basename(config2.command).toLowerCase();
+  const command = import_node_path20.default.basename(config2.command).toLowerCase();
   if (command === "lnwjud" || command === "lnwjud.exe" || command.includes("lnwjud")) {
     return "Refusing to aggregate lnwjud itself";
   }
@@ -36108,9 +36202,9 @@ var rev2026Codec2 = {
     });
     const parsed = buildSchemas20262().RequestMetaEnvelopeSchema.safeParse(meta3);
     if (!parsed.success) for (const issue2 of parsed.error.issues) {
-      const path22 = issue2.path.map(String);
-      const key = path22.length > 0 ? path22.join(".") : "_meta";
-      if (path22.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+      const path23 = issue2.path.map(String);
+      const key = path23.length > 0 ? path23.join(".") : "_meta";
+      if (path23.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
       issues.push({
         key,
         problem: issue2.message
@@ -36407,29 +36501,29 @@ var PERMITTED_X_MCP_HEADER_TYPES2 = /* @__PURE__ */ new Set([
 function scanXMcpHeaderDeclarations2(inputSchema) {
   const declarations = [];
   const seenLower = /* @__PURE__ */ new Map();
-  const visit = (node, path22, reachable) => {
+  const visit = (node, path23, reachable) => {
     if (node === null || typeof node !== "object") return void 0;
     const schema = node;
     if (X_MCP_HEADER_KEY2 in schema) {
-      if (!reachable || path22.length === 0) return `${pathName2(path22)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      if (!reachable || path23.length === 0) return `${pathName2(path23)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
       const raw = schema[X_MCP_HEADER_KEY2];
-      if (typeof raw !== "string" || raw.length === 0) return `${pathName2(path22)}: x-mcp-header MUST be a non-empty string`;
-      if (!RFC9110_TOKEN2.test(raw)) return `${pathName2(path22)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      if (typeof raw !== "string" || raw.length === 0) return `${pathName2(path23)}: x-mcp-header MUST be a non-empty string`;
+      if (!RFC9110_TOKEN2.test(raw)) return `${pathName2(path23)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
       const type = typeof schema.type === "string" ? schema.type : void 0;
-      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES2.has(type)) return `${pathName2(path22)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
+      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES2.has(type)) return `${pathName2(path23)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
       const lower = raw.toLowerCase();
       const prior = seenLower.get(lower);
       if (prior !== void 0) return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
       seenLower.set(lower, raw);
       declarations.push({
-        path: path22,
+        path: path23,
         headerName: raw,
         type
       });
     }
     const properties = schema.properties;
     if (properties !== null && typeof properties === "object") for (const [key, child] of Object.entries(properties)) {
-      const fault$1 = visit(child, [...path22, key], reachable);
+      const fault$1 = visit(child, [...path23, key], reachable);
       if (fault$1 !== void 0) return fault$1;
     }
     for (const k of NON_REACHABLE_SUBSCHEMA_KEYWORDS2) {
@@ -36437,7 +36531,7 @@ function scanXMcpHeaderDeclarations2(inputSchema) {
       if (sub === void 0) continue;
       const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === "object" && OBJECT_VALUED_SUBSCHEMA_KEYWORDS2.has(k) ? Object.values(sub) : [sub];
       for (const branch of branches) {
-        const fault$1 = visit(branch, [...path22, `<${k}>`], false);
+        const fault$1 = visit(branch, [...path23, `<${k}>`], false);
         if (fault$1 !== void 0) return fault$1;
       }
     }
@@ -36477,8 +36571,8 @@ var OBJECT_VALUED_SUBSCHEMA_KEYWORDS2 = /* @__PURE__ */ new Set([
   "$defs",
   "definitions"
 ]);
-function pathName2(path22) {
-  return path22.length === 0 ? "<root>" : path22.join(".");
+function pathName2(path23) {
+  return path23.length === 0 ? "<root>" : path23.join(".");
 }
 var BASE64_SENTINEL_PREFIX = "=?base64?";
 var BASE64_SENTINEL_SUFFIX = "?=";
@@ -36511,9 +36605,9 @@ function utf8ToBase64(s) {
 function encodeMcpParamValue(value) {
   return needsBase64(value) ? `${BASE64_SENTINEL_PREFIX}${utf8ToBase64(value)}${BASE64_SENTINEL_SUFFIX}` : value;
 }
-function valueAtPath(root, path22) {
+function valueAtPath(root, path23) {
   let node = root;
-  for (const key of path22) {
+  for (const key of path23) {
     if (node === null || typeof node !== "object") return void 0;
     node = node[key];
   }
@@ -36768,7 +36862,7 @@ var PROPERTY_KEYS_BY_TYPE2 = {
   array: shapeKeys2([UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema])
 };
 var SUPPORTED_STRING_FORMATS2 = new Set(StringSchemaSchema.shape.format.unwrap().options);
-function walkProperty2(node, path22, vendor, unsupported) {
+function walkProperty2(node, path23, vendor, unsupported) {
   if (!isJsonObject2(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE2, node.type) ? PROPERTY_KEYS_BY_TYPE2[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -36776,8 +36870,8 @@ function walkProperty2(node, path22, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword2(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS2.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern2(node.format, value, vendor)) unsupported.push(`${path22}.${key}`);
-  } else unsupported.push(`${path22}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern2(node.format, value, vendor)) unsupported.push(`${path23}.${key}`);
+  } else unsupported.push(`${path23}.${key}`);
   return pruned;
 }
 function walkRequestedSchema2(converted, vendor) {
@@ -36794,11 +36888,11 @@ function describeUnsupportedProperties2(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema2(PrimitiveSchemaDefinitionSchema, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths2(original, parsed, path22 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths2(item, parsed[index], `${path22}[${index}]`));
+function findDroppedConstraintPaths2(original, parsed, path23 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths2(item, parsed[index], `${path23}[${index}]`));
   if (!isJsonObject2(original) || !isJsonObject2(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path22 ? `${path22}.${key}` : key;
+    const childPath = path23 ? `${path23}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword2(key) ? [] : [childPath];
     return findDroppedConstraintPaths2(value, parsed[key], childPath);
   });
@@ -40949,8 +41043,8 @@ var require_utils2 = /* @__PURE__ */ __commonJSMin2(((exports2, module2) => {
     for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
     return ind;
   }
-  function removeDotSegments(path22) {
-    let input = path22;
+  function removeDotSegments(path23) {
+    let input = path23;
     const output = [];
     let nextSlash = -1;
     let len = 0;
@@ -41103,8 +41197,8 @@ var require_schemes2 = /* @__PURE__ */ __commonJSMin2(((exports2, module2) => {
       wsComponent.secure = void 0;
     }
     if (wsComponent.resourceName) {
-      const [path22, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
+      const [path23, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
       wsComponent.query = query;
       wsComponent.resourceName = void 0;
     }
@@ -48119,8 +48213,8 @@ function createLocalExtensionsService(options = {}) {
 
 // ../cli/src/runtime/stdio-mcp-runtime.ts
 var import_meta = {};
-function createStdioMcpRuntime(dataPath, workspace) {
-  const database = new SqliteDatabase(import_node_path20.default.join(dataPath, "lnwjud.sqlite"));
+function createStdioMcpRuntime(dataPath, workspace, unrestricted = false) {
+  const database = new SqliteDatabase(import_node_path21.default.join(dataPath, "lnwjud.sqlite"));
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
   const auditRepository = new SqliteAuditRepository(database);
@@ -48132,14 +48226,17 @@ function createStdioMcpRuntime(dataPath, workspace) {
   const projectService = new ProjectService(workspaceRepository);
   const processService = new ProcessService(workspaceRepository, {
     projectService,
-    profileProvider: () => fullProfile
+    profileProvider: () => fullProfile,
+    unrestricted
   });
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
     profile: fullProfile
   });
-  const fileService = new FileService(workspaceRepository, void 0, void 0, {
+  const pathGuard = unrestricted ? new WorkspacePathGuard(new SecretPolicy(), { unrestricted: true }) : void 0;
+  const fileService = new FileService(workspaceRepository, pathGuard, void 0, {
     checkpointService,
-    profileProvider: () => fullProfile
+    profileProvider: () => fullProfile,
+    unrestricted
   });
   const gitService = new GitService(workspaceRepository);
   const workspaceQuery = new WorkspaceQueryService(workspaceRepository);
@@ -48154,9 +48251,9 @@ function createStdioMcpRuntime(dataPath, workspace) {
   const capabilityService = createStdioCapabilityService(dataPath, async () => {
     const listed = await workspaceRepository.list();
     const roots = listed.map((entry) => entry.realRootPath);
-    if (roots.length === 0) return [machineRootPath()];
+    if (roots.length === 0) return unrestricted ? [...allFixedDriveRoots()] : [machineRootPath()];
     return roots;
-  });
+  }, unrestricted);
   const actor = { clientId: "cli-mcp-stdio", clientName: "lnwjud cli MCP" };
   const activityTracker = new ActivityTracker({
     async record(event) {
@@ -48177,7 +48274,7 @@ function createStdioMcpRuntime(dataPath, workspace) {
   const services = {
     capabilities: capabilityService,
     extensions,
-    workspaceInfo: new WorkspaceInfoService(workspaceRepository, workspaceService),
+    workspaceInfo: new WorkspaceInfoService(workspaceRepository, workspaceService, unrestricted),
     workspaceQuery,
     projectSnapshot: new ProjectSnapshotService(workspaceRepository, {
       projectService,
@@ -48203,17 +48300,18 @@ function createStdioMcpRuntime(dataPath, workspace) {
     }
   };
 }
-function createStdioCapabilityService(dataPath, workspaceRootsProvider) {
+function createStdioCapabilityService(dataPath, workspaceRootsProvider, unrestricted) {
   const shellBackend = new ShellCapabilityBackend({
-    allowedRoots: [dataPath, machineRootPath()],
+    allowedRoots: [dataPath, ...unrestricted ? [...allFixedDriveRoots()] : [machineRootPath()]],
     allowedRootsProvider: async () => {
       const workspaceRoots = await workspaceRootsProvider();
       const configuredRoots = readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS);
-      const roots = [...workspaceRoots, ...configuredRoots, machineRootPath()];
+      const roots = [...workspaceRoots, ...configuredRoots, ...unrestricted ? [...allFixedDriveRoots()] : [machineRootPath()]];
       return roots.length === 0 ? [dataPath] : roots;
-    }
+    },
+    unrestricted
   });
-  const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: import_node_path20.default.join(dataPath, "browser-profile") });
+  const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: import_node_path21.default.join(dataPath, "browser-profile") });
   const browserBackend = new BrowserCdpBackend({
     protocol: browserProtocol,
     launcher: (url2) => browserProtocol.launch(url2)
@@ -48235,36 +48333,36 @@ function createStdioCapabilityService(dataPath, workspaceRootsProvider) {
 }
 function readCapabilityRoots(value) {
   if (value === void 0 || value.trim().length === 0) return [];
-  return value.split(";").map((root) => root.trim()).filter((root) => root.length > 0).map((root) => import_node_path20.default.resolve(root));
+  return value.split(";").map((root) => root.trim()).filter((root) => root.length > 0).map((root) => import_node_path21.default.resolve(root));
 }
 function capabilityBridgeScriptPath() {
   const configured = process.env.LNWJUD_CAPABILITY_BRIDGE_SCRIPT;
-  if (configured !== void 0 && configured.trim().length > 0) return import_node_path20.default.resolve(configured);
+  if (configured !== void 0 && configured.trim().length > 0) return import_node_path21.default.resolve(configured);
   const scriptDir = resolveScriptDirectory();
   const resourcesPath = process.resourcesPath;
   const candidates = [
-    scriptDir === void 0 ? void 0 : import_node_path20.default.join(scriptDir, "windows-capability-bridge.ps1"),
-    scriptDir === void 0 ? void 0 : import_node_path20.default.join(scriptDir, "resources", "windows-capability-bridge.ps1"),
-    import_node_path20.default.resolve(process.cwd(), "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
-    import_node_path20.default.resolve(process.cwd(), "..", "..", "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
-    resourcesPath === void 0 ? void 0 : import_node_path20.default.join(resourcesPath, "windows-capability-bridge.ps1"),
-    import_node_path20.default.join(import_node_path20.default.dirname(process.execPath), "windows-capability-bridge.ps1"),
-    import_node_path20.default.join(import_node_path20.default.dirname(process.execPath), "resources", "windows-capability-bridge.ps1")
+    scriptDir === void 0 ? void 0 : import_node_path21.default.join(scriptDir, "windows-capability-bridge.ps1"),
+    scriptDir === void 0 ? void 0 : import_node_path21.default.join(scriptDir, "resources", "windows-capability-bridge.ps1"),
+    import_node_path21.default.resolve(process.cwd(), "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
+    import_node_path21.default.resolve(process.cwd(), "..", "..", "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
+    resourcesPath === void 0 ? void 0 : import_node_path21.default.join(resourcesPath, "windows-capability-bridge.ps1"),
+    import_node_path21.default.join(import_node_path21.default.dirname(process.execPath), "windows-capability-bridge.ps1"),
+    import_node_path21.default.join(import_node_path21.default.dirname(process.execPath), "resources", "windows-capability-bridge.ps1")
   ].filter((candidate) => candidate !== void 0);
-  return candidates.find((candidate) => (0, import_node_fs3.existsSync)(candidate)) ?? candidates[0];
+  return candidates.find((candidate) => (0, import_node_fs4.existsSync)(candidate)) ?? candidates[0];
 }
 function resolveScriptDirectory() {
   const arg1 = process.argv[1];
   if (typeof arg1 === "string" && arg1.trim().length > 0) {
     try {
-      return import_node_path20.default.dirname(import_node_path20.default.resolve(arg1));
+      return import_node_path21.default.dirname(import_node_path21.default.resolve(arg1));
     } catch {
     }
   }
   try {
     const metaUrl = import_meta.url;
     if (typeof metaUrl === "string" && metaUrl.length > 0) {
-      return import_node_path20.default.dirname((0, import_node_url.fileURLToPath)(metaUrl));
+      return import_node_path21.default.dirname((0, import_node_url.fileURLToPath)(metaUrl));
     }
   } catch {
   }
@@ -48284,32 +48382,34 @@ function hasFlag(flag) {
 function resolveDataPath() {
   const configured = process.env.LNWJUD_DATA_PATH?.trim();
   if (configured) return configured;
-  return import_node_path21.default.join(process.env.APPDATA ?? import_node_path21.default.join(import_node_os5.default.homedir(), "AppData", "Roaming"), "lnwjud");
+  return import_node_path22.default.join(process.env.APPDATA ?? import_node_path22.default.join(import_node_os5.default.homedir(), "AppData", "Roaming"), "lnwjud");
 }
 async function main() {
   const eRoot = machineRootPath();
-  if (!import_node_fs4.default.existsSync(eRoot)) {
+  if (!import_node_fs5.default.existsSync(eRoot)) {
     process.stderr.write("lnwjud MCP stdio: E:\\ drive is required but was not found\n");
     process.exit(2);
   }
+  const dataPath = resolveDataPath();
+  import_node_fs5.default.mkdirSync(dataPath, { recursive: true });
+  const database = new SqliteDatabase(import_node_path22.default.join(dataPath, "lnwjud.sqlite"));
+  const workspaceRepository = new SqliteWorkspaceRepository(database);
+  const settingsRepository = new SqliteSettingsRepository(database);
+  const workspaceService = new WorkspaceService(workspaceRepository);
+  const unrestricted = isUnrestricted(process.env, settingsRepository.get(UNRESTRICTED_SETTING_KEY));
   const requestedRaw = readArg("--workspace") ?? process.env.LNWJUD_WORKSPACE;
-  const requestedPath = import_node_path21.default.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : eRoot);
-  if (!import_node_fs4.default.existsSync(requestedPath)) {
+  const requestedPath = import_node_path22.default.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : eRoot);
+  if (!import_node_fs5.default.existsSync(requestedPath)) {
     process.stderr.write(`lnwjud MCP stdio: workspace path does not exist: ${requestedPath}
 `);
     process.exit(2);
   }
-  if (!isUnderEDrive(requestedPath)) {
-    process.stderr.write(`lnwjud MCP stdio: workspace must be under E:\\ (got ${requestedPath})
+  if (!unrestricted && !isUnderEDrive(requestedPath)) {
+    process.stderr.write(`lnwjud MCP stdio: workspace must be under E:\\ (got ${requestedPath}). Enable unrestricted mode to use other drives.
 `);
     process.exit(2);
   }
   process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim() || eRoot.replace(/\\/g, "/");
-  const dataPath = resolveDataPath();
-  import_node_fs4.default.mkdirSync(dataPath, { recursive: true });
-  const database = new SqliteDatabase(import_node_path21.default.join(dataPath, "lnwjud.sqlite"));
-  const workspaceRepository = new SqliteWorkspaceRepository(database);
-  const workspaceService = new WorkspaceService(workspaceRepository);
   const reset = hasFlag("--reset-workspaces") || process.env.LNWJUD_RESET_WORKSPACES === "1" || process.env.LNWJUD_RESET_WORKSPACES === "true";
   if (reset) {
     for (const existing of await workspaceService.list()) {
@@ -48317,16 +48417,16 @@ async function main() {
     }
     process.stderr.write("lnwjud MCP stdio: cleared previous workspaces\n");
   }
-  const machineRoot = await syncEMachineRoot(workspaceService);
+  const machineRoot = await syncMachineRoots(workspaceService, unrestricted);
   if (machineRoot === null) {
-    process.stderr.write("lnwjud MCP stdio: could not register E:\\ machine root\n");
+    process.stderr.write("lnwjud MCP stdio: could not register machine root\n");
     process.exit(1);
   }
   const requestedNorm = normalizeWorkspaceRoot(requestedPath).toLowerCase();
   const workspaces = await workspaceService.list();
   let workspace = workspaces.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === requestedNorm) ?? workspaces.find((entry) => requestedNorm.startsWith(normalizeWorkspaceRoot(entry.realRootPath).toLowerCase()));
   if (workspace === void 0 && requestedNorm !== normalizeWorkspaceRoot(eRoot).toLowerCase()) {
-    const displayName = import_node_path21.default.basename(requestedPath) || "Workspace";
+    const displayName = import_node_path22.default.basename(requestedPath) || "Workspace";
     const added = await workspaceService.add(displayName, requestedPath);
     if (!added.ok) {
       process.stderr.write(`lnwjud MCP stdio: could not register ${requestedPath} (${added.error.message})
@@ -48342,11 +48442,10 @@ async function main() {
   }
   database.close();
   const primary = workspace;
-  const runtime = createStdioMcpRuntime(dataPath, primary);
-  process.stderr.write(`lnwjud MCP stdio ready primary=${primary.id} root=${primary.realRootPath}
+  const runtime = createStdioMcpRuntime(dataPath, primary, unrestricted);
+  process.stderr.write(`lnwjud MCP stdio ready primary=${primary.id} root=${primary.realRootPath}${unrestricted ? " unrestricted=1" : ""}
 `);
   let shuttingDown = false;
-  let handle;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -48360,7 +48459,7 @@ async function main() {
     }
     process.exit(0);
   };
-  handle = startMcpStdio({
+  const handle = startMcpStdio({
     services: runtime.services,
     actor: runtime.actor,
     activityTracker: runtime.activityTracker,

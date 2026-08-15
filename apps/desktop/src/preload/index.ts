@@ -1,13 +1,18 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   ipcChannels,
+  pushChannels,
   type AddWorkspaceRequest,
   type AgentState,
+  type ClearLogBufferRequest,
   type DashboardSnapshot,
   type DoctorCheck,
   type DoctorReport,
+  type ExportLogsRequest,
   type InFlightWorkItem,
   type LnwjudApi,
+  type LogLine,
+  type LogSnapshot,
   type ManagedBrowserStatus,
   type McpConnectionStatus,
   type PermissionProfileName,
@@ -380,6 +385,66 @@ function launchManagedBrowser(): Promise<ManagedBrowserStatus> {
   return invoke(ipcChannels.launchManagedBrowser).then(managedBrowserStatus);
 }
 
+function logLine(value: unknown): LogLine {
+  if (!isRecord(value) || !isLogSource(value.source) || !isLogLevel(value.level)) throw new Error('Invalid IPC response');
+  return {
+    id: numberField(value, 'id'),
+    source: value.source,
+    timestamp: stringField(value, 'timestamp'),
+    level: value.level,
+    text: stringField(value, 'text'),
+  };
+}
+
+function logSnapshot(value: unknown): LogSnapshot {
+  if (!isRecord(value) || !Array.isArray(value.lines)) throw new Error('Invalid IPC response');
+  return {
+    lines: value.lines.map(logLine),
+    tunnelLogPath: nullableString(value.tunnelLogPath),
+    tunnelLogExists: booleanField(value, 'tunnelLogExists'),
+  };
+}
+
+function isLogSource(value: unknown): value is 'tunnel' | 'mcp' | 'process' {
+  return value === 'tunnel' || value === 'mcp' || value === 'process';
+}
+
+function isLogLevel(value: unknown): value is 'info' | 'warn' | 'error' {
+  return value === 'info' || value === 'warn' || value === 'error';
+}
+
+function clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }> {
+  if (!isRecord(request) || !isLogSource(request.source)) return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.clearLogBuffer, { source: request.source }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { cleared: booleanField(value, 'cleared') };
+  });
+}
+
+function exportLogs(request: ExportLogsRequest): Promise<{ readonly exported: boolean }> {
+  if (!isRecord(request) || !isLogSource(request.source)) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.exportLogs, { source: request.source, filePath: request.filePath ?? '' }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { exported: booleanField(value, 'exported') };
+  });
+}
+
+function onLogEvent(callback: (line: LogLine) => void): () => void {
+  const listener = (_event: unknown, payload: unknown): void => {
+    try {
+      callback(logLine(payload));
+    } catch {
+      // Ignore malformed push events.
+    }
+  };
+  ipcRenderer.on(pushChannels.logEvent, listener);
+  return (): void => {
+    ipcRenderer.removeListener(pushChannels.logEvent, listener);
+  };
+}
+
 const api: LnwjudApi = {
   listWorkspaces: () => invoke(ipcChannels.listWorkspaces).then(workspaceList),
   addWorkspace,
@@ -402,6 +467,14 @@ const api: LnwjudApi = {
   setLocale,
   launchManagedBrowser,
   runDoctor: () => invoke(ipcChannels.runDoctor).then(doctorReport),
+  getLogSnapshot: () => invoke(ipcChannels.getLogSnapshot).then(logSnapshot),
+  clearLogBuffer,
+  exportLogs,
+  openLogViewer: () => invoke(ipcChannels.openLogViewer).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { opened: booleanField(value, 'opened') };
+  }),
+  onLogEvent,
 };
 
 contextBridge.exposeInMainWorld('lnwjud', api);

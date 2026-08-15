@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import type {
   DashboardSnapshot,
   DoctorReport,
+  LogLine,
+  LogSource,
   PermissionProfileName,
   UiLocale,
   WorkspaceSummary,
@@ -11,9 +13,12 @@ import { ControlCenterPage } from './features/home/ControlCenterPage.js';
 import { ProjectsPage } from './features/projects/ProjectsPage.js';
 import { GitPage } from './features/git/GitPage.js';
 import { WorkLogPage } from './features/worklog/WorkLogPage.js';
+import { LiveLogsPage } from './features/live/LiveLogsPage.js';
 import { SettingsPage } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
 import { createTranslator } from './i18n/index.js';
+
+const MAX_CLIENT_LOG_LINES = 4_000;
 
 export function App(): ReactElement {
   const [screen, setScreen] = useState<Screen>('home');
@@ -24,6 +29,60 @@ export function App(): ReactElement {
   const [mcpBusy, setMcpBusy] = useState(false);
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [locale, setLocale] = useState<UiLocale>('th');
+  const [logLines, setLogLines] = useState<readonly LogLine[]>([]);
+  const [tunnelLogPath, setTunnelLogPath] = useState<string | null>(null);
+  const [tunnelLogExists, setTunnelLogExists] = useState(false);
+  const logIds = useRef<Set<number>>(new Set());
+
+  const appendLogLine = useCallback((line: LogLine): void => {
+    if (logIds.current.has(line.id)) return;
+    logIds.current.add(line.id);
+    setLogLines((previous) => [...previous.slice(-(MAX_CLIENT_LOG_LINES - 1)), line]);
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    void window.lnwjud.getLogSnapshot().then((snapshot) => {
+      if (disposed) return;
+      setLogLines(snapshot.lines);
+      setTunnelLogPath(snapshot.tunnelLogPath);
+      setTunnelLogExists(snapshot.tunnelLogExists);
+      logIds.current = new Set(snapshot.lines.map((line) => line.id));
+    }).catch(() => undefined);
+    const unsubscribe = window.lnwjud.onLogEvent((line) => {
+      appendLogLine(line);
+      if (line.source === 'tunnel') setTunnelLogExists(true);
+    });
+    return (): void => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [appendLogLine]);
+
+  async function clearLogSource(source: LogSource): Promise<void> {
+    try {
+      await window.lnwjud.clearLogBuffer({ source });
+      setLogLines((previous) => previous.filter((line) => line.source !== source));
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Log buffer could not be cleared'));
+    }
+  }
+
+  async function exportLogSource(source: LogSource): Promise<void> {
+    try {
+      await window.lnwjud.exportLogs({ source, filePath: '' });
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Log export failed'));
+    }
+  }
+
+  async function popOutLogViewer(): Promise<void> {
+    try {
+      await window.lnwjud.openLogViewer();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Log viewer could not be opened'));
+    }
+  }
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -213,6 +272,17 @@ export function App(): ReactElement {
       {screen === 'git' ? <GitPage locale={locale} gitSummary={dashboard.gitSummary} /> : null}
       {screen === 'worklog' ? (
         <WorkLogPage locale={locale} dashboard={dashboard} onClearWorkLog={clearWorkLog} />
+      ) : null}
+      {screen === 'live' ? (
+        <LiveLogsPage
+          locale={locale}
+          lines={logLines}
+          tunnelLogPath={tunnelLogPath}
+          tunnelLogExists={tunnelLogExists}
+          onClear={clearLogSource}
+          onExport={exportLogSource}
+          onPopOut={popOutLogViewer}
+        />
       ) : null}
       {screen === 'settings' ? (
         <SettingsPage

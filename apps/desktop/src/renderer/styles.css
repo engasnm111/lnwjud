@@ -186,6 +186,52 @@ input, select {
 .worklog-line.inflight { color: var(--copper); }
 .worklog-line em { color: var(--muted); font-style: normal; }
 
+.log-panel { min-height: 280px; }
+.log-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.log-tab {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.log-tab.active { border-color: var(--teal); color: var(--teal); }
+.log-filter {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0a0e13;
+  color: var(--text, #e6edf3);
+}
+.log-stream {
+  max-height: 520px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: #0a0e13;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.log-line {
+  display: grid;
+  grid-template-columns: 84px 64px 1fr;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid #161d28;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-line time { color: var(--muted); }
+.log-line .tag { color: var(--teal); }
+.log-line.warn .tag { color: #d9a441; }
+.log-line.error .tag { color: var(--danger); }
+.log-line.error { color: #ffd9dd; }
+
 .project-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .project-list li {
   display: flex;

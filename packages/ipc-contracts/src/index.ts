@@ -20,6 +20,14 @@ export const ipcChannels = {
   setLocale: 'lnwjud:set-locale',
   launchManagedBrowser: 'lnwjud:launch-managed-browser',
   runDoctor: 'lnwjud:run-doctor',
+  getLogSnapshot: 'lnwjud:get-log-snapshot',
+  clearLogBuffer: 'lnwjud:clear-log-buffer',
+  exportLogs: 'lnwjud:export-logs',
+  openLogViewer: 'lnwjud:open-log-viewer',
+} as const;
+
+export const pushChannels = {
+  logEvent: 'lnwjud:event:log',
 } as const;
 
 export type IpcChannel = typeof ipcChannels[keyof typeof ipcChannels];
@@ -77,6 +85,32 @@ export interface TunnelStatus {
   readonly profileExists: boolean;
   readonly message: string | null;
   readonly logPath: string | null;
+}
+
+export type LogSource = 'tunnel' | 'mcp' | 'process';
+export type LogLevel = 'info' | 'warn' | 'error';
+
+export interface LogLine {
+  readonly id: number;
+  readonly source: LogSource;
+  readonly timestamp: string;
+  readonly level: LogLevel;
+  readonly text: string;
+}
+
+export interface LogSnapshot {
+  readonly lines: readonly LogLine[];
+  readonly tunnelLogPath: string | null;
+  readonly tunnelLogExists: boolean;
+}
+
+export interface ClearLogBufferRequest {
+  readonly source: LogSource;
+}
+
+export interface ExportLogsRequest {
+  readonly source: LogSource;
+  readonly filePath: string;
 }
 
 export interface DashboardSnapshot {
@@ -217,6 +251,10 @@ export interface IpcRequestMap {
   readonly [ipcChannels.setLocale]: SetLocaleRequest;
   readonly [ipcChannels.launchManagedBrowser]: undefined;
   readonly [ipcChannels.runDoctor]: undefined;
+  readonly [ipcChannels.getLogSnapshot]: undefined;
+  readonly [ipcChannels.clearLogBuffer]: ClearLogBufferRequest;
+  readonly [ipcChannels.exportLogs]: ExportLogsRequest;
+  readonly [ipcChannels.openLogViewer]: undefined;
 }
 
 export interface IpcResponseMap {
@@ -241,6 +279,10 @@ export interface IpcResponseMap {
   readonly [ipcChannels.setLocale]: { readonly locale: UiLocale };
   readonly [ipcChannels.launchManagedBrowser]: ManagedBrowserStatus;
   readonly [ipcChannels.runDoctor]: DoctorReport;
+  readonly [ipcChannels.getLogSnapshot]: LogSnapshot;
+  readonly [ipcChannels.clearLogBuffer]: { readonly cleared: boolean };
+  readonly [ipcChannels.exportLogs]: { readonly exported: boolean };
+  readonly [ipcChannels.openLogViewer]: { readonly opened: boolean };
 }
 
 export interface LnwjudApi {
@@ -265,4 +307,9 @@ export interface LnwjudApi {
   setLocale(request: SetLocaleRequest): Promise<IpcResponseMap[typeof ipcChannels.setLocale]>;
   launchManagedBrowser(): Promise<IpcResponseMap[typeof ipcChannels.launchManagedBrowser]>;
   runDoctor(): Promise<IpcResponseMap[typeof ipcChannels.runDoctor]>;
+  getLogSnapshot(): Promise<IpcResponseMap[typeof ipcChannels.getLogSnapshot]>;
+  clearLogBuffer(request: ClearLogBufferRequest): Promise<IpcResponseMap[typeof ipcChannels.clearLogBuffer]>;
+  exportLogs(request: ExportLogsRequest): Promise<IpcResponseMap[typeof ipcChannels.exportLogs]>;
+  openLogViewer(): Promise<IpcResponseMap[typeof ipcChannels.openLogViewer]>;
+  onLogEvent(callback: (line: LogLine) => void): () => void;
 }

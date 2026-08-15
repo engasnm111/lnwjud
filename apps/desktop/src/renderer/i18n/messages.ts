@@ -4,6 +4,7 @@ export type MessageKey =
   | 'nav.projects'
   | 'nav.git'
   | 'nav.workLog'
+  | 'nav.live'
   | 'nav.settings'
   | 'nav.doctor'
   | 'footer.connected'
@@ -54,6 +55,18 @@ export type MessageKey =
   | 'settings.unrestrictedHint'
   | 'settings.restartRequired'
   | 'badge.unrestricted'
+  | 'live.title'
+  | 'live.subtitle'
+  | 'live.tabTunnel'
+  | 'live.tabMcp'
+  | 'live.tabProcess'
+  | 'live.pause'
+  | 'live.follow'
+  | 'live.filter'
+  | 'live.export'
+  | 'live.waiting'
+  | 'live.waitingTunnel'
+  | 'live.popOut'
   | 'git.title'
   | 'doctor.title'
   | 'doctor.run'
@@ -69,6 +82,7 @@ export const th: Messages = {
   'nav.projects': 'โปรเจกต์',
   'nav.git': 'Git',
   'nav.workLog': 'บันทึกการทำงาน',
+  'nav.live': 'Live Logs',
   'nav.settings': 'ตั้งค่า',
   'nav.doctor': 'Doctor',
   'footer.connected': 'เชื่อมต่อแล้ว',
@@ -119,6 +133,18 @@ export const th: Messages = {
   'settings.unrestrictedHint': 'เปิด: ลงทะเบียนทุกไดร์ฟ (C:, D:, E:), รัน cmd/powershell/npm.cmd ได้, อ่าน secret ได้ทุกที่ — ยังบล็อกคำสั่งลบและ git clean/reset ตามเดิม',
   'settings.restartRequired': 'ต้องรีสตาร์ทแอพเพื่อให้มีผล',
   'badge.unrestricted': 'Unrestricted',
+  'live.title': 'Live Logs',
+  'live.subtitle': 'ดู log ของ tunnel, กิจกรรม MCP และ process แบบ realtime',
+  'live.tabTunnel': 'Tunnel',
+  'live.tabMcp': 'MCP activity',
+  'live.tabProcess': 'Processes',
+  'live.pause': 'หยุดชั่วคราว',
+  'live.follow': 'ตามต่อ (follow)',
+  'live.filter': 'กรองข้อความ...',
+  'live.export': 'ส่งออกไฟล์',
+  'live.waiting': 'ยังไม่มีข้อมูล',
+  'live.waitingTunnel': 'ยังไม่มีไฟล์ tunnel log — รัน tunnel ด้วยสคริปต์ start-lnwjud-tunnel.ps1 หรือกด Start Tunnel',
+  'live.popOut': 'เปิดหน้าต่างแยก',
   'git.title': 'สถานะ Git',
   'doctor.title': 'Doctor',
   'doctor.run': 'รัน Doctor',
@@ -133,6 +159,7 @@ export const en: Messages = {
   'nav.projects': 'Projects',
   'nav.git': 'Git',
   'nav.workLog': 'Work Log',
+  'nav.live': 'Live Logs',
   'nav.settings': 'Settings',
   'nav.doctor': 'Doctor',
   'footer.connected': 'Connected',
@@ -183,6 +210,18 @@ export const en: Messages = {
   'settings.unrestrictedHint': 'On: registers every drive (C:, D:, E:), allows cmd/powershell/npm.cmd, reads secrets anywhere — delete commands and git clean/reset stay blocked',
   'settings.restartRequired': 'Restart the app to apply',
   'badge.unrestricted': 'Unrestricted',
+  'live.title': 'Live Logs',
+  'live.subtitle': 'Real-time tunnel, MCP activity, and process logs',
+  'live.tabTunnel': 'Tunnel',
+  'live.tabMcp': 'MCP activity',
+  'live.tabProcess': 'Processes',
+  'live.pause': 'Pause',
+  'live.follow': 'Follow',
+  'live.filter': 'Filter text...',
+  'live.export': 'Export file',
+  'live.waiting': 'No data yet',
+  'live.waitingTunnel': 'No tunnel log file yet — run start-lnwjud-tunnel.ps1 or press Start Tunnel',
+  'live.popOut': 'Pop out viewer',
   'git.title': 'Git status',
   'doctor.title': 'Doctor',
   'doctor.run': 'Run doctor',
