@@ -14,6 +14,7 @@ import {
   type SetLocaleRequest,
   type SetPermissionProfileRequest,
   type SetTunnelClientPathRequest,
+  type SetUnrestrictedModeRequest,
   type StartMcpRequest,
   type StartProcessRequest,
   type StopProcessRequest,
@@ -31,6 +32,7 @@ export interface DesktopIpcServices {
   selectWorkspace(request: SelectWorkspaceRequest): Promise<WorkspaceSummary>;
   getDashboard(): Promise<DashboardSnapshot>;
   setPermissionProfile(request: SetPermissionProfileRequest): Promise<{ readonly profile: PermissionProfileName }>;
+  setUnrestrictedMode(request: SetUnrestrictedModeRequest): Promise<{ readonly unrestricted: boolean; readonly restartRequired: boolean }>;
   listProcesses(): Promise<IpcResponseMap[typeof ipcChannels.listProcesses]>;
   startProcess(request: StartProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.startProcess]>;
   stopProcess(request: StopProcessRequest): Promise<{ readonly stopped: boolean }>;
@@ -80,6 +82,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     agentState: 'stopped',
     mode: 'WORK',
     locale: 'th',
+    unrestricted: false,
     connectionModes: { httpUrl: null, stdioCommand: 'lnwjud.exe --mcp-stdio' },
     workLog: [],
     inFlight: [],
@@ -87,6 +90,10 @@ const defaultDesktopServices: DesktopIpcServices = {
     appVersion: '0.1.0',
   }),
   setPermissionProfile: async (request): Promise<{ readonly profile: PermissionProfileName }> => ({ profile: request.profile }),
+  setUnrestrictedMode: async (request): Promise<{ readonly unrestricted: boolean; readonly restartRequired: boolean }> => ({
+    unrestricted: request.enabled,
+    restartRequired: false,
+  }),
   listProcesses: async (): Promise<readonly ProcessSummary[]> => [],
   startProcess: async (): Promise<IpcResponseMap[typeof ipcChannels.startProcess]> => {
     throw new Error('Desktop services are not configured');
@@ -141,6 +148,10 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.setPermissionProfile, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setPermissionProfile(parseSetPermissionProfileRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.setUnrestrictedMode, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setUnrestrictedMode(parseSetUnrestrictedModeRequest(payload));
   });
   ipcMain.handle(ipcChannels.listProcesses, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -234,6 +245,11 @@ function parseSelectWorkspaceRequest(payload: unknown): SelectWorkspaceRequest {
 function parseSetPermissionProfileRequest(payload: unknown): SetPermissionProfileRequest {
   if (!isRecord(payload) || !isPermissionProfile(payload.profile)) throw new Error('Invalid IPC payload');
   return { profile: payload.profile };
+}
+
+function parseSetUnrestrictedModeRequest(payload: unknown): SetUnrestrictedModeRequest {
+  if (!isRecord(payload) || typeof payload.enabled !== 'boolean') throw new Error('Invalid IPC payload: enabled');
+  return { enabled: payload.enabled };
 }
 
 function parseStopProcessRequest(payload: unknown): StopProcessRequest {

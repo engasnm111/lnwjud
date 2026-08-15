@@ -27,3 +27,24 @@ describe('CommandPolicy', () => {
     expect(policy.decide(permissionProfiles.safe, 'pnpm', 'project')).toBe('ASK');
   });
 });
+
+describe('CommandPolicy unrestricted', () => {
+  const unrestricted = new CommandPolicy({ unrestricted: true });
+
+  it('allows shell hosts in unrestricted mode', () => {
+    expect(unrestricted.decide(permissionProfiles.full, 'powershell.exe', 'client')).toBe('ALLOW');
+    expect(unrestricted.decide(permissionProfiles.full, 'cmd.exe', 'client')).toBe('ALLOW');
+    expect(unrestricted.decide(permissionProfiles.full, 'pwsh', 'client')).toBe('ALLOW');
+  });
+
+  it('still denies delete/remove executables in unrestricted mode', () => {
+    expect(unrestricted.decide(permissionProfiles.full, 'rm.exe', 'client', ['-rf', 'tmp'])).toBe('DENY');
+    expect(unrestricted.decide(permissionProfiles.full, 'del', 'client', ['file.txt'])).toBe('DENY');
+    expect(unrestricted.decide(permissionProfiles.full, 'remove-item', 'client')).toBe('DENY');
+  });
+
+  it('still denies git clean/reset in unrestricted mode', () => {
+    expect(unrestricted.decide(permissionProfiles.full, 'git', 'client', ['clean', '-fd'])).toBe('DENY');
+    expect(unrestricted.decide(permissionProfiles.full, 'git.exe', 'client', ['reset', '--hard'])).toBe('DENY');
+  });
+});

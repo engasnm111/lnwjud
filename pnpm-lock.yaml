@@ -77,6 +77,9 @@ importers:
       '@lnwjud/permissions':
         specifier: workspace:*
         version: link:../../packages/permissions
+      '@lnwjud/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@lnwjud/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -119,6 +122,9 @@ importers:
       '@lnwjud/search':
         specifier: workspace:*
         version: link:../../packages/search
+      '@lnwjud/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@lnwjud/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -189,6 +195,9 @@ importers:
       '@lnwjud/search':
         specifier: workspace:*
         version: link:../search
+      '@lnwjud/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@lnwjud/workspace':
         specifier: workspace:*
         version: link:../workspace
@@ -203,6 +212,9 @@ importers:
       '@lnwjud/process':
         specifier: workspace:*
         version: link:../process
+      '@lnwjud/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/codex:
     dependencies:
@@ -271,6 +283,9 @@ importers:
       '@lnwjud/domain':
         specifier: workspace:*
         version: link:../domain
+      '@lnwjud/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/process:
     dependencies:
@@ -309,6 +324,9 @@ importers:
       '@lnwjud/domain':
         specifier: workspace:*
         version: link:../domain
+      '@lnwjud/shared':
+        specifier: workspace:*
+        version: link:../shared
 
 packages:
 

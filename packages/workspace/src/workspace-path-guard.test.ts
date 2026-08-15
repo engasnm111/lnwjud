@@ -100,4 +100,21 @@ describe('WorkspacePathGuard', () => {
       expectError(result, 'PATH_OUTSIDE_WORKSPACE');
     }
   });
+
+  it('allows secret files outside E:\\ in unrestricted mode', async () => {
+    const workspace = await createWorkspace();
+    await writeFile(path.join(workspace.rootPath, '.env'), 'SECRET=1\n', 'utf8');
+    const guard = new WorkspacePathGuard(undefined, { unrestricted: true });
+
+    const result = await guard.resolveForRead(workspace, '.env');
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('still rejects paths outside the workspace in unrestricted mode', async () => {
+    const workspace = await createWorkspace();
+    const guard = new WorkspacePathGuard(undefined, { unrestricted: true });
+
+    expectError(await guard.resolveForRead(workspace, '..\\..\\Windows\\System32'), 'PATH_OUTSIDE_WORKSPACE');
+  });
 });

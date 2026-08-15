@@ -66,3 +66,54 @@ describe('ShellCapabilityBackend', () => {
     expect(result).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0, stdout: 'done' } });
   });
 });
+
+describe('ShellCapabilityBackend unrestricted', () => {
+  it('allows a working directory outside configured local roots', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-outside-'));
+    temporaryRoots.push(root, outside);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], unrestricted: true });
+
+    const result = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('outside-ok')"],
+      cwd: outside,
+      execution: 'foreground',
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { state: 'completed', stdout: 'outside-ok' } });
+  });
+
+  it('passes the full environment through in unrestricted mode', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], unrestricted: true });
+
+    const result = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', "process.stdout.write(process.env.LNWJUD_ENV_PROBE ?? 'missing')"],
+      cwd: root,
+      execution: 'foreground',
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { stdout: 'missing' } });
+  });
+
+  it('still blocks delete-like commands in unrestricted mode', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], unrestricted: true });
+
+    const result = await backend.execute({
+      operation: 'run',
+      executable: 'del',
+      arguments: ['file.txt'],
+      cwd: root,
+      execution: 'foreground',
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
+  });
+});

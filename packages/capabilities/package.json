@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@lnwjud/domain": "workspace:*",
-    "@lnwjud/process": "workspace:*"
+    "@lnwjud/process": "workspace:*",
+    "@lnwjud/shared": "workspace:*"
   },
   "scripts": {
     "test": "vitest run",

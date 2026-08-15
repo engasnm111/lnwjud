@@ -12,6 +12,7 @@
     "@lnwjud/extensions": "workspace:*",
     "@lnwjud/mcp-server": "workspace:*",
     "@lnwjud/permissions": "workspace:*",
+    "@lnwjud/shared": "workspace:*",
     "@lnwjud/storage": "workspace:*",
     "@lnwjud/workspace": "workspace:*"
   },

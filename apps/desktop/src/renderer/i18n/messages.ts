@@ -50,6 +50,10 @@ export type MessageKey =
   | 'settings.clientPath'
   | 'settings.savePath'
   | 'settings.permissions'
+  | 'settings.unrestricted'
+  | 'settings.unrestrictedHint'
+  | 'settings.restartRequired'
+  | 'badge.unrestricted'
   | 'git.title'
   | 'doctor.title'
   | 'doctor.run'
@@ -111,6 +115,10 @@ export const th: Messages = {
   'settings.clientPath': 'path ของ tunnel-client.exe',
   'settings.savePath': 'บันทึก path',
   'settings.permissions': 'โปรไฟล์สิทธิ์',
+  'settings.unrestricted': 'โหมดเต็มสิทธิ์ (Unrestricted)',
+  'settings.unrestrictedHint': 'เปิด: ลงทะเบียนทุกไดร์ฟ (C:, D:, E:), รัน cmd/powershell/npm.cmd ได้, อ่าน secret ได้ทุกที่ — ยังบล็อกคำสั่งลบและ git clean/reset ตามเดิม',
+  'settings.restartRequired': 'ต้องรีสตาร์ทแอพเพื่อให้มีผล',
+  'badge.unrestricted': 'Unrestricted',
   'git.title': 'สถานะ Git',
   'doctor.title': 'Doctor',
   'doctor.run': 'รัน Doctor',
@@ -171,6 +179,10 @@ export const en: Messages = {
   'settings.clientPath': 'tunnel-client.exe path',
   'settings.savePath': 'Save path',
   'settings.permissions': 'Permission profile',
+  'settings.unrestricted': 'Unrestricted mode',
+  'settings.unrestrictedHint': 'On: registers every drive (C:, D:, E:), allows cmd/powershell/npm.cmd, reads secrets anywhere — delete commands and git clean/reset stay blocked',
+  'settings.restartRequired': 'Restart the app to apply',
+  'badge.unrestricted': 'Unrestricted',
   'git.title': 'Git status',
   'doctor.title': 'Doctor',
   'doctor.run': 'Run doctor',

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import {
+  isDriveRoot,
   isEMachineRoot,
   isUnderEDrive,
   type Workspace,
@@ -30,12 +31,13 @@ export class WorkspaceInfoService {
   public constructor(
     private readonly workspaces: WorkspaceRepository,
     private readonly workspaceService?: WorkspaceService,
+    private readonly unrestricted: boolean = false,
   ) {}
 
   public async list(actor: FileActor): Promise<Result<readonly WorkspaceInfo[]>> {
     void actor;
     const workspaces = await this.workspaces.list();
-    return ok(workspaces.map(toWorkspaceInfo));
+    return ok(workspaces.map((workspace) => this.toWorkspaceInfo(workspace)));
   }
 
   public async info(actor: FileActor, workspaceId: string): Promise<Result<WorkspaceInfo>> {
@@ -43,7 +45,21 @@ export class WorkspaceInfoService {
     const workspace = await this.workspaces.get(workspaceId);
     return workspace === null
       ? err(appError('WORKSPACE_NOT_FOUND', 'Workspace was not found'))
-      : ok(toWorkspaceInfo(workspace));
+      : ok(this.toWorkspaceInfo(workspace));
+  }
+
+  private toWorkspaceInfo(workspace: Workspace): WorkspaceInfo {
+    const isRoot = this.unrestricted
+      ? isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)
+      : isEMachineRoot(workspace.realRootPath) || isEMachineRoot(workspace.rootPath);
+    return {
+      id: workspace.id,
+      displayName: workspace.displayName,
+      rootPath: workspace.rootPath,
+      realRootPath: workspace.realRootPath,
+      createdAt: workspace.createdAt,
+      kind: isRoot ? 'machine_root' : 'project',
+    };
   }
 
   public async register(actor: FileActor, request: RegisterWorkspaceRequest): Promise<Result<WorkspaceInfo>> {
@@ -56,7 +72,11 @@ export class WorkspaceInfoService {
     if (parent === null) {
       return err(appError('WORKSPACE_NOT_FOUND', 'Parent workspace was not found'));
     }
-    if (!isEMachineRoot(parent.realRootPath) && !isEMachineRoot(parent.rootPath)) {
+    if (this.unrestricted) {
+      if (!isDriveRoot(parent.realRootPath) && !isDriveRoot(parent.rootPath)) {
+        return err(appError('INVALID_INPUT', 'parentWorkspaceId must be a drive-root machine root'));
+      }
+    } else if (!isEMachineRoot(parent.realRootPath) && !isEMachineRoot(parent.rootPath)) {
       return err(appError('INVALID_INPUT', 'parentWorkspaceId must be the E:\\ machine root'));
     }
 
@@ -64,7 +84,7 @@ export class WorkspaceInfoService {
       ? path.resolve(request.path)
       : path.resolve(parent.rootPath, request.path);
 
-    if (!isUnderEDrive(absolutePath)) {
+    if (!this.unrestricted && !isUnderEDrive(absolutePath)) {
       return err(appError('INVALID_INPUT', 'Registered path must be under E:\\'));
     }
 
@@ -73,7 +93,7 @@ export class WorkspaceInfoService {
     const duplicate = existing.find((entry) => normalizeCompare(entry.realRootPath) === normalizedTarget
       || normalizeCompare(entry.rootPath) === normalizedTarget);
     if (duplicate !== undefined) {
-      return ok(toWorkspaceInfo(duplicate));
+      return ok(this.toWorkspaceInfo(duplicate));
     }
 
     const displayName = request.displayName?.trim()
@@ -81,21 +101,8 @@ export class WorkspaceInfoService {
       || 'Workspace';
     const added = await this.workspaceService.add(displayName, absolutePath);
     if (!added.ok) return added;
-    return ok(toWorkspaceInfo(added.value));
+    return ok(this.toWorkspaceInfo(added.value));
   }
-}
-
-function toWorkspaceInfo(workspace: Workspace): WorkspaceInfo {
-  return {
-    id: workspace.id,
-    displayName: workspace.displayName,
-    rootPath: workspace.rootPath,
-    realRootPath: workspace.realRootPath,
-    createdAt: workspace.createdAt,
-    kind: isEMachineRoot(workspace.realRootPath) || isEMachineRoot(workspace.rootPath)
-      ? 'machine_root'
-      : 'project',
-  };
 }
 
 function normalizeCompare(rootPath: string): string {

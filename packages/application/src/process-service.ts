@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { appError, err, ok, type CommandSpec, type Result } from '@lnwjud/domain';
 import { CommandPolicy, DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
 import { ProcessManager, type LogQuery, type ManagedProcess, type ManagedProcessStart, type ProcessLogResult } from '@lnwjud/process';
@@ -34,6 +35,8 @@ export interface ProcessServiceDependencies {
   readonly commandPolicy?: CommandPolicy;
   readonly profile?: PermissionProfile;
   readonly profileProvider?: () => PermissionProfile;
+  /** Full-access mode: shell hosts are allowed and cwd may be any existing directory. */
+  readonly unrestricted?: boolean;
 }
 
 interface ProcessOwner {
@@ -50,6 +53,7 @@ export class ProcessService {
   private readonly permissionEngine: PermissionEngine;
   private readonly commandPolicy: CommandPolicy;
   private readonly profileProvider: () => PermissionProfile;
+  private readonly unrestricted: boolean;
   private readonly owners = new Map<string, ProcessOwner>();
 
   public constructor(
@@ -64,7 +68,8 @@ export class ProcessService {
     );
     this.guard = dependencies.guard ?? new WorkspacePathGuard();
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy();
+    this.unrestricted = dependencies.unrestricted === true;
+    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy({ unrestricted: this.unrestricted });
     this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
   }
 
@@ -139,6 +144,15 @@ export class ProcessService {
   }
 
   private async resolveCwd(workspace: Workspace, requestedCwd: string | undefined): Promise<Result<string>> {
+    if (this.unrestricted && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
+      try {
+        const canonical = await realpath(requestedCwd);
+        if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Process cwd must be a directory'));
+        return ok(canonical);
+      } catch {
+        return err(appError('FILE_NOT_FOUND', 'Process cwd was not found'));
+      }
+    }
     const resolved = await this.guard.resolveForRead(workspace, requestedCwd ?? '.');
     if (!resolved.ok) return resolved;
     const cwd = resolved.value.realPath ?? resolved.value.absolutePath;

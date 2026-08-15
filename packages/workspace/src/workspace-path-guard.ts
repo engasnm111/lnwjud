@@ -11,8 +11,16 @@ interface ExistingAncestor {
   readonly relativeMissing: readonly string[];
 }
 
+export interface WorkspacePathGuardOptions {
+  /** When true, secret-file checks are bypassed for every drive (full-access mode). */
+  readonly unrestricted?: boolean;
+}
+
 export class WorkspacePathGuard {
-  public constructor(private readonly secretPolicy: SecretPolicy = new SecretPolicy()) {}
+  public constructor(
+    private readonly secretPolicy: SecretPolicy = new SecretPolicy(),
+    private readonly options: WorkspacePathGuardOptions = {},
+  ) {}
 
   public async resolveForRead(workspace: Workspace, inputPath: string): Promise<Result<ResolvedWorkspacePath>> {
     const inputValidation = this.validateInput(inputPath);
@@ -107,7 +115,7 @@ export class WorkspacePathGuard {
 
   private assertSecretReadable(workspace: Workspace, relativePath: string): Result<void> {
     // Trusted E: agent surface: secrets and hidden files are intentionally readable.
-    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+    if (this.options.unrestricted === true || isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
       return ok(undefined);
     }
     return this.secretPolicy.assertReadable(relativePath);

@@ -35,6 +35,12 @@ export interface ShellCapabilityOptions {
   readonly defaultTimeoutSeconds?: number;
   readonly autoWaitSeconds?: number;
   readonly maxOutputBytes?: number;
+  /**
+   * Full-access mode: cwd may be any existing directory, the full environment is
+   * passed through, and .cmd/.bat argument metacharacters are not rejected.
+   * Delete-like commands stay blocked in every mode.
+   */
+  readonly unrestricted?: boolean;
 }
 
 interface ShellTaskRecord {
@@ -71,6 +77,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
   private readonly defaultTimeoutSeconds: number;
   private readonly autoWaitSeconds: number;
   private readonly maxOutputBytes: number;
+  private readonly unrestricted: boolean;
 
   public constructor(options: ShellCapabilityOptions) {
     if (options.allowedRoots.length === 0) throw new Error('At least one local capability root is required');
@@ -81,6 +88,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     this.defaultTimeoutSeconds = clampNumber(options.defaultTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, 0.1, MAX_TIMEOUT_SECONDS);
     this.autoWaitSeconds = clampNumber(options.autoWaitSeconds ?? DEFAULT_AUTO_WAIT_SECONDS, 0, DEFAULT_TIMEOUT_SECONDS);
     this.maxOutputBytes = Math.floor(clampNumber(options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES, 1, MAX_OUTPUT_BYTES));
+    this.unrestricted = options.unrestricted === true;
   }
 
   public async execute(input: unknown): Promise<Result<unknown>> {
@@ -115,7 +123,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (!cwd.ok) return cwd;
     const executable = await this.executableResolver.resolve(request.executable);
     if (!executable.ok) return executable;
-    const invocation = toSpawnInvocation(executable.value, request.arguments);
+    const invocation = toSpawnInvocation(executable.value, request.arguments, this.unrestricted);
     if (!invocation.ok) return invocation;
 
     if (request.dryRun) {
@@ -126,7 +134,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     try {
       child = spawn(invocation.value.executable, [...invocation.value.args], {
         cwd: cwd.value,
-        env: createSafeEnvironment(process.env),
+        env: createSafeEnvironment(process.env, this.unrestricted),
         shell: false,
         windowsHide: false,
         ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
@@ -210,6 +218,15 @@ export class ShellCapabilityBackend implements CapabilityBackend {
   }
 
   private async resolveCwd(requestedCwd: string | undefined): Promise<Result<string>> {
+    if (this.unrestricted && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
+      try {
+        const canonical = await realpath(requestedCwd);
+        if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Working directory must be a directory'));
+        return ok(canonical);
+      } catch {
+        return err(appError('FILE_NOT_FOUND', 'Working directory was not found'));
+      }
+    }
     const configuredRoots = this.allowedRootsProvider === undefined ? this.allowedRoots : await this.allowedRootsProvider();
     const canonicalRoots: string[] = [];
     for (const root of configuredRoots) {
@@ -331,15 +348,16 @@ function isWithin(root: string, candidate: string): boolean {
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
-function toSpawnInvocation(executable: string, args: readonly string[]): Result<{ readonly executable: string; readonly args: readonly string[]; readonly windowsVerbatimArguments?: boolean }> {
+function toSpawnInvocation(executable: string, args: readonly string[], unrestricted: boolean): Result<{ readonly executable: string; readonly args: readonly string[]; readonly windowsVerbatimArguments?: boolean }> {
   if (process.platform !== 'win32' || !['.cmd', '.bat'].includes(path.extname(executable).toLowerCase())) return ok({ executable, args });
   const values = [executable, ...args];
-  if (values.some((value) => /[\r\n&|<>^%!]/.test(value) || value.includes('"'))) return err(appError('INVALID_INPUT', 'Windows command shim arguments contain unsupported shell metacharacters'));
+  if (!unrestricted && values.some((value) => /[\r\n&|<>^%!]/.test(value) || value.includes('"'))) return err(appError('INVALID_INPUT', 'Windows command shim arguments contain unsupported shell metacharacters'));
   const commandLine = values.map((value) => /\s/.test(value) ? `"${value}"` : value).join(' ');
   return ok({ executable: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', commandLine], windowsVerbatimArguments: true });
 }
 
-function createSafeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function createSafeEnvironment(source: NodeJS.ProcessEnv, unrestricted: boolean): NodeJS.ProcessEnv {
+  if (unrestricted) return { ...source };
   const allowed = new Set(['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME', 'LANG', 'LC_ALL', 'APPDATA', 'LOCALAPPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ComSpec'].map((key) => process.platform === 'win32' ? key.toLowerCase() : key));
   return Object.fromEntries(Object.entries(source).filter(([key, entry]) => {
     const normalizedKey = process.platform === 'win32' ? key.toLowerCase() : key;

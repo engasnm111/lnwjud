@@ -2,12 +2,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDesktopRuntime, type DesktopRuntime } from '../src/main/desktop-services.js';
 
 const temporaryRoots: string[] = [];
 
+beforeEach(() => {
+  vi.stubEnv('LNWJUD_UNRESTRICTED', '1');
+});
+
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -28,11 +33,12 @@ describe('DesktopRuntime persistence', () => {
 
       const restartedRuntime = createDesktopRuntime(dataRoot);
       try {
-        await expect(restartedRuntime.services.listWorkspaces()).resolves.toMatchObject([
-          { id: workspace.id, realRootPath: workspaceRoot },
-        ]);
+        const listed = await restartedRuntime.services.listWorkspaces();
+        expect(listed).toEqual(expect.arrayContaining([
+          expect.objectContaining({ id: workspace.id, realRootPath: workspaceRoot }),
+        ]));
         await expect(restartedRuntime.services.getDashboard()).resolves.toMatchObject({
-          permissionProfile: 'balanced',
+          permissionProfile: 'full',
           mcp: { running: false, url: null, workspaceId: null },
         });
       } finally {

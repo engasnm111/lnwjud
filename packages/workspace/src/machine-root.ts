@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 /** Only drive E: is allowed as a machine root. */
@@ -38,4 +39,22 @@ export function isUnderEDrive(rootPath: string): boolean {
 
 export function machineRootPath(): string {
   return `${MACHINE_ROOT_LETTER}:\\`;
+}
+
+/** Lists every fixed drive root that exists on this machine (C:\, D:\, …). */
+export function allFixedDriveRoots(): readonly string[] {
+  const roots: string[] = [];
+  for (let code = 65; code <= 90; code += 1) {
+    const root = `${String.fromCharCode(code)}:\\`;
+    if (existsSync(root)) roots.push(root);
+  }
+  return roots;
+}
+
+/**
+ * Machine roots for the current access mode:
+ * E:\ only by default; every existing fixed drive root in unrestricted mode.
+ */
+export function machineRootPaths(unrestricted: boolean): readonly string[] {
+  return unrestricted ? allFixedDriveRoots() : [machineRootPath()];
 }

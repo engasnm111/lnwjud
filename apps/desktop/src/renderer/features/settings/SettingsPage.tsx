@@ -7,6 +7,7 @@ interface SettingsPageProps {
   readonly dashboard: DashboardSnapshot;
   readonly onLocaleChange: (locale: UiLocale) => Promise<void>;
   readonly onPermissionProfileChange: (profile: PermissionProfileName) => Promise<void>;
+  readonly onUnrestrictedChange: (enabled: boolean) => Promise<boolean>;
   readonly onSaveTunnelApiKey: (apiKey: string) => Promise<void>;
   readonly onSetTunnelClientPath: (clientPath: string) => Promise<void>;
 }
@@ -16,6 +17,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [apiKey, setApiKey] = useState('');
   const [clientPath, setClientPath] = useState(props.dashboard.tunnel.clientPath ?? '');
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [unrestrictedMessage, setUnrestrictedMessage] = useState<string | null>(null);
 
   return (
     <div className="page-content">
@@ -45,6 +47,24 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
           <option value="custom">Custom</option>
         </select>
         <p data-testid="permission-profile">{props.dashboard.permissionProfile}</p>
+      </section>
+      <section className="panel">
+        <label className="field-label" htmlFor="unrestricted-mode">{t('settings.unrestricted')}</label>
+        <div className="form-row">
+          <input
+            id="unrestricted-mode"
+            type="checkbox"
+            checked={props.dashboard.unrestricted}
+            onChange={(event) => {
+              void props.onUnrestrictedChange(event.target.checked).then((restartRequired) => {
+                setUnrestrictedMessage(restartRequired ? t('settings.restartRequired') : null);
+              });
+            }}
+          />
+          <span data-testid="unrestricted-state">{props.dashboard.unrestricted ? 'ON' : 'OFF'}</span>
+        </div>
+        <p className="hint">{t('settings.unrestrictedHint')}</p>
+        {unrestrictedMessage === null ? null : <p className="hint" role="status">{unrestrictedMessage}</p>}
       </section>
       <section className="panel">
         <label className="field-label" htmlFor="tunnel-key">{t('settings.tunnelKey')}</label>

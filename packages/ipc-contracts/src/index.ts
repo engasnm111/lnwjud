@@ -4,6 +4,7 @@ export const ipcChannels = {
   selectWorkspace: 'lnwjud:select-workspace',
   getDashboard: 'lnwjud:get-dashboard',
   setPermissionProfile: 'lnwjud:set-permission-profile',
+  setUnrestrictedMode: 'lnwjud:set-unrestricted-mode',
   listProcesses: 'lnwjud:list-processes',
   startProcess: 'lnwjud:start-process',
   stopProcess: 'lnwjud:stop-process',
@@ -103,6 +104,7 @@ export interface DashboardSnapshot {
   readonly agentState: AgentState;
   readonly mode: 'WORK';
   readonly locale: UiLocale;
+  readonly unrestricted: boolean;
   readonly connectionModes: ConnectionModes;
   readonly workLog: readonly WorkLogEntry[];
   readonly inFlight: readonly InFlightWorkItem[];
@@ -152,6 +154,10 @@ export interface SetPermissionProfileRequest {
   readonly profile: PermissionProfileName;
 }
 
+export interface SetUnrestrictedModeRequest {
+  readonly enabled: boolean;
+}
+
 export interface StartProcessRequest {
   readonly workspaceId: string;
   readonly mode: 'fixture' | 'project-dev';
@@ -195,6 +201,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.selectWorkspace]: SelectWorkspaceRequest;
   readonly [ipcChannels.getDashboard]: undefined;
   readonly [ipcChannels.setPermissionProfile]: SetPermissionProfileRequest;
+  readonly [ipcChannels.setUnrestrictedMode]: SetUnrestrictedModeRequest;
   readonly [ipcChannels.listProcesses]: undefined;
   readonly [ipcChannels.startProcess]: StartProcessRequest;
   readonly [ipcChannels.stopProcess]: StopProcessRequest;
@@ -218,6 +225,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.selectWorkspace]: WorkspaceSummary;
   readonly [ipcChannels.getDashboard]: DashboardSnapshot;
   readonly [ipcChannels.setPermissionProfile]: { readonly profile: PermissionProfileName };
+  readonly [ipcChannels.setUnrestrictedMode]: { readonly unrestricted: boolean; readonly restartRequired: boolean };
   readonly [ipcChannels.listProcesses]: readonly ProcessSummary[];
   readonly [ipcChannels.startProcess]: ProcessSummary;
   readonly [ipcChannels.stopProcess]: { readonly stopped: boolean };
@@ -241,6 +249,7 @@ export interface LnwjudApi {
   selectWorkspace(request: SelectWorkspaceRequest): Promise<IpcResponseMap[typeof ipcChannels.selectWorkspace]>;
   getDashboard(): Promise<IpcResponseMap[typeof ipcChannels.getDashboard]>;
   setPermissionProfile(request: SetPermissionProfileRequest): Promise<IpcResponseMap[typeof ipcChannels.setPermissionProfile]>;
+  setUnrestrictedMode(request: SetUnrestrictedModeRequest): Promise<IpcResponseMap[typeof ipcChannels.setUnrestrictedMode]>;
   listProcesses(): Promise<IpcResponseMap[typeof ipcChannels.listProcesses]>;
   startProcess(request: StartProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.startProcess]>;
   stopProcess(request: StopProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.stopProcess]>;

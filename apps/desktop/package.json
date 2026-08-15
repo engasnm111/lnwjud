@@ -25,6 +25,7 @@
     "@lnwjud/permissions": "workspace:*",
     "@lnwjud/process": "workspace:*",
     "@lnwjud/search": "workspace:*",
+    "@lnwjud/shared": "workspace:*",
     "@lnwjud/storage": "workspace:*",
     "@lnwjud/workspace": "workspace:*",
     "react": "19.1.1",

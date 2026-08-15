@@ -39,7 +39,7 @@ import {
   SqliteSettingsRepository,
   SqliteWorkspaceRepository,
 } from '@lnwjud/storage';
-import { machineRootPath, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { allFixedDriveRoots, machineRootPath, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
 
 export interface StdioMcpRuntime {
   readonly services: McpApplicationServices;
@@ -53,7 +53,7 @@ export interface StdioMcpRuntime {
  * Builds full-access MCP application services for stdio/CLI launches.
  * Permission profile is always `full`. Capabilities are wired for ChatGPT tunnel use.
  */
-export function createStdioMcpRuntime(dataPath: string, workspace: Workspace): StdioMcpRuntime {
+export function createStdioMcpRuntime(dataPath: string, workspace: Workspace, unrestricted: boolean = false): StdioMcpRuntime {
   const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
@@ -68,13 +68,16 @@ export function createStdioMcpRuntime(dataPath: string, workspace: Workspace): S
   const processService = new ProcessService(workspaceRepository, {
     projectService,
     profileProvider: (): typeof permissionProfiles.full => fullProfile,
+    unrestricted,
   });
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
     profile: fullProfile,
   });
-  const fileService = new FileService(workspaceRepository, undefined, undefined, {
+  const pathGuard = unrestricted ? new WorkspacePathGuard(new SecretPolicy(), { unrestricted: true }) : undefined;
+  const fileService = new FileService(workspaceRepository, pathGuard, undefined, {
     checkpointService,
     profileProvider: (): typeof permissionProfiles.full => fullProfile,
+    unrestricted,
   });
   const gitService = new GitService(workspaceRepository);
   const workspaceQuery = new WorkspaceQueryService(workspaceRepository);
@@ -89,9 +92,9 @@ export function createStdioMcpRuntime(dataPath: string, workspace: Workspace): S
   const capabilityService = createStdioCapabilityService(dataPath, async () => {
     const listed = await workspaceRepository.list();
     const roots = listed.map((entry) => entry.realRootPath);
-    if (roots.length === 0) return [machineRootPath()];
+    if (roots.length === 0) return unrestricted ? [...allFixedDriveRoots()] : [machineRootPath()];
     return roots;
-  });
+  }, unrestricted);
   const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
   const activityTracker = new ActivityTracker({
     async record(event: ActivitySinkEvent): Promise<void> {
@@ -112,7 +115,7 @@ export function createStdioMcpRuntime(dataPath: string, workspace: Workspace): S
   const services: McpApplicationServices = {
     capabilities: capabilityService,
     extensions,
-    workspaceInfo: new WorkspaceInfoService(workspaceRepository, workspaceService),
+    workspaceInfo: new WorkspaceInfoService(workspaceRepository, workspaceService, unrestricted),
     workspaceQuery,
     projectSnapshot: new ProjectSnapshotService(workspaceRepository, {
       projectService,
@@ -143,15 +146,17 @@ export function createStdioMcpRuntime(dataPath: string, workspace: Workspace): S
 function createStdioCapabilityService(
   dataPath: string,
   workspaceRootsProvider: () => Promise<readonly string[]>,
+  unrestricted: boolean,
 ): LocalCapabilityService {
   const shellBackend = new ShellCapabilityBackend({
-    allowedRoots: [dataPath, machineRootPath()],
+    allowedRoots: [dataPath, ...(unrestricted ? [...allFixedDriveRoots()] : [machineRootPath()])],
     allowedRootsProvider: async (): Promise<readonly string[]> => {
       const workspaceRoots = await workspaceRootsProvider();
       const configuredRoots = readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS);
-      const roots = [...workspaceRoots, ...configuredRoots, machineRootPath()];
+      const roots = [...workspaceRoots, ...configuredRoots, ...(unrestricted ? [...allFixedDriveRoots()] : [machineRootPath()])];
       return roots.length === 0 ? [dataPath] : roots;
     },
+    unrestricted,
   });
   const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: path.join(dataPath, 'browser-profile') });
   const browserBackend = new BrowserCdpBackend({

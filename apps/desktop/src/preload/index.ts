@@ -17,6 +17,7 @@ import {
   type SetLocaleRequest,
   type SetPermissionProfileRequest,
   type SetTunnelClientPathRequest,
+  type SetUnrestrictedModeRequest,
   type StartMcpRequest,
   type StartProcessRequest,
   type StopProcessRequest,
@@ -167,6 +168,7 @@ function dashboard(value: unknown): DashboardSnapshot {
     agentState: agentState(value.agentState),
     mode: 'WORK',
     locale: uiLocale(value.locale),
+    unrestricted: booleanField(value, 'unrestricted'),
     connectionModes: {
       httpUrl: nullableString(value.connectionModes.httpUrl),
       stdioCommand: stringField(value.connectionModes, 'stdioCommand'),
@@ -294,6 +296,16 @@ function setPermissionProfile(request: SetPermissionProfileRequest): Promise<{ r
   });
 }
 
+function setUnrestrictedMode(request: SetUnrestrictedModeRequest): Promise<{ readonly unrestricted: boolean; readonly restartRequired: boolean }> {
+  if (!isRecord(request) || typeof request.enabled !== 'boolean') {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.setUnrestrictedMode, { enabled: request.enabled }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { unrestricted: booleanField(value, 'unrestricted'), restartRequired: booleanField(value, 'restartRequired') };
+  });
+}
+
 function stopProcess(request: StopProcessRequest): Promise<{ readonly stopped: boolean }> {
   if (!isRecord(request) || typeof request.processId !== 'string' || request.processId.trim().length === 0) {
     return Promise.reject(new Error('Invalid IPC request'));
@@ -374,6 +386,7 @@ const api: LnwjudApi = {
   selectWorkspace,
   getDashboard: () => invoke(ipcChannels.getDashboard).then(dashboard),
   setPermissionProfile,
+  setUnrestrictedMode,
   listProcesses: () => invoke(ipcChannels.listProcesses).then(processList),
   startProcess,
   stopProcess,

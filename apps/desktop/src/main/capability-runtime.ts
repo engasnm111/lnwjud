@@ -13,6 +13,7 @@ import {
 } from '@lnwjud/capabilities';
 import type { Result } from '@lnwjud/domain';
 import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
+import { allFixedDriveRoots } from '@lnwjud/workspace';
 
 export interface LocalCapabilityRuntime {
   readonly service: LocalCapabilityService;
@@ -22,15 +23,19 @@ export interface LocalCapabilityRuntime {
 export function createLocalCapabilityRuntime(
   dataPath: string,
   workspaceRootsProvider: () => Promise<readonly string[]>,
+  unrestricted: boolean = false,
 ): LocalCapabilityRuntime {
   const shellBackend = new ShellCapabilityBackend({
     allowedRoots: [dataPath],
     allowedRootsProvider: async (): Promise<readonly string[]> => {
       const workspaceRoots = await workspaceRootsProvider();
       const configuredRoots = readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS);
-      const roots = [...workspaceRoots, ...configuredRoots];
+      const roots = unrestricted
+        ? [...workspaceRoots, ...configuredRoots, ...allFixedDriveRoots()]
+        : [...workspaceRoots, ...configuredRoots];
       return roots.length === 0 ? [dataPath] : roots;
     },
+    unrestricted,
   });
   const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: path.join(dataPath, 'browser-profile') });
   const browserBackend = new BrowserCdpBackend({

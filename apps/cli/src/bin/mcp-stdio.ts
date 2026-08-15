@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { syncEMachineRoot } from '@lnwjud/application';
+import { syncMachineRoots } from '@lnwjud/application';
 import { startMcpStdio } from '@lnwjud/mcp-server';
-import { SqliteDatabase, SqliteWorkspaceRepository } from '@lnwjud/storage';
+import { isUnrestricted, UNRESTRICTED_SETTING_KEY } from '@lnwjud/shared';
+import { SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import { isUnderEDrive, machineRootPath, normalizeWorkspaceRoot, WorkspaceService } from '@lnwjud/workspace';
 import { createStdioMcpRuntime } from '../runtime/stdio-mcp-runtime.js';
 
@@ -31,26 +32,28 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  const dataPath = resolveDataPath();
+  fs.mkdirSync(dataPath, { recursive: true });
+
+  const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+  const workspaceRepository = new SqliteWorkspaceRepository(database);
+  const settingsRepository = new SqliteSettingsRepository(database);
+  const workspaceService = new WorkspaceService(workspaceRepository);
+  const unrestricted = isUnrestricted(process.env, settingsRepository.get(UNRESTRICTED_SETTING_KEY));
+
   const requestedRaw = readArg('--workspace') ?? process.env.LNWJUD_WORKSPACE;
   const requestedPath = path.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : eRoot);
   if (!fs.existsSync(requestedPath)) {
     process.stderr.write(`lnwjud MCP stdio: workspace path does not exist: ${requestedPath}\n`);
     process.exit(2);
   }
-  if (!isUnderEDrive(requestedPath)) {
-    process.stderr.write(`lnwjud MCP stdio: workspace must be under E:\\ (got ${requestedPath})\n`);
+  if (!unrestricted && !isUnderEDrive(requestedPath)) {
+    process.stderr.write(`lnwjud MCP stdio: workspace must be under E:\\ (got ${requestedPath}). Enable unrestricted mode to use other drives.\n`);
     process.exit(2);
   }
 
   process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim()
     || eRoot.replace(/\\/g, '/');
-
-  const dataPath = resolveDataPath();
-  fs.mkdirSync(dataPath, { recursive: true });
-
-  const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
-  const workspaceRepository = new SqliteWorkspaceRepository(database);
-  const workspaceService = new WorkspaceService(workspaceRepository);
 
   const reset = hasFlag('--reset-workspaces')
     || process.env.LNWJUD_RESET_WORKSPACES === '1'
@@ -62,9 +65,9 @@ async function main(): Promise<void> {
     process.stderr.write('lnwjud MCP stdio: cleared previous workspaces\n');
   }
 
-  const machineRoot = await syncEMachineRoot(workspaceService);
+  const machineRoot = await syncMachineRoots(workspaceService, unrestricted);
   if (machineRoot === null) {
-    process.stderr.write('lnwjud MCP stdio: could not register E:\\ machine root\n');
+    process.stderr.write('lnwjud MCP stdio: could not register machine root\n');
     process.exit(1);
   }
 
@@ -91,11 +94,10 @@ async function main(): Promise<void> {
   database.close();
 
   const primary = workspace;
-  const runtime = createStdioMcpRuntime(dataPath, primary);
-  process.stderr.write(`lnwjud MCP stdio ready primary=${primary.id} root=${primary.realRootPath}\n`);
+  const runtime = createStdioMcpRuntime(dataPath, primary, unrestricted);
+  process.stderr.write(`lnwjud MCP stdio ready primary=${primary.id} root=${primary.realRootPath}${unrestricted ? ' unrestricted=1' : ''}\n`);
 
   let shuttingDown = false;
-  let handle: ReturnType<typeof startMcpStdio> | undefined;
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -112,7 +114,7 @@ async function main(): Promise<void> {
     process.exit(0);
   };
 
-  handle = startMcpStdio({
+  const handle = startMcpStdio({
     services: runtime.services,
     actor: runtime.actor,
     activityTracker: runtime.activityTracker,

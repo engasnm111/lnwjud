@@ -13,7 +13,8 @@
     }
   },
   "dependencies": {
-    "@lnwjud/domain": "workspace:*"
+    "@lnwjud/domain": "workspace:*",
+    "@lnwjud/shared": "workspace:*"
   },
   "scripts": {
     "test": "vitest run",

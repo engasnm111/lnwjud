@@ -76,6 +76,17 @@ export function App(): ReactElement {
     }
   }
 
+  async function setUnrestrictedMode(enabled: boolean): Promise<boolean> {
+    try {
+      const result = await window.lnwjud.setUnrestrictedMode({ enabled });
+      await refresh();
+      return result.restartRequired;
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Unrestricted mode could not be changed'));
+      return true;
+    }
+  }
+
   async function stopMcp(): Promise<void> {
     try {
       setMcpBusy(true);
@@ -209,6 +220,7 @@ export function App(): ReactElement {
           dashboard={dashboard}
           onLocaleChange={changeLocale}
           onPermissionProfileChange={setPermissionProfile}
+          onUnrestrictedChange={setUnrestrictedMode}
           onSaveTunnelApiKey={saveTunnelApiKey}
           onSetTunnelClientPath={setTunnelClientPath}
         />

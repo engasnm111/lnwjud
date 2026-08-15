@@ -68,7 +68,10 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
         <div className={`agent-orb ${dashboard.agentState}`} data-testid="agent-state" />
         <div>
           <strong data-testid="mcp-status">{agentLabel}</strong>
-          <p>{t('agent.mode')}</p>
+          <p>
+            {t('agent.mode')}
+            {dashboard.unrestricted ? ` • ${t('badge.unrestricted')}` : ''}
+          </p>
         </div>
       </section>
 

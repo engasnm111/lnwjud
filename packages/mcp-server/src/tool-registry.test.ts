@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { appError, err, ok } from '@lnwjud/domain';
+import type { ActivitySinkEvent } from './activity-tracker.js';
 import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
 
 const actor = { clientId: 'client-1', clientName: 'test' };
@@ -115,7 +116,7 @@ describe('MCP tool registry', () => {
 
     const response = await new ToolRegistry(services, actor, {
       activity: {
-        async record(event) {
+        async record(event: ActivitySinkEvent): Promise<void> {
           events.push({ phase: event.phase, toolName: event.toolName, resultCode: event.resultCode });
         },
       },

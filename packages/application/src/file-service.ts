@@ -48,6 +48,8 @@ export interface FileServiceDependencies {
   readonly profile?: PermissionProfile;
   readonly profileProvider?: () => PermissionProfile;
   readonly unboundedReader?: UnboundedFileReader;
+  /** When true, every workspace uses the trusted read path (binary/base64, no size cap). */
+  readonly unrestricted?: boolean;
 }
 
 export interface WriteFileRequest {
@@ -88,6 +90,7 @@ export class FileService {
   private readonly permissionEngine: PermissionEngine;
   private readonly profileProvider: () => PermissionProfile;
   private readonly unboundedReader: UnboundedFileReader;
+  private readonly unrestricted: boolean;
 
   public constructor(
     private readonly workspaces: WorkspaceRepository,
@@ -101,6 +104,11 @@ export class FileService {
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
     this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
     this.unboundedReader = dependencies.unboundedReader ?? new UnboundedFileReader();
+    this.unrestricted = dependencies.unrestricted === true;
+  }
+
+  private isTrustedWorkspace(workspace: Workspace): boolean {
+    return this.unrestricted || isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath);
   }
 
   public async readFile(actor: FileActor, workspaceId: string, request: ReadFileRequest): Promise<Result<ReadFileResult>> {
@@ -112,7 +120,7 @@ export class FileService {
     if (!resolved.ok) return resolved;
 
     const absolute = resolved.value.realPath ?? resolved.value.absolutePath;
-    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+    if (this.isTrustedWorkspace(workspace)) {
       // Line ranges only apply to utf8 text; ignore for binary.
       if (request.startLine !== undefined || request.endLine !== undefined) {
         const textResult = await this.reader.read(absolute, request);
@@ -146,7 +154,7 @@ export class FileService {
     }
     const workspaceResult = await this.getWorkspace(workspaceId);
     if (!workspaceResult.ok) return workspaceResult;
-    const trustedE = isUnderEDrive(workspaceResult.value.realRootPath) || isUnderEDrive(workspaceResult.value.rootPath);
+    const trustedE = this.isTrustedWorkspace(workspaceResult.value);
 
     const files: ReadFileResult[] = [];
     let totalBytes = 0;
