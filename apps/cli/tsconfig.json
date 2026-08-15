@@ -10,6 +10,7 @@
   "references": [
     { "path": "../../packages/application" },
     { "path": "../../packages/audit" },
+    { "path": "../../packages/capabilities" },
     { "path": "../../packages/codex" },
     { "path": "../../packages/domain" },
     { "path": "../../packages/extensions" },

@@ -5,8 +5,16 @@ export interface McpTextContent {
   readonly text: string;
 }
 
+export interface McpImageContent {
+  readonly type: 'image';
+  readonly data: string;
+  readonly mimeType: string;
+}
+
+export type McpContent = McpTextContent | McpImageContent;
+
 export interface McpToolResponse {
-  readonly content: readonly McpTextContent[];
+  readonly content: readonly McpContent[];
   readonly isError?: boolean;
   readonly structuredContent?: Readonly<Record<string, unknown>>;
 }
@@ -14,8 +22,11 @@ export interface McpToolResponse {
 export function mapResult<T>(result: Result<T>): McpToolResponse {
   if (!result.ok) return mapError(result.error);
   const structuredContent = toStructuredContent(result.value);
+  const image = extractImageContent(result.value);
   return {
-    content: [{ type: 'text', text: toText(result.value) }],
+    content: image === undefined
+      ? [{ type: 'text', text: toText(result.value) }]
+      : [image, { type: 'text', text: toText(result.value) }],
     ...(structuredContent === undefined ? {} : { structuredContent }),
   };
 }
@@ -38,4 +49,14 @@ function toText(value: unknown): string {
 function toStructuredContent(value: unknown): Readonly<Record<string, unknown>> | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return { value };
   return value as Readonly<Record<string, unknown>>;
+}
+
+function extractImageContent(value: unknown): McpImageContent | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.encoding !== 'base64' || typeof record.content !== 'string' || typeof record.mimeType !== 'string') {
+    return undefined;
+  }
+  if (!record.mimeType.startsWith('image/')) return undefined;
+  return { type: 'image', data: record.content, mimeType: record.mimeType };
 }

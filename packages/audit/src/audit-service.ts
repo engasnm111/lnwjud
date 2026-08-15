@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { codexInstructionSummary, Redactor } from './redactor.js';
-import type { AuditEvent, AuditEventInput, AuditEventRepository, CodexRunAuditInput } from './audit-types.js';
+import type {
+  AuditEvent,
+  AuditEventInput,
+  AuditEventRepository,
+  CodexRunAuditInput,
+  McpToolAuditInput,
+} from './audit-types.js';
 
 export class AuditService {
   public constructor(
@@ -37,6 +43,30 @@ export class AuditService {
       metadata: { ...codexInstructionSummary(input.codexTaskId, input.instruction) },
     });
   }
+
+  public recordMcpTool(input: McpToolAuditInput): Promise<void> {
+    return this.record({
+      ...(input.timestamp === undefined ? {} : { timestamp: input.timestamp }),
+      actorId: input.actorId,
+      actorName: input.actorName,
+      ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
+      action: `mcp_tool:${input.toolName}`,
+      ...(input.targetSummary === undefined ? {} : { targetSummary: input.targetSummary }),
+      resultCode: input.resultCode,
+      durationMs: input.durationMs,
+      metadata: {
+        toolName: input.toolName,
+        callId: input.callId,
+        phase: input.phase,
+      },
+    });
+  }
 }
 
-export type { AuditEvent, AuditEventInput, AuditEventRepository, CodexRunAuditInput } from './audit-types.js';
+export type {
+  AuditEvent,
+  AuditEventInput,
+  AuditEventRepository,
+  CodexRunAuditInput,
+  McpToolAuditInput,
+} from './audit-types.js';

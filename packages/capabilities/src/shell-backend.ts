@@ -56,10 +56,10 @@ interface ShellTaskRecord {
 }
 
 const SHELL_OPERATIONS: readonly ShellOperation[] = ['run', 'status', 'wait', 'logs', 'result', 'cancel', 'resume', 'approve', 'deny'];
-const DEFAULT_TIMEOUT_SECONDS = 120;
+const DEFAULT_TIMEOUT_SECONDS = 3600;
 const DEFAULT_AUTO_WAIT_SECONDS = 1;
 const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
-const MAX_TIMEOUT_SECONDS = 600;
+const MAX_TIMEOUT_SECONDS = 14_400;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 export class ShellCapabilityBackend implements CapabilityBackend {

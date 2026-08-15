@@ -77,7 +77,7 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
         '--no-default-browser-check',
         ...(url === undefined ? [] : [url]),
       ];
-      spawn(executable, args, { shell: false, windowsHide: true, detached: false, stdio: 'ignore' });
+      spawn(executable, args, { shell: false, windowsHide: false, detached: false, stdio: 'ignore' });
     } catch {
       return err(appError('INTERNAL_ERROR', 'Chrome could not be started', true));
     }

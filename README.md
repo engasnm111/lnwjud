@@ -102,14 +102,28 @@ pnpm@10.15.0.
 
 ### Build and run the desktop dashboard
 
+One command from the repository root:
+
 ```powershell
-corepack pnpm@10.15.0 build
-Set-Location .\apps\desktop
-corepack pnpm@10.15.0 exec electron .\dist\main\main.js
+Set-Location E:\lnwjud
+corepack pnpm@10.15.0 desktop
 ```
 
-The dashboard owns the SQLite state, workspace registry, permission profile,
-audit records, and loopback MCP lifecycle.
+This builds the desktop app and opens the Agent Control Center. MCP HTTP
+auto-starts on launch (no Start Connection click required). The dashboard owns
+the SQLite state, workspace registry, permission profile, work-log audit
+records, loopback MCP lifecycle, and Secure Tunnel controls.
+
+Optional environment:
+
+```powershell
+$env:LNWJUD_DATA_PATH = "$env:LOCALAPPDATA\lnwjud"
+$env:LNWJUD_WORKSPACE = "D:\projects\my-app"
+corepack pnpm@10.15.0 desktop
+```
+
+Use the same `LNWJUD_DATA_PATH` for desktop UI and `lnwjud.exe --mcp-stdio` so
+ChatGPT tool activity appears in the Work Log.
 
 ### Build a Windows installer
 
@@ -136,11 +150,11 @@ Always use the path shown by the installed shortcut or Get-Command.
 
 ### Add a workspace
 
-1. Start lnwjud.
-2. Add the project directory in the Workspace panel.
-3. Save the returned workspace ID. MCP calls use this ID, not an arbitrary path.
-4. Select a permission profile.
-5. Run the dashboard doctor if a dependency is reported missing.
+1. Start lnwjud (`pnpm desktop` or the installed app).
+2. On Home or Projects, add the project directory path.
+3. The selected project is persisted; switching projects restarts MCP automatically.
+4. Permission profile is forced to full for the MCP bridge.
+5. Run Doctor from the sidebar if a dependency is reported missing.
 
 Every file operation resolves the supplied path against a registered workspace,
 canonicalizes existing parents/targets, rejects traversal and reparse-point
@@ -171,7 +185,7 @@ $env:LNWJUD_CAPABILITY_ROOTS = 'E:/work;E:/projects'
 ```
 
 Only configure roots under drive **E:**. Paths on other drives are ignored.
-Core file tools still require a registered workspace.
+Core file tools still require a registered workspace. Stdio defaults capability roots to `E:/` when unset.
 
 ### Start the local HTTP connection
 
@@ -215,7 +229,7 @@ Example user-scoped or trusted project-scoped config.toml:
 command = "C:/Users/<WindowsUser>/AppData/Local/Programs/lnwjud/lnwjud-mcp-stdio.cmd"
 args = ["--workspace", "E:/lnwjud"]
 startup_timeout_sec = 20
-tool_timeout_sec = 120
+tool_timeout_sec = 3600
 ```
 
 Use prompt approval while testing an unfamiliar workspace. No OpenAI API key
@@ -304,25 +318,33 @@ log:
   level: info
   format: json
 mcp:
-  # tunnel-client defaults to 10m and tears down long ChatGPT sessions if unset
-  connection_max_ttl: 24h
+  # Do not put connection_max_ttl in YAML if your tunnel-client build rejects it.
+  # Force a long ceiling via flag/env instead (default is only 10m):
+  #   --mcp.connection-max-ttl 168h
+  #   MCP_CONNECTION_MAX_TTL=168h
   commands:
     - channel: main
-      command: "C:/Users/<WindowsUser>/AppData/Local/Programs/lnwjud/lnwjud.exe --mcp-stdio"
+      command: "C:/Users/<WindowsUser>/AppData/Local/Programs/lnwjud/lnwjud-mcp-stdio.cmd"
 ```
 
 ### 5. Run diagnostics and the tunnel
 
+Prefer the desktop Control Center: save the Runtime API key once under Settings,
+then click Start Tunnel. The key is stored with Windows DPAPI.
+
+Manual session (still supported):
+
 ```powershell
 $env:CONTROL_PLANE_API_KEY = '<runtime-key-for-this-session>'
+$env:MCP_CONNECTION_MAX_TTL = '168h'
 & $tc doctor --profile lnwjud --explain
 if ($LASTEXITCODE -ne 0) { throw 'tunnel-client doctor failed' }
-& $tc run --profile lnwjud
+& $tc run --profile lnwjud --mcp.connection-max-ttl 168h
 ```
 
-Keep this process and the child lnwjud.exe --mcp-stdio process alive while
-ChatGPT is using the connector. The optional local admin UI at /ui shows
-readiness and channel health.
+Keep this process and the child `lnwjud-mcp-stdio.cmd` process alive while
+ChatGPT is using the connector. Use the same LNWJUD_DATA_PATH as the desktop
+app so Work Log entries appear in the Control Center.
 
 ### 6. Verify the command locally
 
@@ -468,28 +490,33 @@ capability tools, and 5 skills/MCP bridge meta-tools (40 total).
 
 ### Optional machine-root discovery extension
 
-Some stdio-capable builds include a guarded machine-access extension. When the
-server advertises these names in its MCP tools/list response, use them before
-the workspace tools above:
+Stdio and desktop runtimes register drive **E:** (`E:\`) as the sole machine
+root. Other fixed-drive roots are pruned on startup. Project folders may be
+registered under `E:\` via MCP or the desktop UI.
 
 | Tool | Permission | Input | What it does |
 | --- | --- | --- | --- |
-| workspace_list | READ | Empty object | Lists registered machine roots and project workspaces with availability |
-| workspace_register | WRITE | parentWorkspaceId, path, optional displayName | Registers an existing project directory below an approved machine root |
+| workspace_list | READ | Empty object | Lists registered machine roots and project workspaces (`kind`: `machine_root` or `project`) |
+| workspace_register | WRITE | parentWorkspaceId, path, optional displayName | Registers an existing project directory below the `E:\` machine root (idempotent) |
 
-The extension still validates the parent ID, canonical path, reparse points,
-and secret policy. Machine-root discovery is limited to drive **E:** (`E:\`);
-other fixed drives are not registered and existing non-E machine roots are
-pruned on startup. It does not turn a path into an unrestricted filesystem
-handle. If your build does not advertise these two tools, register the
-workspace from the desktop dashboard and use its workspace ID.
+The extension still validates the parent ID, canonical path, and reparse points.
+**Secret and hidden files under `E:\` are intentionally readable** (including
+`.env`, keys, and credentials). Image and other binary files are returned as
+base64 with no application size cap. Paths outside `E:\` remain denied.
+
+Local capability tools (`shell`, `vision`, `accessibility`, `input_event`,
+`window`, `dom_cdp`, `health`) are available on both desktop HTTP MCP and
+stdio/tunnel. Shell allowed roots include `E:\`.
+
+If your build does not advertise `workspace_register`, register the workspace
+from the desktop dashboard and use its workspace ID.
 
 ### Files and search
 
 | Tool | Permission | What it does |
 | --- | --- | --- |
-| read_file | READ | Reads bounded UTF-8 text from one workspace file; binary files are rejected |
-| read_files | READ | Reads up to 20 bounded workspace files with a total output cap |
+| read_file | READ | Reads a workspace file (UTF-8 text, or base64 for binary/images under E:\\; no app size cap on E:\\) |
+| read_files | READ | Reads up to 20 workspace files (aggregate size cap applies outside E:\\ only) |
 | search_files | READ | Searches workspace filenames with bounded results |
 | search_text | READ | Searches text through direct ripgrep arguments; no shell string is built |
 | write_file | WRITE | Writes UTF-8 text and checkpoints an existing target before overwrite |
@@ -497,8 +524,9 @@ workspace from the desktop dashboard and use its workspace ID.
 | move_file | WRITE | Moves a file within one authorized workspace |
 | delete_file | DANGEROUS | Deletes one file or an empty directory; recursive deletion is not exposed |
 
-Default-denied secrets include .env (except .env.example), .env.*, *.pem,
-*.key, id_rsa*, id_ed25519*, .ssh/**, .aws/**, and credentials.json.
+Default-denied secrets apply only to workspaces **outside** `E:\`. Under the
+trusted `E:\` agent surface, `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`,
+`id_ed25519*`, `.ssh/**`, `.aws/**`, and `credentials.json` are readable.
 
 ### Git inspection
 
@@ -691,8 +719,9 @@ read_arbitrary_path
 | process_start refuses PowerShell/CMD | Shell hosts are blocked; use project_* or a specific approved executable/args |
 | Child process windows are visible | This is expected for the current visible-window Windows build; use handles/logs to manage them |
 | codex_status is unavailable | Install Codex or continue with process_* and project_*; lnwjud does not inspect credentials |
-| Tunnel disconnects with context canceled | Keep one runner alive; avoid a competing manual process and scheduled task |
+| Tunnel disconnects with context canceled / context deadline exceeded | Usually MCP connection TTL teardown; keep one launcher open (auto-restart). After restart, Refresh the connector or start a new ChatGPT message |
 | ChatGPT advertises old tools | Restart server/tunnel, Refresh the connector, and start a new conversation |
+| Long tool run looks dead / silent | lnwjud emits progress heartbeats every ~15s after the first 15s; ensure tunnel-client is current and TTL is set via `--mcp.connection-max-ttl 168h` |
 
 For ambiguous failures, call health locally and run tunnel-client doctor
 --explain before restarting both layers.

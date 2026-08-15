@@ -1,6 +1,7 @@
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
   addWorkspace: 'lnwjud:add-workspace',
+  selectWorkspace: 'lnwjud:select-workspace',
   getDashboard: 'lnwjud:get-dashboard',
   setPermissionProfile: 'lnwjud:set-permission-profile',
   listProcesses: 'lnwjud:list-processes',
@@ -8,12 +9,23 @@ export const ipcChannels = {
   stopProcess: 'lnwjud:stop-process',
   startMcp: 'lnwjud:start-mcp',
   stopMcp: 'lnwjud:stop-mcp',
+  restartMcp: 'lnwjud:restart-mcp',
+  clearWorkLog: 'lnwjud:clear-work-log',
+  saveTunnelApiKey: 'lnwjud:save-tunnel-api-key',
+  startTunnel: 'lnwjud:start-tunnel',
+  stopTunnel: 'lnwjud:stop-tunnel',
+  getTunnelStatus: 'lnwjud:get-tunnel-status',
+  setTunnelClientPath: 'lnwjud:set-tunnel-client-path',
+  setLocale: 'lnwjud:set-locale',
   launchManagedBrowser: 'lnwjud:launch-managed-browser',
   runDoctor: 'lnwjud:run-doctor',
 } as const;
 
 export type IpcChannel = typeof ipcChannels[keyof typeof ipcChannels];
 export type PermissionProfileName = 'safe' | 'balanced' | 'full' | 'custom';
+export type UiLocale = 'th' | 'en';
+export type AgentState = 'stopped' | 'idle' | 'busy';
+export type TunnelRunState = 'stopped' | 'starting' | 'running' | 'error';
 
 export interface WorkspaceSummary {
   readonly id: string;
@@ -31,6 +43,39 @@ export interface CapabilitySummary {
   readonly description: string;
   readonly available: boolean;
   readonly ready: boolean;
+}
+
+export interface WorkLogEntry {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly kind: 'task' | 'result' | 'error';
+  readonly toolName: string;
+  readonly resultCode: string;
+  readonly targetSummary: string | null;
+  readonly durationMs: number;
+  readonly workspaceId: string | null;
+}
+
+export interface InFlightWorkItem {
+  readonly callId: string;
+  readonly toolName: string;
+  readonly startedAt: string;
+  readonly targetSummary: string | null;
+  readonly workspaceId: string | null;
+}
+
+export interface ConnectionModes {
+  readonly httpUrl: string | null;
+  readonly stdioCommand: string;
+}
+
+export interface TunnelStatus {
+  readonly state: TunnelRunState;
+  readonly hasApiKey: boolean;
+  readonly clientPath: string | null;
+  readonly profileExists: boolean;
+  readonly message: string | null;
+  readonly logPath: string | null;
 }
 
 export interface DashboardSnapshot {
@@ -55,6 +100,14 @@ export interface DashboardSnapshot {
   readonly recentAuditEvents: readonly AuditEventSummary[];
   readonly permissionProfile: PermissionProfileName;
   readonly capabilities: readonly CapabilitySummary[];
+  readonly agentState: AgentState;
+  readonly mode: 'WORK';
+  readonly locale: UiLocale;
+  readonly connectionModes: ConnectionModes;
+  readonly workLog: readonly WorkLogEntry[];
+  readonly inFlight: readonly InFlightWorkItem[];
+  readonly tunnel: TunnelStatus;
+  readonly appVersion: string;
 }
 
 export interface AuditEventSummary {
@@ -91,6 +144,10 @@ export interface AddWorkspaceRequest {
   readonly rootPath: string;
 }
 
+export interface SelectWorkspaceRequest {
+  readonly workspaceId: string;
+}
+
 export interface SetPermissionProfileRequest {
   readonly profile: PermissionProfileName;
 }
@@ -108,6 +165,18 @@ export interface StartMcpRequest {
   readonly workspaceId: string;
 }
 
+export interface SaveTunnelApiKeyRequest {
+  readonly apiKey: string;
+}
+
+export interface SetTunnelClientPathRequest {
+  readonly clientPath: string;
+}
+
+export interface SetLocaleRequest {
+  readonly locale: UiLocale;
+}
+
 export interface McpConnectionStatus {
   readonly running: boolean;
   readonly url: string | null;
@@ -123,6 +192,7 @@ export interface ManagedBrowserStatus {
 export interface IpcRequestMap {
   readonly [ipcChannels.listWorkspaces]: undefined;
   readonly [ipcChannels.addWorkspace]: AddWorkspaceRequest;
+  readonly [ipcChannels.selectWorkspace]: SelectWorkspaceRequest;
   readonly [ipcChannels.getDashboard]: undefined;
   readonly [ipcChannels.setPermissionProfile]: SetPermissionProfileRequest;
   readonly [ipcChannels.listProcesses]: undefined;
@@ -130,6 +200,14 @@ export interface IpcRequestMap {
   readonly [ipcChannels.stopProcess]: StopProcessRequest;
   readonly [ipcChannels.startMcp]: StartMcpRequest;
   readonly [ipcChannels.stopMcp]: undefined;
+  readonly [ipcChannels.restartMcp]: undefined;
+  readonly [ipcChannels.clearWorkLog]: undefined;
+  readonly [ipcChannels.saveTunnelApiKey]: SaveTunnelApiKeyRequest;
+  readonly [ipcChannels.startTunnel]: undefined;
+  readonly [ipcChannels.stopTunnel]: undefined;
+  readonly [ipcChannels.getTunnelStatus]: undefined;
+  readonly [ipcChannels.setTunnelClientPath]: SetTunnelClientPathRequest;
+  readonly [ipcChannels.setLocale]: SetLocaleRequest;
   readonly [ipcChannels.launchManagedBrowser]: undefined;
   readonly [ipcChannels.runDoctor]: undefined;
 }
@@ -137,6 +215,7 @@ export interface IpcRequestMap {
 export interface IpcResponseMap {
   readonly [ipcChannels.listWorkspaces]: readonly WorkspaceSummary[];
   readonly [ipcChannels.addWorkspace]: WorkspaceSummary;
+  readonly [ipcChannels.selectWorkspace]: WorkspaceSummary;
   readonly [ipcChannels.getDashboard]: DashboardSnapshot;
   readonly [ipcChannels.setPermissionProfile]: { readonly profile: PermissionProfileName };
   readonly [ipcChannels.listProcesses]: readonly ProcessSummary[];
@@ -144,6 +223,14 @@ export interface IpcResponseMap {
   readonly [ipcChannels.stopProcess]: { readonly stopped: boolean };
   readonly [ipcChannels.startMcp]: McpConnectionStatus;
   readonly [ipcChannels.stopMcp]: McpConnectionStatus;
+  readonly [ipcChannels.restartMcp]: McpConnectionStatus;
+  readonly [ipcChannels.clearWorkLog]: { readonly cleared: boolean };
+  readonly [ipcChannels.saveTunnelApiKey]: { readonly saved: boolean };
+  readonly [ipcChannels.startTunnel]: TunnelStatus;
+  readonly [ipcChannels.stopTunnel]: TunnelStatus;
+  readonly [ipcChannels.getTunnelStatus]: TunnelStatus;
+  readonly [ipcChannels.setTunnelClientPath]: { readonly clientPath: string };
+  readonly [ipcChannels.setLocale]: { readonly locale: UiLocale };
   readonly [ipcChannels.launchManagedBrowser]: ManagedBrowserStatus;
   readonly [ipcChannels.runDoctor]: DoctorReport;
 }
@@ -151,6 +238,7 @@ export interface IpcResponseMap {
 export interface LnwjudApi {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
   addWorkspace(request: AddWorkspaceRequest): Promise<IpcResponseMap[typeof ipcChannels.addWorkspace]>;
+  selectWorkspace(request: SelectWorkspaceRequest): Promise<IpcResponseMap[typeof ipcChannels.selectWorkspace]>;
   getDashboard(): Promise<IpcResponseMap[typeof ipcChannels.getDashboard]>;
   setPermissionProfile(request: SetPermissionProfileRequest): Promise<IpcResponseMap[typeof ipcChannels.setPermissionProfile]>;
   listProcesses(): Promise<IpcResponseMap[typeof ipcChannels.listProcesses]>;
@@ -158,6 +246,14 @@ export interface LnwjudApi {
   stopProcess(request: StopProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.stopProcess]>;
   startMcp(request: StartMcpRequest): Promise<IpcResponseMap[typeof ipcChannels.startMcp]>;
   stopMcp(): Promise<IpcResponseMap[typeof ipcChannels.stopMcp]>;
+  restartMcp(): Promise<IpcResponseMap[typeof ipcChannels.restartMcp]>;
+  clearWorkLog(): Promise<IpcResponseMap[typeof ipcChannels.clearWorkLog]>;
+  saveTunnelApiKey(request: SaveTunnelApiKeyRequest): Promise<IpcResponseMap[typeof ipcChannels.saveTunnelApiKey]>;
+  startTunnel(): Promise<IpcResponseMap[typeof ipcChannels.startTunnel]>;
+  stopTunnel(): Promise<IpcResponseMap[typeof ipcChannels.stopTunnel]>;
+  getTunnelStatus(): Promise<IpcResponseMap[typeof ipcChannels.getTunnelStatus]>;
+  setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<IpcResponseMap[typeof ipcChannels.setTunnelClientPath]>;
+  setLocale(request: SetLocaleRequest): Promise<IpcResponseMap[typeof ipcChannels.setLocale]>;
   launchManagedBrowser(): Promise<IpcResponseMap[typeof ipcChannels.launchManagedBrowser]>;
   runDoctor(): Promise<IpcResponseMap[typeof ipcChannels.runDoctor]>;
 }

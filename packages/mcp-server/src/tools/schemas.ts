@@ -33,7 +33,12 @@ export const deleteFileSchema = z.object({
 }).strict();
 
 export const workspaceListSchema = z.object({}).strict();
-export const processStartSchema = z.object({ workspaceId: workspaceIdSchema, executable: z.string().trim().min(1).max(1024), args: z.array(z.string().max(32_768)).max(128), cwd: pathSchema.optional(), timeoutMs: z.number().int().min(1).max(30 * 60 * 1000).optional() }).strict();
+export const workspaceRegisterSchema = z.object({
+  parentWorkspaceId: workspaceIdSchema,
+  path: pathSchema,
+  displayName: z.string().trim().min(1).max(256).optional(),
+}).strict();
+export const processStartSchema = z.object({ workspaceId: workspaceIdSchema, executable: z.string().trim().min(1).max(1024), args: z.array(z.string().max(32_768)).max(128), cwd: pathSchema.optional(), timeoutMs: z.number().int().min(1).max(4 * 60 * 60 * 1000).optional() }).strict();
 export const processHandleSchema = z.object({ workspaceId: workspaceIdSchema, processId: z.string().trim().min(1).max(128) }).strict();
 export const processLogsSchema = processHandleSchema.extend({ tailLines: z.number().int().min(1).max(10_000).optional(), sinceSequence: z.number().int().min(0).optional() }).strict();
 export const codexStatusSchema = z.object({}).strict();
@@ -58,7 +63,7 @@ export const shellCapabilitySchema = z.object({
   cwd: pathSchema.optional(),
   execution: z.enum(['foreground', 'background', 'auto']).default('auto'),
   task_id: z.string().trim().min(1).max(128).optional(),
-  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   max_output_bytes: z.number().int().min(1).max(8 * 1024 * 1024).optional(),
   tail_lines: z.number().int().min(0).max(10_000).optional(),
   include_stdout: z.boolean().default(true),
@@ -78,7 +83,7 @@ export const domCdpCapabilitySchema = z.object({
   steps: z.array(domStepSchema).min(1).max(100).optional(),
   tab_id: z.string().trim().min(1).max(256).optional(),
   display_id: z.string().trim().min(1).max(128).optional(),
-  timeout_seconds: z.number().min(0.1).max(300).optional(),
+  timeout_seconds: z.number().min(0.1).max(3600).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema,
 }).strict();
@@ -87,7 +92,7 @@ export const accessibilityCapabilitySchema = z.object({
   action: z.enum(['status', 'launch_app', 'activate_app', 'list_windows', 'observe', 'observe_summary', 'observe_changes', 'inspect_elements', 'find_element', 'click', 'focus', 'read_value', 'set_value', 'select_item', 'menu_select', 'close_window', 'minimize_window', 'maximize_window', 'restore_window', 'set_window_frame']),
   parameters: capabilityParametersSchema.optional(),
   display_id: z.string().trim().min(1).max(128).optional(),
-  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema,
 }).strict();
@@ -96,7 +101,7 @@ export const inputEventCapabilitySchema = z.object({
   operation: z.enum(['type_text', 'paste_text', 'press_key', 'hotkey', 'key_down', 'key_up', 'mouse_move', 'click', 'double_click', 'right_click', 'drag', 'scroll', 'button_down', 'button_up', 'release_all', 'sequence']),
   parameters: capabilityParametersSchema.optional(),
   display_id: z.string().trim().min(1).max(128).optional(),
-  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema,
 }).strict();
@@ -110,14 +115,14 @@ export const visionCapabilitySchema = z.object({
   exact: z.boolean().default(false),
   min_confidence: z.number().min(0).max(1).optional(),
   display_id: z.string().trim().min(1).max(128).optional(),
-  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   ...capabilityRequestSchema,
 }).strict();
 
 export const windowCapabilitySchema = z.object({
   operation: z.enum(['list', 'get_active', 'get_bounds', 'get_display', 'activate', 'close', 'minimize', 'maximize', 'restore', 'move', 'resize', 'set_window_frame']),
   parameters: capabilityParametersSchema.optional(),
-  timeout_seconds: z.number().min(0.1).max(600).optional(),
+  timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   ...capabilityRequestSchema,
 }).strict();
 

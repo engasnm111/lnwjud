@@ -3,53 +3,48 @@ import type {
   DashboardSnapshot,
   DoctorReport,
   PermissionProfileName,
-  ProcessSummary,
+  UiLocale,
   WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
-import { DashboardPage } from './features/dashboard/DashboardPage.js';
+import { AppShell, type Screen } from './features/shell/AppShell.js';
+import { ControlCenterPage } from './features/home/ControlCenterPage.js';
+import { ProjectsPage } from './features/projects/ProjectsPage.js';
+import { GitPage } from './features/git/GitPage.js';
+import { WorkLogPage } from './features/worklog/WorkLogPage.js';
+import { SettingsPage } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
-
-type Screen = 'dashboard' | 'doctor';
+import { createTranslator } from './i18n/index.js';
 
 export function App(): ReactElement {
-  const [screen, setScreen] = useState<Screen>('dashboard');
+  const [screen, setScreen] = useState<Screen>('home');
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
   const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
-  const [processes, setProcesses] = useState<readonly ProcessSummary[]>([]);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
-  const [browserBusy, setBrowserBusy] = useState(false);
+  const [tunnelBusy, setTunnelBusy] = useState(false);
+  const [locale, setLocale] = useState<UiLocale>('th');
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [nextDashboard, nextWorkspaces, nextProcesses] = await Promise.all([
+      const [nextDashboard, nextWorkspaces] = await Promise.all([
         window.lnwjud.getDashboard(),
         window.lnwjud.listWorkspaces(),
-        window.lnwjud.listProcesses(),
       ]);
       setDashboard(nextDashboard);
       setWorkspaces(nextWorkspaces);
-      setProcesses(nextProcesses);
+      setLocale(nextDashboard.locale);
       setError(null);
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : 'Desktop service request failed');
     }
   }, []);
 
-  const refreshProcesses = useCallback(async (): Promise<void> => {
-    try {
-      setProcesses(await window.lnwjud.listProcesses());
-    } catch {
-      // The primary dashboard error carries initial-load failures; transient polling errors are not fatal.
-    }
-  }, []);
-
   useEffect(() => {
     void refresh();
-    const interval = window.setInterval(() => { void refreshProcesses(); }, 250);
+    const interval = window.setInterval(() => { void refresh(); }, 1_000);
     return (): void => { window.clearInterval(interval); };
-  }, [refresh, refreshProcesses]);
+  }, [refresh]);
 
   async function addWorkspace(rootPath: string): Promise<void> {
     try {
@@ -57,6 +52,18 @@ export function App(): ReactElement {
       await refresh();
     } catch (cause: unknown) {
       setError(errorMessage(cause, 'Workspace could not be added'));
+    }
+  }
+
+  async function selectWorkspace(workspaceId: string): Promise<void> {
+    try {
+      setMcpBusy(true);
+      await window.lnwjud.selectWorkspace({ workspaceId });
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Workspace could not be selected'));
+    } finally {
+      setMcpBusy(false);
     }
   }
 
@@ -69,24 +76,77 @@ export function App(): ReactElement {
     }
   }
 
-  async function startFixtureProcess(): Promise<void> {
-    const workspaceId = dashboard?.selectedWorkspace?.id;
-    if (workspaceId === undefined) return;
+  async function stopMcp(): Promise<void> {
     try {
-      await window.lnwjud.startProcess({ workspaceId, mode: 'fixture' });
-      await refreshProcesses();
+      setMcpBusy(true);
+      await window.lnwjud.stopMcp();
+      await refresh();
     } catch (cause: unknown) {
-      setError(errorMessage(cause, 'Process could not be started'));
+      setError(errorMessage(cause, 'MCP could not be stopped'));
+    } finally {
+      setMcpBusy(false);
     }
   }
 
-  async function stopProcess(processId: string): Promise<void> {
+  async function restartMcp(): Promise<void> {
     try {
-      await window.lnwjud.stopProcess({ processId });
-      await refreshProcesses();
+      setMcpBusy(true);
+      await window.lnwjud.restartMcp();
+      await refresh();
     } catch (cause: unknown) {
-      setError(errorMessage(cause, 'Process could not be stopped'));
+      setError(errorMessage(cause, 'MCP could not be restarted'));
+    } finally {
+      setMcpBusy(false);
     }
+  }
+
+  async function clearWorkLog(): Promise<void> {
+    try {
+      await window.lnwjud.clearWorkLog();
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Work log could not be cleared'));
+    }
+  }
+
+  async function startTunnel(): Promise<void> {
+    try {
+      setTunnelBusy(true);
+      await window.lnwjud.startTunnel();
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Tunnel could not be started'));
+    } finally {
+      setTunnelBusy(false);
+    }
+  }
+
+  async function stopTunnel(): Promise<void> {
+    try {
+      setTunnelBusy(true);
+      await window.lnwjud.stopTunnel();
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'Tunnel could not be stopped'));
+    } finally {
+      setTunnelBusy(false);
+    }
+  }
+
+  async function saveTunnelApiKey(apiKey: string): Promise<void> {
+    await window.lnwjud.saveTunnelApiKey({ apiKey });
+    await refresh();
+  }
+
+  async function setTunnelClientPath(clientPath: string): Promise<void> {
+    await window.lnwjud.setTunnelClientPath({ clientPath });
+    await refresh();
+  }
+
+  async function changeLocale(next: UiLocale): Promise<void> {
+    await window.lnwjud.setLocale({ locale: next });
+    setLocale(next);
+    await refresh();
   }
 
   async function runDoctor(): Promise<void> {
@@ -97,86 +157,72 @@ export function App(): ReactElement {
     }
   }
 
-  async function startMcp(): Promise<void> {
-    const workspaceId = dashboard?.selectedWorkspace?.id;
-    if (workspaceId === undefined) {
-      setError('Select a workspace before starting MCP');
-      return;
-    }
-    setMcpBusy(true);
-    try {
-      await window.lnwjud.startMcp({ workspaceId });
-      await refresh();
-    } catch (cause: unknown) {
-      setError(errorMessage(cause, 'MCP connection could not be started'));
-    } finally {
-      setMcpBusy(false);
-    }
+  if (dashboard === null) {
+    return <div className="boot-screen">Loading…</div>;
   }
 
-  async function stopMcp(): Promise<void> {
-    setMcpBusy(true);
-    try {
-      await window.lnwjud.stopMcp();
-      await refresh();
-    } catch (cause: unknown) {
-      setError(errorMessage(cause, 'MCP connection could not be stopped'));
-    } finally {
-      setMcpBusy(false);
-    }
-  }
-
-  async function launchManagedBrowser(): Promise<void> {
-    setBrowserBusy(true);
-    try {
-      await window.lnwjud.launchManagedBrowser();
-      await refresh();
-    } catch (cause: unknown) {
-      setError(errorMessage(cause, 'Managed Chrome could not be started'));
-    } finally {
-      setBrowserBusy(false);
-    }
-  }
-
-  const selectedProcess = processes[processes.length - 1] ?? null;
+  const t = createTranslator(locale);
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">LOCAL DEVELOPMENT AGENT GATEWAY</p>
-          <p className="brand">lnwjud</p>
-        </div>
-        <nav aria-label="Primary navigation">
-          <button type="button" onClick={() => setScreen('dashboard')}>Dashboard</button>
-          <button type="button" onClick={() => setScreen('doctor')}>Doctor</button>
-        </nav>
-      </header>
-      {error === null ? null : <p role="alert" className="error-banner">{error}</p>}
-      {screen === 'dashboard' && dashboard !== null ? (
-        <DashboardPage
+    <AppShell
+      locale={locale}
+      appVersion={dashboard.appVersion}
+      mcpRunning={dashboard.mcp.running}
+      screen={screen}
+      onNavigate={setScreen}
+      onLocaleChange={(next) => { void changeLocale(next); }}
+    >
+      {error === null ? null : <div className="error-banner" role="alert">{error}</div>}
+      {screen === 'home' ? (
+        <ControlCenterPage
           dashboard={dashboard}
           workspaces={workspaces}
-          processes={processes}
-          selectedProcess={selectedProcess}
-          onAddWorkspace={addWorkspace}
-          onPermissionProfileChange={setPermissionProfile}
-          onStartFixtureProcess={startFixtureProcess}
-          onStopProcess={stopProcess}
-          onStartMcp={startMcp}
-          onStopMcp={stopMcp}
-          onLaunchManagedBrowser={launchManagedBrowser}
-          browserBusy={browserBusy}
+          locale={locale}
           mcpBusy={mcpBusy}
+          tunnelBusy={tunnelBusy}
+          onRefresh={refresh}
+          onStopMcp={stopMcp}
+          onRestartMcp={restartMcp}
+          onSelectWorkspace={selectWorkspace}
+          onAddWorkspace={addWorkspace}
+          onStartTunnel={startTunnel}
+          onStopTunnel={stopTunnel}
+          onClearWorkLog={clearWorkLog}
         />
       ) : null}
-      {screen === 'doctor' ? <DoctorPanel report={doctor} onRunDoctor={runDoctor} /> : null}
-      {screen === 'dashboard' && dashboard === null && error === null ? <p>Loading dashboard…</p> : null}
-    </main>
+      {screen === 'projects' ? (
+        <ProjectsPage
+          locale={locale}
+          workspaces={workspaces}
+          selectedWorkspaceId={dashboard.selectedWorkspace?.id ?? null}
+          onSelectWorkspace={selectWorkspace}
+          onAddWorkspace={addWorkspace}
+        />
+      ) : null}
+      {screen === 'git' ? <GitPage locale={locale} gitSummary={dashboard.gitSummary} /> : null}
+      {screen === 'worklog' ? (
+        <WorkLogPage locale={locale} dashboard={dashboard} onClearWorkLog={clearWorkLog} />
+      ) : null}
+      {screen === 'settings' ? (
+        <SettingsPage
+          locale={locale}
+          dashboard={dashboard}
+          onLocaleChange={changeLocale}
+          onPermissionProfileChange={setPermissionProfile}
+          onSaveTunnelApiKey={saveTunnelApiKey}
+          onSetTunnelClientPath={setTunnelClientPath}
+        />
+      ) : null}
+      {screen === 'doctor' ? (
+        <div className="page-content">
+          <h1>{t('doctor.title')}</h1>
+          <DoctorPanel report={doctor} onRunDoctor={runDoctor} />
+        </div>
+      ) : null}
+    </AppShell>
   );
 }
 
 function errorMessage(cause: unknown, fallback: string): string {
-  if (!(cause instanceof Error) || cause.message.trim().length === 0 || cause.message.startsWith('Error invoking remote method')) return fallback;
-  return cause.message;
+  return cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
 }

@@ -5,11 +5,12 @@ import {
   MAX_FILE_WRITE_BYTES,
   PatchApplier,
   TextFileReader,
+  UnboundedFileReader,
   type FilePatch,
   type LineRange,
 } from '@lnwjud/filesystem';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
-import { WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
+import { isUnderEDrive, WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { CheckpointServicePort } from './checkpoint-service.js';
 
 export interface FileActor {
@@ -26,6 +27,9 @@ export interface ReadFileResult {
   readonly content: string;
   readonly startLine: number;
   readonly endLine: number;
+  readonly encoding?: 'utf8' | 'base64';
+  readonly mimeType?: string;
+  readonly byteLength?: number;
 }
 
 export interface ReadFilesRequest {
@@ -43,6 +47,7 @@ export interface FileServiceDependencies {
   readonly permissionEngine?: PermissionEngine;
   readonly profile?: PermissionProfile;
   readonly profileProvider?: () => PermissionProfile;
+  readonly unboundedReader?: UnboundedFileReader;
 }
 
 export interface WriteFileRequest {
@@ -82,6 +87,7 @@ export class FileService {
   private readonly checkpointService: CheckpointServicePort | undefined;
   private readonly permissionEngine: PermissionEngine;
   private readonly profileProvider: () => PermissionProfile;
+  private readonly unboundedReader: UnboundedFileReader;
 
   public constructor(
     private readonly workspaces: WorkspaceRepository,
@@ -94,17 +100,43 @@ export class FileService {
     this.checkpointService = dependencies.checkpointService;
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
     this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
+    this.unboundedReader = dependencies.unboundedReader ?? new UnboundedFileReader();
   }
 
   public async readFile(actor: FileActor, workspaceId: string, request: ReadFileRequest): Promise<Result<ReadFileResult>> {
     void actor;
     const workspaceResult = await this.getWorkspace(workspaceId);
     if (!workspaceResult.ok) return workspaceResult;
-    const resolved = await this.guard.resolveForRead(workspaceResult.value, request.path);
+    const workspace = workspaceResult.value;
+    const resolved = await this.guard.resolveForRead(workspace, request.path);
     if (!resolved.ok) return resolved;
-    const readResult = await this.reader.read(resolved.value.realPath ?? resolved.value.absolutePath, request);
+
+    const absolute = resolved.value.realPath ?? resolved.value.absolutePath;
+    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+      // Line ranges only apply to utf8 text; ignore for binary.
+      if (request.startLine !== undefined || request.endLine !== undefined) {
+        const textResult = await this.reader.read(absolute, request);
+        if (textResult.ok) {
+          return ok({ path: resolved.value.relativePath, ...textResult.value, encoding: 'utf8', mimeType: 'text/plain' });
+        }
+        // Fall through to unbounded read when text/range fails (binary / huge).
+      }
+      const unbounded = await this.unboundedReader.read(absolute);
+      if (!unbounded.ok) return unbounded;
+      return ok({
+        path: resolved.value.relativePath,
+        content: unbounded.value.content,
+        startLine: unbounded.value.startLine,
+        endLine: unbounded.value.endLine,
+        encoding: unbounded.value.encoding,
+        mimeType: unbounded.value.mimeType,
+        byteLength: unbounded.value.byteLength,
+      });
+    }
+
+    const readResult = await this.reader.read(absolute, request);
     if (!readResult.ok) return readResult;
-    return ok({ path: resolved.value.relativePath, ...readResult.value });
+    return ok({ path: resolved.value.relativePath, ...readResult.value, encoding: 'utf8' });
   }
 
   public async readFiles(actor: FileActor, workspaceId: string, request: ReadFilesRequest): Promise<Result<ReadFilesResult>> {
@@ -112,13 +144,20 @@ export class FileService {
     if (!Array.isArray(request.files) || request.files.length > 20) {
       return err(appError('INVALID_INPUT', 'At most 20 files may be read'));
     }
+    const workspaceResult = await this.getWorkspace(workspaceId);
+    if (!workspaceResult.ok) return workspaceResult;
+    const trustedE = isUnderEDrive(workspaceResult.value.realRootPath) || isUnderEDrive(workspaceResult.value.rootPath);
+
     const files: ReadFileResult[] = [];
     let totalBytes = 0;
     for (const fileRequest of request.files) {
       const result = await this.readFile(actor, workspaceId, fileRequest);
       if (!result.ok) return result;
-      totalBytes += Buffer.byteLength(result.value.content, 'utf8');
-      if (totalBytes > MAX_MULTI_FILE_BYTES) return err(appError('FILE_TOO_LARGE', 'Combined file response exceeds the maximum size'));
+      totalBytes += result.value.byteLength
+        ?? Buffer.byteLength(result.value.content, result.value.encoding === 'base64' ? 'base64' : 'utf8');
+      if (!trustedE && totalBytes > MAX_MULTI_FILE_BYTES) {
+        return err(appError('FILE_TOO_LARGE', 'Total file content exceeds the maximum read size'));
+      }
       files.push(result.value);
     }
     return ok({ files });

@@ -28,7 +28,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // ../../node_modules/.pnpm/isexe@2.0.0/node_modules/isexe/windows.js
 var require_windows = __commonJS({
@@ -36,7 +35,7 @@ var require_windows = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs2 = require("fs");
-    function checkPathExt(path16, options) {
+    function checkPathExt(path22, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
         return true;
@@ -47,25 +46,25 @@ var require_windows = __commonJS({
       }
       for (var i = 0; i < pathext.length; i++) {
         var p = pathext[i].toLowerCase();
-        if (p && path16.substr(-p.length).toLowerCase() === p) {
+        if (p && path22.substr(-p.length).toLowerCase() === p) {
           return true;
         }
       }
       return false;
     }
-    function checkStat(stat9, path16, options) {
-      if (!stat9.isSymbolicLink() && !stat9.isFile()) {
+    function checkStat(stat11, path22, options) {
+      if (!stat11.isSymbolicLink() && !stat11.isFile()) {
         return false;
       }
-      return checkPathExt(path16, options);
+      return checkPathExt(path22, options);
     }
-    function isexe(path16, options, cb) {
-      fs2.stat(path16, function(er, stat9) {
-        cb(er, er ? false : checkStat(stat9, path16, options));
+    function isexe(path22, options, cb) {
+      fs2.stat(path22, function(er, stat11) {
+        cb(er, er ? false : checkStat(stat11, path22, options));
       });
     }
-    function sync(path16, options) {
-      return checkStat(fs2.statSync(path16), path16, options);
+    function sync(path22, options) {
+      return checkStat(fs2.statSync(path22), path22, options);
     }
   }
 });
@@ -76,21 +75,21 @@ var require_mode = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs2 = require("fs");
-    function isexe(path16, options, cb) {
-      fs2.stat(path16, function(er, stat9) {
-        cb(er, er ? false : checkStat(stat9, options));
+    function isexe(path22, options, cb) {
+      fs2.stat(path22, function(er, stat11) {
+        cb(er, er ? false : checkStat(stat11, options));
       });
     }
-    function sync(path16, options) {
-      return checkStat(fs2.statSync(path16), options);
+    function sync(path22, options) {
+      return checkStat(fs2.statSync(path22), options);
     }
-    function checkStat(stat9, options) {
-      return stat9.isFile() && checkMode(stat9, options);
+    function checkStat(stat11, options) {
+      return stat11.isFile() && checkMode(stat11, options);
     }
-    function checkMode(stat9, options) {
-      var mod = stat9.mode;
-      var uid = stat9.uid;
-      var gid = stat9.gid;
+    function checkMode(stat11, options) {
+      var mod = stat11.mode;
+      var uid = stat11.uid;
+      var gid = stat11.gid;
       var myUid = options.uid !== void 0 ? options.uid : process.getuid && process.getuid();
       var myGid = options.gid !== void 0 ? options.gid : process.getgid && process.getgid();
       var u = parseInt("100", 8);
@@ -115,7 +114,7 @@ var require_isexe = __commonJS({
     }
     module2.exports = isexe;
     isexe.sync = sync;
-    function isexe(path16, options, cb) {
+    function isexe(path22, options, cb) {
       if (typeof options === "function") {
         cb = options;
         options = {};
@@ -125,7 +124,7 @@ var require_isexe = __commonJS({
           throw new TypeError("callback not provided");
         }
         return new Promise(function(resolve, reject) {
-          isexe(path16, options || {}, function(er, is) {
+          isexe(path22, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
@@ -134,7 +133,7 @@ var require_isexe = __commonJS({
           });
         });
       }
-      core(path16, options || {}, function(er, is) {
+      core(path22, options || {}, function(er, is) {
         if (er) {
           if (er.code === "EACCES" || options && options.ignoreErrors) {
             er = null;
@@ -144,9 +143,9 @@ var require_isexe = __commonJS({
         cb(er, is);
       });
     }
-    function sync(path16, options) {
+    function sync(path22, options) {
       try {
-        return core.sync(path16, options || {});
+        return core.sync(path22, options || {});
       } catch (er) {
         if (options && options.ignoreErrors || er.code === "EACCES") {
           return false;
@@ -162,7 +161,7 @@ var require_isexe = __commonJS({
 var require_which = __commonJS({
   "../../node_modules/.pnpm/which@2.0.2/node_modules/which/which.js"(exports2, module2) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-    var path16 = require("path");
+    var path22 = require("path");
     var COLON = isWindows ? ";" : ":";
     var isexe = require_isexe();
     var getNotFoundError = (cmd) => Object.assign(new Error(`not found: ${cmd}`), { code: "ENOENT" });
@@ -200,7 +199,7 @@ var require_which = __commonJS({
           return opt.all && found.length ? resolve(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path16.join(pathPart, cmd);
+        const pCmd = path22.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         resolve(subStep(p, i, 0));
       });
@@ -227,7 +226,7 @@ var require_which = __commonJS({
       for (let i = 0; i < pathEnv.length; i++) {
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
-        const pCmd = path16.join(pathPart, cmd);
+        const pCmd = path22.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
         for (let j = 0; j < pathExt.length; j++) {
           const cur = p + pathExt[j];
@@ -275,7 +274,7 @@ var require_path_key = __commonJS({
 var require_resolveCommand = __commonJS({
   "../../node_modules/.pnpm/cross-spawn@7.0.6/node_modules/cross-spawn/lib/util/resolveCommand.js"(exports2, module2) {
     "use strict";
-    var path16 = require("path");
+    var path22 = require("path");
     var which = require_which();
     var getPathKey = require_path_key();
     function resolveCommandAttempt(parsed, withoutPathExt) {
@@ -293,7 +292,7 @@ var require_resolveCommand = __commonJS({
       try {
         resolved = which.sync(parsed.command, {
           path: env[getPathKey({ env })],
-          pathExt: withoutPathExt ? path16.delimiter : void 0
+          pathExt: withoutPathExt ? path22.delimiter : void 0
         });
       } catch (e) {
       } finally {
@@ -302,7 +301,7 @@ var require_resolveCommand = __commonJS({
         }
       }
       if (resolved) {
-        resolved = path16.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
+        resolved = path22.resolve(hasCustomCwd ? parsed.options.cwd : "", resolved);
       }
       return resolved;
     }
@@ -356,8 +355,8 @@ var require_shebang_command = __commonJS({
       if (!match) {
         return null;
       }
-      const [path16, argument] = match[0].replace(/#! ?/, "").split(" ");
-      const binary = path16.split("/").pop();
+      const [path22, argument] = match[0].replace(/#! ?/, "").split(" ");
+      const binary = path22.split("/").pop();
       if (binary === "env") {
         return argument;
       }
@@ -392,7 +391,7 @@ var require_readShebang = __commonJS({
 var require_parse = __commonJS({
   "../../node_modules/.pnpm/cross-spawn@7.0.6/node_modules/cross-spawn/lib/parse.js"(exports2, module2) {
     "use strict";
-    var path16 = require("path");
+    var path22 = require("path");
     var resolveCommand = require_resolveCommand();
     var escape2 = require_escape();
     var readShebang = require_readShebang();
@@ -417,7 +416,7 @@ var require_parse = __commonJS({
       const needsShell = !isExecutableRegExp.test(commandFile);
       if (parsed.options.forceShell || needsShell) {
         const needsDoubleEscapeMetaChars = isCmdShimRegExp.test(commandFile);
-        parsed.command = path16.normalize(parsed.command);
+        parsed.command = path22.normalize(parsed.command);
         parsed.command = escape2.command(parsed.command);
         parsed.args = parsed.args.map((arg) => escape2.argument(arg, needsDoubleEscapeMetaChars));
         const shellCommand = [parsed.command].concat(parsed.args).join(" ");
@@ -507,7 +506,7 @@ var require_cross_spawn = __commonJS({
     var cp = require("child_process");
     var parse3 = require_parse();
     var enoent = require_enoent();
-    function spawn7(command, args, options) {
+    function spawn10(command, args, options) {
       const parsed = parse3(command, args, options);
       const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
       enoent.hookChildProcess(spawned, parsed);
@@ -519,8 +518,8 @@ var require_cross_spawn = __commonJS({
       result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
       return result;
     }
-    module2.exports = spawn7;
-    module2.exports.spawn = spawn7;
+    module2.exports = spawn10;
+    module2.exports.spawn = spawn10;
     module2.exports.sync = spawnSync;
     module2.exports._parse = parse3;
     module2.exports._enoent = enoent;
@@ -528,21 +527,12 @@ var require_cross_spawn = __commonJS({
 });
 
 // ../cli/src/bin/mcp-stdio.ts
-var mcp_stdio_exports = {};
-__export(mcp_stdio_exports, {
-  listFixedDrives: () => listFixedDrives
-});
-module.exports = __toCommonJS(mcp_stdio_exports);
-var import_node_fs = __toESM(require("node:fs"), 1);
-var import_node_os4 = __toESM(require("node:os"), 1);
-var import_node_path15 = __toESM(require("node:path"), 1);
+var import_node_fs4 = __toESM(require("node:fs"), 1);
+var import_node_os5 = __toESM(require("node:os"), 1);
+var import_node_path21 = __toESM(require("node:path"), 1);
 
-// ../../packages/workspace/dist/path-containment.js
-var import_node_path = __toESM(require("node:path"), 1);
-function isWithin(rootPath, candidatePath) {
-  const relativePath = import_node_path.default.relative(import_node_path.default.resolve(rootPath), import_node_path.default.resolve(candidatePath));
-  return relativePath === "" || !relativePath.startsWith(`..${import_node_path.default.sep}`) && relativePath !== ".." && !import_node_path.default.isAbsolute(relativePath);
-}
+// ../../packages/application/dist/file-service.js
+var import_promises7 = require("node:fs/promises");
 
 // ../../packages/domain/dist/errors.js
 function appError(code, message, recoverable = false) {
@@ -566,6 +556,147 @@ var MAX_TREE_DEPTH = 8;
 var DEFAULT_TREE_ENTRIES = 2e3;
 var MAX_TREE_ENTRIES = 5e3;
 
+// ../../packages/filesystem/dist/atomic-writer.js
+var import_node_crypto = require("node:crypto");
+var import_promises = require("node:fs/promises");
+var import_node_path = __toESM(require("node:path"), 1);
+var MAX_FILE_WRITE_BYTES = 4 * 1024 * 1024;
+var AtomicFileWriter = class {
+  async write(filePath, content) {
+    if (Buffer.byteLength(content, "utf8") > MAX_FILE_WRITE_BYTES) {
+      return err(appError("FILE_TOO_LARGE", "File exceeds the maximum write size"));
+    }
+    const temporaryPath = import_node_path.default.join(import_node_path.default.dirname(filePath), `.${import_node_path.default.basename(filePath)}.${(0, import_node_crypto.randomUUID)()}.tmp`);
+    try {
+      await (0, import_promises.writeFile)(temporaryPath, content, { encoding: "utf8", flag: "wx" });
+      await (0, import_promises.rename)(temporaryPath, filePath);
+      return ok(void 0);
+    } catch {
+      return err(appError("INTERNAL_ERROR", "Atomic file write failed", true));
+    } finally {
+      await (0, import_promises.unlink)(temporaryPath).catch(() => void 0);
+    }
+  }
+};
+
+// ../../packages/filesystem/dist/patch-applier.js
+var PatchApplier = class {
+  validate(files) {
+    if (!Array.isArray(files) || files.length === 0 || files.length > 20) {
+      return err(appError("INVALID_INPUT", "Patch must contain 1 to 20 files"));
+    }
+    const paths = /* @__PURE__ */ new Set();
+    let totalBytes = 0;
+    for (const file2 of files) {
+      if (typeof file2.path !== "string" || file2.path.length === 0 || typeof file2.content !== "string") {
+        return err(appError("INVALID_INPUT", "Patch file entry is invalid"));
+      }
+      const normalizedPath = file2.path.replaceAll("/", "\\").toLowerCase();
+      if (paths.has(normalizedPath))
+        return err(appError("INVALID_INPUT", "Patch contains duplicate paths"));
+      paths.add(normalizedPath);
+      totalBytes += Buffer.byteLength(file2.content, "utf8");
+      if (totalBytes > MAX_MULTI_FILE_BYTES)
+        return err(appError("FILE_TOO_LARGE", "Patch exceeds the maximum total size"));
+    }
+    return ok(void 0);
+  }
+};
+
+// ../../packages/filesystem/dist/text-file-reader.js
+var import_promises2 = require("node:fs/promises");
+var TextFileReader = class {
+  async read(filePath, range = {}) {
+    if (!this.isValidRange(range))
+      return err({ code: "INVALID_INPUT", message: "Line range is invalid", recoverable: false });
+    let size;
+    try {
+      size = (await (0, import_promises2.stat)(filePath)).size;
+    } catch {
+      return err({ code: "FILE_NOT_FOUND", message: "File was not found", recoverable: false });
+    }
+    if (size > MAX_FILE_READ_BYTES) {
+      return err({ code: "FILE_TOO_LARGE", message: "File exceeds the maximum read size", recoverable: false });
+    }
+    let data;
+    try {
+      data = await (0, import_promises2.readFile)(filePath);
+    } catch {
+      return err({ code: "FILE_NOT_FOUND", message: "File was not found", recoverable: false });
+    }
+    if (data.subarray(0, 8192).includes(0)) {
+      return err({ code: "BINARY_FILE", message: "Binary files cannot be read as text", recoverable: false });
+    }
+    const content = data.toString("utf8");
+    const lines = this.splitLines(content);
+    const startLine = range.startLine ?? 1;
+    const endLine = range.endLine ?? lines.length;
+    if (lines.length === 0 && startLine !== 1)
+      return err({ code: "INVALID_INPUT", message: "Line range is outside the file", recoverable: false });
+    if (lines.length > 0 && startLine > lines.length)
+      return err({ code: "INVALID_INPUT", message: "Line range is outside the file", recoverable: false });
+    return ok({
+      content: lines.slice(startLine - 1, Math.min(endLine, lines.length)).join(""),
+      startLine,
+      endLine: Math.min(endLine, lines.length)
+    });
+  }
+  isValidRange(range) {
+    return (range.startLine === void 0 || Number.isInteger(range.startLine) && range.startLine >= 1) && (range.endLine === void 0 || Number.isInteger(range.endLine) && range.endLine >= 1) && (range.startLine === void 0 || range.endLine === void 0 || range.startLine <= range.endLine);
+  }
+  splitLines(content) {
+    if (content.length === 0)
+      return [];
+    const lines = content.split(/(?<=\n)/);
+    if (lines.at(-1) === "")
+      lines.pop();
+    return lines;
+  }
+};
+
+// ../../packages/filesystem/dist/tree-reader.js
+var import_promises5 = require("node:fs/promises");
+var import_node_path6 = __toESM(require("node:path"), 1);
+
+// ../../packages/workspace/dist/machine-root.js
+var import_node_path2 = __toESM(require("node:path"), 1);
+var MACHINE_ROOT_LETTER = "E";
+function coerceWindowsPath(rootPath) {
+  const raw = rootPath.trim().replaceAll("/", "\\");
+  if (/^[A-Za-z]:$/i.test(raw))
+    return `${raw}\\`;
+  return raw;
+}
+function normalizeWorkspaceRoot(rootPath) {
+  const resolved = import_node_path2.default.resolve(coerceWindowsPath(rootPath));
+  return resolved.endsWith(import_node_path2.default.sep) ? resolved : `${resolved}${import_node_path2.default.sep}`;
+}
+function isEMachineRoot(rootPath) {
+  const resolved = import_node_path2.default.resolve(coerceWindowsPath(rootPath));
+  const stripped = resolved.replace(/[\\/]+$/, "");
+  return /^E:$/i.test(stripped);
+}
+function isDriveRoot(rootPath) {
+  const resolved = import_node_path2.default.resolve(coerceWindowsPath(rootPath));
+  const stripped = resolved.replace(/[\\/]+$/, "");
+  return /^[A-Za-z]:$/i.test(stripped);
+}
+function isUnderEDrive(rootPath) {
+  const resolved = import_node_path2.default.resolve(coerceWindowsPath(rootPath));
+  const normalized = normalizeWorkspaceRoot(resolved).replaceAll("/", "\\").toLowerCase();
+  return normalized.startsWith("e:\\");
+}
+function machineRootPath() {
+  return `${MACHINE_ROOT_LETTER}:\\`;
+}
+
+// ../../packages/workspace/dist/path-containment.js
+var import_node_path3 = __toESM(require("node:path"), 1);
+function isWithin(rootPath, candidatePath) {
+  const relativePath = import_node_path3.default.relative(import_node_path3.default.resolve(rootPath), import_node_path3.default.resolve(candidatePath));
+  return relativePath === "" || !relativePath.startsWith(`..${import_node_path3.default.sep}`) && relativePath !== ".." && !import_node_path3.default.isAbsolute(relativePath);
+}
+
 // ../../packages/workspace/dist/secret-policy.js
 var PRIVATE_KEY_PREFIXES = ["id_rsa", "id_ed25519"];
 var SecretPolicy = class {
@@ -585,8 +716,8 @@ var SecretPolicy = class {
 };
 
 // ../../packages/workspace/dist/workspace-path-guard.js
-var import_promises = require("node:fs/promises");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_promises3 = require("node:fs/promises");
+var import_node_path4 = __toESM(require("node:path"), 1);
 var WorkspacePathGuard = class {
   secretPolicy;
   constructor(secretPolicy = new SecretPolicy()) {
@@ -599,17 +730,17 @@ var WorkspacePathGuard = class {
     const rootResult = await this.resolveRoot(workspace);
     if (!rootResult.ok)
       return rootResult;
-    const absolutePath = import_node_path2.default.resolve(workspace.rootPath, inputPath);
+    const absolutePath = import_node_path4.default.resolve(workspace.rootPath, inputPath);
     if (!isWithin(workspace.rootPath, absolutePath)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Path is outside the workspace"));
     }
     let realTarget;
     try {
-      realTarget = await (0, import_promises.realpath)(absolutePath);
+      realTarget = await (0, import_promises3.realpath)(absolutePath);
     } catch {
       const ancestorResult = await this.findExistingAncestor(absolutePath);
       if (ancestorResult.ok) {
-        const ancestorRealPath = await (0, import_promises.realpath)(ancestorResult.value.path);
+        const ancestorRealPath = await (0, import_promises3.realpath)(ancestorResult.value.path);
         if (!isWithin(rootResult.value, ancestorRealPath)) {
           return err(appError("PATH_OUTSIDE_WORKSPACE", "Path is outside the workspace"));
         }
@@ -619,12 +750,12 @@ var WorkspacePathGuard = class {
     if (!isWithin(rootResult.value, realTarget)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Path is outside the workspace"));
     }
-    const relativePath = import_node_path2.default.relative(rootResult.value, realTarget);
-    const secretResult = this.secretPolicy.assertReadable(relativePath);
+    const relativePath = import_node_path4.default.relative(rootResult.value, realTarget);
+    const secretResult = this.assertSecretReadable(workspace, relativePath);
     if (!secretResult.ok)
       return secretResult;
     try {
-      await (0, import_promises.stat)(realTarget);
+      await (0, import_promises3.stat)(realTarget);
     } catch {
       return err(appError("FILE_NOT_FOUND", "File was not found"));
     }
@@ -643,21 +774,21 @@ var WorkspacePathGuard = class {
     const rootResult = await this.resolveRoot(workspace);
     if (!rootResult.ok)
       return rootResult;
-    const absolutePath = import_node_path2.default.resolve(workspace.rootPath, inputPath);
+    const absolutePath = import_node_path4.default.resolve(workspace.rootPath, inputPath);
     if (!isWithin(workspace.rootPath, absolutePath)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Path is outside the workspace"));
     }
     const ancestorResult = await this.findExistingAncestor(absolutePath);
     if (!ancestorResult.ok)
       return ancestorResult;
-    const ancestorRealPath = await (0, import_promises.realpath)(ancestorResult.value.path);
+    const ancestorRealPath = await (0, import_promises3.realpath)(ancestorResult.value.path);
     if (!isWithin(rootResult.value, ancestorRealPath)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Path is outside the workspace"));
     }
     let exists = false;
     let realTarget;
     try {
-      realTarget = await (0, import_promises.realpath)(absolutePath);
+      realTarget = await (0, import_promises3.realpath)(absolutePath);
       exists = true;
     } catch {
       exists = false;
@@ -665,8 +796,8 @@ var WorkspacePathGuard = class {
     if (realTarget !== void 0 && !isWithin(rootResult.value, realTarget)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Path is outside the workspace"));
     }
-    const relativePath = realTarget === void 0 ? import_node_path2.default.relative(rootResult.value, absolutePath) : import_node_path2.default.relative(rootResult.value, realTarget);
-    const secretResult = this.secretPolicy.assertReadable(relativePath);
+    const relativePath = realTarget === void 0 ? import_node_path4.default.relative(rootResult.value, absolutePath) : import_node_path4.default.relative(rootResult.value, realTarget);
+    const secretResult = this.assertSecretReadable(workspace, relativePath);
     if (!secretResult.ok)
       return secretResult;
     return ok({
@@ -677,6 +808,12 @@ var WorkspacePathGuard = class {
       exists
     });
   }
+  assertSecretReadable(workspace, relativePath) {
+    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+      return ok(void 0);
+    }
+    return this.secretPolicy.assertReadable(relativePath);
+  }
   validateInput(inputPath) {
     if (typeof inputPath !== "string" || inputPath.includes("\0")) {
       return err(appError("INVALID_INPUT", "Path must be a valid string"));
@@ -685,7 +822,7 @@ var WorkspacePathGuard = class {
   }
   async resolveRoot(workspace) {
     try {
-      return ok(await (0, import_promises.realpath)(workspace.rootPath));
+      return ok(await (0, import_promises3.realpath)(workspace.rootPath));
     } catch {
       return err(appError("WORKSPACE_NOT_FOUND", "Workspace root was not found"));
     }
@@ -695,14 +832,14 @@ var WorkspacePathGuard = class {
     let currentPath = absolutePath;
     while (true) {
       try {
-        await (0, import_promises.lstat)(currentPath);
+        await (0, import_promises3.lstat)(currentPath);
         return ok({ path: currentPath, relativeMissing: missing });
       } catch {
-        const parentPath = import_node_path2.default.dirname(currentPath);
+        const parentPath = import_node_path4.default.dirname(currentPath);
         if (parentPath === currentPath) {
           return err(appError("PATH_OUTSIDE_WORKSPACE", "Path has no existing ancestor"));
         }
-        missing.unshift(import_node_path2.default.basename(currentPath));
+        missing.unshift(import_node_path4.default.basename(currentPath));
         currentPath = parentPath;
       }
     }
@@ -710,9 +847,9 @@ var WorkspacePathGuard = class {
 };
 
 // ../../packages/workspace/dist/workspace-service.js
-var import_promises2 = require("node:fs/promises");
-var import_node_path3 = __toESM(require("node:path"), 1);
-var import_node_crypto = require("node:crypto");
+var import_promises4 = require("node:fs/promises");
+var import_node_path5 = __toESM(require("node:path"), 1);
+var import_node_crypto2 = require("node:crypto");
 var WorkspaceService = class {
   repository;
   constructor(repository) {
@@ -722,10 +859,10 @@ var WorkspaceService = class {
     if (displayName.trim().length === 0 || rootPath.trim().length === 0) {
       return err(appError("INVALID_INPUT", "Workspace name and root path are required"));
     }
-    const absoluteRootPath = import_node_path3.default.resolve(rootPath);
+    const absoluteRootPath = import_node_path5.default.resolve(rootPath);
     let rootStats;
     try {
-      rootStats = await (0, import_promises2.stat)(absoluteRootPath);
+      rootStats = await (0, import_promises4.stat)(absoluteRootPath);
     } catch {
       return err(appError("WORKSPACE_NOT_FOUND", "Workspace root was not found"));
     }
@@ -734,12 +871,12 @@ var WorkspaceService = class {
     }
     let canonicalRootPath;
     try {
-      canonicalRootPath = await (0, import_promises2.realpath)(absoluteRootPath);
+      canonicalRootPath = await (0, import_promises4.realpath)(absoluteRootPath);
     } catch {
       return err(appError("WORKSPACE_NOT_FOUND", "Workspace root could not be canonicalized"));
     }
     const workspace = {
-      id: (0, import_node_crypto.randomUUID)(),
+      id: (0, import_node_crypto2.randomUUID)(),
       displayName: displayName.trim(),
       rootPath: absoluteRootPath,
       realRootPath: canonicalRootPath,
@@ -758,6 +895,2175 @@ var WorkspaceService = class {
     return this.repository.delete(id);
   }
 };
+
+// ../../packages/filesystem/dist/tree-reader.js
+var IGNORED_DIRECTORIES = /* @__PURE__ */ new Set([".git", ".next", "build", "coverage", "dist", "node_modules", "vendor"]);
+var TreeReader = class {
+  async read(rootPath, options = {}) {
+    const maxDepth = options.maxDepth ?? DEFAULT_TREE_DEPTH;
+    const maxEntries = options.maxEntries ?? DEFAULT_TREE_ENTRIES;
+    if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > MAX_TREE_DEPTH || !Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > MAX_TREE_ENTRIES) {
+      return err({ code: "INVALID_INPUT", message: "Tree bounds are invalid", recoverable: false });
+    }
+    let rootRealPath;
+    try {
+      rootRealPath = await (0, import_promises5.realpath)(rootPath);
+    } catch {
+      return err({ code: "FILE_NOT_FOUND", message: "Tree root was not found", recoverable: false });
+    }
+    const entries = [];
+    let truncated = false;
+    const walk = async (currentPath, relativeDirectory, depth) => {
+      if (truncated || depth > maxDepth)
+        return;
+      let directoryEntries;
+      try {
+        directoryEntries = await (0, import_promises5.readdir)(currentPath, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      directoryEntries.sort((left, right) => left.name.localeCompare(right.name, void 0, { sensitivity: "base" }));
+      for (const directoryEntry of directoryEntries) {
+        if (entries.length >= maxEntries) {
+          truncated = true;
+          return;
+        }
+        if (directoryEntry.isDirectory() && IGNORED_DIRECTORIES.has(directoryEntry.name))
+          continue;
+        const absoluteEntryPath = import_node_path6.default.join(currentPath, directoryEntry.name);
+        let entryRealPath;
+        try {
+          entryRealPath = await (0, import_promises5.realpath)(absoluteEntryPath);
+        } catch {
+          continue;
+        }
+        if (!isWithin(rootRealPath, entryRealPath))
+          continue;
+        const relativePath = import_node_path6.default.join(relativeDirectory, directoryEntry.name);
+        const isDirectory = directoryEntry.isDirectory();
+        if (!isDirectory && !directoryEntry.isFile())
+          continue;
+        entries.push({ path: relativePath, type: isDirectory ? "directory" : "file" });
+        if (isDirectory && depth < maxDepth)
+          await walk(absoluteEntryPath, relativePath, depth + 1);
+      }
+    };
+    try {
+      if (!(await (0, import_promises5.lstat)(rootPath)).isDirectory())
+        return err({ code: "INVALID_INPUT", message: "Tree root must be a directory", recoverable: false });
+    } catch {
+      return err({ code: "FILE_NOT_FOUND", message: "Tree root was not found", recoverable: false });
+    }
+    await walk(rootPath, "", 1);
+    return ok({ entries, truncated });
+  }
+};
+
+// ../../packages/filesystem/dist/unbounded-file-reader.js
+var import_promises6 = require("node:fs/promises");
+var import_node_path7 = __toESM(require("node:path"), 1);
+var UnboundedFileReader = class {
+  async read(filePath) {
+    let data;
+    try {
+      const size = (await (0, import_promises6.stat)(filePath)).size;
+      void size;
+      data = await (0, import_promises6.readFile)(filePath);
+    } catch {
+      return err({ code: "FILE_NOT_FOUND", message: "File was not found", recoverable: false });
+    }
+    const mimeType = guessMimeType(filePath);
+    if (!data.subarray(0, 8192).includes(0)) {
+      const content = data.toString("utf8");
+      const lineCount = content.length === 0 ? 0 : content.split(/\r?\n/).length;
+      return ok({
+        content,
+        encoding: "utf8",
+        mimeType: mimeType.startsWith("text/") || mimeType === "application/json" ? mimeType : "text/plain",
+        byteLength: data.byteLength,
+        startLine: lineCount === 0 ? 1 : 1,
+        endLine: Math.max(lineCount, 1)
+      });
+    }
+    return ok({
+      content: data.toString("base64"),
+      encoding: "base64",
+      mimeType,
+      byteLength: data.byteLength,
+      startLine: 1,
+      endLine: 1
+    });
+  }
+};
+function guessMimeType(filePath) {
+  const ext = import_node_path7.default.extname(filePath).toLowerCase();
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".bmp":
+      return "image/bmp";
+    case ".svg":
+      return "image/svg+xml";
+    case ".pdf":
+      return "application/pdf";
+    case ".json":
+      return "application/json";
+    case ".txt":
+    case ".md":
+    case ".csv":
+      return "text/plain";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+// ../../packages/permissions/dist/command-policy.js
+var import_node_path8 = __toESM(require("node:path"), 1);
+var SHELL_HOSTS = /* @__PURE__ */ new Set(["bash", "bash.exe", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "sh", "sh.exe"]);
+var DELETE_EXECUTABLES = /* @__PURE__ */ new Set([
+  "del",
+  "del.exe",
+  "erase",
+  "erase.exe",
+  "rm",
+  "rm.exe",
+  "rmdir",
+  "rmdir.exe",
+  "rd",
+  "rd.exe",
+  "unlink",
+  "unlink.exe",
+  "remove-item"
+]);
+var CommandPolicy = class {
+  decide(profile, executable, source, args = []) {
+    const basename = import_node_path8.default.win32.basename(executable).toLowerCase();
+    if (SHELL_HOSTS.has(basename))
+      return "DENY";
+    if (DELETE_EXECUTABLES.has(basename) || looksLikeDeleteInvocation(basename, args))
+      return "DENY";
+    if (source === "project") {
+      if (!profile.allowedProjectExecutables.includes(basename))
+        return "DENY";
+      return profile.defaults.EXECUTE;
+    }
+    if (!profile.allowedProjectExecutables.includes(basename) && profile.name !== "full")
+      return "ASK";
+    return profile.defaults.EXECUTE;
+  }
+};
+function looksLikeDeleteInvocation(basename, args) {
+  const joined = args.join(" ").toLowerCase();
+  if (basename === "git.exe" || basename === "git") {
+    return /\bclean\b/.test(joined) || /\breset\b/.test(joined);
+  }
+  return false;
+}
+
+// ../../packages/permissions/dist/permission-engine.js
+var HARD_BLOCKED_ACTIONS = /* @__PURE__ */ new Set([
+  "arbitrary_elevation",
+  "delete_outside_workspace",
+  "delete_workspace_root",
+  "disk_format",
+  "git_clean",
+  "git_reset",
+  "kill_unowned_process",
+  "registry_delete",
+  "system_reboot",
+  "system_shutdown"
+]);
+var DefaultPermissionEngine = class {
+  decide(profile, operation) {
+    if (operation.destructive && HARD_BLOCKED_ACTIONS.has(operation.action.toLowerCase())) {
+      return "DENY";
+    }
+    return profile.defaults[operation.level];
+  }
+};
+
+// ../../packages/permissions/dist/profiles.js
+var PROJECT_EXECUTABLES = Object.freeze([
+  "bun",
+  "bun.exe",
+  "corepack",
+  "corepack.cmd",
+  "git",
+  "git.exe",
+  "node",
+  "node.exe",
+  "npm",
+  "npm.cmd",
+  "npx",
+  "npx.cmd",
+  "pnpm",
+  "pnpm.cmd",
+  "rg",
+  "rg.exe",
+  "yarn",
+  "yarn.cmd"
+]);
+var permissionProfiles = Object.freeze({
+  safe: Object.freeze({
+    name: "safe",
+    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ASK", EXECUTE: "ASK", DANGEROUS: "DENY" }),
+    allowedProjectExecutables: PROJECT_EXECUTABLES
+  }),
+  balanced: Object.freeze({
+    name: "balanced",
+    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ALLOW", EXECUTE: "ALLOW", DANGEROUS: "ASK" }),
+    allowedProjectExecutables: PROJECT_EXECUTABLES
+  }),
+  full: Object.freeze({
+    name: "full",
+    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ALLOW", EXECUTE: "ALLOW", DANGEROUS: "ALLOW" }),
+    allowedProjectExecutables: PROJECT_EXECUTABLES
+  }),
+  custom: Object.freeze({
+    name: "custom",
+    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ASK", EXECUTE: "ASK", DANGEROUS: "DENY" }),
+    allowedProjectExecutables: PROJECT_EXECUTABLES
+  })
+});
+
+// ../../packages/application/dist/file-service.js
+var FileService = class {
+  workspaces;
+  guard;
+  reader;
+  writer;
+  patchApplier;
+  checkpointService;
+  permissionEngine;
+  profileProvider;
+  unboundedReader;
+  constructor(workspaces, guard = new WorkspacePathGuard(), reader = new TextFileReader(), dependencies = {}) {
+    this.workspaces = workspaces;
+    this.guard = guard;
+    this.reader = reader;
+    this.writer = dependencies.writer ?? new AtomicFileWriter();
+    this.patchApplier = dependencies.patchApplier ?? new PatchApplier();
+    this.checkpointService = dependencies.checkpointService;
+    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
+    this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
+    this.unboundedReader = dependencies.unboundedReader ?? new UnboundedFileReader();
+  }
+  async readFile(actor, workspaceId, request) {
+    void actor;
+    const workspaceResult = await this.getWorkspace(workspaceId);
+    if (!workspaceResult.ok)
+      return workspaceResult;
+    const workspace = workspaceResult.value;
+    const resolved = await this.guard.resolveForRead(workspace, request.path);
+    if (!resolved.ok)
+      return resolved;
+    const absolute = resolved.value.realPath ?? resolved.value.absolutePath;
+    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+      if (request.startLine !== void 0 || request.endLine !== void 0) {
+        const textResult = await this.reader.read(absolute, request);
+        if (textResult.ok) {
+          return ok({ path: resolved.value.relativePath, ...textResult.value, encoding: "utf8", mimeType: "text/plain" });
+        }
+      }
+      const unbounded = await this.unboundedReader.read(absolute);
+      if (!unbounded.ok)
+        return unbounded;
+      return ok({
+        path: resolved.value.relativePath,
+        content: unbounded.value.content,
+        startLine: unbounded.value.startLine,
+        endLine: unbounded.value.endLine,
+        encoding: unbounded.value.encoding,
+        mimeType: unbounded.value.mimeType,
+        byteLength: unbounded.value.byteLength
+      });
+    }
+    const readResult = await this.reader.read(absolute, request);
+    if (!readResult.ok)
+      return readResult;
+    return ok({ path: resolved.value.relativePath, ...readResult.value, encoding: "utf8" });
+  }
+  async readFiles(actor, workspaceId, request) {
+    void actor;
+    if (!Array.isArray(request.files) || request.files.length > 20) {
+      return err(appError("INVALID_INPUT", "At most 20 files may be read"));
+    }
+    const workspaceResult = await this.getWorkspace(workspaceId);
+    if (!workspaceResult.ok)
+      return workspaceResult;
+    const trustedE = isUnderEDrive(workspaceResult.value.realRootPath) || isUnderEDrive(workspaceResult.value.rootPath);
+    const files = [];
+    let totalBytes = 0;
+    for (const fileRequest of request.files) {
+      const result = await this.readFile(actor, workspaceId, fileRequest);
+      if (!result.ok)
+        return result;
+      totalBytes += result.value.byteLength ?? Buffer.byteLength(result.value.content, result.value.encoding === "base64" ? "base64" : "utf8");
+      if (!trustedE && totalBytes > MAX_MULTI_FILE_BYTES) {
+        return err(appError("FILE_TOO_LARGE", "Total file content exceeds the maximum read size"));
+      }
+      files.push(result.value);
+    }
+    return ok({ files });
+  }
+  async writeFile(actor, workspaceId, request) {
+    if (typeof request?.path !== "string" || typeof request.content !== "string") {
+      return err(appError("INVALID_INPUT", "Write request is invalid"));
+    }
+    if (Buffer.byteLength(request.content, "utf8") > MAX_FILE_WRITE_BYTES) {
+      return err(appError("FILE_TOO_LARGE", "File exceeds the maximum write size"));
+    }
+    const workspaceResult = await this.getWorkspace(workspaceId);
+    if (!workspaceResult.ok)
+      return workspaceResult;
+    const resolved = await this.guard.resolveForWrite(workspaceResult.value, request.path);
+    if (!resolved.ok)
+      return resolved;
+    const existing = await this.inspectExistingFile(resolved.value.absolutePath);
+    if (!existing.ok)
+      return existing;
+    if (existing.value === "directory")
+      return err(appError("INVALID_INPUT", "Directories cannot be written as files"));
+    const permission = this.decide(workspaceId, "write_file", "WRITE", resolved.value.relativePath, false);
+    if (!permission.ok)
+      return permission;
+    let checkpointId;
+    if (existing.value) {
+      const checkpoint = await this.createCheckpoint(actor, workspaceId, [resolved.value.relativePath]);
+      if (!checkpoint.ok)
+        return checkpoint;
+      checkpointId = checkpoint.value.id;
+    }
+    const writeResult = await this.writer.write(resolved.value.realPath ?? resolved.value.absolutePath, request.content);
+    if (!writeResult.ok)
+      return writeResult;
+    return ok({
+      path: resolved.value.relativePath,
+      bytesWritten: Buffer.byteLength(request.content, "utf8"),
+      ...checkpointId === void 0 ? {} : { checkpointId }
+    });
+  }
+  async applyPatch(actor, workspaceId, request) {
+    const validation = this.patchApplier.validate(request?.files ?? []);
+    if (!validation.ok)
+      return validation;
+    const workspaceResult = await this.getWorkspace(workspaceId);
+    if (!workspaceResult.ok)
+      return workspaceResult;
+    const resolvedFiles = [];
+    const existingPaths = [];
+    for (const patch of request.files) {
+      const resolved = await this.guard.resolveForWrite(workspaceResult.value, patch.path);
+      if (!resolved.ok)
+        return resolved;
+      const existing = await this.inspectExistingFile(resolved.value.absolutePath);
+      if (!existing.ok)
+        return existing;
+      if (existing.value === "directory")
+        return err(appError("INVALID_INPUT", "Directories cannot be patched as files"));
+      if (existing.value)
+        existingPaths.push(resolved.value.relativePath);
+      resolvedFiles.push({
+        patch,
+        absolutePath: resolved.value.realPath ?? resolved.value.absolutePath,
+        relativePath: resolved.value.relativePath
+      });
+    }
+    const permission = this.decide(workspaceId, "apply_patch", "WRITE", void 0, false);
+    if (!permission.ok)
+      return permission;
+    let checkpointId;
+    if (existingPaths.length > 0) {
+      const checkpoint = await this.createCheckpoint(actor, workspaceId, existingPaths);
+      if (!checkpoint.ok)
+        return checkpoint;
+      checkpointId = checkpoint.value.id;
+    }
+    for (const resolved of resolvedFiles) {
+      const writeResult = await this.writer.write(resolved.absolutePath, resolved.patch.content);
+      if (!writeResult.ok)
+        return writeResult;
+    }
+    return ok({
+      paths: resolvedFiles.map((resolved) => resolved.relativePath),
+      ...checkpointId === void 0 ? {} : { checkpointId }
+    });
+  }
+  async moveFile(actor, workspaceId, request) {
+    void actor;
+    if (typeof request?.sourcePath !== "string" || typeof request.destinationPath !== "string") {
+      return err(appError("INVALID_INPUT", "Move request is invalid"));
+    }
+    const workspaceResult = await this.getWorkspace(workspaceId);
+    if (!workspaceResult.ok)
+      return workspaceResult;
+    const source = await this.guard.resolveForRead(workspaceResult.value, request.sourcePath);
+    if (!source.ok)
+      return source;
+    const destination = await this.guard.resolveForWrite(workspaceResult.value, request.destinationPath);
+    if (!destination.ok)
+      return destination;
+    const sourceType = await this.inspectExistingFile(source.value.realPath ?? source.value.absolutePath);
+    if (!sourceType.ok)
+      return sourceType;
+    if (!sourceType.value)
+      return err(appError("FILE_NOT_FOUND", "Source file was not found"));
+    const destinationType = await this.inspectExistingFile(destination.value.absolutePath);
+    if (!destinationType.ok)
+      return destinationType;
+    if (destinationType.value)
+      return err(appError("INVALID_INPUT", "Destination already exists"));
+    if (sourceType.value === "directory")
+      return err(appError("INVALID_INPUT", "Directories cannot be moved by this operation"));
+    const permission = this.decide(workspaceId, "move_file", "WRITE", source.value.relativePath, false);
+    if (!permission.ok)
+      return permission;
+    try {
+      await (0, import_promises7.rename)(source.value.realPath ?? source.value.absolutePath, destination.value.absolutePath);
+    } catch {
+      return err(appError("INTERNAL_ERROR", "File move failed", true));
+    }
+    return ok(void 0);
+  }
+  async deleteFile(actor, workspaceId, request) {
+    void actor;
+    if (typeof request?.path !== "string")
+      return err(appError("INVALID_INPUT", "Delete request is invalid"));
+    if (request.userConfirmed !== true) {
+      return err(appError("PERMISSION_REQUIRED", "Deletion requires the user to confirm in chat first, then retry delete_file with userConfirmed: true"));
+    }
+    const workspaceResult = await this.getWorkspace(workspaceId);
+    if (!workspaceResult.ok)
+      return workspaceResult;
+    const resolved = await this.guard.resolveForRead(workspaceResult.value, request.path);
+    if (!resolved.ok)
+      return resolved;
+    if (resolved.value.relativePath.length === 0)
+      return err(appError("PERMISSION_DENIED", "Workspace root cannot be deleted"));
+    const permission = this.decide(workspaceId, "delete_file", "DANGEROUS", resolved.value.relativePath, true);
+    if (!permission.ok)
+      return permission;
+    const targetPath = resolved.value.realPath ?? resolved.value.absolutePath;
+    try {
+      const target = await (0, import_promises7.lstat)(targetPath);
+      if (target.isDirectory()) {
+        const entries = await (0, import_promises7.readdir)(targetPath);
+        if (entries.length > 0)
+          return err(appError("INVALID_INPUT", "Non-empty directories cannot be deleted"));
+        await (0, import_promises7.rmdir)(targetPath);
+      } else {
+        await (0, import_promises7.unlink)(targetPath);
+      }
+    } catch {
+      return err(appError("INTERNAL_ERROR", "File deletion failed", true));
+    }
+    return ok(void 0);
+  }
+  decide(workspaceId, action, level, target, destructive) {
+    const operation = { action, level, workspaceId, destructive, ...target === void 0 ? {} : { target } };
+    const decision = this.permissionEngine.decide(this.profileProvider(), operation);
+    if (decision === "DENY")
+      return err(appError("PERMISSION_DENIED", `${action} is denied`));
+    if (decision === "ASK")
+      return err(appError("PERMISSION_REQUIRED", `${action} requires permission`));
+    return ok(void 0);
+  }
+  async createCheckpoint(actor, workspaceId, paths) {
+    if (this.checkpointService === void 0)
+      return err(appError("INTERNAL_ERROR", "Checkpoint service is unavailable", true));
+    const checkpoint = await this.checkpointService.createForFiles(actor, workspaceId, paths);
+    if (!checkpoint.ok)
+      return checkpoint;
+    return ok({ id: checkpoint.value.id });
+  }
+  async inspectExistingFile(filePath) {
+    try {
+      const target = await (0, import_promises7.lstat)(filePath);
+      return ok(target.isDirectory() ? "directory" : true);
+    } catch (error46) {
+      if (!isFileNotFoundError(error46))
+        return err(appError("INTERNAL_ERROR", "Unable to inspect file target", true));
+      return ok(false);
+    }
+  }
+  async getWorkspace(workspaceId) {
+    const workspace = await this.workspaces.get(workspaceId);
+    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
+  }
+};
+function isFileNotFoundError(error46) {
+  if (typeof error46 !== "object" || error46 === null || !("code" in error46))
+    return false;
+  return error46.code === "ENOENT";
+}
+
+// ../../packages/application/dist/checkpoint-service.js
+var import_node_crypto3 = require("node:crypto");
+var import_promises8 = require("node:fs/promises");
+var CheckpointService = class {
+  workspaces;
+  repository;
+  guard;
+  writer;
+  permissionEngine;
+  profile;
+  constructor(workspaces, repository, dependencies = {}) {
+    this.workspaces = workspaces;
+    this.repository = repository;
+    this.guard = dependencies.guard ?? new WorkspacePathGuard();
+    this.writer = dependencies.writer ?? new AtomicFileWriter();
+    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
+    this.profile = dependencies.profile ?? permissionProfiles.balanced;
+  }
+  async createForFiles(actor, workspaceId, paths) {
+    void actor;
+    if (!Array.isArray(paths) || paths.length === 0 || paths.length > 20)
+      return err(appError("INVALID_INPUT", "Checkpoint requires 1 to 20 files"));
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    const files = [];
+    let totalBytes = 0;
+    const seen = /* @__PURE__ */ new Set();
+    for (const inputPath of paths) {
+      const resolved = await this.guard.resolveForRead(workspace.value, inputPath);
+      if (!resolved.ok)
+        return resolved;
+      if (seen.has(resolved.value.relativePath.toLowerCase()))
+        return err(appError("INVALID_INPUT", "Checkpoint contains duplicate paths"));
+      seen.add(resolved.value.relativePath.toLowerCase());
+      const file2 = await this.readCheckpointFile(resolved.value.realPath ?? resolved.value.absolutePath, resolved.value.relativePath);
+      if (!file2.ok)
+        return file2;
+      totalBytes += file2.value.size;
+      if (totalBytes > MAX_FILE_WRITE_BYTES)
+        return err(appError("FILE_TOO_LARGE", "Checkpoint exceeds the maximum size"));
+      files.push(file2.value);
+    }
+    const checkpoint = { id: (0, import_node_crypto3.randomUUID)(), workspaceId, createdAt: (/* @__PURE__ */ new Date()).toISOString(), files };
+    await this.repository.insert(checkpoint);
+    return ok(checkpoint);
+  }
+  async restore(actor, workspaceId, checkpointId, options = {}) {
+    const checkpoint = await this.repository.get(checkpointId);
+    if (checkpoint === null)
+      return err(appError("FILE_NOT_FOUND", "Checkpoint was not found"));
+    if (checkpoint.workspaceId !== workspaceId)
+      return err(appError("PERMISSION_DENIED", "Checkpoint belongs to another workspace"));
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    const resolvedFiles = [];
+    for (const file2 of checkpoint.files) {
+      const resolved = await this.guard.resolveForWrite(workspace.value, file2.path);
+      if (!resolved.ok)
+        return resolved;
+      if (options.expectedCurrentHashes !== void 0) {
+        const currentHash = await this.hashCurrentFile(resolved.value.realPath ?? resolved.value.absolutePath);
+        const expected = options.expectedCurrentHashes[file2.path];
+        if (expected !== void 0 && currentHash !== expected)
+          return err(appError("INVALID_INPUT", "Checkpoint restore conflict detected"));
+      }
+      resolvedFiles.push({ file: file2, absolutePath: resolved.value.realPath ?? resolved.value.absolutePath });
+    }
+    const profile = options.profile ?? this.profile;
+    const decision = this.permissionEngine.decide(profile, { action: "restore_checkpoint", level: "WRITE", workspaceId, target: checkpointId, destructive: false });
+    if (decision === "DENY")
+      return err(appError("PERMISSION_DENIED", "Checkpoint restore is denied"));
+    if (decision === "ASK")
+      return err(appError("PERMISSION_REQUIRED", "Checkpoint restore requires permission"));
+    const restoredPaths = [];
+    for (const resolved of resolvedFiles) {
+      const result = await this.writer.write(resolved.absolutePath, resolved.file.content);
+      if (!result.ok)
+        return result;
+      restoredPaths.push(resolved.file.path);
+    }
+    void actor;
+    return ok({ restoredPaths });
+  }
+  async readCheckpointFile(filePath, relativePath) {
+    let data;
+    try {
+      if (!(await (0, import_promises8.lstat)(filePath)).isFile())
+        return err(appError("INVALID_INPUT", "Checkpoint target must be a file"));
+      data = await (0, import_promises8.readFile)(filePath);
+    } catch {
+      return err(appError("FILE_NOT_FOUND", "Checkpoint file was not found"));
+    }
+    if (data.byteLength > MAX_FILE_WRITE_BYTES)
+      return err(appError("FILE_TOO_LARGE", "Checkpoint file exceeds the maximum size"));
+    if (data.subarray(0, 8192).includes(0))
+      return err(appError("BINARY_FILE", "Binary files cannot be checkpointed"));
+    const content = data.toString("utf8");
+    return ok({ path: relativePath, content, contentSha256: hash(content), size: data.byteLength });
+  }
+  async hashCurrentFile(filePath) {
+    try {
+      const data = await (0, import_promises8.readFile)(filePath);
+      return hash(data.toString("utf8"));
+    } catch {
+      return null;
+    }
+  }
+  async getWorkspace(workspaceId) {
+    const workspace = await this.workspaces.get(workspaceId);
+    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
+  }
+};
+function hash(value) {
+  return (0, import_node_crypto3.createHash)("sha256").update(value, "utf8").digest("hex");
+}
+
+// ../../packages/application/dist/codex-service.js
+var import_node_crypto5 = require("node:crypto");
+
+// ../../packages/process/dist/process-manager.js
+var import_node_child_process2 = require("node:child_process");
+var import_node_path10 = __toESM(require("node:path"), 1);
+var import_node_crypto4 = require("node:crypto");
+
+// ../../packages/process/dist/executable-resolver.js
+var import_promises9 = require("node:fs/promises");
+var import_node_path9 = __toESM(require("node:path"), 1);
+var PathExecutableResolver = class {
+  environment;
+  constructor(environment = process.env) {
+    this.environment = environment;
+  }
+  async resolve(executable) {
+    if (executable.trim().length === 0)
+      return err({ code: "INVALID_INPUT", message: "Executable is required", recoverable: false });
+    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? "").split(import_node_path9.default.delimiter).filter(Boolean);
+    const hasPath = import_node_path9.default.isAbsolute(executable) || executable.includes(import_node_path9.default.sep) || executable.includes("/") || executable.includes("\\");
+    const candidates = hasPath ? this.withWindowsExtensions(executable) : pathEntries.flatMap((entry) => this.withWindowsExtensions(import_node_path9.default.join(entry, executable)));
+    for (const candidate of candidates) {
+      try {
+        await (0, import_promises9.access)(candidate, import_promises9.constants.F_OK);
+        if ((await (0, import_promises9.stat)(candidate)).isFile())
+          return ok(candidate);
+      } catch {
+        continue;
+      }
+    }
+    return err({ code: "EXECUTABLE_NOT_FOUND", message: `Executable '${executable}' was not found`, recoverable: true });
+  }
+  withWindowsExtensions(candidate) {
+    if (import_node_path9.default.extname(candidate).length > 0 || process.platform !== "win32")
+      return [candidate];
+    const extensions = (this.environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
+    return [...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`), candidate];
+  }
+};
+
+// ../../packages/process/dist/ring-buffer.js
+var DEFAULT_MAX_BYTES = MAX_PROCESS_LOG_BYTES;
+var LogRingBuffer = class {
+  maxBytes;
+  entries = [];
+  sequence = 0;
+  bytes = 0;
+  evicted = false;
+  constructor(maxBytes = DEFAULT_MAX_BYTES) {
+    this.maxBytes = maxBytes;
+  }
+  append(stream, text) {
+    const chunks = text.split(/(?<=\n)/).filter((chunk) => chunk.length > 0);
+    for (const chunk of chunks)
+      this.appendChunk(stream, chunk);
+  }
+  read(query) {
+    const sinceSequence = query.sinceSequence ?? 0;
+    let entries = this.entries.filter((entry) => entry.sequence > sinceSequence);
+    if (query.tailLines !== void 0)
+      entries = entries.slice(-query.tailLines);
+    const oldest = this.entries[0]?.sequence;
+    const cursorMissedEvicted = oldest !== void 0 && query.sinceSequence !== void 0 && oldest > sinceSequence + 1;
+    return {
+      entries,
+      truncated: this.evicted || cursorMissedEvicted,
+      nextSequence: this.sequence
+    };
+  }
+  appendChunk(stream, input) {
+    let text = input;
+    let size = Buffer.byteLength(text, "utf8");
+    if (size > this.maxBytes) {
+      text = Buffer.from(text, "utf8").subarray(-this.maxBytes).toString("utf8");
+      size = Buffer.byteLength(text, "utf8");
+      this.evicted = true;
+    }
+    while (this.entries.length > 0 && this.bytes + size > this.maxBytes) {
+      const removed = this.entries.shift();
+      if (removed === void 0)
+        break;
+      this.bytes -= Buffer.byteLength(removed.text, "utf8");
+      this.evicted = true;
+    }
+    this.sequence += 1;
+    this.entries.push({ sequence: this.sequence, stream, text });
+    this.bytes += size;
+  }
+};
+
+// ../../packages/process/dist/windows-process-tree.js
+var import_node_child_process = require("node:child_process");
+var WindowsProcessTree = class {
+  stop(child, pid) {
+    if (process.platform !== "win32") {
+      if (child.exitCode === null)
+        child.kill("SIGTERM");
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const killer = (0, import_node_child_process.spawn)("taskkill", ["/PID", String(pid), "/T", "/F"], { shell: false, windowsHide: true });
+      killer.once("error", () => {
+        if (child.exitCode === null)
+          child.kill();
+        resolve();
+      });
+      killer.once("close", () => resolve());
+    });
+  }
+};
+
+// ../../packages/process/dist/process-manager.js
+var DEFAULT_TIMEOUT_MS = 5 * 60 * 1e3;
+var MAX_TIMEOUT_MS = 30 * 60 * 1e3;
+var ProcessManager = class {
+  terminator;
+  executableResolver;
+  records = /* @__PURE__ */ new Map();
+  constructor(terminator = new WindowsProcessTree(), executableResolver = new PathExecutableResolver()) {
+    this.terminator = terminator;
+    this.executableResolver = executableResolver;
+  }
+  async start(spec) {
+    const validation = this.validateSpec(spec);
+    if (!validation.ok)
+      return validation;
+    const resolvedExecutable = await this.executableResolver.resolve(spec.executable);
+    if (!resolvedExecutable.ok)
+      return resolvedExecutable;
+    const invocation = toSpawnInvocation(resolvedExecutable.value, spec.args);
+    if (!invocation.ok)
+      return invocation;
+    const processId = (0, import_node_crypto4.randomUUID)();
+    const child = (0, import_node_child_process2.spawn)(invocation.value.executable, [...invocation.value.args], {
+      cwd: spec.cwd,
+      env: createSafeEnvironment(process.env),
+      shell: false,
+      windowsHide: false,
+      ...invocation.value.windowsVerbatimArguments === void 0 ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }
+    });
+    const record2 = {
+      processId,
+      child,
+      spec,
+      startedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      logs: new LogRingBuffer(),
+      state: "starting"
+    };
+    this.records.set(processId, record2);
+    child.stdout?.on("data", (chunk) => record2.logs.append("stdout", chunk.toString("utf8")));
+    child.stderr?.on("data", (chunk) => record2.logs.append("stderr", chunk.toString("utf8")));
+    child.once("error", (error46) => this.handleError(record2, error46));
+    child.once("close", (exitCode) => this.handleClose(record2, exitCode));
+    return new Promise((resolve) => {
+      child.once("spawn", () => {
+        if (record2.state === "starting")
+          record2.state = "running";
+        record2.timer = setTimeout(() => {
+          void this.timeout(record2);
+        }, spec.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+        resolve(ok(this.snapshot(record2)));
+      });
+      child.once("error", (error46) => {
+        resolve(err(error46.code === "ENOENT" ? appError("EXECUTABLE_NOT_FOUND", "Executable was not found") : appError("INTERNAL_ERROR", "Process could not start")));
+      });
+    });
+  }
+  status(processId) {
+    const record2 = this.records.get(processId);
+    return record2 === void 0 ? err(appError("PROCESS_NOT_FOUND", "Process was not found")) : ok(this.snapshot(record2));
+  }
+  list() {
+    return [...this.records.values()].map((record2) => this.snapshot(record2));
+  }
+  logs(processId, query) {
+    const record2 = this.records.get(processId);
+    if (record2 === void 0)
+      return err(appError("PROCESS_NOT_FOUND", "Process was not found"));
+    if (query.tailLines !== void 0 && (!Number.isInteger(query.tailLines) || query.tailLines < 1 || query.tailLines > 1e4)) {
+      return err(appError("INVALID_INPUT", "Log tail limit is invalid"));
+    }
+    if (query.sinceSequence !== void 0 && (!Number.isInteger(query.sinceSequence) || query.sinceSequence < 0)) {
+      return err(appError("INVALID_INPUT", "Log sequence cursor is invalid"));
+    }
+    return ok(record2.logs.read(query));
+  }
+  async stop(processId) {
+    const record2 = this.records.get(processId);
+    if (record2 === void 0)
+      return err(appError("PROCESS_NOT_FOUND", "Process was not found"));
+    if (isTerminal(record2.state))
+      return ok(void 0);
+    const pid = record2.child.pid;
+    if (pid === void 0)
+      return err(appError("INTERNAL_ERROR", "Process PID was not available"));
+    this.finish(record2, "stopped");
+    await this.terminator.stop(record2.child, pid);
+    return ok(void 0);
+  }
+  validateSpec(spec) {
+    if (typeof spec.executable !== "string" || spec.executable.trim().length === 0 || !Array.isArray(spec.args) || !spec.args.every((arg) => typeof arg === "string")) {
+      return err(appError("INVALID_INPUT", "Executable and args are required"));
+    }
+    if (typeof spec.cwd !== "string" || !import_node_path10.default.isAbsolute(spec.cwd)) {
+      return err(appError("INVALID_INPUT", "Process cwd must be an absolute path"));
+    }
+    const timeoutMs = spec.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
+      return err(appError("INVALID_INPUT", "Process timeout is invalid"));
+    }
+    return ok(void 0);
+  }
+  handleError(record2, error46) {
+    if (!isTerminal(record2.state))
+      this.finish(record2, "failed");
+    if (error46.code !== "ENOENT")
+      record2.exitCode = -1;
+  }
+  handleClose(record2, exitCode) {
+    if (!isTerminal(record2.state))
+      this.finish(record2, "exited");
+    if (record2.exitCode === void 0 && exitCode !== null)
+      record2.exitCode = exitCode;
+  }
+  async timeout(record2) {
+    if (record2.state !== "running")
+      return;
+    const pid = record2.child.pid;
+    this.finish(record2, "timed_out");
+    if (pid !== void 0)
+      await this.terminator.stop(record2.child, pid);
+  }
+  finish(record2, state) {
+    record2.state = state;
+    record2.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (record2.timer !== void 0)
+      clearTimeout(record2.timer);
+  }
+  snapshot(record2) {
+    return {
+      processId: record2.processId,
+      executable: record2.spec.executable,
+      args: [...record2.spec.args],
+      cwd: record2.spec.cwd,
+      state: record2.state,
+      startedAt: record2.startedAt,
+      ...record2.finishedAt === void 0 ? {} : { finishedAt: record2.finishedAt },
+      ...record2.exitCode === void 0 ? {} : { exitCode: record2.exitCode }
+    };
+  }
+};
+function toSpawnInvocation(executable, args) {
+  if (process.platform !== "win32" || ![".cmd", ".bat"].includes(import_node_path10.default.extname(executable).toLowerCase())) {
+    return ok({ executable, args });
+  }
+  const values = [executable, ...args];
+  if (values.some((value) => /[\r\n&|<>^%!"]/.test(value))) {
+    return err(appError("INVALID_INPUT", "Windows command shim arguments contain unsupported shell metacharacters"));
+  }
+  const commandLine = `"${values.map(quoteWindowsCommandArgument).join(" ")}"`;
+  return ok({ executable: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", commandLine], windowsVerbatimArguments: true });
+}
+function quoteWindowsCommandArgument(value) {
+  return /\s/.test(value) ? `"${value}"` : value;
+}
+function isTerminal(state) {
+  return state === "exited" || state === "failed" || state === "stopped" || state === "timed_out";
+}
+function createSafeEnvironment(source) {
+  const allowed = new Set([
+    "PATH",
+    "PATHEXT",
+    "SystemRoot",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)"
+  ].map((key) => process.platform === "win32" ? key.toLowerCase() : key));
+  return Object.fromEntries(Object.entries(source).filter(([key, value]) => {
+    const normalizedKey = process.platform === "win32" ? key.toLowerCase() : key;
+    return allowed.has(normalizedKey) && value !== void 0;
+  }));
+}
+
+// ../../packages/codex/dist/codex-discovery.js
+var import_node_child_process3 = require("node:child_process");
+var import_node_os = __toESM(require("node:os"), 1);
+var import_node_path11 = __toESM(require("node:path"), 1);
+var import_promises10 = require("node:fs/promises");
+
+// ../../packages/codex/dist/codex-capabilities.js
+var CodexInvocationBuilder = class {
+  build(executable, capabilities, instruction) {
+    if (executable.trim().length === 0 || instruction.trim().length === 0) {
+      return err(appError("INVALID_INPUT", "Codex executable and instruction are required"));
+    }
+    if (capabilities.instructionMode === null) {
+      return err(appError("CODEX_NOT_AVAILABLE", "Codex instruction invocation is not supported", true));
+    }
+    const args = capabilities.instructionMode === "exec-argument" ? ["exec", instruction] : capabilities.instructionMode === "prompt-option" ? ["--prompt", instruction] : [instruction];
+    return ok({ executable, args });
+  }
+};
+function capabilitiesFromHelp(helpText) {
+  const names = [];
+  if (/\bexec\b/i.test(helpText))
+    names.push("exec");
+  if (/--prompt\b|--instruction\b/i.test(helpText))
+    names.push("prompt-argument");
+  if (/\bprompt\b.*<[^>]+>/i.test(helpText) && !names.includes("prompt-argument"))
+    names.push("positional-instruction");
+  const instructionMode = names.includes("exec") ? "exec-argument" : names.includes("prompt-argument") ? "prompt-option" : names.includes("positional-instruction") ? "positional-argument" : null;
+  return { instructionMode, names };
+}
+
+// ../../packages/codex/dist/codex-discovery.js
+var PathCodexExecutableResolver = class {
+  environment;
+  constructor(environment = process.env) {
+    this.environment = environment;
+  }
+  async resolve() {
+    const pathValue = this.environment.Path ?? this.environment.PATH ?? "";
+    const entries = pathValue.split(import_node_path11.default.delimiter).filter(Boolean);
+    const candidates = entries.flatMap((entry) => this.withWindowsExtensions(import_node_path11.default.join(entry, "codex")));
+    for (const candidate of candidates) {
+      try {
+        await (0, import_promises10.access)(candidate, import_promises10.constants.F_OK);
+        if ((await (0, import_promises10.stat)(candidate)).isFile())
+          return ok(candidate);
+      } catch {
+        continue;
+      }
+    }
+    return err({ code: "EXECUTABLE_NOT_FOUND", message: "Codex executable was not found", recoverable: true });
+  }
+  withWindowsExtensions(candidate) {
+    if (process.platform !== "win32")
+      return [candidate];
+    const extensions = (this.environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
+    return [...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`), candidate];
+  }
+};
+var DirectCodexCommandRunner = class {
+  run(executable, args) {
+    return new Promise((resolve) => {
+      const child = (0, import_node_child_process3.spawn)(executable, [...args], { shell: false, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", (chunk) => {
+        stdout = `${stdout}${chunk.toString("utf8")}`.slice(-1024 * 1024);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr = `${stderr}${chunk.toString("utf8")}`.slice(-1024 * 1024);
+      });
+      child.once("error", (error46) => resolve({
+        exitCode: -1,
+        stdout,
+        stderr,
+        spawnErrorCode: sanitizeSpawnErrorCode(error46.code)
+      }));
+      child.once("close", (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
+    });
+  }
+};
+var CodexDiscovery = class {
+  resolver;
+  runner;
+  constructor(resolver = new PathCodexExecutableResolver(), runner = new DirectCodexCommandRunner()) {
+    this.resolver = resolver;
+    this.runner = runner;
+  }
+  async discover() {
+    const resolved = await this.resolver.resolve();
+    if (!resolved.ok) {
+      if (resolved.error.code === "EXECUTABLE_NOT_FOUND") {
+        return ok({ status: { installed: false, capabilities: [] }, capabilities: { instructionMode: null, names: [] } });
+      }
+      return err({ ...resolved.error, details: { ...resolved.error.details ?? {}, stage: "resolve" } });
+    }
+    const versionResult = await this.runner.run(resolved.value, ["--version"]);
+    if (versionResult.exitCode !== 0)
+      return commandFailure(resolved.value, "--version", versionResult);
+    const helpResult = await this.runner.run(resolved.value, ["--help"]);
+    if (helpResult.exitCode !== 0)
+      return commandFailure(resolved.value, "--help", helpResult);
+    const helpText = `${helpResult.stdout}
+${helpResult.stderr}`;
+    const capabilities = capabilitiesFromHelp(helpText);
+    const statusCapabilities = ["version", "help", ...capabilities.names];
+    const version2 = parseVersion(`${versionResult.stdout}
+${versionResult.stderr}`);
+    return ok({
+      status: {
+        installed: true,
+        executablePath: resolved.value,
+        ...version2 === void 0 ? {} : { version: version2 },
+        capabilities: statusCapabilities
+      },
+      capabilities
+    });
+  }
+};
+function commandFailure(executable, stage, result) {
+  return err({
+    code: "CODEX_NOT_AVAILABLE",
+    message: `Codex ${stage} check failed`,
+    recoverable: true,
+    details: {
+      stage,
+      executablePath: sanitizeExecutablePath(executable),
+      exitCode: result.exitCode,
+      ...result.spawnErrorCode === void 0 ? {} : { spawnErrorCode: result.spawnErrorCode }
+    }
+  });
+}
+function sanitizeSpawnErrorCode(value) {
+  return value === "EACCES" || value === "EPERM" || value === "ENOENT" ? value : "UNKNOWN";
+}
+function sanitizeExecutablePath(value) {
+  const home = import_node_os.default.homedir();
+  const relative = import_node_path11.default.relative(home, value);
+  if (relative.length > 0 && !relative.startsWith("..") && !import_node_path11.default.isAbsolute(relative)) {
+    return `%USERPROFILE%${import_node_path11.default.sep}${relative}`;
+  }
+  const windowsBaseName = import_node_path11.default.win32.basename(value);
+  return windowsBaseName === value ? import_node_path11.default.basename(value) : windowsBaseName;
+}
+function parseVersion(value) {
+  return value.match(/\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/)?.[0];
+}
+
+// ../../packages/codex/dist/codex-adapter.js
+var CodexAdapter = class {
+  discovery;
+  processManager;
+  builder;
+  constructor(discovery = new CodexDiscovery(), processManager = new ProcessManager(), builder = new CodexInvocationBuilder()) {
+    this.discovery = discovery;
+    this.processManager = processManager;
+    this.builder = builder;
+  }
+  async status() {
+    const discovered = await this.discovery.discover();
+    return discovered.ok ? ok(discovered.value.status) : discovered;
+  }
+  async start(cwd, instruction) {
+    const discovered = await this.discovery.discover();
+    if (!discovered.ok)
+      return discovered;
+    if (!discovered.value.status.installed || discovered.value.status.executablePath === void 0) {
+      return err({ code: "CODEX_NOT_AVAILABLE", message: "Codex is not installed", recoverable: true });
+    }
+    const invocation = this.builder.build(discovered.value.status.executablePath, discovered.value.capabilities, instruction);
+    if (!invocation.ok)
+      return invocation;
+    return this.processManager.start({ executable: invocation.value.executable, args: invocation.value.args, cwd });
+  }
+  statusProcess(processId) {
+    return this.processManager.status(processId);
+  }
+  logs(processId, query) {
+    return this.processManager.logs(processId, query);
+  }
+  stop(processId) {
+    return this.processManager.stop(processId);
+  }
+};
+
+// ../../packages/application/dist/codex-service.js
+var MAX_CODEX_INSTRUCTION_BYTES = 256 * 1024;
+var CodexService = class {
+  workspaces;
+  adapter;
+  guard;
+  permissionEngine;
+  profileProvider;
+  auditService;
+  taskIdFactory;
+  diagnostic;
+  owners = /* @__PURE__ */ new Map();
+  constructor(workspaces, dependencies = {}) {
+    this.workspaces = workspaces;
+    this.adapter = dependencies.adapter ?? new CodexAdapter();
+    this.guard = dependencies.guard ?? new WorkspacePathGuard();
+    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
+    this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
+    this.auditService = dependencies.auditService;
+    this.taskIdFactory = dependencies.taskIdFactory ?? import_node_crypto5.randomUUID;
+    this.diagnostic = dependencies.diagnostic ?? ((message) => {
+      console.error(message);
+    });
+  }
+  async status(actor) {
+    void actor;
+    const permission = this.permissionEngine.decide(this.profileProvider(), { action: "codex_status", level: "READ", workspaceId: "system", destructive: false });
+    if (permission === "DENY")
+      return err(appError("PERMISSION_DENIED", "Codex status is denied"));
+    if (permission === "ASK")
+      return err(appError("PERMISSION_REQUIRED", "Codex status requires permission"));
+    return this.adapter.status();
+  }
+  async run(actor, workspaceId, instruction) {
+    if (typeof instruction !== "string" || instruction.trim().length === 0)
+      return err(appError("INVALID_INPUT", "Codex instruction is required"));
+    if (Buffer.byteLength(instruction, "utf8") > MAX_CODEX_INSTRUCTION_BYTES)
+      return err(appError("FILE_TOO_LARGE", "Codex instruction is too large"));
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    const root = await this.guard.resolveForRead(workspace.value, ".");
+    if (!root.ok)
+      return root;
+    const permission = this.permissionEngine.decide(this.profileProvider(), { action: "codex_run", level: "EXECUTE", workspaceId, target: ".", destructive: false });
+    if (permission === "DENY")
+      return err(appError("PERMISSION_DENIED", "Codex execution is denied"));
+    if (permission === "ASK")
+      return err(appError("PERMISSION_REQUIRED", "Codex execution requires permission"));
+    const started = await this.adapter.start(root.value.realPath ?? root.value.absolutePath, instruction);
+    if (!started.ok)
+      return started;
+    const codexTaskId = this.taskIdFactory();
+    this.owners.set(codexTaskId, { actorId: actor.clientId, workspaceId, processId: started.value.processId });
+    await this.recordAudit(actor, workspaceId, codexTaskId, instruction);
+    return ok({ codexTaskId, processId: started.value.processId });
+  }
+  async taskStatus(actor, workspaceId, codexTaskId) {
+    const owner = this.authorize(actor, workspaceId, codexTaskId);
+    if (!owner.ok)
+      return owner;
+    return this.adapter.statusProcess(owner.value.processId);
+  }
+  async taskLogs(actor, workspaceId, codexTaskId, query) {
+    const owner = this.authorize(actor, workspaceId, codexTaskId);
+    if (!owner.ok)
+      return owner;
+    return this.adapter.logs(owner.value.processId, query);
+  }
+  async stop(actor, workspaceId, codexTaskId) {
+    const owner = this.authorize(actor, workspaceId, codexTaskId);
+    if (!owner.ok)
+      return owner;
+    return this.adapter.stop(owner.value.processId);
+  }
+  async recordAudit(actor, workspaceId, codexTaskId, instruction) {
+    if (this.auditService === void 0)
+      return;
+    const input = { actorId: actor.clientId, actorName: actor.clientName, workspaceId, codexTaskId, instruction, resultCode: "STARTED", durationMs: 0 };
+    try {
+      await this.auditService.recordCodexRun(input);
+    } catch {
+      this.diagnostic(`Codex audit recording failed for task ${codexTaskId}`);
+    }
+  }
+  authorize(actor, workspaceId, codexTaskId) {
+    const owner = this.owners.get(codexTaskId);
+    if (owner === void 0)
+      return err(appError("PROCESS_NOT_FOUND", "Codex task was not found"));
+    if (owner.actorId !== actor.clientId || owner.workspaceId !== workspaceId)
+      return err(appError("PERMISSION_DENIED", "Codex task is not owned by this client and workspace"));
+    return ok(owner);
+  }
+  async getWorkspace(workspaceId) {
+    const workspace = await this.workspaces.get(workspaceId);
+    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
+  }
+};
+
+// ../../packages/application/dist/error-sanitizer.js
+var MAX_DIAGNOSTIC_TEXT = 8 * 1024;
+var AUTHORIZATION_HEADER = /(Authorization\s*:\s*Bearer\s+)[^\s,;]+/gi;
+var BEARER_VALUE = /\bBearer\s+[^\s,;]+/gi;
+var SECRET_ASSIGNMENT = /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)[A-Z0-9_]*)\s*[:=]\s*[^\s,;]+/gi;
+var API_KEY_VALUE = /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]+)\b/g;
+function sanitizeException(error46, diagnostic) {
+  const event = toDiagnosticError(error46);
+  try {
+    diagnostic?.(event);
+  } catch {
+  }
+  return appError("INTERNAL_ERROR", "Operation failed", true);
+}
+function redactDiagnosticText(value) {
+  return value.replace(AUTHORIZATION_HEADER, "$1[REDACTED]").replace(BEARER_VALUE, "Bearer [REDACTED]").replace(SECRET_ASSIGNMENT, "$1=[REDACTED]").replace(API_KEY_VALUE, "[REDACTED]").slice(0, MAX_DIAGNOSTIC_TEXT);
+}
+function toDiagnosticError(error46) {
+  if (!(error46 instanceof Error))
+    return { name: "UnknownError", message: "Non-Error exception" };
+  const message = redactDiagnosticText(error46.message);
+  const stack = error46.stack === void 0 ? void 0 : redactDiagnosticText(error46.stack);
+  return { name: redactDiagnosticText(error46.name), message, ...stack === void 0 ? {} : { stack } };
+}
+
+// ../../packages/git/dist/git-runner.js
+var import_node_child_process4 = require("node:child_process");
+var DirectGitRunner = class {
+  run(args, cwd) {
+    return new Promise((resolve) => {
+      const child = (0, import_node_child_process4.spawn)("git", [...args], { cwd, shell: false, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      const append = (current, chunk) => `${current}${chunk.toString("utf8")}`.slice(-8 * 1024 * 1024);
+      child.stdout?.on("data", (chunk) => {
+        stdout = append(stdout, chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr = append(stderr, chunk);
+      });
+      child.on("error", (error46) => resolve({ exitCode: -1, stdout, stderr: `${stderr}${error46.message}` }));
+      child.on("close", (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
+    });
+  }
+};
+
+// ../../packages/git/dist/parsers/status-parser.js
+function parsePorcelainStatus(output) {
+  const tokens = output.split("\0");
+  const entries = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const record2 = tokens[index];
+    if (record2 === void 0 || record2.length < 4)
+      continue;
+    const indexStatus = record2[0] ?? " ";
+    const worktreeStatus = record2[1] ?? " ";
+    const firstPath = record2.slice(3);
+    if (firstPath.length === 0)
+      continue;
+    const kind = getKind(indexStatus, worktreeStatus);
+    if (kind === null)
+      continue;
+    const hasRenameTarget = indexStatus === "R" || indexStatus === "C" || worktreeStatus === "R" || worktreeStatus === "C";
+    const secondPath = hasRenameTarget ? tokens[index + 1] : void 0;
+    if (hasRenameTarget && secondPath !== void 0)
+      index += 1;
+    entries.push({
+      path: secondPath ?? firstPath,
+      ...secondPath === void 0 ? {} : { oldPath: firstPath },
+      kind,
+      indexStatus,
+      worktreeStatus
+    });
+  }
+  return entries;
+}
+function getKind(indexStatus, worktreeStatus) {
+  const status = indexStatus === "?" || worktreeStatus === "?" ? "?" : indexStatus === "!" || worktreeStatus === "!" ? "!" : indexStatus === "U" || worktreeStatus === "U" ? "U" : indexStatus === "R" || worktreeStatus === "R" ? "R" : indexStatus === "C" || worktreeStatus === "C" ? "C" : indexStatus === "A" || worktreeStatus === "A" ? "A" : indexStatus === "D" || worktreeStatus === "D" ? "D" : indexStatus === "M" || worktreeStatus === "M" || indexStatus === "T" || worktreeStatus === "T" ? "M" : null;
+  if (status === "?")
+    return "untracked";
+  if (status === "!")
+    return "ignored";
+  if (status === "U")
+    return "unmerged";
+  if (status === "R")
+    return "renamed";
+  if (status === "C")
+    return "copied";
+  if (status === "A")
+    return "added";
+  if (status === "D")
+    return "deleted";
+  if (status === "M")
+    return "modified";
+  return null;
+}
+
+// ../../packages/git/dist/git-adapter.js
+var GitAdapter = class {
+  runner;
+  constructor(runner = new DirectGitRunner()) {
+    this.runner = runner;
+  }
+  async status(cwd) {
+    const result = await this.runner.run(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd);
+    const error46 = this.mapError(result);
+    if (error46 !== null)
+      return error46;
+    return ok({ entries: parsePorcelainStatus(result.stdout) });
+  }
+  async diff(cwd, request = {}) {
+    const maxBytes = request.maxBytes ?? 1024 * 1024;
+    if (!this.isLimit(maxBytes, 4 * 1024 * 1024))
+      return err(appError("INVALID_INPUT", "Git diff byte limit is invalid"));
+    const args = ["diff", "--no-ext-diff", "--no-color"];
+    if (request.staged === true)
+      args.push("--cached");
+    args.push("--");
+    if (request.path !== void 0)
+      args.push(request.path);
+    const result = await this.runner.run(args, cwd);
+    const error46 = this.mapError(result);
+    if (error46 !== null)
+      return error46;
+    const bounded = this.bound(result.stdout, maxBytes);
+    return ok({ patch: bounded.text, truncated: bounded.truncated });
+  }
+  async log(cwd, request = {}) {
+    const maxCommits = request.maxCommits ?? 20;
+    const maxBytes = request.maxBytes ?? 1024 * 1024;
+    if (!this.isLimit(maxCommits, 100) || !this.isLimit(maxBytes, 4 * 1024 * 1024)) {
+      return err(appError("INVALID_INPUT", "Git log limit is invalid"));
+    }
+    const args = ["log", "--no-color", "--format=%H%x1f%an%x1f%aI%x1f%s%x1e", "-n", String(maxCommits), "--"];
+    const result = await this.runner.run(args, cwd);
+    const error46 = this.mapError(result);
+    if (error46 !== null)
+      return error46;
+    const bounded = this.bound(result.stdout, maxBytes);
+    const entries = bounded.text.split("").flatMap((record2) => {
+      const fields = record2.split("");
+      return fields.length === 4 && fields.every((field) => field.length > 0) ? [{ hash: fields[0] ?? "", author: fields[1] ?? "", date: fields[2] ?? "", subject: fields[3] ?? "" }] : [];
+    });
+    return ok({ entries, truncated: bounded.truncated });
+  }
+  mapError(result) {
+    if (result.exitCode === 0)
+      return null;
+    if (result.exitCode === 128 && /not a git repository/i.test(result.stderr)) {
+      return err(appError("GIT_NOT_REPOSITORY", "Workspace is not a Git repository"));
+    }
+    if (result.exitCode === -1 && /ENOENT/i.test(result.stderr)) {
+      return err(appError("EXECUTABLE_NOT_FOUND", "Git executable was not found"));
+    }
+    return err(appError("INTERNAL_ERROR", "Git command failed", true));
+  }
+  isLimit(value, maximum) {
+    return Number.isInteger(value) && value >= 1 && value <= maximum;
+  }
+  bound(value, maxBytes) {
+    const bytes = Buffer.from(value, "utf8");
+    if (bytes.byteLength <= maxBytes)
+      return { text: value, truncated: false };
+    return { text: bytes.subarray(0, maxBytes).toString("utf8"), truncated: true };
+  }
+};
+
+// ../../packages/application/dist/git-service.js
+var GitService = class {
+  workspaces;
+  guard;
+  adapter;
+  constructor(workspaces, guard = new WorkspacePathGuard(), adapter = new GitAdapter()) {
+    this.workspaces = workspaces;
+    this.guard = guard;
+    this.adapter = adapter;
+  }
+  async status(actor, workspaceId) {
+    void actor;
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    return this.adapter.status(workspace.value.realRootPath);
+  }
+  async diff(actor, workspaceId, request = {}) {
+    void actor;
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    let pathValue;
+    if (request.path !== void 0) {
+      const resolved = await this.guard.resolveForWrite(workspace.value, request.path);
+      if (!resolved.ok)
+        return resolved;
+      pathValue = resolved.value.relativePath;
+    }
+    return this.adapter.diff(workspace.value.realRootPath, {
+      ...pathValue === void 0 ? {} : { path: pathValue },
+      ...request.staged === void 0 ? {} : { staged: request.staged },
+      ...request.maxBytes === void 0 ? {} : { maxBytes: request.maxBytes }
+    });
+  }
+  async log(actor, workspaceId, request = {}) {
+    void actor;
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    return this.adapter.log(workspace.value.realRootPath, request);
+  }
+  async getWorkspace(workspaceId) {
+    const workspace = await this.workspaces.get(workspaceId);
+    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
+  }
+};
+
+// ../../packages/application/dist/machine-root-sync.js
+var import_node_fs = require("node:fs");
+async function syncEMachineRoot(workspaceService) {
+  const existing = await workspaceService.list();
+  for (const workspace of existing) {
+    if (isDriveRoot(workspace.realRootPath) && !isEMachineRoot(workspace.realRootPath)) {
+      await workspaceService.delete(workspace.id);
+    }
+  }
+  const root = machineRootPath();
+  if (!(0, import_node_fs.existsSync)(root))
+    return null;
+  const afterPrune = await workspaceService.list();
+  const target = normalizeWorkspaceRoot(root).toLowerCase();
+  const found = afterPrune.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === target);
+  if (found !== void 0)
+    return found;
+  const added = await workspaceService.add("Local Disk E:", root);
+  return added.ok ? added.value : null;
+}
+
+// ../../packages/project/dist/js-command-detector.js
+var JsCommandDetector = class {
+  getCommand(profile, kind) {
+    if (profile.scripts[kind] === void 0) {
+      return err(appError("INVALID_INPUT", `Project script '${kind}' is not defined`));
+    }
+    if (profile.packageManager === "unknown") {
+      return err(appError("INVALID_INPUT", "Project package manager could not be detected"));
+    }
+    return ok({
+      executable: profile.packageManager,
+      args: profile.packageManager === "npm" ? ["run", kind] : [kind]
+    });
+  }
+};
+
+// ../../packages/project/dist/project-detector.js
+var import_promises11 = require("node:fs/promises");
+var import_node_path12 = __toESM(require("node:path"), 1);
+var NodeProjectFileSystem = class {
+  readFile(filePath) {
+    return (0, import_promises11.readFile)(filePath, "utf8");
+  }
+  async exists(filePath) {
+    try {
+      await (0, import_promises11.access)(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
+var LOCKFILE_PRECEDENCE = [
+  ["pnpm-lock.yaml", "pnpm"],
+  ["package-lock.json", "npm"],
+  ["yarn.lock", "yarn"],
+  ["bun.lockb", "bun"],
+  ["bun.lock", "bun"]
+];
+var CONFIG_FILE_NAMES = [
+  "tsconfig.json",
+  "vite.config.ts",
+  "vite.config.js",
+  "vite.config.mts",
+  "vite.config.mjs",
+  "vitest.config.ts",
+  "vitest.config.js",
+  "eslint.config.js",
+  "eslint.config.mjs",
+  "webpack.config.js",
+  "next.config.js",
+  "next.config.mjs",
+  "biome.json"
+];
+var ProjectDetector = class {
+  fileSystem;
+  constructor(fileSystem = new NodeProjectFileSystem()) {
+    this.fileSystem = fileSystem;
+  }
+  async detect(rootPath) {
+    const packageJsonPath = import_node_path12.default.join(rootPath, "package.json");
+    if (!await this.fileSystem.exists(packageJsonPath)) {
+      return ok({
+        rootPath,
+        kind: "unknown",
+        packageManager: "unknown",
+        frameworks: [],
+        scripts: {},
+        configFiles: await this.findConfigFiles(rootPath)
+      });
+    }
+    let packageJson;
+    try {
+      packageJson = JSON.parse(await this.fileSystem.readFile(packageJsonPath));
+    } catch {
+      return err(appError("INVALID_INPUT", "package.json is not valid JSON"));
+    }
+    if (!this.isPackageJson(packageJson)) {
+      return err(appError("INVALID_INPUT", "package.json has an invalid shape"));
+    }
+    return ok({
+      rootPath,
+      kind: "node",
+      packageManager: await this.detectPackageManager(rootPath),
+      frameworks: await this.detectFrameworks(rootPath, packageJson),
+      scripts: packageJson.scripts ?? {},
+      configFiles: await this.findConfigFiles(rootPath)
+    });
+  }
+  async detectPackageManager(rootPath) {
+    for (const [filename, manager] of LOCKFILE_PRECEDENCE) {
+      if (await this.fileSystem.exists(import_node_path12.default.join(rootPath, filename)))
+        return manager;
+    }
+    return "npm";
+  }
+  async detectFrameworks(rootPath, packageJson) {
+    const dependencyNames = /* @__PURE__ */ new Set([
+      ...Object.keys(packageJson.dependencies ?? {}),
+      ...Object.keys(packageJson.devDependencies ?? {}),
+      ...Object.keys(packageJson.peerDependencies ?? {})
+    ]);
+    const frameworks = /* @__PURE__ */ new Set();
+    if (dependencyNames.has("react") || dependencyNames.has("react-dom"))
+      frameworks.add("react");
+    if (dependencyNames.has("typescript") || await this.fileSystem.exists(import_node_path12.default.join(rootPath, "tsconfig.json")))
+      frameworks.add("typescript");
+    if (dependencyNames.has("vite") || await this.fileSystem.exists(import_node_path12.default.join(rootPath, "vite.config.ts")))
+      frameworks.add("vite");
+    return [...frameworks].sort();
+  }
+  async findConfigFiles(rootPath) {
+    const existing = await Promise.all(CONFIG_FILE_NAMES.map(async (filename) => await this.fileSystem.exists(import_node_path12.default.join(rootPath, filename)) ? filename : null));
+    return existing.flatMap((filename) => filename === null ? [] : [filename]).sort();
+  }
+  isPackageJson(value) {
+    if (typeof value !== "object" || value === null)
+      return false;
+    if ("scripts" in value && !this.isStringRecordOrUndefined(value.scripts))
+      return false;
+    return this.isStringRecordOrUndefined("dependencies" in value ? value.dependencies : void 0) && this.isStringRecordOrUndefined("devDependencies" in value ? value.devDependencies : void 0) && this.isStringRecordOrUndefined("peerDependencies" in value ? value.peerDependencies : void 0);
+  }
+  isStringRecordOrUndefined(value) {
+    if (value === void 0)
+      return true;
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return false;
+    return Object.values(value).every((entry) => typeof entry === "string");
+  }
+};
+
+// ../../packages/application/dist/project-service.js
+var ProjectService = class {
+  workspaces;
+  detector;
+  commandDetector;
+  constructor(workspaces, detector = new ProjectDetector(), commandDetector = new JsCommandDetector()) {
+    this.workspaces = workspaces;
+    this.detector = detector;
+    this.commandDetector = commandDetector;
+  }
+  async detect(workspaceId) {
+    const workspace = await this.workspaces.get(workspaceId);
+    if (workspace === null)
+      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
+    return this.detector.detect(workspace.realRootPath);
+  }
+  async getCommand(workspaceId, kind) {
+    const profile = await this.detect(workspaceId);
+    if (!profile.ok)
+      return profile;
+    return this.commandDetector.getCommand(profile.value, kind);
+  }
+};
+
+// ../../packages/application/dist/process-service.js
+var import_promises12 = require("node:fs/promises");
+var ProcessService = class {
+  workspaces;
+  processManager;
+  projectService;
+  guard;
+  permissionEngine;
+  commandPolicy;
+  profileProvider;
+  owners = /* @__PURE__ */ new Map();
+  constructor(workspaces, dependencies = {}) {
+    this.workspaces = workspaces;
+    this.processManager = dependencies.processManager ?? new ProcessManager();
+    this.projectService = dependencies.projectService ?? new ProjectService(workspaces, new ProjectDetector(), new JsCommandDetector());
+    this.guard = dependencies.guard ?? new WorkspacePathGuard();
+    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
+    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy();
+    this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
+  }
+  start(actor, workspaceId, request) {
+    return this.startInternal(actor, workspaceId, request, "client");
+  }
+  async startProjectCommand(actor, workspaceId, kind) {
+    const command = await this.projectService.getCommand(workspaceId, kind);
+    if (!command.ok)
+      return command;
+    return this.startInternal(actor, workspaceId, { executable: command.value.executable, args: command.value.args }, "project");
+  }
+  async status(actor, workspaceId, processId) {
+    const ownership = this.authorizeHandle(actor, workspaceId, processId);
+    if (!ownership.ok)
+      return ownership;
+    return this.processManager.status(processId);
+  }
+  async list(actor, workspaceId) {
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    const processes = this.processManager.list?.() ?? [];
+    return ok(processes.filter((process5) => {
+      const owner = this.owners.get(process5.processId);
+      return owner?.actorId === actor.clientId && owner.workspaceId === workspace.value.id;
+    }));
+  }
+  async logs(actor, workspaceId, processId, query) {
+    const ownership = this.authorizeHandle(actor, workspaceId, processId);
+    if (!ownership.ok)
+      return ownership;
+    return this.processManager.logs(processId, query);
+  }
+  async stop(actor, workspaceId, processId) {
+    const ownership = this.authorizeHandle(actor, workspaceId, processId);
+    if (!ownership.ok)
+      return ownership;
+    return this.processManager.stop(processId);
+  }
+  async startInternal(actor, workspaceId, request, source) {
+    const validation = this.validateRequest(request);
+    if (!validation.ok)
+      return validation;
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok)
+      return workspace;
+    const cwd = await this.resolveCwd(workspace.value, request.cwd);
+    if (!cwd.ok)
+      return cwd;
+    const profile = this.profileProvider();
+    const commandDecision = this.commandPolicy.decide(profile, request.executable, source, request.args);
+    if (commandDecision === "DENY")
+      return err(appError("PERMISSION_DENIED", "Executable is not permitted"));
+    const permissionDecision = this.permissionEngine.decide(profile, {
+      action: "process_start",
+      level: "EXECUTE",
+      workspaceId,
+      target: request.cwd ?? ".",
+      executable: request.executable,
+      destructive: false
+    });
+    if (permissionDecision === "DENY")
+      return err(appError("PERMISSION_DENIED", "Process execution is denied"));
+    if (commandDecision === "ASK" || permissionDecision === "ASK")
+      return err(appError("PERMISSION_REQUIRED", "Process execution requires permission"));
+    const started = await this.processManager.start({
+      executable: request.executable,
+      args: [...request.args],
+      cwd: cwd.value,
+      ...request.timeoutMs === void 0 ? {} : { timeoutMs: request.timeoutMs }
+    });
+    if (started.ok)
+      this.owners.set(started.value.processId, { actorId: actor.clientId, workspaceId });
+    return started;
+  }
+  async resolveCwd(workspace, requestedCwd) {
+    const resolved = await this.guard.resolveForRead(workspace, requestedCwd ?? ".");
+    if (!resolved.ok)
+      return resolved;
+    const cwd = resolved.value.realPath ?? resolved.value.absolutePath;
+    try {
+      if (!(await (0, import_promises12.stat)(cwd)).isDirectory())
+        return err(appError("INVALID_INPUT", "Process cwd must be a directory"));
+    } catch {
+      return err(appError("FILE_NOT_FOUND", "Process cwd was not found"));
+    }
+    return ok(cwd);
+  }
+  validateRequest(request) {
+    if (typeof request.executable !== "string" || request.executable.trim().length === 0 || !Array.isArray(request.args) || !request.args.every((arg) => typeof arg === "string")) {
+      return err(appError("INVALID_INPUT", "Executable and args are required"));
+    }
+    if (request.cwd !== void 0 && typeof request.cwd !== "string") {
+      return err(appError("INVALID_INPUT", "Process cwd must be a path string"));
+    }
+    if (request.timeoutMs !== void 0 && (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1)) {
+      return err(appError("INVALID_INPUT", "Process timeout is invalid"));
+    }
+    return ok(void 0);
+  }
+  authorizeHandle(actor, workspaceId, processId) {
+    const owner = this.owners.get(processId);
+    if (owner === void 0)
+      return err(appError("PROCESS_NOT_FOUND", "Process was not found"));
+    if (owner.actorId !== actor.clientId || owner.workspaceId !== workspaceId) {
+      return err(appError("PERMISSION_DENIED", "Process handle is not owned by this client and workspace"));
+    }
+    return ok(void 0);
+  }
+  async getWorkspace(workspaceId) {
+    const workspace = await this.workspaces.get(workspaceId);
+    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
+  }
+};
+
+// ../../packages/application/dist/workspace-query-service.js
+var WorkspaceQueryService = class {
+  workspaces;
+  guard;
+  treeReader;
+  constructor(workspaces, guard = new WorkspacePathGuard(), treeReader = new TreeReader()) {
+    this.workspaces = workspaces;
+    this.guard = guard;
+    this.treeReader = treeReader;
+  }
+  async tree(actor, workspaceId, request = {}) {
+    void actor;
+    const workspace = await this.workspaces.get(workspaceId);
+    if (workspace === null)
+      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
+    const resolved = await this.guard.resolveForRead(workspace, request.path ?? ".");
+    if (!resolved.ok)
+      return resolved;
+    return this.treeReader.read(resolved.value.realPath ?? resolved.value.absolutePath, request);
+  }
+};
+
+// ../../packages/application/dist/project-snapshot-service.js
+var MAX_SNAPSHOT_TREE_ENTRIES = 200;
+var MAX_SNAPSHOT_PROCESS_ERRORS = 20;
+var MAX_SNAPSHOT_ERROR_BYTES = 1024;
+var ProjectSnapshotService = class {
+  projectService;
+  gitService;
+  workspaceQuery;
+  processService;
+  constructor(workspaces, dependencies = {}) {
+    this.projectService = dependencies.projectService ?? new ProjectService(workspaces);
+    this.gitService = dependencies.gitService ?? new GitService(workspaces);
+    this.workspaceQuery = dependencies.workspaceQuery ?? new WorkspaceQueryService(workspaces);
+    this.processService = dependencies.processService ?? new ProcessService(workspaces);
+  }
+  async snapshot(actor, workspaceId) {
+    const [project, git, tree, processes] = await Promise.all([
+      this.projectService.detect(workspaceId),
+      this.gitService.status(actor, workspaceId),
+      this.workspaceQuery.tree(actor, workspaceId, { maxDepth: 1, maxEntries: MAX_SNAPSHOT_TREE_ENTRIES }),
+      this.processService.list(actor, workspaceId)
+    ]);
+    if (!project.ok)
+      return project;
+    if (!git.ok && git.error.code !== "GIT_NOT_REPOSITORY")
+      return git;
+    if (!tree.ok)
+      return tree;
+    if (!processes.ok)
+      return processes;
+    const processErrors = await collectProcessErrors(this.processService, actor, workspaceId, processes.value);
+    return ok({
+      project: project.value,
+      git: toGitSummary(git),
+      tree: tree.value,
+      runningProcesses: processes.value.filter(isRunning).map(toProcessSummary),
+      recentProcessErrors: processErrors
+    });
+  }
+};
+function toGitSummary(result) {
+  if (!result.ok)
+    return { repository: false, changedFiles: 0, stagedFiles: 0, clean: true };
+  const stagedFiles = result.value.entries.filter((entry) => entry.indexStatus !== " ").length;
+  return {
+    repository: true,
+    changedFiles: result.value.entries.length,
+    stagedFiles,
+    clean: result.value.entries.length === 0
+  };
+}
+function isRunning(process5) {
+  return process5.state === "starting" || process5.state === "running";
+}
+function toProcessSummary(process5) {
+  return { processId: process5.processId, executable: process5.executable, state: process5.state };
+}
+async function collectProcessErrors(processService, actor, workspaceId, processes) {
+  const errors = [];
+  const candidates = processes.filter((process5) => process5.state === "failed" || process5.state === "timed_out").slice(-MAX_SNAPSHOT_PROCESS_ERRORS);
+  for (const process5 of candidates) {
+    const logs = await processService.logs(actor, workspaceId, process5.processId, { tailLines: 20 });
+    if (!logs.ok)
+      continue;
+    for (const entry of logs.value.entries) {
+      if (entry.stream !== "stderr" || entry.text.trim().length === 0)
+        continue;
+      errors.push({ processId: process5.processId, message: redactProcessError(entry.text).slice(-MAX_SNAPSHOT_ERROR_BYTES) });
+      if (errors.length >= MAX_SNAPSHOT_PROCESS_ERRORS)
+        return errors;
+    }
+  }
+  return errors;
+}
+function redactProcessError(value) {
+  return value.replace(/(\bauthorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[redacted]").replace(/\b(token|secret|password|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s]+/gi, "$1=[redacted]");
+}
+
+// ../../packages/search/dist/executable-resolver.js
+var import_promises13 = require("node:fs/promises");
+var import_node_path13 = __toESM(require("node:path"), 1);
+var PathExecutableResolver2 = class {
+  environment;
+  constructor(environment = process.env) {
+    this.environment = environment;
+  }
+  async resolve(executable) {
+    if (executable.trim().length === 0)
+      return err({ code: "INVALID_INPUT", message: "Executable is required", recoverable: false });
+    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? "").split(import_node_path13.default.delimiter).filter(Boolean);
+    const candidates = import_node_path13.default.isAbsolute(executable) || executable.includes(import_node_path13.default.sep) || executable.includes("/") ? [executable] : pathEntries.flatMap((entry) => this.withWindowsExtensions(import_node_path13.default.join(entry, executable)));
+    for (const candidate of candidates) {
+      try {
+        await (0, import_promises13.access)(candidate, import_promises13.constants.F_OK);
+        if ((await (0, import_promises13.stat)(candidate)).isFile())
+          return ok(candidate);
+      } catch {
+        continue;
+      }
+    }
+    return err({ code: "EXECUTABLE_NOT_FOUND", message: `Executable '${executable}' was not found`, recoverable: true });
+  }
+  withWindowsExtensions(candidate) {
+    if (import_node_path13.default.extname(candidate).length > 0)
+      return [candidate];
+    const extensions = (this.environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
+    return [candidate, ...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`)];
+  }
+};
+
+// ../../packages/search/dist/ripgrep-adapter.js
+var import_node_child_process5 = require("node:child_process");
+var DirectProcessRunner = class {
+  run(command, args, cwd) {
+    return new Promise((resolve) => {
+      const child = (0, import_node_child_process5.spawn)(command, [...args], { cwd, shell: false, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      const append = (current, chunk) => Buffer.from(`${current}${chunk.toString("utf8")}`, "utf8").subarray(-MAX_PROCESS_LOG_BYTES).toString("utf8");
+      child.stdout?.on("data", (chunk) => {
+        stdout = append(stdout, chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr = append(stderr, chunk);
+      });
+      child.on("error", (error46) => resolve({ exitCode: -1, stdout, stderr: `${stderr}${error46.message}` }));
+      child.on("close", (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
+    });
+  }
+};
+var RipgrepAdapter = class {
+  resolver;
+  runner;
+  constructor(resolver = new PathExecutableResolver2(), runner = new DirectProcessRunner()) {
+    this.resolver = resolver;
+    this.runner = runner;
+  }
+  async searchText(request) {
+    const maxResults = request.maxResults ?? DEFAULT_SEARCH_RESULTS;
+    if (request.query.length === 0 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
+      return err({ code: "INVALID_INPUT", message: "Search query or result limit is invalid", recoverable: false });
+    }
+    const executable = await this.resolver.resolve("rg");
+    if (!executable.ok)
+      return executable;
+    const args = ["--json", "--no-heading", "--color", "never", "--hidden"];
+    if (request.glob !== void 0)
+      args.push("--glob", request.glob);
+    args.push("--", request.query, ".");
+    const processResult = await this.runner.run(executable.value, args, request.rootPath);
+    if (processResult.exitCode !== 0 && processResult.exitCode !== 1) {
+      return err({ code: "INTERNAL_ERROR", message: "Search process failed", recoverable: true });
+    }
+    const matches = [];
+    for (const line of processResult.stdout.split(/\r?\n/)) {
+      const match = this.parseMatch(line);
+      if (match === null)
+        continue;
+      matches.push(match);
+      if (matches.length >= maxResults)
+        break;
+    }
+    return ok({ matches, truncated: matches.length >= maxResults && processResult.stdout.includes('"type":"match"') });
+  }
+  async searchFiles(request) {
+    const maxResults = request.maxResults ?? DEFAULT_SEARCH_RESULTS;
+    if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
+      return err({ code: "INVALID_INPUT", message: "Search result limit is invalid", recoverable: false });
+    }
+    const executable = await this.resolver.resolve("rg");
+    if (!executable.ok)
+      return executable;
+    const args = ["--files", "--hidden"];
+    if (request.glob !== void 0)
+      args.push("--glob", request.glob);
+    args.push("--");
+    const processResult = await this.runner.run(executable.value, args, request.rootPath);
+    if (processResult.exitCode !== 0 && processResult.exitCode !== 1) {
+      return err({ code: "INTERNAL_ERROR", message: "Search process failed", recoverable: true });
+    }
+    const paths = processResult.stdout.split(/\r?\n/).filter((entry) => entry.length > 0).slice(0, maxResults);
+    return ok({ paths, truncated: paths.length >= maxResults && processResult.stdout.split(/\r?\n/).filter(Boolean).length > maxResults });
+  }
+  parseMatch(line) {
+    try {
+      const value = JSON.parse(line);
+      if (!this.isMatchRecord(value))
+        return null;
+      return { path: value.data.path.text, line: value.data.line_number, text: value.data.lines.text.replace(/\r?\n$/, "") };
+    } catch {
+      return null;
+    }
+  }
+  isMatchRecord(value) {
+    if (typeof value !== "object" || value === null || !("type" in value) || value.type !== "match" || !("data" in value))
+      return false;
+    const data = value.data;
+    if (typeof data !== "object" || data === null || !("path" in data) || !("line_number" in data) || !("lines" in data))
+      return false;
+    if (typeof data.path !== "object" || data.path === null || !("text" in data.path) || typeof data.path.text !== "string")
+      return false;
+    if (typeof data.line_number !== "number" || typeof data.lines !== "object" || data.lines === null || !("text" in data.lines) || typeof data.lines.text !== "string")
+      return false;
+    return true;
+  }
+};
+
+// ../../packages/application/dist/search-service.js
+var SearchService = class {
+  workspaces;
+  adapter;
+  constructor(workspaces, adapter = new RipgrepAdapter()) {
+    this.workspaces = workspaces;
+    this.adapter = adapter;
+  }
+  async searchText(actor, workspaceId, request) {
+    void actor;
+    const validation = this.validateLimit(request.maxResults);
+    if (!validation.ok)
+      return validation;
+    if (request.query.length === 0)
+      return err(appError("INVALID_INPUT", "Search query is required"));
+    const workspace = await this.workspaces.get(workspaceId);
+    if (workspace === null)
+      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
+    return this.adapter.searchText({
+      rootPath: workspace.realRootPath,
+      query: request.query,
+      ...request.glob === void 0 ? {} : { glob: request.glob },
+      ...request.maxResults === void 0 ? {} : { maxResults: request.maxResults }
+    });
+  }
+  async searchFiles(actor, workspaceId, request) {
+    void actor;
+    const validation = this.validateLimit(request.maxResults);
+    if (!validation.ok)
+      return validation;
+    const workspace = await this.workspaces.get(workspaceId);
+    if (workspace === null)
+      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
+    return this.adapter.searchFiles({
+      rootPath: workspace.realRootPath,
+      ...request.glob === void 0 ? {} : { glob: request.glob },
+      ...request.maxResults === void 0 ? {} : { maxResults: request.maxResults }
+    });
+  }
+  validateLimit(limit) {
+    return limit === void 0 || Number.isInteger(limit) && limit >= 1 && limit <= 500 ? ok(void 0) : err(appError("INVALID_INPUT", "Search result limit is invalid"));
+  }
+};
+
+// ../../packages/application/dist/workspace-info-service.js
+var import_node_path14 = __toESM(require("node:path"), 1);
+var WorkspaceInfoService = class {
+  workspaces;
+  workspaceService;
+  constructor(workspaces, workspaceService) {
+    this.workspaces = workspaces;
+    this.workspaceService = workspaceService;
+  }
+  async list(actor) {
+    void actor;
+    const workspaces = await this.workspaces.list();
+    return ok(workspaces.map(toWorkspaceInfo));
+  }
+  async info(actor, workspaceId) {
+    void actor;
+    const workspace = await this.workspaces.get(workspaceId);
+    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(toWorkspaceInfo(workspace));
+  }
+  async register(actor, request) {
+    void actor;
+    if (this.workspaceService === void 0) {
+      return err(appError("INTERNAL_ERROR", "Workspace registration is unavailable"));
+    }
+    const parent = await this.workspaces.get(request.parentWorkspaceId);
+    if (parent === null) {
+      return err(appError("WORKSPACE_NOT_FOUND", "Parent workspace was not found"));
+    }
+    if (!isEMachineRoot(parent.realRootPath) && !isEMachineRoot(parent.rootPath)) {
+      return err(appError("INVALID_INPUT", "parentWorkspaceId must be the E:\\ machine root"));
+    }
+    const absolutePath = import_node_path14.default.isAbsolute(request.path) ? import_node_path14.default.resolve(request.path) : import_node_path14.default.resolve(parent.rootPath, request.path);
+    if (!isUnderEDrive(absolutePath)) {
+      return err(appError("INVALID_INPUT", "Registered path must be under E:\\"));
+    }
+    const existing = await this.workspaces.list();
+    const normalizedTarget = normalizeCompare(absolutePath);
+    const duplicate = existing.find((entry) => normalizeCompare(entry.realRootPath) === normalizedTarget || normalizeCompare(entry.rootPath) === normalizedTarget);
+    if (duplicate !== void 0) {
+      return ok(toWorkspaceInfo(duplicate));
+    }
+    const displayName = request.displayName?.trim() || import_node_path14.default.basename(absolutePath) || "Workspace";
+    const added = await this.workspaceService.add(displayName, absolutePath);
+    if (!added.ok)
+      return added;
+    return ok(toWorkspaceInfo(added.value));
+  }
+};
+function toWorkspaceInfo(workspace) {
+  return {
+    id: workspace.id,
+    displayName: workspace.displayName,
+    rootPath: workspace.rootPath,
+    realRootPath: workspace.realRootPath,
+    createdAt: workspace.createdAt,
+    kind: isEMachineRoot(workspace.realRootPath) || isEMachineRoot(workspace.rootPath) ? "machine_root" : "project"
+  };
+}
+function normalizeCompare(rootPath) {
+  const resolved = import_node_path14.default.resolve(rootPath);
+  const withSep = resolved.endsWith(import_node_path14.default.sep) ? resolved : `${resolved}${import_node_path14.default.sep}`;
+  return withSep.toLowerCase();
+}
+
+// ../../packages/mcp-server/dist/activity-tracker.js
+var import_node_crypto6 = require("node:crypto");
+var ActivityTracker = class {
+  sink;
+  inflight = /* @__PURE__ */ new Map();
+  constructor(sink) {
+    this.sink = sink;
+  }
+  listInFlight() {
+    return [...this.inflight.values()];
+  }
+  async begin(toolName, input) {
+    const callId = (0, import_node_crypto6.randomUUID)();
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const workspaceId = readWorkspaceId(input);
+    const targetSummary = summarizeToolTarget(toolName, input);
+    const entry = {
+      callId,
+      toolName,
+      startedAt: timestamp,
+      ...workspaceId === void 0 ? {} : { workspaceId },
+      ...targetSummary === void 0 ? {} : { targetSummary }
+    };
+    this.inflight.set(callId, entry);
+    await this.safeRecord({
+      callId,
+      toolName,
+      phase: "started",
+      resultCode: "STARTED",
+      durationMs: 0,
+      timestamp,
+      ...workspaceId === void 0 ? {} : { workspaceId },
+      ...targetSummary === void 0 ? {} : { targetSummary }
+    });
+    return callId;
+  }
+  async end(callId, resultCode, durationMs) {
+    const existing = this.inflight.get(callId);
+    this.inflight.delete(callId);
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    await this.safeRecord({
+      callId,
+      toolName: existing?.toolName ?? "unknown",
+      phase: "completed",
+      resultCode,
+      durationMs,
+      timestamp,
+      ...existing?.workspaceId === void 0 ? {} : { workspaceId: existing.workspaceId },
+      ...existing?.targetSummary === void 0 ? {} : { targetSummary: existing.targetSummary }
+    });
+  }
+  async safeRecord(event) {
+    if (this.sink === void 0)
+      return;
+    try {
+      await this.sink.record(event);
+    } catch {
+    }
+  }
+};
+function summarizeToolTarget(toolName, input) {
+  if (!isRecord(input))
+    return void 0;
+  const pathValue = firstString(input, ["path", "relativePath", "filePath", "targetPath"]);
+  if (pathValue !== void 0)
+    return truncate(pathValue, 160);
+  const query = firstString(input, ["query", "pattern"]);
+  if (query !== void 0)
+    return truncate(query, 120);
+  const executable = firstString(input, ["executable", "command"]);
+  if (executable !== void 0) {
+    const args = Array.isArray(input.arguments) ? input.arguments.filter((entry) => typeof entry === "string").slice(0, 4).join(" ") : Array.isArray(input.args) ? input.args.filter((entry) => typeof entry === "string").slice(0, 4).join(" ") : "";
+    return truncate(args.length > 0 ? `${executable} ${args}` : executable, 160);
+  }
+  const operation = firstString(input, ["operation", "action", "mode"]);
+  if (operation !== void 0)
+    return truncate(`${toolName}:${operation}`, 120);
+  const skillId = firstString(input, ["skillId", "serverId", "name"]);
+  if (skillId !== void 0)
+    return truncate(skillId, 120);
+  return void 0;
+}
+function readWorkspaceId(input) {
+  if (!isRecord(input) || typeof input.workspaceId !== "string" || input.workspaceId.trim().length === 0) {
+    return void 0;
+  }
+  return input.workspaceId;
+}
+function firstString(input, keys) {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim().length > 0)
+      return value;
+  }
+  return void 0;
+}
+function truncate(value, max) {
+  return value.length <= max ? value : `${value.slice(0, max - 1)}\u2026`;
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 // ../../node_modules/.pnpm/@modelcontextprotocol+server@2.0.0/node_modules/@modelcontextprotocol/server/dist/chunk-Br0eD_fh.mjs
 var __create2 = Object.create;
@@ -944,7 +3250,7 @@ __export(external_exports, {
   gt: () => _gt,
   gte: () => _gte,
   guid: () => guid2,
-  hash: () => hash,
+  hash: () => hash2,
   hex: () => hex2,
   hostname: () => hostname2,
   httpUrl: () => httpUrl,
@@ -1579,10 +3885,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path16) {
-  if (!path16)
+function getElementAtPath(obj, path22) {
+  if (!path22)
     return obj;
-  return path16.reduce((acc, key) => acc?.[key], obj);
+  return path22.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1948,11 +4254,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path16, issues) {
+function prefixIssues(path22, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path16);
+    iss.path.unshift(path22);
     return iss;
   });
 }
@@ -2114,7 +4420,7 @@ function formatError(error46, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error46, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error47, path16 = []) => {
+  const processError = (error47, path22 = []) => {
     var _a2, _b;
     for (const issue2 of error47.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -2124,7 +4430,7 @@ function treeifyError(error46, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path16, ...issue2.path];
+        const fullpath = [...path22, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -2156,8 +4462,8 @@ function treeifyError(error46, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path16 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path16) {
+  const path22 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path22) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -12968,7 +15274,7 @@ function hostname2(_params) {
 function hex2(_params) {
   return _stringFormat(ZodCustomStringFormat, "hex", regexes_exports.hex, _params);
 }
-function hash(alg, params) {
+function hash2(alg, params) {
   const enc = params?.enc ?? "hex";
   const format = `${alg}_${enc}`;
   const regex = regexes_exports[format];
@@ -13751,13 +16057,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path16 = ref.slice(1).split("/").filter(Boolean);
-  if (path16.length === 0) {
+  const path22 = ref.slice(1).split("/").filter(Boolean);
+  if (path22.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path16[0] === defsKey) {
-    const key = path16[1];
+  if (path22[0] === defsKey) {
+    const key = path22[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17697,9 +20003,9 @@ var rev2026Codec = {
     });
     const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
     if (!parsed.success) for (const issue2 of parsed.error.issues) {
-      const path16 = issue2.path.map(String);
-      const key = path16.length > 0 ? path16.join(".") : "_meta";
-      if (path16.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+      const path22 = issue2.path.map(String);
+      const key = path22.length > 0 ? path22.join(".") : "_meta";
+      if (path22.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
       issues.push({
         key,
         problem: issue2.message
@@ -18020,29 +20326,29 @@ var PERMITTED_X_MCP_HEADER_TYPES = /* @__PURE__ */ new Set([
 function scanXMcpHeaderDeclarations(inputSchema) {
   const declarations = [];
   const seenLower = /* @__PURE__ */ new Map();
-  const visit = (node, path16, reachable) => {
+  const visit = (node, path22, reachable) => {
     if (node === null || typeof node !== "object") return void 0;
     const schema = node;
     if (X_MCP_HEADER_KEY in schema) {
-      if (!reachable || path16.length === 0) return `${pathName(path16)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      if (!reachable || path22.length === 0) return `${pathName(path22)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
       const raw = schema[X_MCP_HEADER_KEY];
-      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path16)}: x-mcp-header MUST be a non-empty string`;
-      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path16)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path22)}: x-mcp-header MUST be a non-empty string`;
+      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path22)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
       const type = typeof schema.type === "string" ? schema.type : void 0;
-      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path16)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
+      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path22)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
       const lower = raw.toLowerCase();
       const prior = seenLower.get(lower);
       if (prior !== void 0) return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
       seenLower.set(lower, raw);
       declarations.push({
-        path: path16,
+        path: path22,
         headerName: raw,
         type
       });
     }
     const properties = schema.properties;
     if (properties !== null && typeof properties === "object") for (const [key, child] of Object.entries(properties)) {
-      const fault$1 = visit(child, [...path16, key], reachable);
+      const fault$1 = visit(child, [...path22, key], reachable);
       if (fault$1 !== void 0) return fault$1;
     }
     for (const k of NON_REACHABLE_SUBSCHEMA_KEYWORDS) {
@@ -18050,7 +20356,7 @@ function scanXMcpHeaderDeclarations(inputSchema) {
       if (sub === void 0) continue;
       const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === "object" && OBJECT_VALUED_SUBSCHEMA_KEYWORDS.has(k) ? Object.values(sub) : [sub];
       for (const branch of branches) {
-        const fault$1 = visit(branch, [...path16, `<${k}>`], false);
+        const fault$1 = visit(branch, [...path22, `<${k}>`], false);
         if (fault$1 !== void 0) return fault$1;
       }
     }
@@ -18090,8 +20396,8 @@ var OBJECT_VALUED_SUBSCHEMA_KEYWORDS = /* @__PURE__ */ new Set([
   "$defs",
   "definitions"
 ]);
-function pathName(path16) {
-  return path16.length === 0 ? "<root>" : path16.join(".");
+function pathName(path22) {
+  return path22.length === 0 ? "<root>" : path22.join(".");
 }
 var HEADER_MISMATCH_ERROR_CODE = -32020;
 var INBOUND_VALIDATION_LADDER = [
@@ -18380,7 +20686,7 @@ var PROPERTY_KEYS_BY_TYPE = {
   array: shapeKeys([UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema])
 };
 var SUPPORTED_STRING_FORMATS = new Set(StringSchemaSchema.shape.format.unwrap().options);
-function walkProperty(node, path16, vendor, unsupported) {
+function walkProperty(node, path22, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -18388,8 +20694,8 @@ function walkProperty(node, path16, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path16}.${key}`);
-  } else unsupported.push(`${path16}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path22}.${key}`);
+  } else unsupported.push(`${path22}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -18406,11 +20712,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path16 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path16}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path22 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path22}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path16 ? `${path16}.${key}` : key;
+    const childPath = path22 ? `${path22}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -22488,8 +24794,8 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports2, module2) => {
     for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
     return ind;
   }
-  function removeDotSegments(path16) {
-    let input = path16;
+  function removeDotSegments(path22) {
+    let input = path22;
     const output = [];
     let nextSlash = -1;
     let len = 0;
@@ -22642,8 +24948,8 @@ var require_schemes = /* @__PURE__ */ __commonJSMin(((exports2, module2) => {
       wsComponent.secure = void 0;
     }
     if (wsComponent.resourceName) {
-      const [path16, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path16 && path16 !== "/" ? path16 : void 0;
+      const [path22, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
       wsComponent.query = query;
       wsComponent.resourceName = void 0;
     }
@@ -28238,2021 +30544,46 @@ function unwrapOptionalSchema(schema) {
   return schema.def?.innerType ?? schema;
 }
 
-// ../../packages/application/dist/file-service.js
-var import_promises6 = require("node:fs/promises");
-
-// ../../packages/filesystem/dist/atomic-writer.js
-var import_node_crypto2 = require("node:crypto");
-var import_promises3 = require("node:fs/promises");
-var import_node_path4 = __toESM(require("node:path"), 1);
-var MAX_FILE_WRITE_BYTES = 4 * 1024 * 1024;
-var AtomicFileWriter = class {
-  async write(filePath, content) {
-    if (Buffer.byteLength(content, "utf8") > MAX_FILE_WRITE_BYTES) {
-      return err(appError("FILE_TOO_LARGE", "File exceeds the maximum write size"));
-    }
-    const temporaryPath = import_node_path4.default.join(import_node_path4.default.dirname(filePath), `.${import_node_path4.default.basename(filePath)}.${(0, import_node_crypto2.randomUUID)()}.tmp`);
-    try {
-      await (0, import_promises3.writeFile)(temporaryPath, content, { encoding: "utf8", flag: "wx" });
-      await (0, import_promises3.rename)(temporaryPath, filePath);
-      return ok(void 0);
-    } catch {
-      return err(appError("INTERNAL_ERROR", "Atomic file write failed", true));
-    } finally {
-      await (0, import_promises3.unlink)(temporaryPath).catch(() => void 0);
-    }
-  }
-};
-
-// ../../packages/filesystem/dist/patch-applier.js
-var PatchApplier = class {
-  validate(files) {
-    if (!Array.isArray(files) || files.length === 0 || files.length > 20) {
-      return err(appError("INVALID_INPUT", "Patch must contain 1 to 20 files"));
-    }
-    const paths = /* @__PURE__ */ new Set();
-    let totalBytes = 0;
-    for (const file2 of files) {
-      if (typeof file2.path !== "string" || file2.path.length === 0 || typeof file2.content !== "string") {
-        return err(appError("INVALID_INPUT", "Patch file entry is invalid"));
-      }
-      const normalizedPath = file2.path.replaceAll("/", "\\").toLowerCase();
-      if (paths.has(normalizedPath))
-        return err(appError("INVALID_INPUT", "Patch contains duplicate paths"));
-      paths.add(normalizedPath);
-      totalBytes += Buffer.byteLength(file2.content, "utf8");
-      if (totalBytes > MAX_MULTI_FILE_BYTES)
-        return err(appError("FILE_TOO_LARGE", "Patch exceeds the maximum total size"));
-    }
-    return ok(void 0);
-  }
-};
-
-// ../../packages/filesystem/dist/text-file-reader.js
-var import_promises4 = require("node:fs/promises");
-var TextFileReader = class {
-  async read(filePath, range = {}) {
-    if (!this.isValidRange(range))
-      return err({ code: "INVALID_INPUT", message: "Line range is invalid", recoverable: false });
-    let size;
-    try {
-      size = (await (0, import_promises4.stat)(filePath)).size;
-    } catch {
-      return err({ code: "FILE_NOT_FOUND", message: "File was not found", recoverable: false });
-    }
-    if (size > MAX_FILE_READ_BYTES) {
-      return err({ code: "FILE_TOO_LARGE", message: "File exceeds the maximum read size", recoverable: false });
-    }
-    let data;
-    try {
-      data = await (0, import_promises4.readFile)(filePath);
-    } catch {
-      return err({ code: "FILE_NOT_FOUND", message: "File was not found", recoverable: false });
-    }
-    if (data.subarray(0, 8192).includes(0)) {
-      return err({ code: "BINARY_FILE", message: "Binary files cannot be read as text", recoverable: false });
-    }
-    const content = data.toString("utf8");
-    const lines = this.splitLines(content);
-    const startLine = range.startLine ?? 1;
-    const endLine = range.endLine ?? lines.length;
-    if (lines.length === 0 && startLine !== 1)
-      return err({ code: "INVALID_INPUT", message: "Line range is outside the file", recoverable: false });
-    if (lines.length > 0 && startLine > lines.length)
-      return err({ code: "INVALID_INPUT", message: "Line range is outside the file", recoverable: false });
-    return ok({
-      content: lines.slice(startLine - 1, Math.min(endLine, lines.length)).join(""),
-      startLine,
-      endLine: Math.min(endLine, lines.length)
-    });
-  }
-  isValidRange(range) {
-    return (range.startLine === void 0 || Number.isInteger(range.startLine) && range.startLine >= 1) && (range.endLine === void 0 || Number.isInteger(range.endLine) && range.endLine >= 1) && (range.startLine === void 0 || range.endLine === void 0 || range.startLine <= range.endLine);
-  }
-  splitLines(content) {
-    if (content.length === 0)
-      return [];
-    const lines = content.split(/(?<=\n)/);
-    if (lines.at(-1) === "")
-      lines.pop();
-    return lines;
-  }
-};
-
-// ../../packages/filesystem/dist/tree-reader.js
-var import_promises5 = require("node:fs/promises");
-var import_node_path5 = __toESM(require("node:path"), 1);
-var IGNORED_DIRECTORIES = /* @__PURE__ */ new Set([".git", ".next", "build", "coverage", "dist", "node_modules", "vendor"]);
-var TreeReader = class {
-  async read(rootPath, options = {}) {
-    const maxDepth = options.maxDepth ?? DEFAULT_TREE_DEPTH;
-    const maxEntries = options.maxEntries ?? DEFAULT_TREE_ENTRIES;
-    if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > MAX_TREE_DEPTH || !Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > MAX_TREE_ENTRIES) {
-      return err({ code: "INVALID_INPUT", message: "Tree bounds are invalid", recoverable: false });
-    }
-    let rootRealPath;
-    try {
-      rootRealPath = await (0, import_promises5.realpath)(rootPath);
-    } catch {
-      return err({ code: "FILE_NOT_FOUND", message: "Tree root was not found", recoverable: false });
-    }
-    const entries = [];
-    let truncated = false;
-    const walk = async (currentPath, relativeDirectory, depth) => {
-      if (truncated || depth > maxDepth)
-        return;
-      let directoryEntries;
-      try {
-        directoryEntries = await (0, import_promises5.readdir)(currentPath, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      directoryEntries.sort((left, right) => left.name.localeCompare(right.name, void 0, { sensitivity: "base" }));
-      for (const directoryEntry of directoryEntries) {
-        if (entries.length >= maxEntries) {
-          truncated = true;
-          return;
-        }
-        if (directoryEntry.isDirectory() && IGNORED_DIRECTORIES.has(directoryEntry.name))
-          continue;
-        const absoluteEntryPath = import_node_path5.default.join(currentPath, directoryEntry.name);
-        let entryRealPath;
-        try {
-          entryRealPath = await (0, import_promises5.realpath)(absoluteEntryPath);
-        } catch {
-          continue;
-        }
-        if (!isWithin(rootRealPath, entryRealPath))
-          continue;
-        const relativePath = import_node_path5.default.join(relativeDirectory, directoryEntry.name);
-        const isDirectory = directoryEntry.isDirectory();
-        if (!isDirectory && !directoryEntry.isFile())
-          continue;
-        entries.push({ path: relativePath, type: isDirectory ? "directory" : "file" });
-        if (isDirectory && depth < maxDepth)
-          await walk(absoluteEntryPath, relativePath, depth + 1);
-      }
-    };
-    try {
-      if (!(await (0, import_promises5.lstat)(rootPath)).isDirectory())
-        return err({ code: "INVALID_INPUT", message: "Tree root must be a directory", recoverable: false });
-    } catch {
-      return err({ code: "FILE_NOT_FOUND", message: "Tree root was not found", recoverable: false });
-    }
-    await walk(rootPath, "", 1);
-    return ok({ entries, truncated });
-  }
-};
-
-// ../../packages/permissions/dist/command-policy.js
-var import_node_path6 = __toESM(require("node:path"), 1);
-var SHELL_HOSTS = /* @__PURE__ */ new Set(["bash", "bash.exe", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "sh", "sh.exe"]);
-var DELETE_EXECUTABLES = /* @__PURE__ */ new Set([
-  "del",
-  "del.exe",
-  "erase",
-  "erase.exe",
-  "rm",
-  "rm.exe",
-  "rmdir",
-  "rmdir.exe",
-  "rd",
-  "rd.exe",
-  "unlink",
-  "unlink.exe",
-  "remove-item"
-]);
-var CommandPolicy = class {
-  decide(profile, executable, source, args = []) {
-    const basename = import_node_path6.default.win32.basename(executable).toLowerCase();
-    if (SHELL_HOSTS.has(basename))
-      return "DENY";
-    if (DELETE_EXECUTABLES.has(basename) || looksLikeDeleteInvocation(basename, args))
-      return "DENY";
-    if (source === "project") {
-      if (!profile.allowedProjectExecutables.includes(basename))
-        return "DENY";
-      return profile.defaults.EXECUTE;
-    }
-    if (!profile.allowedProjectExecutables.includes(basename) && profile.name !== "full")
-      return "ASK";
-    return profile.defaults.EXECUTE;
-  }
-};
-function looksLikeDeleteInvocation(basename, args) {
-  const joined = args.join(" ").toLowerCase();
-  if (basename === "git.exe" || basename === "git") {
-    return /\bclean\b/.test(joined) || /\breset\b/.test(joined);
-  }
-  return false;
+// ../../packages/mcp-server/dist/progress-heartbeat.js
+var HEARTBEAT_FIRST_MS = 15e3;
+var HEARTBEAT_INTERVAL_MS = 15e3;
+function readProgressToken(context) {
+  const fromMeta = context.mcpReq._meta?.progressToken;
+  return fromMeta !== void 0 ? fromMeta : context.mcpReq.id;
 }
-
-// ../../packages/permissions/dist/permission-engine.js
-var HARD_BLOCKED_ACTIONS = /* @__PURE__ */ new Set([
-  "arbitrary_elevation",
-  "delete_outside_workspace",
-  "delete_workspace_root",
-  "disk_format",
-  "git_clean",
-  "git_reset",
-  "kill_unowned_process",
-  "registry_delete",
-  "system_reboot",
-  "system_shutdown"
-]);
-var DefaultPermissionEngine = class {
-  decide(profile, operation) {
-    if (operation.destructive && HARD_BLOCKED_ACTIONS.has(operation.action.toLowerCase())) {
-      return "DENY";
-    }
-    return profile.defaults[operation.level];
-  }
-};
-
-// ../../packages/permissions/dist/profiles.js
-var PROJECT_EXECUTABLES = Object.freeze([
-  "bun",
-  "bun.exe",
-  "corepack",
-  "corepack.cmd",
-  "git",
-  "git.exe",
-  "node",
-  "node.exe",
-  "npm",
-  "npm.cmd",
-  "npx",
-  "npx.cmd",
-  "pnpm",
-  "pnpm.cmd",
-  "rg",
-  "rg.exe",
-  "yarn",
-  "yarn.cmd"
-]);
-var permissionProfiles = Object.freeze({
-  safe: Object.freeze({
-    name: "safe",
-    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ASK", EXECUTE: "ASK", DANGEROUS: "DENY" }),
-    allowedProjectExecutables: PROJECT_EXECUTABLES
-  }),
-  balanced: Object.freeze({
-    name: "balanced",
-    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ALLOW", EXECUTE: "ALLOW", DANGEROUS: "ASK" }),
-    allowedProjectExecutables: PROJECT_EXECUTABLES
-  }),
-  full: Object.freeze({
-    name: "full",
-    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ALLOW", EXECUTE: "ALLOW", DANGEROUS: "ALLOW" }),
-    allowedProjectExecutables: PROJECT_EXECUTABLES
-  }),
-  custom: Object.freeze({
-    name: "custom",
-    defaults: Object.freeze({ READ: "ALLOW", WRITE: "ASK", EXECUTE: "ASK", DANGEROUS: "DENY" }),
-    allowedProjectExecutables: PROJECT_EXECUTABLES
-  })
-});
-
-// ../../packages/application/dist/file-service.js
-var FileService = class {
-  workspaces;
-  guard;
-  reader;
-  writer;
-  patchApplier;
-  checkpointService;
-  permissionEngine;
-  profileProvider;
-  constructor(workspaces, guard = new WorkspacePathGuard(), reader = new TextFileReader(), dependencies = {}) {
-    this.workspaces = workspaces;
-    this.guard = guard;
-    this.reader = reader;
-    this.writer = dependencies.writer ?? new AtomicFileWriter();
-    this.patchApplier = dependencies.patchApplier ?? new PatchApplier();
-    this.checkpointService = dependencies.checkpointService;
-    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
-  }
-  async readFile(actor, workspaceId, request) {
-    void actor;
-    const workspaceResult = await this.getWorkspace(workspaceId);
-    if (!workspaceResult.ok)
-      return workspaceResult;
-    const resolved = await this.guard.resolveForRead(workspaceResult.value, request.path);
-    if (!resolved.ok)
-      return resolved;
-    const readResult = await this.reader.read(resolved.value.realPath ?? resolved.value.absolutePath, request);
-    if (!readResult.ok)
-      return readResult;
-    return ok({ path: resolved.value.relativePath, ...readResult.value });
-  }
-  async readFiles(actor, workspaceId, request) {
-    void actor;
-    if (!Array.isArray(request.files) || request.files.length > 20) {
-      return err(appError("INVALID_INPUT", "At most 20 files may be read"));
-    }
-    const files = [];
-    let totalBytes = 0;
-    for (const fileRequest of request.files) {
-      const result = await this.readFile(actor, workspaceId, fileRequest);
-      if (!result.ok)
-        return result;
-      totalBytes += Buffer.byteLength(result.value.content, "utf8");
-      if (totalBytes > MAX_MULTI_FILE_BYTES)
-        return err(appError("FILE_TOO_LARGE", "Combined file response exceeds the maximum size"));
-      files.push(result.value);
-    }
-    return ok({ files });
-  }
-  async writeFile(actor, workspaceId, request) {
-    if (typeof request?.path !== "string" || typeof request.content !== "string") {
-      return err(appError("INVALID_INPUT", "Write request is invalid"));
-    }
-    if (Buffer.byteLength(request.content, "utf8") > MAX_FILE_WRITE_BYTES) {
-      return err(appError("FILE_TOO_LARGE", "File exceeds the maximum write size"));
-    }
-    const workspaceResult = await this.getWorkspace(workspaceId);
-    if (!workspaceResult.ok)
-      return workspaceResult;
-    const resolved = await this.guard.resolveForWrite(workspaceResult.value, request.path);
-    if (!resolved.ok)
-      return resolved;
-    const existing = await this.inspectExistingFile(resolved.value.absolutePath);
-    if (!existing.ok)
-      return existing;
-    if (existing.value === "directory")
-      return err(appError("INVALID_INPUT", "Directories cannot be written as files"));
-    const permission = this.decide(workspaceId, "write_file", "WRITE", resolved.value.relativePath, false);
-    if (!permission.ok)
-      return permission;
-    let checkpointId;
-    if (existing.value) {
-      const checkpoint = await this.createCheckpoint(actor, workspaceId, [resolved.value.relativePath]);
-      if (!checkpoint.ok)
-        return checkpoint;
-      checkpointId = checkpoint.value.id;
-    }
-    const writeResult = await this.writer.write(resolved.value.realPath ?? resolved.value.absolutePath, request.content);
-    if (!writeResult.ok)
-      return writeResult;
-    return ok({
-      path: resolved.value.relativePath,
-      bytesWritten: Buffer.byteLength(request.content, "utf8"),
-      ...checkpointId === void 0 ? {} : { checkpointId }
-    });
-  }
-  async applyPatch(actor, workspaceId, request) {
-    const validation = this.patchApplier.validate(request?.files ?? []);
-    if (!validation.ok)
-      return validation;
-    const workspaceResult = await this.getWorkspace(workspaceId);
-    if (!workspaceResult.ok)
-      return workspaceResult;
-    const resolvedFiles = [];
-    const existingPaths = [];
-    for (const patch of request.files) {
-      const resolved = await this.guard.resolveForWrite(workspaceResult.value, patch.path);
-      if (!resolved.ok)
-        return resolved;
-      const existing = await this.inspectExistingFile(resolved.value.absolutePath);
-      if (!existing.ok)
-        return existing;
-      if (existing.value === "directory")
-        return err(appError("INVALID_INPUT", "Directories cannot be patched as files"));
-      if (existing.value)
-        existingPaths.push(resolved.value.relativePath);
-      resolvedFiles.push({
-        patch,
-        absolutePath: resolved.value.realPath ?? resolved.value.absolutePath,
-        relativePath: resolved.value.relativePath
-      });
-    }
-    const permission = this.decide(workspaceId, "apply_patch", "WRITE", void 0, false);
-    if (!permission.ok)
-      return permission;
-    let checkpointId;
-    if (existingPaths.length > 0) {
-      const checkpoint = await this.createCheckpoint(actor, workspaceId, existingPaths);
-      if (!checkpoint.ok)
-        return checkpoint;
-      checkpointId = checkpoint.value.id;
-    }
-    for (const resolved of resolvedFiles) {
-      const writeResult = await this.writer.write(resolved.absolutePath, resolved.patch.content);
-      if (!writeResult.ok)
-        return writeResult;
-    }
-    return ok({
-      paths: resolvedFiles.map((resolved) => resolved.relativePath),
-      ...checkpointId === void 0 ? {} : { checkpointId }
-    });
-  }
-  async moveFile(actor, workspaceId, request) {
-    void actor;
-    if (typeof request?.sourcePath !== "string" || typeof request.destinationPath !== "string") {
-      return err(appError("INVALID_INPUT", "Move request is invalid"));
-    }
-    const workspaceResult = await this.getWorkspace(workspaceId);
-    if (!workspaceResult.ok)
-      return workspaceResult;
-    const source = await this.guard.resolveForRead(workspaceResult.value, request.sourcePath);
-    if (!source.ok)
-      return source;
-    const destination = await this.guard.resolveForWrite(workspaceResult.value, request.destinationPath);
-    if (!destination.ok)
-      return destination;
-    const sourceType = await this.inspectExistingFile(source.value.realPath ?? source.value.absolutePath);
-    if (!sourceType.ok)
-      return sourceType;
-    if (!sourceType.value)
-      return err(appError("FILE_NOT_FOUND", "Source file was not found"));
-    const destinationType = await this.inspectExistingFile(destination.value.absolutePath);
-    if (!destinationType.ok)
-      return destinationType;
-    if (destinationType.value)
-      return err(appError("INVALID_INPUT", "Destination already exists"));
-    if (sourceType.value === "directory")
-      return err(appError("INVALID_INPUT", "Directories cannot be moved by this operation"));
-    const permission = this.decide(workspaceId, "move_file", "WRITE", source.value.relativePath, false);
-    if (!permission.ok)
-      return permission;
-    try {
-      await (0, import_promises6.rename)(source.value.realPath ?? source.value.absolutePath, destination.value.absolutePath);
-    } catch {
-      return err(appError("INTERNAL_ERROR", "File move failed", true));
-    }
-    return ok(void 0);
-  }
-  async deleteFile(actor, workspaceId, request) {
-    void actor;
-    if (typeof request?.path !== "string")
-      return err(appError("INVALID_INPUT", "Delete request is invalid"));
-    if (request.userConfirmed !== true) {
-      return err(appError("PERMISSION_REQUIRED", "Deletion requires the user to confirm in chat first, then retry delete_file with userConfirmed: true"));
-    }
-    const workspaceResult = await this.getWorkspace(workspaceId);
-    if (!workspaceResult.ok)
-      return workspaceResult;
-    const resolved = await this.guard.resolveForRead(workspaceResult.value, request.path);
-    if (!resolved.ok)
-      return resolved;
-    if (resolved.value.relativePath.length === 0)
-      return err(appError("PERMISSION_DENIED", "Workspace root cannot be deleted"));
-    const permission = this.decide(workspaceId, "delete_file", "DANGEROUS", resolved.value.relativePath, true);
-    if (!permission.ok)
-      return permission;
-    const targetPath = resolved.value.realPath ?? resolved.value.absolutePath;
-    try {
-      const target = await (0, import_promises6.lstat)(targetPath);
-      if (target.isDirectory()) {
-        const entries = await (0, import_promises6.readdir)(targetPath);
-        if (entries.length > 0)
-          return err(appError("INVALID_INPUT", "Non-empty directories cannot be deleted"));
-        await (0, import_promises6.rmdir)(targetPath);
-      } else {
-        await (0, import_promises6.unlink)(targetPath);
-      }
-    } catch {
-      return err(appError("INTERNAL_ERROR", "File deletion failed", true));
-    }
-    return ok(void 0);
-  }
-  decide(workspaceId, action, level, target, destructive) {
-    const operation = { action, level, workspaceId, destructive, ...target === void 0 ? {} : { target } };
-    const decision = this.permissionEngine.decide(this.profileProvider(), operation);
-    if (decision === "DENY")
-      return err(appError("PERMISSION_DENIED", `${action} is denied`));
-    if (decision === "ASK")
-      return err(appError("PERMISSION_REQUIRED", `${action} requires permission`));
-    return ok(void 0);
-  }
-  async createCheckpoint(actor, workspaceId, paths) {
-    if (this.checkpointService === void 0)
-      return err(appError("INTERNAL_ERROR", "Checkpoint service is unavailable", true));
-    const checkpoint = await this.checkpointService.createForFiles(actor, workspaceId, paths);
-    if (!checkpoint.ok)
-      return checkpoint;
-    return ok({ id: checkpoint.value.id });
-  }
-  async inspectExistingFile(filePath) {
-    try {
-      const target = await (0, import_promises6.lstat)(filePath);
-      return ok(target.isDirectory() ? "directory" : true);
-    } catch (error46) {
-      if (!isFileNotFoundError(error46))
-        return err(appError("INTERNAL_ERROR", "Unable to inspect file target", true));
-      return ok(false);
-    }
-  }
-  async getWorkspace(workspaceId) {
-    const workspace = await this.workspaces.get(workspaceId);
-    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
-  }
-};
-function isFileNotFoundError(error46) {
-  if (typeof error46 !== "object" || error46 === null || !("code" in error46))
-    return false;
-  return error46.code === "ENOENT";
-}
-
-// ../../packages/application/dist/checkpoint-service.js
-var import_node_crypto3 = require("node:crypto");
-var import_promises7 = require("node:fs/promises");
-var CheckpointService = class {
-  workspaces;
-  repository;
-  guard;
-  writer;
-  permissionEngine;
-  profile;
-  constructor(workspaces, repository, dependencies = {}) {
-    this.workspaces = workspaces;
-    this.repository = repository;
-    this.guard = dependencies.guard ?? new WorkspacePathGuard();
-    this.writer = dependencies.writer ?? new AtomicFileWriter();
-    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.profile = dependencies.profile ?? permissionProfiles.balanced;
-  }
-  async createForFiles(actor, workspaceId, paths) {
-    void actor;
-    if (!Array.isArray(paths) || paths.length === 0 || paths.length > 20)
-      return err(appError("INVALID_INPUT", "Checkpoint requires 1 to 20 files"));
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    const files = [];
-    let totalBytes = 0;
-    const seen = /* @__PURE__ */ new Set();
-    for (const inputPath of paths) {
-      const resolved = await this.guard.resolveForRead(workspace.value, inputPath);
-      if (!resolved.ok)
-        return resolved;
-      if (seen.has(resolved.value.relativePath.toLowerCase()))
-        return err(appError("INVALID_INPUT", "Checkpoint contains duplicate paths"));
-      seen.add(resolved.value.relativePath.toLowerCase());
-      const file2 = await this.readCheckpointFile(resolved.value.realPath ?? resolved.value.absolutePath, resolved.value.relativePath);
-      if (!file2.ok)
-        return file2;
-      totalBytes += file2.value.size;
-      if (totalBytes > MAX_FILE_WRITE_BYTES)
-        return err(appError("FILE_TOO_LARGE", "Checkpoint exceeds the maximum size"));
-      files.push(file2.value);
-    }
-    const checkpoint = { id: (0, import_node_crypto3.randomUUID)(), workspaceId, createdAt: (/* @__PURE__ */ new Date()).toISOString(), files };
-    await this.repository.insert(checkpoint);
-    return ok(checkpoint);
-  }
-  async restore(actor, workspaceId, checkpointId, options = {}) {
-    const checkpoint = await this.repository.get(checkpointId);
-    if (checkpoint === null)
-      return err(appError("FILE_NOT_FOUND", "Checkpoint was not found"));
-    if (checkpoint.workspaceId !== workspaceId)
-      return err(appError("PERMISSION_DENIED", "Checkpoint belongs to another workspace"));
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    const resolvedFiles = [];
-    for (const file2 of checkpoint.files) {
-      const resolved = await this.guard.resolveForWrite(workspace.value, file2.path);
-      if (!resolved.ok)
-        return resolved;
-      if (options.expectedCurrentHashes !== void 0) {
-        const currentHash = await this.hashCurrentFile(resolved.value.realPath ?? resolved.value.absolutePath);
-        const expected = options.expectedCurrentHashes[file2.path];
-        if (expected !== void 0 && currentHash !== expected)
-          return err(appError("INVALID_INPUT", "Checkpoint restore conflict detected"));
-      }
-      resolvedFiles.push({ file: file2, absolutePath: resolved.value.realPath ?? resolved.value.absolutePath });
-    }
-    const profile = options.profile ?? this.profile;
-    const decision = this.permissionEngine.decide(profile, { action: "restore_checkpoint", level: "WRITE", workspaceId, target: checkpointId, destructive: false });
-    if (decision === "DENY")
-      return err(appError("PERMISSION_DENIED", "Checkpoint restore is denied"));
-    if (decision === "ASK")
-      return err(appError("PERMISSION_REQUIRED", "Checkpoint restore requires permission"));
-    const restoredPaths = [];
-    for (const resolved of resolvedFiles) {
-      const result = await this.writer.write(resolved.absolutePath, resolved.file.content);
-      if (!result.ok)
-        return result;
-      restoredPaths.push(resolved.file.path);
-    }
-    void actor;
-    return ok({ restoredPaths });
-  }
-  async readCheckpointFile(filePath, relativePath) {
-    let data;
-    try {
-      if (!(await (0, import_promises7.lstat)(filePath)).isFile())
-        return err(appError("INVALID_INPUT", "Checkpoint target must be a file"));
-      data = await (0, import_promises7.readFile)(filePath);
-    } catch {
-      return err(appError("FILE_NOT_FOUND", "Checkpoint file was not found"));
-    }
-    if (data.byteLength > MAX_FILE_WRITE_BYTES)
-      return err(appError("FILE_TOO_LARGE", "Checkpoint file exceeds the maximum size"));
-    if (data.subarray(0, 8192).includes(0))
-      return err(appError("BINARY_FILE", "Binary files cannot be checkpointed"));
-    const content = data.toString("utf8");
-    return ok({ path: relativePath, content, contentSha256: hash2(content), size: data.byteLength });
-  }
-  async hashCurrentFile(filePath) {
-    try {
-      const data = await (0, import_promises7.readFile)(filePath);
-      return hash2(data.toString("utf8"));
-    } catch {
-      return null;
-    }
-  }
-  async getWorkspace(workspaceId) {
-    const workspace = await this.workspaces.get(workspaceId);
-    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
-  }
-};
-function hash2(value) {
-  return (0, import_node_crypto3.createHash)("sha256").update(value, "utf8").digest("hex");
-}
-
-// ../../packages/application/dist/codex-service.js
-var import_node_crypto5 = require("node:crypto");
-
-// ../../packages/process/dist/process-manager.js
-var import_node_child_process2 = require("node:child_process");
-var import_node_path8 = __toESM(require("node:path"), 1);
-var import_node_crypto4 = require("node:crypto");
-
-// ../../packages/process/dist/executable-resolver.js
-var import_promises8 = require("node:fs/promises");
-var import_node_path7 = __toESM(require("node:path"), 1);
-var PathExecutableResolver = class {
-  environment;
-  constructor(environment = process.env) {
-    this.environment = environment;
-  }
-  async resolve(executable) {
-    if (executable.trim().length === 0)
-      return err({ code: "INVALID_INPUT", message: "Executable is required", recoverable: false });
-    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? "").split(import_node_path7.default.delimiter).filter(Boolean);
-    const hasPath = import_node_path7.default.isAbsolute(executable) || executable.includes(import_node_path7.default.sep) || executable.includes("/") || executable.includes("\\");
-    const candidates = hasPath ? this.withWindowsExtensions(executable) : pathEntries.flatMap((entry) => this.withWindowsExtensions(import_node_path7.default.join(entry, executable)));
-    for (const candidate of candidates) {
-      try {
-        await (0, import_promises8.access)(candidate, import_promises8.constants.F_OK);
-        if ((await (0, import_promises8.stat)(candidate)).isFile())
-          return ok(candidate);
-      } catch {
-        continue;
-      }
-    }
-    return err({ code: "EXECUTABLE_NOT_FOUND", message: `Executable '${executable}' was not found`, recoverable: true });
-  }
-  withWindowsExtensions(candidate) {
-    if (import_node_path7.default.extname(candidate).length > 0 || process.platform !== "win32")
-      return [candidate];
-    const extensions = (this.environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
-    return [...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`), candidate];
-  }
-};
-
-// ../../packages/process/dist/ring-buffer.js
-var DEFAULT_MAX_BYTES = MAX_PROCESS_LOG_BYTES;
-var LogRingBuffer = class {
-  maxBytes;
-  entries = [];
-  sequence = 0;
-  bytes = 0;
-  evicted = false;
-  constructor(maxBytes = DEFAULT_MAX_BYTES) {
-    this.maxBytes = maxBytes;
-  }
-  append(stream, text) {
-    const chunks = text.split(/(?<=\n)/).filter((chunk) => chunk.length > 0);
-    for (const chunk of chunks)
-      this.appendChunk(stream, chunk);
-  }
-  read(query) {
-    const sinceSequence = query.sinceSequence ?? 0;
-    let entries = this.entries.filter((entry) => entry.sequence > sinceSequence);
-    if (query.tailLines !== void 0)
-      entries = entries.slice(-query.tailLines);
-    const oldest = this.entries[0]?.sequence;
-    const cursorMissedEvicted = oldest !== void 0 && query.sinceSequence !== void 0 && oldest > sinceSequence + 1;
-    return {
-      entries,
-      truncated: this.evicted || cursorMissedEvicted,
-      nextSequence: this.sequence
-    };
-  }
-  appendChunk(stream, input) {
-    let text = input;
-    let size = Buffer.byteLength(text, "utf8");
-    if (size > this.maxBytes) {
-      text = Buffer.from(text, "utf8").subarray(-this.maxBytes).toString("utf8");
-      size = Buffer.byteLength(text, "utf8");
-      this.evicted = true;
-    }
-    while (this.entries.length > 0 && this.bytes + size > this.maxBytes) {
-      const removed = this.entries.shift();
-      if (removed === void 0)
-        break;
-      this.bytes -= Buffer.byteLength(removed.text, "utf8");
-      this.evicted = true;
-    }
-    this.sequence += 1;
-    this.entries.push({ sequence: this.sequence, stream, text });
-    this.bytes += size;
-  }
-};
-
-// ../../packages/process/dist/windows-process-tree.js
-var import_node_child_process = require("node:child_process");
-var WindowsProcessTree = class {
-  stop(child, pid) {
-    if (process.platform !== "win32") {
-      if (child.exitCode === null)
-        child.kill("SIGTERM");
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      const killer = (0, import_node_child_process.spawn)("taskkill", ["/PID", String(pid), "/T", "/F"], { shell: false, windowsHide: true });
-      killer.once("error", () => {
-        if (child.exitCode === null)
-          child.kill();
-        resolve();
-      });
-      killer.once("close", () => resolve());
-    });
-  }
-};
-
-// ../../packages/process/dist/process-manager.js
-var DEFAULT_TIMEOUT_MS = 5 * 60 * 1e3;
-var MAX_TIMEOUT_MS = 30 * 60 * 1e3;
-var ProcessManager = class {
-  terminator;
-  executableResolver;
-  records = /* @__PURE__ */ new Map();
-  constructor(terminator = new WindowsProcessTree(), executableResolver = new PathExecutableResolver()) {
-    this.terminator = terminator;
-    this.executableResolver = executableResolver;
-  }
-  async start(spec) {
-    const validation = this.validateSpec(spec);
-    if (!validation.ok)
-      return validation;
-    const resolvedExecutable = await this.executableResolver.resolve(spec.executable);
-    if (!resolvedExecutable.ok)
-      return resolvedExecutable;
-    const invocation = toSpawnInvocation(resolvedExecutable.value, spec.args);
-    if (!invocation.ok)
-      return invocation;
-    const processId = (0, import_node_crypto4.randomUUID)();
-    const child = (0, import_node_child_process2.spawn)(invocation.value.executable, [...invocation.value.args], {
-      cwd: spec.cwd,
-      env: createSafeEnvironment(process.env),
-      shell: false,
-      windowsHide: false,
-      ...invocation.value.windowsVerbatimArguments === void 0 ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }
-    });
-    const record2 = {
-      processId,
-      child,
-      spec,
-      startedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      logs: new LogRingBuffer(),
-      state: "starting"
-    };
-    this.records.set(processId, record2);
-    child.stdout?.on("data", (chunk) => record2.logs.append("stdout", chunk.toString("utf8")));
-    child.stderr?.on("data", (chunk) => record2.logs.append("stderr", chunk.toString("utf8")));
-    child.once("error", (error46) => this.handleError(record2, error46));
-    child.once("close", (exitCode) => this.handleClose(record2, exitCode));
-    return new Promise((resolve) => {
-      child.once("spawn", () => {
-        if (record2.state === "starting")
-          record2.state = "running";
-        record2.timer = setTimeout(() => {
-          void this.timeout(record2);
-        }, spec.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-        resolve(ok(this.snapshot(record2)));
-      });
-      child.once("error", (error46) => {
-        resolve(err(error46.code === "ENOENT" ? appError("EXECUTABLE_NOT_FOUND", "Executable was not found") : appError("INTERNAL_ERROR", "Process could not start")));
-      });
-    });
-  }
-  status(processId) {
-    const record2 = this.records.get(processId);
-    return record2 === void 0 ? err(appError("PROCESS_NOT_FOUND", "Process was not found")) : ok(this.snapshot(record2));
-  }
-  list() {
-    return [...this.records.values()].map((record2) => this.snapshot(record2));
-  }
-  logs(processId, query) {
-    const record2 = this.records.get(processId);
-    if (record2 === void 0)
-      return err(appError("PROCESS_NOT_FOUND", "Process was not found"));
-    if (query.tailLines !== void 0 && (!Number.isInteger(query.tailLines) || query.tailLines < 1 || query.tailLines > 1e4)) {
-      return err(appError("INVALID_INPUT", "Log tail limit is invalid"));
-    }
-    if (query.sinceSequence !== void 0 && (!Number.isInteger(query.sinceSequence) || query.sinceSequence < 0)) {
-      return err(appError("INVALID_INPUT", "Log sequence cursor is invalid"));
-    }
-    return ok(record2.logs.read(query));
-  }
-  async stop(processId) {
-    const record2 = this.records.get(processId);
-    if (record2 === void 0)
-      return err(appError("PROCESS_NOT_FOUND", "Process was not found"));
-    if (isTerminal(record2.state))
-      return ok(void 0);
-    const pid = record2.child.pid;
-    if (pid === void 0)
-      return err(appError("INTERNAL_ERROR", "Process PID was not available"));
-    this.finish(record2, "stopped");
-    await this.terminator.stop(record2.child, pid);
-    return ok(void 0);
-  }
-  validateSpec(spec) {
-    if (typeof spec.executable !== "string" || spec.executable.trim().length === 0 || !Array.isArray(spec.args) || !spec.args.every((arg) => typeof arg === "string")) {
-      return err(appError("INVALID_INPUT", "Executable and args are required"));
-    }
-    if (typeof spec.cwd !== "string" || !import_node_path8.default.isAbsolute(spec.cwd)) {
-      return err(appError("INVALID_INPUT", "Process cwd must be an absolute path"));
-    }
-    const timeoutMs = spec.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
-      return err(appError("INVALID_INPUT", "Process timeout is invalid"));
-    }
-    return ok(void 0);
-  }
-  handleError(record2, error46) {
-    if (!isTerminal(record2.state))
-      this.finish(record2, "failed");
-    if (error46.code !== "ENOENT")
-      record2.exitCode = -1;
-  }
-  handleClose(record2, exitCode) {
-    if (!isTerminal(record2.state))
-      this.finish(record2, "exited");
-    if (record2.exitCode === void 0 && exitCode !== null)
-      record2.exitCode = exitCode;
-  }
-  async timeout(record2) {
-    if (record2.state !== "running")
-      return;
-    const pid = record2.child.pid;
-    this.finish(record2, "timed_out");
-    if (pid !== void 0)
-      await this.terminator.stop(record2.child, pid);
-  }
-  finish(record2, state) {
-    record2.state = state;
-    record2.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-    if (record2.timer !== void 0)
-      clearTimeout(record2.timer);
-  }
-  snapshot(record2) {
-    return {
-      processId: record2.processId,
-      executable: record2.spec.executable,
-      args: [...record2.spec.args],
-      cwd: record2.spec.cwd,
-      state: record2.state,
-      startedAt: record2.startedAt,
-      ...record2.finishedAt === void 0 ? {} : { finishedAt: record2.finishedAt },
-      ...record2.exitCode === void 0 ? {} : { exitCode: record2.exitCode }
-    };
-  }
-};
-function toSpawnInvocation(executable, args) {
-  if (process.platform !== "win32" || ![".cmd", ".bat"].includes(import_node_path8.default.extname(executable).toLowerCase())) {
-    return ok({ executable, args });
-  }
-  const values = [executable, ...args];
-  if (values.some((value) => /[\r\n&|<>^%!"]/.test(value))) {
-    return err(appError("INVALID_INPUT", "Windows command shim arguments contain unsupported shell metacharacters"));
-  }
-  const commandLine = `"${values.map(quoteWindowsCommandArgument).join(" ")}"`;
-  return ok({ executable: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", commandLine], windowsVerbatimArguments: true });
-}
-function quoteWindowsCommandArgument(value) {
-  return /\s/.test(value) ? `"${value}"` : value;
-}
-function isTerminal(state) {
-  return state === "exited" || state === "failed" || state === "stopped" || state === "timed_out";
-}
-function createSafeEnvironment(source) {
-  const allowed = new Set([
-    "PATH",
-    "PATHEXT",
-    "SystemRoot",
-    "WINDIR",
-    "TEMP",
-    "TMP",
-    "USERPROFILE",
-    "HOMEDRIVE",
-    "HOMEPATH",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "APPDATA",
-    "LOCALAPPDATA",
-    "ProgramData",
-    "ProgramFiles",
-    "ProgramFiles(x86)"
-  ].map((key) => process.platform === "win32" ? key.toLowerCase() : key));
-  return Object.fromEntries(Object.entries(source).filter(([key, value]) => {
-    const normalizedKey = process.platform === "win32" ? key.toLowerCase() : key;
-    return allowed.has(normalizedKey) && value !== void 0;
-  }));
-}
-
-// ../../packages/codex/dist/codex-discovery.js
-var import_node_child_process3 = require("node:child_process");
-var import_node_os = __toESM(require("node:os"), 1);
-var import_node_path9 = __toESM(require("node:path"), 1);
-var import_promises9 = require("node:fs/promises");
-
-// ../../packages/codex/dist/codex-capabilities.js
-var CodexInvocationBuilder = class {
-  build(executable, capabilities, instruction) {
-    if (executable.trim().length === 0 || instruction.trim().length === 0) {
-      return err(appError("INVALID_INPUT", "Codex executable and instruction are required"));
-    }
-    if (capabilities.instructionMode === null) {
-      return err(appError("CODEX_NOT_AVAILABLE", "Codex instruction invocation is not supported", true));
-    }
-    const args = capabilities.instructionMode === "exec-argument" ? ["exec", instruction] : capabilities.instructionMode === "prompt-option" ? ["--prompt", instruction] : [instruction];
-    return ok({ executable, args });
-  }
-};
-function capabilitiesFromHelp(helpText) {
-  const names = [];
-  if (/\bexec\b/i.test(helpText))
-    names.push("exec");
-  if (/--prompt\b|--instruction\b/i.test(helpText))
-    names.push("prompt-argument");
-  if (/\bprompt\b.*<[^>]+>/i.test(helpText) && !names.includes("prompt-argument"))
-    names.push("positional-instruction");
-  const instructionMode = names.includes("exec") ? "exec-argument" : names.includes("prompt-argument") ? "prompt-option" : names.includes("positional-instruction") ? "positional-argument" : null;
-  return { instructionMode, names };
-}
-
-// ../../packages/codex/dist/codex-discovery.js
-var PathCodexExecutableResolver = class {
-  environment;
-  constructor(environment = process.env) {
-    this.environment = environment;
-  }
-  async resolve() {
-    const pathValue = this.environment.Path ?? this.environment.PATH ?? "";
-    const entries = pathValue.split(import_node_path9.default.delimiter).filter(Boolean);
-    const candidates = entries.flatMap((entry) => this.withWindowsExtensions(import_node_path9.default.join(entry, "codex")));
-    for (const candidate of candidates) {
-      try {
-        await (0, import_promises9.access)(candidate, import_promises9.constants.F_OK);
-        if ((await (0, import_promises9.stat)(candidate)).isFile())
-          return ok(candidate);
-      } catch {
-        continue;
-      }
-    }
-    return err({ code: "EXECUTABLE_NOT_FOUND", message: "Codex executable was not found", recoverable: true });
-  }
-  withWindowsExtensions(candidate) {
-    if (process.platform !== "win32")
-      return [candidate];
-    const extensions = (this.environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
-    return [...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`), candidate];
-  }
-};
-var DirectCodexCommandRunner = class {
-  run(executable, args) {
-    return new Promise((resolve) => {
-      const child = (0, import_node_child_process3.spawn)(executable, [...args], { shell: false, windowsHide: true });
-      let stdout = "";
-      let stderr = "";
-      child.stdout?.on("data", (chunk) => {
-        stdout = `${stdout}${chunk.toString("utf8")}`.slice(-1024 * 1024);
-      });
-      child.stderr?.on("data", (chunk) => {
-        stderr = `${stderr}${chunk.toString("utf8")}`.slice(-1024 * 1024);
-      });
-      child.once("error", (error46) => resolve({
-        exitCode: -1,
-        stdout,
-        stderr,
-        spawnErrorCode: sanitizeSpawnErrorCode(error46.code)
-      }));
-      child.once("close", (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
-    });
-  }
-};
-var CodexDiscovery = class {
-  resolver;
-  runner;
-  constructor(resolver = new PathCodexExecutableResolver(), runner = new DirectCodexCommandRunner()) {
-    this.resolver = resolver;
-    this.runner = runner;
-  }
-  async discover() {
-    const resolved = await this.resolver.resolve();
-    if (!resolved.ok) {
-      if (resolved.error.code === "EXECUTABLE_NOT_FOUND") {
-        return ok({ status: { installed: false, capabilities: [] }, capabilities: { instructionMode: null, names: [] } });
-      }
-      return err({ ...resolved.error, details: { ...resolved.error.details ?? {}, stage: "resolve" } });
-    }
-    const versionResult = await this.runner.run(resolved.value, ["--version"]);
-    if (versionResult.exitCode !== 0)
-      return commandFailure(resolved.value, "--version", versionResult);
-    const helpResult = await this.runner.run(resolved.value, ["--help"]);
-    if (helpResult.exitCode !== 0)
-      return commandFailure(resolved.value, "--help", helpResult);
-    const helpText = `${helpResult.stdout}
-${helpResult.stderr}`;
-    const capabilities = capabilitiesFromHelp(helpText);
-    const statusCapabilities = ["version", "help", ...capabilities.names];
-    const version2 = parseVersion(`${versionResult.stdout}
-${versionResult.stderr}`);
-    return ok({
-      status: {
-        installed: true,
-        executablePath: resolved.value,
-        ...version2 === void 0 ? {} : { version: version2 },
-        capabilities: statusCapabilities
-      },
-      capabilities
-    });
-  }
-};
-function commandFailure(executable, stage, result) {
-  return err({
-    code: "CODEX_NOT_AVAILABLE",
-    message: `Codex ${stage} check failed`,
-    recoverable: true,
-    details: {
-      stage,
-      executablePath: sanitizeExecutablePath(executable),
-      exitCode: result.exitCode,
-      ...result.spawnErrorCode === void 0 ? {} : { spawnErrorCode: result.spawnErrorCode }
-    }
-  });
-}
-function sanitizeSpawnErrorCode(value) {
-  return value === "EACCES" || value === "EPERM" || value === "ENOENT" ? value : "UNKNOWN";
-}
-function sanitizeExecutablePath(value) {
-  const home = import_node_os.default.homedir();
-  const relative = import_node_path9.default.relative(home, value);
-  if (relative.length > 0 && !relative.startsWith("..") && !import_node_path9.default.isAbsolute(relative)) {
-    return `%USERPROFILE%${import_node_path9.default.sep}${relative}`;
-  }
-  const windowsBaseName = import_node_path9.default.win32.basename(value);
-  return windowsBaseName === value ? import_node_path9.default.basename(value) : windowsBaseName;
-}
-function parseVersion(value) {
-  return value.match(/\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/)?.[0];
-}
-
-// ../../packages/codex/dist/codex-adapter.js
-var CodexAdapter = class {
-  discovery;
-  processManager;
-  builder;
-  constructor(discovery = new CodexDiscovery(), processManager = new ProcessManager(), builder = new CodexInvocationBuilder()) {
-    this.discovery = discovery;
-    this.processManager = processManager;
-    this.builder = builder;
-  }
-  async status() {
-    const discovered = await this.discovery.discover();
-    return discovered.ok ? ok(discovered.value.status) : discovered;
-  }
-  async start(cwd, instruction) {
-    const discovered = await this.discovery.discover();
-    if (!discovered.ok)
-      return discovered;
-    if (!discovered.value.status.installed || discovered.value.status.executablePath === void 0) {
-      return err({ code: "CODEX_NOT_AVAILABLE", message: "Codex is not installed", recoverable: true });
-    }
-    const invocation = this.builder.build(discovered.value.status.executablePath, discovered.value.capabilities, instruction);
-    if (!invocation.ok)
-      return invocation;
-    return this.processManager.start({ executable: invocation.value.executable, args: invocation.value.args, cwd });
-  }
-  statusProcess(processId) {
-    return this.processManager.status(processId);
-  }
-  logs(processId, query) {
-    return this.processManager.logs(processId, query);
-  }
-  stop(processId) {
-    return this.processManager.stop(processId);
-  }
-};
-
-// ../../packages/application/dist/codex-service.js
-var MAX_CODEX_INSTRUCTION_BYTES = 256 * 1024;
-var CodexService = class {
-  workspaces;
-  adapter;
-  guard;
-  permissionEngine;
-  profileProvider;
-  auditService;
-  taskIdFactory;
-  diagnostic;
-  owners = /* @__PURE__ */ new Map();
-  constructor(workspaces, dependencies = {}) {
-    this.workspaces = workspaces;
-    this.adapter = dependencies.adapter ?? new CodexAdapter();
-    this.guard = dependencies.guard ?? new WorkspacePathGuard();
-    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
-    this.auditService = dependencies.auditService;
-    this.taskIdFactory = dependencies.taskIdFactory ?? import_node_crypto5.randomUUID;
-    this.diagnostic = dependencies.diagnostic ?? ((message) => {
-      console.error(message);
-    });
-  }
-  async status(actor) {
-    void actor;
-    const permission = this.permissionEngine.decide(this.profileProvider(), { action: "codex_status", level: "READ", workspaceId: "system", destructive: false });
-    if (permission === "DENY")
-      return err(appError("PERMISSION_DENIED", "Codex status is denied"));
-    if (permission === "ASK")
-      return err(appError("PERMISSION_REQUIRED", "Codex status requires permission"));
-    return this.adapter.status();
-  }
-  async run(actor, workspaceId, instruction) {
-    if (typeof instruction !== "string" || instruction.trim().length === 0)
-      return err(appError("INVALID_INPUT", "Codex instruction is required"));
-    if (Buffer.byteLength(instruction, "utf8") > MAX_CODEX_INSTRUCTION_BYTES)
-      return err(appError("FILE_TOO_LARGE", "Codex instruction is too large"));
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    const root = await this.guard.resolveForRead(workspace.value, ".");
-    if (!root.ok)
-      return root;
-    const permission = this.permissionEngine.decide(this.profileProvider(), { action: "codex_run", level: "EXECUTE", workspaceId, target: ".", destructive: false });
-    if (permission === "DENY")
-      return err(appError("PERMISSION_DENIED", "Codex execution is denied"));
-    if (permission === "ASK")
-      return err(appError("PERMISSION_REQUIRED", "Codex execution requires permission"));
-    const started = await this.adapter.start(root.value.realPath ?? root.value.absolutePath, instruction);
-    if (!started.ok)
-      return started;
-    const codexTaskId = this.taskIdFactory();
-    this.owners.set(codexTaskId, { actorId: actor.clientId, workspaceId, processId: started.value.processId });
-    await this.recordAudit(actor, workspaceId, codexTaskId, instruction);
-    return ok({ codexTaskId, processId: started.value.processId });
-  }
-  async taskStatus(actor, workspaceId, codexTaskId) {
-    const owner = this.authorize(actor, workspaceId, codexTaskId);
-    if (!owner.ok)
-      return owner;
-    return this.adapter.statusProcess(owner.value.processId);
-  }
-  async taskLogs(actor, workspaceId, codexTaskId, query) {
-    const owner = this.authorize(actor, workspaceId, codexTaskId);
-    if (!owner.ok)
-      return owner;
-    return this.adapter.logs(owner.value.processId, query);
-  }
-  async stop(actor, workspaceId, codexTaskId) {
-    const owner = this.authorize(actor, workspaceId, codexTaskId);
-    if (!owner.ok)
-      return owner;
-    return this.adapter.stop(owner.value.processId);
-  }
-  async recordAudit(actor, workspaceId, codexTaskId, instruction) {
-    if (this.auditService === void 0)
-      return;
-    const input = { actorId: actor.clientId, actorName: actor.clientName, workspaceId, codexTaskId, instruction, resultCode: "STARTED", durationMs: 0 };
-    try {
-      await this.auditService.recordCodexRun(input);
-    } catch {
-      this.diagnostic(`Codex audit recording failed for task ${codexTaskId}`);
-    }
-  }
-  authorize(actor, workspaceId, codexTaskId) {
-    const owner = this.owners.get(codexTaskId);
-    if (owner === void 0)
-      return err(appError("PROCESS_NOT_FOUND", "Codex task was not found"));
-    if (owner.actorId !== actor.clientId || owner.workspaceId !== workspaceId)
-      return err(appError("PERMISSION_DENIED", "Codex task is not owned by this client and workspace"));
-    return ok(owner);
-  }
-  async getWorkspace(workspaceId) {
-    const workspace = await this.workspaces.get(workspaceId);
-    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
-  }
-};
-
-// ../../packages/application/dist/error-sanitizer.js
-var MAX_DIAGNOSTIC_TEXT = 8 * 1024;
-var AUTHORIZATION_HEADER = /(Authorization\s*:\s*Bearer\s+)[^\s,;]+/gi;
-var BEARER_VALUE = /\bBearer\s+[^\s,;]+/gi;
-var SECRET_ASSIGNMENT = /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)[A-Z0-9_]*)\s*[:=]\s*[^\s,;]+/gi;
-var API_KEY_VALUE = /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]+)\b/g;
-function sanitizeException(error46, diagnostic) {
-  const event = toDiagnosticError(error46);
+async function sendProgress(context, toolName, startedAt) {
+  const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1e3));
   try {
-    diagnostic?.(event);
+    await context.mcpReq.notify({
+      method: "notifications/progress",
+      params: {
+        progressToken: readProgressToken(context),
+        progress: elapsedSeconds,
+        message: `${toolName} still running (${elapsedSeconds}s)`
+      }
+    });
   } catch {
   }
-  return appError("INTERNAL_ERROR", "Operation failed", true);
 }
-function redactDiagnosticText(value) {
-  return value.replace(AUTHORIZATION_HEADER, "$1[REDACTED]").replace(BEARER_VALUE, "Bearer [REDACTED]").replace(SECRET_ASSIGNMENT, "$1=[REDACTED]").replace(API_KEY_VALUE, "[REDACTED]").slice(0, MAX_DIAGNOSTIC_TEXT);
-}
-function toDiagnosticError(error46) {
-  if (!(error46 instanceof Error))
-    return { name: "UnknownError", message: "Non-Error exception" };
-  const message = redactDiagnosticText(error46.message);
-  const stack = error46.stack === void 0 ? void 0 : redactDiagnosticText(error46.stack);
-  return { name: redactDiagnosticText(error46.name), message, ...stack === void 0 ? {} : { stack } };
-}
-
-// ../../packages/git/dist/git-runner.js
-var import_node_child_process4 = require("node:child_process");
-var DirectGitRunner = class {
-  run(args, cwd) {
-    return new Promise((resolve) => {
-      const child = (0, import_node_child_process4.spawn)("git", [...args], { cwd, shell: false, windowsHide: true });
-      let stdout = "";
-      let stderr = "";
-      const append = (current, chunk) => `${current}${chunk.toString("utf8")}`.slice(-8 * 1024 * 1024);
-      child.stdout?.on("data", (chunk) => {
-        stdout = append(stdout, chunk);
-      });
-      child.stderr?.on("data", (chunk) => {
-        stderr = append(stderr, chunk);
-      });
-      child.on("error", (error46) => resolve({ exitCode: -1, stdout, stderr: `${stderr}${error46.message}` }));
-      child.on("close", (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
-    });
+async function withProgressHeartbeat(context, toolName, run) {
+  if (context === void 0 || typeof context.mcpReq?.notify !== "function") {
+    return run();
   }
-};
-
-// ../../packages/git/dist/parsers/status-parser.js
-function parsePorcelainStatus(output) {
-  const tokens = output.split("\0");
-  const entries = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const record2 = tokens[index];
-    if (record2 === void 0 || record2.length < 4)
-      continue;
-    const indexStatus = record2[0] ?? " ";
-    const worktreeStatus = record2[1] ?? " ";
-    const firstPath = record2.slice(3);
-    if (firstPath.length === 0)
-      continue;
-    const kind = getKind(indexStatus, worktreeStatus);
-    if (kind === null)
-      continue;
-    const hasRenameTarget = indexStatus === "R" || indexStatus === "C" || worktreeStatus === "R" || worktreeStatus === "C";
-    const secondPath = hasRenameTarget ? tokens[index + 1] : void 0;
-    if (hasRenameTarget && secondPath !== void 0)
-      index += 1;
-    entries.push({
-      path: secondPath ?? firstPath,
-      ...secondPath === void 0 ? {} : { oldPath: firstPath },
-      kind,
-      indexStatus,
-      worktreeStatus
-    });
+  const startedAt = Date.now();
+  let interval;
+  const first = setTimeout(() => {
+    void sendProgress(context, toolName, startedAt);
+    interval = setInterval(() => {
+      void sendProgress(context, toolName, startedAt);
+    }, HEARTBEAT_INTERVAL_MS);
+  }, HEARTBEAT_FIRST_MS);
+  try {
+    return await run();
+  } finally {
+    clearTimeout(first);
+    if (interval !== void 0)
+      clearInterval(interval);
   }
-  return entries;
-}
-function getKind(indexStatus, worktreeStatus) {
-  const status = indexStatus === "?" || worktreeStatus === "?" ? "?" : indexStatus === "!" || worktreeStatus === "!" ? "!" : indexStatus === "U" || worktreeStatus === "U" ? "U" : indexStatus === "R" || worktreeStatus === "R" ? "R" : indexStatus === "C" || worktreeStatus === "C" ? "C" : indexStatus === "A" || worktreeStatus === "A" ? "A" : indexStatus === "D" || worktreeStatus === "D" ? "D" : indexStatus === "M" || worktreeStatus === "M" || indexStatus === "T" || worktreeStatus === "T" ? "M" : null;
-  if (status === "?")
-    return "untracked";
-  if (status === "!")
-    return "ignored";
-  if (status === "U")
-    return "unmerged";
-  if (status === "R")
-    return "renamed";
-  if (status === "C")
-    return "copied";
-  if (status === "A")
-    return "added";
-  if (status === "D")
-    return "deleted";
-  if (status === "M")
-    return "modified";
-  return null;
-}
-
-// ../../packages/git/dist/git-adapter.js
-var GitAdapter = class {
-  runner;
-  constructor(runner = new DirectGitRunner()) {
-    this.runner = runner;
-  }
-  async status(cwd) {
-    const result = await this.runner.run(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd);
-    const error46 = this.mapError(result);
-    if (error46 !== null)
-      return error46;
-    return ok({ entries: parsePorcelainStatus(result.stdout) });
-  }
-  async diff(cwd, request = {}) {
-    const maxBytes = request.maxBytes ?? 1024 * 1024;
-    if (!this.isLimit(maxBytes, 4 * 1024 * 1024))
-      return err(appError("INVALID_INPUT", "Git diff byte limit is invalid"));
-    const args = ["diff", "--no-ext-diff", "--no-color"];
-    if (request.staged === true)
-      args.push("--cached");
-    args.push("--");
-    if (request.path !== void 0)
-      args.push(request.path);
-    const result = await this.runner.run(args, cwd);
-    const error46 = this.mapError(result);
-    if (error46 !== null)
-      return error46;
-    const bounded = this.bound(result.stdout, maxBytes);
-    return ok({ patch: bounded.text, truncated: bounded.truncated });
-  }
-  async log(cwd, request = {}) {
-    const maxCommits = request.maxCommits ?? 20;
-    const maxBytes = request.maxBytes ?? 1024 * 1024;
-    if (!this.isLimit(maxCommits, 100) || !this.isLimit(maxBytes, 4 * 1024 * 1024)) {
-      return err(appError("INVALID_INPUT", "Git log limit is invalid"));
-    }
-    const args = ["log", "--no-color", "--format=%H%x1f%an%x1f%aI%x1f%s%x1e", "-n", String(maxCommits), "--"];
-    const result = await this.runner.run(args, cwd);
-    const error46 = this.mapError(result);
-    if (error46 !== null)
-      return error46;
-    const bounded = this.bound(result.stdout, maxBytes);
-    const entries = bounded.text.split("").flatMap((record2) => {
-      const fields = record2.split("");
-      return fields.length === 4 && fields.every((field) => field.length > 0) ? [{ hash: fields[0] ?? "", author: fields[1] ?? "", date: fields[2] ?? "", subject: fields[3] ?? "" }] : [];
-    });
-    return ok({ entries, truncated: bounded.truncated });
-  }
-  mapError(result) {
-    if (result.exitCode === 0)
-      return null;
-    if (result.exitCode === 128 && /not a git repository/i.test(result.stderr)) {
-      return err(appError("GIT_NOT_REPOSITORY", "Workspace is not a Git repository"));
-    }
-    if (result.exitCode === -1 && /ENOENT/i.test(result.stderr)) {
-      return err(appError("EXECUTABLE_NOT_FOUND", "Git executable was not found"));
-    }
-    return err(appError("INTERNAL_ERROR", "Git command failed", true));
-  }
-  isLimit(value, maximum) {
-    return Number.isInteger(value) && value >= 1 && value <= maximum;
-  }
-  bound(value, maxBytes) {
-    const bytes = Buffer.from(value, "utf8");
-    if (bytes.byteLength <= maxBytes)
-      return { text: value, truncated: false };
-    return { text: bytes.subarray(0, maxBytes).toString("utf8"), truncated: true };
-  }
-};
-
-// ../../packages/application/dist/git-service.js
-var GitService = class {
-  workspaces;
-  guard;
-  adapter;
-  constructor(workspaces, guard = new WorkspacePathGuard(), adapter = new GitAdapter()) {
-    this.workspaces = workspaces;
-    this.guard = guard;
-    this.adapter = adapter;
-  }
-  async status(actor, workspaceId) {
-    void actor;
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    return this.adapter.status(workspace.value.realRootPath);
-  }
-  async diff(actor, workspaceId, request = {}) {
-    void actor;
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    let pathValue;
-    if (request.path !== void 0) {
-      const resolved = await this.guard.resolveForWrite(workspace.value, request.path);
-      if (!resolved.ok)
-        return resolved;
-      pathValue = resolved.value.relativePath;
-    }
-    return this.adapter.diff(workspace.value.realRootPath, {
-      ...pathValue === void 0 ? {} : { path: pathValue },
-      ...request.staged === void 0 ? {} : { staged: request.staged },
-      ...request.maxBytes === void 0 ? {} : { maxBytes: request.maxBytes }
-    });
-  }
-  async log(actor, workspaceId, request = {}) {
-    void actor;
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    return this.adapter.log(workspace.value.realRootPath, request);
-  }
-  async getWorkspace(workspaceId) {
-    const workspace = await this.workspaces.get(workspaceId);
-    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
-  }
-};
-
-// ../../packages/project/dist/js-command-detector.js
-var JsCommandDetector = class {
-  getCommand(profile, kind) {
-    if (profile.scripts[kind] === void 0) {
-      return err(appError("INVALID_INPUT", `Project script '${kind}' is not defined`));
-    }
-    if (profile.packageManager === "unknown") {
-      return err(appError("INVALID_INPUT", "Project package manager could not be detected"));
-    }
-    return ok({
-      executable: profile.packageManager,
-      args: profile.packageManager === "npm" ? ["run", kind] : [kind]
-    });
-  }
-};
-
-// ../../packages/project/dist/project-detector.js
-var import_promises10 = require("node:fs/promises");
-var import_node_path10 = __toESM(require("node:path"), 1);
-var NodeProjectFileSystem = class {
-  readFile(filePath) {
-    return (0, import_promises10.readFile)(filePath, "utf8");
-  }
-  async exists(filePath) {
-    try {
-      await (0, import_promises10.access)(filePath);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-};
-var LOCKFILE_PRECEDENCE = [
-  ["pnpm-lock.yaml", "pnpm"],
-  ["package-lock.json", "npm"],
-  ["yarn.lock", "yarn"],
-  ["bun.lockb", "bun"],
-  ["bun.lock", "bun"]
-];
-var CONFIG_FILE_NAMES = [
-  "tsconfig.json",
-  "vite.config.ts",
-  "vite.config.js",
-  "vite.config.mts",
-  "vite.config.mjs",
-  "vitest.config.ts",
-  "vitest.config.js",
-  "eslint.config.js",
-  "eslint.config.mjs",
-  "webpack.config.js",
-  "next.config.js",
-  "next.config.mjs",
-  "biome.json"
-];
-var ProjectDetector = class {
-  fileSystem;
-  constructor(fileSystem = new NodeProjectFileSystem()) {
-    this.fileSystem = fileSystem;
-  }
-  async detect(rootPath) {
-    const packageJsonPath = import_node_path10.default.join(rootPath, "package.json");
-    if (!await this.fileSystem.exists(packageJsonPath)) {
-      return ok({
-        rootPath,
-        kind: "unknown",
-        packageManager: "unknown",
-        frameworks: [],
-        scripts: {},
-        configFiles: await this.findConfigFiles(rootPath)
-      });
-    }
-    let packageJson;
-    try {
-      packageJson = JSON.parse(await this.fileSystem.readFile(packageJsonPath));
-    } catch {
-      return err(appError("INVALID_INPUT", "package.json is not valid JSON"));
-    }
-    if (!this.isPackageJson(packageJson)) {
-      return err(appError("INVALID_INPUT", "package.json has an invalid shape"));
-    }
-    return ok({
-      rootPath,
-      kind: "node",
-      packageManager: await this.detectPackageManager(rootPath),
-      frameworks: await this.detectFrameworks(rootPath, packageJson),
-      scripts: packageJson.scripts ?? {},
-      configFiles: await this.findConfigFiles(rootPath)
-    });
-  }
-  async detectPackageManager(rootPath) {
-    for (const [filename, manager] of LOCKFILE_PRECEDENCE) {
-      if (await this.fileSystem.exists(import_node_path10.default.join(rootPath, filename)))
-        return manager;
-    }
-    return "npm";
-  }
-  async detectFrameworks(rootPath, packageJson) {
-    const dependencyNames = /* @__PURE__ */ new Set([
-      ...Object.keys(packageJson.dependencies ?? {}),
-      ...Object.keys(packageJson.devDependencies ?? {}),
-      ...Object.keys(packageJson.peerDependencies ?? {})
-    ]);
-    const frameworks = /* @__PURE__ */ new Set();
-    if (dependencyNames.has("react") || dependencyNames.has("react-dom"))
-      frameworks.add("react");
-    if (dependencyNames.has("typescript") || await this.fileSystem.exists(import_node_path10.default.join(rootPath, "tsconfig.json")))
-      frameworks.add("typescript");
-    if (dependencyNames.has("vite") || await this.fileSystem.exists(import_node_path10.default.join(rootPath, "vite.config.ts")))
-      frameworks.add("vite");
-    return [...frameworks].sort();
-  }
-  async findConfigFiles(rootPath) {
-    const existing = await Promise.all(CONFIG_FILE_NAMES.map(async (filename) => await this.fileSystem.exists(import_node_path10.default.join(rootPath, filename)) ? filename : null));
-    return existing.flatMap((filename) => filename === null ? [] : [filename]).sort();
-  }
-  isPackageJson(value) {
-    if (typeof value !== "object" || value === null)
-      return false;
-    if ("scripts" in value && !this.isStringRecordOrUndefined(value.scripts))
-      return false;
-    return this.isStringRecordOrUndefined("dependencies" in value ? value.dependencies : void 0) && this.isStringRecordOrUndefined("devDependencies" in value ? value.devDependencies : void 0) && this.isStringRecordOrUndefined("peerDependencies" in value ? value.peerDependencies : void 0);
-  }
-  isStringRecordOrUndefined(value) {
-    if (value === void 0)
-      return true;
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return false;
-    return Object.values(value).every((entry) => typeof entry === "string");
-  }
-};
-
-// ../../packages/application/dist/project-service.js
-var ProjectService = class {
-  workspaces;
-  detector;
-  commandDetector;
-  constructor(workspaces, detector = new ProjectDetector(), commandDetector = new JsCommandDetector()) {
-    this.workspaces = workspaces;
-    this.detector = detector;
-    this.commandDetector = commandDetector;
-  }
-  async detect(workspaceId) {
-    const workspace = await this.workspaces.get(workspaceId);
-    if (workspace === null)
-      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
-    return this.detector.detect(workspace.realRootPath);
-  }
-  async getCommand(workspaceId, kind) {
-    const profile = await this.detect(workspaceId);
-    if (!profile.ok)
-      return profile;
-    return this.commandDetector.getCommand(profile.value, kind);
-  }
-};
-
-// ../../packages/application/dist/process-service.js
-var import_promises11 = require("node:fs/promises");
-var ProcessService = class {
-  workspaces;
-  processManager;
-  projectService;
-  guard;
-  permissionEngine;
-  commandPolicy;
-  profileProvider;
-  owners = /* @__PURE__ */ new Map();
-  constructor(workspaces, dependencies = {}) {
-    this.workspaces = workspaces;
-    this.processManager = dependencies.processManager ?? new ProcessManager();
-    this.projectService = dependencies.projectService ?? new ProjectService(workspaces, new ProjectDetector(), new JsCommandDetector());
-    this.guard = dependencies.guard ?? new WorkspacePathGuard();
-    this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
-    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy();
-    this.profileProvider = dependencies.profileProvider ?? (() => dependencies.profile ?? permissionProfiles.balanced);
-  }
-  start(actor, workspaceId, request) {
-    return this.startInternal(actor, workspaceId, request, "client");
-  }
-  async startProjectCommand(actor, workspaceId, kind) {
-    const command = await this.projectService.getCommand(workspaceId, kind);
-    if (!command.ok)
-      return command;
-    return this.startInternal(actor, workspaceId, { executable: command.value.executable, args: command.value.args }, "project");
-  }
-  async status(actor, workspaceId, processId) {
-    const ownership = this.authorizeHandle(actor, workspaceId, processId);
-    if (!ownership.ok)
-      return ownership;
-    return this.processManager.status(processId);
-  }
-  async list(actor, workspaceId) {
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    const processes = this.processManager.list?.() ?? [];
-    return ok(processes.filter((process5) => {
-      const owner = this.owners.get(process5.processId);
-      return owner?.actorId === actor.clientId && owner.workspaceId === workspace.value.id;
-    }));
-  }
-  async logs(actor, workspaceId, processId, query) {
-    const ownership = this.authorizeHandle(actor, workspaceId, processId);
-    if (!ownership.ok)
-      return ownership;
-    return this.processManager.logs(processId, query);
-  }
-  async stop(actor, workspaceId, processId) {
-    const ownership = this.authorizeHandle(actor, workspaceId, processId);
-    if (!ownership.ok)
-      return ownership;
-    return this.processManager.stop(processId);
-  }
-  async startInternal(actor, workspaceId, request, source) {
-    const validation = this.validateRequest(request);
-    if (!validation.ok)
-      return validation;
-    const workspace = await this.getWorkspace(workspaceId);
-    if (!workspace.ok)
-      return workspace;
-    const cwd = await this.resolveCwd(workspace.value, request.cwd);
-    if (!cwd.ok)
-      return cwd;
-    const profile = this.profileProvider();
-    const commandDecision = this.commandPolicy.decide(profile, request.executable, source, request.args);
-    if (commandDecision === "DENY")
-      return err(appError("PERMISSION_DENIED", "Executable is not permitted"));
-    const permissionDecision = this.permissionEngine.decide(profile, {
-      action: "process_start",
-      level: "EXECUTE",
-      workspaceId,
-      target: request.cwd ?? ".",
-      executable: request.executable,
-      destructive: false
-    });
-    if (permissionDecision === "DENY")
-      return err(appError("PERMISSION_DENIED", "Process execution is denied"));
-    if (commandDecision === "ASK" || permissionDecision === "ASK")
-      return err(appError("PERMISSION_REQUIRED", "Process execution requires permission"));
-    const started = await this.processManager.start({
-      executable: request.executable,
-      args: [...request.args],
-      cwd: cwd.value,
-      ...request.timeoutMs === void 0 ? {} : { timeoutMs: request.timeoutMs }
-    });
-    if (started.ok)
-      this.owners.set(started.value.processId, { actorId: actor.clientId, workspaceId });
-    return started;
-  }
-  async resolveCwd(workspace, requestedCwd) {
-    const resolved = await this.guard.resolveForRead(workspace, requestedCwd ?? ".");
-    if (!resolved.ok)
-      return resolved;
-    const cwd = resolved.value.realPath ?? resolved.value.absolutePath;
-    try {
-      if (!(await (0, import_promises11.stat)(cwd)).isDirectory())
-        return err(appError("INVALID_INPUT", "Process cwd must be a directory"));
-    } catch {
-      return err(appError("FILE_NOT_FOUND", "Process cwd was not found"));
-    }
-    return ok(cwd);
-  }
-  validateRequest(request) {
-    if (typeof request.executable !== "string" || request.executable.trim().length === 0 || !Array.isArray(request.args) || !request.args.every((arg) => typeof arg === "string")) {
-      return err(appError("INVALID_INPUT", "Executable and args are required"));
-    }
-    if (request.cwd !== void 0 && typeof request.cwd !== "string") {
-      return err(appError("INVALID_INPUT", "Process cwd must be a path string"));
-    }
-    if (request.timeoutMs !== void 0 && (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1)) {
-      return err(appError("INVALID_INPUT", "Process timeout is invalid"));
-    }
-    return ok(void 0);
-  }
-  authorizeHandle(actor, workspaceId, processId) {
-    const owner = this.owners.get(processId);
-    if (owner === void 0)
-      return err(appError("PROCESS_NOT_FOUND", "Process was not found"));
-    if (owner.actorId !== actor.clientId || owner.workspaceId !== workspaceId) {
-      return err(appError("PERMISSION_DENIED", "Process handle is not owned by this client and workspace"));
-    }
-    return ok(void 0);
-  }
-  async getWorkspace(workspaceId) {
-    const workspace = await this.workspaces.get(workspaceId);
-    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(workspace);
-  }
-};
-
-// ../../packages/application/dist/workspace-query-service.js
-var WorkspaceQueryService = class {
-  workspaces;
-  guard;
-  treeReader;
-  constructor(workspaces, guard = new WorkspacePathGuard(), treeReader = new TreeReader()) {
-    this.workspaces = workspaces;
-    this.guard = guard;
-    this.treeReader = treeReader;
-  }
-  async tree(actor, workspaceId, request = {}) {
-    void actor;
-    const workspace = await this.workspaces.get(workspaceId);
-    if (workspace === null)
-      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
-    const resolved = await this.guard.resolveForRead(workspace, request.path ?? ".");
-    if (!resolved.ok)
-      return resolved;
-    return this.treeReader.read(resolved.value.realPath ?? resolved.value.absolutePath, request);
-  }
-};
-
-// ../../packages/application/dist/project-snapshot-service.js
-var MAX_SNAPSHOT_TREE_ENTRIES = 200;
-var MAX_SNAPSHOT_PROCESS_ERRORS = 20;
-var MAX_SNAPSHOT_ERROR_BYTES = 1024;
-var ProjectSnapshotService = class {
-  projectService;
-  gitService;
-  workspaceQuery;
-  processService;
-  constructor(workspaces, dependencies = {}) {
-    this.projectService = dependencies.projectService ?? new ProjectService(workspaces);
-    this.gitService = dependencies.gitService ?? new GitService(workspaces);
-    this.workspaceQuery = dependencies.workspaceQuery ?? new WorkspaceQueryService(workspaces);
-    this.processService = dependencies.processService ?? new ProcessService(workspaces);
-  }
-  async snapshot(actor, workspaceId) {
-    const [project, git, tree, processes] = await Promise.all([
-      this.projectService.detect(workspaceId),
-      this.gitService.status(actor, workspaceId),
-      this.workspaceQuery.tree(actor, workspaceId, { maxDepth: 1, maxEntries: MAX_SNAPSHOT_TREE_ENTRIES }),
-      this.processService.list(actor, workspaceId)
-    ]);
-    if (!project.ok)
-      return project;
-    if (!git.ok && git.error.code !== "GIT_NOT_REPOSITORY")
-      return git;
-    if (!tree.ok)
-      return tree;
-    if (!processes.ok)
-      return processes;
-    const processErrors = await collectProcessErrors(this.processService, actor, workspaceId, processes.value);
-    return ok({
-      project: project.value,
-      git: toGitSummary(git),
-      tree: tree.value,
-      runningProcesses: processes.value.filter(isRunning).map(toProcessSummary),
-      recentProcessErrors: processErrors
-    });
-  }
-};
-function toGitSummary(result) {
-  if (!result.ok)
-    return { repository: false, changedFiles: 0, stagedFiles: 0, clean: true };
-  const stagedFiles = result.value.entries.filter((entry) => entry.indexStatus !== " ").length;
-  return {
-    repository: true,
-    changedFiles: result.value.entries.length,
-    stagedFiles,
-    clean: result.value.entries.length === 0
-  };
-}
-function isRunning(process5) {
-  return process5.state === "starting" || process5.state === "running";
-}
-function toProcessSummary(process5) {
-  return { processId: process5.processId, executable: process5.executable, state: process5.state };
-}
-async function collectProcessErrors(processService, actor, workspaceId, processes) {
-  const errors = [];
-  const candidates = processes.filter((process5) => process5.state === "failed" || process5.state === "timed_out").slice(-MAX_SNAPSHOT_PROCESS_ERRORS);
-  for (const process5 of candidates) {
-    const logs = await processService.logs(actor, workspaceId, process5.processId, { tailLines: 20 });
-    if (!logs.ok)
-      continue;
-    for (const entry of logs.value.entries) {
-      if (entry.stream !== "stderr" || entry.text.trim().length === 0)
-        continue;
-      errors.push({ processId: process5.processId, message: redactProcessError(entry.text).slice(-MAX_SNAPSHOT_ERROR_BYTES) });
-      if (errors.length >= MAX_SNAPSHOT_PROCESS_ERRORS)
-        return errors;
-    }
-  }
-  return errors;
-}
-function redactProcessError(value) {
-  return value.replace(/(\bauthorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[redacted]").replace(/\b(token|secret|password|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s]+/gi, "$1=[redacted]");
-}
-
-// ../../packages/search/dist/executable-resolver.js
-var import_promises12 = require("node:fs/promises");
-var import_node_path11 = __toESM(require("node:path"), 1);
-var PathExecutableResolver2 = class {
-  environment;
-  constructor(environment = process.env) {
-    this.environment = environment;
-  }
-  async resolve(executable) {
-    if (executable.trim().length === 0)
-      return err({ code: "INVALID_INPUT", message: "Executable is required", recoverable: false });
-    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? "").split(import_node_path11.default.delimiter).filter(Boolean);
-    const candidates = import_node_path11.default.isAbsolute(executable) || executable.includes(import_node_path11.default.sep) || executable.includes("/") ? [executable] : pathEntries.flatMap((entry) => this.withWindowsExtensions(import_node_path11.default.join(entry, executable)));
-    for (const candidate of candidates) {
-      try {
-        await (0, import_promises12.access)(candidate, import_promises12.constants.F_OK);
-        if ((await (0, import_promises12.stat)(candidate)).isFile())
-          return ok(candidate);
-      } catch {
-        continue;
-      }
-    }
-    return err({ code: "EXECUTABLE_NOT_FOUND", message: `Executable '${executable}' was not found`, recoverable: true });
-  }
-  withWindowsExtensions(candidate) {
-    if (import_node_path11.default.extname(candidate).length > 0)
-      return [candidate];
-    const extensions = (this.environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
-    return [candidate, ...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`)];
-  }
-};
-
-// ../../packages/search/dist/ripgrep-adapter.js
-var import_node_child_process5 = require("node:child_process");
-var DirectProcessRunner = class {
-  run(command, args, cwd) {
-    return new Promise((resolve) => {
-      const child = (0, import_node_child_process5.spawn)(command, [...args], { cwd, shell: false, windowsHide: true });
-      let stdout = "";
-      let stderr = "";
-      const append = (current, chunk) => Buffer.from(`${current}${chunk.toString("utf8")}`, "utf8").subarray(-MAX_PROCESS_LOG_BYTES).toString("utf8");
-      child.stdout?.on("data", (chunk) => {
-        stdout = append(stdout, chunk);
-      });
-      child.stderr?.on("data", (chunk) => {
-        stderr = append(stderr, chunk);
-      });
-      child.on("error", (error46) => resolve({ exitCode: -1, stdout, stderr: `${stderr}${error46.message}` }));
-      child.on("close", (exitCode) => resolve({ exitCode: exitCode ?? -1, stdout, stderr }));
-    });
-  }
-};
-var RipgrepAdapter = class {
-  resolver;
-  runner;
-  constructor(resolver = new PathExecutableResolver2(), runner = new DirectProcessRunner()) {
-    this.resolver = resolver;
-    this.runner = runner;
-  }
-  async searchText(request) {
-    const maxResults = request.maxResults ?? DEFAULT_SEARCH_RESULTS;
-    if (request.query.length === 0 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
-      return err({ code: "INVALID_INPUT", message: "Search query or result limit is invalid", recoverable: false });
-    }
-    const executable = await this.resolver.resolve("rg");
-    if (!executable.ok)
-      return executable;
-    const args = ["--json", "--no-heading", "--color", "never", "--hidden"];
-    if (request.glob !== void 0)
-      args.push("--glob", request.glob);
-    args.push("--", request.query, ".");
-    const processResult = await this.runner.run(executable.value, args, request.rootPath);
-    if (processResult.exitCode !== 0 && processResult.exitCode !== 1) {
-      return err({ code: "INTERNAL_ERROR", message: "Search process failed", recoverable: true });
-    }
-    const matches = [];
-    for (const line of processResult.stdout.split(/\r?\n/)) {
-      const match = this.parseMatch(line);
-      if (match === null)
-        continue;
-      matches.push(match);
-      if (matches.length >= maxResults)
-        break;
-    }
-    return ok({ matches, truncated: matches.length >= maxResults && processResult.stdout.includes('"type":"match"') });
-  }
-  async searchFiles(request) {
-    const maxResults = request.maxResults ?? DEFAULT_SEARCH_RESULTS;
-    if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SEARCH_RESULTS) {
-      return err({ code: "INVALID_INPUT", message: "Search result limit is invalid", recoverable: false });
-    }
-    const executable = await this.resolver.resolve("rg");
-    if (!executable.ok)
-      return executable;
-    const args = ["--files", "--hidden"];
-    if (request.glob !== void 0)
-      args.push("--glob", request.glob);
-    args.push("--");
-    const processResult = await this.runner.run(executable.value, args, request.rootPath);
-    if (processResult.exitCode !== 0 && processResult.exitCode !== 1) {
-      return err({ code: "INTERNAL_ERROR", message: "Search process failed", recoverable: true });
-    }
-    const paths = processResult.stdout.split(/\r?\n/).filter((entry) => entry.length > 0).slice(0, maxResults);
-    return ok({ paths, truncated: paths.length >= maxResults && processResult.stdout.split(/\r?\n/).filter(Boolean).length > maxResults });
-  }
-  parseMatch(line) {
-    try {
-      const value = JSON.parse(line);
-      if (!this.isMatchRecord(value))
-        return null;
-      return { path: value.data.path.text, line: value.data.line_number, text: value.data.lines.text.replace(/\r?\n$/, "") };
-    } catch {
-      return null;
-    }
-  }
-  isMatchRecord(value) {
-    if (typeof value !== "object" || value === null || !("type" in value) || value.type !== "match" || !("data" in value))
-      return false;
-    const data = value.data;
-    if (typeof data !== "object" || data === null || !("path" in data) || !("line_number" in data) || !("lines" in data))
-      return false;
-    if (typeof data.path !== "object" || data.path === null || !("text" in data.path) || typeof data.path.text !== "string")
-      return false;
-    if (typeof data.line_number !== "number" || typeof data.lines !== "object" || data.lines === null || !("text" in data.lines) || typeof data.lines.text !== "string")
-      return false;
-    return true;
-  }
-};
-
-// ../../packages/application/dist/search-service.js
-var SearchService = class {
-  workspaces;
-  adapter;
-  constructor(workspaces, adapter = new RipgrepAdapter()) {
-    this.workspaces = workspaces;
-    this.adapter = adapter;
-  }
-  async searchText(actor, workspaceId, request) {
-    void actor;
-    const validation = this.validateLimit(request.maxResults);
-    if (!validation.ok)
-      return validation;
-    if (request.query.length === 0)
-      return err(appError("INVALID_INPUT", "Search query is required"));
-    const workspace = await this.workspaces.get(workspaceId);
-    if (workspace === null)
-      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
-    return this.adapter.searchText({
-      rootPath: workspace.realRootPath,
-      query: request.query,
-      ...request.glob === void 0 ? {} : { glob: request.glob },
-      ...request.maxResults === void 0 ? {} : { maxResults: request.maxResults }
-    });
-  }
-  async searchFiles(actor, workspaceId, request) {
-    void actor;
-    const validation = this.validateLimit(request.maxResults);
-    if (!validation.ok)
-      return validation;
-    const workspace = await this.workspaces.get(workspaceId);
-    if (workspace === null)
-      return err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found"));
-    return this.adapter.searchFiles({
-      rootPath: workspace.realRootPath,
-      ...request.glob === void 0 ? {} : { glob: request.glob },
-      ...request.maxResults === void 0 ? {} : { maxResults: request.maxResults }
-    });
-  }
-  validateLimit(limit) {
-    return limit === void 0 || Number.isInteger(limit) && limit >= 1 && limit <= 500 ? ok(void 0) : err(appError("INVALID_INPUT", "Search result limit is invalid"));
-  }
-};
-
-// ../../packages/application/dist/workspace-info-service.js
-var WorkspaceInfoService = class {
-  workspaces;
-  constructor(workspaces) {
-    this.workspaces = workspaces;
-  }
-  async list(actor) {
-    void actor;
-    const workspaces = await this.workspaces.list();
-    return ok(workspaces.map(toWorkspaceInfo));
-  }
-  async info(actor, workspaceId) {
-    void actor;
-    const workspace = await this.workspaces.get(workspaceId);
-    return workspace === null ? err(appError("WORKSPACE_NOT_FOUND", "Workspace was not found")) : ok(toWorkspaceInfo(workspace));
-  }
-};
-function toWorkspaceInfo(workspace) {
-  return {
-    id: workspace.id,
-    displayName: workspace.displayName,
-    rootPath: workspace.rootPath,
-    realRootPath: workspace.realRootPath,
-    createdAt: workspace.createdAt
-  };
 }
 
 // ../../packages/mcp-server/dist/result-mapper.js
@@ -30260,8 +30591,9 @@ function mapResult(result) {
   if (!result.ok)
     return mapError(result.error);
   const structuredContent = toStructuredContent(result.value);
+  const image = extractImageContent(result.value);
   return {
-    content: [{ type: "text", text: toText(result.value) }],
+    content: image === void 0 ? [{ type: "text", text: toText(result.value) }] : [image, { type: "text", text: toText(result.value) }],
     ...structuredContent === void 0 ? {} : { structuredContent }
   };
 }
@@ -30283,6 +30615,17 @@ function toStructuredContent(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return { value };
   return value;
+}
+function extractImageContent(value) {
+  if (typeof value !== "object" || value === null)
+    return void 0;
+  const record2 = value;
+  if (record2.encoding !== "base64" || typeof record2.content !== "string" || typeof record2.mimeType !== "string") {
+    return void 0;
+  }
+  if (!record2.mimeType.startsWith("image/"))
+    return void 0;
+  return { type: "image", data: record2.content, mimeType: record2.mimeType };
 }
 
 // ../../packages/mcp-server/dist/tools/tool-types.js
@@ -30336,7 +30679,12 @@ var deleteFileSchema = external_exports.object({
   userConfirmed: external_exports.boolean().optional()
 }).strict();
 var workspaceListSchema = external_exports.object({}).strict();
-var processStartSchema = external_exports.object({ workspaceId: workspaceIdSchema, executable: external_exports.string().trim().min(1).max(1024), args: external_exports.array(external_exports.string().max(32768)).max(128), cwd: pathSchema.optional(), timeoutMs: external_exports.number().int().min(1).max(30 * 60 * 1e3).optional() }).strict();
+var workspaceRegisterSchema = external_exports.object({
+  parentWorkspaceId: workspaceIdSchema,
+  path: pathSchema,
+  displayName: external_exports.string().trim().min(1).max(256).optional()
+}).strict();
+var processStartSchema = external_exports.object({ workspaceId: workspaceIdSchema, executable: external_exports.string().trim().min(1).max(1024), args: external_exports.array(external_exports.string().max(32768)).max(128), cwd: pathSchema.optional(), timeoutMs: external_exports.number().int().min(1).max(4 * 60 * 60 * 1e3).optional() }).strict();
 var processHandleSchema = external_exports.object({ workspaceId: workspaceIdSchema, processId: external_exports.string().trim().min(1).max(128) }).strict();
 var processLogsSchema = processHandleSchema.extend({ tailLines: external_exports.number().int().min(1).max(1e4).optional(), sinceSequence: external_exports.number().int().min(0).optional() }).strict();
 var codexStatusSchema = external_exports.object({}).strict();
@@ -30359,7 +30707,7 @@ var shellCapabilitySchema = external_exports.object({
   cwd: pathSchema.optional(),
   execution: external_exports.enum(["foreground", "background", "auto"]).default("auto"),
   task_id: external_exports.string().trim().min(1).max(128).optional(),
-  timeout_seconds: external_exports.number().min(0.1).max(600).optional(),
+  timeout_seconds: external_exports.number().min(0.1).max(14400).optional(),
   max_output_bytes: external_exports.number().int().min(1).max(8 * 1024 * 1024).optional(),
   tail_lines: external_exports.number().int().min(0).max(1e4).optional(),
   include_stdout: external_exports.boolean().default(true),
@@ -30377,7 +30725,7 @@ var domCdpCapabilitySchema = external_exports.object({
   steps: external_exports.array(domStepSchema).min(1).max(100).optional(),
   tab_id: external_exports.string().trim().min(1).max(256).optional(),
   display_id: external_exports.string().trim().min(1).max(128).optional(),
-  timeout_seconds: external_exports.number().min(0.1).max(300).optional(),
+  timeout_seconds: external_exports.number().min(0.1).max(3600).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema
 }).strict();
@@ -30385,7 +30733,7 @@ var accessibilityCapabilitySchema = external_exports.object({
   action: external_exports.enum(["status", "launch_app", "activate_app", "list_windows", "observe", "observe_summary", "observe_changes", "inspect_elements", "find_element", "click", "focus", "read_value", "set_value", "select_item", "menu_select", "close_window", "minimize_window", "maximize_window", "restore_window", "set_window_frame"]),
   parameters: capabilityParametersSchema.optional(),
   display_id: external_exports.string().trim().min(1).max(128).optional(),
-  timeout_seconds: external_exports.number().min(0.1).max(600).optional(),
+  timeout_seconds: external_exports.number().min(0.1).max(14400).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema
 }).strict();
@@ -30393,7 +30741,7 @@ var inputEventCapabilitySchema = external_exports.object({
   operation: external_exports.enum(["type_text", "paste_text", "press_key", "hotkey", "key_down", "key_up", "mouse_move", "click", "double_click", "right_click", "drag", "scroll", "button_down", "button_up", "release_all", "sequence"]),
   parameters: capabilityParametersSchema.optional(),
   display_id: external_exports.string().trim().min(1).max(128).optional(),
-  timeout_seconds: external_exports.number().min(0.1).max(600).optional(),
+  timeout_seconds: external_exports.number().min(0.1).max(14400).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema
 }).strict();
@@ -30406,13 +30754,13 @@ var visionCapabilitySchema = external_exports.object({
   exact: external_exports.boolean().default(false),
   min_confidence: external_exports.number().min(0).max(1).optional(),
   display_id: external_exports.string().trim().min(1).max(128).optional(),
-  timeout_seconds: external_exports.number().min(0.1).max(600).optional(),
+  timeout_seconds: external_exports.number().min(0.1).max(14400).optional(),
   ...capabilityRequestSchema
 }).strict();
 var windowCapabilitySchema = external_exports.object({
   operation: external_exports.enum(["list", "get_active", "get_bounds", "get_display", "activate", "close", "minimize", "maximize", "restore", "move", "resize", "set_window_frame"]),
   parameters: capabilityParametersSchema.optional(),
-  timeout_seconds: external_exports.number().min(0.1).max(600).optional(),
+  timeout_seconds: external_exports.number().min(0.1).max(14400).optional(),
   ...capabilityRequestSchema
 }).strict();
 var healthCapabilitySchema = external_exports.object({
@@ -30817,11 +31165,23 @@ function workspaceTools(context) {
   return [
     defineTool({
       name: "workspace_list",
-      description: "List all registered workspaces/drive roots available to lnwjud. Call this first to discover workspace IDs.",
+      description: "List all registered workspaces/drive roots available to lnwjud. Call this first to discover workspace IDs. Entries include kind=machine_root|project.",
       permission: "DANGEROUS",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: workspaceListSchema,
       handler: async () => context.services.workspaceInfo === void 0 ? missingService() : context.services.workspaceInfo.list === void 0 ? missingService() : context.services.workspaceInfo.list(context.actor)
+    }),
+    defineTool({
+      name: "workspace_register",
+      description: "Register an existing project directory under the E:\\ machine root. parentWorkspaceId must be the E:\\ machine root from workspace_list. Idempotent for the same path.",
+      permission: "WRITE",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: workspaceRegisterSchema,
+      handler: async (input) => context.services.workspaceInfo === void 0 ? missingService() : context.services.workspaceInfo.register === void 0 ? missingService() : context.services.workspaceInfo.register(context.actor, {
+        parentWorkspaceId: input.parentWorkspaceId,
+        path: input.path,
+        ...input.displayName === void 0 ? {} : { displayName: input.displayName }
+      })
     }),
     defineTool({
       name: "workspace_info",
@@ -30858,8 +31218,10 @@ function workspaceTools(context) {
 var ToolRegistry = class {
   tools;
   diagnostic;
+  activity;
   constructor(services, actor, options = {}) {
     this.diagnostic = options.diagnostic;
+    this.activity = options.activityTracker ?? new ActivityTracker(options.activity);
     const context = { services, actor };
     const workspace = workspaceTools(context);
     const files = fileTools(context);
@@ -30879,24 +31241,54 @@ var ToolRegistry = class {
   list() {
     return this.tools;
   }
+  listInFlight() {
+    return this.activity.listInFlight();
+  }
   async invoke(name, input) {
+    const callId = await this.activity.begin(name, input);
+    const started = Date.now();
     try {
       const tool = this.tools.find((candidate) => candidate.name === name);
-      if (tool === void 0)
-        return mapError(appError("INVALID_INPUT", "Unknown MCP tool"));
+      if (tool === void 0) {
+        const response2 = mapError(appError("INVALID_INPUT", "Unknown MCP tool"));
+        await this.activity.end(callId, "INVALID_INPUT", Date.now() - started);
+        return response2;
+      }
       const parsed = tool.parse(input);
-      if (!parsed.ok)
-        return mapError(parsed.error);
-      return mapResult(await tool.execute(parsed.value));
+      if (!parsed.ok) {
+        const response2 = mapError(parsed.error);
+        await this.activity.end(callId, parsed.error.code, Date.now() - started);
+        return response2;
+      }
+      const response = mapResult(await tool.execute(parsed.value));
+      const resultCode = response.isError === true ? readErrorCode(response) ?? "ERROR" : "SUCCESS";
+      await this.activity.end(callId, resultCode, Date.now() - started);
+      return response;
     } catch (error46) {
-      return mapError(sanitizeException(error46, this.diagnostic));
+      const response = mapError(sanitizeException(error46, this.diagnostic));
+      await this.activity.end(callId, "INTERNAL_ERROR", Date.now() - started);
+      return response;
     }
   }
 };
+function readErrorCode(response) {
+  const content = response.structuredContent;
+  if (typeof content !== "object" || content === null || !("error" in content))
+    return void 0;
+  const error46 = content.error;
+  if (typeof error46 !== "object" || error46 === null || !("code" in error46))
+    return void 0;
+  const code = error46.code;
+  return typeof code === "string" ? code : void 0;
+}
 
 // ../../packages/mcp-server/dist/server.js
 function createMcpServer(options) {
-  const registry2 = new ToolRegistry(options.services, options.actor, options.diagnostic === void 0 ? {} : { diagnostic: options.diagnostic });
+  const registry2 = new ToolRegistry(options.services, options.actor, {
+    ...options.diagnostic === void 0 ? {} : { diagnostic: options.diagnostic },
+    ...options.activity === void 0 ? {} : { activity: options.activity },
+    ...options.activityTracker === void 0 ? {} : { activityTracker: options.activityTracker }
+  });
   const server = new McpServer({ name: "lnwjud", version: "0.1.0" }, { capabilities: { tools: {} } });
   for (const tool of registry2.list()) {
     server.registerTool(tool.name, {
@@ -30904,8 +31296,7 @@ function createMcpServer(options) {
       inputSchema: tool.inputSchema,
       annotations: tool.annotations
     }, async (input, context) => {
-      void context;
-      return registry2.invoke(tool.name, input);
+      return withProgressHeartbeat(context, tool.name, async () => registry2.invoke(tool.name, input));
     });
   }
   return server;
@@ -31396,7 +31787,15 @@ function toError(value) {
 }
 
 // ../../packages/mcp-server/dist/stdio.js
+function isBenignStdioPipeError(error46) {
+  return /EPIPE|ECONNRESET|broken pipe/i.test(error46.message);
+}
 function writeStdioDiagnostic(error46) {
+  if (isBenignStdioPipeError(error46)) {
+    process.stderr.write(`lnwjud MCP stdio: peer closed (${error46.message})
+`);
+    return;
+  }
   process.stderr.write(`lnwjud MCP stdio error: ${error46.message}
 `);
 }
@@ -31432,7 +31831,7 @@ var SqliteAuditRepository = class {
     } catch {
       return null;
     }
-    if (!isRecord(metadata))
+    if (!isRecord2(metadata))
       return null;
     return {
       id: value.id,
@@ -31456,7 +31855,7 @@ var SqliteAuditRepository = class {
     return typeof value.id === "string" && typeof value.timestamp === "string" && typeof value.actor_id === "string" && typeof value.actor_name === "string" && (typeof value.workspace_id === "string" || value.workspace_id === null) && typeof value.action === "string" && (typeof value.target_summary === "string" || value.target_summary === null) && (typeof value.permission_decision === "string" || value.permission_decision === null) && typeof value.result_code === "string" && typeof value.duration_ms === "number" && typeof value.metadata_json === "string";
   }
 };
-function isRecord(value) {
+function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -31643,13 +32042,15 @@ var SqliteWorkspaceRepository = class {
 };
 
 // ../cli/src/runtime/stdio-mcp-runtime.ts
-var import_node_path14 = __toESM(require("node:path"), 1);
+var import_node_fs3 = require("node:fs");
+var import_node_path20 = __toESM(require("node:path"), 1);
+var import_node_url = require("node:url");
 
 // ../../packages/audit/dist/audit-service.js
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 
 // ../../packages/audit/dist/redactor.js
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto7 = require("node:crypto");
 var SENSITIVE_KEY = /authorization|token|secret|password|api[_-]?key|private[_-]?key|credential/i;
 var BEARER_VALUE2 = /\bBearer\s+[^\s,;]+/gi;
 var AUTHORIZATION_HEADER2 = /(Authorization\s*:\s*Bearer\s+)[^\s,;]+/gi;
@@ -31670,20 +32071,20 @@ var Redactor = class {
   }
   redactRecord(value) {
     const redacted = this.redact(value);
-    return isRecord2(redacted) ? redacted : {};
+    return isRecord3(redacted) ? redacted : {};
   }
 };
 function codexInstructionSummary(codexTaskId, instruction) {
   return {
     codexTaskId,
     instructionLength: Buffer.byteLength(instruction, "utf8"),
-    instructionSha256: (0, import_node_crypto6.createHash)("sha256").update(instruction, "utf8").digest("hex")
+    instructionSha256: (0, import_node_crypto7.createHash)("sha256").update(instruction, "utf8").digest("hex")
   };
 }
 function redactString(value) {
   return value.replace(AUTHORIZATION_HEADER2, "$1[REDACTED]").replace(BEARER_VALUE2, "Bearer [REDACTED]").replace(ENV_SECRET_ASSIGNMENT, "$1=[REDACTED]").replace(API_KEY_PREFIX, "[REDACTED]");
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -31697,7 +32098,7 @@ var AuditService = class {
   }
   async record(input) {
     const event = {
-      id: (0, import_node_crypto7.randomUUID)(),
+      id: (0, import_node_crypto8.randomUUID)(),
       timestamp: input.timestamp ?? (/* @__PURE__ */ new Date()).toISOString(),
       actorId: input.actorId,
       actorName: input.actorName,
@@ -31723,7 +32124,967 @@ var AuditService = class {
       metadata: { ...codexInstructionSummary(input.codexTaskId, input.instruction) }
     });
   }
+  recordMcpTool(input) {
+    return this.record({
+      ...input.timestamp === void 0 ? {} : { timestamp: input.timestamp },
+      actorId: input.actorId,
+      actorName: input.actorName,
+      ...input.workspaceId === void 0 ? {} : { workspaceId: input.workspaceId },
+      action: `mcp_tool:${input.toolName}`,
+      ...input.targetSummary === void 0 ? {} : { targetSummary: input.targetSummary },
+      resultCode: input.resultCode,
+      durationMs: input.durationMs,
+      metadata: {
+        toolName: input.toolName,
+        callId: input.callId,
+        phase: input.phase
+      }
+    });
+  }
 };
+
+// ../../packages/capabilities/dist/local-capability-service.js
+var LocalCapabilityService = class {
+  backends;
+  constructor(backends) {
+    this.backends = backends;
+  }
+  execute(tool, input) {
+    const backend = this.backendFor(tool);
+    return backend === void 0 ? Promise.resolve(err(appError("INVALID_INPUT", "Capability tool is not supported"))) : backend.execute(input);
+  }
+  backendFor(tool) {
+    switch (tool) {
+      case "shell":
+        return this.backends.shell;
+      case "dom_cdp":
+        return this.backends.domCdp;
+      case "accessibility":
+        return this.backends.accessibility;
+      case "input_event":
+        return this.backends.inputEvent;
+      case "vision":
+        return this.backends.vision;
+      case "window":
+        return this.backends.window;
+      case "health":
+        return this.backends.health;
+    }
+  }
+};
+
+// ../../packages/capabilities/dist/shell-backend.js
+var import_node_child_process6 = require("node:child_process");
+var import_promises14 = require("node:fs/promises");
+var import_node_path15 = __toESM(require("node:path"), 1);
+var import_node_crypto9 = require("node:crypto");
+var SHELL_OPERATIONS = ["run", "status", "wait", "logs", "result", "cancel", "resume", "approve", "deny"];
+var DEFAULT_TIMEOUT_SECONDS = 3600;
+var DEFAULT_AUTO_WAIT_SECONDS = 1;
+var DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+var MAX_TIMEOUT_SECONDS = 14400;
+var MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+var ShellCapabilityBackend = class {
+  tasks = /* @__PURE__ */ new Map();
+  executableResolver;
+  terminator;
+  allowedRoots;
+  allowedRootsProvider;
+  defaultTimeoutSeconds;
+  autoWaitSeconds;
+  maxOutputBytes;
+  constructor(options) {
+    if (options.allowedRoots.length === 0)
+      throw new Error("At least one local capability root is required");
+    this.allowedRoots = options.allowedRoots.map((root) => import_node_path15.default.resolve(root));
+    this.allowedRootsProvider = options.allowedRootsProvider;
+    this.executableResolver = options.executableResolver ?? new PathExecutableResolver();
+    this.terminator = options.terminator ?? new WindowsProcessTree();
+    this.defaultTimeoutSeconds = clampNumber(options.defaultTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, 0.1, MAX_TIMEOUT_SECONDS);
+    this.autoWaitSeconds = clampNumber(options.autoWaitSeconds ?? DEFAULT_AUTO_WAIT_SECONDS, 0, DEFAULT_TIMEOUT_SECONDS);
+    this.maxOutputBytes = Math.floor(clampNumber(options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES, 1, MAX_OUTPUT_BYTES));
+  }
+  async execute(input) {
+    const parsed = parseShellRequest(input, this.defaultTimeoutSeconds, this.maxOutputBytes);
+    if (!parsed.ok)
+      return parsed;
+    switch (parsed.value.operation) {
+      case "run":
+        return this.run(parsed.value);
+      case "status":
+        return this.taskSnapshot(parsed.value.taskId);
+      case "wait":
+        return this.wait(parsed.value);
+      case "logs":
+        return this.taskSnapshot(parsed.value.taskId, parsed.value.tailLines);
+      case "result":
+        return this.taskSnapshot(parsed.value.taskId);
+      case "cancel":
+        return this.cancel(parsed.value.taskId);
+      case "resume":
+      case "approve":
+      case "deny":
+        return err(appError("INVALID_INPUT", `${parsed.value.operation} is not required by the local task runner`));
+    }
+  }
+  async run(request) {
+    if (request.executable === void 0)
+      return err(appError("INVALID_INPUT", "Executable is required"));
+    if (request.privilege === "admin")
+      return err(appError("PERMISSION_DENIED", "Administrator access is not available to the local runner"));
+    if (isDeleteLikeShellCommand(request.executable, request.arguments)) {
+      return err(appError("PERMISSION_REQUIRED", "Delete/remove commands are blocked. Ask the user to confirm, then use delete_file with userConfirmed: true"));
+    }
+    const cwd = await this.resolveCwd(request.cwd);
+    if (!cwd.ok)
+      return cwd;
+    const executable = await this.executableResolver.resolve(request.executable);
+    if (!executable.ok)
+      return executable;
+    const invocation = toSpawnInvocation2(executable.value, request.arguments);
+    if (!invocation.ok)
+      return invocation;
+    if (request.dryRun) {
+      return ok({ dry_run: true, executable: invocation.value.executable, arguments: [...invocation.value.args], cwd: cwd.value });
+    }
+    let child;
+    try {
+      child = (0, import_node_child_process6.spawn)(invocation.value.executable, [...invocation.value.args], {
+        cwd: cwd.value,
+        env: createSafeEnvironment2(process.env),
+        shell: false,
+        windowsHide: false,
+        ...invocation.value.windowsVerbatimArguments === void 0 ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }
+      });
+    } catch {
+      return err(appError("INTERNAL_ERROR", "Local task could not start", true));
+    }
+    let resolveCompletion;
+    const completion = new Promise((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const record2 = {
+      taskId: (0, import_node_crypto9.randomUUID)(),
+      child,
+      includeStdout: request.includeStdout,
+      includeStderr: request.includeStderr,
+      maxOutputBytes: request.maxOutputBytes,
+      stdout: new OutputCapture(request.maxOutputBytes),
+      stderr: new OutputCapture(request.maxOutputBytes),
+      startedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      completion,
+      resolveCompletion,
+      state: "running"
+    };
+    this.tasks.set(record2.taskId, record2);
+    child.stdout?.on("data", (chunk) => record2.stdout.append(chunk));
+    child.stderr?.on("data", (chunk) => record2.stderr.append(chunk));
+    child.once("error", () => {
+      if (record2.state === "running")
+        this.finish(record2, "failed", -1, "Local task failed to start");
+    });
+    child.once("close", (exitCode) => {
+      if (record2.state !== "running")
+        return;
+      this.finish(record2, exitCode === 0 ? "completed" : "failed", exitCode ?? -1);
+    });
+    record2.timer = setTimeout(() => {
+      void this.timeout(record2);
+    }, request.timeoutSeconds * 1e3);
+    if (request.execution === "background")
+      return ok(this.snapshot(record2));
+    await this.waitFor(record2, request.execution === "auto" ? this.autoWaitSeconds : request.timeoutSeconds);
+    return ok(this.snapshot(record2));
+  }
+  async wait(request) {
+    const record2 = this.getTask(request.taskId);
+    if (!record2.ok)
+      return record2;
+    await this.waitFor(record2.value, request.timeoutSeconds);
+    return ok(this.snapshot(record2.value, request.tailLines));
+  }
+  async waitFor(record2, seconds) {
+    if (record2.state !== "running" || seconds <= 0)
+      return;
+    await Promise.race([record2.completion, delay(seconds * 1e3)]);
+  }
+  async timeout(record2) {
+    if (record2.state !== "running")
+      return;
+    this.finish(record2, "timed_out", -1, "Local task timed out");
+    const pid = record2.child.pid;
+    if (pid !== void 0)
+      await this.terminator.stop(record2.child, pid);
+  }
+  async cancel(taskId) {
+    const record2 = this.getTask(taskId);
+    if (!record2.ok)
+      return record2;
+    if (record2.value.state === "running") {
+      this.finish(record2.value, "cancelled", -1);
+      const pid = record2.value.child.pid;
+      if (pid !== void 0)
+        await this.terminator.stop(record2.value.child, pid);
+    }
+    return ok(this.snapshot(record2.value));
+  }
+  taskSnapshot(taskId, tailLines) {
+    const record2 = this.getTask(taskId);
+    return record2.ok ? ok(this.snapshot(record2.value, tailLines)) : record2;
+  }
+  getTask(taskId) {
+    if (taskId === void 0)
+      return err(appError("INVALID_INPUT", "Task ID is required"));
+    const task = this.tasks.get(taskId);
+    return task === void 0 ? err(appError("PROCESS_NOT_FOUND", "Task was not found")) : ok(task);
+  }
+  async resolveCwd(requestedCwd) {
+    const configuredRoots = this.allowedRootsProvider === void 0 ? this.allowedRoots : await this.allowedRootsProvider();
+    const canonicalRoots = [];
+    for (const root of configuredRoots) {
+      try {
+        if ((await (0, import_promises14.stat)(root)).isDirectory())
+          canonicalRoots.push(await (0, import_promises14.realpath)(root));
+      } catch {
+        continue;
+      }
+    }
+    if (canonicalRoots.length === 0)
+      return err(appError("FILE_NOT_FOUND", "No local capability root is available"));
+    const candidate = import_node_path15.default.resolve(requestedCwd ?? canonicalRoots[0]);
+    let canonicalCandidate;
+    try {
+      canonicalCandidate = await (0, import_promises14.realpath)(candidate);
+      if (!(await (0, import_promises14.stat)(canonicalCandidate)).isDirectory())
+        return err(appError("INVALID_INPUT", "Working directory must be a directory"));
+    } catch {
+      return err(appError("FILE_NOT_FOUND", "Working directory was not found"));
+    }
+    if (!canonicalRoots.some((root) => isWithin2(root, canonicalCandidate))) {
+      return err(appError("PATH_OUTSIDE_WORKSPACE", "Working directory is outside configured local roots"));
+    }
+    return ok(canonicalCandidate);
+  }
+  finish(record2, state, exitCode, errorMessage) {
+    if (record2.state !== "running")
+      return;
+    record2.state = state;
+    if (exitCode !== void 0)
+      record2.exitCode = exitCode;
+    if (errorMessage !== void 0)
+      record2.errorMessage = errorMessage;
+    record2.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (record2.timer !== void 0)
+      clearTimeout(record2.timer);
+    record2.resolveCompletion();
+  }
+  snapshot(record2, tailLines) {
+    const stdout = record2.includeStdout ? record2.stdout.text(tailLines) : void 0;
+    const stderr = record2.includeStderr ? record2.stderr.text(tailLines) : void 0;
+    return {
+      task_id: record2.taskId,
+      state: record2.state,
+      ...record2.exitCode === void 0 ? {} : { exit_code: record2.exitCode },
+      ...stdout === void 0 ? {} : { stdout },
+      ...stderr === void 0 ? {} : { stderr },
+      ...record2.errorMessage === void 0 ? {} : { error: record2.errorMessage },
+      started_at: record2.startedAt,
+      ...record2.finishedAt === void 0 ? {} : { finished_at: record2.finishedAt },
+      truncated: record2.stdout.truncated || record2.stderr.truncated
+    };
+  }
+};
+var OutputCapture = class {
+  maxBytes;
+  chunks = [];
+  bytes = 0;
+  truncated = false;
+  constructor(maxBytes) {
+    this.maxBytes = maxBytes;
+  }
+  append(value) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+    const remaining = this.maxBytes - this.bytes;
+    if (remaining <= 0) {
+      this.truncated = true;
+      return;
+    }
+    this.chunks.push(chunk.subarray(0, remaining));
+    this.bytes += Math.min(chunk.byteLength, remaining);
+    if (chunk.byteLength > remaining)
+      this.truncated = true;
+  }
+  text(tailLines) {
+    const value = redactText(Buffer.concat(this.chunks).toString("utf8"));
+    if (tailLines === void 0 || tailLines < 1)
+      return tailLines === 0 ? "" : value;
+    const lines = value.split(/\r?\n/);
+    return lines.slice(-tailLines).join("\n");
+  }
+};
+function parseShellRequest(value, defaultTimeoutSeconds, maxOutputBytes) {
+  if (!isRecord4(value))
+    return err(appError("INVALID_INPUT", "Shell input must be an object"));
+  const operation = value.operation === void 0 ? "run" : value.operation;
+  if (!isShellOperation(operation))
+    return err(appError("INVALID_INPUT", "Shell operation is invalid"));
+  const executable = value.executable === void 0 ? void 0 : value.executable;
+  if (executable !== void 0 && (typeof executable !== "string" || executable.trim().length === 0))
+    return err(appError("INVALID_INPUT", "Executable is invalid"));
+  const rawArguments = value.arguments === void 0 ? [] : value.arguments;
+  if (!Array.isArray(rawArguments) || !rawArguments.every((item) => typeof item === "string"))
+    return err(appError("INVALID_INPUT", "Arguments must be strings"));
+  const privilege = value.privilege === void 0 ? "user" : value.privilege;
+  if (privilege !== "user" && privilege !== "admin")
+    return err(appError("INVALID_INPUT", "Privilege is invalid"));
+  const execution = value.execution === void 0 ? "auto" : value.execution;
+  if (execution !== "foreground" && execution !== "background" && execution !== "auto")
+    return err(appError("INVALID_INPUT", "Execution mode is invalid"));
+  const cwd = value.cwd === void 0 ? void 0 : value.cwd;
+  if (cwd !== void 0 && (typeof cwd !== "string" || cwd.includes("\0")))
+    return err(appError("INVALID_INPUT", "Working directory is invalid"));
+  const taskId = value.task_id === void 0 ? void 0 : value.task_id;
+  if (taskId !== void 0 && (typeof taskId !== "string" || taskId.trim().length === 0))
+    return err(appError("INVALID_INPUT", "Task ID is invalid"));
+  const timeoutSeconds = value.timeout_seconds === void 0 ? defaultTimeoutSeconds : value.timeout_seconds;
+  if (typeof timeoutSeconds !== "number" || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 0.1 || timeoutSeconds > MAX_TIMEOUT_SECONDS)
+    return err(appError("INVALID_INPUT", "Timeout is invalid"));
+  const requestedMaxBytes = value.max_output_bytes === void 0 ? maxOutputBytes : value.max_output_bytes;
+  if (typeof requestedMaxBytes !== "number" || !Number.isInteger(requestedMaxBytes) || requestedMaxBytes < 1 || requestedMaxBytes > MAX_OUTPUT_BYTES)
+    return err(appError("INVALID_INPUT", "Output limit is invalid"));
+  const tailLines = value.tail_lines === void 0 ? void 0 : value.tail_lines;
+  if (tailLines !== void 0 && (typeof tailLines !== "number" || !Number.isInteger(tailLines) || tailLines < 0 || tailLines > 1e4))
+    return err(appError("INVALID_INPUT", "Tail limit is invalid"));
+  const includeStdout = value.include_stdout === void 0 ? true : value.include_stdout;
+  const includeStderr = value.include_stderr === void 0 ? true : value.include_stderr;
+  const dryRun = value.dry_run === void 0 ? false : value.dry_run;
+  if (typeof includeStdout !== "boolean" || typeof includeStderr !== "boolean" || typeof dryRun !== "boolean")
+    return err(appError("INVALID_INPUT", "Shell flags are invalid"));
+  return ok({ operation, ...executable === void 0 ? {} : { executable: executable.trim() }, arguments: rawArguments, privilege, ...cwd === void 0 ? {} : { cwd }, execution, ...taskId === void 0 ? {} : { taskId }, timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...tailLines === void 0 ? {} : { tailLines }, includeStdout, includeStderr, dryRun });
+}
+function isShellOperation(value) {
+  return typeof value === "string" && SHELL_OPERATIONS.some((operation) => operation === value);
+}
+function isRecord4(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isWithin2(root, candidate) {
+  const relative = import_node_path15.default.relative(root, candidate);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${import_node_path15.default.sep}`) && !import_node_path15.default.isAbsolute(relative);
+}
+function toSpawnInvocation2(executable, args) {
+  if (process.platform !== "win32" || ![".cmd", ".bat"].includes(import_node_path15.default.extname(executable).toLowerCase()))
+    return ok({ executable, args });
+  const values = [executable, ...args];
+  if (values.some((value) => /[\r\n&|<>^%!]/.test(value) || value.includes('"')))
+    return err(appError("INVALID_INPUT", "Windows command shim arguments contain unsupported shell metacharacters"));
+  const commandLine = values.map((value) => /\s/.test(value) ? `"${value}"` : value).join(" ");
+  return ok({ executable: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", commandLine], windowsVerbatimArguments: true });
+}
+function createSafeEnvironment2(source) {
+  const allowed = new Set(["PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "LANG", "LC_ALL", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ComSpec"].map((key) => process.platform === "win32" ? key.toLowerCase() : key));
+  return Object.fromEntries(Object.entries(source).filter(([key, entry]) => {
+    const normalizedKey = process.platform === "win32" ? key.toLowerCase() : key;
+    return entry !== void 0 && allowed.has(normalizedKey);
+  }));
+}
+function redactText(value) {
+  return value.replace(/(\bauthorization\s*:\s*bearer\s+)[^\s]+/gi, "$1[redacted]").replace(/\b(token|secret|password|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s]+/gi, "$1=[redacted]");
+}
+function clampNumber(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+function isDeleteLikeShellCommand(executable, args) {
+  const basename = import_node_path15.default.win32.basename(executable).toLowerCase();
+  const deleteNames = /* @__PURE__ */ new Set(["del", "del.exe", "erase", "erase.exe", "rm", "rm.exe", "rmdir", "rmdir.exe", "rd", "rd.exe", "unlink", "unlink.exe"]);
+  if (deleteNames.has(basename))
+    return true;
+  const joined = args.map((entry) => entry.toLowerCase()).join(" ");
+  if (basename === "powershell.exe" || basename === "powershell" || basename === "pwsh.exe" || basename === "pwsh") {
+    return /\bremove-item\b/.test(joined) || /\brm\b/.test(joined) || /\bdel\b/.test(joined);
+  }
+  if (basename === "cmd.exe" || basename === "cmd") {
+    return /(^|[\s&|])(del|erase|rd|rmdir)\b/.test(joined);
+  }
+  return false;
+}
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+// ../../packages/capabilities/dist/browser-cdp-protocol.js
+var import_promises15 = require("node:fs/promises");
+var import_node_fs2 = require("node:fs");
+var import_node_os2 = __toESM(require("node:os"), 1);
+var import_node_path16 = __toESM(require("node:path"), 1);
+var import_node_child_process7 = require("node:child_process");
+var NodeBrowserCdpProtocol = class {
+  port;
+  profileDir;
+  chromeExecutable;
+  constructor(options = {}) {
+    this.port = options.port ?? readPort(process.env.LNWJUD_BROWSER_CDP_PORT);
+    this.profileDir = options.profileDir ?? process.env.LNWJUD_BROWSER_PROFILE ?? import_node_path16.default.join(import_node_os2.default.tmpdir(), "lnwjud-browser-profile");
+    this.chromeExecutable = options.chromeExecutable ?? process.env.LNWJUD_BROWSER_EXECUTABLE;
+  }
+  async status() {
+    try {
+      const response = await fetch(this.endpoint("/json/version"));
+      return { ready: response.ok, port: this.port };
+    } catch {
+      return { ready: false, port: this.port };
+    }
+  }
+  async listTabs() {
+    const value = await this.requestJson("/json/list");
+    if (!Array.isArray(value))
+      throw new Error("Chrome tabs response was invalid");
+    return value.flatMap((item) => {
+      const tab = toTab(item);
+      return tab === void 0 ? [] : [tab];
+    });
+  }
+  async newTab(url2) {
+    const response = await fetch(this.endpoint(`/json/new?${encodeURIComponent(url2)}`), { method: "PUT" });
+    if (!response.ok)
+      throw new Error(`Chrome new-tab request failed: ${response.status}`);
+    const value = await response.json();
+    const tab = toTab(value);
+    if (tab === void 0)
+      throw new Error("Chrome new-tab response was invalid");
+    return tab;
+  }
+  async closeTab(tabId) {
+    const response = await fetch(this.endpoint(`/json/close/${encodeURIComponent(tabId)}`));
+    return { closed: response.ok, tab_id: tabId };
+  }
+  async request(tabId, method, params) {
+    const tabs = await this.listTabs();
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (tab === void 0)
+      throw new Error("Chrome tab was not found");
+    const socketUrl = validateWebSocketUrl(tab.webSocketDebuggerUrl, this.port);
+    return sendWebSocketRequest(socketUrl, method, params);
+  }
+  async launch(url2) {
+    const existing = await this.status();
+    if (existing.ready)
+      return ok({ ready: true, port: this.port, launched: false });
+    const executable = this.findChromeExecutable();
+    if (executable === void 0)
+      return err(appError("EXECUTABLE_NOT_FOUND", "Google Chrome was not found"));
+    try {
+      await (0, import_promises15.mkdir)(this.profileDir, { recursive: true });
+      const args = [
+        `--remote-debugging-port=${this.port}`,
+        `--user-data-dir=${this.profileDir}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+        ...url2 === void 0 ? [] : [url2]
+      ];
+      (0, import_node_child_process7.spawn)(executable, args, { shell: false, windowsHide: false, detached: false, stdio: "ignore" });
+    } catch {
+      return err(appError("INTERNAL_ERROR", "Chrome could not be started", true));
+    }
+    const deadline = Date.now() + 3e4;
+    while (Date.now() <= deadline) {
+      const state = await this.status();
+      if (state.ready)
+        return ok({ ready: true, port: this.port, launched: true });
+      await delay2(100);
+    }
+    return err(appError("PROCESS_TIMEOUT", "Chrome CDP did not become ready", true));
+  }
+  endpoint(resource) {
+    return `http://127.0.0.1:${this.port}${resource}`;
+  }
+  async requestJson(resource) {
+    const response = await fetch(this.endpoint(resource));
+    if (!response.ok)
+      throw new Error(`Chrome CDP HTTP request failed: ${response.status}`);
+    const value = await response.json();
+    return value;
+  }
+  findChromeExecutable() {
+    if (this.chromeExecutable !== void 0 && this.chromeExecutable.trim().length > 0)
+      return this.chromeExecutable;
+    if (process.platform !== "win32")
+      return void 0;
+    const localAppData = process.env.LOCALAPPDATA;
+    const programFiles = process.env.ProgramFiles;
+    const programFilesX86 = process.env["ProgramFiles(x86)"];
+    const candidates = [
+      localAppData === void 0 ? void 0 : import_node_path16.default.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+      programFiles === void 0 ? void 0 : import_node_path16.default.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      programFilesX86 === void 0 ? void 0 : import_node_path16.default.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+      localAppData === void 0 ? void 0 : import_node_path16.default.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
+      programFiles === void 0 ? void 0 : import_node_path16.default.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+      programFilesX86 === void 0 ? void 0 : import_node_path16.default.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe")
+    ];
+    return candidates.find((candidate) => candidate !== void 0 && (0, import_node_fs2.existsSync)(candidate));
+  }
+};
+function toTab(value) {
+  if (!isRecord5(value))
+    return void 0;
+  if (typeof value.id !== "string" || typeof value.title !== "string" || typeof value.url !== "string" || typeof value.webSocketDebuggerUrl !== "string")
+    return void 0;
+  return { id: value.id, title: value.title, url: value.url, webSocketDebuggerUrl: value.webSocketDebuggerUrl };
+}
+function validateWebSocketUrl(value, port) {
+  const url2 = new URL(value);
+  if (url2.protocol !== "ws:" || url2.hostname !== "127.0.0.1" && url2.hostname !== "localhost" || url2.port !== "" && Number(url2.port) !== port)
+    throw new Error("Chrome CDP socket is not local");
+  return url2.toString();
+}
+function sendWebSocketRequest(url2, method, params) {
+  return new Promise((resolve, reject) => {
+    if (typeof WebSocket === "undefined") {
+      reject(new Error("WebSocket is not available"));
+      return;
+    }
+    const socket = new WebSocket(url2);
+    const id = 1;
+    const timer = setTimeout(() => {
+      socket.close();
+      reject(new Error("Chrome CDP request timed out"));
+    }, 3e4);
+    const finish = (callback) => {
+      clearTimeout(timer);
+      socket.close();
+      callback();
+    };
+    socket.addEventListener("open", () => socket.send(JSON.stringify({ id, method, params })));
+    socket.addEventListener("message", (event) => {
+      const value = typeof event.data === "string" ? parseJson(event.data) : void 0;
+      if (!isRecord5(value) || value.id !== id)
+        return;
+      finish(() => resolve(value));
+    });
+    socket.addEventListener("error", () => finish(() => reject(new Error("Chrome CDP socket failed"))));
+  });
+}
+function parseJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return void 0;
+  }
+}
+function isRecord5(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readPort(value) {
+  const port = value === void 0 ? 9222 : Number(value);
+  return Number.isInteger(port) && port >= 9222 && port <= 9322 ? port : 9222;
+}
+function delay2(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+// ../../packages/capabilities/dist/browser-cdp-backend.js
+var BROWSER_ACTIONS = ["launch", "status", "list_tabs", "new_tab", "close_tab", "navigate", "evaluate", "query", "click", "type", "wait", "screenshot"];
+var DEFAULT_TIMEOUT_SECONDS2 = 30;
+var MAX_TIMEOUT_SECONDS2 = 3600;
+var BrowserCdpBackend = class {
+  protocol;
+  launcher;
+  constructor(options = {}) {
+    this.protocol = options.protocol ?? new NodeBrowserCdpProtocol();
+    this.launcher = options.launcher;
+  }
+  async execute(input) {
+    const parsed = parseBrowserRequest(input);
+    if (!parsed.ok)
+      return parsed;
+    if (parsed.value.steps !== void 0)
+      return this.executeSteps(parsed.value);
+    if (parsed.value.action === void 0)
+      return err(appError("INVALID_INPUT", "DOM action is required"));
+    return this.executeAction(parsed.value, parsed.value.action, parsed.value.parameters);
+  }
+  async executeSteps(request) {
+    const values = [];
+    for (const step of request.steps ?? []) {
+      const result = await this.executeAction(request, step.action, step.parameters);
+      if (!result.ok)
+        return result;
+      values.push(result.value);
+    }
+    return ok({ steps: values });
+  }
+  async executeAction(request, action, parameters) {
+    if (request.dryRun)
+      return ok({ dry_run: true, action, parameters });
+    switch (action) {
+      case "status":
+        return ok(await this.protocol.status());
+      case "launch":
+        if (this.launcher === void 0)
+          return err(appError("INTERNAL_ERROR", "Browser launcher is not configured", true));
+        return this.launcher(readString(parameters, "url"));
+      case "list_tabs":
+        return ok({ tabs: await this.protocol.listTabs() });
+      case "new_tab":
+        return ok(await this.protocol.newTab(readString(parameters, "url") ?? "about:blank"));
+      case "close_tab": {
+        const tabId = request.tabId ?? readString(parameters, "tab_id");
+        return tabId === void 0 ? err(appError("INVALID_INPUT", "Tab ID is required")) : ok(await this.protocol.closeTab(tabId));
+      }
+      case "navigate":
+        return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, "Page.navigate", { url: readString(parameters, "url") ?? "" }));
+      case "evaluate": {
+        const expression = readString(parameters, "expression");
+        return expression === void 0 ? err(appError("INVALID_INPUT", "JavaScript expression is required")) : this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }));
+      }
+      case "query":
+        return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, "Runtime.evaluate", { expression: queryScript(readString(parameters, "selector") ?? ""), returnByValue: true, awaitPromise: true }));
+      case "click":
+        return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, "Runtime.evaluate", { expression: clickScript(readString(parameters, "selector") ?? ""), returnByValue: true, awaitPromise: true }));
+      case "type":
+        return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, "Runtime.evaluate", { expression: typeScript(readString(parameters, "selector") ?? "", readString(parameters, "text") ?? ""), returnByValue: true, awaitPromise: true }));
+      case "wait":
+        return this.waitFor(request, parameters);
+      case "screenshot":
+        return this.withTab(request, parameters, async (tab) => {
+          const result = await this.protocol.request(tab.id, "Page.captureScreenshot", { format: "png" });
+          const data = readScreenshotData(result);
+          return data === void 0 ? err(appError("INTERNAL_ERROR", "Browser screenshot response was invalid", true)) : ok({ format: "png", data_base64: data });
+        });
+    }
+  }
+  async waitFor(request, parameters) {
+    const selector = readString(parameters, "selector");
+    const expression = readString(parameters, "expression");
+    if (selector === void 0 && expression === void 0)
+      return err(appError("INVALID_INPUT", "Wait requires a selector or expression"));
+    const deadline = Date.now() + Math.min(request.timeoutSeconds, MAX_TIMEOUT_SECONDS2) * 1e3;
+    while (Date.now() <= deadline) {
+      const result = await this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, "Runtime.evaluate", {
+        expression: selector === void 0 ? expression : `Boolean(document.querySelector(${JSON.stringify(selector)}))`,
+        returnByValue: true,
+        awaitPromise: true
+      }));
+      if (!result.ok)
+        return result;
+      if (result.value === true)
+        return ok({ ready: true });
+      await delay3(Math.min(readNumber(parameters, "poll_interval_seconds") ?? 0.1, 1) * 1e3);
+    }
+    return ok({ ready: false, timed_out: true });
+  }
+  async withTab(request, parameters, callback) {
+    const tabId = request.tabId ?? readString(parameters, "tab_id");
+    const tabs = await this.protocol.listTabs();
+    const tab = tabId === void 0 ? tabs[0] : tabs.find((candidate) => candidate.id === tabId);
+    return tab === void 0 ? err(appError("INVALID_INPUT", "A managed Chrome tab is required")) : callback(tab);
+  }
+  async evaluateProtocol(tabId, method, params) {
+    try {
+      return ok(readCdpValue(await this.protocol.request(tabId, method, params)));
+    } catch {
+      return err(appError("INTERNAL_ERROR", "Browser CDP request failed", true));
+    }
+  }
+};
+function parseBrowserRequest(value) {
+  if (!isRecord6(value))
+    return err(appError("INVALID_INPUT", "DOM input must be an object"));
+  const actionValue = value.action;
+  const action = actionValue === void 0 ? void 0 : isBrowserAction(actionValue) ? actionValue : null;
+  if (action === null)
+    return err(appError("INVALID_INPUT", "DOM action is invalid"));
+  const parametersValue = value.parameters;
+  const parameters = parametersValue === void 0 ? {} : parametersValue;
+  if (!isRecord6(parameters))
+    return err(appError("INVALID_INPUT", "DOM parameters must be an object"));
+  const tabId = value.tab_id;
+  if (tabId !== void 0 && typeof tabId !== "string")
+    return err(appError("INVALID_INPUT", "Tab ID is invalid"));
+  const timeoutSeconds = value.timeout_seconds === void 0 ? DEFAULT_TIMEOUT_SECONDS2 : value.timeout_seconds;
+  if (typeof timeoutSeconds !== "number" || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 0.1 || timeoutSeconds > MAX_TIMEOUT_SECONDS2)
+    return err(appError("INVALID_INPUT", "DOM timeout is invalid"));
+  const dryRun = value.dry_run === void 0 ? false : value.dry_run;
+  if (typeof dryRun !== "boolean")
+    return err(appError("INVALID_INPUT", "Dry-run flag is invalid"));
+  const stepsValue = value.steps;
+  if (stepsValue !== void 0 && (!Array.isArray(stepsValue) || stepsValue.length < 1 || stepsValue.length > 100))
+    return err(appError("INVALID_INPUT", "DOM steps must contain 1 to 100 items"));
+  const normalizedSteps = [];
+  if (stepsValue !== void 0) {
+    for (const step of stepsValue) {
+      if (!isRecord6(step) || !isBrowserAction(step.action))
+        return err(appError("INVALID_INPUT", "DOM step is invalid"));
+      const stepParameters = step.parameters === void 0 ? {} : step.parameters;
+      if (!isRecord6(stepParameters))
+        return err(appError("INVALID_INPUT", "DOM step parameters are invalid"));
+      normalizedSteps.push({ action: step.action, parameters: stepParameters });
+    }
+  }
+  return ok({ ...action === void 0 ? {} : { action }, parameters, ...stepsValue === void 0 ? {} : { steps: normalizedSteps }, ...tabId === void 0 ? {} : { tabId }, timeoutSeconds, dryRun });
+}
+function isBrowserAction(value) {
+  return typeof value === "string" && BROWSER_ACTIONS.some((action) => action === value);
+}
+function isRecord6(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function readString(value, key) {
+  const result = value[key];
+  return typeof result === "string" ? result : void 0;
+}
+function readNumber(value, key) {
+  const result = value[key];
+  return typeof result === "number" && Number.isFinite(result) ? result : void 0;
+}
+function readCdpValue(response) {
+  if (!isRecord6(response))
+    return void 0;
+  const outerResult = response.result;
+  if (!isRecord6(outerResult))
+    return void 0;
+  const remoteResult = outerResult.result;
+  if (!isRecord6(remoteResult))
+    return void 0;
+  if ("exceptionDetails" in remoteResult)
+    return void 0;
+  return "value" in remoteResult ? remoteResult.value : void 0;
+}
+function readScreenshotData(response) {
+  if (!isRecord6(response) || !isRecord6(response.result))
+    return void 0;
+  return typeof response.result.data === "string" ? response.result.data : void 0;
+}
+function queryScript(selector) {
+  return `(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el) return {ok:false}; const r=el.getBoundingClientRect(); return {ok:true,text:el.innerText||el.value||'',tag:el.tagName,disabled:!!el.disabled,frame:{x:r.x,y:r.y,width:r.width,height:r.height}}; })()`;
+}
+function clickScript(selector) {
+  return `(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el) return {ok:false}; el.scrollIntoView({block:'center',inline:'center'}); el.click(); return {ok:true}; })()`;
+}
+function typeScript(selector, text) {
+  return `(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el) return {ok:false}; el.focus(); const setter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value')?.set; if(setter) setter.call(el,${JSON.stringify(text)}); else el.value=${JSON.stringify(text)}; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return {ok:true,value:el.value}; })()`;
+}
+function delay3(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+// ../../packages/capabilities/dist/health-backend.js
+var HealthCapabilityBackend = class {
+  platform;
+  domCdp;
+  accessibility;
+  constructor(options = {}) {
+    this.platform = options.platform ?? process.platform;
+    this.domCdp = options.domCdp;
+    this.accessibility = options.accessibility;
+  }
+  async execute(input) {
+    if (!isRecord7(input))
+      return err(appError("INVALID_INPUT", "Health input must be an object"));
+    const operation = input.operation === void 0 ? "check_all" : input.operation;
+    if (operation !== "check_all" && operation !== "check_tool")
+      return err(appError("INVALID_INPUT", "Health operation is invalid"));
+    const tool = input.tool;
+    const validatedTool = isCapabilityToolName(tool) ? tool : void 0;
+    if (operation === "check_tool" && validatedTool === void 0)
+      return err(appError("INVALID_INPUT", "Health tool is required"));
+    if (operation === "check_tool" && validatedTool !== void 0)
+      return ok({ tool: validatedTool, ...await this.check(validatedTool) });
+    const capabilities = {};
+    for (const name of capabilityToolNames)
+      capabilities[name] = await this.check(name);
+    return ok({ capabilities });
+  }
+  async check(tool) {
+    if (tool === "shell" || tool === "health")
+      return { available: true, ready: true, local: true };
+    if (tool === "input_event" || tool === "vision" || tool === "window")
+      return { available: this.platform === "win32", ready: this.platform === "win32", local: true };
+    if (tool === "dom_cdp")
+      return this.checkDelegated(this.domCdp, { action: "status" });
+    return this.checkDelegated(this.accessibility, { action: "status" });
+  }
+  async checkDelegated(backend, input) {
+    if (backend === void 0)
+      return { available: false, ready: false, local: true, reason: "Backend is not configured" };
+    const result = await backend.execute(input);
+    if (!result.ok)
+      return { available: false, ready: false, local: true, reason: result.error.message };
+    const value = isRecord7(result.value) ? result.value : {};
+    return { available: value.available !== false, ready: value.ready !== false, local: true, ...value };
+  }
+};
+function isCapabilityToolName(value) {
+  return typeof value === "string" && capabilityToolNames.some((name) => name === value);
+}
+function isRecord7(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ../../packages/capabilities/dist/windows-native-backend.js
+var WindowsNativeCapabilityBackend = class {
+  capability;
+  bridge;
+  platform;
+  constructor(capability, bridge, platform = process.platform) {
+    this.capability = capability;
+    this.bridge = bridge;
+    this.platform = platform;
+  }
+  execute(input) {
+    if (this.platform !== "win32")
+      return Promise.resolve(err(appError("INTERNAL_ERROR", "Windows capability is unavailable on this platform", true)));
+    if (!isRecord8(input))
+      return Promise.resolve(err(appError("INVALID_INPUT", "Native capability input must be an object")));
+    if (input.dry_run === true)
+      return Promise.resolve(ok({ dry_run: true, capability: this.capability }));
+    return this.bridge.execute({ capability: this.capability, input });
+  }
+};
+function isRecord8(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ../../packages/capabilities/dist/windows-bridge.js
+var import_node_child_process8 = require("node:child_process");
+var import_node_path17 = __toESM(require("node:path"), 1);
+var DEFAULT_TIMEOUT_SECONDS3 = 600;
+var MAX_TIMEOUT_SECONDS3 = 14400;
+var DEFAULT_MAX_OUTPUT_BYTES2 = 8 * 1024 * 1024;
+var APP_ERROR_CODES = [
+  "INVALID_INPUT",
+  "WORKSPACE_NOT_FOUND",
+  "PATH_OUTSIDE_WORKSPACE",
+  "SECRET_ACCESS_DENIED",
+  "PERMISSION_DENIED",
+  "PERMISSION_REQUIRED",
+  "FILE_NOT_FOUND",
+  "FILE_TOO_LARGE",
+  "BINARY_FILE",
+  "PROCESS_NOT_FOUND",
+  "PROCESS_TIMEOUT",
+  "EXECUTABLE_NOT_FOUND",
+  "GIT_NOT_REPOSITORY",
+  "CODEX_NOT_AVAILABLE",
+  "INTERNAL_ERROR"
+];
+var PowerShellWindowsCapabilityBridge = class {
+  scriptPath;
+  powershellPath;
+  platform;
+  maxOutputBytes;
+  terminator;
+  constructor(options) {
+    this.scriptPath = import_node_path17.default.resolve(options.scriptPath);
+    this.powershellPath = options.powershellPath ?? powershellExecutable();
+    this.platform = options.platform ?? process.platform;
+    this.maxOutputBytes = Math.max(1, Math.min(options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES2, DEFAULT_MAX_OUTPUT_BYTES2));
+    this.terminator = options.terminator ?? new WindowsProcessTree();
+  }
+  execute(request) {
+    if (this.platform !== "win32")
+      return Promise.resolve(err(appError("INTERNAL_ERROR", "Windows bridge is unavailable on this platform", true)));
+    if (!import_node_path17.default.isAbsolute(this.scriptPath))
+      return Promise.resolve(err(appError("INVALID_INPUT", "Windows bridge script path must be absolute")));
+    let serialized;
+    try {
+      serialized = JSON.stringify(request);
+    } catch {
+      return Promise.resolve(err(appError("INVALID_INPUT", "Windows bridge input could not be serialized")));
+    }
+    return new Promise((resolve) => {
+      let stdout = "";
+      let timedOut = false;
+      let settled = false;
+      const child = (0, import_node_child_process8.spawn)(this.powershellPath, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", this.scriptPath], {
+        shell: false,
+        windowsHide: false,
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      const timeoutSeconds = readTimeout(request.input);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        const pid = child.pid;
+        if (pid === void 0)
+          child.kill();
+        else
+          void this.terminator.stop(child, pid);
+      }, timeoutSeconds * 1e3);
+      const append = (current, value) => {
+        const chunk = Buffer.isBuffer(value) ? value.toString("utf8") : value;
+        const remaining = this.maxOutputBytes - Buffer.byteLength(current, "utf8");
+        return remaining <= 0 ? current : current + chunk.slice(0, remaining);
+      };
+      child.stdout?.on("data", (chunk) => {
+        stdout = append(stdout, chunk);
+      });
+      child.stderr?.resume();
+      child.once("error", () => {
+        if (settled)
+          return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(err(appError("INTERNAL_ERROR", "Windows bridge process could not start", true)));
+      });
+      child.once("close", () => {
+        if (settled)
+          return;
+        settled = true;
+        clearTimeout(timer);
+        if (timedOut) {
+          resolve(err(appError("PROCESS_TIMEOUT", "Windows bridge timed out", true)));
+          return;
+        }
+        const result = parseBridgeResult(stdout);
+        if (result !== void 0) {
+          resolve(result);
+          return;
+        }
+        resolve(err(appError("INTERNAL_ERROR", "Windows bridge returned an invalid response", true)));
+      });
+      child.stdin?.end(serialized, "utf8");
+    });
+  }
+};
+function parseBridgeResult(value) {
+  let parsed;
+  try {
+    parsed = JSON.parse(value.trim());
+  } catch {
+    return void 0;
+  }
+  if (!isRecord9(parsed) || typeof parsed.ok !== "boolean")
+    return void 0;
+  if (parsed.ok)
+    return ok(parsed.value);
+  const error46 = parsed.error;
+  if (!isRecord9(error46) || typeof error46.code !== "string" || typeof error46.message !== "string" || typeof error46.recoverable !== "boolean")
+    return void 0;
+  const code = APP_ERROR_CODES.find((candidate) => candidate === error46.code) ?? "INTERNAL_ERROR";
+  return err(appError(code, error46.message, error46.recoverable));
+}
+function readTimeout(value) {
+  if (!isRecord9(value) || typeof value.timeout_seconds !== "number" || !Number.isFinite(value.timeout_seconds))
+    return DEFAULT_TIMEOUT_SECONDS3;
+  return Math.min(MAX_TIMEOUT_SECONDS3, Math.max(0.1, value.timeout_seconds));
+}
+function powershellExecutable() {
+  return process.platform === "win32" && process.env.SystemRoot !== void 0 ? import_node_path17.default.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : "powershell.exe";
+}
+function isRecord9(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ../../packages/capabilities/dist/index.js
+var capabilityToolNames = Object.freeze([
+  "shell",
+  "dom_cdp",
+  "accessibility",
+  "input_event",
+  "vision",
+  "window",
+  "health"
+]);
 
 // ../../packages/extensions/dist/types.js
 var DEFAULT_EXTENSIONS_SETTINGS = Object.freeze({
@@ -31807,9 +33168,9 @@ function normalizePathKey(value) {
 }
 
 // ../../packages/extensions/dist/skill-catalog.js
-var import_promises13 = require("node:fs/promises");
-var import_node_os2 = __toESM(require("node:os"), 1);
-var import_node_path12 = __toESM(require("node:path"), 1);
+var import_promises16 = require("node:fs/promises");
+var import_node_os3 = __toESM(require("node:os"), 1);
+var import_node_path18 = __toESM(require("node:path"), 1);
 var SkillCatalog = class {
   options;
   constructor(options) {
@@ -31834,20 +33195,20 @@ var SkillCatalog = class {
     if (skill === void 0)
       return err(appError("FILE_NOT_FOUND", `Skill not found: ${input.skillId}`));
     const relativePath = input.relativePath?.trim() || "SKILL.md";
-    if (relativePath.includes("\0") || import_node_path12.default.isAbsolute(relativePath)) {
+    if (relativePath.includes("\0") || import_node_path18.default.isAbsolute(relativePath)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Skill relative path must stay inside the skill folder"));
     }
-    const skillDir = import_node_path12.default.dirname(skill.skillPath);
-    const resolved = import_node_path12.default.resolve(skillDir, relativePath);
+    const skillDir = import_node_path18.default.dirname(skill.skillPath);
+    const resolved = import_node_path18.default.resolve(skillDir, relativePath);
     if (!isPathInside(skillDir, resolved)) {
       return err(appError("PATH_OUTSIDE_WORKSPACE", "Skill relative path must stay inside the skill folder"));
     }
     try {
-      const content = await (0, import_promises13.readFile)(resolved, "utf8");
+      const content = await (0, import_promises16.readFile)(resolved, "utf8");
       if (Buffer.byteLength(content, "utf8") > 2 * 1024 * 1024) {
         return err(appError("FILE_TOO_LARGE", "Skill file exceeds 2 MiB"));
       }
-      const meta3 = parseSkillMarkdown(content, import_node_path12.default.basename(skillDir));
+      const meta3 = parseSkillMarkdown(content, import_node_path18.default.basename(skillDir));
       return ok({
         id: skill.id,
         name: meta3.name,
@@ -31869,8 +33230,8 @@ var SkillCatalog = class {
       const skillFiles = await findSkillFiles(root.path, 3);
       for (const skillPath of skillFiles) {
         try {
-          const content = await (0, import_promises13.readFile)(skillPath, "utf8");
-          const fallbackName = import_node_path12.default.basename(import_node_path12.default.dirname(skillPath));
+          const content = await (0, import_promises16.readFile)(skillPath, "utf8");
+          const fallbackName = import_node_path18.default.basename(import_node_path18.default.dirname(skillPath));
           const meta3 = parseSkillMarkdown(content, fallbackName);
           skills.push({
             id: `${root.source}/${meta3.name}`,
@@ -31888,19 +33249,19 @@ var SkillCatalog = class {
     return dedupeById(skills);
   }
   roots() {
-    const home = this.options.homeDir ?? import_node_os2.default.homedir();
+    const home = this.options.homeDir ?? import_node_os3.default.homedir();
     const defaults = [
-      { source: "cursor-skills-cursor", path: import_node_path12.default.join(home, ".cursor", "skills-cursor") },
-      { source: "cursor-skills", path: import_node_path12.default.join(home, ".cursor", "skills") },
-      { source: "claude-skills", path: import_node_path12.default.join(home, ".claude", "skills") },
-      { source: "agents-skills", path: import_node_path12.default.join(home, ".agents", "skills") }
+      { source: "cursor-skills-cursor", path: import_node_path18.default.join(home, ".cursor", "skills-cursor") },
+      { source: "cursor-skills", path: import_node_path18.default.join(home, ".cursor", "skills") },
+      { source: "claude-skills", path: import_node_path18.default.join(home, ".claude", "skills") },
+      { source: "agents-skills", path: import_node_path18.default.join(home, ".agents", "skills") }
     ];
     const workspaceRoot = this.options.workspaceRoot?.trim();
     if (workspaceRoot !== void 0 && workspaceRoot.length > 0) {
-      defaults.push({ source: "workspace-cursor-skills", path: import_node_path12.default.join(workspaceRoot, ".cursor", "skills") }, { source: "workspace-claude-skills", path: import_node_path12.default.join(workspaceRoot, ".claude", "skills") });
+      defaults.push({ source: "workspace-cursor-skills", path: import_node_path18.default.join(workspaceRoot, ".cursor", "skills") }, { source: "workspace-claude-skills", path: import_node_path18.default.join(workspaceRoot, ".claude", "skills") });
     }
     for (const extra of [...this.options.settings.extraSkillRoots, ...this.options.extraRoots ?? []]) {
-      defaults.push({ source: `extra:${import_node_path12.default.basename(extra)}`, path: import_node_path12.default.resolve(extra) });
+      defaults.push({ source: `extra:${import_node_path18.default.basename(extra)}`, path: import_node_path18.default.resolve(extra) });
     }
     return defaults;
   }
@@ -31982,7 +33343,7 @@ async function findSkillFiles(root, maxDepth) {
 async function walkForSkills(current, depth, maxDepth, results) {
   if (depth > maxDepth)
     return;
-  const skillPath = import_node_path12.default.join(current, "SKILL.md");
+  const skillPath = import_node_path18.default.join(current, "SKILL.md");
   if (depth > 0 && await isFile(skillPath)) {
     results.push(skillPath);
     return;
@@ -31990,12 +33351,12 @@ async function walkForSkills(current, depth, maxDepth, results) {
   if (depth === maxDepth)
     return;
   for (const entry of await safeReaddir(current)) {
-    await walkForSkills(import_node_path12.default.join(current, entry), depth + 1, maxDepth, results);
+    await walkForSkills(import_node_path18.default.join(current, entry), depth + 1, maxDepth, results);
   }
 }
 async function safeReaddir(root) {
   try {
-    const entries = await (0, import_promises13.readdir)(root, { withFileTypes: true });
+    const entries = await (0, import_promises16.readdir)(root, { withFileTypes: true });
     return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
   } catch {
     return [];
@@ -32003,14 +33364,14 @@ async function safeReaddir(root) {
 }
 async function isFile(filePath) {
   try {
-    return (await (0, import_promises13.stat)(filePath)).isFile();
+    return (await (0, import_promises16.stat)(filePath)).isFile();
   } catch {
     return false;
   }
 }
 function isPathInside(root, candidate) {
-  const relative = import_node_path12.default.relative(import_node_path12.default.resolve(root), import_node_path12.default.resolve(candidate));
-  return relative === "" || !relative.startsWith("..") && !import_node_path12.default.isAbsolute(relative);
+  const relative = import_node_path18.default.relative(import_node_path18.default.resolve(root), import_node_path18.default.resolve(candidate));
+  return relative === "" || !relative.startsWith("..") && !import_node_path18.default.isAbsolute(relative);
 }
 function dedupeById(skills) {
   const seen = /* @__PURE__ */ new Set();
@@ -32025,20 +33386,20 @@ function dedupeById(skills) {
 }
 
 // ../../packages/extensions/dist/mcp-config-loader.js
-var import_promises14 = require("node:fs/promises");
-var import_node_os3 = __toESM(require("node:os"), 1);
-var import_node_path13 = __toESM(require("node:path"), 1);
+var import_promises17 = require("node:fs/promises");
+var import_node_os4 = __toESM(require("node:os"), 1);
+var import_node_path19 = __toESM(require("node:path"), 1);
 var McpConfigLoader = class {
   options;
   constructor(options) {
     this.options = options;
   }
   async discover() {
-    const home = this.options.homeDir ?? import_node_os3.default.homedir();
-    const appData = this.options.appDataDir ?? process.env.APPDATA ?? import_node_path13.default.join(home, "AppData", "Roaming");
+    const home = this.options.homeDir ?? import_node_os4.default.homedir();
+    const appData = this.options.appDataDir ?? process.env.APPDATA ?? import_node_path19.default.join(home, "AppData", "Roaming");
     const discovered = [];
-    await this.loadFile(discovered, import_node_path13.default.join(home, ".cursor", "mcp.json"), "cursor");
-    await this.loadFile(discovered, import_node_path13.default.join(appData, "Claude", "claude_desktop_config.json"), "claude-desktop");
+    await this.loadFile(discovered, import_node_path19.default.join(home, ".cursor", "mcp.json"), "cursor");
+    await this.loadFile(discovered, import_node_path19.default.join(appData, "Claude", "claude_desktop_config.json"), "claude-desktop");
     for (const [name, config2] of Object.entries(this.options.settings.extraMcpServers)) {
       discovered.push(this.toServer(name, "lnwjud-settings", config2));
     }
@@ -32046,7 +33407,7 @@ var McpConfigLoader = class {
   }
   async loadFile(target, filePath, source) {
     try {
-      const raw = await (0, import_promises14.readFile)(filePath, "utf8");
+      const raw = await (0, import_promises17.readFile)(filePath, "utf8");
       const parsed = JSON.parse(raw);
       if (typeof parsed !== "object" || parsed === null)
         return;
@@ -32097,7 +33458,7 @@ function exclusionReason(name, config2) {
   if (lowered === "lnwjud" || lowered.startsWith("lnwjud-")) {
     return "Refusing to aggregate lnwjud itself";
   }
-  const command = import_node_path13.default.basename(config2.command).toLowerCase();
+  const command = import_node_path19.default.basename(config2.command).toLowerCase();
   if (command === "lnwjud" || command === "lnwjud.exe" || command.includes("lnwjud")) {
     return "Refusing to aggregate lnwjud itself";
   }
@@ -34747,9 +36108,9 @@ var rev2026Codec2 = {
     });
     const parsed = buildSchemas20262().RequestMetaEnvelopeSchema.safeParse(meta3);
     if (!parsed.success) for (const issue2 of parsed.error.issues) {
-      const path16 = issue2.path.map(String);
-      const key = path16.length > 0 ? path16.join(".") : "_meta";
-      if (path16.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+      const path22 = issue2.path.map(String);
+      const key = path22.length > 0 ? path22.join(".") : "_meta";
+      if (path22.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
       issues.push({
         key,
         problem: issue2.message
@@ -35046,29 +36407,29 @@ var PERMITTED_X_MCP_HEADER_TYPES2 = /* @__PURE__ */ new Set([
 function scanXMcpHeaderDeclarations2(inputSchema) {
   const declarations = [];
   const seenLower = /* @__PURE__ */ new Map();
-  const visit = (node, path16, reachable) => {
+  const visit = (node, path22, reachable) => {
     if (node === null || typeof node !== "object") return void 0;
     const schema = node;
     if (X_MCP_HEADER_KEY2 in schema) {
-      if (!reachable || path16.length === 0) return `${pathName2(path16)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      if (!reachable || path22.length === 0) return `${pathName2(path22)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
       const raw = schema[X_MCP_HEADER_KEY2];
-      if (typeof raw !== "string" || raw.length === 0) return `${pathName2(path16)}: x-mcp-header MUST be a non-empty string`;
-      if (!RFC9110_TOKEN2.test(raw)) return `${pathName2(path16)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      if (typeof raw !== "string" || raw.length === 0) return `${pathName2(path22)}: x-mcp-header MUST be a non-empty string`;
+      if (!RFC9110_TOKEN2.test(raw)) return `${pathName2(path22)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
       const type = typeof schema.type === "string" ? schema.type : void 0;
-      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES2.has(type)) return `${pathName2(path16)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
+      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES2.has(type)) return `${pathName2(path22)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
       const lower = raw.toLowerCase();
       const prior = seenLower.get(lower);
       if (prior !== void 0) return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
       seenLower.set(lower, raw);
       declarations.push({
-        path: path16,
+        path: path22,
         headerName: raw,
         type
       });
     }
     const properties = schema.properties;
     if (properties !== null && typeof properties === "object") for (const [key, child] of Object.entries(properties)) {
-      const fault$1 = visit(child, [...path16, key], reachable);
+      const fault$1 = visit(child, [...path22, key], reachable);
       if (fault$1 !== void 0) return fault$1;
     }
     for (const k of NON_REACHABLE_SUBSCHEMA_KEYWORDS2) {
@@ -35076,7 +36437,7 @@ function scanXMcpHeaderDeclarations2(inputSchema) {
       if (sub === void 0) continue;
       const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === "object" && OBJECT_VALUED_SUBSCHEMA_KEYWORDS2.has(k) ? Object.values(sub) : [sub];
       for (const branch of branches) {
-        const fault$1 = visit(branch, [...path16, `<${k}>`], false);
+        const fault$1 = visit(branch, [...path22, `<${k}>`], false);
         if (fault$1 !== void 0) return fault$1;
       }
     }
@@ -35116,8 +36477,8 @@ var OBJECT_VALUED_SUBSCHEMA_KEYWORDS2 = /* @__PURE__ */ new Set([
   "$defs",
   "definitions"
 ]);
-function pathName2(path16) {
-  return path16.length === 0 ? "<root>" : path16.join(".");
+function pathName2(path22) {
+  return path22.length === 0 ? "<root>" : path22.join(".");
 }
 var BASE64_SENTINEL_PREFIX = "=?base64?";
 var BASE64_SENTINEL_SUFFIX = "?=";
@@ -35150,9 +36511,9 @@ function utf8ToBase64(s) {
 function encodeMcpParamValue(value) {
   return needsBase64(value) ? `${BASE64_SENTINEL_PREFIX}${utf8ToBase64(value)}${BASE64_SENTINEL_SUFFIX}` : value;
 }
-function valueAtPath(root, path16) {
+function valueAtPath(root, path22) {
   let node = root;
-  for (const key of path16) {
+  for (const key of path22) {
     if (node === null || typeof node !== "object") return void 0;
     node = node[key];
   }
@@ -35407,7 +36768,7 @@ var PROPERTY_KEYS_BY_TYPE2 = {
   array: shapeKeys2([UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema])
 };
 var SUPPORTED_STRING_FORMATS2 = new Set(StringSchemaSchema.shape.format.unwrap().options);
-function walkProperty2(node, path16, vendor, unsupported) {
+function walkProperty2(node, path22, vendor, unsupported) {
   if (!isJsonObject2(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE2, node.type) ? PROPERTY_KEYS_BY_TYPE2[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -35415,8 +36776,8 @@ function walkProperty2(node, path16, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword2(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS2.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern2(node.format, value, vendor)) unsupported.push(`${path16}.${key}`);
-  } else unsupported.push(`${path16}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern2(node.format, value, vendor)) unsupported.push(`${path22}.${key}`);
+  } else unsupported.push(`${path22}.${key}`);
   return pruned;
 }
 function walkRequestedSchema2(converted, vendor) {
@@ -35433,11 +36794,11 @@ function describeUnsupportedProperties2(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema2(PrimitiveSchemaDefinitionSchema, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths2(original, parsed, path16 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths2(item, parsed[index], `${path16}[${index}]`));
+function findDroppedConstraintPaths2(original, parsed, path22 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths2(item, parsed[index], `${path22}[${index}]`));
   if (!isJsonObject2(original) || !isJsonObject2(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path16 ? `${path16}.${key}` : key;
+    const childPath = path22 ? `${path22}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword2(key) ? [] : [childPath];
     return findDroppedConstraintPaths2(value, parsed[key], childPath);
   });
@@ -39588,8 +40949,8 @@ var require_utils2 = /* @__PURE__ */ __commonJSMin2(((exports2, module2) => {
     for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
     return ind;
   }
-  function removeDotSegments(path16) {
-    let input = path16;
+  function removeDotSegments(path22) {
+    let input = path22;
     const output = [];
     let nextSlash = -1;
     let len = 0;
@@ -39742,8 +41103,8 @@ var require_schemes2 = /* @__PURE__ */ __commonJSMin2(((exports2, module2) => {
       wsComponent.secure = void 0;
     }
     if (wsComponent.resourceName) {
-      const [path16, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path16 && path16 !== "/" ? path16 : void 0;
+      const [path22, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
       wsComponent.query = query;
       wsComponent.resourceName = void 0;
     }
@@ -46757,13 +48118,15 @@ function createLocalExtensionsService(options = {}) {
 }
 
 // ../cli/src/runtime/stdio-mcp-runtime.ts
+var import_meta = {};
 function createStdioMcpRuntime(dataPath, workspace) {
-  const database = new SqliteDatabase(import_node_path14.default.join(dataPath, "lnwjud.sqlite"));
+  const database = new SqliteDatabase(import_node_path20.default.join(dataPath, "lnwjud.sqlite"));
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
   const checkpointRepository = new SqliteCheckpointRepository(database);
+  const workspaceService = new WorkspaceService(workspaceRepository);
   const fullProfile = permissionProfiles.full;
   settingsRepository.set("permission_profile", "full");
   const projectService = new ProjectService(workspaceRepository);
@@ -46784,9 +48147,37 @@ function createStdioMcpRuntime(dataPath, workspace) {
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     workspaceRootProvider: async () => workspace.realRootPath
   });
+  const codexService = new CodexService(workspaceRepository, {
+    auditService,
+    profileProvider: () => fullProfile
+  });
+  const capabilityService = createStdioCapabilityService(dataPath, async () => {
+    const listed = await workspaceRepository.list();
+    const roots = listed.map((entry) => entry.realRootPath);
+    if (roots.length === 0) return [machineRootPath()];
+    return roots;
+  });
+  const actor = { clientId: "cli-mcp-stdio", clientName: "lnwjud cli MCP" };
+  const activityTracker = new ActivityTracker({
+    async record(event) {
+      await auditService.recordMcpTool({
+        actorId: actor.clientId,
+        actorName: actor.clientName,
+        ...event.workspaceId === void 0 ? {} : { workspaceId: event.workspaceId },
+        toolName: event.toolName,
+        callId: event.callId,
+        phase: event.phase,
+        ...event.targetSummary === void 0 ? {} : { targetSummary: event.targetSummary },
+        resultCode: event.resultCode,
+        durationMs: event.durationMs,
+        timestamp: event.timestamp
+      });
+    }
+  });
   const services = {
+    capabilities: capabilityService,
     extensions,
-    workspaceInfo: new WorkspaceInfoService(workspaceRepository),
+    workspaceInfo: new WorkspaceInfoService(workspaceRepository, workspaceService),
     workspaceQuery,
     projectSnapshot: new ProjectSnapshotService(workspaceRepository, {
       projectService,
@@ -46799,20 +48190,85 @@ function createStdioMcpRuntime(dataPath, workspace) {
     search: new SearchService(workspaceRepository),
     git: gitService,
     process: processService,
-    codex: new CodexService(workspaceRepository, {
-      auditService,
-      profileProvider: () => fullProfile
-    })
+    codex: codexService
   };
   return {
     services,
-    actor: { clientId: "cli-mcp-stdio", clientName: "lnwjud cli MCP" },
+    actor,
     extensions,
+    activityTracker,
     close: async () => {
       await extensions.close().catch(() => void 0);
       database.close();
     }
   };
+}
+function createStdioCapabilityService(dataPath, workspaceRootsProvider) {
+  const shellBackend = new ShellCapabilityBackend({
+    allowedRoots: [dataPath, machineRootPath()],
+    allowedRootsProvider: async () => {
+      const workspaceRoots = await workspaceRootsProvider();
+      const configuredRoots = readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS);
+      const roots = [...workspaceRoots, ...configuredRoots, machineRootPath()];
+      return roots.length === 0 ? [dataPath] : roots;
+    }
+  });
+  const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: import_node_path20.default.join(dataPath, "browser-profile") });
+  const browserBackend = new BrowserCdpBackend({
+    protocol: browserProtocol,
+    launcher: (url2) => browserProtocol.launch(url2)
+  });
+  const windowsBridge = new PowerShellWindowsCapabilityBridge({ scriptPath: capabilityBridgeScriptPath() });
+  const health = new HealthCapabilityBackend({
+    domCdp: browserBackend,
+    accessibility: new WindowsNativeCapabilityBackend("accessibility", windowsBridge)
+  });
+  return new LocalCapabilityService({
+    shell: shellBackend,
+    domCdp: browserBackend,
+    accessibility: new WindowsNativeCapabilityBackend("accessibility", windowsBridge),
+    inputEvent: new WindowsNativeCapabilityBackend("input_event", windowsBridge),
+    vision: new WindowsNativeCapabilityBackend("vision", windowsBridge),
+    window: new WindowsNativeCapabilityBackend("window", windowsBridge),
+    health
+  });
+}
+function readCapabilityRoots(value) {
+  if (value === void 0 || value.trim().length === 0) return [];
+  return value.split(";").map((root) => root.trim()).filter((root) => root.length > 0).map((root) => import_node_path20.default.resolve(root));
+}
+function capabilityBridgeScriptPath() {
+  const configured = process.env.LNWJUD_CAPABILITY_BRIDGE_SCRIPT;
+  if (configured !== void 0 && configured.trim().length > 0) return import_node_path20.default.resolve(configured);
+  const scriptDir = resolveScriptDirectory();
+  const resourcesPath = process.resourcesPath;
+  const candidates = [
+    scriptDir === void 0 ? void 0 : import_node_path20.default.join(scriptDir, "windows-capability-bridge.ps1"),
+    scriptDir === void 0 ? void 0 : import_node_path20.default.join(scriptDir, "resources", "windows-capability-bridge.ps1"),
+    import_node_path20.default.resolve(process.cwd(), "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
+    import_node_path20.default.resolve(process.cwd(), "..", "..", "packages", "capabilities", "src", "windows-capability-bridge.ps1"),
+    resourcesPath === void 0 ? void 0 : import_node_path20.default.join(resourcesPath, "windows-capability-bridge.ps1"),
+    import_node_path20.default.join(import_node_path20.default.dirname(process.execPath), "windows-capability-bridge.ps1"),
+    import_node_path20.default.join(import_node_path20.default.dirname(process.execPath), "resources", "windows-capability-bridge.ps1")
+  ].filter((candidate) => candidate !== void 0);
+  return candidates.find((candidate) => (0, import_node_fs3.existsSync)(candidate)) ?? candidates[0];
+}
+function resolveScriptDirectory() {
+  const arg1 = process.argv[1];
+  if (typeof arg1 === "string" && arg1.trim().length > 0) {
+    try {
+      return import_node_path20.default.dirname(import_node_path20.default.resolve(arg1));
+    } catch {
+    }
+  }
+  try {
+    const metaUrl = import_meta.url;
+    if (typeof metaUrl === "string" && metaUrl.length > 0) {
+      return import_node_path20.default.dirname((0, import_node_url.fileURLToPath)(metaUrl));
+    }
+  } catch {
+  }
+  return void 0;
 }
 
 // ../cli/src/bin/mcp-stdio.ts
@@ -46828,51 +48284,30 @@ function hasFlag(flag) {
 function resolveDataPath() {
   const configured = process.env.LNWJUD_DATA_PATH?.trim();
   if (configured) return configured;
-  return import_node_path15.default.join(process.env.APPDATA ?? import_node_path15.default.join(import_node_os4.default.homedir(), "AppData", "Roaming"), "lnwjud");
-}
-function normalizeRoot(rootPath) {
-  const resolved = import_node_path15.default.resolve(rootPath);
-  return resolved.endsWith(import_node_path15.default.sep) ? resolved : `${resolved}${import_node_path15.default.sep}`;
-}
-function listFixedDrives() {
-  const drives = [];
-  for (let code = "A".charCodeAt(0); code <= "Z".charCodeAt(0); code += 1) {
-    const root = `${String.fromCharCode(code)}:\\`;
-    try {
-      if (import_node_fs.default.existsSync(root) && import_node_fs.default.statSync(root).isDirectory()) drives.push(root);
-    } catch {
-    }
-  }
-  return drives;
-}
-async function ensureWorkspace(workspaceService, displayName, rootPath) {
-  if (!import_node_fs.default.existsSync(rootPath)) return;
-  const existing = await workspaceService.list();
-  const target = normalizeRoot(rootPath).toLowerCase();
-  if (existing.some((entry) => normalizeRoot(entry.realRootPath).toLowerCase() === target)) return;
-  const added = await workspaceService.add(displayName, rootPath);
-  if (!added.ok) {
-    process.stderr.write(`lnwjud MCP stdio: could not register ${rootPath} (${added.error.message})
-`);
-  }
+  return import_node_path21.default.join(process.env.APPDATA ?? import_node_path21.default.join(import_node_os5.default.homedir(), "AppData", "Roaming"), "lnwjud");
 }
 async function main() {
-  const fixedDrives = listFixedDrives();
-  if (fixedDrives.length === 0) {
-    process.stderr.write("lnwjud MCP stdio: no fixed drives found\n");
+  const eRoot = machineRootPath();
+  if (!import_node_fs4.default.existsSync(eRoot)) {
+    process.stderr.write("lnwjud MCP stdio: E:\\ drive is required but was not found\n");
     process.exit(2);
   }
   const requestedRaw = readArg("--workspace") ?? process.env.LNWJUD_WORKSPACE;
-  const requestedPath = import_node_path15.default.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : fixedDrives[0]);
-  if (!import_node_fs.default.existsSync(requestedPath)) {
+  const requestedPath = import_node_path21.default.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : eRoot);
+  if (!import_node_fs4.default.existsSync(requestedPath)) {
     process.stderr.write(`lnwjud MCP stdio: workspace path does not exist: ${requestedPath}
 `);
     process.exit(2);
   }
-  process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim() || fixedDrives.map((drive) => drive.replace(/\\/g, "/")).join(";");
+  if (!isUnderEDrive(requestedPath)) {
+    process.stderr.write(`lnwjud MCP stdio: workspace must be under E:\\ (got ${requestedPath})
+`);
+    process.exit(2);
+  }
+  process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim() || eRoot.replace(/\\/g, "/");
   const dataPath = resolveDataPath();
-  import_node_fs.default.mkdirSync(dataPath, { recursive: true });
-  const database = new SqliteDatabase(import_node_path15.default.join(dataPath, "lnwjud.sqlite"));
+  import_node_fs4.default.mkdirSync(dataPath, { recursive: true });
+  const database = new SqliteDatabase(import_node_path21.default.join(dataPath, "lnwjud.sqlite"));
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const workspaceService = new WorkspaceService(workspaceRepository);
   const reset = hasFlag("--reset-workspaces") || process.env.LNWJUD_RESET_WORKSPACES === "1" || process.env.LNWJUD_RESET_WORKSPACES === "true";
@@ -46882,37 +48317,75 @@ async function main() {
     }
     process.stderr.write("lnwjud MCP stdio: cleared previous workspaces\n");
   }
-  for (const drive of fixedDrives) {
-    const letter = drive.slice(0, 2);
-    await ensureWorkspace(workspaceService, `Local Disk ${letter}`, drive);
-  }
-  const workspaces = await workspaceService.list();
-  const requestedNorm = normalizeRoot(requestedPath).toLowerCase();
-  const workspace = workspaces.find((entry) => normalizeRoot(entry.realRootPath).toLowerCase() === requestedNorm) ?? workspaces.find((entry) => requestedNorm.startsWith(normalizeRoot(entry.realRootPath).toLowerCase())) ?? workspaces[0];
-  if (workspace === void 0) {
-    process.stderr.write("lnwjud MCP stdio: no workspace available\n");
+  const machineRoot = await syncEMachineRoot(workspaceService);
+  if (machineRoot === null) {
+    process.stderr.write("lnwjud MCP stdio: could not register E:\\ machine root\n");
     process.exit(1);
   }
-  for (const entry of workspaces) {
+  const requestedNorm = normalizeWorkspaceRoot(requestedPath).toLowerCase();
+  const workspaces = await workspaceService.list();
+  let workspace = workspaces.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === requestedNorm) ?? workspaces.find((entry) => requestedNorm.startsWith(normalizeWorkspaceRoot(entry.realRootPath).toLowerCase()));
+  if (workspace === void 0 && requestedNorm !== normalizeWorkspaceRoot(eRoot).toLowerCase()) {
+    const displayName = import_node_path21.default.basename(requestedPath) || "Workspace";
+    const added = await workspaceService.add(displayName, requestedPath);
+    if (!added.ok) {
+      process.stderr.write(`lnwjud MCP stdio: could not register ${requestedPath} (${added.error.message})
+`);
+      process.exit(1);
+    }
+    workspace = added.value;
+  }
+  workspace ??= machineRoot;
+  for (const entry of await workspaceService.list()) {
     process.stderr.write(`lnwjud workspace id=${entry.id} root=${entry.realRootPath}
 `);
   }
   database.close();
-  const runtime = createStdioMcpRuntime(dataPath, workspace);
-  process.stderr.write(`lnwjud MCP stdio ready primary=${workspace.id} root=${workspace.realRootPath}
+  const primary = workspace;
+  const runtime = createStdioMcpRuntime(dataPath, primary);
+  process.stderr.write(`lnwjud MCP stdio ready primary=${primary.id} root=${primary.realRootPath}
 `);
-  startMcpStdio({
+  let shuttingDown = false;
+  let handle;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await handle?.close();
+    } catch {
+    }
+    try {
+      await runtime.close();
+    } catch {
+    }
+    process.exit(0);
+  };
+  handle = startMcpStdio({
     services: runtime.services,
     actor: runtime.actor,
+    activityTracker: runtime.activityTracker,
     onError: (error46) => {
+      if (/EPIPE|ECONNRESET|broken pipe/i.test(error46.message)) {
+        process.stderr.write(`lnwjud MCP stdio: peer closed (${error46.message})
+`);
+        void shutdown();
+        return;
+      }
       process.stderr.write(`lnwjud MCP stdio error: ${error46.message}
 `);
     }
   });
-  const shutdown = async () => {
-    await runtime.close();
-    process.exit(0);
-  };
+  process.stdin.on("end", () => {
+    void shutdown();
+  });
+  process.stdin.on("close", () => {
+    void shutdown();
+  });
+  process.stdout.on("error", (error46) => {
+    if (error46.code === "EPIPE" || error46.code === "ECONNRESET") {
+      void shutdown();
+    }
+  });
   process.on("SIGINT", () => {
     void shutdown();
   });
@@ -46924,10 +48397,6 @@ main().catch((error46) => {
   process.stderr.write(`lnwjud MCP stdio failed: ${error46 instanceof Error ? error46.message : "unknown"}
 `);
   process.exit(1);
-});
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  listFixedDrives
 });
 /*! Bundled license information:
 

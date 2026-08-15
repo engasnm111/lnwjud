@@ -166,7 +166,17 @@ export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHt
       else response.destroy();
     });
   });
-  const address = await listen(server, options.port);
+  let address: McpHttpServerAddress;
+  try {
+    address = await listen(server, options.port);
+  } catch (error: unknown) {
+    // Preferred fixed ports (e.g. 18765) may already be taken — fall back to ephemeral.
+    if (options.port !== 0 && isAddressInUse(error)) {
+      address = await listen(server, 0);
+    } else {
+      throw error;
+    }
+  }
   const endpoint = new URL(`http://${address.host}:${address.port}/mcp`);
 
   return {
@@ -179,4 +189,8 @@ export async function startMcpHttp(options: McpHttpServerOptions): Promise<McpHt
       });
     },
   };
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'EADDRINUSE';
 }

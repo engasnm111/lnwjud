@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { WorkspaceService } from '@lnwjud/workspace';
+import { syncEMachineRoot } from '@lnwjud/application';
 import { startMcpStdio } from '@lnwjud/mcp-server';
 import { SqliteDatabase, SqliteWorkspaceRepository } from '@lnwjud/storage';
+import { isUnderEDrive, machineRootPath, normalizeWorkspaceRoot, WorkspaceService } from '@lnwjud/workspace';
 import { createStdioMcpRuntime } from '../runtime/stdio-mcp-runtime.js';
 
 function readArg(flag: string): string | undefined {
@@ -23,56 +24,26 @@ function resolveDataPath(): string {
   return path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'lnwjud');
 }
 
-function normalizeRoot(rootPath: string): string {
-  const resolved = path.resolve(rootPath);
-  return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
-}
-
-/** Fixed local drive letters that currently exist as directories. */
-export function listFixedDrives(): readonly string[] {
-  const drives: string[] = [];
-  for (let code = 'A'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code += 1) {
-    const root = `${String.fromCharCode(code)}:\\`;
-    try {
-      if (fs.existsSync(root) && fs.statSync(root).isDirectory()) drives.push(root);
-    } catch {
-      // Skip inaccessible letters.
-    }
-  }
-  return drives;
-}
-
-async function ensureWorkspace(
-  workspaceService: WorkspaceService,
-  displayName: string,
-  rootPath: string,
-): Promise<void> {
-  if (!fs.existsSync(rootPath)) return;
-  const existing = await workspaceService.list();
-  const target = normalizeRoot(rootPath).toLowerCase();
-  if (existing.some((entry) => normalizeRoot(entry.realRootPath).toLowerCase() === target)) return;
-  const added = await workspaceService.add(displayName, rootPath);
-  if (!added.ok) {
-    process.stderr.write(`lnwjud MCP stdio: could not register ${rootPath} (${added.error.message})\n`);
-  }
-}
-
 async function main(): Promise<void> {
-  const fixedDrives = listFixedDrives();
-  if (fixedDrives.length === 0) {
-    process.stderr.write('lnwjud MCP stdio: no fixed drives found\n');
+  const eRoot = machineRootPath();
+  if (!fs.existsSync(eRoot)) {
+    process.stderr.write('lnwjud MCP stdio: E:\\ drive is required but was not found\n');
     process.exit(2);
   }
 
   const requestedRaw = readArg('--workspace') ?? process.env.LNWJUD_WORKSPACE;
-  const requestedPath = path.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : fixedDrives[0]!);
+  const requestedPath = path.resolve(requestedRaw && requestedRaw.trim().length > 0 ? requestedRaw : eRoot);
   if (!fs.existsSync(requestedPath)) {
     process.stderr.write(`lnwjud MCP stdio: workspace path does not exist: ${requestedPath}\n`);
     process.exit(2);
   }
+  if (!isUnderEDrive(requestedPath)) {
+    process.stderr.write(`lnwjud MCP stdio: workspace must be under E:\\ (got ${requestedPath})\n`);
+    process.exit(2);
+  }
 
   process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim()
-    || fixedDrives.map((drive) => drive.replace(/\\/g, '/')).join(';');
+    || eRoot.replace(/\\/g, '/');
 
   const dataPath = resolveDataPath();
   fs.mkdirSync(dataPath, { recursive: true });
@@ -91,41 +62,77 @@ async function main(): Promise<void> {
     process.stderr.write('lnwjud MCP stdio: cleared previous workspaces\n');
   }
 
-  for (const drive of fixedDrives) {
-    const letter = drive.slice(0, 2);
-    await ensureWorkspace(workspaceService, `Local Disk ${letter}`, drive);
-  }
-
-  const workspaces = await workspaceService.list();
-  const requestedNorm = normalizeRoot(requestedPath).toLowerCase();
-  const workspace = workspaces.find((entry) => normalizeRoot(entry.realRootPath).toLowerCase() === requestedNorm)
-    ?? workspaces.find((entry) => requestedNorm.startsWith(normalizeRoot(entry.realRootPath).toLowerCase()))
-    ?? workspaces[0];
-
-  if (workspace === undefined) {
-    process.stderr.write('lnwjud MCP stdio: no workspace available\n');
+  const machineRoot = await syncEMachineRoot(workspaceService);
+  if (machineRoot === null) {
+    process.stderr.write('lnwjud MCP stdio: could not register E:\\ machine root\n');
     process.exit(1);
   }
 
-  for (const entry of workspaces) {
+  const requestedNorm = normalizeWorkspaceRoot(requestedPath).toLowerCase();
+  const workspaces = await workspaceService.list();
+  let workspace = workspaces.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === requestedNorm)
+    ?? workspaces.find((entry) => requestedNorm.startsWith(normalizeWorkspaceRoot(entry.realRootPath).toLowerCase()));
+
+  if (workspace === undefined && requestedNorm !== normalizeWorkspaceRoot(eRoot).toLowerCase()) {
+    const displayName = path.basename(requestedPath) || 'Workspace';
+    const added = await workspaceService.add(displayName, requestedPath);
+    if (!added.ok) {
+      process.stderr.write(`lnwjud MCP stdio: could not register ${requestedPath} (${added.error.message})\n`);
+      process.exit(1);
+    }
+    workspace = added.value;
+  }
+
+  workspace ??= machineRoot;
+
+  for (const entry of await workspaceService.list()) {
     process.stderr.write(`lnwjud workspace id=${entry.id} root=${entry.realRootPath}\n`);
   }
   database.close();
 
-  const runtime = createStdioMcpRuntime(dataPath, workspace);
-  process.stderr.write(`lnwjud MCP stdio ready primary=${workspace.id} root=${workspace.realRootPath}\n`);
-  startMcpStdio({
+  const primary = workspace;
+  const runtime = createStdioMcpRuntime(dataPath, primary);
+  process.stderr.write(`lnwjud MCP stdio ready primary=${primary.id} root=${primary.realRootPath}\n`);
+
+  let shuttingDown = false;
+  let handle: ReturnType<typeof startMcpStdio> | undefined;
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await handle?.close();
+    } catch {
+      // ignore transport close races during parent teardown
+    }
+    try {
+      await runtime.close();
+    } catch {
+      // ignore runtime close races during parent teardown
+    }
+    process.exit(0);
+  };
+
+  handle = startMcpStdio({
     services: runtime.services,
     actor: runtime.actor,
+    activityTracker: runtime.activityTracker,
     onError: (error): void => {
+      if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
+        process.stderr.write(`lnwjud MCP stdio: peer closed (${error.message})\n`);
+        void shutdown();
+        return;
+      }
       process.stderr.write(`lnwjud MCP stdio error: ${error.message}\n`);
     },
   });
 
-  const shutdown = async (): Promise<void> => {
-    await runtime.close();
-    process.exit(0);
-  };
+  process.stdin.on('end', () => { void shutdown(); });
+  process.stdin.on('close', () => { void shutdown(); });
+  process.stdout.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE' || error.code === 'ECONNRESET') {
+      void shutdown();
+    }
+  });
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });
 }

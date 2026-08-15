@@ -82,6 +82,11 @@ export class DesktopMcpLifecycle {
     return operation;
   }
 
+  public async restart(workspaceId: string): Promise<DesktopMcpStatus> {
+    await this.stop();
+    return this.start(workspaceId);
+  }
+
   public close(): Promise<DesktopMcpStatus> {
     return this.stop();
   }

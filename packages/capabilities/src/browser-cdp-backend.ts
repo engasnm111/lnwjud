@@ -35,6 +35,7 @@ interface BrowserRequest {
 
 const BROWSER_ACTIONS: readonly BrowserAction[] = ['launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot'];
 const DEFAULT_TIMEOUT_SECONDS = 30;
+const MAX_TIMEOUT_SECONDS = 3600;
 
 export class BrowserCdpBackend implements CapabilityBackend {
   private readonly protocol: BrowserCdpProtocol;
@@ -97,7 +98,7 @@ export class BrowserCdpBackend implements CapabilityBackend {
     const selector = readString(parameters, 'selector');
     const expression = readString(parameters, 'expression');
     if (selector === undefined && expression === undefined) return err(appError('INVALID_INPUT', 'Wait requires a selector or expression'));
-    const deadline = Date.now() + Math.min(request.timeoutSeconds, 300) * 1000;
+    const deadline = Date.now() + Math.min(request.timeoutSeconds, MAX_TIMEOUT_SECONDS) * 1000;
     while (Date.now() <= deadline) {
       const result = await this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', {
         expression: selector === undefined ? expression! : `Boolean(document.querySelector(${JSON.stringify(selector)}))`,
@@ -138,7 +139,7 @@ function parseBrowserRequest(value: unknown): Result<BrowserRequest> {
   const tabId = value.tab_id;
   if (tabId !== undefined && typeof tabId !== 'string') return err(appError('INVALID_INPUT', 'Tab ID is invalid'));
   const timeoutSeconds = value.timeout_seconds === undefined ? DEFAULT_TIMEOUT_SECONDS : value.timeout_seconds;
-  if (typeof timeoutSeconds !== 'number' || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 0.1 || timeoutSeconds > 300) return err(appError('INVALID_INPUT', 'DOM timeout is invalid'));
+  if (typeof timeoutSeconds !== 'number' || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 0.1 || timeoutSeconds > MAX_TIMEOUT_SECONDS) return err(appError('INVALID_INPUT', 'DOM timeout is invalid'));
   const dryRun = value.dry_run === undefined ? false : value.dry_run;
   if (typeof dryRun !== 'boolean') return err(appError('INVALID_INPUT', 'Dry-run flag is invalid'));
   const stepsValue = value.steps;

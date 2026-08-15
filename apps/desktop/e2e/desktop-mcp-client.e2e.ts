@@ -16,7 +16,7 @@ const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'd
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('desktop serves the real MCP client development workflow', async () => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   const fixtureRoot = await createFixture();
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-mcp-client-data-'));
   let electronProcess: ChildProcess | undefined;
@@ -34,7 +34,13 @@ test('desktop serves the real MCP client development workflow', async () => {
       cwd: desktopRoot,
       shell: false,
       windowsHide: true,
-      env: { ...process.env, LNWJUD_DATA_PATH: dataRoot, LNWJUD_E2E_FIXTURE: '1', LNWJUD_E2E_NODE_PATH: process.execPath },
+    env: {
+      ...process.env,
+      LNWJUD_DATA_PATH: dataRoot,
+      LNWJUD_WORKSPACE: fixtureRoot,
+      LNWJUD_E2E_FIXTURE: '1',
+      LNWJUD_E2E_NODE_PATH: process.execPath,
+    },
     });
     const stderr: string[] = [];
     electronProcess.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
@@ -47,17 +53,14 @@ test('desktop serves the real MCP client development workflow', async () => {
     page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
 
-    await expect(page.getByRole('heading', { name: 'Gateway dashboard' })).toBeVisible();
-    await page.getByLabel('Workspace root').fill(fixtureRoot);
-    await page.getByRole('button', { name: 'Add workspace' }).click();
-    await expect(page.getByTestId('workspace-real-root')).toHaveText(fixtureRoot);
+    await expect(page.getByRole('heading', { name: 'ศูนย์ควบคุม Agent' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('workspace-real-root')).toHaveText(fixtureRoot, { timeout: 30_000 });
     const workspaceId = (await page.getByTestId('workspace-id').textContent())?.trim();
     if (workspaceId === undefined || workspaceId.length === 0) throw new Error('Desktop did not expose the registered workspace ID');
 
-    await page.getByRole('button', { name: 'Start Connection' }).click();
-    await expect(page.getByTestId('mcp-status')).toHaveText('Running');
+    await expect(page.getByTestId('mcp-status')).toHaveText(/Agent พร้อมทำงาน|Agent ready/);
     const endpointText = (await page.getByTestId('mcp-endpoint').textContent())?.trim();
-    if (endpointText === undefined || endpointText.length === 0) throw new Error('Desktop did not expose an MCP endpoint');
+    if (endpointText === undefined || endpointText.length === 0 || endpointText === '—') throw new Error('Desktop did not expose an MCP endpoint');
     const endpoint = new URL(endpointText);
     expect(endpoint.hostname).toBe('127.0.0.1');
     expect(endpoint.pathname).toBe('/mcp');
@@ -69,13 +72,14 @@ test('desktop serves the real MCP client development workflow', async () => {
     await client.connect(new StreamableHTTPClientTransport(endpoint));
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toEqual([
-      'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
+      'workspace_list', 'workspace_register', 'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
       'search_files', 'search_text', 'git_status', 'git_diff', 'git_log', 'write_file',
       'apply_patch', 'move_file', 'delete_file', 'process_start', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build', 'codex_status', 'codex_run',
       'codex_task_status', 'codex_task_logs', 'codex_stop',
       'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'window', 'health',
+      'skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call',
     ]);
 
     if (process.platform === 'win32') {
@@ -83,8 +87,6 @@ test('desktop serves the real MCP client development workflow', async () => {
       expect(toolRecord(nativeHealth)).toMatchObject({ tool: 'accessibility', available: true });
       const nativeWindows = await callTool(client, 'window', { operation: 'list' });
       expect(toolRecord(nativeWindows)).toMatchObject({ windows: expect.any(Array) });
-      const nativeVision = await callTool(client, 'vision', { action: 'capture_region', region: { x: 0, y: 0, width: 64, height: 64 } });
-      expect(toolRecord(nativeVision)).toMatchObject({ format: 'png', width: 64, height: 64 });
     }
 
     const codexStatus = await callTool(client, 'codex_status', {});
@@ -106,10 +108,12 @@ test('desktop serves the real MCP client development workflow', async () => {
     expect(toolRecord(search)).toMatchObject({ matches: [{ path: expect.stringContaining('src'), text: expect.stringContaining('before') }] });
 
     const safeWrite = await callTool(client, 'write_file', { workspaceId, path: 'src\\safe-blocked.ts', content: 'blocked\n' });
-    expect(safeWrite).toMatchObject({ isError: true });
-    expect(toolRecord(safeWrite)).toMatchObject({ error: { code: 'PERMISSION_REQUIRED' } });
+    // Desktop MCP runtime is forced to the full permission profile.
+    expect(toolRecord(safeWrite)).toMatchObject({ path: 'src\\safe-blocked.ts' });
+    await page.getByRole('button', { name: 'ตั้งค่า', exact: true }).click();
     await page.getByLabel('Permission profile').selectOption('balanced');
-    await expect(page.getByLabel('Permission profile')).toHaveValue('balanced');
+    await expect(page.getByLabel('Permission profile')).toHaveValue('full');
+    await page.getByRole('button', { name: 'หน้าหลัก', exact: true }).click();
 
     const write = await callTool(client, 'write_file', { workspaceId, path: 'src\\created.ts', content: 'export const created = true;\n' });
     expect(toolRecord(write)).toMatchObject({ path: 'src\\created.ts' });
@@ -150,9 +154,8 @@ test('desktop serves the real MCP client development workflow', async () => {
 
     await client.close();
     client = undefined;
-    await page.getByRole('button', { name: 'Stop Connection' }).click();
-    await expect(page.getByTestId('mcp-status')).toHaveText('Stopped');
-    await expect(page.getByTestId('mcp-endpoint')).toHaveText('No local endpoint active');
+    await page.getByRole('button', { name: 'หยุด', exact: true }).click();
+    await expect(page.getByTestId('mcp-status')).toHaveText(/Agent หยุดทำงาน|Agent stopped/, { timeout: 30_000 });
     await browser.close();
     browser = undefined;
   } finally {

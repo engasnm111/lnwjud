@@ -11,7 +11,8 @@ const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
 const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
-test('dashboard supports workspace, permissions, fixture process, and doctor journey', async () => {
+test('control center auto-starts MCP and supports project + doctor journey', async () => {
+  test.setTimeout(90_000);
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-'));
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-data-'));
   await writeFile(path.join(fixtureRoot, '.env'), 'SECRET_NOT_FOR_UI=do-not-display\n', 'utf8');
@@ -24,7 +25,13 @@ test('dashboard supports workspace, permissions, fixture process, and doctor jou
     cwd: desktopRoot,
     shell: false,
     windowsHide: true,
-    env: { ...process.env, LNWJUD_DATA_PATH: dataRoot, LNWJUD_E2E_FIXTURE: '1', LNWJUD_E2E_NODE_PATH: process.execPath },
+    env: {
+      ...process.env,
+      LNWJUD_DATA_PATH: dataRoot,
+      LNWJUD_WORKSPACE: fixtureRoot,
+      LNWJUD_E2E_FIXTURE: '1',
+      LNWJUD_E2E_NODE_PATH: process.execPath,
+    },
   });
   const stderr: string[] = [];
   electronProcess.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
@@ -38,41 +45,30 @@ test('dashboard supports workspace, permissions, fixture process, and doctor jou
     const page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
 
-    await expect(page.getByRole('heading', { name: 'Gateway dashboard' })).toBeVisible();
-    if (process.platform === 'win32') {
-      await expect(page.getByText('AVAILABLE', { exact: true })).toBeVisible();
-      await page.getByRole('button', { name: 'Launch managed Chrome' }).click();
-      await expect(page.getByText('7/7 ready')).toBeVisible();
-    }
+    await expect(page.getByRole('heading', { name: 'ศูนย์ควบคุม Agent' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('mcp-status')).toHaveText(/Agent พร้อมทำงาน|Agent ready/, { timeout: 30_000 });
+    await expect(page.getByTestId('mcp-endpoint')).toContainText('http://127.0.0.1:', { timeout: 30_000 });
+    await expect(page.getByTestId('work-log')).toBeVisible({ timeout: 30_000 });
+
+    await page.getByRole('button', { name: 'คัดลอก' }).first().click();
+    await expect(page.getByTestId('mcp-copy-status')).toHaveText(/คัดลอกแล้ว|Copied/);
+
+    await page.getByRole('button', { name: 'โปรเจกต์', exact: true }).click();
     await page.getByLabel('Workspace root').fill(path.join(fixtureRoot, 'missing-workspace'));
-    await page.getByRole('button', { name: 'Add workspace' }).click();
-    await expect(page.getByRole('alert')).toHaveText('Workspace could not be added');
-    await page.getByLabel('Workspace root').fill(fixtureRoot);
-    await page.getByRole('button', { name: 'Add workspace' }).click();
-    await expect(page.getByTestId('workspace-real-root')).toHaveText(fixtureRoot);
+    await page.getByRole('button', { name: 'เพิ่มโปรเจกต์', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText(/Workspace (could not be added|root was not found)/);
+
+    await page.getByRole('button', { name: 'หน้าหลัก', exact: true }).click();
+    await expect(page.getByTestId('workspace-real-root')).toContainText(fixtureRoot);
+
+    await page.getByRole('button', { name: 'Git', exact: true }).click();
     await expect(page.getByTestId('git-summary')).toContainText('Not a Git repository');
-    await expect(page.getByTestId('mcp-status')).toHaveText('Stopped');
-    await page.getByRole('button', { name: 'Start Connection' }).click();
-    await expect(page.getByTestId('mcp-status')).toHaveText('Running');
-    await expect(page.getByTestId('mcp-endpoint')).toContainText('http://127.0.0.1:');
-    await page.getByRole('button', { name: 'Copy MCP endpoint' }).click();
-    await expect(page.getByTestId('mcp-copy-status')).toHaveText('Copied');
-    await page.getByRole('button', { name: 'Stop Connection' }).click();
-    await expect(page.getByTestId('mcp-status')).toHaveText('Stopped');
-    await expect(page.getByTestId('mcp-endpoint')).toHaveText('No local endpoint active');
 
+    await page.getByRole('button', { name: 'ตั้งค่า', exact: true }).click();
     await page.getByLabel('Permission profile').selectOption('balanced');
-    await expect(page.getByTestId('permission-profile')).toHaveText('Balanced');
-    await page.reload();
-    await expect(page.getByLabel('Permission profile')).toHaveValue('balanced');
+    await expect(page.getByTestId('permission-profile')).toHaveText('full');
 
-    await page.getByRole('button', { name: 'Start fixture process' }).click();
-    await expect(page.getByTestId('process-status')).toHaveText('running');
-    await expect(page.getByTestId('process-log')).toContainText('fixture-ready');
-    await page.getByRole('button', { name: 'Stop process' }).click();
-    await expect(page.getByTestId('process-status')).toHaveText('stopped');
-
-    await page.getByRole('button', { name: 'Doctor' }).click();
+    await page.getByRole('button', { name: 'Doctor', exact: true }).click();
     await page.getByRole('button', { name: 'Run doctor' }).click();
     await expect(page.getByTestId('doctor-check-os')).toBeVisible();
     await expect(page.getByTestId('doctor-check-database')).toBeVisible();
@@ -98,38 +94,39 @@ async function findEphemeralPort(): Promise<number> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error === undefined ? resolve() : reject(error));
   });
-  if (address === null || typeof address === 'string') throw new Error('Could not allocate an ephemeral port');
+  if (address === null || typeof address === 'string') throw new Error('Could not allocate ephemeral port');
   return address.port;
 }
 
-async function waitForDevTools(port: number, electronProcess: ChildProcess, stderr: readonly string[]): Promise<void> {
-  await expect.poll(async () => {
-    if (electronProcess.exitCode !== null) throw new Error(`Electron exited with ${electronProcess.exitCode}: ${stderr.join('')}`);
+async function waitForDevTools(port: number, child: ChildProcess, stderr: string[]): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`Electron exited early: ${stderr.join('')}`);
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`);
-      return response.ok;
+      if (response.ok) return;
     } catch {
-      return false;
+      // retry
     }
-  }, { timeout: 10_000, intervals: [50, 100, 250] }).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Timed out waiting for Electron DevTools: ${stderr.join('')}`);
 }
 
-async function terminateProcessTree(process: ChildProcess): Promise<void> {
-  if (process.exitCode !== null || process.pid === undefined) return;
+async function terminateProcessTree(child: ChildProcess): Promise<void> {
+  if (child.pid !== undefined) {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true });
+  }
   await new Promise<void>((resolve) => {
-    const killer = spawn('taskkill.exe', ['/PID', String(process.pid), '/T', '/F'], { shell: false, windowsHide: true });
-    killer.once('error', () => resolve());
-    killer.once('close', () => resolve());
+    if (child.exitCode !== null) {
+      resolve();
+      return;
+    }
+    child.once('exit', () => resolve());
+    setTimeout(() => resolve(), 5_000);
   });
 }
 
 async function removeTemporaryRoot(root: string): Promise<void> {
-  await expect.poll(async () => {
-    try {
-      await rm(root, { recursive: true, force: true });
-      return true;
-    } catch {
-      return false;
-    }
-  }, { timeout: 5_000, intervals: [50, 100, 250] }).toBe(true);
+  await rm(root, { recursive: true, force: true });
 }

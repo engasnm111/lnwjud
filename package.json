@@ -17,7 +17,9 @@
     "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
     "test:e2e": "corepack pnpm@10.15.0 -r --if-present test:e2e",
     "diagnose:electron": "node scripts/diagnose-electron-startup.mjs",
-    "build": "corepack pnpm@10.15.0 -r --if-present build"
+    "build": "corepack pnpm@10.15.0 -r --if-present build",
+    "desktop": "corepack pnpm@10.15.0 --filter @lnwjud/desktop build && corepack pnpm@10.15.0 --filter @lnwjud/desktop exec electron ./dist/main/main.js",
+    "start": "corepack pnpm@10.15.0 desktop"
   },
   "devDependencies": {
     "@eslint/js": "9.33.0",

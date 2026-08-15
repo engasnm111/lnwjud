@@ -29,7 +29,8 @@ export function createMainWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    show: false,
+    show: true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: getPreloadPath(),
       nodeIntegration: false,
@@ -46,7 +47,15 @@ export function createMainWindow(): BrowserWindow {
   mainWindow.webContents.on('will-attach-webview', (event) => {
     event.preventDefault();
   });
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  const reveal = (): void => {
+    if (mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  };
+  mainWindow.once('ready-to-show', reveal);
+  // Fallback if ready-to-show never fires (blank/hung loads).
+  setTimeout(reveal, 1_500);
   void mainWindow.loadFile(rendererEntryPath);
   return mainWindow;
 }

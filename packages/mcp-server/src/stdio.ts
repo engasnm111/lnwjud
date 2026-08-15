@@ -5,7 +5,15 @@ export interface McpStdioOptions extends McpServerOptions {
   readonly onError?: (error: Error) => void;
 }
 
+export function isBenignStdioPipeError(error: Error): boolean {
+  return /EPIPE|ECONNRESET|broken pipe/i.test(error.message);
+}
+
 function writeStdioDiagnostic(error: Error): void {
+  if (isBenignStdioPipeError(error)) {
+    process.stderr.write(`lnwjud MCP stdio: peer closed (${error.message})\n`);
+    return;
+  }
   process.stderr.write(`lnwjud MCP stdio error: ${error.message}\n`);
 }
 

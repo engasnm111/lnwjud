@@ -9,7 +9,7 @@ describe('MCP tool registry', () => {
     const registry = new ToolRegistry({}, actor);
 
     expect(registry.list().map((tool) => tool.name)).toEqual([
-      'workspace_list', 'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
+      'workspace_list', 'workspace_register', 'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
       'search_files', 'search_text', 'git_status', 'git_diff', 'git_log', 'write_file',
       'apply_patch', 'move_file', 'delete_file', 'process_start', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
@@ -86,5 +86,45 @@ describe('MCP tool registry', () => {
     expect(response.content[0]?.text).not.toContain('secret-token');
     expect(JSON.stringify(diagnostics)).not.toContain('secret-token');
     expect(diagnostics).toHaveLength(1);
+  });
+
+  it('records activity sink events for successful tool calls', async () => {
+    const events: Array<{ phase: string; toolName: string; resultCode: string }> = [];
+    const services: McpApplicationServices = {
+      file: {
+        async readFile() {
+          return ok({ path: 'src\\file.ts', content: 'hello', truncated: false });
+        },
+        async readFiles() {
+          return ok({ files: [] });
+        },
+        async writeFile() {
+          return ok({ path: 'x' });
+        },
+        async applyPatch() {
+          return ok({ paths: [] });
+        },
+        async moveFile() {
+          return ok({ from: 'a', to: 'b' });
+        },
+        async deleteFile() {
+          return ok({ path: 'x' });
+        },
+      },
+    };
+
+    const response = await new ToolRegistry(services, actor, {
+      activity: {
+        async record(event) {
+          events.push({ phase: event.phase, toolName: event.toolName, resultCode: event.resultCode });
+        },
+      },
+    }).invoke('read_file', { workspaceId: 'workspace-1', path: 'src\\file.ts' });
+
+    expect(response.isError).not.toBe(true);
+    expect(events).toEqual([
+      { phase: 'started', toolName: 'read_file', resultCode: 'STARTED' },
+      { phase: 'completed', toolName: 'read_file', resultCode: 'SUCCESS' },
+    ]);
   });
 });

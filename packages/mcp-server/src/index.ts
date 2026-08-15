@@ -1,5 +1,7 @@
+export * from './activity-tracker.js';
 export * from './http.js';
 export * from './origin-policy.js';
+export * from './progress-heartbeat.js';
 export * from './result-mapper.js';
 export * from './server.js';
 export * from './stdio.js';

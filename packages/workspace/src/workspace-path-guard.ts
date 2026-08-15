@@ -1,6 +1,7 @@
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { isUnderEDrive } from './machine-root.js';
 import { isWithin } from './path-containment.js';
 import { SecretPolicy } from './secret-policy.js';
 import type { ResolvedWorkspacePath, Workspace } from './workspace-types.js';
@@ -42,7 +43,7 @@ export class WorkspacePathGuard {
     }
 
     const relativePath = path.relative(rootResult.value, realTarget);
-    const secretResult = this.secretPolicy.assertReadable(relativePath);
+    const secretResult = this.assertSecretReadable(workspace, relativePath);
     if (!secretResult.ok) return secretResult;
 
     try {
@@ -92,7 +93,7 @@ export class WorkspacePathGuard {
     const relativePath = realTarget === undefined
       ? path.relative(rootResult.value, absolutePath)
       : path.relative(rootResult.value, realTarget);
-    const secretResult = this.secretPolicy.assertReadable(relativePath);
+    const secretResult = this.assertSecretReadable(workspace, relativePath);
     if (!secretResult.ok) return secretResult;
 
     return ok({
@@ -102,6 +103,14 @@ export class WorkspacePathGuard {
       ...(realTarget === undefined ? {} : { realPath: realTarget }),
       exists,
     });
+  }
+
+  private assertSecretReadable(workspace: Workspace, relativePath: string): Result<void> {
+    // Trusted E: agent surface: secrets and hidden files are intentionally readable.
+    if (isUnderEDrive(workspace.realRootPath) || isUnderEDrive(workspace.rootPath)) {
+      return ok(undefined);
+    }
+    return this.secretPolicy.assertReadable(relativePath);
   }
 
   private validateInput(inputPath: string): Result<void> {

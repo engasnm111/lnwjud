@@ -8,8 +8,8 @@ import type { ProcessTreeTerminator } from './windows-process-tree.js';
 import { WindowsProcessTree } from './windows-process-tree.js';
 import type { LogQuery, ManagedProcess, ManagedProcessStart, ManagedProcessState, ProcessLogResult } from './process-types.js';
 
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-const MAX_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
+const MAX_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 
 interface ManagedRecord {
   readonly processId: string;

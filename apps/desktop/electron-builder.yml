@@ -16,6 +16,12 @@ extraResources:
     to: lnwjud-mcp-stdio.cjs
   - from: build/lnwjud-mcp-stdio.cmd
     to: lnwjud-mcp-stdio.cmd
+# Tunnel profile expects these next to lnwjud.exe (not only under resources/).
+extraFiles:
+  - from: build/lnwjud-mcp-stdio.cjs
+    to: lnwjud-mcp-stdio.cjs
+  - from: build/lnwjud-mcp-stdio.cmd
+    to: lnwjud-mcp-stdio.cmd
 win:
   signAndEditExecutable: false
   target:

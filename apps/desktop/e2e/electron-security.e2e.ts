@@ -27,7 +27,7 @@ test('renderer cannot access Node globals', async () => {
     await expect.poll(() => context.pages().length).toBeGreaterThan(0);
     const page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
-    await expect(page.getByText('lnwjud', { exact: true })).toBeVisible();
+    await expect(page.getByText('lnwjud', { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect.poll(async () => page.evaluate(() => ({
       process: typeof Reflect.get(window, 'process'),
       require: typeof Reflect.get(window, 'require'),

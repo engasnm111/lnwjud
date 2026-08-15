@@ -38,6 +38,9 @@ public static class LnwjudNative
 
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr extra);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hWnd, uint command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
@@ -55,11 +58,12 @@ public static class LnwjudNative
         var result = new List<Dictionary<string, object>>();
         EnumWindows((hWnd, extra) =>
         {
-            if (!IsWindowVisible(hWnd)) return true;
+            if (!IsWindow(hWnd)) return true;
+            // Skip owned popups; keep every top-level HWND (visible, minimized, or cloaked).
+            if (GetWindow(hWnd, 4 /* GW_OWNER */) != IntPtr.Zero) return true;
             var titleBuilder = new StringBuilder(512);
             GetWindowText(hWnd, titleBuilder, titleBuilder.Capacity);
             var title = titleBuilder.ToString();
-            if (string.IsNullOrWhiteSpace(title)) return true;
             uint processId;
             GetWindowThreadProcessId(hWnd, out processId);
             var processName = "";
@@ -72,6 +76,8 @@ public static class LnwjudNative
                 process.Dispose();
             }
             catch { }
+            // Drop empty shell noise (no title and no process name), keep everything else.
+            if (string.IsNullOrWhiteSpace(title) && string.IsNullOrWhiteSpace(processName)) return true;
             var bounds = new Rect();
             GetWindowRect(hWnd, out bounds);
             var boundsValue = new Dictionary<string, object>();
@@ -81,10 +87,12 @@ public static class LnwjudNative
             boundsValue.Add("height", bounds.Bottom - bounds.Top);
             var record = new Dictionary<string, object>();
             record.Add("hwnd", hWnd.ToInt64());
-            record.Add("title", title);
+            record.Add("title", string.IsNullOrWhiteSpace(title) ? processName : title);
             record.Add("process_id", (long)processId);
             record.Add("process_name", processName);
             record.Add("process_path", processPath);
+            record.Add("visible", IsWindowVisible(hWnd));
+            record.Add("minimized", IsIconic(hWnd));
             record.Add("bounds", boundsValue);
             result.Add(record);
             return true;

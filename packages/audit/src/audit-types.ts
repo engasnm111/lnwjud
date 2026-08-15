@@ -40,3 +40,16 @@ export interface CodexRunAuditInput {
   readonly resultCode: string;
   readonly durationMs: number;
 }
+
+export interface McpToolAuditInput {
+  readonly timestamp?: string;
+  readonly actorId: string;
+  readonly actorName: string;
+  readonly workspaceId?: string;
+  readonly toolName: string;
+  readonly callId: string;
+  readonly phase: 'started' | 'completed';
+  readonly targetSummary?: string;
+  readonly resultCode: string;
+  readonly durationMs: number;
+}

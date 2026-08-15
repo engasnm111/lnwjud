@@ -43,4 +43,26 @@ describe('AuditService', () => {
     expect(repository.events[0]?.metadata).toMatchObject({ codexTaskId: 'codex-1', instructionLength: 26 });
     expect(JSON.stringify(repository.events[0])).not.toContain('do not persist this prompt');
   });
+
+  it('records MCP tool activity with phase metadata', async () => {
+    const repository = new MemoryAuditRepository();
+    await new AuditService(repository).recordMcpTool({
+      actorId: 'client-1',
+      actorName: 'test',
+      workspaceId: 'workspace-1',
+      toolName: 'read_file',
+      callId: 'call-1',
+      phase: 'completed',
+      targetSummary: 'src\\app.ts',
+      resultCode: 'SUCCESS',
+      durationMs: 8,
+    });
+
+    expect(repository.events[0]).toMatchObject({
+      action: 'mcp_tool:read_file',
+      targetSummary: 'src\\app.ts',
+      resultCode: 'SUCCESS',
+      metadata: { toolName: 'read_file', callId: 'call-1', phase: 'completed' },
+    });
+  });
 });

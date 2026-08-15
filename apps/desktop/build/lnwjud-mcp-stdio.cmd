@@ -16,5 +16,5 @@ if not exist "%SCRIPT%" (
   echo lnwjud-mcp-stdio: launcher script missing: %SCRIPT% 1>&2
   exit /b 1
 )
-rem Registers every fixed drive automatically. Pass --reset-workspaces on first boot after wipe.
+rem Trusted E:\ machine root + registered project workspaces. Pass --reset-workspaces after wipe.
 "%NODE_EXE%" "%SCRIPT%" %*

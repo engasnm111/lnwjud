@@ -13,6 +13,7 @@ export interface PowerShellWindowsBridgeOptions {
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 600;
+const MAX_TIMEOUT_SECONDS = 14_400;
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const APP_ERROR_CODES: readonly AppErrorCode[] = [
   'INVALID_INPUT', 'WORKSPACE_NOT_FOUND', 'PATH_OUTSIDE_WORKSPACE', 'SECRET_ACCESS_DENIED', 'PERMISSION_DENIED',
@@ -107,7 +108,7 @@ function parseBridgeResult(value: string): Result<unknown> | undefined {
 
 function readTimeout(value: unknown): number {
   if (!isRecord(value) || typeof value.timeout_seconds !== 'number' || !Number.isFinite(value.timeout_seconds)) return DEFAULT_TIMEOUT_SECONDS;
-  return Math.min(600, Math.max(0.1, value.timeout_seconds));
+  return Math.min(MAX_TIMEOUT_SECONDS, Math.max(0.1, value.timeout_seconds));
 }
 
 function powershellExecutable(): string {

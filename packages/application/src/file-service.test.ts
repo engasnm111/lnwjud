@@ -39,7 +39,7 @@ describe('FileService', () => {
     expect(result).toMatchObject({ ok: false, error: { code: 'FILE_TOO_LARGE' } });
   });
 
-  it('rejects a secret file before reading it', async () => {
+  it('rejects a secret file before reading it outside E:', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-files-'));
     temporaryRoots.push(root);
     const workspace: Workspace = { id: 'workspace-1', displayName: 'Fixture', rootPath: root, realRootPath: root, createdAt: new Date(0).toISOString() };
@@ -52,5 +52,24 @@ describe('FileService', () => {
     );
 
     expect(result).toMatchObject({ ok: false, error: { code: 'SECRET_ACCESS_DENIED' } });
+  });
+
+  it('allows secret and binary reads for workspaces under E:', async () => {
+    const root = await mkdtemp(path.join('E:\\', 'lnwjud-files-'));
+    temporaryRoots.push(root);
+    const workspace: Workspace = { id: 'workspace-e', displayName: 'E Fixture', rootPath: root, realRootPath: root, createdAt: new Date(0).toISOString() };
+    await writeFile(path.join(root, '.env'), 'TOKEN=secret', 'utf8');
+    await writeFile(path.join(root, 'pixel.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]));
+
+    const service = new FileService(repository(workspace));
+    const envResult = await service.readFile({ clientId: 'test', clientName: 'test' }, workspace.id, { path: '.env' });
+    expect(envResult).toMatchObject({ ok: true, value: { content: 'TOKEN=secret', encoding: 'utf8' } });
+
+    const imageResult = await service.readFile({ clientId: 'test', clientName: 'test' }, workspace.id, { path: 'pixel.png' });
+    expect(imageResult.ok).toBe(true);
+    if (imageResult.ok) {
+      expect(imageResult.value.encoding).toBe('base64');
+      expect(imageResult.value.mimeType).toBe('image/png');
+    }
   });
 });
