@@ -34,7 +34,9 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
       : t('agent.stopped');
 
   const tunnelLabel = dashboard.tunnel.state === 'running'
-    ? t('tunnel.running')
+    ? dashboard.tunnel.source === 'external'
+      ? t('tunnel.runningExternal')
+      : t('tunnel.running')
     : dashboard.tunnel.state === 'starting'
       ? t('tunnel.starting')
       : dashboard.tunnel.state === 'error'

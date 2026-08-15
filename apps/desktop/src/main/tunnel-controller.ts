@@ -13,6 +13,7 @@ const PROFILE_NAME = 'lnwjud';
 const SECRET_FILE = 'lnwjud.runtime.secret';
 const CLIENT_PATH_SETTING = 'tunnel_client_path';
 const MCP_CONNECTION_MAX_TTL = '168h';
+const EXTERNAL_PROBE_TTL_MS = 4_000;
 
 export interface TunnelControllerOptions {
   readonly getClientPath: () => string | null;
@@ -23,6 +24,8 @@ export class TunnelController {
   private child: ChildProcess | null = null;
   private state: TunnelRunState = 'stopped';
   private message: string | null = null;
+  private externalProbeAt = 0;
+  private lastExternalProbe = false;
 
   public constructor(private readonly options: TunnelControllerOptions) {}
 
@@ -79,21 +82,40 @@ export class TunnelController {
 
   public async status(): Promise<TunnelStatus> {
     const clientPath = this.resolveClientPath();
+    let source: TunnelStatus['source'] = 'desktop';
     if (this.child !== null && this.child.exitCode === null) {
       this.state = 'running';
       this.message = null;
     } else if (this.child !== null && this.child.exitCode !== null) {
       this.child = null;
       if (this.state === 'running') this.state = 'stopped';
+    } else if (this.state !== 'starting') {
+      // No desktop-owned child: reflect a tunnel started externally (e.g. start-lnwjud-tunnel.ps1).
+      if (await this.probeExternalRunning()) {
+        this.state = 'running';
+        this.message = null;
+        source = 'external';
+      } else if (this.state === 'running') {
+        this.state = 'stopped';
+      }
     }
     return {
       state: this.state,
+      source,
       hasApiKey: await this.hasApiKey(),
       clientPath,
       profileExists: existsSync(this.profilePath()),
       message: this.message,
       logPath: this.logPath(),
     };
+  }
+
+  private async probeExternalRunning(): Promise<boolean> {
+    const now = Date.now();
+    if (now - this.externalProbeAt < EXTERNAL_PROBE_TTL_MS) return this.lastExternalProbe;
+    this.externalProbeAt = now;
+    this.lastExternalProbe = await isLnwjudTunnelProcessRunning();
+    return this.lastExternalProbe;
   }
 
   public async start(): Promise<TunnelStatus> {

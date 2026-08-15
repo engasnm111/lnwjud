@@ -131,11 +131,14 @@ function inFlightItems(value: unknown): readonly InFlightWorkItem[] {
 function tunnelStatus(value: unknown): TunnelStatus {
   if (!isRecord(value)) throw new Error('Invalid IPC response');
   const state = value.state;
+  const source = value.source;
   if (state !== 'stopped' && state !== 'starting' && state !== 'running' && state !== 'error') {
     throw new Error('Invalid IPC response');
   }
+  if (source !== 'desktop' && source !== 'external') throw new Error('Invalid IPC response');
   return {
     state,
+    source,
     hasApiKey: booleanField(value, 'hasApiKey'),
     clientPath: nullableString(value.clientPath),
     profileExists: booleanField(value, 'profileExists'),

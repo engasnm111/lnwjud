@@ -232,6 +232,17 @@ input, select {
 .log-line.error .tag { color: var(--danger); }
 .log-line.error { color: #ffd9dd; }
 
+.log-viewer-shell { min-height: 100vh; padding: 12px 16px; }
+.log-viewer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 12px;
+}
+.log-viewer-header .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-viewer-shell .log-stream { max-height: calc(100vh - 170px); }
+
 .project-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .project-list li {
   display: flex;

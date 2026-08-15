@@ -29,7 +29,7 @@ import {
 } from '@lnwjud/ipc-contracts';
 import { startMcpStdio } from '@lnwjud/mcp-server';
 import { createDesktopRuntime, type DesktopRuntime } from './desktop-services.js';
-import { createMainWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
+import { createLogViewerWindow, createMainWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
 
 export interface DesktopIpcServices {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
@@ -61,6 +61,7 @@ export type MainWindowProvider = () => BrowserWindow | null;
 
 const emptyTunnel: TunnelStatus = {
   state: 'stopped',
+  source: 'desktop',
   hasApiKey: false,
   clientPath: null,
   profileExists: false,
@@ -129,11 +130,10 @@ const defaultDesktopServices: DesktopIpcServices = {
   clearLogBuffer: async (): Promise<{ readonly cleared: boolean }> => ({ cleared: false }),
 };
 
-export function isTrustedIpcSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow): boolean {
+export function isTrustedIpcSender(event: IpcMainInvokeEvent, window: BrowserWindow | null): boolean {
+  void window;
   const senderFrame = event.senderFrame;
-  return event.sender === mainWindow.webContents
-    && senderFrame !== null
-    && isAllowedRendererUrl(senderFrame.url, getRendererEntryPath());
+  return senderFrame !== null && isAllowedRendererUrl(senderFrame.url, getRendererEntryPath());
 }
 
 export function registerIpcHandlers(
@@ -251,7 +251,7 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.openLogViewer, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
-    return { opened: false };
+    return { opened: openLogViewerWindow() !== null };
   });
 }
 
@@ -383,8 +383,24 @@ function isPermissionProfile(value: unknown): value is PermissionProfileName {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let logViewerWindow: BrowserWindow | null = null;
 let desktopRuntime: DesktopRuntime | null = null;
 let shutdownStarted = false;
+
+function openLogViewerWindow(): BrowserWindow | null {
+  if (logViewerWindow !== null && !logViewerWindow.isDestroyed()) {
+    if (logViewerWindow.isMinimized()) logViewerWindow.restore();
+    logViewerWindow.show();
+    logViewerWindow.focus();
+    return logViewerWindow;
+  }
+  const viewer = createLogViewerWindow();
+  logViewerWindow = viewer;
+  viewer.on('closed', () => {
+    logViewerWindow = null;
+  });
+  return viewer;
+}
 
 function createDesktopWindow(): void {
   mainWindow = createMainWindow();
@@ -493,6 +509,33 @@ function bootstrapDesktop(): void {
   });
 }
 
+function bootstrapLogViewerOnly(): void {
+  const dataPath = configureDataPath();
+  void app.whenReady().then(async () => {
+    const runtime = createDesktopRuntime(dataPath);
+    desktopRuntime = runtime;
+    runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
+    runtime.logHub.start();
+    registerIpcHandlers(() => mainWindow, runtime.services);
+    const viewer = openLogViewerWindow();
+    if (viewer !== null) {
+      mainWindow = viewer;
+      viewer.on('closed', () => {
+        if (mainWindow === viewer) mainWindow = null;
+      });
+    }
+  });
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+  app.on('will-quit', (event) => {
+    if (shutdownStarted) return;
+    event.preventDefault();
+    shutdownStarted = true;
+    void closeDesktopRuntimeAndQuit();
+  });
+}
+
 async function closeDesktopRuntimeAndQuit(): Promise<void> {
   try {
     await desktopRuntime?.close();
@@ -514,8 +557,28 @@ function configureDataPath(): string {
   return app.getPath('userData');
 }
 
-if (wantsMcpStdio()) {
-  bootstrapMcpStdio();
+const gotInstanceLock = app.requestSingleInstanceLock();
+if (!gotInstanceLock) {
+  app.quit();
 } else {
-  bootstrapDesktop();
+  app.on('second-instance', (_event, argv) => {
+    const existing = logViewerWindow !== null && !logViewerWindow.isDestroyed() ? logViewerWindow : null;
+    if (existing !== null) {
+      if (existing.isMinimized()) existing.restore();
+      existing.show();
+      existing.focus();
+    } else if (argv.includes('--log-viewer')) {
+      openLogViewerWindow();
+    } else if (mainWindow !== null) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+  if (wantsMcpStdio()) {
+    bootstrapMcpStdio();
+  } else if (process.argv.includes('--log-viewer')) {
+    bootstrapLogViewerOnly();
+  } else {
+    bootstrapDesktop();
+  }
 }

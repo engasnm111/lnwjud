@@ -59,3 +59,31 @@ export function createMainWindow(): BrowserWindow {
   void mainWindow.loadFile(rendererEntryPath);
   return mainWindow;
 }
+
+export function createLogViewerWindow(): BrowserWindow {
+  const rendererEntryPath = getRendererEntryPath();
+  const viewerWindow = new BrowserWindow({
+    width: 960,
+    height: 680,
+    show: true,
+    autoHideMenuBar: true,
+    title: 'lnwjud — Live Logs',
+    webPreferences: {
+      preload: getPreloadPath(),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+
+  viewerWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  viewerWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!isAllowedRendererUrl(navigationUrl, rendererEntryPath)) event.preventDefault();
+  });
+  viewerWindow.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
+  void viewerWindow.loadFile(rendererEntryPath, { hash: 'log-viewer' });
+  return viewerWindow;
+}

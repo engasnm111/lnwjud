@@ -80,6 +80,8 @@ export interface ConnectionModes {
 
 export interface TunnelStatus {
   readonly state: TunnelRunState;
+  /** desktop = started by this app; external = started by a script or another process. */
+  readonly source: 'desktop' | 'external';
   readonly hasApiKey: boolean;
   readonly clientPath: string | null;
   readonly profileExists: boolean;

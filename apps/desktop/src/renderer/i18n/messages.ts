@@ -29,6 +29,7 @@ export type MessageKey =
   | 'tunnel.needKey'
   | 'tunnel.needProfile'
   | 'tunnel.running'
+  | 'tunnel.runningExternal'
   | 'tunnel.stopped'
   | 'tunnel.starting'
   | 'tunnel.error'
@@ -106,7 +107,8 @@ export const th: Messages = {
   'tunnel.stop': 'หยุด Tunnel',
   'tunnel.needKey': 'บันทึก Runtime API key ครั้งแรกในการตั้งค่า',
   'tunnel.needProfile': 'ยังไม่มีโปรไฟล์ lnwjud.yaml',
-  'tunnel.running': 'Tunnel เชื่อมต่อแล้ว',
+  'tunnel.running': 'Tunnel เชื่อมต่อแล้ว (จากแอพนี้)',
+  'tunnel.runningExternal': 'Tunnel เชื่อมต่อแล้ว (จากสคริปต์) — ปุ่ม Start ถูกปิดไว้แล้ว',
   'tunnel.stopped': 'Tunnel หยุดอยู่',
   'tunnel.starting': 'กำลังเริ่ม Tunnel',
   'tunnel.error': 'Tunnel มีข้อผิดพลาด',
@@ -183,7 +185,8 @@ export const en: Messages = {
   'tunnel.stop': 'Stop Tunnel',
   'tunnel.needKey': 'Save a Runtime API key once in Settings',
   'tunnel.needProfile': 'Missing lnwjud.yaml tunnel profile',
-  'tunnel.running': 'Tunnel connected',
+  'tunnel.running': 'Tunnel connected (from this app)',
+  'tunnel.runningExternal': 'Tunnel connected (from script) — Start is disabled',
   'tunnel.stopped': 'Tunnel stopped',
   'tunnel.starting': 'Starting tunnel',
   'tunnel.error': 'Tunnel error',
