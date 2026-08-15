@@ -23,7 +23,7 @@ export function workspaceTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'workspace_register',
-      description: 'Register an existing project directory under the E:\\ machine root. parentWorkspaceId must be the E:\\ machine root from workspace_list. Idempotent for the same path.',
+      description: 'Register an existing project directory under a machine root (E:\\ by default; any drive root in unrestricted mode). parentWorkspaceId must be a machine root from workspace_list. Idempotent for the same path.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: workspaceRegisterSchema,

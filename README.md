@@ -477,8 +477,8 @@ start a new chat.
 
 ## Complete MCP tool catalog
 
-The current catalog contains 28 workspace/project tools, 7 local desktop
-capability tools, and 5 skills/MCP bridge meta-tools (40 total).
+The current catalog contains 28 workspace/project tools, 16 local desktop
+capability tools, and 5 skills/MCP bridge meta-tools (49 total).
 
 ### Workspace and project inspection
 
@@ -490,19 +490,22 @@ capability tools, and 5 skills/MCP bridge meta-tools (40 total).
 
 ### Optional machine-root discovery extension
 
-Stdio and desktop runtimes register drive **E:** (`E:\`) as the sole machine
-root. Other fixed-drive roots are pruned on startup. Project folders may be
-registered under `E:\` via MCP or the desktop UI.
+By default, stdio and desktop runtimes register drive **E:** (`E:\`) as the
+sole machine root and prune other drive roots on startup. In **Unrestricted
+mode**, every fixed drive (C:, D:, E:, …) is registered instead and nothing is
+pruned. Project folders may be registered under those roots via MCP or the
+desktop UI.
 
 | Tool | Permission | Input | What it does |
 | --- | --- | --- | --- |
 | workspace_list | READ | Empty object | Lists registered machine roots and project workspaces (`kind`: `machine_root` or `project`) |
-| workspace_register | WRITE | parentWorkspaceId, path, optional displayName | Registers an existing project directory below the `E:\` machine root (idempotent) |
+| workspace_register | WRITE | parentWorkspaceId, path, optional displayName | Registers an existing project directory below a machine root (idempotent; any drive root in unrestricted mode) |
 
 The extension still validates the parent ID, canonical path, and reparse points.
 **Secret and hidden files under `E:\` are intentionally readable** (including
 `.env`, keys, and credentials). Image and other binary files are returned as
-base64 with no application size cap. Paths outside `E:\` remain denied.
+base64 with no application size cap. Paths outside `E:\` remain denied unless
+Unrestricted mode is enabled.
 
 Local capability tools (`shell`, `vision`, `accessibility`, `input_event`,
 `window`, `dom_cdp`, `health`) are available on both desktop HTTP MCP and
@@ -580,6 +583,15 @@ Typical flow: codex_run → poll task status/logs → inspect git_diff → run c
 | vision | READ | Local display/region/window PNG capture and optional OCR; never clicks or types |
 | window | DANGEROUS | Native window list/inspect/activate/close/minimize/maximize/restore/move/resize/frame operations |
 | health | READ | Per-backend diagnostics with no input/browser/window side effects |
+| system_info | READ | OS/CPU/memory/disks/battery/uptime and top processes (read-only) |
+| notification | EXECUTE | Windows toast (BurntToast) or balloon notification |
+| file_dialog | EXECUTE | Native open/save dialogs returning chosen paths; does not read or write files itself |
+| clipboard | DANGEROUS | Clipboard text read/write and PNG image read as base64 |
+| web_fetch | DANGEROUS | Bounded http/https GET/POST/PUT/DELETE/HEAD with text or base64 responses |
+| audio | DANGEROUS | Microphone WAV recording (up to 600s), local audio playback, stop |
+| screen_record | DANGEROUS | ffmpeg gdigrab screen recording with start/stop/status (requires ffmpeg on PATH) |
+| office | DANGEROUS | Excel range read/write/save_as and Word read_text/replace/save_as via COM (requires Office) |
+| scheduler | DANGEROUS | Windows scheduled task list/create/run/delete via schtasks.exe (argument arrays, shell false) |
 
 Use dom_cdp for web pages, accessibility for semantic native controls, and
 input_event only as a low-level fallback. shell remains direct executable
@@ -653,6 +665,81 @@ Use health for diagnostics; dom_cdp for managed web pages; accessibility for
 native controls; vision for screen/OCR fallback; input_event only when the
 higher-level APIs cannot operate; and window for native window management.
 
+## Unrestricted full-access mode
+
+Unrestricted mode lifts the workspace/command limits while keeping the
+deletion blocks. Enable it either way:
+
+- Settings → Unrestricted mode (checkbox; restart the app to apply), or
+- `$env:LNWJUD_UNRESTRICTED = '1'` before launching lnwjud (the tunnel script
+  below sets this automatically for the stdio runtime).
+
+When enabled:
+
+- Every fixed drive (C:, D:, E:, …) is registered as a machine root, so
+  `PATH_OUTSIDE_WORKSPACE` stops appearing and `workspace_register` accepts any drive.
+- `cmd.exe`, `powershell.exe`, `pwsh`, `bash`, and `sh` are allowed through
+  `process_start` (still spawned with separate arguments, `shell: false`).
+- `.cmd`/`.bat` shims (npm.cmd, npx.cmd, …) accept arguments containing `& | < > ^ %`.
+- Secret files (.env, *.key, id_rsa, .ssh/**, .aws/**, credentials.json) are
+  readable on every drive; binary files read as base64 with no size cap.
+- Shell working directories may be anywhere and the full environment is passed
+  through to child processes.
+
+Still blocked in every mode: `del`/`erase`/`rm`/`rmdir`/`rd`/`unlink`/
+`remove-item`, `git clean`, `git reset`, and `delete_file` without
+`userConfirmed: true`.
+
+## Real-time Live Logs
+
+The desktop app includes a Live Logs screen (sidebar) with three tabs:
+
+- Tunnel — tails `%APPDATA%\tunnel-client\lnwjud-tunnel.log` continuously
+- MCP activity — every tool call received by MCP appears immediately
+- Processes — state and recent output of managed processes
+
+Follow/pause, text filter, clear, and export-to-file are available per tab,
+and "Pop out viewer" opens a compact separate window. The viewer can also be
+launched directly:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\lnwjud\lnwjud.exe" --log-viewer
+```
+
+The app is single-instance: launching with `--log-viewer` while the dashboard
+is already open focuses/opens the viewer in the running instance.
+
+## Tunnel state sync between the script and the app
+
+The tunnel can be started from the PowerShell script or from the app's Start
+Tunnel button, and both reflect the same state:
+
+- When the script starts the tunnel, the dashboard detects the external
+  tunnel-client process (within ~4 seconds) and shows "Tunnel connected
+  (from script)" with the Start button disabled.
+- Stop Tunnel in the app also stops a script-started tunnel.
+- If the tunnel exits, the status returns to stopped automatically.
+
+## Run the tunnel with a resilient script
+
+The repository ships `scripts/start-lnwjud-tunnel.ps1`. Copy it anywhere and
+run it instead of a manual `tunnel-client run`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<WindowsUser>\Downloads\tunnel\start-lnwjud-tunnel.ps1"
+```
+
+The script sets `--mcp.connection-max-ttl 168h` (prevents the 10-minute
+disconnect), writes `lnwjud-tunnel.log`, aligns `LNWJUD_DATA_PATH` with the
+desktop app so ChatGPT activity shows in the Work Log and Live Logs, enables
+unrestricted mode, restarts the tunnel automatically when it drops, avoids
+double-starting, and opens the log viewer window. Parameters: `-NoViewer`,
+`-OpenDashboard`, `-ForceRestart`.
+
+## คู่มือภาษาไทย (Thai manual)
+
+ดูคู่มือฉบับเต็มเป็นภาษาไทยได้ที่ [docs/USAGE_TH.md](docs/USAGE_TH.md)
+
 ## Security and operational model
 
 ### Transport
@@ -695,13 +782,15 @@ These are intentionally not in the core catalog:
 
 ```text
 run_shell
-powershell
-cmd
 git_reset
 git_clean
 kill_pid
 read_arbitrary_path
 ```
+
+`powershell` and `cmd` are not standalone tools. They are executable names:
+`process_start`/`shell` allow them in unrestricted mode and deny them
+otherwise; deletion-style invocations stay blocked in every mode.
 
 ## Troubleshooting
 
@@ -715,8 +804,8 @@ read_arbitrary_path
 | The desktop window opens when the tunnel starts | A GUI-only executable was configured; install/use the stdio launcher |
 | WORKSPACE_NOT_FOUND | Use the exact registered workspace ID, not a path or display name |
 | PATH_OUTSIDE_WORKSPACE | Register/select the correct root and use a workspace-relative path |
-| A secret file is denied | Use a non-secret example file or an approved host-side secret workflow |
-| process_start refuses PowerShell/CMD | Shell hosts are blocked; use project_* or a specific approved executable/args |
+| A secret file is denied | Enable Unrestricted mode (Settings or LNWJUD_UNRESTRICTED=1) to read secrets on every drive |
+| process_start refuses PowerShell/CMD | Shell hosts are denied in default mode; enable Unrestricted mode to allow cmd/powershell/pwsh (deletion commands stay blocked) |
 | Child process windows are visible | This is expected for the current visible-window Windows build; use handles/logs to manage them |
 | codex_status is unavailable | Install Codex or continue with process_* and project_*; lnwjud does not inspect credentials |
 | Tunnel disconnects with context canceled / context deadline exceeded | Usually MCP connection TTL teardown; keep one launcher open (auto-restart). After restart, Refresh the connector or start a new ChatGPT message |
