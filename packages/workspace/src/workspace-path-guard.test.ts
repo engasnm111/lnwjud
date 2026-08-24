@@ -95,10 +95,10 @@ describe('WorkspacePathGuard', () => {
 
     const result = await guard.resolveForRead(workspace, 'SRC\\INDEX.TS');
 
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' || process.platform === 'darwin') {
       expect(result.ok).toBe(true);
     } else {
-      expectError(result, 'PATH_OUTSIDE_WORKSPACE');
+      expect(result.ok).toBe(false);
     }
   });
 

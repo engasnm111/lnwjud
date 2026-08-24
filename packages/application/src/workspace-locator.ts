@@ -49,8 +49,13 @@ export async function resolveSharedWorkspace(
   return source;
 }
 
+function isWindowsStylePath(p: string): boolean {
+  return /^[A-Za-z]:[/\\]/i.test(p);
+}
+
 function workspaceContains(workspace: Workspace, inputPath: string): boolean {
-  const absolutePath = path.resolve(inputPath);
+  const isWin = isWindowsStylePath(inputPath) || isWindowsStylePath(workspace.rootPath);
+  const absolutePath = isWin ? path.win32.normalize(inputPath) : path.resolve(inputPath);
   return isWithin(workspace.realRootPath, absolutePath) || isWithin(workspace.rootPath, absolutePath);
 }
 

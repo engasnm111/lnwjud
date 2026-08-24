@@ -1,4 +1,4 @@
-﻿# Dependencies & Package Managers
+# Dependencies & Package Managers
 node_modules/
 .pnpm-store/
 
@@ -11,6 +11,8 @@ apps/desktop/build/*.cjs
 apps/desktop/build/*.cmd
 apps/desktop/build/*.mjs
 apps/desktop/build/*.exe
+apps/desktop/build/lnwjud-mcp-stdio
+apps/desktop/build/lnwjud-node
 *.tsbuildinfo
 *.tsbuildinfo.*
 *.last-run.json

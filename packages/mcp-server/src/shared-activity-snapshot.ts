@@ -1,4 +1,4 @@
-﻿import { execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -482,13 +482,28 @@ function isAlreadyExists(error: unknown): boolean {
 }
 
 async function runWindowsProcessProbe(pid: number, timeoutMs: number): Promise<string> {
-  const { stdout } = await execFileAsync('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-Command',
-    `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
-  ], { windowsHide: true, encoding: 'utf8', timeout: timeoutMs });
-  return stdout;
+  if (process.platform === 'win32') {
+    const { stdout } = await execFileAsync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
+    ], { windowsHide: true, encoding: 'utf8', timeout: timeoutMs });
+    return stdout;
+  }
+  try {
+    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: timeoutMs });
+    const trimmed = stdout.trim();
+    if (!trimmed) return 'GONE';
+    const date = new Date(trimmed);
+    if (Number.isNaN(date.getTime())) return 'GONE';
+    return `LIVE|${date.toISOString()}`;
+  } catch (error: unknown) {
+    if (isRecord(error) && typeof error.code === 'number' && error.code !== 0) {
+      return 'GONE';
+    }
+    throw error;
+  }
 }
 
 function isProcessProbeTimeout(error: unknown): boolean {

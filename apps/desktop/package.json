@@ -16,6 +16,7 @@
     "build:main": "node scripts/write-capability-integrity.mjs && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js",
     "build:renderer": "vite build --config vite.config.ts",
     "package:windows": "corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --win nsis --x64 --publish never",
+    "package:mac": "corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --mac --publish never",
     "test": "vitest run --config vitest.config.ts --passWithNoTests",
     "typecheck": "tsc -b",
     "test:e2e": "node node_modules/electron/install.js && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js && esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --conditions=development --external:electron --outfile=dist/preload/index.cjs && vite build --config vite.config.ts && playwright test --config playwright.config.ts",

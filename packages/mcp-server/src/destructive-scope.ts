@@ -23,7 +23,9 @@ export function isScopedAutoApprovalAllowed(
   scope: WorkspaceScope | null,
 ): boolean {
   if (decision.approvalKey === undefined || policy.approvals[decision.approvalKey] !== true || scope === null) return false;
-  const root = path.win32.resolve(scope.rootPath);
+  if (isDriveRoot(scope.rootPath)) return false;
+  const p = getPathApi(scope.rootPath);
+  const root = p.resolve(scope.rootPath);
   if (isDriveRoot(root)) return false;
   const value = asRecord(input);
   if (value === null) return false;
@@ -173,24 +175,39 @@ function hasGitScopeOverride(args: readonly string[]): boolean {
 function resolveCwd(root: string, value: unknown): string | null {
   if (value === undefined) return root;
   if (typeof value !== 'string') return null;
-  const candidate = path.win32.isAbsolute(value) ? path.win32.resolve(value) : path.win32.resolve(root, value);
+  const p = getPathApi(root, value);
+  const candidate = p.isAbsolute(value) ? p.resolve(value) : p.resolve(root, value);
   return isWithin(root, candidate) ? candidate : null;
 }
 
 function relativeProjectPath(root: string, cwd: string, target: string): string | null {
   if (target.includes('\0')) return null;
-  const candidate = path.win32.isAbsolute(target) ? path.win32.resolve(target) : path.win32.resolve(cwd, target);
+  const p = getPathApi(root, target);
+  const candidate = p.isAbsolute(target) ? p.resolve(target) : p.resolve(cwd, target);
   if (!isWithin(root, candidate)) return null;
-  return path.win32.relative(root, candidate).replaceAll('\\', '/');
+  return p.relative(root, candidate).replaceAll('\\', '/');
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(path.win32.resolve(root), path.win32.resolve(candidate));
-  return relative === '' || (!relative.startsWith('..') && !path.win32.isAbsolute(relative));
+  const p = getPathApi(root, candidate);
+  const relative = p.relative(p.resolve(root), p.resolve(candidate));
+  return relative === '' || (!relative.startsWith('..') && !p.isAbsolute(relative));
 }
 
 function isDriveRoot(value: string): boolean {
-  return /^[A-Za-z]:\\$/.test(path.win32.resolve(value));
+  const raw = value.trim();
+  if (raw === '/' || raw === '\\' || raw === path.sep) return true;
+  if (/^[A-Za-z]:[\\/]?$/i.test(raw)) return true;
+  const p = getPathApi(raw);
+  const resolved = p.resolve(raw);
+  return resolved === '/' || /^[A-Za-z]:[\\/]?$/i.test(resolved);
+}
+
+function getPathApi(root: string, candidate?: string): typeof path.win32 | typeof path.posix {
+  if (/^[A-Za-z]:/i.test(root) || (candidate !== undefined && /^[A-Za-z]:/i.test(candidate))) {
+    return path.win32;
+  }
+  return process.platform === 'win32' ? path.win32 : path.posix;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

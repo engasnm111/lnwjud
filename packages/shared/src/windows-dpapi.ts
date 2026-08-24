@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const KEY_PREFIX_V2 = 'dpapi:v2:';
 const KEY_PREFIX_V1 = 'dpapi:v1:';
+const KEY_PREFIX_RAW = 'raw:v1:';
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
 
 export function protectWithWindowsDpapi(plainText: string): string {
@@ -33,29 +34,31 @@ export function unprotectWithWindowsDpapi(cipherText: string): string {
   return runPowerShellDpapi(script, cipherText);
 }
 
-export function loadOrCreateWindowsProtectedKey(filePath: string, byteLength = 32): Buffer {
+export function loadOrCreateProtectedKey(filePath: string, byteLength = 32): Buffer {
   if (!Number.isInteger(byteLength) || byteLength < 16 || byteLength > 64) throw new Error('Invalid protected key length');
   const absolutePath = path.resolve(filePath);
   mkdirSync(path.dirname(absolutePath), { recursive: true });
   try {
     const stored = readFileSync(absolutePath, 'utf8');
     const decoded = decodeProtectedKey(stored, byteLength);
-    if (stored.trim().startsWith(KEY_PREFIX_V1)) writeProtectedKeyV2(absolutePath, decoded);
+    if (stored.trim().startsWith(KEY_PREFIX_V1) && process.platform === 'win32') writeProtectedKeyV2(absolutePath, decoded);
     return decoded;
   } catch (error) {
     if (!isMissingFile(error)) throw error;
   }
 
   const generated = randomBytes(byteLength);
-  const protectedValue = encodeProtectedKeyV2(generated);
+  const protectedValue = encodeProtectedKey(generated);
   try {
-    writeFileSync(absolutePath, protectedValue, { encoding: 'utf8', flag: 'wx' });
+    writeFileSync(absolutePath, protectedValue, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     return generated;
   } catch (error) {
     if (!isAlreadyExists(error)) throw error;
     return decodeProtectedKey(readFileSync(absolutePath, 'utf8'), byteLength);
   }
 }
+
+export const loadOrCreateWindowsProtectedKey = loadOrCreateProtectedKey;
 
 export function loadCheckpointEncryptionKey(dataPath: string): Buffer {
   const configured = process.env.LNWJUD_CHECKPOINT_KEY_BASE64;
@@ -64,7 +67,12 @@ export function loadCheckpointEncryptionKey(dataPath: string): Buffer {
     if (key.byteLength !== 32) throw new Error('LNWJUD_CHECKPOINT_KEY_BASE64 must decode to 32 bytes');
     return key;
   }
-  return loadOrCreateWindowsProtectedKey(path.join(dataPath, 'checkpoint-master.key'), 32);
+  return loadOrCreateProtectedKey(path.join(dataPath, 'checkpoint-master.key'), 32);
+}
+
+function encodeProtectedKey(key: Buffer): string {
+  if (process.platform === 'win32') return KEY_PREFIX_V2 + protectWithWindowsDpapi(key.toString('base64'));
+  return KEY_PREFIX_RAW + key.toString('base64');
 }
 
 function encodeProtectedKeyV2(key: Buffer): string {
@@ -82,6 +90,8 @@ function decodeProtectedKey(value: string, expectedLength: number): Buffer {
     plain = unprotectWithWindowsDpapi(trimmed.slice(KEY_PREFIX_V2.length));
   } else if (trimmed.startsWith(KEY_PREFIX_V1)) {
     plain = unprotectLegacySecureString(trimmed.slice(KEY_PREFIX_V1.length));
+  } else if (trimmed.startsWith(KEY_PREFIX_RAW)) {
+    plain = trimmed.slice(KEY_PREFIX_RAW.length);
   } else {
     throw new Error('Protected key file has an unsupported format');
   }

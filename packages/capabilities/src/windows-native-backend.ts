@@ -69,10 +69,10 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
     const targets: string[] = [];
     for (const field of fields) {
       const value = input[field];
-      if (typeof value === 'string' && value.trim().length > 0) targets.push(path.resolve(value.trim()));
+      if (typeof value === 'string' && value.trim().length > 0) targets.push(value.trim());
       if (Array.isArray(value)) {
         for (const entry of value) {
-          if (typeof entry === 'string' && entry.trim().length > 0) targets.push(path.resolve(entry.trim()));
+          if (typeof entry === 'string' && entry.trim().length > 0) targets.push(entry.trim());
         }
       }
     }
@@ -80,7 +80,7 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
 
     const roots = this.options.allowedRootsProvider === undefined
       ? []
-      : (await this.options.allowedRootsProvider()).map((root) => path.resolve(root));
+      : (await this.options.allowedRootsProvider());
     for (const target of targets) {
       const within = roots.some((root) => isWithin(root, target));
       if (!within) return err(appError('PATH_OUTSIDE_WORKSPACE', `${this.capability} target path is outside configured local roots`));
@@ -97,9 +97,17 @@ function isSignalAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
+function getPathApi(root: string, candidate?: string): typeof path.win32 | typeof path.posix {
+  if (/^[A-Za-z]:/i.test(root) || (candidate !== undefined && /^[A-Za-z]:/i.test(candidate))) {
+    return path.win32;
+  }
+  return process.platform === 'win32' ? path.win32 : path.posix;
+}
+
 function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  const p = getPathApi(root, candidate);
+  const relative = p.relative(p.resolve(root), p.resolve(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${p.sep}`) && !p.isAbsolute(relative));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

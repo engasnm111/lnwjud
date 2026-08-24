@@ -25,9 +25,8 @@ function servicesWithOffice(root: string, officeResults: Record<string, unknown>
 }
 
 async function withWorkspace(run: (root: string, file: string, provider: string) => Promise<void>): Promise<void> {
-  // Hosted Windows runners may report TEMP as an 8.3 path (RUNNER~1) while
-  // realpath() returns the long form. Keep fixtures canonical like real workspaces.
-  const root = path.win32.normalize(await realpath(await mkdtemp(path.join(tmpdir(), 'lnwjud-doc-test-'))));
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'lnwjud-doc-test-')));
+  const root = process.platform === 'win32' ? path.win32.normalize(dir) : path.normalize(dir);
   const file = path.join(root, 'sample.pdf');
   await writeFile(file, '%PDF-1.4\n%fake-but-present\n%%EOF\n', 'utf8');
   const provider = path.join(root, 'pdftotext.exe');

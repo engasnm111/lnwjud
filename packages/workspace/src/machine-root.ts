@@ -3,9 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 function coerceWindowsPath(rootPath: string): string {
-  const raw = rootPath.trim().replaceAll('/', '\\');
-  if (/^[A-Za-z]:$/i.test(raw)) return `${raw}\\`;
-  return raw;
+  const raw = rootPath.trim();
+  if (/^[A-Za-z]:/i.test(raw)) {
+    const converted = raw.replaceAll('/', '\\');
+    return /^[A-Za-z]:$/i.test(converted) ? `${converted}\\` : converted;
+  }
+  return process.platform === 'win32' ? raw.replaceAll('/', '\\') : raw;
 }
 
 export function normalizeWorkspaceRoot(rootPath: string): string {
@@ -13,25 +16,33 @@ export function normalizeWorkspaceRoot(rootPath: string): string {
   return resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
 }
 
-/** Return the Windows drive root that owns a path, without requiring the drive to exist. */
+/** Return the drive or machine root that owns a path, without requiring the drive to exist. */
 export function driveRootForPath(rootPath: string | undefined): string | null {
   if (typeof rootPath !== 'string' || rootPath.trim().length === 0) return null;
-  const raw = coerceWindowsPath(rootPath);
-  const match = /^([A-Za-z]):(?:\\|$)/.exec(raw);
+  const raw = rootPath.trim();
+  const match = /^([A-Za-z]):(?:[\\/]|$)/.exec(raw);
   const letter = match?.[1];
-  return letter === undefined ? null : `${letter.toUpperCase()}:\\`;
+  if (letter !== undefined) return `${letter.toUpperCase()}:\\`;
+  if (raw.startsWith('/') || path.isAbsolute(raw)) {
+    return path.parse(path.resolve(raw)).root || '/';
+  }
+  return null;
 }
 
-/** True when the path is any Windows drive root (C:\\, D:\\, …). */
+/** True when the path is any Windows drive root (C:\\, D:\\, …) or POSIX root (/). */
 export function isDriveRoot(rootPath: string): boolean {
-  return /^[A-Za-z]:\\?$/.test(coerceWindowsPath(rootPath));
+  const trimmed = rootPath.trim();
+  if (trimmed === '/' || trimmed === path.sep) return true;
+  return /^[A-Za-z]:[\\/]?$/.test(trimmed);
 }
 
 /** True when a path is contained by the supplied machine drive root. */
 export function isUnderMachineRoot(rootPath: string, machineRoot: string): boolean {
   const root = driveRootForPath(machineRoot);
   const candidate = driveRootForPath(rootPath);
-  return root !== null && candidate !== null && root.toLowerCase() === candidate.toLowerCase();
+  if (root === null || candidate === null) return false;
+  if (root === '/' && candidate === '/') return true;
+  return root.toLowerCase() === candidate.toLowerCase();
 }
 
 /**
@@ -46,18 +57,26 @@ export function machineRootPath(
     preferredPath,
     environment.SystemDrive,
     environment.HOMEDRIVE,
-    process.cwd(),
-    os.homedir(),
   ];
   for (const candidate of candidates) {
     const root = driveRootForPath(candidate);
     if (root !== null) return root;
   }
-  return path.parse(path.resolve(preferredPath ?? '.')).root;
+  if (process.platform !== 'win32' && (!preferredPath || !/^[A-Za-z]:/i.test(preferredPath))) {
+    return '/';
+  }
+  for (const candidate of [process.cwd(), os.homedir()]) {
+    const root = driveRootForPath(candidate);
+    if (root !== null) return root;
+  }
+  return path.parse(path.resolve(preferredPath ?? '.')).root || (process.platform === 'win32' ? 'C:\\' : '/');
 }
 
-/** Lists every fixed drive root that exists on this machine (C:\\, D:\\, …). */
+/** Lists every fixed drive root that exists on this machine (C:\\, D:\\, … or /). */
 export function allFixedDriveRoots(): readonly string[] {
+  if (process.platform !== 'win32') {
+    return ['/'];
+  }
   const roots: string[] = [];
   for (let code = 65; code <= 90; code += 1) {
     const root = `${String.fromCharCode(code)}:\\`;
@@ -68,5 +87,13 @@ export function allFixedDriveRoots(): readonly string[] {
 
 /** Machine roots for the current access mode. */
 export function machineRootPaths(unrestricted: boolean, preferredPath?: string): readonly string[] {
-  return unrestricted ? allFixedDriveRoots() : [machineRootPath(preferredPath)];
+  if (unrestricted) {
+    const fixed = allFixedDriveRoots();
+    if (preferredPath) {
+      const preferredRoot = driveRootForPath(preferredPath);
+      if (preferredRoot && !fixed.includes(preferredRoot)) return [preferredRoot, ...fixed];
+    }
+    return fixed;
+  }
+  return [machineRootPath(preferredPath)];
 }

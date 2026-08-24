@@ -184,23 +184,22 @@ export class DocumentRuntimeService {
   }
 
   private async resolveWorkspacePath(workspaceId: string, requested: string, mustExist: boolean): Promise<Result<string>> {
+    const p = process.platform === 'win32' ? path.win32 : path;
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
     let canonicalRoot: string;
     try {
-      canonicalRoot = path.win32.normalize(await realpath(root.value));
+      canonicalRoot = p.normalize(await realpath(root.value));
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root could not be resolved'));
     }
-    // Windows can expose the same physical location under an 8.3 short path
-    // while realpath() returns the long spelling. Do not make a lexical
-    // containment decision until the candidate (or its parent) is canonical.
-    const candidate = path.win32.isAbsolute(requested) ? path.win32.normalize(requested) : path.win32.join(canonicalRoot, requested);
+    const normalizedRequested = process.platform === 'win32' ? requested : requested.replaceAll('\\', '/');
+    const candidate = p.isAbsolute(normalizedRequested) ? p.normalize(normalizedRequested) : p.join(canonicalRoot, normalizedRequested);
 
     if (mustExist) {
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `File was not found: ${candidate}`));
       try {
-        const canonical = path.win32.normalize(await realpath(candidate));
+        const canonical = p.normalize(await realpath(candidate));
         return isWithin(canonicalRoot, canonical)
           ? ok(canonical)
           : err(appError('PATH_OUTSIDE_WORKSPACE', `Document path resolves outside the registered workspace: ${requested}`));
@@ -209,17 +208,18 @@ export class DocumentRuntimeService {
       }
     }
 
-    const parent = path.win32.dirname(candidate);
+    const parent = p.dirname(candidate);
     try {
-      const canonicalParent = path.win32.normalize(await realpath(parent));
+      const canonicalParent = p.normalize(await realpath(parent));
       if (!isWithin(canonicalRoot, canonicalParent)) return err(appError('PATH_OUTSIDE_WORKSPACE', `Document target resolves outside the registered workspace: ${requested}`));
-      return ok(path.win32.join(canonicalParent, path.win32.basename(candidate)));
+      return ok(p.join(canonicalParent, p.basename(candidate)));
     } catch {
       return err(appError('FILE_NOT_FOUND', `Document target parent was not found: ${parent}`));
     }
   }
 
   private async workspaceRoot(workspaceId: string): Promise<Result<string>> {
+    const p = process.platform === 'win32' ? path.win32 : path;
     const workspaceInfo = this.services.workspaceInfo;
     if (workspaceInfo === undefined) return err(appError('WORKSPACE_NOT_FOUND', 'Workspace service is not configured'));
     const info = await workspaceInfo.info(this.actor, workspaceId);
@@ -229,7 +229,7 @@ export class DocumentRuntimeService {
       : undefined;
     return rootPath === undefined
       ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(path.win32.normalize(rootPath));
+      : ok(p.normalize(rootPath));
   }
 }
 

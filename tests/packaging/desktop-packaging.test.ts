@@ -50,7 +50,11 @@ describe('Windows desktop packaging', () => {
     expect(config).toContain('windows-capability-bridge.ps1');
     expect(config).toContain('build/lnwjud-node.exe');
     expect(config).toContain('to: lnwjud-node.exe');
-    await access(path.join(desktopRoot, 'build', 'lnwjud-node.exe'));
+    if (process.platform === 'win32') {
+      await access(path.join(desktopRoot, 'build', 'lnwjud-node.exe'));
+    } else {
+      await access(path.join(desktopRoot, 'build', 'lnwjud-node'));
+    }
     const stdioLauncher = await readFile(path.join(desktopRoot, 'build', 'lnwjud-mcp-stdio.cmd'), 'utf8');
     expect(stdioLauncher).toContain('lnwjud-node.exe');
     expect(stdioLauncher).toContain('no system Node.js is required');
@@ -72,7 +76,7 @@ describe('Windows desktop packaging', () => {
     expect(mainBundle).toMatch(/setPath\(["']userData["']/);
   });
 
-  it('runs the stdio launcher with the bundled Node runtime even when PATH contains no system Node', async () => {
+  it.runIf(process.platform === 'win32')('runs the stdio launcher with the bundled Node runtime even when PATH contains no system Node', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-packaged-stdio-'));
     const launcher = path.join(desktopRoot, 'build', 'lnwjud-mcp-stdio.cmd');
     const systemRoot = process.env.SystemRoot ?? path.win32.join(`C:${path.win32.sep}`, 'Windows');
@@ -113,6 +117,50 @@ describe('Windows desktop packaging', () => {
       if (child.exitCode === null && child.pid !== undefined) {
         const taskkill = spawn(path.join(systemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
         await new Promise<void>((resolve) => taskkill.once('exit', () => resolve()));
+        if (child.exitCode === null) await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await rm(dataPath, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it.runIf(process.platform !== 'win32')('runs the POSIX stdio launcher with the bundled Node runtime', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-packaged-stdio-'));
+    const launcher = path.join(desktopRoot, 'build', 'lnwjud-mcp-stdio');
+    const child = spawn(launcher, ['--workspace', repositoryRoot], {
+      cwd: desktopRoot,
+      env: {
+        ...process.env,
+        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+        LNWJUD_DATA_PATH: dataPath,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`stdio launcher did not become ready: ${stderr}`)), 20_000);
+        child.stderr?.setEncoding('utf8');
+        child.stderr?.on('data', (chunk: string) => {
+          stderr += chunk;
+          if (!stderr.includes('lnwjud MCP stdio ready ')) return;
+          clearTimeout(timer);
+          resolve();
+        });
+        child.once('error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.once('exit', (code) => {
+          if (stderr.includes('lnwjud MCP stdio ready ')) return;
+          clearTimeout(timer);
+          reject(new Error(`stdio launcher exited early with ${String(code)}: ${stderr}`));
+        });
+      });
+      expect(stderr).toContain('lnwjud MCP stdio ready ');
+    } finally {
+      if (child.exitCode === null && child.pid !== undefined) {
+        child.kill('SIGTERM');
         if (child.exitCode === null) await new Promise<void>((resolve) => child.once('exit', () => resolve()));
       }
       await new Promise((resolve) => setTimeout(resolve, 150));

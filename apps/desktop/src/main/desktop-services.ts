@@ -325,6 +325,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         ...(typeof resourcesPath === 'string'
           ? packagedStdioLauncherCandidates(process.execPath, resourcesPath)
           : packagedStdioLauncherCandidates(process.execPath)),
+        path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'build', process.platform === 'win32' ? 'lnwjud-mcp-stdio.cmd' : 'lnwjud-mcp-stdio'),
         path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'build', 'lnwjud-mcp-stdio.cmd'),
       ]);
       return preferredTunnelMcpCommand(process.execPath, cmdPath);
@@ -371,7 +372,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     else settingsRepository.set(selectedWorkspaceSettingKey, next.id);
   }
   const doctorService = new DoctorService({
-    os: async (): Promise<DoctorProbeResult> => ({ status: process.platform === 'win32' ? 'pass' : 'warn', message: `${process.platform} ${process.arch}` }),
+    os: async (): Promise<DoctorProbeResult> => ({ status: (process.platform === 'win32' || process.platform === 'darwin') ? 'pass' : 'warn', message: `${process.platform} ${process.arch}` }),
     database: async (): Promise<DoctorProbeResult> => ({ status: 'pass', message: 'SQLite database ready' }),
     git: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'git'),
     ripgrep: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'rg'),
@@ -898,9 +899,10 @@ function deriveAgentState(running: boolean, inFlightCount: number): AgentState {
 
 function buildConnectionModes(httpUrl: string | null): ConnectionModes {
   const packaged = process.env.LNWJUD_PACKAGED_EXECUTABLE?.trim();
+  const defaultExecutable = process.platform === 'win32' ? 'lnwjud.exe' : 'lnwjud';
   const stdioCommand = packaged && packaged.length > 0
     ? `${packaged} --mcp-stdio`
-    : 'lnwjud.exe --mcp-stdio';
+    : `${defaultExecutable} --mcp-stdio`;
   return { httpUrl, stdioCommand };
 }
 

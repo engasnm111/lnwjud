@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 
@@ -223,7 +224,48 @@ async function currentProcessOwner(): Promise<TunnelLockOwner> {
   return { pid: process.pid, processStartedAt: probe.processStartedAt, acquiredAt: new Date().toISOString() };
 }
 
+async function withPosixTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
+  const normalized = path.resolve(profileDirectory).replace(/[\\/]+$/, '');
+  const identity = createHash('sha256').update(normalized, 'utf8').digest('hex').slice(0, 24);
+  const lockDir = path.join(os.tmpdir(), `lnwjud-tunnel-lock-${identity}`);
+  const deadline = Date.now() + MUTEX_WAIT_MS;
+  let acquired = false;
+
+  while (Date.now() < deadline) {
+    try {
+      await mkdir(lockDir);
+      acquired = true;
+      break;
+    } catch (err: unknown) {
+      if (isAlreadyExists(err)) {
+        try {
+          const stats = await stat(lockDir);
+          if (Date.now() - stats.mtimeMs > 30_000) {
+            await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
+          }
+        } catch { /* ignore */ }
+        await new Promise((r) => setTimeout(r, 50));
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  if (!acquired) {
+    throw new Error('Timed out waiting for the lnwjud tunnel lock critical section');
+  }
+
+  try {
+    return await action();
+  } finally {
+    await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 async function withTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
+  if (process.platform !== 'win32') {
+    return withPosixTunnelLockCriticalSection(profileDirectory, action);
+  }
   const mutexName = tunnelLockMutexName(profileDirectory);
   const script = [
     "$ErrorActionPreference='Stop'",

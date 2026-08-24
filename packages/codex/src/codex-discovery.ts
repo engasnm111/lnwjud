@@ -152,6 +152,9 @@ function sanitizeSpawnErrorCode(value: string | undefined): CodexSpawnErrorCode 
 }
 
 function sanitizeExecutablePath(value: string): string {
+  if (/^[A-Za-z]:/i.test(value) && process.platform !== 'win32') {
+    return path.win32.basename(value);
+  }
   const home = os.homedir();
   const relative = path.relative(home, value);
   if (relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative)) {

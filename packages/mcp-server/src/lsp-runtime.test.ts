@@ -28,7 +28,8 @@ describe('LspRuntimeService', () => {
   });
 
   it('rejects lexical workspace escapes before spawning a language server', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
+    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
     const outside = path.join(root, '..', 'outside.ts');
     await writeFile(outside, 'export const outside = true;\n', 'utf8');
     let spawns = 0;
@@ -43,7 +44,8 @@ describe('LspRuntimeService', () => {
   });
 
   it('collects published diagnostics from a configured language server', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
+    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
 
     const fakeServer = await createFakeServer();
@@ -63,7 +65,8 @@ describe('LspRuntimeService', () => {
   });
 
   it('returns an approval-gated rename plan without applying it', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
+    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
     const fakeServer = await createFakeServer();
     const runtime = new LspRuntimeService(servicesWithRoot(root), actor, {

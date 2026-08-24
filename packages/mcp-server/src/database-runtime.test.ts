@@ -22,7 +22,8 @@ function servicesWithRoot(root: string): McpApplicationServices {
 }
 
 async function withDatabase(run: (root: string, database: string) => Promise<void>): Promise<void> {
-  const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
+  const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-'));
+  const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
   const database = path.join(root, 'app.db');
   const connection = new DatabaseSync(database);
   connection.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE VIEW fancy_users AS SELECT id FROM users;\nCREATE INDEX users_name ON users(name);\nINSERT INTO users (name) VALUES (\'alice\'), (\'bob\');');
@@ -73,7 +74,8 @@ describe('DatabaseRuntimeService', () => {
   });
 
   it('fails closed when the file is not a SQLite database', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
+    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-'));
+    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
     await writeFile(path.join(root, 'fake.db'), 'this is not sqlite', 'utf8');
     const runtime = new DatabaseRuntimeService(servicesWithRoot(root), actor);
     await expect(runtime.query({ workspaceId: 'ws-1', target: 'fake.db', sql: 'SELECT 1' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });

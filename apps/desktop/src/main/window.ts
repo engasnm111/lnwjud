@@ -44,17 +44,20 @@ export function isAllowedRendererUrl(navigationUrl: string, rendererEntryPath: s
 export function createMainWindow(showOnReady = true): BrowserWindow {
   const rendererEntryPath = getRendererEntryPath();
   const iconPath = getWindowIconPath();
+  const isMac = process.platform === 'darwin';
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     show: showOnReady,
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#07090e',
-      symbolColor: '#f5c542',
-      height: 38,
-    },
+    titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+    ...(isMac ? { trafficLightPosition: { x: 12, y: 10 } } : {
+      titleBarOverlay: {
+        color: '#07090e',
+        symbolColor: '#f5c542',
+        height: 38,
+      },
+    }),
     ...(iconPath !== undefined ? { icon: iconPath } : {}),
     webPreferences: {
       preload: getPreloadPath(),
@@ -90,18 +93,21 @@ export function createMainWindow(showOnReady = true): BrowserWindow {
 export function createLogViewerWindow(): BrowserWindow {
   const rendererEntryPath = getRendererEntryPath();
   const iconPath = getWindowIconPath();
+  const isMac = process.platform === 'darwin';
   const viewerWindow = new BrowserWindow({
     width: 960,
     height: 680,
     show: true,
     autoHideMenuBar: true,
     title: 'lnwjud — Live Logs',
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#07090e',
-      symbolColor: '#f5c542',
-      height: 38,
-    },
+    titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+    ...(isMac ? { trafficLightPosition: { x: 12, y: 10 } } : {
+      titleBarOverlay: {
+        color: '#07090e',
+        symbolColor: '#f5c542',
+        height: 38,
+      },
+    }),
     ...(iconPath !== undefined ? { icon: iconPath } : {}),
     webPreferences: {
       preload: getPreloadPath(),

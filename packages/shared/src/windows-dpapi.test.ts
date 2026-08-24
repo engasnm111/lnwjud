@@ -24,3 +24,17 @@ describe.runIf(process.platform === 'win32')('Windows DPAPI helpers', () => {
     }
   }, 15_000);
 });
+
+describe.runIf(process.platform !== 'win32')('Non-Windows protected key helpers', () => {
+  it('persists a raw:v1: key and reuses the same key', async () => {
+    const filePath = path.join(os.tmpdir(), 'lnwjud-raw-key-' + process.pid + '-' + Date.now() + '.key');
+    try {
+      const first = loadOrCreateWindowsProtectedKey(filePath, 32);
+      const stored = await readFile(filePath, 'utf8');
+      expect(stored).toMatch(/^raw:v1:/);
+      expect(loadOrCreateWindowsProtectedKey(filePath, 32)).toEqual(first);
+    } finally {
+      await rm(filePath, { force: true });
+    }
+  });
+});

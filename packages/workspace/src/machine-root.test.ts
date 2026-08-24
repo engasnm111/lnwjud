@@ -21,14 +21,30 @@ describe('machine-root helpers', () => {
   it('lists only existing drive roots', () => {
     const roots = allFixedDriveRoots();
     expect(Array.isArray(roots)).toBe(true);
-    for (const root of roots) expect(root).toMatch(/^[A-Z]:\\$/);
-    if (process.platform === 'win32') expect(roots.length).toBeGreaterThan(0);
+    expect(roots.length).toBeGreaterThan(0);
+    if (process.platform === 'win32') {
+      for (const root of roots) expect(root).toMatch(/^[A-Z]:\\$/);
+    } else {
+      expect(roots).toEqual(['/']);
+    }
   });
 
   it('uses the selected workspace drive in restricted mode and every fixed drive in unrestricted mode', () => {
     expect(machineRootPaths(false, 'D:\\DPLANT-V8')).toEqual(['D:\\']);
     const roots = machineRootPaths(true, 'D:\\DPLANT-V8');
     expect(roots.length).toBeGreaterThan(0);
-    expect(roots.every((root) => /^[A-Z]:\\$/.test(root))).toBe(true);
+    if (process.platform === 'win32') {
+      expect(roots.every((root) => /^[A-Z]:\\$/.test(root))).toBe(true);
+    } else {
+      expect(roots).toContain('D:\\');
+      expect(roots).toContain('/');
+    }
+  });
+
+  it('supports POSIX root paths on non-Windows platforms', () => {
+    expect(driveRootForPath('/Users/alice/projects')).toBe('/');
+    expect(isDriveRoot('/')).toBe(true);
+    expect(isDriveRoot('/Users')).toBe(false);
+    expect(isUnderMachineRoot('/Users/alice', '/')).toBe(true);
   });
 });

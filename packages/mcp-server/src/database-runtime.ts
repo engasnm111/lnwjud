@@ -90,6 +90,7 @@ export class DatabaseRuntimeService {
   }
 
   private async resolveTarget(input: Record<string, unknown>): Promise<Result<string>> {
+    const p = process.platform === 'win32' ? path.win32 : path;
     const workspaceId = readTrimmed(input.workspaceId);
     const requested = readTrimmed(input.target ?? input.path ?? input.database);
     if (workspaceId === undefined || requested === undefined) return err(appError('INVALID_INPUT', 'db tools require workspaceId and target'));
@@ -98,13 +99,15 @@ export class DatabaseRuntimeService {
     }
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
-    const resolved = path.win32.isAbsolute(requested) ? path.win32.normalize(requested) : path.win32.join(root.value, requested);
+    const normalizedRequested = process.platform === 'win32' ? requested : requested.replaceAll('\\', '/');
+    const resolved = p.isAbsolute(normalizedRequested) ? p.normalize(normalizedRequested) : p.join(root.value, normalizedRequested);
     if (!isWithin(root.value, resolved)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
     if (!existsSync(resolved)) return err(appError('FILE_NOT_FOUND', `Database target was not found: ${resolved}`));
     return ok(resolved);
   }
 
   private async workspaceRoot(workspaceId: string): Promise<Result<string>> {
+    const p = process.platform === 'win32' ? path.win32 : path;
     const workspaceInfo = this.services.workspaceInfo;
     if (workspaceInfo === undefined) return err(appError('WORKSPACE_NOT_FOUND', 'Workspace service is not configured'));
     const info = await workspaceInfo.info(this.actor, workspaceId);
@@ -114,7 +117,7 @@ export class DatabaseRuntimeService {
       : undefined;
     return rootPath === undefined
       ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(path.win32.normalize(rootPath));
+      : ok(p.normalize(rootPath));
   }
 }
 
@@ -146,8 +149,9 @@ function bindParameters(input: Record<string, unknown>): (null | number | bigint
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(root.toLowerCase(), candidate.toLowerCase());
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.win32.sep}`) && !path.win32.isAbsolute(relative));
+  const p = process.platform === 'win32' ? path.win32 : path;
+  const relative = p.relative(p.resolve(root), p.resolve(candidate));
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${p.sep}`) && !p.isAbsolute(relative));
 }
 
 function readTrimmed(value: unknown): string | undefined {

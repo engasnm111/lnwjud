@@ -81,10 +81,11 @@ export class SandboxRuntimeService {
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
 
+    const p = process.platform === 'win32' ? path.win32 : path;
     const jobId = readTrimmed(input.jobId) ?? `job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    const staging = path.win32.join(root.value, '.lnwjud', 'sandbox', jobId);
-    const inputPath = path.win32.join(staging, 'input');
-    const outputPath = path.win32.join(staging, 'output');
+    const staging = p.join(root.value, '.lnwjud', 'sandbox', jobId);
+    const inputPath = p.join(staging, 'input');
+    const outputPath = p.join(staging, 'output');
     const executable = readTrimmed(input.executable);
     if (executable === undefined) return err(appError('INVALID_INPUT', 'sandbox_exec requires executable'));
     const args = Array.isArray(input.arguments) ? input.arguments.map((value) => String(value)) : [];
@@ -103,23 +104,23 @@ export class SandboxRuntimeService {
 
     await mkdir(inputPath, { recursive: true });
     await mkdir(outputPath, { recursive: true });
-    await writeFile(path.win32.join(inputPath, 'sandbox-runner.ps1'), SANDBOX_RUNNER_SCRIPT, 'utf8');
-    await writeFile(path.win32.join(outputPath, 'job-manifest.json'), JSON.stringify(plan.value.jobManifest, null, 2), 'utf8');
-    const wsbPath = path.win32.join(staging, 'job.wsb');
+    await writeFile(p.join(inputPath, 'sandbox-runner.ps1'), SANDBOX_RUNNER_SCRIPT, 'utf8');
+    await writeFile(p.join(outputPath, 'job-manifest.json'), JSON.stringify(plan.value.jobManifest, null, 2), 'utf8');
+    const wsbPath = p.join(staging, 'job.wsb');
     await writeFile(wsbPath, plan.value.wsbXml, 'utf8');
 
     const launched = await this.launcher(this.sandboxExecutable, [wsbPath]);
     if (!launched.ok) return launched;
     const deadlineMs = Date.now() + (plan.value.jobManifest.timeoutSeconds + this.startupGraceSeconds) * 1_000;
-    const finished = await this.waiter(path.win32.join(outputPath, 'exit-code.txt'), deadlineMs, signal);
+    const finished = await this.waiter(p.join(outputPath, 'exit-code.txt'), deadlineMs, signal);
     if (!finished) {
       return err(appError('PROCESS_TIMEOUT', `Sandbox job ${jobId} did not produce exit-code.txt within ${plan.value.jobManifest.timeoutSeconds + this.startupGraceSeconds}s`, true));
     }
 
     const [exitCode, stdout, stderr] = await Promise.all([
-      readBounded(path.win32.join(outputPath, 'exit-code.txt'), 64),
-      readBounded(path.win32.join(outputPath, 'stdout.log'), this.maxArtifactBytes),
-      readBounded(path.win32.join(outputPath, 'stderr.log'), this.maxArtifactBytes),
+      readBounded(p.join(outputPath, 'exit-code.txt'), 64),
+      readBounded(p.join(outputPath, 'stdout.log'), this.maxArtifactBytes),
+      readBounded(p.join(outputPath, 'stderr.log'), this.maxArtifactBytes),
     ]);
     return ok({
       tool: 'sandbox_exec',

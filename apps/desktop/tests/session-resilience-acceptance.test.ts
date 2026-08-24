@@ -83,7 +83,7 @@ describe('session resilience acceptance', () => {
     }
   }, 30_000);
 
-  it('keeps the desktop lock and production launcher to one owner in either winner order without running tunnel-client', async () => {
+  it.runIf(process.platform === 'win32')('keeps the desktop lock and production launcher to one owner in either winner order without running tunnel-client', async () => {
     const root = await temporaryDirectory();
     const profileDirectory = path.join(root, 'tunnel-client');
     const sentinel = path.join(root, 'tunnel-client-invoked');
@@ -120,7 +120,7 @@ describe('session resilience acceptance', () => {
     if (afterRelease.acquired) expect(await afterRelease.release()).toBe(true);
   }, 15_000);
 
-  it('uses the same critical section across a TypeScript stale reclaim and PowerShell publisher', async () => {
+  it.runIf(process.platform === 'win32')('uses the same critical section across a TypeScript stale reclaim and PowerShell publisher', async () => {
     const root = await temporaryDirectory();
     const profileDirectory = path.join(root, 'tunnel-client');
     await mkdir(profileDirectory, { recursive: true });

@@ -14,16 +14,36 @@ export function resolveLnwjudDataPath(
   roamingAppDataFallback?: string,
 ): string {
   const configured = environment.LNWJUD_DATA_PATH?.trim();
-  if (configured) return path.resolve(configured);
+  if (configured) {
+    if (/^[A-Za-z]:[\\/]/.test(configured)) return path.win32.resolve(configured);
+    return path.resolve(configured);
+  }
 
+  const defaultAppData = getDefaultAppData(environment);
   const appData = firstNonEmpty(
     environment.APPDATA,
     roamingAppDataFallback,
-    environment.USERPROFILE ? path.join(environment.USERPROFILE, 'AppData', 'Roaming') : undefined,
-    environment.HOME ? path.join(environment.HOME, 'AppData', 'Roaming') : undefined,
-    path.join(os.homedir(), 'AppData', 'Roaming'),
+    environment.USERPROFILE ? path.win32.join(environment.USERPROFILE, 'AppData', 'Roaming') : undefined,
+    defaultAppData,
   );
+
+  if (/^[A-Za-z]:[\\/]/.test(appData)) {
+    return path.win32.resolve(appData, 'lnwjud');
+  }
   return path.resolve(appData, 'lnwjud');
+}
+
+function getDefaultAppData(environment: DataPathEnvironment): string {
+  if (process.platform === 'darwin') {
+    const home = environment.HOME?.trim() || os.homedir();
+    return path.join(home, 'Library', 'Application Support');
+  }
+  if (process.platform !== 'win32') {
+    const home = environment.HOME?.trim() || os.homedir();
+    return path.join(home, '.local', 'share');
+  }
+  const home = environment.USERPROFILE?.trim() || environment.HOME?.trim() || os.homedir();
+  return path.join(home, 'AppData', 'Roaming');
 }
 
 function firstNonEmpty(...values: readonly (string | undefined)[]): string {
@@ -31,5 +51,5 @@ function firstNonEmpty(...values: readonly (string | undefined)[]): string {
     const trimmed = value?.trim();
     if (trimmed) return trimmed;
   }
-  return path.join(os.homedir(), 'AppData', 'Roaming');
+  return getDefaultAppData({});
 }

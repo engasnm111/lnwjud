@@ -44,7 +44,7 @@ describe('CheckpointService', () => {
     if (!created.ok) throw new Error('checkpoint creation failed');
     const restored = await service.restore(actor, workspace.id, created.value.id, { profile: permissionProfiles.full });
 
-    expect(restored).toMatchObject({ ok: true, value: { restoredPaths: ['src\\file.txt'] } });
+    expect(restored).toMatchObject({ ok: true, value: { restoredPaths: [path.join('src', 'file.txt')] } });
     await expect(readFile(target, 'utf8')).resolves.toBe('before');
   });
 

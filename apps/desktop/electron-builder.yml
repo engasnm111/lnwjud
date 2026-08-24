@@ -1,4 +1,4 @@
-﻿appId: com.lnwjud.desktop
+appId: com.lnwjud.desktop
 productName: lnwjud
 asar: true
 npmRebuild: false
@@ -26,18 +26,26 @@ extraResources:
     to: lnwjud-mcp-stdio.cjs
   - from: build/lnwjud-mcp-stdio.cmd
     to: lnwjud-mcp-stdio.cmd
+  - from: build/lnwjud-mcp-stdio
+    to: lnwjud-mcp-stdio
   - from: build/lnwjud-node.exe
     to: lnwjud-node.exe
+  - from: build/lnwjud-node
+    to: lnwjud-node
   - from: ../../native/windows-ocr/bin
     to: windows-ocr
-# Tunnel profile expects these next to lnwjud.exe (not only under resources/).
+# Tunnel profile expects these next to lnwjud.exe / lnwjud (not only under resources/).
 extraFiles:
   - from: build/lnwjud-mcp-stdio.cjs
     to: lnwjud-mcp-stdio.cjs
   - from: build/lnwjud-mcp-stdio.cmd
     to: lnwjud-mcp-stdio.cmd
+  - from: build/lnwjud-mcp-stdio
+    to: lnwjud-mcp-stdio
   - from: build/lnwjud-node.exe
     to: lnwjud-node.exe
+  - from: build/lnwjud-node
+    to: lnwjud-node
 win:
   icon: build/icon.ico
   target:
@@ -58,3 +66,19 @@ nsis:
   uninstallerIcon: build/icon.ico
   uninstallDisplayName: ${productName}
   include: build/installer.nsh
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  artifactName: lnwjud-${version}-${arch}.${ext}
+  darkModeSupport: true
+dmg:
+  artifactName: lnwjud-${version}-${arch}.dmg

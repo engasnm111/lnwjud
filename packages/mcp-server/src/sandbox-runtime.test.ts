@@ -30,10 +30,11 @@ function service(options: {
 }
 
 async function withTempRoot(run: (root: string) => Promise<void>): Promise<void> {
-  const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
+  const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
+  const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
   await writeFile(path.join(root, 'WindowsSandbox.exe'), 'stub');
   try {
-    await run(path.win32.normalize(root));
+    await run(root);
   } finally {
     // Best-effort cleanup; artifacts stay for audit in production too.
   }
