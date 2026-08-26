@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { resolveLnwjudDataPath } from '../packages/shared/dist/index.js';
-import { SqliteDatabase, SqliteWorkspaceRepository } from '../packages/storage/dist/index.js';
-import { WorkspaceService } from '../packages/workspace/dist/index.js';
+import { syncMachineRoots } from '../packages/application/dist/index.js';
+import { resolveLnwjudDataPath, isUnrestricted } from '../packages/shared/dist/index.js';
+import { SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '../packages/storage/dist/index.js';
+import { WorkspaceService, machineRootPath, normalizeWorkspaceRoot } from '../packages/workspace/dist/index.js';
 import { startMcpStdio } from '../packages/mcp-server/dist/index.js';
 import { createStdioMcpRuntime } from '../apps/cli/dist/index.js';
 
@@ -67,32 +67,34 @@ Options:
 
   const databasePath = path.join(resolvedDataPath, 'lnwjud.sqlite');
   const database = new SqliteDatabase(databasePath, { backupDirectory: path.join(resolvedDataPath, 'backups') });
-  const workspaceRepository = new SqliteWorkspaceRepository(database);
-  const workspaceService = new WorkspaceService(workspaceRepository);
+  const rawWorkspaceRepository = new SqliteWorkspaceRepository(database);
+  const settingsRepository = new SqliteSettingsRepository(database);
+  const workspaceService = new WorkspaceService(rawWorkspaceRepository);
 
-  let workspace = await workspaceRepository.findByPath(realWorkspacePath);
+  const unrestricted = options.strictRoots ? false : isUnrestricted(process.env, settingsRepository.get('unrestricted'));
+  const machineRoot = await syncMachineRoots(workspaceService, unrestricted, realWorkspacePath);
+
+  const requestedNorm = normalizeWorkspaceRoot(realWorkspacePath).toLowerCase();
+  const workspaces = await workspaceService.list();
+  let workspace = workspaces.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === requestedNorm);
+
   if (!workspace) {
-    const addResult = await workspaceService.add(path.basename(realWorkspacePath) || 'workspace', realWorkspacePath);
+    const addResult = await workspaceService.add(path.basename(realWorkspacePath) || 'Workspace', realWorkspacePath);
     if (addResult.ok) {
       workspace = addResult.value;
     } else {
-      const existingWorkspaces = await workspaceRepository.list();
-      if (existingWorkspaces.length > 0) {
-        workspace = existingWorkspaces[0];
-      } else {
-        process.stderr.write(`lnwjud-mcp-stdio error: Failed to register workspace: ${addResult.error.message}\n`);
-        database.close();
-        process.exit(1);
-      }
+      workspace = machineRoot ?? workspaces[0];
     }
   }
+
+  database.close();
 
   const runtimeOptions = {
     permissionProfile: options.profile,
     ...(options.strictRoots ? { strictAllowedRoots: [realWorkspacePath] } : {}),
   };
 
-  const runtime = createStdioMcpRuntime(resolvedDataPath, workspace, !options.strictRoots, runtimeOptions);
+  const runtime = createStdioMcpRuntime(resolvedDataPath, workspace, unrestricted, runtimeOptions);
 
   const stdioHandle = startMcpStdio({
     services: runtime.services,

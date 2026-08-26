@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Anthropic-to-GPT Proxy Adapter with Full SSE Streaming Support
+ * Anthropic-to-GPT Proxy Adapter with Full SSE Streaming & Tool Mapping Support
  *
  * Architecture:
  *   Claude Code -> Anthropic-compatible Proxy (this script) -> OpenAI/GPT API
@@ -18,7 +18,7 @@ const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 
-function transformAnthropicToOpenAI(anthropicReq) {
+export function transformAnthropicToOpenAI(anthropicReq) {
   const messages = [];
 
   if (anthropicReq.system) {
@@ -98,7 +98,7 @@ function transformAnthropicToOpenAI(anthropicReq) {
   return openAiReq;
 }
 
-function transformOpenAIToAnthropic(openAiRes, model) {
+export function transformOpenAIToAnthropic(openAiRes, model) {
   const choice = openAiRes.choices?.[0];
   const message = choice?.message;
   const content = [];
@@ -336,6 +336,8 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: 'Not found' }));
 });
 
-server.listen(PORT, () => {
-  process.stdout.write(`Anthropic-to-GPT proxy listening on http://127.0.0.1:${PORT}\n`);
-});
+if (process.argv[1] && process.argv[1].endsWith('anthropic-gpt-proxy.mjs')) {
+  server.listen(PORT, () => {
+    process.stdout.write(`Anthropic-to-GPT proxy listening on http://127.0.0.1:${PORT}\n`);
+  });
+}
