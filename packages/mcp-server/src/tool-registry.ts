@@ -376,6 +376,12 @@ export class ToolRegistry {
   }
 }
 
+function getPathApi(filePath: string): typeof path.win32 | typeof path.posix {
+  if (process.platform === 'win32') return path.win32;
+  if (/^[A-Za-z]:[\\/]/.test(filePath) || filePath.includes('\\')) return path.win32;
+  return path.posix;
+}
+
 function withInternalUserConfirmation(input: unknown): unknown {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return input;
   return { ...(input as Record<string, unknown>), userConfirmed: true };
@@ -422,13 +428,13 @@ function withActivityWorkspaceId(input: unknown, workspaceId: string | undefined
 function isAbsoluteActivityPath(value: string): boolean { return path.win32.isAbsolute(value) || path.posix.isAbsolute(value); }
 
 function activityPathContains(root: string, candidate: string): boolean {
-  const api = path.win32.isAbsolute(root) || path.win32.isAbsolute(candidate) ? path.win32 : path.posix;
+  const api = getPathApi(root);
   const relative = api.relative(api.resolve(root), api.resolve(candidate));
   return relativePathStaysWithin(api, relative);
 }
 
 function normalizedActivityPath(value: string): string {
-  const api = path.win32.isAbsolute(value) ? path.win32 : path.posix;
+  const api = getPathApi(value);
   return api.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
 }
 
@@ -455,7 +461,7 @@ function bindCommandExecutionToActiveWorkspace(toolName: string, input: unknown,
   }
   const rootPath = readTrimmedString(activeWorkspaceScope.rootPath);
   if (rootPath === undefined) return { ok: false, message: 'Host active workspace root is invalid' };
-  const pathApi = path.win32.isAbsolute(rootPath) ? path.win32 : path.posix;
+  const pathApi = getPathApi(rootPath);
   if (!pathApi.isAbsolute(rootPath)) return { ok: false, message: 'Host active workspace root is invalid' };
   const normalizedRoot = pathApi.resolve(rootPath);
   if (nativePathTool) {
@@ -476,14 +482,14 @@ function bindCommandExecutionToActiveWorkspace(toolName: string, input: unknown,
   return { ok: true, value: { ...input, cwd: normalizedCwd, metadata: { ...metadata, [CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY]: normalizedRoot } } };
 }
 
-function scopePathContains(pathApi: typeof path.win32, root: string, candidate: string): boolean {
+function scopePathContains(pathApi: typeof path.win32 | typeof path.posix, root: string, candidate: string): boolean {
   const caseInsensitive = pathApi === path.win32;
   const normalizedRoot = caseInsensitive ? root.toLowerCase() : root;
   const normalizedCandidate = caseInsensitive ? candidate.toLowerCase() : candidate;
   return relativePathStaysWithin(pathApi, pathApi.relative(normalizedRoot, normalizedCandidate));
 }
 
-function relativePathStaysWithin(pathApi: typeof path.win32, relative: string): boolean {
+function relativePathStaysWithin(pathApi: typeof path.win32 | typeof path.posix, relative: string): boolean {
   if (relative === '') return true;
   if (pathApi.isAbsolute(relative)) return false;
   const [firstSegment] = relative.split(pathApi.sep);
@@ -619,7 +625,7 @@ function commandExecutionLeavesActiveWorkspace(toolName: string, input: unknown,
   const cwd = readTrimmedString(input.cwd);
   const root = readTrimmedString(activeWorkspaceScope.rootPath);
   if (cwd === undefined || root === undefined) return false;
-  const pathApi = path.win32.isAbsolute(root) ? path.win32 : path.posix;
+  const pathApi = getPathApi(root);
   if (!pathApi.isAbsolute(cwd)) return false;
   return !scopePathContains(pathApi, pathApi.resolve(root), pathApi.resolve(cwd));
 }

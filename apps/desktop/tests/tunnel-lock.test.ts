@@ -170,7 +170,7 @@ describe('lnwjud tunnel ownership lock', () => {
     const directory = await temporaryDirectory();
     const lockPath = path.join(directory, 'lnwjud.tunnel.lock');
     await writeFile(lockPath, '', 'utf8');
-    await expect(acquireTunnelLock({ profileDirectory: directory, owner: owner(909, '2026-08-20T00:00:00.000Z') })).rejects.toThrow('invalid owner metadata');
+    await expect(acquireTunnelLock({ profileDirectory: directory, owner: owner(909, '2026-08-20T00:00:00.000Z'), inspectProcess: async () => ({ state: 'gone' }) })).rejects.toThrow('invalid owner metadata');
     expect(await readFile(lockPath, 'utf8')).toBe('');
     expect((await readdir(directory)).filter((name) => name.includes('.publish.'))).toEqual([]);
   });
@@ -239,7 +239,7 @@ describe('lnwjud tunnel ownership lock', () => {
     await writeFile(lockPath, raw, 'utf8');
 
     expect(await readTunnelLock(directory)).toBeNull();
-    await expect(acquireTunnelLock({ profileDirectory: directory, owner: owner(919, '2026-08-20T00:00:00.000Z') })).rejects.toThrow('invalid owner metadata');
+    await expect(acquireTunnelLock({ profileDirectory: directory, owner: owner(919, '2026-08-20T00:00:00.000Z'), inspectProcess: async () => ({ state: 'gone' }) })).rejects.toThrow('invalid owner metadata');
     expect(await readFile(lockPath, 'utf8')).toBe(raw);
   });
 });

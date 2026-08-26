@@ -50,6 +50,12 @@ export async function resolveSharedWorkspace(
 }
 
 function workspaceContains(workspace: Workspace, inputPath: string): boolean {
+  if (process.platform !== 'win32' && /^[A-Za-z]:/i.test(inputPath)) {
+    const normalizedInput = inputPath.replaceAll('\\', '/');
+    const normalizedRoot = workspace.realRootPath.replaceAll('\\', '/');
+    const relative = path.posix.relative(normalizedRoot, normalizedInput);
+    return relative === '' || (!relative.startsWith('..') && !path.posix.isAbsolute(relative));
+  }
   const absolutePath = path.resolve(inputPath);
   return isWithin(workspace.realRootPath, absolutePath) || isWithin(workspace.rootPath, absolutePath);
 }

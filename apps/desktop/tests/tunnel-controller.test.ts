@@ -481,7 +481,12 @@ async function ownedController(kill: () => boolean, stopTimeoutMs = 2_000, shutd
     processStartedAt: '2026-08-20T00:00:00.000Z',
     acquiredAt: '2026-08-20T00:00:00.000Z',
   };
-  const claim = await acquireTunnelLock({ profileDirectory: profileDir, owner: lockOwner, inspectProcess: async () => ({ state: 'live', processStartedAt: lockOwner.processStartedAt }), ...(lockHooks === undefined ? {} : { hooks: lockHooks }) });
+  const claim = await acquireTunnelLock({
+    profileDirectory: profileDir,
+    owner: lockOwner,
+    inspectProcess: shutdownOptions.inspectOwnedProcess ?? (async () => ({ state: 'live', processStartedAt: lockOwner.processStartedAt })),
+    ...(lockHooks === undefined ? {} : { hooks: lockHooks }),
+  });
   if (!claim.acquired) throw new Error('test controller could not acquire its lock');
   const controller = new TunnelController({
     getClientPath: (): string | null => null,
@@ -490,6 +495,8 @@ async function ownedController(kill: () => boolean, stopTimeoutMs = 2_000, shutd
     isExternalTunnelRunning: async (): Promise<boolean> => false,
     stopTimeoutMs,
     inspectOwnedProcessTree: async (): Promise<readonly { readonly pid: number; readonly processStartedAt: string }[]> => [],
+    inspectLockProcess: async () => ({ state: 'live', processStartedAt: lockOwner.processStartedAt }),
+    inspectProcess: async () => ({ state: 'live', processStartedAt: lockOwner.processStartedAt }),
     ...shutdownOptions,
   });
   const child = new EventEmitter() as FakeChild;

@@ -119,6 +119,7 @@ describe('DesktopRuntime persistence', () => {
       await runtime.close();
     }
   }, 30_000);
+
   it('persists AI delete and STDIO security policy settings and applies scoped delete dynamically', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-workspace-'));
@@ -361,6 +362,7 @@ describe('DesktopRuntime persistence', () => {
       await restarted.close();
     }
   }, 30_000);
+
   it('applies MCP poll and foreground wait settings live without requiring a runtime restart', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-live-waits-'));
     temporaryRoots.push(rawDataRoot);
@@ -417,6 +419,9 @@ describe('DesktopRuntime persistence', () => {
           },
         });
         expect(Date.now() - shellStartedAt).toBeLessThan(4_000);
+        if (shellResponse.isError) {
+          console.error('desktop-runtime.persistence shellResponse error:', JSON.stringify(shellResponse));
+        }
         expect(shellResponse.isError).not.toBe(true);
         expect(shellResponse.structuredContent).toMatchObject({ state: 'running', task_id: expect.any(String) });
         const shellTaskId = (shellResponse.structuredContent as { task_id: string }).task_id;

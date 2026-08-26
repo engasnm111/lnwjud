@@ -33,7 +33,6 @@ interface ShellRequest {
   readonly owner: CapabilityTaskOwner;
 }
 
-
 export interface ShellCapabilityOptions {
   readonly allowedRoots: readonly string[];
   readonly allowedRootsProvider?: () => Promise<readonly string[]>;
@@ -46,11 +45,6 @@ export interface ShellCapabilityOptions {
   readonly maxSynchronousWaitSeconds?: number;
   readonly maxSynchronousWaitSecondsProvider?: () => number;
   readonly maxOutputBytes?: number;
-  /**
-   * Full-access mode: cwd may be any existing directory, the full environment is
-   * passed through, and .cmd/.bat argument metacharacters are not rejected.
-   * Delete-like commands are policy-gated; exact scoped destructive families may be auto-approved when the saved user policy enables them.
-   */
   readonly unrestricted?: boolean;
 }
 
@@ -350,12 +344,6 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
   }
 
-  private getTask(taskId: string | undefined): Result<ShellTaskRecord> {
-    if (taskId === undefined) return err(appError('INVALID_INPUT', 'Task ID is required'));
-    const task = this.tasks.get(taskId);
-    return task === undefined ? err(appError('PROCESS_NOT_FOUND', 'Task was not found')) : ok(task);
-  }
-
   private async runDurable(
     request: ShellRequest,
     cwd: string,
@@ -396,7 +384,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
   }
 
   private async resolveCwd(requestedCwd: string | undefined, activeWorkspaceRoot: string | undefined): Promise<Result<string>> {
-    if (this.unrestricted && activeWorkspaceRoot === undefined && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
+    if (this.unrestricted && activeWorkspaceRoot === undefined && requestedCwd !== undefined && (path.win32.isAbsolute(requestedCwd) || path.posix.isAbsolute(requestedCwd))) {
       try {
         const canonical = await realpath(requestedCwd);
         if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Working directory must be a directory'));
@@ -418,10 +406,12 @@ export class ShellCapabilityBackend implements CapabilityBackend {
 
     let canonicalActiveRoot: string | undefined;
     if (activeWorkspaceRoot !== undefined) {
-      if (!path.isAbsolute(activeWorkspaceRoot)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is invalid'));
+      if (!path.win32.isAbsolute(activeWorkspaceRoot) && !path.posix.isAbsolute(activeWorkspaceRoot)) {
+        return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is invalid'));
+      }
       try {
         canonicalActiveRoot = await realpath(activeWorkspaceRoot);
-        if (!(await stat(canonicalActiveRoot)).isDirectory()) return err(appError('INVALID_INPUT', 'Host active workspace root must be a directory'));
+        if (!(await stat(canonicalActiveRoot)).isDirectory()) return err(appError('FILE_NOT_FOUND', 'Host active workspace root was not found'));
       } catch {
         return err(appError('FILE_NOT_FOUND', 'Host active workspace root was not found'));
       }

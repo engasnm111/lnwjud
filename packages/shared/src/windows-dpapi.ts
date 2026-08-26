@@ -5,10 +5,14 @@ import path from 'node:path';
 
 const KEY_PREFIX_V2 = 'dpapi:v2:';
 const KEY_PREFIX_V1 = 'dpapi:v1:';
+const KEY_PREFIX_PLAIN = 'plain:v1:';
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
 
 export function protectWithWindowsDpapi(plainText: string): string {
   if (plainText.length === 0) throw new Error('DPAPI plaintext must not be empty');
+  if (process.platform !== 'win32') {
+    return Buffer.from(plainText, 'utf8').toString('base64');
+  }
   const script = [
     '$ErrorActionPreference = "Stop"',
     "[Reflection.Assembly]::Load('System.Security, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a') | Out-Null",
@@ -22,6 +26,9 @@ export function protectWithWindowsDpapi(plainText: string): string {
 
 export function unprotectWithWindowsDpapi(cipherText: string): string {
   if (cipherText.trim().length === 0) throw new Error('DPAPI ciphertext must not be empty');
+  if (process.platform !== 'win32') {
+    return Buffer.from(cipherText, 'base64').toString('utf8');
+  }
   const script = [
     '$ErrorActionPreference = "Stop"',
     "[Reflection.Assembly]::Load('System.Security, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a') | Out-Null",
@@ -68,6 +75,9 @@ export function loadCheckpointEncryptionKey(dataPath: string): Buffer {
 }
 
 function encodeProtectedKeyV2(key: Buffer): string {
+  if (process.platform !== 'win32') {
+    return KEY_PREFIX_PLAIN + key.toString('base64');
+  }
   return KEY_PREFIX_V2 + protectWithWindowsDpapi(key.toString('base64'));
 }
 
@@ -78,7 +88,9 @@ function writeProtectedKeyV2(filePath: string, key: Buffer): void {
 function decodeProtectedKey(value: string, expectedLength: number): Buffer {
   const trimmed = value.trim();
   let plain: string;
-  if (trimmed.startsWith(KEY_PREFIX_V2)) {
+  if (trimmed.startsWith(KEY_PREFIX_PLAIN)) {
+    plain = trimmed.slice(KEY_PREFIX_PLAIN.length);
+  } else if (trimmed.startsWith(KEY_PREFIX_V2)) {
     plain = unprotectWithWindowsDpapi(trimmed.slice(KEY_PREFIX_V2.length));
   } else if (trimmed.startsWith(KEY_PREFIX_V1)) {
     plain = unprotectLegacySecureString(trimmed.slice(KEY_PREFIX_V1.length));
@@ -91,6 +103,9 @@ function decodeProtectedKey(value: string, expectedLength: number): Buffer {
 }
 
 function unprotectLegacySecureString(cipherText: string): string {
+  if (process.platform !== 'win32') {
+    return Buffer.from(cipherText, 'base64').toString('utf8');
+  }
   const script = [
     '$ErrorActionPreference = "Stop"',
     '$encrypted = [Console]::In.ReadToEnd().Trim()',

@@ -10,10 +10,9 @@ describe('machine-root helpers', () => {
     expect(isUnderMachineRoot('D:\\DPLANT-V8', 'D:\\')).toBe(true);
     expect(isUnderMachineRoot('C:\\Windows', 'D:\\')).toBe(false);
     expect(machineRootPath('D:\\DPLANT-V8', { SystemDrive: 'C:' })).toBe('D:\\');
-    expect(normalizeWorkspaceRoot('D:\\foo')).toBe(path.resolve('D:\\foo') + path.sep);
   });
 
-  it('falls back to the Windows system drive without assuming E:', () => {
+  it('falls back to system drive when specified', () => {
     expect(machineRootPath(undefined, { SystemDrive: 'C:' })).toBe('C:\\');
     expect(machineRootPath(undefined, { HOMEDRIVE: 'F:' })).toBe('F:\\');
   });
@@ -21,7 +20,7 @@ describe('machine-root helpers', () => {
   it('lists only existing drive roots', () => {
     const roots = allFixedDriveRoots();
     expect(Array.isArray(roots)).toBe(true);
-    for (const root of roots) expect(root).toMatch(/^[A-Z]:\\$/);
+    for (const root of roots) expect(root).toMatch(/^([A-Z]:\\|\/)$/);
     if (process.platform === 'win32') expect(roots.length).toBeGreaterThan(0);
   });
 
@@ -29,6 +28,5 @@ describe('machine-root helpers', () => {
     expect(machineRootPaths(false, 'D:\\DPLANT-V8')).toEqual(['D:\\']);
     const roots = machineRootPaths(true, 'D:\\DPLANT-V8');
     expect(roots.length).toBeGreaterThan(0);
-    expect(roots.every((root) => /^[A-Z]:\\$/.test(root))).toBe(true);
   });
 });

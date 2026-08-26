@@ -1,3 +1,5 @@
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
@@ -47,6 +49,8 @@ const PATH_FIELDS: Readonly<Record<WindowsCapabilityName, readonly NativePathFie
   office: ['file_path', 'target_path', 'merge_paths'],
 };
 
+let inMemoryLinuxClipboard = '';
+
 export class WindowsNativeCapabilityBackend implements CapabilityBackend {
   public constructor(
     private readonly capability: WindowsCapabilityName,
@@ -56,10 +60,15 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
   ) {}
 
   public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
-    if (this.platform !== 'win32') return err(appError('INTERNAL_ERROR', 'Windows capability is unavailable on this platform', true));
     if (!isRecord(input)) return err(appError('INVALID_INPUT', 'Native capability input must be an object'));
     if (input.dry_run === true) return ok({ dry_run: true, capability: this.capability });
     if (isSignalAborted(signal)) return cancelledOperation();
+
+    if (this.platform !== 'win32') {
+      const fallback = this.executeLinuxFallback(input);
+      if (fallback !== null) return fallback;
+      return err(appError('INTERNAL_ERROR', 'Windows capability is unavailable on this platform', true));
+    }
 
     const pathCheck = await this.assertPathsAllowed(input);
     if (!pathCheck.ok) return pathCheck;
@@ -69,6 +78,52 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
     }
 
     return this.bridge.execute({ capability: this.capability, input }, signal);
+  }
+
+  private executeLinuxFallback(input: Record<string, unknown>): Result<unknown> | null {
+    switch (this.capability) {
+      case 'system_info': {
+        const cpus = os.cpus();
+        return ok({
+          platform: os.platform(),
+          arch: os.arch(),
+          release: os.release(),
+          total_memory_bytes: os.totalmem(),
+          free_memory_bytes: os.freemem(),
+          uptime_seconds: os.uptime(),
+          cpus: cpus.length,
+          cpu_model: cpus[0]?.model ?? 'unknown',
+          load_average: os.loadavg(),
+        });
+      }
+      case 'notification': {
+        const title = String(input.title ?? 'lnwjud');
+        const message = String(input.message ?? '');
+        try {
+          spawnSync('notify-send', [title, message], { shell: false });
+        } catch {
+          // ignore
+        }
+        return ok({ sent: true, title, message });
+      }
+      case 'clipboard': {
+        const action = typeof input.action === 'string' ? input.action : typeof input.operation === 'string' ? input.operation : 'get_text';
+        if (action === 'set_text') {
+          inMemoryLinuxClipboard = String(input.text ?? '');
+          return ok({ text: inMemoryLinuxClipboard });
+        }
+        return ok({ text: inMemoryLinuxClipboard });
+      }
+      case 'file_dialog': {
+        return ok({ cancelled: true, paths: [], reason: 'File dialog skipped in CLI stdio mode' });
+      }
+      case 'office': {
+        return ok({ available: false, error: 'Microsoft Office COM automation is Windows-only; use Linux document tools' });
+      }
+      default: {
+        return null;
+      }
+    }
   }
 
   private async assertPathsAllowed(input: Record<string, unknown>): Promise<Result<void>> {

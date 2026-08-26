@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -30,20 +30,21 @@ function service(options: {
 }
 
 async function withTempRoot(run: (root: string) => Promise<void>): Promise<void> {
-  const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
+  const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
+  const root = await realpath(rawRoot);
   await writeFile(path.join(root, 'WindowsSandbox.exe'), 'stub');
   try {
-    await run(path.win32.normalize(root));
+    await run(root);
   } finally {
-    // Best-effort cleanup; artifacts stay for audit in production too.
+    // Best-effort cleanup
   }
 }
 
 describe('SandboxRuntimeService', () => {
   it('reports a truthful unavailable state when WindowsSandbox.exe is missing', async () => {
-    const runtime = new SandboxRuntimeService(servicesWithRoot('C:\\nowhere'), actor, {
+    const runtime = new SandboxRuntimeService(servicesWithRoot('/nowhere'), actor, {
       platform: 'win32',
-      sandboxExecutable: 'Z:\\missing\\WindowsSandbox.exe',
+      sandboxExecutable: '/missing/WindowsSandbox.exe',
     });
     await expect(runtime.execute({ workspaceId: 'ws-1', executable: 'node', arguments: ['--version'] })).resolves.toMatchObject({
       ok: true, value: { available: false, reason: 'windows_sandbox_feature_missing' },

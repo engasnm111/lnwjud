@@ -47,7 +47,7 @@ describe('CheckpointService', () => {
     if (!created.ok) throw new Error('checkpoint creation failed');
     const restored = await service.restore(actor, workspace.id, created.value.id, { profile: permissionProfiles.full, userConfirmed: true });
 
-    expect(restored).toMatchObject({ ok: true, value: { restoredPaths: ['src\\file.txt'], rollbackCheckpointId: expect.any(String) } });
+    expect(restored).toMatchObject({ ok: true, value: { restoredPaths: [path.normalize('src/file.txt')], rollbackCheckpointId: expect.any(String) } });
     await expect(readFile(target, 'utf8')).resolves.toBe('before');
     if (!restored.ok || restored.value.rollbackCheckpointId === undefined) throw new Error('rollback checkpoint missing');
     await expect(service.restore(actor, workspace.id, restored.value.rollbackCheckpointId, { profile: permissionProfiles.full, userConfirmed: true }))
@@ -69,7 +69,7 @@ describe('CheckpointService', () => {
     expect(listed).toMatchObject({ ok: true, value: [{
       id: created.value.id,
       workspaceId: workspace.id,
-      files: [{ path: 'src\\file.txt', size: Buffer.byteLength('secret-before-content'), contentSha256: expect.any(String) }],
+      files: [{ path: path.normalize('src/file.txt'), size: Buffer.byteLength('secret-before-content'), contentSha256: expect.any(String) }],
     }] });
     expect(JSON.stringify(listed)).not.toContain('secret-before-content');
   });
