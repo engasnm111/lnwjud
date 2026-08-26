@@ -95,8 +95,6 @@ async function replaceVerifiedStaleOwner(lockPath: string, staleOwner: TunnelLoc
     await restoreQuarantinedRecord(lockPath, quarantinePath);
     throw error;
   }
-  // Once the fixed owner is visible, cleanup failure must not strand a lock
-  // owned by a caller that was told acquisition failed.
   await rm(publishPath, { force: true }).catch(() => undefined);
   await rm(quarantinePath, { force: true }).catch(() => undefined);
 }
@@ -223,7 +221,22 @@ async function currentProcessOwner(): Promise<TunnelLockOwner> {
   return { pid: process.pid, processStartedAt: probe.processStartedAt, acquiredAt: new Date().toISOString() };
 }
 
+const posixCriticalSectionLock = new Map<string, Promise<void>>();
+
 async function withTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
+  if (process.platform !== 'win32') {
+    const key = path.resolve(profileDirectory);
+    const previous = posixCriticalSectionLock.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    posixCriticalSectionLock.set(key, previous.then(() => current, () => current));
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+    }
+  }
   const mutexName = tunnelLockMutexName(profileDirectory);
   const script = [
     "$ErrorActionPreference='Stop'",
@@ -277,8 +290,6 @@ async function withTunnelLockCriticalSection<T>(profileDirectory: string, action
   }
   if (actionFailed) throw actionError;
   if (cleanupError !== null) {
-    // The authoritative action already completed while the mutex was held.
-    // Do not misreport that mutation as failed because only helper cleanup failed.
     console.warn('Tunnel lock mutex cleanup failed after the authoritative action completed');
   }
   return actionResult;

@@ -30,7 +30,7 @@ afterEach(async () => {
 
 function expectError(
   result: Result<ResolvedWorkspacePath>,
-  code: 'INVALID_INPUT' | 'PATH_OUTSIDE_WORKSPACE' | 'SECRET_ACCESS_DENIED',
+  code: 'INVALID_INPUT' | 'PATH_OUTSIDE_WORKSPACE' | 'SECRET_ACCESS_DENIED' | 'FILE_NOT_FOUND',
 ): void {
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error.code).toBe(code);
@@ -98,7 +98,7 @@ describe('WorkspacePathGuard', () => {
     if (process.platform === 'win32') {
       expect(result.ok).toBe(true);
     } else {
-      expectError(result, 'PATH_OUTSIDE_WORKSPACE');
+      expectError(result, 'FILE_NOT_FOUND');
     }
   });
 

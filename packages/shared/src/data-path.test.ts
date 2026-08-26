@@ -8,10 +8,10 @@ describe('resolveLnwjudDataPath', () => {
   });
 
   it('defaults to the per-user roaming AppData lnwjud directory', () => {
-    expect(resolveLnwjudDataPath({ APPDATA: 'C:\\Users\\u\\AppData\\Roaming' })).toBe(path.resolve('C:\\Users\\u\\AppData\\Roaming\\lnwjud'));
+    expect(resolveLnwjudDataPath({ APPDATA: 'C:\\Users\\u\\AppData\\Roaming' })).toBe(path.resolve('C:\\Users\\u\\AppData\\Roaming', 'lnwjud'));
   });
 
   it('accepts Electron appData as a fallback without embedding a build-machine profile', () => {
-    expect(resolveLnwjudDataPath({}, 'C:\\Users\\end-user\\AppData\\Roaming')).toBe(path.resolve('C:\\Users\\end-user\\AppData\\Roaming\\lnwjud'));
+    expect(resolveLnwjudDataPath({}, 'C:\\Users\\end-user\\AppData\\Roaming')).toBe(path.resolve('C:\\Users\\end-user\\AppData\\Roaming', 'lnwjud'));
   });
 });

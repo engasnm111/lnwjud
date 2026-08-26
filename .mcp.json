@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "lnwjud": {
+      "command": "node",
+      "args": [
+        "./bin/lnwjud-mcp-stdio.mjs",
+        "--workspace",
+        "."
+      ]
+    }
+  }
+}

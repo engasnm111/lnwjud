@@ -1,4 +1,4 @@
-﻿import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -7,9 +7,22 @@ const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const buildDir = path.join(desktopRoot, 'build');
 const cmdPath = path.join(buildDir, 'lnwjud-mcp-stdio.cmd');
 const bundledNodePath = path.join(buildDir, 'lnwjud-node.exe');
-const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '', 10);
 
-if (process.platform !== 'win32') throw new Error('The packaged stdio runtime is generated on Windows only');
+if (process.platform !== 'win32') {
+  const shPath = path.join(buildDir, 'lnwjud-mcp-stdio');
+  const shContents = `#!/bin/sh
+BASE="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT="$BASE/lnwjud-mcp-stdio.cjs"
+if [ ! -f "$SCRIPT" ]; then SCRIPT="$BASE/resources/lnwjud-mcp-stdio.cjs"; fi
+exec node "$SCRIPT" "$@"
+`;
+  mkdirSync(buildDir, { recursive: true });
+  writeFileSync(shPath, shContents, { encoding: 'utf8', mode: 0o755 });
+  process.stdout.write(`Generated Linux stdio launcher -> ${shPath}\n`);
+  process.exit(0);
+}
+
+const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '', 10);
 if (nodeMajor !== 24) throw new Error(`lnwjud packaged stdio requires the build runtime to be Node.js 24.x; got ${process.versions.node}`);
 
 const contents = `@echo off

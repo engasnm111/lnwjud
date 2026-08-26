@@ -1,0 +1,5 @@
+#!/bin/sh
+BASE="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT="$BASE/lnwjud-mcp-stdio.cjs"
+if [ ! -f "$SCRIPT" ]; then SCRIPT="$BASE/resources/lnwjud-mcp-stdio.cjs"; fi
+exec node "$SCRIPT" "$@"

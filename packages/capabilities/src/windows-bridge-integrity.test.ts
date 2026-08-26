@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe('PowerShellWindowsCapabilityBridge integrity', () => {
-  it('executes a script only when its SHA-256 matches the embedded expectation', async () => {
+  it.runIf(process.platform === 'win32')('executes a script only when its SHA-256 matches the embedded expectation', async () => {
     const root = await temporaryRoot();
     const scriptPath = path.join(root, 'bridge.ps1');
     const script = '$input | Out-Null; Write-Output \'{"ok":true,"value":{"trusted":true}}\'';
@@ -24,7 +24,7 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
     await expect(bridge.execute({ capability: 'system_info', input: { action: 'summary' } })).resolves.toEqual({ ok: true, value: { trusted: true } });
   }, 15_000);
 
-  it('fails closed after the script changes, even if it was valid on a previous call', async () => {
+  it.runIf(process.platform === 'win32')('fails closed after the script changes, even if it was valid on a previous call', async () => {
     const root = await temporaryRoot();
     const scriptPath = path.join(root, 'bridge.ps1');
     const trusted = '$input | Out-Null; Write-Output \'{"ok":true,"value":{"trusted":true}}\'';
@@ -66,9 +66,6 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
 });
 
 async function temporaryRoot(): Promise<string> {
-  // GitHub Hosted Windows runners may expose os.tmpdir() through an infrastructure
-  // junction. Canonicalize that parent first so the fixture itself is a regular,
-  // non-reparse path while production integrity checks remain fail-closed.
   const canonicalTemp = await realpath(os.tmpdir());
   const root = await mkdtemp(path.join(canonicalTemp, 'lnwjud-bridge-integrity-'));
   temporaryRoots.push(root);

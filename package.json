@@ -7,6 +7,9 @@
     "node": ">=24.0.0 <25"
   },
   "type": "module",
+  "bin": {
+    "lnwjud-mcp-stdio": "./bin/lnwjud-mcp-stdio.mjs"
+  },
   "scripts": {
     "set-version": "node scripts/set-version.mjs",
     "lint": "eslint .",

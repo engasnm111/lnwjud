@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ function servicesWithRoot(root: string): McpApplicationServices {
 describe('LspRuntimeService', () => {
   it('reports the missing configuration truthfully before spawning anything', async () => {
     let spawns = 0;
-    const runtime = new LspRuntimeService(servicesWithRoot('C:\\ws'), actor, {
+    const runtime = new LspRuntimeService(servicesWithRoot('/ws'), actor, {
       environment: {},
       spawner: (): ReturnType<typeof ok> => { spawns += 1; return ok({ kill: () => undefined } as never); },
     });
@@ -28,7 +28,8 @@ describe('LspRuntimeService', () => {
   });
 
   it('rejects lexical workspace escapes before spawning a language server', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
+    const root = await realpath(rawRoot);
     const outside = path.join(root, '..', 'outside.ts');
     await writeFile(outside, 'export const outside = true;\n', 'utf8');
     let spawns = 0;
@@ -43,7 +44,8 @@ describe('LspRuntimeService', () => {
   });
 
   it('collects published diagnostics from a configured language server', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
+    const root = await realpath(rawRoot);
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
 
     const fakeServer = await createFakeServer();
@@ -63,7 +65,8 @@ describe('LspRuntimeService', () => {
   });
 
   it('returns an approval-gated rename plan without applying it', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
+    const root = await realpath(rawRoot);
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
     const fakeServer = await createFakeServer();
     const runtime = new LspRuntimeService(servicesWithRoot(root), actor, {

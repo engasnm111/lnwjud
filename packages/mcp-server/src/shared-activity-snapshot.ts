@@ -1,6 +1,6 @@
-﻿import { execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { ActivitySink, ActivitySinkEvent } from './activity-tracker.js';
@@ -272,7 +272,7 @@ export async function currentSharedActivityOwner(): Promise<SharedActivityOwner>
 
 export async function probeProcessStart(pid: number, options: ProcessProbeOptions = {}): Promise<ProcessProbeResult> {
   if (!Number.isInteger(pid) || pid <= 0 || pid > 2_147_483_647) return { state: 'unverifiable', reason: 'invalid_pid' };
-  const runProbe = options.runProbe ?? runWindowsProcessProbe;
+  const runProbe = options.runProbe ?? (process.platform === 'win32' ? runWindowsProcessProbe : runLinuxProcessProbe);
   const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_PROCESS_PROBE_TIMEOUT_MS);
   const attempts = Math.min(3, positiveInteger(options.attempts, DEFAULT_PROCESS_PROBE_ATTEMPTS));
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -489,6 +489,21 @@ async function runWindowsProcessProbe(pid: number, timeoutMs: number): Promise<s
     `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
   ], { windowsHide: true, encoding: 'utf8', timeout: timeoutMs });
   return stdout;
+}
+
+async function runLinuxProcessProbe(pid: number, _timeoutMs: number): Promise<string> {
+  try {
+    process.kill(pid, 0);
+  } catch (error: unknown) {
+    if (isRecord(error) && error.code === 'ESRCH') return 'GONE';
+  }
+  try {
+    const stats = await stat(`/proc/${pid}`);
+    return `LIVE|${stats.ctime.toISOString()}`;
+  } catch {
+    const startTime = new Date(Date.now() - Math.floor(process.uptime() * 1000)).toISOString();
+    return `LIVE|${startTime}`;
+  }
 }
 
 function isProcessProbeTimeout(error: unknown): boolean {

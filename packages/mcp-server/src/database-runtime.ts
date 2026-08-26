@@ -98,8 +98,9 @@ export class DatabaseRuntimeService {
     }
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
-    const pathApi = path.win32.isAbsolute(root.value) ? path.win32 : path;
-    const requestedAbsolute = pathApi.isAbsolute(requested) ? pathApi.resolve(requested) : pathApi.resolve(root.value, requested);
+    const pathApi = process.platform === 'win32' ? path.win32 : path;
+    const normalizedRequested = process.platform !== 'win32' ? requested.replaceAll('\\', '/') : requested;
+    const requestedAbsolute = pathApi.isAbsolute(normalizedRequested) ? pathApi.resolve(normalizedRequested) : pathApi.resolve(root.value, normalizedRequested);
     if (!isWithin(root.value, requestedAbsolute)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
     let canonicalTarget: string;
     try {
@@ -160,7 +161,7 @@ function bindParameters(input: Record<string, unknown>): (null | number | bigint
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const pathApi = path.win32.isAbsolute(root) ? path.win32 : path;
+  const pathApi = process.platform === 'win32' ? path.win32 : path;
   const caseInsensitive = pathApi === path.win32;
   const normalizedRoot = caseInsensitive ? root.toLowerCase() : root;
   const normalizedCandidate = caseInsensitive ? candidate.toLowerCase() : candidate;
