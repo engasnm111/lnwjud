@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process';
+import { access, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
@@ -32,7 +35,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
   }
 
   public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
-    if (this.platform !== 'win32') return err(appError('INTERNAL_ERROR', 'Scheduled tasks are unavailable on this platform', true));
+    if (this.platform !== 'win32' && this.platform !== 'darwin') return err(appError('INTERNAL_ERROR', 'Scheduled tasks are unavailable on this platform', true));
     const parsed = parseRequest(input);
     if (!parsed.ok) return parsed;
     if (isSignalAborted(signal)) return cancelledOperation();
@@ -57,6 +60,14 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
           'PERMISSION_REQUIRED',
           'Creating, running, or deleting a scheduled task requires explicit user confirmation',
         ));
+      }
+      if (this.platform === 'darwin') {
+        switch (request.action) {
+          case 'list': return ok({ tasks: await this.listMacTasks() });
+          case 'create': return ok(await this.createMacTask(request.taskName, request.command, request.arguments ?? [], request.schedule ?? 'DAILY', request.startTime ?? '09:00', signal));
+          case 'delete': return ok(await this.deleteMacTask(request.taskName, signal));
+          case 'run': return ok(await this.runMacTask(request.taskName, signal));
+        }
       }
       switch (request.action) {
         case 'list': return ok({ tasks: await this.list(signal) });
@@ -124,11 +135,112 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
     return { started: true, task_name: taskName };
   }
 
+  private async listMacTasks(): Promise<readonly Record<string, unknown>[]> {
+    const directory = macLaunchAgentsDirectory();
+    await mkdir(directory, { recursive: true });
+    const files = (await readdir(directory)).filter((name) => name.startsWith('com.lnwjud.task.') && name.endsWith('.plist'));
+    const tasks: Record<string, unknown>[] = [];
+    for (const file of files) {
+      try {
+        const xml = await readFile(path.join(directory, file), 'utf8');
+        const name = decodeXmlText(readPlistString(xml, 'LnwjudTaskName') ?? file.slice('com.lnwjud.task.'.length, -'.plist'.length));
+        const hour = Number(readPlistInteger(xml, 'Hour') ?? 0);
+        const minute = Number(readPlistInteger(xml, 'Minute') ?? 0);
+        tasks.push({ name, status: 'loaded-or-configured', schedule: 'DAILY', start_time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`, backend: 'launchd' });
+      } catch {
+        continue;
+      }
+    }
+    return tasks;
+  }
+
+  private async createMacTask(taskName: string, command: string, args: readonly string[], schedule: string, startTime: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    if (schedule.toUpperCase() !== 'DAILY') throw new Error('macOS launchd scheduler currently supports DAILY schedules only');
+    const [hourText, minuteText] = startTime.split(':');
+    const hour = Number(hourText);
+    const minute = Number(minuteText);
+    const directory = macLaunchAgentsDirectory();
+    await mkdir(directory, { recursive: true });
+    const label = macTaskLabel(taskName);
+    const plistPath = path.join(directory, `${label}.plist`);
+    try {
+      await access(plistPath);
+      throw new Error(`Scheduled task already exists: ${taskName}`);
+    } catch (error: unknown) {
+      if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+    const plist = buildLaunchAgentPlist(label, taskName, command, args, hour, minute);
+    await writeFile(plistPath, plist, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    try {
+      await runLaunchctl(['bootstrap', `gui/${process.getuid?.() ?? 0}`, plistPath], signal);
+    } catch (error) {
+      await unlink(plistPath).catch(() => undefined);
+      throw error;
+    }
+    return { created: true, task_name: taskName, schedule: 'DAILY', start_time: startTime, backend: 'launchd' };
+  }
+
+  private async deleteMacTask(taskName: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const label = macTaskLabel(taskName);
+    const plistPath = path.join(macLaunchAgentsDirectory(), `${label}.plist`);
+    await runLaunchctl(['bootout', `gui/${process.getuid?.() ?? 0}`, plistPath], signal).catch(() => undefined);
+    await unlink(plistPath);
+    return { deleted: true, task_name: taskName, backend: 'launchd' };
+  }
+
+  private async runMacTask(taskName: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const label = macTaskLabel(taskName);
+    const plistPath = path.join(macLaunchAgentsDirectory(), `${label}.plist`);
+    await access(plistPath);
+    await runLaunchctl(['kickstart', '-k', `gui/${process.getuid?.() ?? 0}/${label}`], signal);
+    return { started: true, task_name: taskName, backend: 'launchd' };
+  }
+
   private runCommand(args: readonly string[], signal?: AbortSignal): Promise<SchedulerRunResult> {
     return signal === undefined
       ? this.runImpl(this.executable, args)
       : this.runImpl(this.executable, args, signal);
   }
+}
+
+function macLaunchAgentsDirectory(): string {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents');
+}
+
+function macTaskLabel(taskName: string): string {
+  const slug = taskName.trim().toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'task';
+  return `com.lnwjud.task.${slug}`;
+}
+
+function buildLaunchAgentPlist(label: string, taskName: string, command: string, args: readonly string[], hour: number, minute: number): string {
+  const programArguments = [command, ...args].map((value) => `      <string>${escapeXml(value)}</string>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>${escapeXml(label)}</string>\n  <key>LnwjudTaskName</key>\n  <string>${escapeXml(taskName)}</string>\n  <key>ProgramArguments</key>\n  <array>\n${programArguments}\n  </array>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>${hour}</integer>\n    <key>Minute</key>\n    <integer>${minute}</integer>\n  </dict>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n`;
+}
+
+async function runLaunchctl(args: readonly string[], signal?: AbortSignal): Promise<void> {
+  await execFileAsync('/bin/launchctl', [...args], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    ...(signal === undefined ? {} : { signal }),
+  });
+}
+
+function escapeXml(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+}
+
+function decodeXmlText(value: string): string {
+  return value.replaceAll('&apos;', "'").replaceAll('&quot;', '"').replaceAll('&gt;', '>').replaceAll('&lt;', '<').replaceAll('&amp;', '&');
+}
+
+function readPlistString(xml: string, key: string): string | undefined {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<key>\\s*${escapedKey}\\s*</key>\\s*<string>([\\s\\S]*?)</string>`).exec(xml)?.[1];
+}
+
+function readPlistInteger(xml: string, key: string): string | undefined {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`<key>\\s*${escapedKey}\\s*</key>\\s*<integer>(\\d+)</integer>`).exec(xml)?.[1];
 }
 
 function cancelledOperation(): Result<never> {

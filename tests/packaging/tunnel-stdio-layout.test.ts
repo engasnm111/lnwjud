@@ -14,15 +14,32 @@ function section(config: string, start: string, end: string): string {
 }
 
 describe('Secure Tunnel packaged stdio layout', () => {
-  it('ships one canonical stdio runtime beside lnwjud.exe instead of duplicating it under resources', async () => {
+  it('ships one canonical stdio runtime beside the app binary per platform, never duplicated under resources', async () => {
     const config = await readFile(path.join(desktopRoot, 'electron-builder.yml'), 'utf8');
-    const resources = section(config, 'extraResources', 'extraFiles');
-    const files = section(config, 'extraFiles', 'win');
+    const sharedResources = section(config, 'extraResources', 'extraFiles');
+    const sharedFiles = section(config, 'extraFiles', 'win');
+    const windowsBlock = section(config, 'win', 'nsis');
+    const macBlock = section(config, 'mac', 'dmg');
 
-    for (const artifact of ['lnwjud-mcp-stdio.cmd', 'lnwjud-mcp-stdio.cjs', 'lnwjud-node.exe']) {
-      expect(resources).not.toContain(`to: ${artifact}`);
-      expect(files).toContain(`to: ${artifact}`);
-      expect(config.match(new RegExp(`from: build/${artifact.replaceAll('.', '\\.')}`, 'g')) ?? []).toHaveLength(1);
+    // The MCP bundle itself is platform-neutral and ships beside the binary.
+    expect(sharedResources).not.toContain('to: lnwjud-mcp-stdio.cjs');
+    expect(sharedFiles).toContain('to: lnwjud-mcp-stdio.cjs');
+
+    // Windows launchers live only in the win block; macOS launchers only in mac.
+    for (const artifact of ['lnwjud-mcp-stdio.cmd', 'lnwjud-node.exe']) {
+      expect(sharedResources).not.toContain(`to: ${artifact}`);
+      expect(sharedFiles).not.toContain(`to: ${artifact}`);
+      expect(windowsBlock).toContain(`to: ${artifact}`);
+      expect(macBlock).not.toContain(`to: ${artifact}`);
+    }
+    for (const artifact of ['lnwjud-mcp-stdio', 'lnwjud-node']) {
+      expect(macBlock).toContain(`to: ${artifact}`);
+      expect(windowsBlock).not.toContain(`to: ${artifact}\n`);
+    }
+
+    // Every launcher artifact is staged exactly once from the build folder.
+    for (const artifact of ['lnwjud-mcp-stdio.cmd', 'lnwjud-mcp-stdio', 'lnwjud-mcp-stdio.cjs', 'lnwjud-node.exe', 'lnwjud-node']) {
+      expect(config.match(new RegExp(`from: build/${artifact.replaceAll('.', '\\.')}$`, 'gm')) ?? []).toHaveLength(1);
     }
   });
 

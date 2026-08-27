@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { access } from 'node:fs/promises';
@@ -51,7 +51,7 @@ import {
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
-import { createDesktopRuntime, type DesktopRuntime } from './desktop-services.js';
+import { createDesktopRuntime, type DesktopRuntime, type DesktopRuntimeOptions } from './desktop-services.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
@@ -422,9 +422,11 @@ export function registerIpcHandlers(
     const window = getMainWindow();
     if (window === null) return { clientPath: null };
     const result = await dialog.showOpenDialog(window, {
-      title: 'Select tunnel-client.exe',
+      title: process.platform === 'win32' ? 'Select tunnel-client.exe' : 'Select tunnel-client',
       properties: ['openFile'],
-      filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }],
+      ...(process.platform === 'win32'
+        ? { filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }] }
+        : {}),
     });
     return { clientPath: result.canceled ? null : (result.filePaths[0] ?? null) };
   });
@@ -1086,6 +1088,32 @@ function redirectConsoleToStderr(): void {
   console.error = (...args: unknown[]): void => write(process.stderr, args);
 }
 
+const MACOS_SAFE_STORAGE_PREFIX = 'safe-storage:v1:';
+const LEGACY_RAW_SECRET_PREFIX = 'raw:v1:';
+
+function macosTunnelSecretProvider(): Pick<DesktopRuntimeOptions, 'encryptTunnelSecret' | 'decryptTunnelSecret'> {
+  if (process.platform !== 'darwin') return {};
+  return {
+    encryptTunnelSecret: async (plain: string): Promise<string> => {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS Keychain encryption is unavailable');
+      return MACOS_SAFE_STORAGE_PREFIX + safeStorage.encryptString(plain).toString('base64');
+    },
+    decryptTunnelSecret: async (encrypted: string): Promise<string> => {
+      const trimmed = encrypted.trim();
+      if (trimmed.startsWith(MACOS_SAFE_STORAGE_PREFIX)) {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('macOS Keychain decryption is unavailable');
+        return safeStorage.decryptString(Buffer.from(trimmed.slice(MACOS_SAFE_STORAGE_PREFIX.length), 'base64'));
+      }
+      // v4.12.0 macOS previews stored a 0600 raw-base64 envelope. Keep read
+      // compatibility so the next explicit Save can migrate it into Keychain.
+      if (trimmed.startsWith(LEGACY_RAW_SECRET_PREFIX)) {
+        return Buffer.from(trimmed.slice(LEGACY_RAW_SECRET_PREFIX.length), 'base64').toString('utf8');
+      }
+      throw new Error('Stored tunnel secret has an unsupported macOS format');
+    },
+  };
+}
+
 function bootstrapMcpStdio(): void {
   redirectConsoleToStderr();
   app.commandLine.appendSwitch('disable-gpu');
@@ -1096,6 +1124,7 @@ function bootstrapMcpStdio(): void {
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
+      ...macosTunnelSecretProvider(),
     });
     desktopRuntime = runtime;
     const workspacePath = readArgValue('--workspace')
@@ -1366,7 +1395,7 @@ function bootstrapDesktop(): void {
     );
 
     prependBundledRuntimeToolsToPath();
-    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval });
+    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval, ...macosTunnelSecretProvider() });
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -1401,7 +1430,7 @@ function bootstrapLogViewerOnly(): void {
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.lnwjud.desktop');
     prependBundledRuntimeToolsToPath();
-    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval });
+    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval, ...macosTunnelSecretProvider() });
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));

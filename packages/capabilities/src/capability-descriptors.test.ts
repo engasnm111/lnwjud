@@ -24,13 +24,14 @@ describe('capability descriptors', () => {
     expect(descriptor?.requirements).toContain('wsl.exe');
   });
 
-  it('keeps native OCR truthful when package identity is a prerequisite', () => {
+  it('keeps native OCR truthful about its per-platform prerequisites', () => {
     const descriptor = capabilityDescriptors.find((item) => item.name === 'vision');
 
     expect(descriptor).toMatchObject({
       supportsDryRun: true,
       auditTarget: 'display',
     });
-    expect(descriptor?.requirements).toContain('Windows package identity for WinRT OCR');
+    expect(descriptor?.availability).toBe('desktop');
+    expect(descriptor?.requirements).toContain('screen recording permission; platform OCR backend for OCR');
   });
 });

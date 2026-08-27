@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
@@ -222,18 +223,18 @@ export class LspRuntimeService {
   private async resolveWorkspaceFiles(root: string, files: readonly string[]): Promise<Result<readonly string[]>> {
     let canonicalRoot: string;
     try {
-      canonicalRoot = path.win32.normalize(await realpath(root));
+      canonicalRoot = path.normalize(await realpath(root));
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root could not be resolved'));
     }
     const resolved: string[] = [];
     for (const file of files) {
-      const candidate = path.win32.isAbsolute(file) ? path.win32.normalize(file) : path.win32.join(canonicalRoot, file);
+      const candidate = path.isAbsolute(file) ? path.normalize(file) : path.join(canonicalRoot, file);
       if (!isWithin(canonicalRoot, candidate)) return err(appError('PATH_OUTSIDE_WORKSPACE', `LSP file is outside the registered workspace: ${file}`));
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `LSP file was not found: ${file}`));
       let canonicalFile: string;
       try {
-        canonicalFile = path.win32.normalize(await realpath(candidate));
+        canonicalFile = path.normalize(await realpath(candidate));
       } catch {
         return err(appError('FILE_NOT_FOUND', `LSP file could not be resolved: ${file}`));
       }
@@ -282,7 +283,7 @@ export class LspRuntimeService {
       : undefined;
     return rootPath === undefined
       ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(path.win32.normalize(rootPath));
+      : ok(path.normalize(rootPath));
   }
 }
 
@@ -324,23 +325,24 @@ function languageIdForFile(file: string, fallback: string): string {
 }
 
 function pathToUri(file: string): string {
-  const normalized = path.win32.normalize(file).replaceAll('\\', '/').replace(/^\/+/, '');
-  return `file:///${encodeURI(normalized).replaceAll('#', '%23').replaceAll('?', '%3F')}`;
+  return pathToFileURL(path.resolve(file)).href;
 }
 
 function uriToPath(uri: string): string {
   try {
-    return decodeURIComponent(uri.replace(/^file:\/\/\//, '')).replaceAll('/', '\\');
+    return fileURLToPath(uri);
   } catch {
-    return uri.replace(/^file:\/\/\//, '').replaceAll('/', '\\');
+    return uri.replace(/^file:\/\//, '');
   }
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(root.toLowerCase(), candidate.toLowerCase());
+  const normalizedRoot = process.platform === 'win32' ? path.resolve(root).toLowerCase() : path.resolve(root);
+  const normalizedCandidate = process.platform === 'win32' ? path.resolve(candidate).toLowerCase() : path.resolve(candidate);
+  const relative = path.relative(normalizedRoot, normalizedCandidate);
   if (relative === '') return true;
-  if (path.win32.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.win32.sep);
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
   return firstSegment !== '..';
 }
 

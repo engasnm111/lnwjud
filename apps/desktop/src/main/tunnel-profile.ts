@@ -5,8 +5,8 @@ import path from 'node:path';
 // Tunnel itself targets the live Desktop loopback HTTP MCP so the host-selected
 // Active Project and native exact-action approval remain authoritative.
 const COMMAND_LINE = /(command:\s*)"[^"]*"/i;
-const PACKAGED_EXECUTABLE = 'lnwjud.exe';
-const PACKAGED_STDIO_LAUNCHER = 'lnwjud-mcp-stdio.cmd';
+const PACKAGED_EXECUTABLES = new Set(['lnwjud.exe', 'lnwjud']);
+const PACKAGED_STDIO_LAUNCHERS = new Set(['lnwjud-mcp-stdio.cmd', 'lnwjud-mcp-stdio']);
 const RUNTIME_API_KEY_REF = 'env:CONTROL_PLANE_API_KEY';
 
 export function posixPath(filePath: string): string {
@@ -172,22 +172,23 @@ export function resolveStdioLauncherPath(candidates: readonly string[]): string 
  */
 export function preferredTunnelMcpCommand(execPath: string, cmdFallback: string | null): string | null {
   if (cmdFallback === null) return null;
-  if (path.win32.basename(execPath).toLowerCase() !== PACKAGED_EXECUTABLE) return cmdFallback;
+  const executableName = portableBasename(execPath).toLowerCase();
+  if (!PACKAGED_EXECUTABLES.has(executableName)) return cmdFallback;
   if (!existsSync(execPath) || !existsSync(cmdFallback)) return null;
 
   try {
     const installDirectory = realpathSync.native(path.dirname(execPath));
     const launcher = realpathSync.native(cmdFallback);
-    if (path.win32.basename(launcher).toLowerCase() !== PACKAGED_STDIO_LAUNCHER) return null;
+    if (!PACKAGED_STDIO_LAUNCHERS.has(portableBasename(launcher).toLowerCase())) return null;
 
     const launcherDirectory = realpathSync.native(path.dirname(launcher));
-    if (sameWindowsPath(launcherDirectory, installDirectory)) return launcher;
+    if (samePlatformPath(launcherDirectory, installDirectory)) return launcher;
 
     const resourcesCandidate = path.join(path.dirname(execPath), 'resources');
     if (!existsSync(resourcesCandidate)) return null;
     const resourcesDirectory = realpathSync.native(resourcesCandidate);
     if (!isCanonicalWithin(installDirectory, resourcesDirectory)) return null;
-    return sameWindowsPath(launcherDirectory, resourcesDirectory) ? launcher : null;
+    return samePlatformPath(launcherDirectory, resourcesDirectory) ? launcher : null;
   } catch {
     return null;
   }
@@ -195,12 +196,13 @@ export function preferredTunnelMcpCommand(execPath: string, cmdFallback: string 
 
 export function packagedStdioLauncherCandidates(execPath: string, resourcesPath?: string): string[] {
   const execDir = path.dirname(execPath);
+  const launcherName = portableBasename(execPath).toLowerCase().endsWith('.exe') ? 'lnwjud-mcp-stdio.cmd' : 'lnwjud-mcp-stdio';
   const candidates = [
-    path.join(execDir, 'lnwjud-mcp-stdio.cmd'),
-    path.join(execDir, 'resources', 'lnwjud-mcp-stdio.cmd'),
+    path.join(execDir, launcherName),
+    path.join(execDir, 'resources', launcherName),
   ];
   if (typeof resourcesPath === 'string' && resourcesPath.trim().length > 0) {
-    candidates.push(path.join(resourcesPath, 'lnwjud-mcp-stdio.cmd'));
+    candidates.push(path.join(resourcesPath, launcherName));
   }
   return candidates;
 }
@@ -276,14 +278,34 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function sameWindowsPath(left: string, right: string): boolean {
-  return path.win32.normalize(left).toLowerCase() === path.win32.normalize(right).toLowerCase();
+function portableBasename(value: string): string {
+  return path.win32.basename(path.posix.basename(value));
+}
+
+function looksLikeWindowsPath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function samePlatformPath(left: string, right: string): boolean {
+  const windowsStyle = looksLikeWindowsPath(left) || looksLikeWindowsPath(right);
+  const api = windowsStyle ? path.win32 : path;
+  const normalize = (value: string): string => {
+    const normalized = api.normalize(value);
+    return windowsStyle || process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  return normalize(left) === normalize(right);
 }
 
 function isCanonicalWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(path.win32.normalize(root).toLowerCase(), path.win32.normalize(candidate).toLowerCase());
+  const windowsStyle = looksLikeWindowsPath(root) || looksLikeWindowsPath(candidate);
+  const api = windowsStyle ? path.win32 : path;
+  const normalize = (value: string): string => {
+    const normalized = api.normalize(value);
+    return windowsStyle || process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const relative = api.relative(normalize(root), normalize(candidate));
   if (relative === '') return true;
-  if (path.win32.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.win32.sep);
+  if (api.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(api.sep);
   return firstSegment !== '..';
 }

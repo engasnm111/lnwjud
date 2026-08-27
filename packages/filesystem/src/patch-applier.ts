@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { appError, err, MAX_MULTI_FILE_BYTES, ok, type Result } from '@lnwjud/domain';
 
 export interface FilePatch {
@@ -20,7 +21,8 @@ export class PatchApplier {
       if (typeof file.path !== 'string' || file.path.length === 0 || typeof file.content !== 'string') {
         return err(appError('INVALID_INPUT', 'Patch file entry is invalid'));
       }
-      const normalizedPath = file.path.replaceAll('/', '\\').toLowerCase();
+      const nativePath = path.normalize(file.path.replace(/[\\/]+/g, path.sep));
+      const normalizedPath = nativePath.toLowerCase();
       if (paths.has(normalizedPath)) return err(appError('INVALID_INPUT', 'Patch contains duplicate paths'));
       paths.add(normalizedPath);
       totalBytes += Buffer.byteLength(file.content, 'utf8');

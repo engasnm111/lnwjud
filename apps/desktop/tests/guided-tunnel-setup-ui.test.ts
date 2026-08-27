@@ -43,7 +43,7 @@ describe('guided tunnel onboarding UI', () => {
     const en = renderToStaticMarkup(createElement(FirstRunTunnelTip, { locale: 'en', onStart: noop, onLater: noop }));
 
     expect(th).toContain('ตั้งค่า ChatGPT ให้ใช้ lnwjud');
-    expect(th).toContain('Windows DPAPI');
+    expect(th).toContain('macOS Keychain / Windows DPAPI');
     expect(th).toContain('เริ่มตั้งค่า');
     expect(th).toContain('ไว้ทีหลัง');
     expect(en).toContain('Connect ChatGPT to lnwjud');

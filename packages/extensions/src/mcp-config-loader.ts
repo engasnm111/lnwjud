@@ -17,7 +17,7 @@ export class McpConfigLoader {
 
   public async discover(): Promise<readonly DiscoveredMcpServer[]> {
     const home = this.options.homeDir ?? os.homedir();
-    const appData = this.options.appDataDir ?? process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+    const appData = this.options.appDataDir ?? defaultAppDataDirectory(home);
     const discovered: DiscoveredMcpServer[] = [];
 
     await this.loadFile(
@@ -120,6 +120,12 @@ function substitute(value: string, workspaceRoot: string | undefined, env: NodeJ
   }
   result = result.replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => env[name] ?? '');
   return result;
+}
+
+function defaultAppDataDirectory(home: string): string {
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support');
+  if (process.platform === 'win32') return process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+  return process.env.XDG_CONFIG_HOME ?? path.join(home, '.config');
 }
 
 function dedupeServers(servers: readonly DiscoveredMcpServer[]): readonly DiscoveredMcpServer[] {

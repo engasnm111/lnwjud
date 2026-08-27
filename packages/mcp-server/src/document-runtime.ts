@@ -210,19 +210,19 @@ export class DocumentRuntimeService {
     if (!root.ok) return root;
     let canonicalRoot: string;
     try {
-      canonicalRoot = path.win32.normalize(await realpath(root.value));
+      canonicalRoot = path.normalize(await realpath(root.value));
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root could not be resolved'));
     }
     // Windows can expose the same physical location under an 8.3 short path
     // while realpath() returns the long spelling. Do not make a lexical
     // containment decision until the candidate (or its parent) is canonical.
-    const candidate = path.win32.isAbsolute(requested) ? path.win32.normalize(requested) : path.win32.join(canonicalRoot, requested);
+    const candidate = path.isAbsolute(requested) ? path.normalize(requested) : path.join(canonicalRoot, requested);
 
     if (mustExist) {
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `File was not found: ${candidate}`));
       try {
-        const canonical = path.win32.normalize(await realpath(candidate));
+        const canonical = path.normalize(await realpath(candidate));
         return isWithin(canonicalRoot, canonical)
           ? ok(canonical)
           : err(appError('PATH_OUTSIDE_WORKSPACE', `Document path resolves outside the registered workspace: ${requested}`));
@@ -231,11 +231,11 @@ export class DocumentRuntimeService {
       }
     }
 
-    const parent = path.win32.dirname(candidate);
+    const parent = path.dirname(candidate);
     try {
-      const canonicalParent = path.win32.normalize(await realpath(parent));
+      const canonicalParent = path.normalize(await realpath(parent));
       if (!isWithin(canonicalRoot, canonicalParent)) return err(appError('PATH_OUTSIDE_WORKSPACE', `Document target resolves outside the registered workspace: ${requested}`));
-      return ok(path.win32.join(canonicalParent, path.win32.basename(candidate)));
+      return ok(path.join(canonicalParent, path.basename(candidate)));
     } catch {
       return err(appError('FILE_NOT_FOUND', `Document target parent was not found: ${parent}`));
     }
@@ -251,7 +251,7 @@ export class DocumentRuntimeService {
       : undefined;
     return rootPath === undefined
       ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(path.win32.normalize(rootPath));
+      : ok(path.normalize(rootPath));
   }
 }
 
@@ -306,10 +306,12 @@ function unavailable(tool: string, reason: string, requirements: readonly string
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(root.toLowerCase(), candidate.toLowerCase());
+  const normalizedRoot = process.platform === 'win32' ? path.resolve(root).toLowerCase() : path.resolve(root);
+  const normalizedCandidate = process.platform === 'win32' ? path.resolve(candidate).toLowerCase() : path.resolve(candidate);
+  const relative = path.relative(normalizedRoot, normalizedCandidate);
   if (relative === '') return true;
-  if (path.win32.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.win32.sep);
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
   return firstSegment !== '..';
 }
 

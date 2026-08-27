@@ -146,7 +146,7 @@ export class TunnelController {
     const normalizedTunnelId = tunnelId.trim();
     if (!/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(normalizedTunnelId)) throw new Error('Tunnel ID is invalid');
     const clientPath = this.resolveClientPath();
-    if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
+    if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client was not found');
     const mcpServerUrl = await this.requireMcpServerUrl();
     if (!(await this.hasApiKey())) throw new Error('Save a Runtime API key first');
     const encryptedSecret = await readFile(this.secretPath(), 'utf8');
@@ -179,7 +179,7 @@ export class TunnelController {
       return '';
     }
     const resolved = path.resolve(trimmed);
-    if (!existsSync(resolved)) throw new Error('tunnel-client.exe was not found');
+    if (!existsSync(resolved)) throw new Error('tunnel-client was not found');
     this.options.setClientPath(resolved);
     if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
     return resolved;
@@ -362,7 +362,7 @@ export class TunnelController {
       if (!lockAcquired) return this.status();
 
       const clientPath = this.resolveClientPath();
-      if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
+      if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client was not found');
       const hasApiKey = await this.hasApiKey();
       throwIfStartCancelled(signal);
       if (!hasApiKey) throw new Error('Save a Runtime API key first');
@@ -1051,8 +1051,7 @@ function runPowerShellWithStdin(command: string, input: string): Promise<string>
 
 export function tunnelClientEnv(apiKey: string, profileDirectory: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  const userProfile = process.env.USERPROFILE ?? os.homedir();
-  const appData = process.env.APPDATA ?? path.join(userProfile, 'AppData', 'Roaming');
+  const home = os.homedir();
   env.CONTROL_PLANE_API_KEY = apiKey.trim();
   env.MCP_CONNECTION_MAX_TTL = MCP_CONNECTION_MAX_TTL;
   // Secure Tunnel forwards to the already-running Desktop HTTP MCP. Do not pass
@@ -1061,10 +1060,15 @@ export function tunnelClientEnv(apiKey: string, profileDirectory: string): NodeJ
   delete env.LNWJUD_UNRESTRICTED;
   env.TUNNEL_CLIENT_PROFILE = PROFILE_NAME;
   env.TUNNEL_CLIENT_PROFILE_DIR = profileDirectory;
-  env.USERPROFILE = userProfile;
-  env.APPDATA = appData;
-  env.HOME = userProfile;
-  delete env.XDG_CONFIG_HOME;
+  env.HOME = process.env.HOME ?? home;
+  if (process.platform === 'win32') {
+    const userProfile = process.env.USERPROFILE ?? home;
+    env.USERPROFILE = userProfile;
+    env.APPDATA = process.env.APPDATA ?? path.join(userProfile, 'AppData', 'Roaming');
+  } else {
+    delete env.USERPROFILE;
+    delete env.APPDATA;
+  }
   return env;
 }
 

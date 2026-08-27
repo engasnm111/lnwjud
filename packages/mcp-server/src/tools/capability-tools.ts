@@ -117,7 +117,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'vision_annotated_capture',
-      description: 'Capture a local Windows screen/region/window and return a short-lived Set-of-Marks observation with numbered bounds, a content hash, and an annotated PNG. This tool only observes; use ui_target_action for a separately gated action.',
+      description: 'Capture a local screen/region/window and return a short-lived Set-of-Marks observation with numbered bounds, a content hash, and an annotated PNG when the native platform backend supports annotation. This tool only observes; use ui_target_action for a separately gated action.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: visionAnnotatedCaptureSchema,
@@ -133,7 +133,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'window',
-      description: 'Direct native Windows window management. List, inspect, activate, move, resize, minimize, maximize, restore, or close windows without raw coordinates when a window operation is sufficient.',
+      description: 'Direct native desktop window management on supported platforms. List, inspect, activate, move, resize, minimize, maximize, restore, or close windows without raw coordinates when a window operation is sufficient.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: windowCapabilitySchema,
@@ -157,7 +157,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'notification',
-      description: 'Show a Windows notification (toast when BurntToast is installed, balloon otherwise). Use to tell the user when a long task finishes.',
+      description: 'Show a native desktop notification on the local platform. Use to tell the user when a long task finishes.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: notificationCapabilitySchema,
@@ -165,7 +165,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'file_dialog',
-      description: 'Open a native Windows file open/save dialog and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards.',
+      description: 'Open the native file open/save dialog on the local desktop platform and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: fileDialogCapabilitySchema,
@@ -173,7 +173,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'clipboard',
-      description: 'Read or write the Windows clipboard (text, or PNG image as base64). Use get_text/get_image to read and set_text to write.',
+      description: 'Read or write the native desktop clipboard. Text is supported cross-platform; image support depends on the native backend. Use get_text/get_image to read and set_text to write.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: clipboardCapabilitySchema,
@@ -213,7 +213,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'scheduler',
-      description: 'Manage Windows scheduled tasks with schtasks.exe. list is read-only; create, run, and delete always require explicit chat confirmation and userConfirmed: true.',
+      description: 'Manage local scheduled tasks. Windows uses schtasks.exe; macOS uses the native scheduler when available. list is read-only; create, run, and delete always require explicit chat confirmation and userConfirmed: true.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: schedulerCapabilitySchema,

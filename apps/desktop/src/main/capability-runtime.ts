@@ -6,6 +6,7 @@ import {
   capabilityToolNames,
   HealthCapabilityBackend,
   LocalCapabilityService,
+  MacosNativeCapabilityBackend,
   NodeBrowserCdpProtocol,
   PowerShellWindowsCapabilityBridge,
   SchedulerCapabilityBackend,
@@ -61,23 +62,28 @@ export function createLocalCapabilityRuntime(
   const expectedScriptSha256 = capabilityBridgeExpectedSha256();
   const windowsBridge = new PowerShellWindowsCapabilityBridge({ scriptPath: windowsBridgeScript, expectedScriptSha256 });
   const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
-  const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge);
-  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
+  const nativeBackend = (capability: ConstructorParameters<typeof WindowsNativeCapabilityBackend>[0]): MacosNativeCapabilityBackend | WindowsNativeCapabilityBackend => process.platform === 'darwin'
+    ? new MacosNativeCapabilityBackend(capability, process.platform, nativeOptions)
+    : new WindowsNativeCapabilityBackend(capability, windowsBridge, process.platform, nativeOptions);
+  const accessibilityBackend = nativeBackend('accessibility');
+  const inputEventBackend = nativeBackend('input_event');
+  const nativeVisionBackend = nativeBackend('vision');
   const ocrHelperPath = windowsOcrHelperPath();
   const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath });
-  const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-    platform: process.platform,
-    ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
-  }));
-  const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge);
-  const systemInfoBackend = new WindowsNativeCapabilityBackend('system_info', windowsBridge);
-  const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge);
-  const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
-  const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
-  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions);
-  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions);
-  const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions);
+  const visionBackend = process.platform === 'darwin'
+    ? nativeVisionBackend
+    : new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
+      platform: process.platform,
+      ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
+    }));
+  const windowBackend = nativeBackend('window');
+  const systemInfoBackend = nativeBackend('system_info');
+  const notificationBackend = nativeBackend('notification');
+  const fileDialogBackend = nativeBackend('file_dialog');
+  const clipboardBackend = nativeBackend('clipboard');
+  const audioBackend = nativeBackend('audio');
+  const screenRecordBackend = nativeBackend('screen_record');
+  const officeBackend = nativeBackend('office');
   const webFetchBackend = new WebFetchCapabilityBackend();
   const schedulerBackend = new SchedulerCapabilityBackend();
   const wslAvailabilityProbe = async (): Promise<Result<unknown>> => {
@@ -182,14 +188,14 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
   window: 'Manage native desktop windows',
   health: 'Check tool readiness',
   system_info: 'Read system information',
-  notification: 'Show Windows notifications',
+  notification: 'Show desktop notifications',
   file_dialog: 'Native file open/save dialogs',
   clipboard: 'Read and write the clipboard',
   web_fetch: 'Fetch http/https URLs',
   audio: 'Record and play audio',
   screen_record: 'Record the screen to MP4',
   office: 'Automate Excel and Word',
-  scheduler: 'Manage Windows scheduled tasks',
+  scheduler: 'Manage local scheduled tasks',
   wsl_exec: 'Run scoped Linux developer tasks',
   wsl_fs: 'Translate scoped Windows and WSL paths',
 };
@@ -197,20 +203,20 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
 const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[number], string>> = {
   shell: 'System, CLI, file, process, and developer tasks',
   dom_cdp: 'DOM work inside a local managed Chrome session',
-  accessibility: 'Windows UI Automation trees and semantic controls',
+  accessibility: 'Native accessibility trees and semantic controls',
   input_event: 'Native keyboard, pointer, drag, and scroll events',
   vision: 'Local screen, monitor, region, and window capture',
   window: 'List, focus, move, resize, minimize, restore, and close windows',
   health: 'Readiness and capability diagnostics',
   system_info: 'OS, CPU, memory, disks, battery, uptime, and top processes',
   notification: 'Toast or balloon notifications for the local user',
-  file_dialog: 'Windows open/save dialog returning chosen paths',
+  file_dialog: 'Native open/save dialog returning chosen paths',
   clipboard: 'Clipboard text and PNG image access',
   web_fetch: 'Bounded HTTP requests with text or base64 responses',
   audio: 'Microphone recording and local audio playback',
-  screen_record: 'ffmpeg gdigrab screen capture with start/stop/status',
+  screen_record: 'Native screen capture with start/stop/status',
   office: 'Excel range read/write and Word text operations via COM',
-  scheduler: 'schtasks.exe list/create/run/delete operations',
+  scheduler: 'Native scheduled-task list/create/run/delete operations',
   wsl_exec: 'WSL2 argv-only execution inside registered workspaces',
   wsl_fs: 'Path translation and metadata without raw WSL filesystem access',
 };

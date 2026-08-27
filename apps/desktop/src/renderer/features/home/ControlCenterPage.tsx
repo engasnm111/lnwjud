@@ -259,7 +259,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
                 id="add-project-path"
                 value={projectPath}
                 onChange={(event) => setProjectPath(event.target.value)}
-                placeholder="D:\\projects\\app"
+                placeholder="/path/to/project"
               />
               <button
                 type="button"

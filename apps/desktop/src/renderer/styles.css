@@ -52,7 +52,7 @@
   --copper: #e2c07d;
   --danger: #f87171;
   --font: "Prompt", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: Consolas, "Cascadia Mono", "JetBrains Mono", monospace;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Cascadia Mono", "JetBrains Mono", monospace;
   --page-bottom-gap: 48px;
   
   color: var(--text);
@@ -168,6 +168,15 @@ input:focus, select:focus {
   box-shadow: 0 0 10px var(--gold-glow);
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--gold-bright);
+  outline-offset: 2px;
+}
+
 /* Window Shell Container */
 .window-container {
   display: flex;
@@ -192,10 +201,16 @@ input:focus, select:focus {
   background: #07090e;
   border-bottom: 1px solid var(--border);
   padding: 0 12px;
-  /* Space reserved for Windows native titleBarOverlay buttons (Minimize, Maximize, Close) */
+  /* Windows reserves room for the native titleBarOverlay controls. */
   padding-right: 146px;
   user-select: none;
   z-index: 1000;
+}
+
+html[data-platform='macos'] .custom-titlebar {
+  /* Keep content clear of the native traffic lights used by hiddenInset. */
+  padding-left: 84px;
+  padding-right: 12px;
 }
 
 .titlebar-drag-region {
@@ -2344,5 +2359,16 @@ h2 {
   .primary-project-row {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

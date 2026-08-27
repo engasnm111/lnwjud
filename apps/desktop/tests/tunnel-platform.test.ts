@@ -53,7 +53,7 @@ describe('tunnel platform support', () => {
     const { readFile } = await import('node:fs/promises');
     const source = await readFile(new URL('../src/main/desktop-services.ts', import.meta.url), 'utf8');
     expect(source).toContain("process.platform === 'win32' ? 'tunnel-client.exe' : 'tunnel-client'");
-    // Non-Windows hosts must inject the portable raw:v1 secret envelope.
-    expect(source).toContain("'raw:v1:' + Buffer.from(plain, 'utf8').toString('base64')");
+    // Production macOS secret storage is injected from Electron main via safeStorage/Keychain.
+    expect(source).not.toContain("'raw:v1:' + Buffer.from(plain, 'utf8').toString('base64')");
   });
 });

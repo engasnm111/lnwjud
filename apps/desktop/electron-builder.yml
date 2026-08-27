@@ -20,30 +20,29 @@ publish:
 afterPack: scripts/capture-packaged-runtime-evidence.mjs
 afterSign: scripts/capture-packaged-runtime-evidence.mjs
 extraResources:
-  - from: ../../packages/capabilities/src/windows-capability-bridge.ps1
-    to: windows-capability-bridge.ps1
-  - from: build/windows-capability-bridge.sha256
-    to: windows-capability-bridge.sha256
-  - from: ../../native/windows-ocr/bin
-    to: windows-ocr
   - from: build/tunnel-client
     to: tunnel-client
   - from: build/runtime-tools
     to: runtime-tools
-# Tunnel profile expects these next to lnwjud.exe / lnwjud (not only under resources/).
+# The MCP bundle is common; platform launchers/runtimes are scoped below so
+# macOS packages never carry .cmd/.exe/PowerShell/OCR Windows payloads.
 extraFiles:
   - from: build/lnwjud-mcp-stdio.cjs
     to: lnwjud-mcp-stdio.cjs
-  - from: build/lnwjud-mcp-stdio.cmd
-    to: lnwjud-mcp-stdio.cmd
-  - from: build/lnwjud-mcp-stdio
-    to: lnwjud-mcp-stdio
-  - from: build/lnwjud-node.exe
-    to: lnwjud-node.exe
-  - from: build/lnwjud-node
-    to: lnwjud-node
 win:
   icon: build/icon.ico
+  extraResources:
+    - from: ../../packages/capabilities/src/windows-capability-bridge.ps1
+      to: windows-capability-bridge.ps1
+    - from: build/windows-capability-bridge.sha256
+      to: windows-capability-bridge.sha256
+    - from: ../../native/windows-ocr/bin
+      to: windows-ocr
+  extraFiles:
+    - from: build/lnwjud-mcp-stdio.cmd
+      to: lnwjud-mcp-stdio.cmd
+    - from: build/lnwjud-node.exe
+      to: lnwjud-node.exe
   target:
     - target: nsis
       arch:
@@ -68,6 +67,11 @@ nsis:
 mac:
   icon: build/icon.png
   category: public.app-category.developer-tools
+  extraFiles:
+    - from: build/lnwjud-mcp-stdio
+      to: lnwjud-mcp-stdio
+    - from: build/lnwjud-node
+      to: lnwjud-node
   target:
     - target: dmg
       arch:

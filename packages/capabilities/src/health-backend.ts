@@ -41,12 +41,21 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   }
 
   private async check(tool: CapabilityToolName): Promise<Record<string, unknown>> {
-    if (tool === 'shell' || tool === 'health' || tool === 'web_fetch' || tool === 'scheduler') return this.describe(tool, { available: true, ready: true, local: true });
-    if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard'
-      || tool === 'audio' || tool === 'screen_record' || tool === 'office') {
-      return this.describe(tool, { available: this.platform === 'win32', ready: this.platform === 'win32', local: true });
+    if (tool === 'shell' || tool === 'health' || tool === 'web_fetch') return this.describe(tool, { available: true, ready: true, local: true });
+    if (tool === 'scheduler') {
+      const supported = this.platform === 'win32' || this.platform === 'darwin';
+      return this.describe(tool, { available: supported, ready: supported, local: true, ...(supported ? {} : { reason: 'Native scheduler backend is not configured for this platform' }) });
     }
-    if (tool === 'input_event' || tool === 'vision' || tool === 'window') return this.describe(tool, { available: this.platform === 'win32', ready: this.platform === 'win32', local: true });
+    if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard'
+      || tool === 'audio' || tool === 'screen_record') {
+      const supported = this.platform === 'win32' || this.platform === 'darwin';
+      return this.describe(tool, { available: supported, ready: supported, local: true });
+    }
+    if (tool === 'office') return this.describe(tool, { available: this.platform === 'win32', ready: this.platform === 'win32', local: true, ...(this.platform === 'win32' ? {} : { reason: 'Native Microsoft Office automation is not configured for macOS' }) });
+    if (tool === 'input_event' || tool === 'vision' || tool === 'window') {
+      const supported = this.platform === 'win32' || this.platform === 'darwin';
+      return this.describe(tool, { available: supported, ready: supported, local: true });
+    }
     if (tool === 'dom_cdp') return this.describe(tool, await this.checkDelegated(this.domCdp, { action: 'status' }));
     if (tool === 'wsl_exec') return this.describe(tool, await this.checkDelegated(this.wslExec, { operation: 'status' }));
     if (tool === 'wsl_fs') return this.describe(tool, await this.checkDelegated(this.wslFs, { operation: 'status' }));

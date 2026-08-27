@@ -158,9 +158,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       if (selected === null) return;
       setClientPath(selected);
       await props.onSetTunnelClientPath(selected);
-      setSavedMessage(props.locale === 'th' ? 'บันทึก tunnel-client.exe แล้ว' : 'tunnel-client.exe saved.');
+      setSavedMessage(props.locale === 'th' ? 'บันทึก tunnel-client แล้ว' : 'tunnel-client saved.');
     } catch (cause: unknown) {
-      setTunnelMessage(cause instanceof Error ? cause.message : 'Could not select tunnel-client.exe');
+      setTunnelMessage(cause instanceof Error ? cause.message : 'Could not select tunnel-client');
     }
   }
 
@@ -395,7 +395,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="stdio-roots">{props.locale === 'th' ? 'Allowed Roots — หนึ่ง path ต่อบรรทัด' : 'Allowed Roots — one path per line'}</label>
-                  <textarea id="stdio-roots" className="settings-textarea" rows={5} value={allowedRootsText} placeholder={'E:\\Projects\\MyApp\nD:\\Shared\\Source'} onChange={(event) => { setAllowedRootsText(event.target.value); setStdioDirty(true); }} />
+                  <textarea id="stdio-roots" className="settings-textarea" rows={5} value={allowedRootsText} placeholder={'/path/to/project\n/path/to/shared/source'} onChange={(event) => { setAllowedRootsText(event.target.value); setStdioDirty(true); }} />
                 </div>
                 <div className="inline-actions"><button type="button" className="btn-save-gold" disabled={!stdioDirty} onClick={() => { void saveStdioPolicy(); }}>{props.locale === 'th' ? 'บันทึก STDIO Policy' : 'Save STDIO Policy'}</button></div>
                 {policyError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {policyError}</div>}
@@ -435,16 +435,16 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-key">{t('settings.tunnelKey')}</label>
                   <div className="form-row"><div className="password-input-wrapper"><input id="tunnel-key" type={showApiKey ? 'text' : 'password'} placeholder={props.dashboard.tunnel.hasApiKey ? '••••••••••••••••' : 'sk-...'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" /><button type="button" className="toggle-pw-btn" onClick={() => setShowApiKey((value) => !value)}>{showApiKey ? 'Hide' : 'Show'}</button></div><button type="button" className="btn-save-gold" onClick={() => { void props.onSaveTunnelApiKey(apiKey).then(() => { setApiKey(''); setSavedMessage(t('settings.saved')); }); }}>{t('settings.saveKey')}</button></div>
-                  <p className="hint">{props.dashboard.tunnel.hasApiKey ? 'Protected with Windows DPAPI' : t('tunnel.needKey')}</p>
+                  <p className="hint">{props.dashboard.tunnel.hasApiKey ? 'Protected by the operating system credential store' : t('tunnel.needKey')}</p>
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-client-path">{props.locale === 'th' ? 'tunnel-client (รวมมากับโปรแกรมแล้ว)' : 'tunnel-client (bundled)'}</label>
-                  <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.12 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.12 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
-                  <p className="hint">{props.locale === 'th' ? 'lnwjud ฝัง OpenAI tunnel-client v0.0.12 (Windows x64) ใน installer และเลือกให้เองอัตโนมัติ ช่องนี้ใช้เฉพาะกรณีต้องการ override/troubleshoot' : 'lnwjud bundles OpenAI tunnel-client v0.0.12 (Windows x64) in the installer and selects it automatically. Use this field only to override it for troubleshooting.'}</p>
+                  <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.13 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.13 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
+                  <p className="hint">{props.locale === 'th' ? 'lnwjud ฝัง OpenAI tunnel-client v0.0.13 ที่ตรงกับแพลตฟอร์ม (macOS universal / Windows x64) และเลือกให้เองอัตโนมัติ ช่องนี้ใช้เฉพาะกรณีต้องการ override/troubleshoot' : 'lnwjud bundles OpenAI tunnel-client v0.0.13 for the current platform (universal macOS / Windows x64) and selects it automatically. Use this field only to override it for troubleshooting.'}</p>
                 </div>
               </div>
               <div className="tunnel-setup-box">
-                <div className="settings-mini-heading"><strong>Setup Wizard</strong><span>{props.locale === 'th' ? 'ไม่ต้องเปิด PowerShell init เอง' : 'No manual PowerShell init'}</span></div>
+                <div className="settings-mini-heading"><strong>Setup Wizard</strong><span>{props.locale === 'th' ? 'ไม่ต้อง init ผ่าน Terminal/PowerShell เอง' : 'No manual terminal init'}</span></div>
                 <label className="field-label" htmlFor="tunnel-id">OpenAI Tunnel ID</label>
                 <div className="form-row"><input id="tunnel-id" placeholder="tunnel_0123456789abcdef..." value={tunnelId} onChange={(event) => setTunnelId(event.target.value)} /><button type="button" className="btn-save-gold" disabled={tunnelBusy} onClick={() => { void configureTunnel(); }}>{tunnelBusy ? (props.locale === 'th' ? 'กำลังตั้งค่า…' : 'Configuring…') : (props.locale === 'th' ? 'Configure Tunnel' : 'Configure Tunnel')}</button></div>
               </div>

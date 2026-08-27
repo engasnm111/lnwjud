@@ -29,7 +29,7 @@ export function WorkspacePanel({ selectedWorkspace, workspaces, onAddWorkspace }
       <form onSubmit={(event) => { void submit(event); }} className="workspace-form">
         <label htmlFor="workspace-root">Workspace root</label>
         <div className="form-row">
-          <input id="workspace-root" aria-label="Workspace root" value={rootPath} onChange={(event) => setRootPath(event.currentTarget.value)} placeholder="C:\\Projects\\my-app" />
+          <input id="workspace-root" aria-label="Workspace root" value={rootPath} onChange={(event) => setRootPath(event.currentTarget.value)} placeholder="/path/to/my-app" />
           <button type="submit" disabled={pending}>{pending ? 'Adding…' : 'Add workspace'}</button>
         </div>
       </form>

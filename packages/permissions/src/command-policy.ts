@@ -23,7 +23,7 @@ export class CommandPolicy {
   public decide(profile: PermissionProfile, executable: string, source: CommandSource, args: readonly string[] = []): PermissionDecision {
     void this.options;
     void args;
-    const basename = path.win32.basename(executable).toLowerCase();
+    const basename = path.win32.basename(path.posix.basename(executable)).toLowerCase();
     if (DELETE_EXECUTABLES.has(basename)) return 'ASK';
 
     if (source === 'project') {

@@ -138,7 +138,7 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
             <NumberField label={locale === 'th' ? 'ช่วงตรวจอัปเดต (นาที)' : 'Update interval (minutes)'} value={draft.updateIntervalMinutes} min={5} max={1440} onChange={(value) => patch({ updateIntervalMinutes: value })} />
           </div>
           <div className="switch-grid">
-            <SettingSwitch checked={draft.launchAtStartup} label={locale === 'th' ? 'เปิดพร้อม Windows' : 'Start with Windows'} description={locale === 'th' ? 'เปิด lnwjud อัตโนมัติหลัง Sign in' : 'Launch lnwjud automatically after sign in'} onChange={(value) => patch({ launchAtStartup: value })} />
+            <SettingSwitch checked={draft.launchAtStartup} label={locale === 'th' ? 'เปิดพร้อมระบบ' : 'Start with system'} description={locale === 'th' ? 'เปิด lnwjud อัตโนมัติหลัง Sign in' : 'Launch lnwjud automatically after sign in'} onChange={(value) => patch({ launchAtStartup: value })} />
             <SettingSwitch checked={draft.startMinimized} label={locale === 'th' ? 'เริ่มแบบซ่อนใน Tray' : 'Start minimized'} description={locale === 'th' ? 'ไม่แสดงหน้าต่างหลักตอนเปิดอัตโนมัติ' : 'Keep the main window hidden on startup'} onChange={(value) => patch({ startMinimized: value })} />
             <SettingSwitch checked={draft.updateAutoCheck} label={locale === 'th' ? 'ตรวจอัปเดตอัตโนมัติ' : 'Automatic update checks'} description={locale === 'th' ? 'ตรวจตามช่วงเวลาที่กำหนด' : 'Check periodically using the interval above'} onChange={(value) => patch({ updateAutoCheck: value })} />
             <SettingSwitch checked={draft.updateCheckOnStartup} label={locale === 'th' ? 'ตรวจเมื่อเปิดโปรแกรม' : 'Check on startup'} description={locale === 'th' ? 'ตรวจหลังเปิดโปรแกรมไม่นาน' : 'Check shortly after the app starts'} onChange={(value) => patch({ updateCheckOnStartup: value })} />
@@ -158,7 +158,7 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
           </div>
           <div className="setting-field">
             <label className="field-label" htmlFor="custom-executables">{locale === 'th' ? 'Allowed Executables เพิ่มเติม — หนึ่งรายการต่อบรรทัด' : 'Additional allowed executables — one per line'}</label>
-            <textarea id="custom-executables" className="settings-textarea" rows={4} value={draft.customPermission.allowedExecutables.join('\n')} placeholder={'python.exe\ndocker.exe\ndotnet.exe'} onChange={(event) => patchCustom({ allowedExecutables: splitList(event.target.value) })} />
+            <textarea id="custom-executables" className="settings-textarea" rows={4} value={draft.customPermission.allowedExecutables.join('\n')} placeholder={'python\ndocker\ndotnet'} onChange={(event) => patchCustom({ allowedExecutables: splitList(event.target.value) })} />
           </div>
         </section>
       ) : null}
@@ -197,7 +197,7 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
           <section className="panel settings-card settings-card-polished" aria-label="Capability roots">
             <CardHeading icon="⌂" title={locale === 'th' ? 'Capability Roots' : 'Capability Roots'} subtitle={locale === 'th' ? 'เพิ่มพื้นที่ที่ tools สามารถเข้าถึงได้' : 'Additional roots available to local capability tools'} />
             <label className="field-label" htmlFor="capability-roots">{locale === 'th' ? 'หนึ่ง path ต่อบรรทัด' : 'One path per line'}</label>
-            <textarea id="capability-roots" className="settings-textarea" rows={5} value={draft.capabilityRoots.join('\n')} placeholder={'D:\\Projects\nE:\\Work'} onChange={(event) => patch({ capabilityRoots: splitList(event.target.value) })} />
+            <textarea id="capability-roots" className="settings-textarea" rows={5} value={draft.capabilityRoots.join('\n')} placeholder={'/path/to/projects\n/path/to/work'} onChange={(event) => patch({ capabilityRoots: splitList(event.target.value) })} />
             <p className="hint">{locale === 'th' ? 'ใช้กับ Shell, Office, Screen Record และ WSL โดยไม่ต้องแก้ environment variable เอง' : 'Used by Shell, Office, screen recording, and WSL without editing environment variables.'}</p>
           </section>
 
@@ -205,9 +205,9 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
             <CardHeading icon="◫" title={locale === 'th' ? 'Local Providers' : 'Local Providers'} subtitle={locale === 'th' ? 'ตั้งค่า PDF และ Language Server โดยไม่ต้องแก้ Environment Variable' : 'Configure PDF and language-server providers without environment variables'} badge="ADVANCED" />
             <div className="setting-grid two-col">
               <Field
-                label={locale === 'th' ? 'PDF Provider (pdftotext.exe)' : 'PDF Provider (pdftotext.exe)'}
+                label="PDF Provider (pdftotext)"
                 value={draft.pdfProviderPath}
-                placeholder={locale === 'th' ? 'พาธไปยัง pdftotext.exe (ถ้ามี)' : 'Path to pdftotext.exe (optional)'}
+                placeholder={locale === 'th' ? 'พาธไปยัง pdftotext (ถ้ามี)' : 'Path to pdftotext (optional)'}
                 onChange={(value) => patch({ pdfProviderPath: value })}
               />
               <TextArea
@@ -251,7 +251,7 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
                 <div className="section-heading"><strong>{server.name || `MCP Server ${index + 1}`}</strong><button type="button" className="danger-soft-button" onClick={() => patchExtensions({ extraMcpServers: draft.extensions.extraMcpServers.filter((_entry, current) => current !== index) })}>{locale === 'th' ? 'ลบ' : 'Remove'}</button></div>
                 <div className="setting-grid two-col">
                   <Field label="Name" value={server.name} onChange={(value) => updateServer(index, { name: value })} />
-                  <Field label="Command" value={server.command} placeholder="npx.cmd" onChange={(value) => updateServer(index, { command: value })} />
+                  <Field label="Command" value={server.command} placeholder="npx" onChange={(value) => updateServer(index, { command: value })} />
                   <Field label="Working directory" value={server.cwd} placeholder="optional" onChange={(value) => updateServer(index, { cwd: value })} />
                   <Field label="Type" value={server.type} placeholder="optional (for example stdio)" onChange={(value) => updateServer(index, { type: value })} />
                   <TextArea label="Args — one per line" value={server.args.join('\n')} onChange={(value) => updateServer(index, { args: splitLines(value) })} />

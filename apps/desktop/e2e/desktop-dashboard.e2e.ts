@@ -8,7 +8,11 @@ import { chromium, expect, test, type Page } from '@playwright/test';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronExecutable = process.platform === 'win32'
+  ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
+  : process.platform === 'darwin'
+    ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+    : path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron');
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('control center auto-starts MCP and supports project + doctor journey', async () => {
@@ -144,11 +148,15 @@ async function waitForDevTools(port: number, child: ChildProcess, stderr: string
 
 async function terminateProcessTree(child: ChildProcess): Promise<void> {
   if (child.pid !== undefined) {
-    const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true });
-    await new Promise<void>((resolve) => {
-      killer.once('error', () => resolve());
-      killer.once('close', () => resolve());
-    });
+    if (process.platform === 'win32') {
+      const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true });
+      await new Promise<void>((resolve) => {
+        killer.once('error', () => resolve());
+        killer.once('close', () => resolve());
+      });
+    } else {
+      try { child.kill('SIGTERM'); } catch { /* already exited */ }
+    }
   }
   await new Promise<void>((resolve) => {
     if (child.exitCode !== null) {
@@ -156,7 +164,12 @@ async function terminateProcessTree(child: ChildProcess): Promise<void> {
       return;
     }
     child.once('exit', () => resolve());
-    setTimeout(() => resolve(), 5_000);
+    setTimeout(() => {
+      if (child.exitCode === null && process.platform !== 'win32') {
+        try { child.kill('SIGKILL'); } catch { /* already exited */ }
+      }
+      resolve();
+    }, 5_000);
   });
 }
 

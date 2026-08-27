@@ -1,4 +1,5 @@
-import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -86,10 +87,21 @@ writeFileSync(cmdPath, cmdContents.replace(/\r?\n/g, '\r\n'), 'utf8');
 writeFileSync(shPath, shContents.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o755 });
 try { chmodSync(shPath, 0o755); } catch { /* chmod is best effort outside POSIX filesystems */ }
 
-// Ship both runtime binary spellings so each platform's installer finds its file even
-// when the bundle was produced by a different host OS.
+// Ship only the runtime binary that belongs to the current target platform.
+// Windows packaging is produced on Windows; macOS packaging must never retain
+// a stale PE runtime from an earlier Windows build in the shared build folder.
+const staleNodePath = path.join(buildDir, isWin ? 'lnwjud-node' : 'lnwjud-node.exe');
+rmSync(staleNodePath, { force: true });
+
+// Homebrew Node dynamically links libnode and cannot run outside its prefix;
+// a bundled runtime must be self-contained (nvm/nodejs.org builds are).
+if (!isWin) {
+  const inspected = spawnSync('otool', ['-L', process.execPath], { encoding: 'utf8' });
+  if (inspected.status === 0 && /libnode[.0-9]*\.dylib/.test(inspected.stdout ?? '')) {
+    throw new Error('Bundled Node runtime must be self-contained; build with an nvm/nodejs.org Node instead of Homebrew Node');
+  }
+}
 copyFileSync(process.execPath, bundledNodePath);
 try { chmodSync(bundledNodePath, 0o755); } catch { /* ignore on windows */ }
-copyFileSync(process.execPath, path.join(buildDir, isWin ? 'lnwjud-node' : 'lnwjud-node.exe'));
 
 process.stdout.write(`Bundled private Node runtime ${process.versions.node} -> ${bundledNodePath}\n`);
