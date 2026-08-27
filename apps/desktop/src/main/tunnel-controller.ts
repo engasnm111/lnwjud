@@ -1195,9 +1195,17 @@ function validOwnedProcessTimestamp(value: string): boolean {
 export async function findLnwjudTunnelProcessPidsPosix(): Promise<readonly number[]> {
   // POSIX equivalent of the CIM probe: pgrep -f matches the full argument
   // list, but macOS pgrep -l prints only the process name, so command lines
-  // are re-read through ps for the lnwjud profile filter.
-  const { stdout } = await execFileAsync('pgrep', ['-f', 'tunnel-client'], { encoding: 'utf8', timeout: 3_000 });
-  const candidates = stdout.split('\n')
+  // are re-read through ps for the lnwjud profile filter. pgrep exits 1 when
+  // nothing matches, which means "no tunnel client running", not a failure.
+  let pgrepStdout = '';
+  try {
+    const listed = await execFileAsync('pgrep', ['-f', 'tunnel-client'], { encoding: 'utf8', timeout: 3_000 });
+    pgrepStdout = listed.stdout;
+  } catch (error: unknown) {
+    const code = (error as { readonly code?: number | string }).code;
+    if (code !== 1) throw error;
+  }
+  const candidates = pgrepStdout.split('\n')
     .map((value) => Number.parseInt(value.trim(), 10))
     .filter((pid) => Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647 && pid !== process.pid);
   const matches: number[] = [];

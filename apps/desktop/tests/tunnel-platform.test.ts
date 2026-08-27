@@ -32,6 +32,12 @@ describe('tunnel platform support', () => {
     }
   }, 5_000);
 
+  it.runIf(process.platform !== 'win32')('resolves with an empty list when no tunnel-client process exists (pgrep exits 1)', async () => {
+    // pgrep uses exit code 1 for "no matches"; the probe must treat that as
+    // "nothing is running" instead of an error that blocks tunnel start.
+    await expect(findLnwjudTunnelProcessPidsPosix()).resolves.toEqual(expect.any(Array));
+  });
+
   it.runIf(process.platform !== 'win32')('ignores processes whose arguments do not reference the lnwjud profile', async () => {
     const marker = `probe-unrelated-${process.pid}`;
     const child = execFile(process.execPath, ['-e', 'setTimeout(() => {}, 600)', marker, 'tunnel-client']);
