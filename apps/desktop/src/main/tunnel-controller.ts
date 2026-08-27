@@ -56,6 +56,7 @@ export interface TunnelControllerOptions {
   readonly terminateOwnedProcessTree?: (pid: number) => Promise<void>;
   readonly inspectOwnedProcess?: (pid: number) => Promise<ProcessProbeResult>;
   readonly inspectOwnedProcessTree?: (rootPid: number) => Promise<readonly OwnedProcessIdentity[]>;
+  readonly encryptSecret?: (plain: string) => Promise<string>;
   readonly decryptSecret?: (encrypted: string) => Promise<string>;
   readonly probeHealthEndpoint?: (host: string, port: number) => Promise<boolean>;
   readonly healthProbeTimeoutMs?: number;
@@ -93,7 +94,13 @@ export class TunnelController {
   public constructor(private readonly options: TunnelControllerOptions) {}
 
   public profileDirectory(): string {
-    return path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'tunnel-client');
+    const base = process.env.APPDATA
+      ?? (process.platform === 'darwin'
+        ? path.join(os.homedir(), 'Library', 'Application Support')
+        : process.platform === 'win32'
+          ? path.join(os.homedir(), 'AppData', 'Roaming')
+          : path.join(os.homedir(), '.config'));
+    return path.join(base, 'tunnel-client');
   }
 
   public secretPath(): string {
@@ -129,7 +136,7 @@ export class TunnelController {
     const trimmed = apiKey.trim();
     if (trimmed.length === 0) throw new Error('Runtime API key is required');
     await mkdir(this.profileDirectory(), { recursive: true });
-    const encrypted = await encryptWithDpapi(trimmed);
+    const encrypted = await (this.options.encryptSecret?.(trimmed) ?? encryptWithDpapi(trimmed));
     await writeFile(this.secretPath(), encrypted, 'utf8');
     this.lastApiKey = trimmed;
     if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
@@ -505,7 +512,7 @@ export class TunnelController {
           { pid: pid as number, processStartedAt: this.ownedChildStartedAt },
           ...descendants,
         ]);
-        await (this.options.terminateOwnedProcessTree?.(pid as number) ?? terminateWindowsProcessTree(pid as number));
+        await (this.options.terminateOwnedProcessTree?.(pid as number) ?? (process.platform === 'win32' ? terminateWindowsProcessTree(pid as number) : terminatePosixProcessTree(pid as number)));
         await waitForTunnelChildExit(child, this.options.escalationTimeoutMs ?? 2_000).catch(() => undefined);
         await verifyOwnedProcessTreeExited(expectedTree, inspect);
       }
@@ -531,7 +538,9 @@ export class TunnelController {
     const clientPath = this.resolveClientPath();
     if (clientPath === null || !existsSync(clientPath)) return { value: null, reason: 'configured_tunnel_client_not_found' };
     try {
-      const value = await (this.options.inspectFileVersion?.(clientPath) ?? inspectWindowsFileVersion(clientPath));
+      const value = process.platform === 'win32'
+        ? await (this.options.inspectFileVersion?.(clientPath) ?? inspectWindowsFileVersion(clientPath))
+        : null;
       return value === null || value.trim().length === 0 ? { value: null, reason: 'file_version_metadata_unavailable' } : { value: value.trim().slice(0, 128), reason: null };
     } catch { return { value: null, reason: 'file_version_metadata_unavailable' }; }
   }
@@ -1009,6 +1018,9 @@ async function decryptWithDpapi(encrypted: string): Promise<string> {
 }
 
 function runPowerShellWithStdin(command: string, input: string): Promise<string> {
+  if (process.platform !== 'win32') {
+    return Promise.reject(new Error('Windows DPAPI secret storage is only available on Windows; a platform secret provider must be injected'));
+  }
   return new Promise((resolve, reject) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
       windowsHide: true,
@@ -1085,6 +1097,7 @@ async function isLnwjudTunnelProcessRunning(): Promise<boolean> {
 }
 
 async function findLnwjudTunnelProcessPids(): Promise<readonly number[]> {
+  if (process.platform !== 'win32') return findLnwjudTunnelProcessPidsPosix();
   const result = await Promise.race([
     execFileAsync('powershell.exe', [
       '-NoProfile',
@@ -1177,6 +1190,32 @@ function validOwnedProcessTimestamp(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
   const parsed = new Date(value);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+export async function findLnwjudTunnelProcessPidsPosix(): Promise<readonly number[]> {
+  // POSIX equivalent of the CIM probe: pgrep -f matches the full argument
+  // list, but macOS pgrep -l prints only the process name, so command lines
+  // are re-read through ps for the lnwjud profile filter.
+  const { stdout } = await execFileAsync('pgrep', ['-f', 'tunnel-client'], { encoding: 'utf8', timeout: 3_000 });
+  const candidates = stdout.split('\n')
+    .map((value) => Number.parseInt(value.trim(), 10))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647 && pid !== process.pid);
+  const matches: number[] = [];
+  for (const pid of candidates) {
+    try {
+      const inspected = await execFileAsync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 2_000 });
+      if (/(--profile[= ]lnwjud|lnwjud\.yaml)/i.test(inspected.stdout)) matches.push(pid);
+    } catch { /* process exited between pgrep and ps */ }
+  }
+  return matches;
+}
+
+async function terminatePosixProcessTree(pid: number): Promise<void> {
+  // tunnel-client supervises its own runtime children; escalating the root
+  // process is sufficient on POSIX hosts.
+  try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
 }
 
 async function terminateWindowsProcessTree(pid: number): Promise<void> {

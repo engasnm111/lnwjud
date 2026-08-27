@@ -373,7 +373,16 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     maxAutoRestarts: (): number => readSettings().tunnelMaxAutoRestarts,
     getTunnelId: (): string | null => settingsRepository.get(tunnelIdentitySettingKey),
     setTunnelId: (value: string): void => { settingsRepository.set(tunnelIdentitySettingKey, value.trim()); },
-
+    // On non-Windows hosts there is no DPAPI; keep the same secret file with a
+    // raw base64 envelope (0600) instead so tunnel credentials stay portable.
+    ...(process.platform === 'win32' ? {} : {
+      encryptSecret: async (plain: string): Promise<string> => 'raw:v1:' + Buffer.from(plain, 'utf8').toString('base64'),
+      decryptSecret: async (encrypted: string): Promise<string> => {
+        const trimmed = encrypted.trim();
+        if (!trimmed.startsWith('raw:v1:')) throw new Error('Stored tunnel secret has an unsupported format');
+        return Buffer.from(trimmed.slice('raw:v1:'.length), 'base64').toString('utf8');
+      },
+    }),
 
   });
   const logHub = new LogHub({
@@ -997,7 +1006,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 function bundledTunnelClientPath(): string | null {
   const resourcesPath = (process as NodeJS.Process & { readonly resourcesPath?: string }).resourcesPath;
   if (typeof resourcesPath !== 'string' || resourcesPath.trim().length === 0) return null;
-  return path.join(resourcesPath, 'tunnel-client', 'tunnel-client.exe');
+  const binaryName = process.platform === 'win32' ? 'tunnel-client.exe' : 'tunnel-client';
+  return path.join(resourcesPath, 'tunnel-client', binaryName);
 }
 
 function fixtureNodeExecutable(): string {

@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
-$version = '0.0.12'
+$version = '0.0.13'
 $assetName = "tunnel-client-v$version-windows-amd64.zip"
 $assetUrl = "https://github.com/openai/tunnel-client/releases/download/v$version/$assetName"
-$expectedSha256 = '2a2804933924e38a502d62b61f0266cb80d56d65744f4c29876b2bf9c1544356'
+$expectedSha256 = '17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb'
 
 $desktopRoot = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $desktopRoot 'build'

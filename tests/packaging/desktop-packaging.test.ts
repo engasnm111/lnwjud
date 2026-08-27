@@ -122,6 +122,24 @@ describe('Windows desktop packaging', () => {
     expect(launcherScript).not.toContain("process.platform !== 'win32') throw");
   });
 
+  it('bundles the pinned OpenAI tunnel-client v0.0.13 for Windows and universal macOS', async () => {
+    const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
+    const macPrepare = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.mjs'), 'utf8');
+    const windowsPrepare = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.ps1'), 'utf8');
+
+    expect(desktopPackage.scripts?.['package:mac']).toContain('node scripts/prepare-tunnel-client.mjs');
+    expect(macPrepare).toContain("const version = '0.0.13'");
+    expect(macPrepare).toContain('15abf165f06050af642c948ba6bd6c905191dc5420a9422dadde2b49d892e2c6');
+    expect(macPrepare).toContain('c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c');
+    expect(macPrepare).toContain("BINARIES = ['tunnel-client', 'cloudflared']");
+    expect(macPrepare).toContain("'lipo'");
+    expect(macPrepare).toContain('BUNDLED_TUNNEL_CLIENT.txt');
+
+    // Windows stays pinned to the same upstream release for parity.
+    expect(windowsPrepare).toContain("$version = '0.0.13'");
+    expect(windowsPrepare).toContain('17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb');
+  });
+
   it('bundles a pinned universal macOS ripgrep runtime for packaged search', async () => {
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
     const prepare = await readFile(path.join(desktopRoot, 'scripts', 'prepare-ripgrep.mjs'), 'utf8');
