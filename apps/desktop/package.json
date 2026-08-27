@@ -16,7 +16,7 @@
     "build:main": "node scripts/write-capability-integrity.mjs && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js",
     "build:renderer": "vite build --config vite.config.ts",
     "package:windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/prepare-tunnel-client.ps1 && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/prepare-ripgrep.ps1 && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ../../scripts/prepare-windows-ocr.ps1 && corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --win nsis portable --x64 --publish never && node scripts/write-portable-update-manifest.mjs && node scripts/write-release-evidence.mjs && node scripts/verify-release-evidence.mjs",
-    "package:mac": "corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --mac --publish never",
+    "package:mac": "node scripts/prepare-ripgrep.mjs && corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --mac --publish never",
 
     "test": "vitest run --config vitest.config.ts --passWithNoTests",
     "typecheck": "tsc -b",

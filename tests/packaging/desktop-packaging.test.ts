@@ -122,6 +122,19 @@ describe('Windows desktop packaging', () => {
     expect(launcherScript).not.toContain("process.platform !== 'win32') throw");
   });
 
+  it('bundles a pinned universal macOS ripgrep runtime for packaged search', async () => {
+    const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
+    const prepare = await readFile(path.join(desktopRoot, 'scripts', 'prepare-ripgrep.mjs'), 'utf8');
+
+    expect(desktopPackage.scripts?.['package:mac']).toContain('node scripts/prepare-ripgrep.mjs');
+    expect(prepare).toContain("$version = '15.2.0'".replace('$version', 'version'));
+    expect(prepare).toContain('3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4');
+    expect(prepare).toContain('af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1');
+    expect(prepare).toContain("'lipo'");
+    expect(prepare).toContain('BUNDLED_RIPGREP.txt');
+    expect(prepare).toContain("'runtime-tools', 'ripgrep'");
+  });
+
   it('targets Windows 10 OCR through the .NET 8 Windows TFM without the legacy SDK contracts package', async () => {
     const ocrProject = await readFile(path.join(repositoryRoot, 'native', 'windows-ocr', 'lnwjud-windows-ocr.csproj'), 'utf8');
     expect(ocrProject).toContain('<TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>');

@@ -62,3 +62,31 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  verify-macos:
+    name: macOS Verification
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Run macOS verification gate
+        run: |
+          corepack pnpm@10.15.0 typecheck
+          corepack pnpm@10.15.0 lint
+          corepack pnpm@10.15.0 test:release
+          corepack pnpm@10.15.0 test:integration

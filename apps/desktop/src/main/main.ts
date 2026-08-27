@@ -1362,7 +1362,7 @@ function bootstrapDesktop(): void {
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.lnwjud.desktop');
     console.log(
-      `[WindowsCompatibility] ${windowsCompatibility.generation} build=${windowsCompatibility.build ?? 'unknown'} arch=${process.arch} gpu=${windowsCompatibility.disableHardwareAcceleration ? 'software' : 'hardware'}; ${windowsCompatibility.reason}`,
+      `[PlatformCompatibility] ${windowsCompatibility.generation} build=${windowsCompatibility.build ?? 'unknown'} arch=${process.arch} gpu=${windowsCompatibility.disableHardwareAcceleration ? 'software' : 'hardware'}; ${windowsCompatibility.reason}`,
     );
 
     prependBundledRuntimeToolsToPath();

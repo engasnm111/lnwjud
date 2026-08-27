@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-describe('PowerShell tunnel launcher ownership contract', () => {
+describe.skipIf(process.platform !== 'win32')('PowerShell tunnel launcher ownership contract', () => {
   it('parses and delegates ownership to the side-effect-free helper without local lock definitions', async () => {
     const starter = path.resolve('scripts/start-lnwjud-tunnel.ps1').replace(/'/g, "''");
     const helper = path.resolve('scripts/lib/lnwjud-tunnel-lock.ps1').replace(/'/g, "''");

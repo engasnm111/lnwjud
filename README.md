@@ -65,6 +65,7 @@ capabilities are additive.
 - Makes project removal registration-only. Removing a project from lnwjud does **not** delete its directory, files, Git repository, audit history, or checkpoints; system/machine-root workspaces are protected from archive/remove actions.
 - Repairs selected-workspace state after archive/removal, stops the workspace index watcher, blocks lifecycle changes while tracked Desktop work is active, and restores an archived registration instead of creating a duplicate when the same path is added again.
 - Adds native macOS support across runtime paths (Darwin data/home directories, machine-root resolution, process/LSP/document/sandbox runtimes, window/tunnel lifetime handling, application menu), plus signed-off packaging via `pnpm package:macos` (DMG + ZIP for x64/arm64) and an MCP stdio shell launcher for macOS bundles.
+- Makes macOS a first-class desktop target: the platform compatibility profile and Doctor OS check pass on Darwin arm64/x64, packaged Mac bundles ship a pinned universal ripgrep 15.2.0 runtime (SHA-256-verified, `lipo`-merged), and CI runs a dedicated macOS verification lane (typecheck + lint + full unit suite + integration).
 
 Current v4 highlights include:
 

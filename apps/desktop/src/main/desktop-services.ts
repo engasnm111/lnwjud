@@ -1,3 +1,4 @@
+import { release as nodeRelease } from 'node:os';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import {
@@ -132,6 +133,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import type { DesktopIpcServices } from './main.js';
+import { windowsCompatibilityProfile } from './windows-compatibility.js';
 import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
 import { LogHub, classifyMcpWorkLogKind } from './log-hub.js';
 
@@ -516,7 +518,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   }
 
   const doctorService = new DoctorService({
-    os: async (): Promise<DoctorProbeResult> => ({ status: process.platform === 'win32' && process.arch === 'x64' ? 'pass' : 'fail', message: `${process.platform} ${process.arch}` }),
+    os: async (): Promise<DoctorProbeResult> => ({ status: windowsCompatibilityProfile(process.platform, nodeRelease(), process.arch).supportedReleaseTarget ? 'pass' : 'fail', message: `${process.platform} ${process.arch}` }),
 
     database: async (): Promise<DoctorProbeResult> => ({ status: 'pass', message: 'SQLite database ready' }),
     git: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'git', 'warn'),

@@ -1,4 +1,4 @@
-export type WindowsGeneration = 'windows-10' | 'windows-11' | 'unsupported-windows' | 'non-windows';
+export type WindowsGeneration = 'windows-10' | 'windows-11' | 'unsupported-windows' | 'macos' | 'unsupported-macos' | 'non-windows';
 
 export interface WindowsCompatibilityProfile {
   readonly generation: WindowsGeneration;
@@ -23,13 +23,26 @@ export function windowsCompatibilityProfile(
   release: string,
   architecture: string,
 ): WindowsCompatibilityProfile {
+  if (platform === 'darwin') {
+    const supported = architecture === 'arm64' || architecture === 'x64';
+    return {
+      generation: supported ? 'macos' : 'unsupported-macos',
+      build: null,
+      supportedReleaseTarget: supported,
+      disableHardwareAcceleration: false,
+      reason: supported
+        ? `macOS compatibility profile (${architecture}): hardware acceleration remains enabled.`
+        : 'lnwjud macOS packages require Apple Silicon (arm64) or Intel (x64) macOS.',
+    };
+  }
+
   if (platform !== 'win32') {
     return {
       generation: 'non-windows',
       build: null,
       supportedReleaseTarget: false,
       disableHardwareAcceleration: false,
-      reason: 'The packaged desktop release target is Windows x64.',
+      reason: 'lnwjud desktop packages support Windows x64 and macOS arm64/x64.',
     };
   }
 
