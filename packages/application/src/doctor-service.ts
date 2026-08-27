@@ -41,7 +41,7 @@ export class DoctorService {
     const definitions: readonly CheckDefinition[] = [
       { id: 'os', required: true, probe: () => this.probes.os() },
       { id: 'database', required: true, probe: () => this.probes.database() },
-      { id: 'git', required: true, probe: () => this.probes.git() },
+      { id: 'git', required: false, probe: () => this.probes.git() },
       { id: 'ripgrep', required: true, probe: () => this.probes.ripgrep() },
       { id: 'workspaces', required: true, probe: () => this.probes.workspaces() },
       { id: 'mcp-port', required: true, probe: () => this.probes.mcpPort() },

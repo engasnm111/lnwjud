@@ -30,6 +30,23 @@ export class SqliteCheckpointRepository implements CheckpointRepository {
     return this.toCheckpoint(row);
   }
 
+  public async list(workspaceId: string, limit = 100): Promise<Checkpoint[]> {
+    const boundedLimit = Number.isInteger(limit) ? Math.min(Math.max(limit, 1), 500) : 100;
+    const rows = this.database.connection.prepare(
+      'SELECT id, workspace_id, created_at, files_json FROM checkpoints WHERE workspace_id = ? ORDER BY created_at DESC, id DESC LIMIT ?',
+    ).all(workspaceId, boundedLimit);
+    return rows.flatMap((row) => {
+      const checkpoint = this.toCheckpoint(row);
+      return checkpoint === null ? [] : [checkpoint];
+    });
+  }
+
+  public async deleteOlderThan(cutoffIso: string): Promise<number> {
+    if (!Number.isFinite(Date.parse(cutoffIso))) throw new Error('Checkpoint retention cutoff is invalid');
+    const result = this.database.connection.prepare('DELETE FROM checkpoints WHERE created_at < ?').run(cutoffIso);
+    return Number(result.changes);
+  }
+
   private toCheckpoint(value: unknown): Checkpoint | null {
     if (!this.isCheckpointRow(value)) return null;
     let files: unknown;

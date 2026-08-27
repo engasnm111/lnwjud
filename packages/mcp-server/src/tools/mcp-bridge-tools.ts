@@ -1,7 +1,12 @@
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 import { mcpCallSchema, mcpDescribeSchema, mcpListSchema } from './schemas.js';
 
-const fullAccess = {
+const readOnlyInspection = {
+  permission: 'READ' as const,
+  annotations: { readOnlyHint: true, destructiveHint: false },
+};
+
+const opaqueChildMutation = {
   permission: 'DANGEROUS' as const,
   annotations: { readOnlyHint: false, destructiveHint: true },
 };
@@ -10,8 +15,8 @@ export function mcpBridgeTools(context: McpToolContext): McpToolDefinition[] {
   return [
     defineTool({
       name: 'mcp_list',
-      description: 'List local MCP servers discovered from Cursor, Claude Desktop, and lnwjud settings. Does not flatten child tools into the lnwjud catalog.',
-      ...fullAccess,
+      description: 'List local MCP servers discovered from Cursor, Claude Desktop, and lnwjud settings. This inspection is read-only and does not flatten child tools into the lnwjud catalog.',
+      ...readOnlyInspection,
       inputSchema: mcpListSchema,
       handler: async () => context.services.extensions === undefined
         ? missingService()
@@ -19,8 +24,8 @@ export function mcpBridgeTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'mcp_describe',
-      description: 'Connect to one local MCP server (if needed) and return its tool names, descriptions, and input schemas.',
-      ...fullAccess,
+      description: 'Connect to one local MCP server (if needed) and return its tool names, descriptions, and input schemas. This operation only inspects the child tool catalog.',
+      ...readOnlyInspection,
       inputSchema: mcpDescribeSchema,
       handler: async (input, signal) => context.services.extensions === undefined
         ? missingService()
@@ -28,8 +33,8 @@ export function mcpBridgeTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'mcp_call',
-      description: 'Call a tool on a discovered local MCP server. Because child side effects cannot be proven non-destructive at this boundary, every mcp_call requires explicit chat confirmation and userConfirmed: true.',
-      ...fullAccess,
+      description: 'Call a tool on a discovered local MCP server. Child side effects and filesystem/network scope are controlled by that child server, so every mcp_call is treated as opaque mutation and requires explicit chat plus host exact-action approval.',
+      ...opaqueChildMutation,
       inputSchema: mcpCallSchema,
       handler: async (input, signal) => context.services.extensions === undefined
         ? missingService()

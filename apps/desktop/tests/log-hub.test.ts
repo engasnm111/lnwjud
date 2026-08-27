@@ -26,6 +26,31 @@ describe('LogHub', () => {
     expect(hub.snapshot().lines[0]?.text).toContain('[ERROR] write_file FILE_NOT_FOUND — File or directory was not found');
   });
 
+  it('treats confirmation requests and stale process reads as notices, not errors', async () => {
+    vi.useFakeTimers();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-loghub-control-flow-'));
+    temporaryRoots.push(root);
+    const activityPath = path.join(root, 'mcp-activity.log');
+    await writeFile(activityPath, [
+      { callId: 'confirm', toolName: 'apply_patch', phase: 'completed', resultCode: 'PERMISSION_REQUIRED', resultMessage: 'explicit confirmation required' },
+      { callId: 'stale-status', toolName: 'process_status', phase: 'completed', resultCode: 'PROCESS_NOT_FOUND', resultMessage: 'Process was not found' },
+      { callId: 'real-error', toolName: 'write_file', phase: 'completed', resultCode: 'FILE_NOT_FOUND', resultMessage: 'File was not found' },
+    ].map((entry) => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
+
+    const hub = new LogHub({ tunnelLogPath: path.join(root, 'missing-tunnel.log'), mcpActivityLogPath: activityPath });
+    hub.start();
+    await vi.advanceTimersByTimeAsync(700);
+    hub.stop();
+
+    const lines = hub.snapshot().lines.filter((line) => line.source === 'mcp');
+    expect(lines.find((line) => line.text.includes('apply_patch'))?.level).toBe('info');
+    expect(lines.find((line) => line.text.includes('process_status'))?.level).toBe('info');
+    expect(lines.find((line) => line.text.includes('write_file'))?.level).toBe('error');
+    expect(lines.find((line) => line.text.includes('apply_patch'))?.text).toContain('[RESULT]');
+    expect(lines.find((line) => line.text.includes('process_status'))?.text).toContain('[RESULT]');
+    expect(lines.find((line) => line.text.includes('write_file'))?.text).toContain('[ERROR]');
+  });
+
   it('feeds and snapshots lines per source with dedupe', () => {
     const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
     hub.feedIfNew('mcp', 'a', 'info', 'first');
@@ -297,6 +322,17 @@ describe('LogHub', () => {
     const [tunnel, processLine] = hub.snapshot().lines;
     expect(tunnel).toMatchObject({ source: 'tunnel', workspaceId: null, sessionId: null });
     expect(processLine).toMatchObject({ source: 'process', workspaceId: 'workspace-a', sessionId: null });
+  });
+
+  it('retains the newest 10,000 lines per source instead of dropping recent activity too early', () => {
+    const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
+    for (let index = 0; index < 10_005; index += 1) {
+      hub.feed('mcp', 'info', `line-${index}`);
+    }
+    const lines = hub.snapshot().lines.filter((line) => line.source === 'mcp');
+    expect(lines).toHaveLength(10_000);
+    expect(lines[0]?.text).toBe('line-5');
+    expect(lines.at(-1)?.text).toBe('line-10004');
   });
 
   it('notifies subscribers of new lines', () => {

@@ -9,6 +9,7 @@ import { ContextEconomyRuntime } from './context-economy.js';
 import { DatabaseRuntimeService } from './database-runtime.js';
 import { DocumentRuntimeService } from './document-runtime.js';
 import { LspRuntimeService } from './lsp-runtime.js';
+import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import { SandboxRuntimeService } from './sandbox-runtime.js';
 import { UPGRADE_TOOL_CATALOG, type UpgradeToolCatalogEntry } from './upgrade-catalog.js';
 import { UpgradeRuntimeStateStore, type UpgradeRuntimeSessionState, type UpgradeRuntimeSharedState } from './upgrade-runtime-state-store.js';
@@ -81,14 +82,15 @@ const PRIMITIVE_SEARCH_ENTRIES: readonly SearchCatalogEntry[] = [
   primitiveEntry('read_files', 'Read multiple guarded workspace files.', 'READ', ['workspace', 'file', 'read']),
   primitiveEntry('search_files', 'Search guarded workspace file paths.', 'READ', ['workspace', 'search', 'read']),
   primitiveEntry('search_text', 'Search guarded workspace text.', 'READ', ['workspace', 'search', 'read']),
-  primitiveEntry('git', 'Run a guarded Git operation.', 'DANGEROUS', ['git', 'execute']),
-  primitiveEntry('write_file', 'Write a guarded workspace file.', 'WRITE', ['workspace', 'file', 'write']),
+  primitiveEntry('git', 'Run a guarded Git operation.', 'EXECUTE', ['git', 'execute']),
+  primitiveEntry('write_file', 'Guarded text file creation or replacement with checkpoint protection; prefer over shell filesystem scripts.', 'WRITE', ['workspace', 'file', 'write', 'create', 'replace', 'text']),
   primitiveEntry('apply_patch', 'Apply a guarded workspace patch.', 'WRITE', ['workspace', 'file', 'write']),
-  primitiveEntry('shell', 'Run a local task through the bounded shell runner.', 'EXECUTE', ['shell', 'process', 'execute']),
+  primitiveEntry('edit_file', 'First-choice exact guarded text replacement for narrow source and config repairs; use instead of shell editing scripts.', 'WRITE', ['workspace', 'file', 'write', 'edit', 'replace', 'source', 'config', 'text']),
+  primitiveEntry('shell', 'Run builds, tests, package managers, and system operations; not a text editor when edit_file, apply_patch, or write_file can perform the change.', 'EXECUTE', ['shell', 'process', 'execute', 'build', 'test']),
   primitiveEntry('vision', 'Capture local screen content or use the OCR boundary.', 'READ', ['vision', 'display', 'read']),
   primitiveEntry('vision_annotated_capture', 'Capture an expiring Set-of-Marks observation.', 'READ', ['vision', 'ui', 'read']),
-  primitiveEntry('ui_target_action', 'Act on a revalidated visual mark.', 'DANGEROUS', ['vision', 'ui', 'execute']),
-  primitiveEntry('tool_batch', 'Invoke registered tools with bounded dependency groups.', 'DANGEROUS', ['workflow', 'execute']),
+  primitiveEntry('ui_target_action', 'Act on a revalidated visual mark.', 'EXECUTE', ['vision', 'ui', 'execute']),
+  primitiveEntry('tool_batch', 'Invoke registered tools with bounded dependency groups.', 'EXECUTE', ['workflow', 'execute']),
 ];
 
 const CAPABILITY_SEARCH_ENTRIES: readonly SearchCatalogEntry[] = capabilityDescriptors.map((descriptor) => capabilitySearchEntry(descriptor));
@@ -147,7 +149,7 @@ export class UpgradeRuntimeService {
       case 'tool_categories':
         return ok(this.categories());
       case 'tool_aliases':
-        return ok({ aliases: { read: 'read_file', search: 'search_text', tree: 'workspace_tree', logs: 'live_logs_query', tests: 'test_context', context: 'workspace_context', map: 'repo_map' }, primitiveToolsRemainAvailable: true });
+        return ok({ aliases: { read: 'read_file', edit: 'edit_file', search: 'search_text', tree: 'workspace_tree', logs: 'live_logs_query', tests: 'test_context', context: 'workspace_context', map: 'repo_map' }, primitiveToolsRemainAvailable: true });
       case 'capabilities':
         return ok({ categories: this.categories().categories, totalUpgradeTools: UPGRADE_TOOL_CATALOG.length, primitiveToolsRemainAvailable: true });
       case 'route_intent':
@@ -179,10 +181,14 @@ export class UpgradeRuntimeService {
         return ok({ hooks: [...this.hooks.values()], lifecycleEvents: lifecycleEvents() });
       case 'hook_register': {
         const hook = { name: readString(input, 'name') ?? `hook-${this.hooks.size + 1}`, event: readString(input, 'event') ?? 'beforeTool' };
+        if (this.hooks.has(hook.name)) {
+          return err(appError('INVALID_INPUT', 'Lifecycle hook already exists; remove it explicitly before registering a replacement'));
+        }
         this.hooks.set(hook.name, hook);
         return ok({ registered: true, hook });
       }
       case 'hook_remove': {
+        if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Removing a lifecycle hook requires explicit user confirmation'));
         const hookName = readString(input, 'name');
         return ok({ removed: hookName === undefined ? false : this.hooks.delete(hookName), name: hookName ?? null });
       }
@@ -196,8 +202,10 @@ export class UpgradeRuntimeService {
       case 'plugin_install':
       case 'plugin_enable':
       case 'plugin_disable':
+        return this.changePlugin(name, readString(input, 'name') ?? readString(input, 'plugin'));
       case 'plugin_remove':
-        return ok(await this.changePlugin(name, readString(input, 'name') ?? readString(input, 'plugin')));
+        if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Removing a plugin requires explicit user confirmation'));
+        return this.changePlugin(name, readString(input, 'name') ?? readString(input, 'plugin'));
       case 'session_context':
       case 'session_resume':
         return ok({ session: Object.fromEntries(this.session), checkpoints: this.checkpoints });
@@ -297,9 +305,9 @@ export class UpgradeRuntimeService {
       case 'inspect_workbook':
         return this.documents.inspectWorkbook(input);
       case 'docx_merge':
-        return this.documents.docxMerge(input);
+        return this.documents.docxMerge(input, signal);
       case 'office_ppt':
-        return this.officePowerPoint(input);
+        return this.officePowerPoint(input, signal);
       case 'office_outlook':
         return this.officeOutlook(input);
       case 'handoff_context':
@@ -413,16 +421,30 @@ export class UpgradeRuntimeService {
     return { categories: [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([category, tools]) => ({ category, tools })) };
   }
 
-  private async changePlugin(operation: string, name: string | undefined): Promise<unknown> {
-    if (name === undefined || name.trim().length === 0) return { changed: false, reason: 'plugin name is required' };
+  private async changePlugin(operation: string, name: string | undefined): Promise<Result<unknown>> {
+    if (name === undefined || name.trim().length === 0) return err(appError('INVALID_INPUT', 'Plugin name is required'));
     let changed = false;
+    let exists = false;
     if (operation === 'plugin_remove') {
       await this.mutateSharedState((plugins) => { changed = plugins.delete(name); });
-      return { changed, name };
+      return ok({ changed, name });
     }
     const plugin = { name, enabled: operation !== 'plugin_disable' };
-    await this.mutateSharedState((plugins) => { plugins.set(name, plugin); changed = true; });
-    return { changed, ...plugin };
+    await this.mutateSharedState((plugins) => {
+      exists = plugins.has(name);
+      if (operation === 'plugin_install') {
+        if (!exists) { plugins.set(name, plugin); changed = true; }
+        return;
+      }
+      if (exists) { plugins.set(name, plugin); changed = true; }
+    });
+    if (operation === 'plugin_install' && exists) {
+      return err(appError('INVALID_INPUT', 'Plugin already exists; remove it explicitly before installing a replacement'));
+    }
+    if (operation !== 'plugin_install' && !exists) {
+      return err(appError('INVALID_INPUT', 'Plugin must be installed before it can be enabled or disabled'));
+    }
+    return ok({ changed, ...plugin });
   }
 
   private async createTask(kind: RuntimeTask['kind'], input: Record<string, unknown>): Promise<RuntimeTask> {
@@ -532,7 +554,7 @@ export class UpgradeRuntimeService {
     return ok({ ...preview, dryRun: false, applied, automaticDestructiveRetry: false });
   }
 
-  private async officePowerPoint(input: Record<string, unknown>): Promise<Result<unknown>> {
+  private async officePowerPoint(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok({ tool: 'office_ppt', status: 'optional', available: false, reason: 'Office capability is not configured' });
     const action = readString(input, 'action') ?? 'read';
@@ -544,8 +566,39 @@ export class UpgradeRuntimeService {
     const plan = { tool: 'office_ppt', status: 'ready', available: true, app: 'powerpoint', action, file_path: filePath, ...(targetPath === undefined ? {} : { target_path: targetPath }) };
     if (action === 'save_as' && input.dryRun !== false && input.dry_run !== false) return ok({ ...plan, dryRun: true, executed: false });
     if (action === 'save_as' && input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'PowerPoint save_as requires explicit user confirmation'));
-    const result = await capabilities.execute('office', { app: 'powerpoint', action, file_path: filePath, ...(targetPath === undefined ? {} : { target_path: targetPath }) });
-    return result.ok ? ok({ ...plan, dryRun: false, executed: true, result: result.value }) : result;
+    let safeFilePath = filePath;
+    let safeTargetPath = targetPath;
+    let replacementBackup: { readonly recoveryId: string; readonly recoveryPath: string } | undefined;
+    if (action === 'save_as') {
+      const workspaceId = readString(input, 'workspaceId');
+      if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'PowerPoint save_as requires workspaceId'));
+      const fileSafety = this.services.file;
+      if (fileSafety === undefined) return err(appError('INTERNAL_ERROR', 'File safety service is unavailable; refusing PowerPoint save_as', true));
+      const prepared = await fileSafety.prepareExternalFileMutation(this.actor, workspaceId, {
+        sourcePaths: [filePath],
+        targetPath: targetPath!,
+        userConfirmed: true,
+      }, signal);
+      if (!prepared.ok) return prepared;
+      safeFilePath = prepared.value.sourcePaths[0]!;
+      safeTargetPath = prepared.value.targetPath;
+      replacementBackup = prepared.value.replacementBackup;
+    }
+    const result = await capabilities.execute('office', {
+      app: 'powerpoint',
+      action,
+      file_path: safeFilePath,
+      ...(safeTargetPath === undefined ? {} : { target_path: safeTargetPath }),
+      ...(action === 'save_as' ? { userConfirmed: true } : {}),
+    }, signal);
+    if (!result.ok) return withReplacementRecoveryDetails(result, replacementBackup);
+    return ok({
+      ...plan,
+      dryRun: false,
+      executed: true,
+      result: result.value,
+      ...(replacementBackup === undefined ? {} : { replacementBackup }),
+    });
   }
 
   private async officeOutlook(input: Record<string, unknown>): Promise<Result<unknown>> {
@@ -990,7 +1043,7 @@ function actorSessionId(actor: FileActor): string {
 }
 
 function runtimeOwnerKey(actor: FileActor): string {
-  return `${actor.clientId} ${actorSessionId(actor)}`;
+  return `${actor.clientId}\u0000${actorSessionId(actor)}`;
 }
 
 function isWorktreeLedgerEntry(value: unknown): value is WorktreeLedgerEntry {

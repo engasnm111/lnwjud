@@ -26,13 +26,15 @@ describe('Projects page lifecycle controls', () => {
         workspace('system-root', { rootPath: 'E:\\', realRootPath: 'E:\\', kind: 'machine_root' }),
       ],
       selectedWorkspaceId: 'active-project',
+      activeWorkspaceIds: ['active-project'],
       onSelectWorkspace: noop,
+      onSetWorkspaceActive: noop,
       onAddWorkspace: noop,
       onSetWorkspaceArchived: async (): Promise<void> => undefined,
       onDeleteWorkspace: noop,
     }));
 
-    expect(markup).toContain('Active projects');
+    expect(markup).toContain('>Projects</h2>');
     expect(markup).toContain('Archived projects');
     expect(markup).toContain('System workspaces');
     expect(markup).toContain('Archive</button>');
@@ -40,6 +42,7 @@ describe('Projects page lifecycle controls', () => {
     expect(markup).toContain('Remove</button>');
     expect(markup).toContain('managed automatically by lnwjud');
     expect(markup.match(/>Remove<\/button>/g)?.length).toBe(2);
+    expect(markup).toContain('title="At least one Active Project is required"');
   });
 
   it('explains that registration removal never deletes project files', () => {
@@ -47,7 +50,9 @@ describe('Projects page lifecycle controls', () => {
       locale: 'th',
       workspaces: [workspace('project-a')],
       selectedWorkspaceId: null,
+      activeWorkspaceIds: [],
       onSelectWorkspace: noop,
+      onSetWorkspaceActive: noop,
       onAddWorkspace: noop,
       onSetWorkspaceArchived: async (): Promise<void> => undefined,
       onDeleteWorkspace: noop,

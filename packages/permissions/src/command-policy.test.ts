@@ -13,9 +13,11 @@ describe('CommandPolicy', () => {
     expect(policy.decide(permissionProfiles.balanced, 'custom-tool.exe', 'client')).toBe('ASK');
   });
 
-  it('denies shell hosts even when presented as a project command', () => {
-    expect(policy.decide(permissionProfiles.balanced, 'powershell.exe', 'project')).toBe('DENY');
-    expect(policy.decide(permissionProfiles.full, 'cmd.exe', 'project')).toBe('DENY');
+  it('allows normal shell hosts in Balanced and leaves Safe approval semantics intact', () => {
+    expect(policy.decide(permissionProfiles.balanced, 'powershell.exe', 'project')).toBe('ALLOW');
+    expect(policy.decide(permissionProfiles.balanced, 'cmd.exe', 'client')).toBe('ALLOW');
+    expect(policy.decide(permissionProfiles.balanced, 'python.exe', 'client')).toBe('ALLOW');
+    expect(policy.decide(permissionProfiles.safe, 'powershell.exe', 'client')).toBe('ASK');
   });
 
   it('asks before delete/remove executables', () => {
@@ -43,7 +45,7 @@ describe('CommandPolicy unrestricted', () => {
     expect(unrestricted.decide(permissionProfiles.full, 'remove-item', 'client')).toBe('ASK');
   });
 
-  it('allows every git subcommand including rm, clean, and reset', () => {
+  it('allows every git subcommand including rm, clean, and reset at this layer', () => {
     expect(unrestricted.decide(permissionProfiles.full, 'git', 'client', ['init'])).toBe('ALLOW');
     expect(unrestricted.decide(permissionProfiles.full, 'git', 'client', ['rm', '-rf', 'old.txt'])).toBe('ALLOW');
     expect(unrestricted.decide(permissionProfiles.full, 'git', 'client', ['clean', '-fd'])).toBe('ALLOW');

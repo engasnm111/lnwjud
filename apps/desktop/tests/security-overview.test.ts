@@ -6,6 +6,7 @@ import { ControlCenterPage } from '../src/renderer/features/home/ControlCenterPa
 
 const baseDashboard: DashboardSnapshot = {
   selectedWorkspace: null,
+  activeWorkspaces: [],
   gitSummary: { branch: null, changedFiles: 0, stagedFiles: 0, message: '' },
   mcp: { running: false, url: null, workspaceId: null },
   codex: { installed: false, version: null },
@@ -41,9 +42,11 @@ function render(dashboard: DashboardSnapshot, locale: 'th' | 'en' = 'en'): strin
     onStopMcp: async () => undefined,
     onRestartMcp: async () => undefined,
     onSelectWorkspace: async () => undefined,
+    onSetWorkspaceActive: async () => undefined,
     onAddWorkspace: async () => undefined,
     onStartTunnel: async () => undefined,
     onStopTunnel: async () => undefined,
+    onOpenTunnelSetup: () => undefined,
     onCaptureIncident: async () => undefined,
     incidentBusy: false,
     incidentClassification: null,
@@ -62,7 +65,7 @@ describe('Security Overview', () => {
     expect(markup).not.toContain('registered machine roots may be visible');
   });
 
-  it('warns when Secure Tunnel / STDIO has broad full access without Strict Roots', () => {
+  it('warns when standalone/headless STDIO has broad full access without Strict Roots', () => {
     const markup = render({
       ...baseDashboard,
       stdioPermissionProfile: 'full',
@@ -76,10 +79,28 @@ describe('Security Overview', () => {
     expect(markup).toContain('AI File Delete');
   });
 
+  it('does not claim an orphan external tunnel is fully connected when local setup is missing', () => {
+    const markup = render({
+      ...baseDashboard,
+      tunnel: {
+        state: 'running',
+        source: 'external',
+        hasApiKey: false,
+        clientPath: 'C:\\fixture\\tunnel-client.exe',
+        profileExists: false,
+        message: null,
+        logPath: null,
+        persistent: null,
+      },
+    });
+    expect(markup).toContain('A tunnel process is still running, but lnwjud setup is incomplete.');
+    expect(markup).not.toContain('Tunnel connected (from script) — Start is disabled');
+  });
+
   it('localizes the security summary to Thai', () => {
     const markup = render({ ...baseDashboard, locale: 'th' }, 'th');
     expect(markup).toContain('ภาพรวมความปลอดภัย');
     expect(markup).toContain('จำกัดขอบเขตแล้ว');
-    expect(markup).toContain('Strict Roots จำกัดเฉพาะ Secure Tunnel / STDIO');
+    expect(markup).toContain('Strict Roots จำกัด standalone/headless STDIO');
   });
 });

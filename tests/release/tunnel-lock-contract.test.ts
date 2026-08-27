@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -19,7 +20,11 @@ describe('PowerShell tunnel launcher ownership contract', () => {
     `);
 
     expect(JSON.parse(result)).toMatchObject({ errors: 0, helperErrors: 0, helperSideEffects: 0, functions: 0, enter: 1, release: 1 });
-    expect(JSON.parse(result).dotSources).toEqual(expect.arrayContaining([expect.stringContaining('lnwjud-tunnel-lock.ps1')]));
+    expect(JSON.parse(result).dotSources).toEqual(expect.arrayContaining([expect.stringContaining('$lockHelperResolved')]));
+    const starterSource = await readFile(path.resolve('scripts/start-lnwjud-tunnel.ps1'), 'utf8');
+    expect(starterSource).toContain('lnwjud-tunnel-lock.ps1');
+    expect(starterSource).toContain('Resolve-Path -LiteralPath $lockHelperRequested');
+    expect(starterSource).toContain('[IO.FileAttributes]::ReparsePoint');
   });
 });
 

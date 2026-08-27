@@ -30,6 +30,22 @@ describe('central destructive policy', () => {
     }).destructive).toBe(true);
   });
 
+  it.each([
+    ['git', { args: ['-C', 'E:\\outside', 'clean', '-fd'] }],
+    ['git', { args: ['-c', 'alias.wipe=!rm -rf .', 'wipe'] }],
+    ['shell', { operation: 'run', executable: 'pwsh.exe', arguments: ['-EncodedCommand', 'VwByAGkAdABlAC0ATwB1AHQAcAB1AHQA'] }],
+    ['web_fetch', { method: 'POST', url: 'https://example.test/item' }],
+    ['web_fetch', { method: 'PUT', url: 'https://example.test/item' }],
+  ])('keeps the legacy %s adapter fail-closed for bypass inputs', (tool, input) => {
+    expect(inspectDestructiveOperation(tool, input).destructive).toBe(true);
+  });
+
+
+  it('does not mark ordinary argv execution as destructive', () => {
+    expect(inspectDestructiveOperation('shell', { operation: 'run', executable: 'node.exe', arguments: ['cleanup.js'] }).destructive).toBe(false);
+    expect(inspectDestructiveOperation('process_start', { executable: 'node.exe', args: ['script.js'] }).destructive).toBe(false);
+  });
+
   it.each(['rm', 'del'])('detects PowerShell %s aliases hidden behind process_start', (command) => {
     expect(inspectDestructiveOperation('process_start', {
       executable: 'powershell',

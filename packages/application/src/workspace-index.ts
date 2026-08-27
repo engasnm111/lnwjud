@@ -264,9 +264,11 @@ function normalizeRelativePath(value: string): string {
 }
 
 function isWithin(rootPath: string, candidatePath: string): boolean {
-  const root = path.resolve(rootPath).toLowerCase();
-  const candidate = path.resolve(candidatePath).toLowerCase();
-  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  if (relative === '') return true;
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
+  return firstSegment !== '..';
 }
 
 function languageFor(relativePath: string): string | null {

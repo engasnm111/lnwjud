@@ -4,6 +4,7 @@ import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
+import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 /**
@@ -114,7 +115,7 @@ export class DocumentRuntimeService {
     });
   }
 
-  public async docxMerge(input: Record<string, unknown>): Promise<Result<unknown>> {
+  public async docxMerge(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
     const workspaceId = readString(input.workspaceId);
     const primary = readString(input.file_path ?? input.primary);
     const target = readString(input.target_path ?? input.target);
@@ -145,9 +146,30 @@ export class DocumentRuntimeService {
 
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return unavailable('docx_merge', 'Office capability is not configured', ['local DOCX provider (Word installation)', 'edit approval']);
-    const merged = await capabilities.execute('office', { app: 'word', action: 'merge', file_path: resolvedPrimary.value, merge_paths: resolvedMergePaths, target_path: resolvedTarget.value });
-    if (!merged.ok) return merged;
-    return ok({ ...plan, dryRun: false, applied: true, result: merged.value });
+    const fileSafety = this.services.file;
+    if (fileSafety === undefined) return err(appError('INTERNAL_ERROR', 'File safety service is unavailable; refusing DOCX merge', true));
+    const prepared = await fileSafety.prepareExternalFileMutation(this.actor, workspaceId, {
+      sourcePaths: [resolvedPrimary.value, ...resolvedMergePaths],
+      targetPath: resolvedTarget.value,
+      userConfirmed: true,
+    }, signal);
+    if (!prepared.ok) return prepared;
+    const merged = await capabilities.execute('office', {
+      app: 'word',
+      action: 'merge',
+      file_path: prepared.value.sourcePaths[0],
+      merge_paths: prepared.value.sourcePaths.slice(1),
+      target_path: prepared.value.targetPath,
+      userConfirmed: true,
+    }, signal);
+    if (!merged.ok) return withReplacementRecoveryDetails(merged, prepared.value.replacementBackup);
+    return ok({
+      ...plan,
+      dryRun: false,
+      applied: true,
+      result: merged.value,
+      ...(prepared.value.replacementBackup === undefined ? {} : { replacementBackup: prepared.value.replacementBackup }),
+    });
   }
 
   private resolveProvider(): string | null {
@@ -184,22 +206,23 @@ export class DocumentRuntimeService {
   }
 
   private async resolveWorkspacePath(workspaceId: string, requested: string, mustExist: boolean): Promise<Result<string>> {
-    const p = process.platform === 'win32' ? path.win32 : path;
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
     let canonicalRoot: string;
     try {
-      canonicalRoot = p.normalize(await realpath(root.value));
+      canonicalRoot = path.win32.normalize(await realpath(root.value));
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root could not be resolved'));
     }
-    const normalizedRequested = process.platform === 'win32' ? requested : requested.replaceAll('\\', '/');
-    const candidate = p.isAbsolute(normalizedRequested) ? p.normalize(normalizedRequested) : p.join(canonicalRoot, normalizedRequested);
+    // Windows can expose the same physical location under an 8.3 short path
+    // while realpath() returns the long spelling. Do not make a lexical
+    // containment decision until the candidate (or its parent) is canonical.
+    const candidate = path.win32.isAbsolute(requested) ? path.win32.normalize(requested) : path.win32.join(canonicalRoot, requested);
 
     if (mustExist) {
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `File was not found: ${candidate}`));
       try {
-        const canonical = p.normalize(await realpath(candidate));
+        const canonical = path.win32.normalize(await realpath(candidate));
         return isWithin(canonicalRoot, canonical)
           ? ok(canonical)
           : err(appError('PATH_OUTSIDE_WORKSPACE', `Document path resolves outside the registered workspace: ${requested}`));
@@ -208,18 +231,17 @@ export class DocumentRuntimeService {
       }
     }
 
-    const parent = p.dirname(candidate);
+    const parent = path.win32.dirname(candidate);
     try {
-      const canonicalParent = p.normalize(await realpath(parent));
+      const canonicalParent = path.win32.normalize(await realpath(parent));
       if (!isWithin(canonicalRoot, canonicalParent)) return err(appError('PATH_OUTSIDE_WORKSPACE', `Document target resolves outside the registered workspace: ${requested}`));
-      return ok(p.join(canonicalParent, p.basename(candidate)));
+      return ok(path.win32.join(canonicalParent, path.win32.basename(candidate)));
     } catch {
       return err(appError('FILE_NOT_FOUND', `Document target parent was not found: ${parent}`));
     }
   }
 
   private async workspaceRoot(workspaceId: string): Promise<Result<string>> {
-    const p = process.platform === 'win32' ? path.win32 : path;
     const workspaceInfo = this.services.workspaceInfo;
     if (workspaceInfo === undefined) return err(appError('WORKSPACE_NOT_FOUND', 'Workspace service is not configured'));
     const info = await workspaceInfo.info(this.actor, workspaceId);
@@ -229,7 +251,7 @@ export class DocumentRuntimeService {
       : undefined;
     return rootPath === undefined
       ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(p.normalize(rootPath));
+      : ok(path.win32.normalize(rootPath));
   }
 }
 
@@ -285,7 +307,10 @@ function unavailable(tool: string, reason: string, requirements: readonly string
 
 function isWithin(root: string, candidate: string): boolean {
   const relative = path.win32.relative(root.toLowerCase(), candidate.toLowerCase());
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.win32.sep}`) && !path.win32.isAbsolute(relative));
+  if (relative === '') return true;
+  if (path.win32.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.win32.sep);
+  return firstSegment !== '..';
 }
 
 function readString(value: unknown): string | undefined {

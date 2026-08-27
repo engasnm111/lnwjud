@@ -30,6 +30,7 @@ export type MessageKey =
   | 'tunnel.needProfile'
   | 'tunnel.running'
   | 'tunnel.runningExternal'
+  | 'tunnel.incompleteExternal'
   | 'tunnel.stopped'
   | 'tunnel.starting'
   | 'tunnel.error'
@@ -146,6 +147,52 @@ export type MessageKey =
   | 'error.tunnelStart'
   | 'error.tunnelStop'
   | 'error.doctorRun'
+  | 'guidedTunnel.tipTitle'
+  | 'guidedTunnel.tipBody'
+  | 'guidedTunnel.privacy'
+  | 'guidedTunnel.startSetup'
+  | 'guidedTunnel.later'
+  | 'guidedTunnel.openGuide'
+  | 'guidedTunnel.progress'
+  | 'guidedTunnel.stepTunnelTitle'
+  | 'guidedTunnel.stepTunnelBody'
+  | 'guidedTunnel.openTunnelSettings'
+  | 'guidedTunnel.tunnelIdLabel'
+  | 'guidedTunnel.tunnelIdHint'
+  | 'guidedTunnel.tunnelIdInvalid'
+  | 'guidedTunnel.next'
+  | 'guidedTunnel.back'
+  | 'guidedTunnel.stepKeyTitle'
+  | 'guidedTunnel.stepKeyBody'
+  | 'guidedTunnel.openApiKeys'
+  | 'guidedTunnel.apiKeyLabel'
+  | 'guidedTunnel.apiKeyHint'
+  | 'guidedTunnel.apiKeyRequired'
+  | 'guidedTunnel.saveKey'
+  | 'guidedTunnel.keyStored'
+  | 'guidedTunnel.stepConfigureTitle'
+  | 'guidedTunnel.stepConfigureBody'
+  | 'guidedTunnel.configure'
+  | 'guidedTunnel.configuring'
+  | 'guidedTunnel.configured'
+  | 'guidedTunnel.stepStartTitle'
+  | 'guidedTunnel.stepStartBody'
+  | 'guidedTunnel.startTunnel'
+  | 'guidedTunnel.starting'
+  | 'guidedTunnel.running'
+  | 'guidedTunnel.stepChatGptTitle'
+  | 'guidedTunnel.stepChatGptBody'
+  | 'guidedTunnel.openChatGptPlugins'
+  | 'guidedTunnel.localComplete'
+  | 'guidedTunnel.done'
+  | 'guidedTunnel.dismissedHint'
+  | 'guidedTunnel.linkError'
+  | 'guidedTunnel.copyLink'
+  | 'guidedTunnel.retry'
+  | 'guidedTunnel.externalRuntime'
+  | 'guidedTunnel.showApiKey'
+  | 'guidedTunnel.hideApiKey'
+  | 'guidedTunnel.advanced'
   | 'language.th'
   | 'language.en';
 
@@ -173,7 +220,7 @@ export const th: Messages = {
   'action.restart': 'รีสตาร์ท',
   'action.retry': 'ลองใหม่',
   'mcp.localUrl': 'MCP URL (local)',
-  'mcp.stdioCommand': 'คำสั่ง Secure Tunnel (stdio)',
+  'mcp.stdioCommand': 'คำสั่ง MCP แบบ Local STDIO',
   'mcp.copy': 'คัดลอก',
   'mcp.copied': 'คัดลอกแล้ว',
   'tunnel.title': 'Secure MCP Tunnel สำหรับ ChatGPT',
@@ -183,9 +230,56 @@ export const th: Messages = {
   'tunnel.needProfile': 'ยังไม่มีโปรไฟล์ lnwjud.yaml',
   'tunnel.running': 'Tunnel เชื่อมต่อแล้ว (จากแอพนี้)',
   'tunnel.runningExternal': 'Tunnel เชื่อมต่อแล้ว (จากสคริปต์) — ปุ่ม Start ถูกปิดไว้แล้ว',
+  'tunnel.incompleteExternal': 'พบ Tunnel process ที่ยังทำงานอยู่ แต่การตั้งค่า lnwjud ยังไม่ครบ — กดหยุด Tunnel ก่อนเริ่มตั้งค่าใหม่',
   'tunnel.stopped': 'Tunnel หยุดอยู่',
   'tunnel.starting': 'กำลังเริ่ม Tunnel',
   'tunnel.error': 'Tunnel มีข้อผิดพลาด',
+  'guidedTunnel.tipTitle': 'ตั้งค่า ChatGPT ให้ใช้ lnwjud',
+  'guidedTunnel.tipBody': 'ทำขั้นตอนนี้เพียงครั้งเดียว lnwjud จะพาไปสร้าง Tunnel ID และ Runtime API key แล้วตั้งค่าให้โดยอัตโนมัติ',
+  'guidedTunnel.privacy': 'คีย์จะถูกเข้ารหัสด้วย Windows DPAPI และเก็บในเครื่องนี้เท่านั้น lnwjud ไม่มีเซิร์ฟเวอร์กลางรับคีย์ของคุณ',
+  'guidedTunnel.startSetup': 'เริ่มตั้งค่า',
+  'guidedTunnel.later': 'ไว้ทีหลัง',
+  'guidedTunnel.openGuide': 'เปิดคู่มือตั้งค่า',
+  'guidedTunnel.progress': 'ขั้นตอนการเชื่อมต่อ',
+  'guidedTunnel.stepTunnelTitle': '1. สร้าง OpenAI Tunnel',
+  'guidedTunnel.stepTunnelBody': 'เปิดหน้า Tunnel Settings เลือกองค์กรที่ใช้กับ ChatGPT สร้าง tunnel และคัดลอกค่าที่ขึ้นต้นด้วย tunnel_ หากสร้างไม่ได้ ให้ตรวจว่าบัญชีมี Tunnels Read + Manage',
+  'guidedTunnel.openTunnelSettings': 'เปิดหน้า Tunnel Settings',
+  'guidedTunnel.tunnelIdLabel': 'Tunnel ID',
+  'guidedTunnel.tunnelIdHint': 'วาง Tunnel ID ที่คัดลอกจาก OpenAI Platform',
+  'guidedTunnel.tunnelIdInvalid': 'Tunnel ID ต้องขึ้นต้นด้วย tunnel_ และมีรูปแบบถูกต้อง',
+  'guidedTunnel.next': 'ขั้นตอนถัดไป',
+  'guidedTunnel.back': 'ย้อนกลับ',
+  'guidedTunnel.stepKeyTitle': '2. สร้าง Runtime API key',
+  'guidedTunnel.stepKeyBody': 'เปิดหน้า API Keys สร้าง secret key ใหม่ กำหนดสิทธิ์ Tunnels Read + Use แล้วคัดลอกทันที',
+  'guidedTunnel.openApiKeys': 'เปิดหน้าสร้าง API key',
+  'guidedTunnel.apiKeyLabel': 'Runtime API key',
+  'guidedTunnel.apiKeyHint': 'คีย์จะแสดงเต็มเพียงครั้งเดียว วางแล้วกดบันทึก',
+  'guidedTunnel.apiKeyRequired': 'กรุณาวาง Runtime API key',
+  'guidedTunnel.saveKey': 'บันทึกคีย์อย่างปลอดภัย',
+  'guidedTunnel.keyStored': 'บันทึกคีย์ใน Windows DPAPI แล้ว',
+  'guidedTunnel.stepConfigureTitle': '3. ให้ lnwjud ตั้งค่าอัตโนมัติ',
+  'guidedTunnel.stepConfigureBody': 'lnwjud จะใช้ tunnel-client ที่มากับโปรแกรม สร้างโปรไฟล์ local และตรวจสอบการเชื่อมต่อให้',
+  'guidedTunnel.configure': 'ตั้งค่าและตรวจสอบ',
+  'guidedTunnel.configuring': 'กำลังสร้างโปรไฟล์และตรวจสอบ…',
+  'guidedTunnel.configured': 'โปรไฟล์ Tunnel พร้อมใช้งาน',
+  'guidedTunnel.stepStartTitle': '4. เริ่ม Tunnel',
+  'guidedTunnel.stepStartBody': 'ตรวจสอบข้อมูลด้านล่าง แล้วกด Start Tunnel เมื่อสถานะเป็น Running โปรแกรมจะ reconnect Tunnel ID เดิมให้อัตโนมัติ',
+  'guidedTunnel.startTunnel': 'Start Tunnel',
+  'guidedTunnel.starting': 'กำลังเริ่ม Tunnel…',
+  'guidedTunnel.running': 'Tunnel กำลังทำงาน',
+  'guidedTunnel.stepChatGptTitle': '5. เชื่อมต่อใน ChatGPT',
+  'guidedTunnel.stepChatGptBody': 'เปิด ChatGPT Plugins หากยังไม่เปิด Developer mode ให้ไปที่ Settings > Security and login > Developer mode จากนั้นกดเพิ่ม connection เลือก Tunnel แล้วเลือกหรือวาง Tunnel ID นี้',
+  'guidedTunnel.openChatGptPlugins': 'เปิด ChatGPT Plugins',
+  'guidedTunnel.localComplete': 'การตั้งค่าฝั่งเครื่องเสร็จแล้ว',
+  'guidedTunnel.done': 'เสร็จสิ้น',
+  'guidedTunnel.dismissedHint': 'ยังไม่ได้ตั้งค่า Tunnel คุณเปิดคู่มือได้ทุกเมื่อ',
+  'guidedTunnel.linkError': 'เปิดลิงก์ไม่ได้ กรุณาคัดลอกลิงก์ด้านล่างไปเปิดในเบราว์เซอร์',
+  'guidedTunnel.copyLink': 'คัดลอกลิงก์',
+  'guidedTunnel.retry': 'ลองอีกครั้ง',
+  'guidedTunnel.externalRuntime': 'พบ Tunnel ที่กำลังรันจากภายนอก แต่ยังไม่ใช่ Tunnel ที่ lnwjud Desktop เป็นเจ้าของ ให้หยุด Tunnel เดิมก่อน แล้วกด Start Tunnel อีกครั้ง',
+  'guidedTunnel.showApiKey': 'แสดง',
+  'guidedTunnel.hideApiKey': 'ซ่อน',
+  'guidedTunnel.advanced': 'การตั้งค่าขั้นสูงและแก้ปัญหา',
   'project.active': 'โปรเจกต์ที่ใช้งาน',
   'project.setMain': 'ตั้งเป็นโปรเจกต์หลัก',
   'project.add': 'เพิ่มโปรเจกต์',
@@ -238,7 +332,7 @@ export const th: Messages = {
   'security.summaryBroad': 'การเข้าถึงกว้าง',
   'security.summaryRestricted': 'จำกัดขอบเขตแล้ว',
   'security.desktopProfile': 'Desktop Profile',
-  'security.stdioProfile': 'Secure Tunnel / STDIO Profile',
+  'security.stdioProfile': 'Standalone STDIO Profile',
   'security.strictRoots': 'Strict Roots',
   'security.aiDelete': 'AI File Delete',
   'security.unrestricted': 'Unrestricted',
@@ -249,8 +343,8 @@ export const th: Messages = {
   'security.registeredWorkspaces': 'workspace ที่ลงทะเบียน',
   'security.allowedRoots': 'Allowed Roots',
   'security.machineRoots': 'Machine roots / workspace ที่ลงทะเบียน',
-  'security.warningBroad': 'Secure Tunnel / STDIO ใช้ Full โดยปิด Strict Roots อยู่ จึงอาจมองเห็น machine roots ที่ระบบลงทะเบียนไว้ ควรเปิด Strict Roots เมื่อต้องการจำกัดเฉพาะโฟลเดอร์ที่เลือก',
-  'security.strictHint': 'Strict Roots จำกัดเฉพาะ Secure Tunnel / STDIO และไม่ใช่ OS sandbox',
+  'security.warningBroad': 'Standalone/headless STDIO ใช้ Full โดยปิด Strict Roots อยู่ จึงอาจมองเห็น machine roots ที่ระบบลงทะเบียนไว้ ควรเปิด Strict Roots เมื่อต้องการจำกัดเฉพาะโฟลเดอร์ที่เลือก',
+  'security.strictHint': 'Strict Roots จำกัด standalone/headless STDIO และไม่ใช่ OS sandbox; Secure Tunnel ใช้ Active Project ของ Desktop',
   'live.title': 'Live Logs',
   'live.subtitle': 'ดู log ของ tunnel, กิจกรรม MCP และ process แบบ realtime',
   'live.tabTunnel': 'Tunnel',
@@ -325,7 +419,7 @@ export const en: Messages = {
   'action.restart': 'Restart',
   'action.retry': 'Retry',
   'mcp.localUrl': 'MCP URL (local)',
-  'mcp.stdioCommand': 'Secure Tunnel command (stdio)',
+  'mcp.stdioCommand': 'Local STDIO MCP command',
   'mcp.copy': 'Copy',
   'mcp.copied': 'Copied',
   'tunnel.title': 'Secure MCP Tunnel for ChatGPT',
@@ -335,9 +429,56 @@ export const en: Messages = {
   'tunnel.needProfile': 'Missing lnwjud.yaml tunnel profile',
   'tunnel.running': 'Tunnel connected (from this app)',
   'tunnel.runningExternal': 'Tunnel connected (from script) — Start is disabled',
+  'tunnel.incompleteExternal': 'A tunnel process is still running, but lnwjud setup is incomplete. Stop the tunnel before starting setup again.',
   'tunnel.stopped': 'Tunnel stopped',
   'tunnel.starting': 'Starting tunnel',
   'tunnel.error': 'Tunnel error',
+  'guidedTunnel.tipTitle': 'Connect ChatGPT to lnwjud',
+  'guidedTunnel.tipBody': 'Complete this once. lnwjud will guide you through creating a Tunnel ID and Runtime API key, then configure the connection automatically.',
+  'guidedTunnel.privacy': 'Your key is encrypted with Windows DPAPI and stored only on this PC. lnwjud has no central server that receives your key.',
+  'guidedTunnel.startSetup': 'Start setup',
+  'guidedTunnel.later': 'Set up later',
+  'guidedTunnel.openGuide': 'Open setup guide',
+  'guidedTunnel.progress': 'Connection setup',
+  'guidedTunnel.stepTunnelTitle': '1. Create an OpenAI Tunnel',
+  'guidedTunnel.stepTunnelBody': 'Open Tunnel Settings, select the organization used with ChatGPT, create a tunnel, and copy the value beginning with tunnel_. If creation is unavailable, verify that the account has Tunnels Read + Manage.',
+  'guidedTunnel.openTunnelSettings': 'Open Tunnel Settings',
+  'guidedTunnel.tunnelIdLabel': 'Tunnel ID',
+  'guidedTunnel.tunnelIdHint': 'Paste the Tunnel ID copied from OpenAI Platform.',
+  'guidedTunnel.tunnelIdInvalid': 'The Tunnel ID must begin with tunnel_ and use a valid format.',
+  'guidedTunnel.next': 'Continue',
+  'guidedTunnel.back': 'Back',
+  'guidedTunnel.stepKeyTitle': '2. Create a Runtime API key',
+  'guidedTunnel.stepKeyBody': 'Open API Keys, create a new secret key, grant it Tunnels Read + Use, and copy it immediately.',
+  'guidedTunnel.openApiKeys': 'Open API Keys',
+  'guidedTunnel.apiKeyLabel': 'Runtime API key',
+  'guidedTunnel.apiKeyHint': 'The full key is shown once. Paste it here, then save it.',
+  'guidedTunnel.apiKeyRequired': 'Paste a Runtime API key.',
+  'guidedTunnel.saveKey': 'Save key securely',
+  'guidedTunnel.keyStored': 'Key saved with Windows DPAPI.',
+  'guidedTunnel.stepConfigureTitle': '3. Let lnwjud configure the connection',
+  'guidedTunnel.stepConfigureBody': 'lnwjud will use the bundled tunnel-client, create the local profile, and check the connection.',
+  'guidedTunnel.configure': 'Configure and check',
+  'guidedTunnel.configuring': 'Creating the profile and checking it…',
+  'guidedTunnel.configured': 'Tunnel profile is ready.',
+  'guidedTunnel.stepStartTitle': '4. Start the Tunnel',
+  'guidedTunnel.stepStartBody': 'Review the details below, then select Start Tunnel. Once it is Running, the app will reconnect the same Tunnel ID automatically.',
+  'guidedTunnel.startTunnel': 'Start Tunnel',
+  'guidedTunnel.starting': 'Starting Tunnel…',
+  'guidedTunnel.running': 'Tunnel is running',
+  'guidedTunnel.stepChatGptTitle': '5. Connect in ChatGPT',
+  'guidedTunnel.stepChatGptBody': 'Open ChatGPT Plugins. If Developer mode is off, go to Settings > Security and login > Developer mode. Add a connection, choose Tunnel, then select or paste this Tunnel ID.',
+  'guidedTunnel.openChatGptPlugins': 'Open ChatGPT Plugins',
+  'guidedTunnel.localComplete': 'Local setup is complete.',
+  'guidedTunnel.done': 'Done',
+  'guidedTunnel.dismissedHint': 'Tunnel is not configured yet. You can reopen the guide at any time.',
+  'guidedTunnel.linkError': 'Could not open the link. Copy the address below into your browser.',
+  'guidedTunnel.copyLink': 'Copy link',
+  'guidedTunnel.retry': 'Try again',
+  'guidedTunnel.externalRuntime': 'A tunnel is running externally, but lnwjud Desktop does not own it yet. Stop the existing tunnel, then select Start Tunnel again.',
+  'guidedTunnel.showApiKey': 'Show',
+  'guidedTunnel.hideApiKey': 'Hide',
+  'guidedTunnel.advanced': 'Advanced settings and troubleshooting',
   'project.active': 'Active project',
   'project.setMain': 'Set as main project',
   'project.add': 'Add project',
@@ -390,7 +531,7 @@ export const en: Messages = {
   'security.summaryBroad': 'Broad access',
   'security.summaryRestricted': 'Restricted scope',
   'security.desktopProfile': 'Desktop Profile',
-  'security.stdioProfile': 'Secure Tunnel / STDIO Profile',
+  'security.stdioProfile': 'Standalone STDIO Profile',
   'security.strictRoots': 'Strict Roots',
   'security.aiDelete': 'AI File Delete',
   'security.unrestricted': 'Unrestricted',
@@ -401,8 +542,8 @@ export const en: Messages = {
   'security.registeredWorkspaces': 'registered workspaces',
   'security.allowedRoots': 'Allowed Roots',
   'security.machineRoots': 'Machine roots / registered workspaces',
-  'security.warningBroad': 'Secure Tunnel / STDIO is using Full with Strict Roots off, so registered machine roots may be visible. Enable Strict Roots to limit access to selected folders.',
-  'security.strictHint': 'Strict Roots scopes Secure Tunnel / STDIO only and is not an OS sandbox.',
+  'security.warningBroad': 'Standalone/headless STDIO is using Full with Strict Roots off, so registered machine roots may be visible. Enable Strict Roots to limit access to selected folders.',
+  'security.strictHint': 'Strict Roots scopes standalone/headless STDIO and is not an OS sandbox; Secure Tunnel uses the Desktop Active Project.',
   'live.title': 'Live Logs',
   'live.subtitle': 'Real-time tunnel, MCP activity, and process logs',
   'live.tabTunnel': 'Tunnel',

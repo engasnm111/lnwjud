@@ -1,10 +1,15 @@
-﻿name: CI
+name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - 'release/v*'
   pull_request:
     branches: [ main ]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -35,4 +40,25 @@ jobs:
 
       - name: Run authoritative verification gate
         shell: powershell
+        env:
+          # electron-builder uses these only when the real production certificate secrets exist.
+          # Pull requests/forks remain buildable unsigned; public Release has a separate mandatory signature gate.
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
+
+      - name: Upload verified Windows release artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-${{ github.sha }}
+          path: |
+            apps/desktop/dist/installers/*.exe
+            apps/desktop/dist/installers/*.blockmap
+            apps/desktop/dist/installers/latest.yml
+            apps/desktop/dist/installers/portable.yml
+            apps/desktop/dist/installers/SHA256SUMS.txt
+            apps/desktop/dist/installers/PROVENANCE.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

@@ -160,8 +160,9 @@ function readTimeout(value: unknown): number {
 }
 
 function powershellExecutable(): string {
-  return process.platform === 'win32' && process.env.SystemRoot !== undefined
-    ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  return process.platform === 'win32' && systemRoot !== undefined
+    ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     : 'powershell.exe';
 }
 

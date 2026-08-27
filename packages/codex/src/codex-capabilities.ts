@@ -32,11 +32,15 @@ export class CodexInvocationBuilder {
     if (capabilities.instructionMode === null) {
       return err(appError('CODEX_NOT_AVAILABLE', 'Codex instruction invocation is not supported', true));
     }
+    if (!capabilities.names.includes('sandbox') || !capabilities.names.includes('workspace-write')) {
+      return err(appError('CODEX_NOT_AVAILABLE', 'Codex workspace-write sandbox support was not verified', true));
+    }
+    const sandboxArgs = ['--sandbox', 'workspace-write'];
     const args = capabilities.instructionMode === 'exec-argument'
-      ? ['exec', instruction]
+      ? ['exec', ...sandboxArgs, instruction]
       : capabilities.instructionMode === 'prompt-option'
-        ? ['--prompt', instruction]
-        : [instruction];
+        ? [...sandboxArgs, '--prompt', instruction]
+        : [...sandboxArgs, instruction];
     return ok({ executable, args });
   }
 }
@@ -46,6 +50,8 @@ export function capabilitiesFromHelp(helpText: string): CodexCapabilities {
   if (/\bexec\b/i.test(helpText)) names.push('exec');
   if (/--prompt\b|--instruction\b/i.test(helpText)) names.push('prompt-argument');
   if (/\bprompt\b.*<[^>]+>/i.test(helpText) && !names.includes('prompt-argument')) names.push('positional-instruction');
+  if (/--sandbox\b/i.test(helpText)) names.push('sandbox');
+  if (/\bworkspace-write\b/i.test(helpText)) names.push('workspace-write');
   const instructionMode = names.includes('exec')
     ? 'exec-argument'
     : names.includes('prompt-argument')

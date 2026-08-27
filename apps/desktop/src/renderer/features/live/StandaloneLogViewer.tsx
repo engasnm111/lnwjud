@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import type { LogLine, LogSource } from '@lnwjud/ipc-contracts';
+import { workspaceScopeMatches, type LogLine, type LogSource, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import { applyLogSnapshot } from './log-buffer.js';
 import { LogStreamPanel, type LogScopeSelection } from './LogStreamPanel.js';
 
-const MAX_CLIENT_LOG_LINES = 4_000;
+const MAX_CLIENT_LOG_LINES = 30_000;
 const sources: readonly LogSource[] = ['tunnel', 'mcp', 'process'];
 
 export function StandaloneLogViewer(): ReactElement {
@@ -13,6 +13,7 @@ export function StandaloneLogViewer(): ReactElement {
   const [tunnelLogPath, setTunnelLogPath] = useState<string | null>(null);
   const [tunnelLogExists, setTunnelLogExists] = useState(false);
   const [tab, setTab] = useState<LogSource>('tunnel');
+  const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
   const logIds = useRef<Set<number>>(new Set());
 
   const appendLine = useCallback((line: LogLine): void => {
@@ -32,6 +33,9 @@ export function StandaloneLogViewer(): ReactElement {
       });
       setTunnelLogPath(snapshot.tunnelLogPath);
       setTunnelLogExists(snapshot.tunnelLogExists);
+    }).catch(() => undefined);
+    void window.lnwjud.listWorkspaces().then((nextWorkspaces) => {
+      if (!disposed) setWorkspaces(nextWorkspaces);
     }).catch(() => undefined);
     const unsubscribe = window.lnwjud.onLogEvent((line) => {
       appendLine(line);
@@ -54,7 +58,7 @@ export function StandaloneLogViewer(): ReactElement {
       ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
     };
     await window.lnwjud.clearLogBuffer(request).catch(() => undefined);
-    setLines((previous) => previous.filter((line) => line.source !== source || !lineMatchesScope(line, scope)));
+    setLines((previous) => previous.filter((line) => line.source !== source || !lineMatchesScope(line, scope, workspaces)));
   }
 
   async function clearAll(): Promise<void> {
@@ -63,13 +67,15 @@ export function StandaloneLogViewer(): ReactElement {
     setLines([]);
   }
 
-  async function exportLogs(source: LogSource, scope: LogScopeSelection, query: string): Promise<void> {
+  async function exportLogs(source: LogSource, scope: LogScopeSelection, query: string, lineIds: readonly number[], rows: readonly string[]): Promise<void> {
     await window.lnwjud.exportLogs({
       source,
       filePath: '',
       ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
       ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
       ...(query.trim().length === 0 ? {} : { query: query.trim() }),
+      lineIds,
+      rows,
     }).catch(() => undefined);
   }
 
@@ -123,16 +129,17 @@ export function StandaloneLogViewer(): ReactElement {
           workspaceLabel={t('scope.workspace')}
           sessionLabel={t('scope.session')}
           scopeAllLabel={t('scope.all')}
+          workspaces={workspaces}
           onClear={(scope) => clear(tab, scope)}
-          onExport={(scope, query) => exportLogs(tab, scope, query)}
+          onExport={(scope, query, lineIds, rows) => exportLogs(tab, scope, query, lineIds, rows)}
         />
       </div>
     </div>
   );
 }
 
-function lineMatchesScope(line: Pick<LogLine, 'workspaceId' | 'sessionId'>, scope: LogScopeSelection): boolean {
-  if (scope.workspaceId !== null && line.workspaceId !== scope.workspaceId) return false;
+function lineMatchesScope(line: Pick<LogLine, 'workspaceId' | 'sessionId'>, scope: LogScopeSelection, workspaces: readonly WorkspaceSummary[]): boolean {
+  if (scope.workspaceId !== null && !workspaceScopeMatches(workspaces, line.workspaceId, scope.workspaceId)) return false;
   if (scope.sessionId !== null && line.sessionId !== scope.sessionId) return false;
   return true;
 }

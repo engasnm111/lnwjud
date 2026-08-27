@@ -58,7 +58,7 @@ describe('Codex review flow', () => {
     const processService = new ProcessService(workspaces, {
       projectService: {
         async getCommand(): Promise<Result<{ executable: string; args: readonly string[] }>> {
-          return ok({ executable: process.execPath, args: ['-e', "process.stdout.write('project-test-pass\\n')"] });
+          return ok({ executable: process.execPath, args: ['project-test.mjs'] });
         },
       },
     });
@@ -79,7 +79,11 @@ describe('Codex review flow', () => {
       process: processService,
       codex,
     };
-    const registry = new ToolRegistry(services, actor, { codexToolsEnabled: true });
+    const registry = new ToolRegistry(services, actor, {
+      codexToolsEnabled: true,
+      activeWorkspaceScopeProvider: async (): Promise<{ workspaceId: string; rootPath: string }> => ({ workspaceId, rootPath: fixtureRoot }),
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
+    });
 
     try {
       const run = await registry.invoke('codex_run', { workspaceId, instruction: 'Review the fixture and update the permitted review file.', userConfirmed: true });
@@ -94,7 +98,7 @@ describe('Codex review flow', () => {
       const diff = await registry.invoke('git_diff', { workspaceId, path: 'src/reviewed.ts' });
       expect(diff).toMatchObject({ structuredContent: { patch: expect.stringContaining("+export const reviewed = true;") } });
 
-      const projectTest = await registry.invoke('project_test', { workspaceId });
+      const projectTest = await registry.invoke('project_test', { workspaceId, userConfirmed: true });
       expect(projectTest).toMatchObject({ structuredContent: { processId: expect.any(String) } });
       const projectProcessId = stringField(projectTest, 'processId');
       await waitForProcessTerminal(registry, workspaceId, projectProcessId);
@@ -105,7 +109,7 @@ describe('Codex review flow', () => {
       expect(stopRun).toMatchObject({ structuredContent: { codexTaskId: 'codex-stop-task', processId: expect.any(String) } });
       const stopTaskId = stringField(stopRun, 'codexTaskId');
       expect(await registry.invoke('codex_task_status', { workspaceId, codexTaskId: stopTaskId })).toMatchObject({ structuredContent: { state: 'running' } });
-      const stop = await registry.invoke('codex_stop', { workspaceId, codexTaskId: stopTaskId });
+      const stop = await registry.invoke('codex_stop', { workspaceId, codexTaskId: stopTaskId, userConfirmed: true });
       expect(stop.isError).not.toBe(true);
       expect((await waitForCodexTerminal(registry, workspaceId, stopTaskId)).state).toBe('stopped');
 
@@ -144,12 +148,13 @@ async function createFixture(): Promise<string> {
   const root = await realpath(rawRoot);
   await mkdir(path.join(root, 'src'));
   await writeFile(path.join(root, 'src', 'reviewed.ts'), 'export const reviewed = false;\n', 'utf8');
-  await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'lnwjud-codex-fixture', scripts: { test: 'node -e "process.stdout.write(\'project-test-pass\\n\')"' } }), 'utf8');
+  await writeFile(path.join(root, 'project-test.mjs'), "process.stdout.write('project-test-pass\\n');\n", 'utf8');
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'lnwjud-codex-fixture', scripts: { test: 'node project-test.mjs' } }), 'utf8');
   await writeFile(path.join(root, 'package-lock.json'), '{}', 'utf8');
   await execFileAsync('git', ['init', '--quiet'], { cwd: root, windowsHide: true });
   await execFileAsync('git', ['config', 'user.email', 'lnwjud-test@example.invalid'], { cwd: root, windowsHide: true });
   await execFileAsync('git', ['config', 'user.name', 'lnwjud codex integration'], { cwd: root, windowsHide: true });
-  await execFileAsync('git', ['add', '--', 'package.json', 'package-lock.json', 'src'], { cwd: root, windowsHide: true });
+  await execFileAsync('git', ['add', '--', 'package.json', 'package-lock.json', 'project-test.mjs', 'src'], { cwd: root, windowsHide: true });
   await execFileAsync('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: root, windowsHide: true });
   return root;
 }

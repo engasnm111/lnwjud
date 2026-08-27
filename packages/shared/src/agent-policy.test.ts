@@ -42,16 +42,48 @@ describe('agent policy settings', () => {
     expect(Object.entries(parsed.approvals).filter(([key]) => key !== 'delete_file').every(([, enabled]) => enabled === false)).toBe(true);
   });
 
-  it('round-trips the fine-grained destructive policy', () => {
+  it('preserves explicit destructive command-family settings while keeping recovery invariants on', () => {
     const parsed = parseDestructiveAutoApprovalPolicy(JSON.stringify({
       protectCriticalFiles: false,
-      recoverableDelete: true,
-      approvals: { git_rm: true, shell_rm_unlink: true },
+      recoverableDelete: false,
+      approvals: {
+        delete_file: true,
+        git_rm: true,
+        git_clean: true,
+        git_reset_restore: true,
+        shell_rm_unlink: true,
+        shell_rmdir: true,
+        shell_del_erase: true,
+        wsl_rm_unlink: true,
+        wsl_rmdir: true,
+      },
     }));
-    expect(parsed.approvals.git_rm).toBe(true);
-    expect(parsed.approvals.shell_rm_unlink).toBe(true);
-    expect(parsed.approvals.git_clean).toBe(false);
+    expect(parsed.protectCriticalFiles).toBe(true);
+    expect(parsed.recoverableDelete).toBe(true);
+    expect(Object.values(parsed.approvals).every((enabled) => enabled === true)).toBe(true);
     expect(parseDestructiveAutoApprovalPolicy(serializeDestructiveAutoApprovalPolicy(parsed))).toEqual(parsed);
+  });
+
+  it('does not allow delete auto-approval without critical protection and recovery', () => {
+    const parsed = parseDestructiveAutoApprovalPolicy(JSON.stringify({
+      protectCriticalFiles: false,
+      recoverableDelete: false,
+      approvals: { delete_file: true },
+    }));
+    expect(parsed).toMatchObject({
+      protectCriticalFiles: true,
+      recoverableDelete: true,
+      approvals: { delete_file: true },
+    });
+  });
+
+  it('keeps critical protection and Recovery Trash on even when delete auto-approval is off', () => {
+    const parsed = parseDestructiveAutoApprovalPolicy(JSON.stringify({
+      protectCriticalFiles: false,
+      recoverableDelete: false,
+      approvals: { delete_file: false },
+    }));
+    expect(parsed).toMatchObject({ protectCriticalFiles: true, recoverableDelete: true, approvals: { delete_file: false } });
   });
 
   it('recognizes protected critical files without blocking templates', () => {

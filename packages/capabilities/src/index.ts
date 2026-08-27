@@ -23,13 +23,23 @@ export const capabilityToolNames = Object.freeze([
 
 export type CapabilityToolName = (typeof capabilityToolNames)[number];
 
+export { prohibitedAgentCommandReason } from './agent-command-policy.js';
+
 export interface CapabilityService {
   execute(tool: CapabilityToolName, input: unknown, signal?: AbortSignal): Promise<Result<unknown>>;
 }
 
 export { LocalCapabilityService, type CapabilityBackend, type LocalCapabilityBackends } from './local-capability-service.js';
 export { ShellCapabilityBackend, type ShellCapabilityOptions } from './shell-backend.js';
-export { CAPABILITY_TASK_OWNER_METADATA_KEY, capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
+export {
+  CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY,
+  CAPABILITY_TASK_OWNER_METADATA_KEY,
+  capabilityTaskOwnerMatches,
+  legacyCapabilityTaskOwner,
+  readCapabilityActiveWorkspaceRoot,
+  readCapabilityTaskOwner,
+  type CapabilityTaskOwner,
+} from './task-ownership.js';
 export { BrowserCdpBackend, type BrowserCdpProtocol, type BrowserCdpTab } from './browser-cdp-backend.js';
 export { NodeBrowserCdpProtocol } from './browser-cdp-protocol.js';
 export { HealthCapabilityBackend } from './health-backend.js';

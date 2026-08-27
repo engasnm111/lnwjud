@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
@@ -90,7 +91,6 @@ export class DatabaseRuntimeService {
   }
 
   private async resolveTarget(input: Record<string, unknown>): Promise<Result<string>> {
-    const p = process.platform === 'win32' ? path.win32 : path;
     const workspaceId = readTrimmed(input.workspaceId);
     const requested = readTrimmed(input.target ?? input.path ?? input.database);
     if (workspaceId === undefined || requested === undefined) return err(appError('INVALID_INPUT', 'db tools require workspaceId and target'));
@@ -99,15 +99,30 @@ export class DatabaseRuntimeService {
     }
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
-    const normalizedRequested = process.platform === 'win32' ? requested : requested.replaceAll('\\', '/');
-    const resolved = p.isAbsolute(normalizedRequested) ? p.normalize(normalizedRequested) : p.join(root.value, normalizedRequested);
-    if (!isWithin(root.value, resolved)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
-    if (!existsSync(resolved)) return err(appError('FILE_NOT_FOUND', `Database target was not found: ${resolved}`));
-    return ok(resolved);
+    const pathApi = path.win32.isAbsolute(root.value) ? path.win32 : path;
+    const requestedAbsolute = pathApi.isAbsolute(requested) ? pathApi.resolve(requested) : pathApi.resolve(root.value, requested);
+    if (!isWithin(root.value, requestedAbsolute)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
+    let canonicalTarget: string;
+    try {
+      // Cross-host hardening: accept paths recorded with foreign separators.
+      let probe = requestedAbsolute;
+      if (!existsSync(probe)) {
+        const alternate = process.platform === 'win32' ? probe.replace(/\//g, '\\') : probe.replace(/\\/g, '/');
+        if (alternate !== probe && existsSync(alternate)) probe = alternate;
+      }
+      canonicalTarget = await realpath(probe);
+    } catch (error: unknown) {
+      if (isNodeError(error, 'ENOENT')) return err(appError('FILE_NOT_FOUND', `Database target was not found: ${requestedAbsolute}`));
+      return err(appError('INVALID_INPUT', 'Database target could not be canonically resolved'));
+    }
+    if (SQLITE_EXTENSIONS.has(path.extname(canonicalTarget).toLowerCase()) === false) {
+      return err(appError('INVALID_INPUT', `Database target must resolve to ${[...SQLITE_EXTENSIONS].join(', ')}`));
+    }
+    if (!isWithin(root.value, canonicalTarget)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
+    return ok(canonicalTarget);
   }
 
   private async workspaceRoot(workspaceId: string): Promise<Result<string>> {
-    const p = process.platform === 'win32' ? path.win32 : path;
     const workspaceInfo = this.services.workspaceInfo;
     if (workspaceInfo === undefined) return err(appError('WORKSPACE_NOT_FOUND', 'Workspace service is not configured'));
     const info = await workspaceInfo.info(this.actor, workspaceId);
@@ -115,9 +130,12 @@ export class DatabaseRuntimeService {
     const rootPath = typeof (info.value as { realRootPath?: unknown }).realRootPath === 'string'
       ? (info.value as { realRootPath: string }).realRootPath
       : undefined;
-    return rootPath === undefined
-      ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(p.normalize(rootPath));
+    if (rootPath === undefined) return err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true));
+    try {
+      return ok(await realpath(rootPath));
+    } catch {
+      return err(appError('INTERNAL_ERROR', 'Workspace root could not be canonically resolved', true));
+    }
   }
 }
 
@@ -149,11 +167,21 @@ function bindParameters(input: Record<string, unknown>): (null | number | bigint
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const p = process.platform === 'win32' ? path.win32 : path;
-  const relative = p.relative(p.resolve(root), p.resolve(candidate));
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${p.sep}`) && !p.isAbsolute(relative));
+  const pathApi = path.win32.isAbsolute(root) ? path.win32 : path;
+  const caseInsensitive = pathApi === path.win32;
+  const normalizedRoot = caseInsensitive ? root.toLowerCase() : root;
+  const normalizedCandidate = caseInsensitive ? candidate.toLowerCase() : candidate;
+  const relative = pathApi.relative(normalizedRoot, normalizedCandidate);
+  if (relative === '') return true;
+  if (pathApi.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(pathApi.sep);
+  return firstSegment !== '..';
 }
 
 function readTrimmed(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isNodeError(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === code;
 }

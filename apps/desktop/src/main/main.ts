@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
+import os from 'node:os';
 import { access } from 'node:fs/promises';
 import { autoUpdater } from 'electron-updater';
 import {
@@ -17,15 +18,19 @@ import {
   type DestructiveDeletePolicy,
   type DoctorReport,
   type ExportLogsRequest,
+  type ExportWorkLogRequest,
   type IpcResponseMap,
   type LogSnapshot,
   type ManagedBrowserStatus,
   type McpConnectionStatus,
   type ProcessSummary,
+  type RestoreCheckpointRequest,
+  type RestoreRecoveryItemRequest,
   type PermissionProfileName,
   type SaveTunnelApiKeyRequest,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
+  type SetWorkspaceActiveRequest,
   type SetWorkspaceArchivedRequest,
   type SetAiDeletePolicyRequest,
   type SetLocaleRequest,
@@ -43,25 +48,37 @@ import {
   type UpdateStatus,
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
-import { readSharedActivitySnapshot, startMcpStdio } from '@lnwjud/mcp-server';
+import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
 import { createDesktopRuntime, type DesktopRuntime } from './desktop-services.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
+import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, getRendererEntryPath, getWindowIconPath, isAllowedRendererUrl } from './window.js';
 import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, shouldHideMainWindowOnClose } from './tray.js';
 import { UpdateInstallCoordinator, type UpdateSharedActivitySnapshot } from './update-install.js';
 import { UpdateCheckScheduler } from './update-check-scheduler.js';
+import {
+  configureUpdaterForDistribution,
+  currentPortableExecutablePath,
+  detectWindowsDistribution,
+  launchPortableReplacement,
+  preparePortableReplacement,
+} from './portable-update.js';
+import { windowsCompatibilityProfile } from './windows-compatibility.js';
 import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
+import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
+import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 
 export interface DesktopIpcServices {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
   addWorkspace(request: AddWorkspaceRequest): Promise<WorkspaceSummary>;
   selectWorkspace(request: SelectWorkspaceRequest): Promise<WorkspaceSummary>;
+  setWorkspaceActive(request: SetWorkspaceActiveRequest): Promise<{ readonly workspace: WorkspaceSummary; readonly active: boolean }>;
   setWorkspaceArchived(request: SetWorkspaceArchivedRequest): Promise<WorkspaceSummary>;
   deleteWorkspace(request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string }>;
   getDashboard(): Promise<DashboardSnapshot>;
@@ -71,6 +88,8 @@ export interface DesktopIpcServices {
   setStdioPolicy(request: SetStdioPolicyRequest): Promise<{ readonly profile: PermissionProfileName; readonly strictRoots: boolean; readonly allowedRoots: readonly string[]; readonly restartRequired: boolean }>;
   createBackup(): Promise<BackupSummary>;
   scheduleRestoreBackup(request: ScheduleRestoreBackupRequest): Promise<{ readonly scheduled: boolean; readonly restartRequired: boolean }>;
+  restoreRecoveryItem(request: RestoreRecoveryItemRequest): Promise<{ readonly restored: boolean; readonly path: string; readonly rollbackRecoveryId: string | null }>;
+  restoreCheckpoint(request: RestoreCheckpointRequest): Promise<{ readonly restored: boolean; readonly paths: readonly string[]; readonly rollbackCheckpointId: string | null }>;
   listProcesses(): Promise<IpcResponseMap[typeof ipcChannels.listProcesses]>;
   startProcess(request: StartProcessRequest): Promise<IpcResponseMap[typeof ipcChannels.startProcess]>;
   stopProcess(request: StopProcessRequest): Promise<{ readonly stopped: boolean }>;
@@ -114,6 +133,7 @@ const emptyTunnel: TunnelStatus = {
   profileExists: false,
   message: null,
   logPath: null,
+  persistent: null,
 };
 const defaultUserSettings: UserSettings = {
   customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
@@ -136,6 +156,7 @@ const defaultUserSettings: UserSettings = {
   startMinimized: false,
   tunnelAutoReconnect: true,
   tunnelMaxAutoRestarts: 5,
+  recoveryRetentionDays: 0,
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
@@ -147,6 +168,9 @@ const defaultDesktopServices: DesktopIpcServices = {
   selectWorkspace: async (): Promise<WorkspaceSummary> => {
     throw new Error('Workspace service is not configured');
   },
+  setWorkspaceActive: async (): Promise<{ readonly workspace: WorkspaceSummary; readonly active: boolean }> => {
+    throw new Error('Workspace service is not configured');
+  },
   setWorkspaceArchived: async (): Promise<WorkspaceSummary> => {
     throw new Error('Workspace service is not configured');
   },
@@ -155,6 +179,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   },
   getDashboard: async (): Promise<DashboardSnapshot> => ({
     selectedWorkspace: null,
+    activeWorkspaces: [],
     gitSummary: { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' },
     mcp: { running: false, url: null, workspaceId: null },
     codex: { installed: false, version: null },
@@ -177,6 +202,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     stdioStrictRoots: false,
     stdioAllowedRoots: [],
     backups: [],
+    recovery: { trashRoot: null, trashItems: [], checkpoints: [] },
     connectionModes: { httpUrl: null, stdioCommand: 'lnwjud.exe --mcp-stdio' },
     workLog: [],
     inFlight: [],
@@ -198,6 +224,8 @@ const defaultDesktopServices: DesktopIpcServices = {
   }),
   createBackup: async (): Promise<BackupSummary> => ({ id: 'unavailable', createdAt: new Date(0).toISOString(), reason: 'manual', sizeBytes: 0 }),
   scheduleRestoreBackup: async (): Promise<{ readonly scheduled: boolean; readonly restartRequired: boolean }> => ({ scheduled: false, restartRequired: false }),
+  restoreRecoveryItem: async (): Promise<{ readonly restored: boolean; readonly path: string; readonly rollbackRecoveryId: string | null }> => ({ restored: false, path: '', rollbackRecoveryId: null }),
+  restoreCheckpoint: async (): Promise<{ readonly restored: boolean; readonly paths: readonly string[]; readonly rollbackCheckpointId: string | null }> => ({ restored: false, paths: [], rollbackCheckpointId: null }),
   listProcesses: async (): Promise<readonly ProcessSummary[]> => [],
   startProcess: async (): Promise<IpcResponseMap[typeof ipcChannels.startProcess]> => {
     throw new Error('Desktop services are not configured');
@@ -272,6 +300,10 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     return services.selectWorkspace(parseSelectWorkspaceRequest(payload));
   });
+  ipcMain.handle(ipcChannels.setWorkspaceActive, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setWorkspaceActive(parseSetWorkspaceActiveRequest(payload));
+  });
   ipcMain.handle(ipcChannels.setWorkspaceArchived, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setWorkspaceArchived(parseSetWorkspaceArchivedRequest(payload));
@@ -309,6 +341,14 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.scheduleRestoreBackup, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.scheduleRestoreBackup(parseScheduleRestoreBackupRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.restoreRecoveryItem, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.restoreRecoveryItem(parseRestoreRecoveryItemRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.restoreCheckpoint, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.restoreCheckpoint(parseRestoreCheckpointRequest(payload));
   });
   ipcMain.handle(ipcChannels.listProcesses, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -392,6 +432,12 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     return services.configureTunnelProfile(parseConfigureTunnelProfileRequest(payload));
   });
+  ipcMain.handle(ipcChannels.openExternalSetupPage, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    const request = parseOpenExternalSetupPageRequest(payload);
+    await shell.openExternal(resolveExternalSetupUrl(request.target));
+    return { opened: true as const };
+  });
   ipcMain.handle(ipcChannels.launchManagedBrowser, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
@@ -414,6 +460,10 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.exportLogs, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return exportLogsToFile(getMainWindow(), services, parseExportLogsRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.exportWorkLog, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return exportWorkLogToFile(getMainWindow(), parseExportWorkLogRequest(payload));
   });
   ipcMain.handle(ipcChannels.captureIncident, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -460,14 +510,19 @@ function parseSelectWorkspaceRequest(payload: unknown): SelectWorkspaceRequest {
   return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId') };
 }
 
+function parseSetWorkspaceActiveRequest(payload: unknown): SetWorkspaceActiveRequest {
+  if (!isRecord(payload) || typeof payload.active !== 'boolean') throw new Error('Invalid IPC payload: active');
+  return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId'), active: payload.active };
+}
+
 function parseSetWorkspaceArchivedRequest(payload: unknown): SetWorkspaceArchivedRequest {
   if (!isRecord(payload) || typeof payload.archived !== 'boolean') throw new Error('Invalid IPC payload: archived');
   return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId'), archived: payload.archived };
 }
 
 function parseDeleteWorkspaceRequest(payload: unknown): DeleteWorkspaceRequest {
-  if (!isRecord(payload)) throw new Error('Invalid IPC payload');
-  return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId') };
+  if (!isRecord(payload) || typeof payload.userConfirmed !== 'boolean') throw new Error('Invalid IPC payload');
+  return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId'), userConfirmed: payload.userConfirmed };
 }
 
 function parseSetPermissionProfileRequest(payload: unknown): SetPermissionProfileRequest {
@@ -508,6 +563,22 @@ function parseScheduleRestoreBackupRequest(payload: unknown): ScheduleRestoreBac
   return { backupId: nonEmptyString(payload.backupId, 'backupId') };
 }
 
+function parseRestoreRecoveryItemRequest(payload: unknown): RestoreRecoveryItemRequest {
+  if (!isRecord(payload)) throw new Error('Invalid IPC payload');
+  return {
+    workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId'),
+    recoveryId: nonEmptyString(payload.recoveryId, 'recoveryId'),
+  };
+}
+
+function parseRestoreCheckpointRequest(payload: unknown): RestoreCheckpointRequest {
+  if (!isRecord(payload)) throw new Error('Invalid IPC payload');
+  return {
+    workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId'),
+    checkpointId: nonEmptyString(payload.checkpointId, 'checkpointId'),
+  };
+}
+
 function parseSetStdioPolicyRequest(payload: unknown): SetStdioPolicyRequest {
   if (!isRecord(payload) || !isPermissionProfile(payload.profile) || typeof payload.strictRoots !== 'boolean' || !Array.isArray(payload.allowedRoots)) {
     throw new Error('Invalid IPC payload: stdio policy');
@@ -538,13 +609,34 @@ function parseExportLogsRequest(payload: unknown): ExportLogsRequest {
   }
   const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
   const sessionId = optionalScopeId(payload.sessionId, 'sessionId');
+  const lineIds = payload.lineIds;
+  if (lineIds !== undefined && (!Array.isArray(lineIds) || lineIds.length > 5_000 || lineIds.some((id) => !Number.isSafeInteger(id) || Number(id) <= 0))) {
+    throw new Error('Invalid IPC payload: lineIds');
+  }
+  const rows = payload.rows;
+  if (rows !== undefined && (!Array.isArray(rows) || rows.length > 5_000 || rows.some((row) => typeof row !== 'string' || row.length > 16_384))) {
+    throw new Error('Invalid IPC payload: rows');
+  }
   return {
     source: payload.source,
     filePath: typeof payload.filePath === 'string' ? payload.filePath : '',
     ...(workspaceId === undefined ? {} : { workspaceId }),
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(typeof payload.query === 'string' && payload.query.trim().length > 0 ? { query: payload.query.trim().slice(0, 512) } : {}),
+    ...(lineIds === undefined ? {} : { lineIds: lineIds as number[] }),
+    ...(rows === undefined ? {} : { rows: rows as string[] }),
   };
+}
+
+function parseExportWorkLogRequest(payload: unknown): ExportWorkLogRequest {
+  if (!isRecord(payload) || !Array.isArray(payload.rows) || payload.rows.length > 5_000) {
+    throw new Error('Invalid IPC payload: rows');
+  }
+  const rows = payload.rows.map((row) => {
+    if (typeof row !== 'string' || row.length > 16_384) throw new Error('Invalid IPC payload: rows');
+    return row;
+  });
+  return { rows };
 }
 
 function optionalScopeId(value: unknown, key: string): string | undefined {
@@ -570,18 +662,49 @@ async function exportLogsToFile(
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) {
     return { exported: false };
   }
-  const snapshot = await services.getLogSnapshot();
-  const query = request.query?.toLowerCase() ?? '';
-  const content = snapshot.lines
-    .filter((line) => line.source === request.source)
-    .filter((line) => request.workspaceId === undefined || line.workspaceId === request.workspaceId)
-    .filter((line) => request.sessionId === undefined || line.sessionId === request.sessionId)
-    .filter((line) => query.length === 0 || line.text.toLowerCase().includes(query))
-    .sort((left, right) => right.id - left.id)
-    .map((line) => `[${line.timestamp}] [${line.level.toUpperCase()}] ${line.text}`)
-    .join('\r\n');
+  let content: string;
+  if (request.rows !== undefined) {
+    content = request.rows.join('\r\n');
+  } else {
+    const snapshot = await services.getLogSnapshot();
+    const query = request.query?.toLowerCase() ?? '';
+    const requestedLineIds = request.lineIds === undefined ? null : new Set(request.lineIds);
+    content = snapshot.lines
+      .filter((line) => line.source === request.source)
+      .filter((line) => requestedLineIds === null || requestedLineIds.has(line.id))
+      .filter((line) => requestedLineIds !== null || request.workspaceId === undefined || line.workspaceId === request.workspaceId)
+      .filter((line) => requestedLineIds !== null || request.sessionId === undefined || line.sessionId === request.sessionId)
+      .filter((line) => requestedLineIds !== null || query.length === 0 || line.text.toLowerCase().includes(query))
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.timestamp);
+        const rightTime = Date.parse(right.timestamp);
+        if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return rightTime - leftTime;
+        return right.id - left.id;
+      })
+      .map((line) => `${formatExportLogTimestamp(line.timestamp)} [${line.level.toUpperCase()}] ${line.text}`)
+      .join('\r\n');
+  }
   await atomicWrite(result.filePath, content.length === 0 ? '' : `${content}\r\n`);
   return { exported: true };
+}
+
+async function exportWorkLogToFile(window: BrowserWindow | null, request: ExportWorkLogRequest): Promise<{ readonly exported: boolean }> {
+  if (window === null) return { exported: false };
+  const result = await dialog.showSaveDialog(window, {
+    title: 'Export lnwjud work log',
+    defaultPath: 'lnwjud-work-log.txt',
+    filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+  });
+  if (result.canceled || result.filePath === undefined || result.filePath.length === 0) return { exported: false };
+  const content = request.rows.join('\r\n');
+  await atomicWrite(result.filePath, content.length === 0 ? '' : `${content}\r\n`);
+  return { exported: true };
+}
+
+function formatExportLogTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
 }
 
 function broadcastToAllWindows(channel: string, payload: unknown): void {
@@ -662,6 +785,7 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
     startMinimized: booleanField(record.startMinimized, 'startMinimized'),
     tunnelAutoReconnect: booleanField(record.tunnelAutoReconnect, 'tunnelAutoReconnect'),
     tunnelMaxAutoRestarts: boundedInteger(record.tunnelMaxAutoRestarts, 'tunnelMaxAutoRestarts', 0, 50),
+    recoveryRetentionDays: boundedInteger(record.recoveryRetentionDays, 'recoveryRetentionDays', 0, 3650),
     extensions: {
       mode: extensions.mode === 'allowlist' || extensions.mode === 'enable_all' ? extensions.mode : invalidField('extensions.mode'),
       disabledServers: stringArray(extensions.disabledServers, 'extensions.disabledServers', 256),
@@ -753,6 +877,9 @@ let desktopShutdownCoordinator: DesktopShutdownCoordinator | null = null;
 let updateInstallCoordinator: UpdateInstallCoordinator | null = null;
 let updateCheckScheduler: UpdateCheckScheduler | null = null;
 let pendingUpdateCheckSource: 'automatic' | 'tray' | 'renderer' | null = null;
+const windowsDistribution = detectWindowsDistribution(app.isPackaged);
+const windowsCompatibility = windowsCompatibilityProfile(process.platform, os.release(), process.arch);
+let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
 let crashDiagnostics: CrashDiagnosticsRecorder | null = null;
 const rendererRecoveryPolicy = new RendererRecoveryPolicy();
 let crashRecoveryConfigured = false;
@@ -765,6 +892,20 @@ let currentUpdateStatus: UpdateStatus = {
   message: app.isPackaged ? null : nativeMessages(desktopLocale).updaterUnavailablePackagedOnly,
   canInstall: false,
 };
+
+async function requestNativeMutationApproval(request: HostMutationApprovalRequest): Promise<boolean> {
+  const options = mutationApprovalDialogOptions(desktopLocale, request);
+  const dialogOptions = { ...options, buttons: [...options.buttons] };
+  const parent = mainWindow !== null && !mainWindow.isDestroyed()
+    ? mainWindow
+    : logViewerWindow !== null && !logViewerWindow.isDestroyed()
+      ? logViewerWindow
+      : null;
+  const result = parent === null
+    ? await dialog.showMessageBox(dialogOptions)
+    : await dialog.showMessageBox(parent, dialogOptions);
+  return isMutationApprovalResponse(result.response);
+}
 
 function openLogViewerWindow(): BrowserWindow | null {
   if (logViewerWindow !== null && !logViewerWindow.isDestroyed()) {
@@ -951,7 +1092,11 @@ function bootstrapMcpStdio(): void {
   app.commandLine.appendSwitch('disable-software-rasterizer');
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
-    const runtime = createDesktopRuntime(dataPath, { permissionProfile: 'full' });
+    prependBundledRuntimeToolsToPath();
+    const runtime = createDesktopRuntime(dataPath, {
+      permissionProfile: 'full',
+      hostMutationApprovalProvider: requestNativeMutationApproval,
+    });
     desktopRuntime = runtime;
     const workspacePath = readArgValue('--workspace')
       ?? process.env.LNWJUD_WORKSPACE
@@ -967,6 +1112,9 @@ function bootstrapMcpStdio(): void {
       actor: runtime.mcpActor,
       activityTracker: runtime.activityTracker,
       destructivePolicyProvider: () => runtime.getDestructivePolicy(),
+      activeWorkspaceScopeProvider: () => runtime.getActiveWorkspaceScope(),
+      activeWorkspaceScopesProvider: () => runtime.getActiveWorkspaceScopes(),
+      hostMutationApprovalProvider: requestNativeMutationApproval,
       codexToolsEnabled: runtime.getUserSettings().codexToolsEnabled,
       onError: (error): void => {
         if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
@@ -1030,6 +1178,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
     return;
   }
   try {
+    configureUpdaterForDistribution(autoUpdater, windowsDistribution);
     autoUpdater.autoDownload = desktopUserSettings.updateAutoDownload;
     autoUpdater.autoInstallOnAppQuit = false;
     updateInstallCoordinator = new UpdateInstallCoordinator({
@@ -1058,7 +1207,28 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
         void runtime.createBackup('pre-update').catch((error: unknown) => {
           console.error(`Pre-update backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
         }).finally(() => {
-          void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
+          if (windowsDistribution === 'installer') {
+            void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
+            return;
+          }
+          const portableUpdate = pendingPortableUpdate;
+          if (portableUpdate === null) {
+            patchUpdateStatus({ phase: 'error', message: 'Portable update file is unavailable. Check for updates again.', canInstall: false });
+            return;
+          }
+          void preparePortableReplacement({
+            downloadedFile: portableUpdate.downloadedFile,
+            currentExecutablePath: currentPortableExecutablePath(),
+          }).then((prepared) => {
+            void desktopShutdownCoordinator?.requestQuit(() => {
+              launchPortableReplacement(prepared);
+              app.quit();
+            }, 'install');
+          }).catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : 'Portable update could not be prepared.';
+            console.error(`[AutoUpdater] portable install preparation failed: ${message}`);
+            patchUpdateStatus({ phase: 'error', message, canInstall: false });
+          });
         });
       },
     });
@@ -1073,6 +1243,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
       recordUpdaterEvent(`update-available:${info.version}`);
       const requestedFromTray = pendingUpdateCheckSource === 'tray';
       pendingUpdateCheckSource = null;
+      pendingPortableUpdate = null;
       console.log(`[AutoUpdater] Update available: v${info.version}`);
       const messages = nativeMessages(desktopLocale);
       patchUpdateStatus({
@@ -1134,6 +1305,9 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
 
     autoUpdater.on('update-downloaded', (info) => {
       recordUpdaterDownload(info.version);
+      if (windowsDistribution === 'portable') {
+        pendingPortableUpdate = { version: info.version, downloadedFile: info.downloadedFile };
+      }
       patchUpdateStatus({
         phase: 'ready',
         availableVersion: info.version,
@@ -1183,11 +1357,16 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
 }
 
 function bootstrapDesktop(): void {
+  if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.lnwjud.desktop');
-    configureApplicationMenu();
-    const runtime = createDesktopRuntime(dataPath);
+    console.log(
+      `[WindowsCompatibility] ${windowsCompatibility.generation} build=${windowsCompatibility.build ?? 'unknown'} arch=${process.arch} gpu=${windowsCompatibility.disableHardwareAcceleration ? 'software' : 'hardware'}; ${windowsCompatibility.reason}`,
+    );
+
+    prependBundledRuntimeToolsToPath();
+    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval });
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -1202,15 +1381,12 @@ function bootstrapDesktop(): void {
     }
     createDesktopWindow();
     createDesktopTray();
+    void runtime.autoStartTunnel().catch((error: unknown) => {
+      console.error(`Tunnel persistent runtime auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
     initAutoUpdater(runtime);
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createDesktopWindow(true);
-      } else if (mainWindow && !mainWindow.isDestroyed()) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
-      }
+      if (BrowserWindow.getAllWindows().length === 0) createDesktopWindow(true);
     });
   });
   app.on('before-quit', handleDesktopBeforeQuit);
@@ -1219,70 +1395,13 @@ function bootstrapDesktop(): void {
   });
 }
 
-function configureApplicationMenu(): void {
-  if (process.platform === 'darwin') {
-    const template: Electron.MenuItemConstructorOptions[] = [
-      {
-        label: app.name,
-        submenu: [
-          { role: 'about' },
-          { type: 'separator' },
-          { role: 'services' },
-          { type: 'separator' },
-          { role: 'hide' },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit' },
-        ],
-      },
-      {
-        label: 'Edit',
-        submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
-          { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
-        ],
-      },
-      {
-        label: 'View',
-        submenu: [
-          { role: 'reload' },
-          { role: 'forceReload' },
-          { role: 'toggleDevTools' },
-          { type: 'separator' },
-          { role: 'resetZoom' },
-          { role: 'zoomIn' },
-          { role: 'zoomOut' },
-          { type: 'separator' },
-          { role: 'togglefullscreen' },
-        ],
-      },
-      {
-        label: 'Window',
-        submenu: [
-          { role: 'minimize' },
-          { role: 'zoom' },
-          { type: 'separator' },
-          { role: 'front' },
-          { type: 'separator' },
-          { role: 'window' },
-        ],
-      },
-    ];
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-  }
-}
-
 function bootstrapLogViewerOnly(): void {
   const dataPath = configureDataPath();
+  if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.lnwjud.desktop');
-    const runtime = createDesktopRuntime(dataPath);
+    prependBundledRuntimeToolsToPath();
+    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval });
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));

@@ -42,7 +42,7 @@ export function gitTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'git',
-      description: 'Run any git subcommand immediately with a separate args array (init, clone, add, commit, remote, fetch, pull, push, rm, mv, restore, checkout, switch, branch, tag, stash, merge, rebase, cherry-pick, reset, clean, revert). cwd may be an absolute path; workspaceId is then optional. Returns exitCode, stdout, and stderr. Destructive Git operations require explicit chat confirmation and userConfirmed: true unless that command family is globally auto-approved and this call supplies a registered workspaceId whose project boundary contains every target. Do not wrap git in powershell/cmd.',
+      description: 'Run a Git subcommand with a separate args array. Full Access runs ordinary read and non-destructive Git mutations without confirmation. Destructive/data-loss Git forms ask unless their exact scoped family is enabled for auto-approval; scope overrides, aliases, unsafe pathspecs, unknown commands, and destructive remote/history rewrites remain guarded or denied. Mutating calls require workspaceId to match the host-selected Active Project. Do not wrap Git in PowerShell/cmd.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: gitRunSchema,
@@ -53,6 +53,7 @@ export function gitTools(context: McpToolContext): McpToolDefinition[] {
           ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
           ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
           ...(input.timeoutSeconds === undefined ? {} : { timeoutMs: Math.floor(input.timeoutSeconds * 1000) }),
+          ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
         }, signal),
     }),
   ];

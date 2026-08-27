@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -57,7 +57,7 @@ describe('ProcessService', () => {
     };
     const service = new ProcessService(repository(workspace), { processManager: manager, projectService: projectCommands });
 
-    const result = await service.startProjectCommand({ clientId: 'client-1', clientName: 'test' }, workspace.id, 'test');
+    const result = await service.startProjectCommand({ clientId: 'client-1', clientName: 'test' }, workspace.id, 'test', undefined, true);
 
     expect(result).toMatchObject({ ok: true, value: { processId: 'process-1' } });
     expect(calls).toEqual([{ executable: 'pnpm', args: ['test'], cwd: workspace.realRootPath }]);
@@ -95,12 +95,79 @@ describe('ProcessService', () => {
     expect(permissionCalls).toBe(0);
   });
 
+  it('allows an explicitly absolute cwd outside the workspace in unrestricted mode', async () => {
+    const workspace = await createWorkspace();
+    const outsideRaw = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-process-outside-'));
+    temporaryRoots.push(outsideRaw);
+    const outside = await realpath(outsideRaw);
+    const calls: ManagedProcessStart[] = [];
+    const service = new ProcessService(repository(workspace), {
+      processManager: fakeManager(calls),
+      unrestricted: true,
+    });
+
+    const result = await service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, {
+      executable: 'pnpm.cmd',
+      args: ['test'],
+      cwd: outside,
+      userConfirmed: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { processId: 'process-1' } });
+    expect(calls).toEqual([{ executable: 'pnpm.cmd', args: ['test'], cwd: outside }]);
+  });
+
+  it('rejects a workspace junction or symlink whose canonical cwd escapes the workspace', async () => {
+    const workspace = await createWorkspace();
+    const outsideRaw = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-process-junction-outside-'));
+    temporaryRoots.push(outsideRaw);
+    const outside = await realpath(outsideRaw);
+    const escape = path.join(workspace.realRootPath, 'escape');
+    await symlink(outside, escape, process.platform === 'win32' ? 'junction' : 'dir');
+    const calls: ManagedProcessStart[] = [];
+    const service = new ProcessService(repository(workspace), {
+      processManager: fakeManager(calls),
+      unrestricted: true,
+    });
+
+    const result = await service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, {
+      executable: 'pnpm.cmd',
+      args: ['test'],
+      cwd: escape,
+      userConfirmed: true,
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    ['rm', ['-rf', 'target']],
+    ['powershell.exe', ['-Command', 'Remove-Item target']],
+    ['git', ['clean', '-fd']],
+  ] as const)('requires confirmation for risky command %s, then dispatches after confirmation', async (executable, args) => {
+    const workspace = await createWorkspace();
+    const calls: ManagedProcessStart[] = [];
+    const service = new ProcessService(repository(workspace), {
+      processManager: fakeManager(calls),
+      unrestricted: true,
+    });
+
+    const blocked = await service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, { executable, args });
+    expect(blocked).toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
+    expect(calls).toHaveLength(0);
+    const result = await service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, { executable, args, userConfirmed: true });
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
   it('enforces process ownership for status, logs, and stop handles', async () => {
     const workspace = await createWorkspace();
     const service = new ProcessService(repository(workspace), { processManager: fakeManager([]) });
     const started = await service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, {
       executable: 'pnpm',
       args: ['test'],
+      userConfirmed: true,
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
@@ -109,7 +176,7 @@ describe('ProcessService', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
     await expect(service.logs({ clientId: 'client-1', clientName: 'test' }, workspace.id, started.value.processId, {}))
       .resolves.toMatchObject({ ok: true });
-    await expect(service.stop({ clientId: 'client-1', clientName: 'test' }, workspace.id, started.value.processId))
+    await expect(service.stop({ clientId: 'client-1', clientName: 'test' }, workspace.id, started.value.processId, true))
       .resolves.toMatchObject({ ok: true });
   });
 
@@ -145,6 +212,7 @@ describe('ProcessService', () => {
     await expect(service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, {
       executable: 'pnpm',
       args: ['test'],
+      userConfirmed: true,
     }, signal)).resolves.toMatchObject({ ok: true });
 
     expect(observedSignals).toEqual([signal]);
@@ -173,13 +241,13 @@ describe('ProcessService', () => {
     const service = new ProcessService(repository(workspace), { processManager: manager });
     const actor = { clientId: 'client-1', clientName: 'test' };
 
-    const starting = service.start(actor, workspace.id, { executable: 'pnpm', args: ['test'] });
+    const starting = service.start(actor, workspace.id, { executable: 'pnpm', args: ['test'], userConfirmed: true });
     await createdGate;
     await expect(service.list(actor, workspace.id)).resolves.toMatchObject({
       ok: true,
       value: [expect.objectContaining({ processId: 'process-provisional' })],
     });
-    await expect(service.stop(actor, workspace.id, 'process-provisional')).resolves.toMatchObject({ ok: true });
+    await expect(service.stop(actor, workspace.id, 'process-provisional', true)).resolves.toMatchObject({ ok: true });
     expect(stops).toBe(1);
     releaseStart();
     await expect(starting).resolves.toMatchObject({ ok: true });
@@ -190,7 +258,7 @@ describe('ProcessService', () => {
     const service = new ProcessService(repository(workspace), { processManager: fakeManager([]) });
     const owner = { clientId: 'client-1', clientName: 'test', sessionId: 'session-a' };
     const otherSession = { clientId: 'client-1', clientName: 'test', sessionId: 'session-b' };
-    const started = await service.start(owner, workspace.id, { executable: 'pnpm', args: ['test'] });
+    const started = await service.start(owner, workspace.id, { executable: 'pnpm', args: ['test'], userConfirmed: true });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 

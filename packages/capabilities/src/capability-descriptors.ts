@@ -36,7 +36,7 @@ export const capabilityDescriptors: readonly CapabilityDescriptor[] = Object.fre
   descriptor('shell', 'always', 'EXECUTE', 'process', ['workspace registration'], true, true),
   descriptor('dom_cdp', 'optional', 'READ', 'browser', ['CDP-compatible browser']),
   descriptor('accessibility', 'windows', 'READ', 'window', ['UI Automation']),
-  descriptor('input_event', 'windows', 'DANGEROUS', 'window', ['input permission'], false, true),
+  descriptor('input_event', 'windows', 'EXECUTE', 'window', ['input permission'], false, true),
   descriptor('vision', 'windows', 'READ', 'display', ['Windows package identity for WinRT OCR'], false, true),
   descriptor('window', 'windows', 'WRITE', 'window', ['Win32 window access'], false, true),
   descriptor('health', 'always', 'READ', 'diagnostics'),

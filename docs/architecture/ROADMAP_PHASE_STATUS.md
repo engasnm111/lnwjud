@@ -83,16 +83,17 @@ credentials.
 
 ## Codex connection rule
 
-Codex continues to connect through the existing secure tunnel path:
+Connection paths are deliberately separated:
 
 ```text
-Codex -> tunnel-client -> packaged lnwjud-mcp-stdio.cmd -> direct Node MCP stdio
+Codex CLI / local MCP host -> packaged lnwjud-mcp-stdio.cmd -> direct Node MCP stdio
+ChatGPT web / Secure Tunnel -> tunnel-client -> lnwjud Desktop loopback HTTP MCP
 ```
 
-The desktop rewrites the managed `lnwjud` profile to the packaged direct-node
-launcher, preserves the long MCP TTL, and bounds automatic reconnect attempts
-so a bad MCP child cannot create an endless connect/disconnect loop. Local HTTP
-and local stdio remain available as separate compatibility paths.
+Secure Tunnel uses the Desktop runtime so the host-selected Active Project and
+native exact-action approval remain authoritative. Direct local stdio remains a
+separate headless path and intentionally fails closed when a mutation requires a
+trusted interactive host approval provider.
 
 ## Multi-workspace / multi-session concurrency upgrade
 

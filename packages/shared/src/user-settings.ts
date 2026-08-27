@@ -19,6 +19,7 @@ export const USER_SETTING_KEYS = Object.freeze({
   startMinimized: 'start_minimized',
   tunnelAutoReconnect: 'tunnel_auto_reconnect',
   tunnelMaxAutoRestarts: 'tunnel_max_auto_restarts',
+  recoveryRetentionDays: 'recovery_retention_days',
 });
 
 export const DEFAULT_MCP_CALL_TIMEOUT_MS = 60_000;
@@ -31,6 +32,7 @@ export const MAX_CONFIGURABLE_WAIT_SECONDS = 60;
 export const DEFAULT_CODEX_TOOLS_ENABLED = false;
 export const DEFAULT_UPDATE_INTERVAL_MINUTES = 30;
 export const DEFAULT_TUNNEL_MAX_AUTO_RESTARTS = 5;
+export const DEFAULT_RECOVERY_RETENTION_DAYS = 0;
 
 export type CloseBehavior = 'tray' | 'quit';
 export type PermissionDecisionSetting = 'ALLOW' | 'ASK' | 'DENY';

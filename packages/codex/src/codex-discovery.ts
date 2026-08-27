@@ -157,7 +157,7 @@ function sanitizeExecutablePath(value: string): string {
   }
   const home = os.homedir();
   const relative = path.relative(home, value);
-  if (relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+  if (relative.length > 0 && !path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..') {
     return `%USERPROFILE%${path.sep}${relative}`;
   }
   const windowsBaseName = path.win32.basename(value);

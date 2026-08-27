@@ -35,7 +35,7 @@ afterEach(async () => {
 
 describe('session resilience acceptance', () => {
   it('keeps the bundled production MCP stdio entrypoint alive across sequential calls and an error on a non-E workspace', async () => {
-    const root = await temporaryDirectory();
+    const root = await nonEDriveTemporaryDirectory();
     expect(path.parse(root).root.toUpperCase()).not.toBe('E:\\');
     const workspace = path.join(root, 'workspace');
     const dataPath = path.join(root, 'data');
@@ -54,7 +54,13 @@ describe('session resilience acceptance', () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [bundlePath, '--workspace', workspace],
-      env: { ...process.env, LNWJUD_DATA_PATH: dataPath, LNWJUD_RESET_WORKSPACES: '1', LNWJUD_UNRESTRICTED: '0' },
+      env: {
+        ...process.env,
+        LNWJUD_DATA_PATH: dataPath,
+        LNWJUD_RESET_WORKSPACES: '1',
+        LNWJUD_CONFIRM_RESET_WORKSPACES: 'DELETE-REGISTERED-WORKSPACES',
+        LNWJUD_UNRESTRICTED: '0',
+      },
       stderr: 'pipe',
     });
     let diagnostics = '';
@@ -66,7 +72,7 @@ describe('session resilience acceptance', () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(208);
+      expect(tools.tools).toHaveLength(217);
       expect(tools.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
       for (let index = 0; index < 3; index += 1) {
         const result = await client.callTool({ name: 'workspace_list', arguments: {} });
@@ -203,24 +209,34 @@ describe('session resilience acceptance', () => {
       expect(leaseFile).toBeDefined();
       const initialized = JSON.parse(await readFile(path.join(leaseDirectory, leaseFile!), 'utf8')) as { owner: { pid: number; processStartedAt: string } };
       expect(initialized.owner.pid).toBe(activity.child.pid);
+      let observedShared: { activeCallCount: number; revision: number } | null = null;
+      const observedRevisionCounts = new Map<number, number>();
       const sharedActivitySnapshot = async (): Promise<UpdateSharedActivitySnapshot> => {
         const observation = await readSharedActivitySnapshot({ profileDirectory, inspectProcess: async (pid) => pid === activity.child.pid ? { state: 'live', processStartedAt: initialized.owner.processStartedAt } : { state: 'gone' } });
-        return observation.state === 'available'
-          ? { state: 'available' as const, activeCallCount: observation.activeCount, revision: observation.revision, ownerKey: observation.ownerKey }
-          : observation;
+        if (observation.state === 'available') {
+          observedShared = { activeCallCount: observation.activeCount, revision: observation.revision };
+          observedRevisionCounts.set(observation.revision, (observedRevisionCounts.get(observation.revision) ?? 0) + 1);
+          return { state: 'available' as const, activeCallCount: observation.activeCount, revision: observation.revision, ownerKey: observation.ownerKey };
+        }
+        return observation;
       };
       const coordinator = new UpdateInstallCoordinator({ activeCallCount: (): number => 0, tunnelRunning: async (): Promise<boolean> => true, sharedActivitySnapshot, install, quietPeriodMs: 300, pollIntervalMs: 20 });
       await activity.command('BEGIN');
       coordinator.requestInstall();
-      await delay(120);
+      await waitUntil(() => observedShared?.activeCallCount === 1, 2_000);
       expect(install).not.toHaveBeenCalled();
+
       await activity.command('END');
-      await delay(200);
+      await waitUntil(() => observedShared?.activeCallCount === 0 && (observedShared?.revision ?? 0) >= 2, 2_000);
       await activity.command('BEGIN');
       await activity.command('END');
-      await delay(180);
+      const postTransition = await readSharedActivitySnapshot({ profileDirectory, inspectProcess: async (pid) => pid === activity.child.pid ? { state: 'live', processStartedAt: initialized.owner.processStartedAt } : { state: 'gone' } });
+      if (postTransition.state !== 'available') throw new Error(`activity snapshot unavailable after short transition: ${postTransition.state}`);
+      const postTransitionRevision = postTransition.revision;
+      await waitUntil(() => (observedRevisionCounts.get(postTransitionRevision) ?? 0) >= 2, 2_000);
       expect(install).not.toHaveBeenCalled();
-      await waitUntil(() => install.mock.calls.length === 1, 500);
+
+      await waitUntil(() => install.mock.calls.length === 1, 5_000);
       expect(install).toHaveBeenCalledOnce();
     } finally {
       await activity.close();
@@ -330,6 +346,24 @@ async function incidentReport(options: { resultCode: 'SUCCESS' | 'FAILED'; trigg
     logLines: lines,
   });
   return { ...report, __lines: lines };
+}
+
+async function nonEDriveTemporaryDirectory(): Promise<string> {
+  if (process.platform !== 'win32') return temporaryDirectory();
+  const candidates = [process.env.LOCALAPPDATA, process.env.USERPROFILE, os.homedir()]
+    .filter((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0);
+  for (const candidate of candidates) {
+    const base = path.resolve(candidate);
+    if (path.parse(base).root.toUpperCase() === 'E:\\') continue;
+    try {
+      const root = await mkdtemp(path.join(base, 'lnwjud-session-resilience-'));
+      temporaryRoots.push(root);
+      return root;
+    } catch {
+      // Try the next writable non-E location.
+    }
+  }
+  throw new Error('A writable non-E temporary directory is required for this acceptance test');
 }
 
 async function temporaryDirectory(): Promise<string> {

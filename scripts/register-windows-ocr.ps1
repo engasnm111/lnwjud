@@ -6,7 +6,7 @@
 #   release:       -ReleaseCertPfx/-ReleaseCertPassword with the real release
 #                  certificate; the publisher in the manifest must match it.
 # Requires: dotnet SDK 8+, Windows SDK makeappx.exe + signtool.exe (searched
-# under C:\Program Files (x86)\Windows Kits\10\bin\<ver>\x64).
+# from the machine's ProgramFiles(x86)/ProgramFiles Windows SDK roots).
 [CmdletBinding()]
 param(
   [string]$ReleaseCertPfx,
@@ -26,11 +26,18 @@ if (-not (Test-Path $helper)) {
 function Find-SdkTool([string]$Name) {
   $found = Get-Command $Name -ErrorAction SilentlyContinue
   if ($found) { return $found.Source }
-  $kitsRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
-  if (Test-Path $kitsRoot) {
-    $candidate = Get-ChildItem $kitsRoot -Directory |
+
+  $programFilesRoots = @(
+    [System.Environment]::GetEnvironmentVariable('ProgramFiles(x86)'),
+    $env:ProgramFiles
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+  foreach ($programFilesRoot in $programFilesRoots) {
+    $kitsRoot = Join-Path $programFilesRoot 'Windows Kits\10\bin'
+    if (-not (Test-Path -LiteralPath $kitsRoot -PathType Container)) { continue }
+    $candidate = Get-ChildItem -LiteralPath $kitsRoot -Directory |
       ForEach-Object { Join-Path $_.FullName "x64\$Name" } |
-      Where-Object { Test-Path $_ } |
+      Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
       Sort-Object -Descending |
       Select-Object -First 1
     if ($candidate) { return $candidate }

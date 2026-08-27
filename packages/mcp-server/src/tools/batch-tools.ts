@@ -40,7 +40,7 @@ export function batchTools(invoker: BatchToolInvoker): readonly McpToolDefinitio
   return [defineTool({
     name: 'tool_batch',
     description: 'Execute multiple MCP tools with parallel, dependency-aware, timeout, cancellation, and partial-result handling.',
-    permission: 'DANGEROUS',
+    permission: 'EXECUTE',
     annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: toolBatchSchema,
     async handler(rawInput, signal): Promise<Result<unknown>> {

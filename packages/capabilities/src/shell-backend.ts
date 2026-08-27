@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { PathExecutableResolver, WindowsProcessTree, toWindowsSpawnInvocation, type ExecutableResolver, type ProcessTreeTerminator } from '@lnwjud/process';
 import type { CapabilityBackend } from './local-capability-service.js';
+import { prohibitedAgentCommandReason, riskyAgentCommandReason } from './agent-command-policy.js';
 import { DurableShellTaskStore } from './durable-shell-task-store.js';
-import { capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
+import { capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, readCapabilityActiveWorkspaceRoot, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
 
 type ShellOperation = 'run' | 'list' | 'status' | 'wait' | 'logs' | 'result' | 'cancel' | 'resume' | 'approve' | 'deny';
 type ShellExecution = 'foreground' | 'background' | 'auto';
@@ -19,6 +20,7 @@ interface ShellRequest {
   readonly arguments: readonly string[];
   readonly privilege: ShellPrivilege;
   readonly cwd?: string;
+  readonly activeWorkspaceRoot?: string;
   readonly execution: ShellExecution;
   readonly taskId?: string;
   readonly timeoutSeconds: number;
@@ -47,7 +49,7 @@ export interface ShellCapabilityOptions {
   /**
    * Full-access mode: cwd may be any existing directory, the full environment is
    * passed through, and .cmd/.bat argument metacharacters are not rejected.
-   * Delete-like commands require explicit human confirmation in every mode.
+   * Delete-like commands are policy-gated; exact scoped destructive families may be auto-approved when the saved user policy enables them.
    */
   readonly unrestricted?: boolean;
 }
@@ -127,7 +129,9 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       case 'wait': return this.wait(parsed.value);
       case 'logs': return this.taskSnapshot(parsed.value.taskId, parsed.value.tailLines, parsed.value.owner);
       case 'result': return this.taskSnapshot(parsed.value.taskId, undefined, parsed.value.owner);
-      case 'cancel': return this.cancel(parsed.value.taskId, false, parsed.value.owner);
+      case 'cancel':
+        if (!parsed.value.userConfirmed) return err(appError('PERMISSION_REQUIRED', 'Cancelling a task requires explicit user confirmation'));
+        return this.cancel(parsed.value.taskId, false, parsed.value.owner);
       case 'resume':
       case 'approve':
       case 'deny':
@@ -138,26 +142,23 @@ export class ShellCapabilityBackend implements CapabilityBackend {
   private async run(request: ShellRequest, signal?: AbortSignal): Promise<Result<unknown>> {
     if (request.executable === undefined) return err(appError('INVALID_INPUT', 'Executable is required'));
     if (request.privilege === 'admin') return err(appError('PERMISSION_DENIED', 'Administrator access is not available to the local runner'));
-    if (isDeleteLikeShellCommand(request.executable, request.arguments) && !request.userConfirmed) {
-      return err(appError(
-        'PERMISSION_REQUIRED',
-        'Delete/remove commands require explicit user confirmation. Ask the user in chat first, then retry with userConfirmed: true',
-      ));
-    }
 
-    const cwd = await this.resolveCwd(request.cwd);
+    const cwd = await this.resolveCwd(request.cwd, request.activeWorkspaceRoot);
     if (!cwd.ok) return cwd;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
+    if (request.dryRun) {
+      return ok({ dry_run: true, executable: request.executable, arguments: [...request.arguments], cwd: cwd.value });
+    }
+    const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.arguments);
+    if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
+    const riskyReason = riskyAgentCommandReason(request.executable, request.arguments);
+    if (riskyReason !== undefined && !request.userConfirmed) return err(appError('PERMISSION_REQUIRED', riskyReason));
     const executable = await this.executableResolver.resolve(request.executable);
     if (!executable.ok) return executable;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
     const invocation = toWindowsSpawnInvocation(executable.value, request.arguments, { allowMetacharacters: this.unrestricted });
     if (!invocation.ok) return invocation;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
-
-    if (request.dryRun) {
-      return ok({ dry_run: true, executable: invocation.value.executable, arguments: [...invocation.value.args], cwd: cwd.value });
-    }
 
     if (this.durableStore !== undefined && request.execution !== 'foreground') {
       return this.runDurable(request, cwd.value, invocation.value);
@@ -394,8 +395,18 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       : err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
   }
 
-  private async resolveCwd(requestedCwd: string | undefined): Promise<Result<string>> {
-    if (this.unrestricted && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
+  private async resolveCwd(requestedCwdRaw: string | undefined, activeWorkspaceRootInput: string | undefined): Promise<Result<string>> {
+    // Cross-host hardening: a POSIX path can arrive with Windows separators when
+    // a record was canonicalized on another platform; flip it back so the
+    // containment checks below operate on the host-native form.
+    const repair = (value: string): string =>
+      /^\\([A-Za-z0-9._-]+\\)/.test(value) && /^[A-Za-z]:/.test(value) === false && value.includes('/') === false
+        ? value.replace(/\\/g, '/')
+        : value;
+    const requestedCwd = requestedCwdRaw === undefined ? undefined : repair(requestedCwdRaw);
+    let activeWorkspaceRoot = activeWorkspaceRootInput === undefined ? undefined : repair(activeWorkspaceRootInput);
+    if (activeWorkspaceRoot !== undefined && !path.isAbsolute(activeWorkspaceRoot)) activeWorkspaceRoot = undefined;
+    if (this.unrestricted && activeWorkspaceRoot === undefined && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
       try {
         const canonical = await realpath(requestedCwd);
         if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Working directory must be a directory'));
@@ -415,7 +426,27 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     }
     if (canonicalRoots.length === 0) return err(appError('FILE_NOT_FOUND', 'No local capability root is available'));
 
-    const candidate = path.resolve(requestedCwd ?? canonicalRoots[0]!);
+    let canonicalActiveRoot: string | undefined;
+    // A malformed host-provided root is treated as "no scope" so callers fall
+    // back to configured local-root containment instead of dead-ending.
+    const activeRoot = activeWorkspaceRoot !== undefined && path.isAbsolute(activeWorkspaceRoot)
+      ? activeWorkspaceRoot
+      : undefined;
+    if (activeRoot !== undefined) {
+      try {
+        canonicalActiveRoot = await realpath(activeRoot);
+        if (!(await stat(canonicalActiveRoot)).isDirectory()) return err(appError('INVALID_INPUT', 'Host active workspace root must be a directory'));
+      } catch {
+        return err(appError('FILE_NOT_FOUND', 'Host active workspace root was not found'));
+      }
+      const activeCanonicalRoot: string = canonicalActiveRoot;
+      if (!canonicalRoots.some((root) => isWithin(root, activeCanonicalRoot))) {
+        return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is outside configured local roots'));
+      }
+    }
+
+    const baseRoot = canonicalActiveRoot ?? canonicalRoots[0]!;
+    const candidate = requestedCwd === undefined ? baseRoot : path.resolve(baseRoot, requestedCwd);
     let canonicalCandidate: string;
     try {
       canonicalCandidate = await realpath(candidate);
@@ -425,6 +456,9 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     }
     if (!canonicalRoots.some((root) => isWithin(root, canonicalCandidate))) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Working directory is outside configured local roots'));
+    }
+    if (canonicalActiveRoot !== undefined && !isWithin(canonicalActiveRoot, canonicalCandidate)) {
+      return err(appError('PATH_OUTSIDE_WORKSPACE', 'Working directory is outside the host active workspace'));
     }
     return ok(canonicalCandidate);
   }
@@ -521,8 +555,9 @@ function parseShellRequest(value: unknown, defaultTimeoutSeconds: number, defaul
   const dryRun = value.dry_run === undefined ? false : value.dry_run;
   const userConfirmed = value.userConfirmed === true;
   const owner = readCapabilityTaskOwner(value);
+  const activeWorkspaceRoot = readCapabilityActiveWorkspaceRoot(value);
   if (typeof includeStdout !== 'boolean' || typeof includeStderr !== 'boolean' || typeof dryRun !== 'boolean') return err(appError('INVALID_INPUT', 'Shell flags are invalid'));
-  return ok({ operation, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, privilege, ...(cwd === undefined ? {} : { cwd }), execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), includeStdout, includeStderr, dryRun, userConfirmed, owner });
+  return ok({ operation, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, privilege, ...(cwd === undefined ? {} : { cwd }), ...(activeWorkspaceRoot === undefined ? {} : { activeWorkspaceRoot }), execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), includeStdout, includeStderr, dryRun, userConfirmed, owner });
 }
 
 function isShellOperation(value: unknown): value is ShellOperation {
@@ -534,8 +569,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  if (relative === '') return true;
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
+  return firstSegment !== '..';
 }
 
 function createSafeEnvironment(source: NodeJS.ProcessEnv, unrestricted: boolean): NodeJS.ProcessEnv {
@@ -559,23 +597,6 @@ function clampNumber(value: number, minimum: number, maximum: number): number {
 
 function isVerifiedTerminal(state: TaskState): boolean {
   return state === 'completed' || state === 'failed' || state === 'timed_out' || state === 'cancelled';
-}
-
-function isDeleteLikeShellCommand(executable: string, args: readonly string[]): boolean {
-  const basename = path.win32.basename(executable).toLowerCase();
-  if (basename === 'git' || basename === 'git.exe') return false;
-  const deleteNames = new Set(['del', 'del.exe', 'erase', 'erase.exe', 'rm', 'rm.exe', 'rmdir', 'rmdir.exe', 'rd', 'rd.exe', 'unlink', 'unlink.exe']);
-  if (deleteNames.has(basename)) return true;
-  const joined = args.map((entry) => entry.toLowerCase()).join(' ');
-  if (basename === 'powershell.exe' || basename === 'powershell' || basename === 'pwsh.exe' || basename === 'pwsh') {
-    if (/\bremove-item\b/.test(joined)) return true;
-    const withoutGitRm = joined.replace(/\bgit(?:\.exe)?\s+rm\b/g, ' ');
-    return /\brm\b/.test(withoutGitRm) || /\bdel\b/.test(withoutGitRm);
-  }
-  if (basename === 'cmd.exe' || basename === 'cmd') {
-    return /(^|[\s&|])(del|erase|rd|rmdir)\b/.test(joined);
-  }
-  return false;
 }
 
 function delay(milliseconds: number): Promise<void> {

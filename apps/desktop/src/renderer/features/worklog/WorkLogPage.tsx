@@ -8,6 +8,7 @@ interface WorkLogPageProps {
   readonly dashboard: DashboardSnapshot;
   readonly workspaces: readonly WorkspaceSummary[];
   readonly onClearWorkLog: (scope: LogScopeSelection) => Promise<void>;
+  readonly onExportWorkLog: (rows: readonly string[]) => Promise<void>;
 }
 
 export function WorkLogPage(props: WorkLogPageProps): ReactElement {
@@ -26,6 +27,8 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
         filter={filter}
         onFilterChange={setFilter}
         onClear={props.onClearWorkLog}
+        exportLabel={t('live.export')}
+        onExport={props.onExportWorkLog}
         entries={props.dashboard.workLog}
         inFlight={props.dashboard.inFlight}
         workspaces={props.workspaces}

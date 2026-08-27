@@ -62,13 +62,17 @@ describe('public repository hygiene', () => {
     const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     expect(typeof rootPackage.version).toBe('string');
+    const version = rootPackage.version as string;
 
-    expect(readme).toContain(`## Current version: v${rootPackage.version as string}`);
-    expect(readme).toContain(`The v${rootPackage.version as string} release target and runtime contract`);
-    expect(readme).toContain(`The Windows installer for the current version is \`lnwjud-Setup-${rootPackage.version as string}.exe\``);
+    expect(readme).toContain(`## Current version: v${version}`);
+    expect(readme).toContain(`The v${version} release target and runtime contract`);
+    expect(readme).toContain(`Current Windows 10/11 x64 artifacts are \`lnwjud-Setup-${version}.exe\` (recommended installer) and \`lnwjud-Portable-${version}.exe\``);
+    expect(readme).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
+    expect(readme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
     expect(readme).not.toContain('current source/release candidate is');
     expect(readme).not.toContain('pending publication');
-    expect(readme).toContain('214 configurable tools');
+    expect(readme).toContain('223 configurable tools');
+    expect(readme).toContain('217 advertised by default');
     expect(readme).not.toContain(['Verify the ', '184-tool catalog'].join(''));
     expect(readme).not.toContain(['current v3.0.0 catalog contains ', '184 tools'].join(''));
     expect(readme).not.toContain('packaged v3.0.0 build');
@@ -84,7 +88,7 @@ describe('public repository hygiene', () => {
     expect(missing, `README links to untracked docs: ${missing.join(', ')}`).toEqual([]);
   });
 
-  it('documents the real desktop MCP port and OpenAI tunnel client', async () => {
+  it('documents the real desktop MCP port and bundled OpenAI tunnel client', async () => {
     const envExample = await readFile(path.join(repositoryRoot, '.env.example'), 'utf8');
     const settings = await readFile(
       path.join(repositoryRoot, 'apps', 'desktop', 'src', 'renderer', 'i18n', 'messages.ts'),
@@ -100,13 +104,14 @@ describe('public repository hygiene', () => {
       path.join(repositoryRoot, 'apps', 'desktop', 'src', 'renderer', 'features', 'settings', 'SettingsPage.tsx'),
       'utf8',
     );
-    expect(settingsPage).toContain('placeholder="C:\\tools\\tunnel-client.exe"');
-    expect(settingsPage).not.toContain('C:\\\\tools\\\\tunnel-client.exe');
+    expect(settingsPage).toContain('Bundled v0.0.12 is used automatically');
+    expect(settingsPage).toContain('Use bundled');
+    expect(settingsPage).not.toContain('placeholder="C:\\tools\\tunnel-client.exe"');
   });
 
   it('does not retain stale permission examples in the detailed README guide', async () => {
     const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
-    expect(readme).not.toContain('| workspace_list | READ |');
-    expect(readme).toContain('| workspace_list | DANGEROUS |');
+    expect(readme).not.toContain('| workspace_list | DANGEROUS |');
+    expect(readme).toContain('| workspace_list | EXECUTE |');
   });
 });

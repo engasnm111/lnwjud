@@ -3,6 +3,22 @@
   SetOutPath "$INSTDIR"
   CreateDirectory "$SMPROGRAMS"
   CreateShortCut "$SMPROGRAMS\lnwjud.lnk" "$INSTDIR\lnwjud.exe" "" "$INSTDIR\lnwjud.exe" 0
+
+  ; electron-builder writes "Uninstall ${PRODUCT_FILENAME}.exe" before customInstall.
+  ; Keep the standard registry integration, but expose a shorter stable filename to users.
+  Delete "$INSTDIR\uninstall.exe"
+  ClearErrors
+  Rename "$INSTDIR\Uninstall ${PRODUCT_FILENAME}.exe" "$INSTDIR\uninstall.exe"
+  ${ifNot} ${Errors}
+    ${if} $installMode == "all"
+      StrCpy $0 "/allusers"
+    ${else}
+      StrCpy $0 "/currentuser"
+    ${endIf}
+    StrCpy $2 "$INSTDIR\uninstall.exe"
+    WriteRegStr SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" UninstallString '"$2" $0'
+    WriteRegStr SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" QuietUninstallString '"$2" $0 /S'
+  ${endIf}
 !macroend
 
 !macro customUnInstall

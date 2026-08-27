@@ -86,7 +86,7 @@ async function syncAllVersions() {
     // skip if missing
   }
 
-  // 7. Update README.md installer references
+  // 7. Update README.md current-version references without rewriting release history.
   const readmePath = path.join(rootDir, 'README.md');
   try {
     let readmeContent = await readFile(readmePath, 'utf8');
@@ -95,8 +95,11 @@ async function syncAllVersions() {
       .replace(/The v[0-9.]+ release target and runtime contract/g, 'The v' + version + ' release target and runtime contract')
       .replace(/current source\/release candidate is `v[0-9.]+`/g, 'current version is `v' + version + '`')
       .replace(/The Windows installer for the current version is `lnwjud-Setup-[0-9.]+\.exe`/g, 'The Windows installer for the current version is `lnwjud-Setup-' + version + '.exe`')
+      .replace(/Current Windows 10\/11 x64 artifacts are `lnwjud-Setup-[0-9.]+\.exe` \(recommended installer\) and `lnwjud-Portable-[0-9.]+\.exe`/g, 'Current Windows 10/11 x64 artifacts are `lnwjud-Setup-' + version + '.exe` (recommended installer) and `lnwjud-Portable-' + version + '.exe`')
+      .replace(/single-file \*\*`lnwjud-Portable-[0-9.]+\.exe`\*\*/g, 'single-file **`lnwjud-Portable-' + version + '.exe`**')
       .replace(/validated local test installer `lnwjud-Setup-[0-9.]+\.exe`/g, 'validated local test installer `lnwjud-Setup-' + version + '.exe`')
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, 'apps/desktop/dist/installers/lnwjud-Setup-' + version + '.exe')
+      .replace(/apps\/desktop\/dist\/installers\/lnwjud-Portable-[0-9.]+\.exe/g, 'apps/desktop/dist/installers/lnwjud-Portable-' + version + '.exe')
       .replace(/current v[0-9.]+ `ToolRegistry`/g, 'current v' + version + ' `ToolRegistry`')
       .replace(/## v[0-9.]+ release status/g, `## v${version} release status`)
       .replace(/Release `v[0-9.]+`/g, `Release \`v${version}\``);
@@ -110,9 +113,16 @@ async function syncAllVersions() {
   const markdownTargets = [
     ['.github/RELEASE_CHECKLIST.md', (content) => content
       .replace(/\*\*Current (?:version|release candidate):\*\* `v[0-9.]+`/g, `**Current version:** ` + '`v' + version + '`')
-      .replace(/(\*\*Current (?:version|release candidate):\*\*[^\r\n]*Windows installer `lnwjud-Setup-)[0-9.]+(\.exe`)/g, (_match, prefix, suffix) => prefix + version + suffix)],
-    ['docs/USAGE_TH.md', (content) => content.replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)],
-    ['docs/development/PACKAGING_WINDOWS.md', (content) => content.replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)],
+      .replace(/(\*\*Current (?:version|release candidate):\*\*[^\r\n]*Windows installer `lnwjud-Setup-)[0-9.]+(\.exe`)/g, (_match, prefix, suffix) => prefix + version + suffix)
+      .replace(/(portable executable `lnwjud-Portable-)[0-9.]+(\.exe`)/g, (_match, prefix, suffix) => prefix + version + suffix)],
+    ['docs/USAGE_TH.md', (content) => content
+      .replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`)
+      .replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)
+      .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${version}.exe`)],
+    ['docs/development/PACKAGING_WINDOWS.md', (content) => content
+      .replace(/For v[0-9.]+:/g, `For v${version}:`)
+      .replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)
+      .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${version}.exe`)],
     ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`)],
   ];
   for (const [relativePath, update] of markdownTargets) {

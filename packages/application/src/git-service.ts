@@ -11,6 +11,7 @@ import {
   type GitStatusResult,
 } from '@lnwjud/git';
 import { WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
+import { isProvablyReadOnlyGitInvocation, prohibitedAgentGitInvocationReason } from '@lnwjud/shared';
 import type { FileActor } from './file-service.js';
 import { isAbsoluteFsPath, resolveWorkspaceForPath } from './workspace-locator.js';
 
@@ -19,6 +20,7 @@ export interface GitRunRequest {
   readonly workspaceId?: string;
   readonly cwd?: string;
   readonly timeoutMs?: number;
+  readonly userConfirmed?: boolean;
 }
 
 export class GitService {
@@ -78,6 +80,11 @@ export class GitService {
 
   public async run(actor: FileActor, request: GitRunRequest, signal?: AbortSignal): Promise<Result<GitCommandResult>> {
     void actor;
+    if (!isProvablyReadOnlyGitInvocation(request.args) && request.userConfirmed !== true) {
+      return err(appError('PERMISSION_REQUIRED', 'Git mutation or unclassified invocation requires explicit user confirmation'));
+    }
+    const prohibitedReason = prohibitedAgentGitInvocationReason(request.args);
+    if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
     const cwd = await this.resolveCwd(request.workspaceId, request.cwd);
     if (!cwd.ok) return cwd;
     return this.adapter.run(cwd.value, request.args, request.timeoutMs, signal);

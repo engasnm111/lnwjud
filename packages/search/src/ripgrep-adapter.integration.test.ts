@@ -86,6 +86,13 @@ describe('RipgrepAdapter', () => {
     expect(receivedArgs).not.toContain(receivedArgs.join(' '));
   });
 
+  it('reports malformed ripgrep arguments as INVALID_INPUT with bounded diagnostics', async () => {
+    const runner: ProcessRunner = { async run(): Promise<ProcessRunResult> { return { exitCode: 2, stdout: '', stderr: 'regex parse error: unclosed group\n' }; } };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+    await expect(adapter.searchText({ rootPath: 'C:\\workspace', query: 'broken(' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('unclosed group') } });
+  });
+
   it('parses bounded JSON match records and reports truncation', async () => {
     const runner: ProcessRunner = {
       async run(): Promise<ProcessRunResult> {

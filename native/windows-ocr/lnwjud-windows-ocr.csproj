@@ -14,7 +14,4 @@
     <AssemblyName>lnwjud-windows-ocr</AssemblyName>
     <RootNamespace>Lnwjud.WindowsOcr</RootNamespace>
   </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.28000.2526" />
-  </ItemGroup>
 </Project>

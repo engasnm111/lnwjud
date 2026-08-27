@@ -1,4 +1,4 @@
-﻿name: Release
+name: Release
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - 'v*'
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -13,13 +14,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-release:
-    name: Verify & Publish Windows Release
+  publish-release:
+    name: Publish Verified Windows Release
     runs-on: windows-latest
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Verify release tag matches package version
         shell: pwsh
@@ -30,34 +36,102 @@ jobs:
             throw "Release tag must match package.json version. Expected $expectedTag but got ${{ github.ref_name }}"
           }
 
-      - name: Setup Node.js 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Enable Corepack & Setup pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.15.0 --activate
-
-      - name: Install ripgrep for E2E search
-        shell: powershell
-        run: choco install ripgrep -y --no-progress
-
-      - name: Run authoritative verification gate
-        shell: powershell
-        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
+      - name: Download verified CI artifact
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $repository = "${{ github.repository }}"
+          $sha = "${{ github.sha }}"
+          $artifactName = "windows-release-$sha"
+          $runsJson = gh run list --repo $repository --workflow ci.yml --commit $sha --event push --status success --limit 20 --json databaseId,headSha,conclusion
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to query successful CI runs for $sha"
+          }
+          $runs = @($runsJson | ConvertFrom-Json)
+          $run = $runs | Where-Object { $_.headSha -eq $sha -and $_.conclusion -eq 'success' } | Select-Object -First 1
+          if ($null -eq $run) {
+            throw "Release requires a successful CI run for exact commit $sha before tagging."
+          }
 
-      - name: Create GitHub Release & Upload Installer
+          $installerDirectory = Join-Path $PWD 'apps\desktop\dist\installers'
+          New-Item -ItemType Directory -Force -Path $installerDirectory | Out-Null
+          gh run download "$($run.databaseId)" --repo $repository --name $artifactName --dir $installerDirectory
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to download verified artifact '$artifactName' from CI run $($run.databaseId)."
+          }
+
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $requiredFiles = @(
+            "lnwjud-Setup-$($package.version).exe",
+            "lnwjud-Setup-$($package.version).exe.blockmap",
+            "lnwjud-Portable-$($package.version).exe",
+            'latest.yml',
+            'portable.yml',
+            'SHA256SUMS.txt',
+            'PROVENANCE.json'
+          )
+          foreach ($fileName in $requiredFiles) {
+            $filePath = Join-Path $installerDirectory $fileName
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+              throw "Verified CI artifact is missing required release file: $fileName"
+            }
+          }
+          Write-Host "Using verified CI artifact from run $($run.databaseId) for commit $sha"
+
+      - name: Verify source provenance and SHA-256 evidence
+        shell: pwsh
+        env:
+          LNWJUD_EXPECTED_COMMIT_SHA: ${{ github.sha }}
+          LNWJUD_REQUIRE_CLEAN_PROVENANCE: '1'
+        run: node apps/desktop/scripts/verify-release-evidence.mjs
+
+      - name: Verify Windows Authenticode when signing is configured
+        shell: pwsh
+        env:
+          WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          WINDOWS_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+        run: |
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_LINK)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_KEY_PASSWORD)
+          if ($hasCertificate -ne $hasPassword) {
+            throw 'WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD must either both be configured or both be absent.'
+          }
+
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $installerDirectory = Join-Path $PWD 'apps\desktop\dist\installers'
+          $releaseArtifacts = @(
+            (Join-Path $installerDirectory "lnwjud-Setup-$($package.version).exe"),
+            (Join-Path $installerDirectory "lnwjud-Portable-$($package.version).exe")
+          )
+          foreach ($artifact in $releaseArtifacts) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $artifact
+            if ($hasCertificate) {
+              if ($signature.Status -ne 'Valid') {
+                throw "Windows signing credentials are configured but the release artifact is not validly Authenticode-signed: $artifact (status=$($signature.Status))."
+              }
+              Write-Host "Authenticode valid: $artifact signer=$($signature.SignerCertificate.Subject)"
+            }
+            else {
+              if ($signature.Status -eq 'Valid') {
+                Write-Host "Authenticode valid even though repository signing secrets are not configured: $artifact signer=$($signature.SignerCertificate.Subject)"
+              }
+              else {
+                Write-Warning "Publishing unsigned Windows artifact: $artifact (Authenticode status=$($signature.Status)). SHA-256 and source provenance remain mandatory."
+              }
+            }
+          }
+
+      - name: Create GitHub Release & Upload Windows Artifacts
         uses: softprops/action-gh-release@v2
         with:
           files: |
             apps/desktop/dist/installers/*.exe
             apps/desktop/dist/installers/*.blockmap
             apps/desktop/dist/installers/latest.yml
+            apps/desktop/dist/installers/portable.yml
+            apps/desktop/dist/installers/SHA256SUMS.txt
+            apps/desktop/dist/installers/PROVENANCE.json
           draft: false
           prerelease: false
           generate_release_notes: true

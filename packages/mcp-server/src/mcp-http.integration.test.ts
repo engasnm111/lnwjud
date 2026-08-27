@@ -50,9 +50,25 @@ describe('MCP localhost HTTP transport', () => {
       const first = await client.listTools();
       const second = await client.listTools();
 
-      expect(first.tools.map((tool) => tool.name)).toHaveLength(208);
+      expect(first.tools.map((tool) => tool.name)).toHaveLength(217);
       expect(first.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
       expect(second.tools.map((tool) => tool.name)).toEqual(first.tools.map((tool) => tool.name));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('advertises outcome-driven continuation without an elapsed-time cutoff', async () => {
+    const client = new Client({ name: 'continuity-policy-client', version: '0.1.0' });
+    const transport = new StreamableHTTPClientTransport(handle.endpoint);
+
+    try {
+      await client.connect(transport);
+      const instructions = client.getInstructions();
+
+      expect(instructions).toContain('until the requested outcome is complete');
+      expect(instructions).toContain('because elapsed time has passed');
+      expect(instructions).not.toMatch(/\b(?:22|25|60)\s*minutes?\b/i);
     } finally {
       await client.close();
     }
@@ -67,7 +83,7 @@ describe('MCP localhost HTTP transport', () => {
 
       expect(transport.sessionId).toEqual(expect.any(String));
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toHaveLength(208);
+      expect(tools.tools.map((tool) => tool.name)).toHaveLength(217);
       expect(tools.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
 
       const first = await client.callTool({ name: 'workspace_list', arguments: {} });

@@ -28,4 +28,17 @@ describe('LogHub clear semantics', () => {
     hub.syncWorkLog([first, { ...first, id: 'audit-2', timestamp: '2026-08-22T00:00:01.000Z', targetSummary: 'b' }], []);
     expect(hub.snapshot().lines).toHaveLength(1);
   });
+
+  it('clears legacy slash/case workspace aliases when the registered project is selected', () => {
+    const hub = new LogHub({ tunnelLogPath: 'Z:/missing-lnwjud-tunnel.log' });
+    const workspaces = [
+      { id: 'lnwjud-project', displayName: 'lnwjud', rootPath: 'E:\\lnwjud', realRootPath: 'E:\\lnwjud', createdAt: '2026-08-01T00:00:00.000Z' },
+    ];
+    hub.feedIfNew('mcp', 'slash', 'info', 'slash', undefined, undefined, { workspaceId: 'e:/LNWJUD/' });
+    hub.feedIfNew('mcp', 'backslash', 'info', 'backslash', undefined, undefined, { workspaceId: 'E:\\lnwjud' });
+    hub.feedIfNew('mcp', 'other', 'info', 'other', undefined, undefined, { workspaceId: 'E:\\other' });
+
+    hub.clear('mcp', { workspaceId: 'lnwjud-project' }, workspaces);
+    expect(hub.snapshot().lines.map((line) => line.text)).toEqual(['other']);
+  });
 });

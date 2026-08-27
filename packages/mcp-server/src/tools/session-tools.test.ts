@@ -66,6 +66,8 @@ describe('session tools', () => {
     expect(value.prompt).toEqual(expect.stringContaining('Continue this run in the same chat'));
     expect(value.prompt).toEqual(expect.stringContaining('durable-123'));
     expect(value.prompt).toEqual(expect.stringContaining('Refresh connector'));
+    expect(value.prompt).toEqual(expect.stringContaining('Continue until the requested acceptance is complete'));
+    expect(value.prompt).not.toEqual(expect.stringContaining('Before ending'));
   });
 
   it('returns verify_incremental cache hit for unchanged diff and miss after the diff changes', async () => {

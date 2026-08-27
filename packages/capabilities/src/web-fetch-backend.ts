@@ -52,8 +52,11 @@ export class WebFetchCapabilityBackend implements CapabilityBackend {
     if (request.dryRun) {
       return ok({ dry_run: true, url: url.toString(), method: request.method });
     }
+    if (request.method !== 'GET' && request.method !== 'HEAD' && request.userConfirmed !== true) {
+      return err(appError('PERMISSION_REQUIRED', 'HTTP mutation requests require explicit user confirmation'));
+    }
 
-    if (parentSignal?.aborted === true) return cancelledRequest();
+    if (parentSignal?.aborted === true) return cancelledRequest(request.method, 'Web request was cancelled before dispatch');
     const timeoutSignal = AbortSignal.timeout(request.timeoutSeconds * 1000);
     const signal = parentSignal === undefined ? timeoutSignal : AbortSignal.any([parentSignal, timeoutSignal]);
     let response: Response;
@@ -66,9 +69,13 @@ export class WebFetchCapabilityBackend implements CapabilityBackend {
         signal,
       });
     } catch (error: unknown) {
-      if (signal.aborted) return cancelledRequest();
-      const reason = error instanceof Error && error.name === 'TimeoutError' ? 'Request timed out' : 'Request failed';
-      return err(appError('INTERNAL_ERROR', reason, true));
+      const timedOutOrCancelled = signal.aborted || (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError'));
+      const reason = timedOutOrCancelled
+        ? 'Web request was cancelled or timed out after dispatch'
+        : 'Web request failed after dispatch';
+      return timedOutOrCancelled
+        ? cancelledRequest(request.method, reason)
+        : requestFailure(request.method, reason);
     }
 
     let bytes: Buffer;
@@ -101,8 +108,10 @@ export class WebFetchCapabilityBackend implements CapabilityBackend {
         bytes = Buffer.concat(chunks);
       }
     } catch {
-      if (signal.aborted) return cancelledRequest();
-      return err(appError('INTERNAL_ERROR', 'Response body could not be read', true));
+      const reason = signal.aborted ? 'Web response reading was cancelled or timed out' : 'Web response body could not be read';
+      return signal.aborted
+        ? cancelledRequest(request.method, reason)
+        : requestFailure(request.method, reason);
     }
 
     const contentType = response.headers.get('content-type') ?? '';
@@ -129,10 +138,29 @@ interface WebFetchRequest {
   readonly maxBytes: number;
   readonly timeoutSeconds: number;
   readonly dryRun: boolean;
+  readonly userConfirmed: boolean;
 }
 
-function cancelledRequest(): Result<never> {
-  return err(appError('PROCESS_TIMEOUT', 'Web request was cancelled or timed out', true));
+function isMutationMethod(method: WebFetchRequest['method']): boolean {
+  return method !== 'GET' && method !== 'HEAD';
+}
+
+function cancelledRequest(method: WebFetchRequest['method'], reason: string): Result<never> {
+  if (isMutationMethod(method)) return uncertainMutationRequest(reason);
+  return err(appError('PROCESS_TIMEOUT', reason, true));
+}
+
+function requestFailure(method: WebFetchRequest['method'], reason: string): Result<never> {
+  if (isMutationMethod(method)) return uncertainMutationRequest(reason);
+  return err(appError('INTERNAL_ERROR', reason, true));
+}
+
+function uncertainMutationRequest(reason: string): Result<never> {
+  return err(appError(
+    'PROCESS_TIMEOUT',
+    `${reason}. HTTP mutation outcome may be unknown after dispatch; inspect the remote resource before any manual retry. Do not retry automatically.`,
+    true,
+  ));
 }
 
 function parseRequest(value: unknown): Result<WebFetchRequest> {
@@ -157,6 +185,7 @@ function parseRequest(value: unknown): Result<WebFetchRequest> {
   }
   const dryRun = value.dry_run === undefined ? false : value.dry_run;
   if (typeof dryRun !== 'boolean') return err(appError('INVALID_INPUT', 'dry_run is invalid'));
+  const userConfirmed = value.userConfirmed === true;
   return ok({
     url: url.trim(),
     method: methodValue,
@@ -165,6 +194,7 @@ function parseRequest(value: unknown): Result<WebFetchRequest> {
     maxBytes,
     timeoutSeconds,
     dryRun,
+    userConfirmed,
   });
 }
 

@@ -60,22 +60,22 @@ export function parseDestructiveAutoApprovalPolicy(
   const approvalsRaw = parsed !== null && isRecord(parsed.approvals) ? parsed.approvals : {};
   const approvals = Object.fromEntries(DESTRUCTIVE_APPROVAL_KEYS.map((key) => [
     key,
-    key === 'delete_file'
-      ? booleanValue(approvalsRaw[key], legacyAllowAiDelete)
-      : booleanValue(approvalsRaw[key], false),
+    booleanValue(approvalsRaw[key], key === 'delete_file' ? legacyAllowAiDelete : false),
   ])) as Record<DestructiveApprovalKey, boolean>;
   return {
-    protectCriticalFiles: booleanValue(parsed?.protectCriticalFiles, true),
-    recoverableDelete: booleanValue(parsed?.recoverableDelete, true),
+    // These are invariants in v4.10+, not optional auto-approval preferences.
+    protectCriticalFiles: true,
+    recoverableDelete: true,
     approvals,
   };
 }
 
 export function serializeDestructiveAutoApprovalPolicy(value: DestructiveAutoApprovalPolicy): string {
+  const normalized = parseDestructiveAutoApprovalPolicy(JSON.stringify(value));
   return JSON.stringify({
-    protectCriticalFiles: value.protectCriticalFiles === true,
-    recoverableDelete: value.recoverableDelete === true,
-    approvals: Object.fromEntries(DESTRUCTIVE_APPROVAL_KEYS.map((key) => [key, value.approvals[key] === true])),
+    protectCriticalFiles: normalized.protectCriticalFiles,
+    recoverableDelete: normalized.recoverableDelete,
+    approvals: Object.fromEntries(DESTRUCTIVE_APPROVAL_KEYS.map((key) => [key, normalized.approvals[key]])),
   });
 }
 

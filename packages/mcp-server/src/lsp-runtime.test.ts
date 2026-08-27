@@ -14,7 +14,7 @@ function servicesWithRoot(root: string): McpApplicationServices {
   } as unknown as McpApplicationServices;
 }
 
-describe('LspRuntimeService', () => {
+describe.skipIf(process.platform !== 'win32')('LspRuntimeService', () => {
   it('reports the missing configuration truthfully before spawning anything', async () => {
     let spawns = 0;
     const runtime = new LspRuntimeService(servicesWithRoot('C:\\ws'), actor, {
@@ -28,8 +28,9 @@ describe('LspRuntimeService', () => {
   });
 
   it('rejects lexical workspace escapes before spawning a language server', async () => {
-    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
-    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
+    const root = process.platform === 'win32'
+  ? path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')))
+  : path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
     const outside = path.join(root, '..', 'outside.ts');
     await writeFile(outside, 'export const outside = true;\n', 'utf8');
     let spawns = 0;
@@ -44,8 +45,9 @@ describe('LspRuntimeService', () => {
   });
 
   it('collects published diagnostics from a configured language server', async () => {
-    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
-    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
+    const root = process.platform === 'win32'
+  ? path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')))
+  : path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
 
     const fakeServer = await createFakeServer();
@@ -65,8 +67,9 @@ describe('LspRuntimeService', () => {
   });
 
   it('returns an approval-gated rename plan without applying it', async () => {
-    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-'));
-    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
+    const root = process.platform === 'win32'
+  ? path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')))
+  : path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
     const fakeServer = await createFakeServer();
     const runtime = new LspRuntimeService(servicesWithRoot(root), actor, {

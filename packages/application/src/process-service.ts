@@ -4,6 +4,7 @@ import { appError, err, ok, type CommandSpec, type Result } from '@lnwjud/domain
 import { CommandPolicy, DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
 import { ProcessManager, type LogQuery, type ManagedProcess, type ManagedProcessStart, type ProcessLogResult } from '@lnwjud/process';
 import { JsCommandDetector, ProjectDetector, type ProjectCommandKind } from '@lnwjud/project';
+import { prohibitedAgentCommandReason, riskyAgentCommandReason } from '@lnwjud/shared';
 import { WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { FileActor } from './file-service.js';
 import { ProjectService } from './project-service.js';
@@ -13,6 +14,7 @@ export interface ProcessStartRequest {
   readonly args: readonly string[];
   readonly cwd?: string;
   readonly timeoutMs?: number;
+  readonly userConfirmed?: boolean;
 }
 
 export interface ProcessManagerPort {
@@ -36,7 +38,7 @@ export interface ProcessServiceDependencies {
   readonly profile?: PermissionProfile;
   readonly profileProvider?: () => PermissionProfile;
   readonly defaultTimeoutMsProvider?: () => number;
-  /** Full-access mode: shell hosts are allowed and cwd may be any existing directory. */
+  /** Full-access mode can broaden executable policy and allow an explicitly absolute cwd outside the selected workspace. */
   readonly unrestricted?: boolean;
 }
 
@@ -81,12 +83,26 @@ export class ProcessService {
     return this.startInternal(actor, workspaceId, request, 'client', signal);
   }
 
-  public async startProjectCommand(actor: FileActor, workspaceId: string, kind: ProjectCommandKind, signal?: AbortSignal): Promise<Result<ManagedProcess>> {
+  public previewProjectCommand(workspaceId: string, kind: ProjectCommandKind): Promise<Result<CommandSpec>> {
+    return this.projectService.getCommand(workspaceId, kind);
+  }
+
+  public async startProjectCommand(
+    actor: FileActor,
+    workspaceId: string,
+    kind: ProjectCommandKind,
+    signal?: AbortSignal,
+    userConfirmed = false,
+    approvedCommand?: CommandSpec,
+  ): Promise<Result<ManagedProcess>> {
     if (isAborted(signal)) return cancelledStart();
     const command = await this.projectService.getCommand(workspaceId, kind);
     if (isAborted(signal)) return cancelledStart();
     if (!command.ok) return command;
-    return this.startInternal(actor, workspaceId, { executable: command.value.executable, args: command.value.args }, 'project', signal);
+    if (approvedCommand !== undefined && !commandsEqual(approvedCommand, command.value)) {
+      return err(appError('PERMISSION_DENIED', 'Detected project command changed after approval; fresh approval is required'));
+    }
+    return this.startInternal(actor, workspaceId, { executable: command.value.executable, args: command.value.args, userConfirmed }, 'project', signal);
   }
 
   public async status(actor: FileActor, workspaceId: string, processId: string): Promise<Result<ManagedProcess>> {
@@ -111,9 +127,10 @@ export class ProcessService {
     return this.processManager.logs(processId, query);
   }
 
-  public async stop(actor: FileActor, workspaceId: string, processId: string): Promise<Result<void>> {
+  public async stop(actor: FileActor, workspaceId: string, processId: string, userConfirmed = false): Promise<Result<void>> {
     const ownership = this.authorizeHandle(actor, workspaceId, processId);
     if (!ownership.ok) return ownership;
+    if (!userConfirmed) return err(appError('PERMISSION_REQUIRED', 'Stopping a process requires explicit user confirmation'));
     return this.processManager.stop(processId);
   }
 
@@ -128,6 +145,14 @@ export class ProcessService {
     if (isAborted(signal)) return cancelledStart();
     if (!cwd.ok) return cwd;
 
+    const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.args);
+    if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
+    const riskyReason = riskyAgentCommandReason(request.executable, request.args);
+    if (riskyReason !== undefined && request.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', riskyReason));
+    if (this.unrestricted && request.cwd !== undefined && path.isAbsolute(request.cwd) && !isWithinWorkspace(workspace.value.realRootPath, cwd.value) && request.userConfirmed !== true) {
+      return err(appError('PERMISSION_REQUIRED', 'Running outside the selected workspace requires explicit user confirmation'));
+    }
+
     const profile = this.profileProvider();
     const commandDecision = this.commandPolicy.decide(profile, request.executable, source, request.args);
     if (commandDecision === 'DENY') return err(appError('PERMISSION_DENIED', 'Executable is not permitted'));
@@ -140,7 +165,7 @@ export class ProcessService {
       destructive: false,
     });
     if (permissionDecision === 'DENY') return err(appError('PERMISSION_DENIED', 'Process execution is denied'));
-    if (commandDecision === 'ASK' || permissionDecision === 'ASK') return err(appError('PERMISSION_REQUIRED', 'Process execution requires permission'));
+    if ((commandDecision === 'ASK' || permissionDecision === 'ASK') && request.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Process execution requires permission'));
 
     if (isAborted(signal)) return cancelledStart();
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMsProvider?.();
@@ -157,7 +182,7 @@ export class ProcessService {
   }
 
   private async resolveCwd(workspace: Workspace, requestedCwd: string | undefined): Promise<Result<string>> {
-    if (this.unrestricted && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
+    if (this.unrestricted && requestedCwd !== undefined && path.isAbsolute(requestedCwd) && !pathStaysWithinWorkspace(workspace.realRootPath, requestedCwd)) {
       try {
         const canonical = await realpath(requestedCwd);
         if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Process cwd must be a directory'));
@@ -168,7 +193,8 @@ export class ProcessService {
     }
     const resolved = await this.guard.resolveForRead(workspace, requestedCwd ?? '.');
     if (!resolved.ok) return resolved;
-    const cwd = resolved.value.realPath ?? resolved.value.absolutePath;
+    const cwd = resolved.value.realPath;
+    if (cwd === undefined) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Process cwd could not be canonically verified'));
     try {
       if (!(await stat(cwd)).isDirectory()) return err(appError('INVALID_INPUT', 'Process cwd must be a directory'));
     } catch {
@@ -205,12 +231,31 @@ export class ProcessService {
   }
 }
 
+function commandsEqual(left: CommandSpec, right: CommandSpec): boolean {
+  return left.executable === right.executable
+    && left.args.length === right.args.length
+    && left.args.every((arg, index) => arg === right.args[index]);
+}
+
 function actorSessionId(actor: FileActor): string {
   return actor.sessionId?.trim() || actor.clientId;
 }
 
 function cancelledStart(): Result<never> {
   return err(appError('PROCESS_TIMEOUT', 'Process start was cancelled before launch completed', true));
+}
+
+function pathStaysWithinWorkspace(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  if (relative === '') return true;
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
+  return firstSegment !== '..';
+}
+
+function isWithinWorkspace(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..');
 }
 
 function isAborted(signal: AbortSignal | undefined): boolean {

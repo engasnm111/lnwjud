@@ -1,5 +1,7 @@
 ﻿export const CAPABILITY_TASK_OWNER_METADATA_KEY = 'lnwjud.taskOwner.v1';
 
+export const CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY = 'lnwjud.activeWorkspaceRoot.v1';
+
 export interface CapabilityTaskOwner {
   readonly clientId: string;
   readonly sessionId: string;
@@ -16,6 +18,15 @@ export function readCapabilityTaskOwner(input: unknown): CapabilityTaskOwner {
   const workspaceId = boundedString(value.workspaceId);
   if (clientId === undefined || sessionId === undefined) return legacyCapabilityTaskOwner();
   return { clientId, sessionId, ...(workspaceId === undefined ? {} : { workspaceId }) };
+}
+
+export function readCapabilityActiveWorkspaceRoot(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  const metadata = isRecord(input.metadata) ? input.metadata : undefined;
+  const value = metadata?.[CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY];
+  if (typeof value !== 'string' || value.includes('\0')) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= 32_768 ? trimmed : undefined;
 }
 
 export function legacyCapabilityTaskOwner(): CapabilityTaskOwner {

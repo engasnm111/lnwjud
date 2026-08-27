@@ -5,6 +5,7 @@ import { APP_VERSION, ipcChannels, type TunnelStatus } from '@lnwjud/ipc-contrac
 const electronHarness = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, payload?: unknown) => Promise<unknown>>(),
   quit: vi.fn(),
+  shellOpenExternal: vi.fn(async () => undefined),
 }));
 
 vi.mock('electron', () => ({
@@ -33,6 +34,7 @@ vi.mock('electron', () => ({
   },
   Menu: { buildFromTemplate: vi.fn() },
   nativeImage: { createFromPath: vi.fn() },
+  shell: { openExternal: electronHarness.shellOpenExternal },
   Tray: class Tray {},
 }));
 
@@ -57,12 +59,14 @@ const stoppedTunnel: TunnelStatus = {
   profileExists: false,
   message: null,
   logPath: null,
+  persistent: null,
 };
 
 describe('production desktop IPC acceptance', () => {
   beforeEach(() => {
     electronHarness.handlers.clear();
     electronHarness.quit.mockClear();
+    electronHarness.shellOpenExternal.mockClear();
   });
 
   it('routes critical MCP and tunnel start/stop/status calls through registered production handlers', async () => {
@@ -112,12 +116,15 @@ describe('production desktop IPC acceptance', () => {
     await expect(requiredHandler(ipcChannels.setWorkspaceArchived)(trusted, { workspaceId: 'workspace-production', archived: 'yes' }))
       .rejects.toThrow(/archived/);
 
-    await expect(requiredHandler(ipcChannels.deleteWorkspace)(trusted, { workspaceId: 'workspace-production' })).resolves.toEqual({
+    await expect(requiredHandler(ipcChannels.deleteWorkspace)(trusted, { workspaceId: 'workspace-production' }))
+      .rejects.toThrow('Invalid IPC payload');
+    await expect(requiredHandler(ipcChannels.deleteWorkspace)(trusted, { workspaceId: 'workspace-production', userConfirmed: true })).resolves.toEqual({
       deleted: true,
       workspaceId: 'workspace-production',
       rootPath: 'E:\\workspace-production',
+      backupId: 'backup-production',
     });
-    expect(services.deleteWorkspace).toHaveBeenCalledWith({ workspaceId: 'workspace-production' });
+    expect(services.deleteWorkspace).toHaveBeenCalledWith({ workspaceId: 'workspace-production', userConfirmed: true });
   });
 
   it('notifies the native tray after a trusted locale change', async () => {
@@ -130,6 +137,22 @@ describe('production desktop IPC acceptance', () => {
 
     expect(services.setLocale).toHaveBeenCalledWith({ locale: 'en' });
     expect(onLocaleChanged).toHaveBeenCalledExactlyOnceWith('en');
+  });
+
+  it('opens only allowlisted setup pages for a trusted renderer', async () => {
+    const services = desktopServices();
+    registerIpcHandlers(() => ({}) as never, services);
+    const trusted = { senderFrame: { url: pathToFileURL(getRendererEntryPath()).href } };
+    const untrusted = { senderFrame: { url: 'https://example.invalid/' } };
+    const handler = requiredHandler(ipcChannels.openExternalSetupPage);
+
+    await expect(handler(trusted, { target: 'openai_tunnels' })).resolves.toEqual({ opened: true });
+    expect(electronHarness.shellOpenExternal).toHaveBeenCalledExactlyOnceWith(
+      'https://platform.openai.com/settings/organization/tunnels',
+    );
+    await expect(handler(trusted, { target: 'https://evil.example/' })).rejects.toThrow(/target/);
+    await expect(handler(untrusted, { target: 'openai_tunnels' })).rejects.toThrow('IPC sender rejected');
+    expect(electronHarness.shellOpenExternal).toHaveBeenCalledTimes(1);
   });
 
   it('exposes updater status, manual check, and install actions through trusted IPC', async () => {
@@ -161,8 +184,13 @@ describe('production desktop IPC acceptance', () => {
     expect(services.clearLogBuffer).toHaveBeenCalledWith({ source: 'mcp', workspaceId: 'ws-a', sessionId: 'session-a' });
 
     await expect(requiredHandler(ipcChannels.clearLogBuffer)(trusted, { source: 'mcp', sessionId: '' })).rejects.toThrow(/sessionId/);
-    await expect(requiredHandler(ipcChannels.exportLogs)(trusted, { source: 'mcp', filePath: '', workspaceId: 'ws-a', sessionId: 'session-a', query: 'needle' })).resolves.toEqual({ exported: false });
+    await expect(requiredHandler(ipcChannels.exportLogs)(trusted, { source: 'mcp', filePath: '', workspaceId: 'ws-a', sessionId: 'session-a', query: 'needle', lineIds: [9, 4, 1], rows: ['8/27/2026, 2:30:00 AM [INFO] needle'] })).resolves.toEqual({ exported: false });
     await expect(requiredHandler(ipcChannels.exportLogs)(trusted, { source: 'mcp', filePath: '', workspaceId: '' })).rejects.toThrow(/workspaceId/);
+    await expect(requiredHandler(ipcChannels.exportLogs)(trusted, { source: 'mcp', filePath: '', lineIds: [0] })).rejects.toThrow(/lineIds/);
+    await expect(requiredHandler(ipcChannels.exportLogs)(trusted, { source: 'mcp', filePath: '', rows: ['ok', 7] })).rejects.toThrow(/rows/);
+
+    await expect(requiredHandler(ipcChannels.exportWorkLog)(trusted, { rows: ['first visible row', 'second visible row'] })).resolves.toEqual({ exported: false });
+    await expect(requiredHandler(ipcChannels.exportWorkLog)(trusted, { rows: ['ok', 7] })).rejects.toThrow(/rows/);
   });
 
   it('enforces the production IPC sender and payload guards before invoking services', async () => {
@@ -190,7 +218,7 @@ function desktopServices(): DesktopIpcServices {
     addWorkspace: vi.fn(async () => { throw new Error('unused'); }),
     selectWorkspace: vi.fn(async () => { throw new Error('unused'); }),
     setWorkspaceArchived: vi.fn(async (request) => ({ id: request.workspaceId, displayName: 'Production', rootPath: 'E:\\workspace-production', realRootPath: 'E:\\workspace-production', createdAt: new Date(0).toISOString(), archivedAt: request.archived ? new Date().toISOString() : null, kind: 'project' as const })),
-    deleteWorkspace: vi.fn(async (request) => ({ deleted: true, workspaceId: request.workspaceId, rootPath: 'E:\\workspace-production' })),
+    deleteWorkspace: vi.fn(async (request) => ({ deleted: true, workspaceId: request.workspaceId, rootPath: 'E:\\workspace-production', backupId: 'backup-production' })),
     getDashboard: vi.fn(async () => { throw new Error('unused'); }),
     setPermissionProfile: vi.fn(async (request) => ({ profile: request.profile })),
     setUnrestrictedMode: vi.fn(async (request) => ({ unrestricted: request.enabled, restartRequired: false })),

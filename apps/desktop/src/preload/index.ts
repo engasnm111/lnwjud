@@ -14,18 +14,23 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type ExportLogsRequest,
+  type ExportWorkLogRequest,
   type IncidentExportResult,
   type InFlightWorkItem,
   type LnwjudApi,
   type LogLine,
+  type OpenExternalSetupPageRequest,
   type LogSnapshot,
   type ManagedBrowserStatus,
   type McpConnectionStatus,
   type PermissionProfileName,
   type ProcessSummary,
+  type RestoreCheckpointRequest,
+  type RestoreRecoveryItemRequest,
   type SaveTunnelApiKeyRequest,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
+  type SetWorkspaceActiveRequest,
   type SetWorkspaceArchivedRequest,
   type SetAiDeletePolicyRequest,
   type SetLocaleRequest,
@@ -155,6 +160,41 @@ function inFlightItems(value: unknown): readonly InFlightWorkItem[] {
   });
 }
 
+function tunnelPersistentStatus(value: unknown): TunnelStatus['persistent'] {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) throw new Error('Invalid IPC response');
+  const state = value.state;
+  const mode = value.mode;
+  if (state !== 'stopped' && state !== 'starting' && state !== 'running' && state !== 'reconnecting' && state !== 'error' && state !== 'auth-required') throw new Error('Invalid IPC response');
+  if (mode !== 'native-managed' && mode !== 'profile-child' && mode !== 'external') throw new Error('Invalid IPC response');
+  const nullableBoolean = (entry: unknown): boolean | null => {
+    if (entry === null) return null;
+    if (typeof entry === 'boolean') return entry;
+    throw new Error('Invalid IPC response');
+  };
+  return {
+    enabled: booleanField(value, 'enabled'),
+    tunnelIdMasked: nullableString(value.tunnelIdMasked),
+    runtimeAlias: stringField(value, 'runtimeAlias'),
+    mode,
+    state,
+    healthy: nullableBoolean(value.healthy),
+    ready: nullableBoolean(value.ready),
+    pollHealthy: nullableBoolean(value.pollHealthy),
+    reconnectCount: integerField(value, 'reconnectCount'),
+    lastConnectedAt: nullableString(value.lastConnectedAt),
+    lastReconnectAt: nullableString(value.lastReconnectAt),
+    nextReconnectAt: nullableString(value.nextReconnectAt),
+    lastErrorCode: nullableString(value.lastErrorCode),
+    clientVersion: nullableString(value.clientVersion),
+    localMcpUrl: nullableString(value.localMcpUrl),
+    uiUrl: nullableString(value.uiUrl),
+    readyBeforeRetire: booleanField(value, 'readyBeforeRetire'),
+    strictZeroDowntime: booleanField(value, 'strictZeroDowntime'),
+    capabilityEvidence: nullableString(value.capabilityEvidence),
+  };
+}
+
 function tunnelStatus(value: unknown): TunnelStatus {
   if (!isRecord(value)) throw new Error('Invalid IPC response');
   const state = value.state;
@@ -171,6 +211,7 @@ function tunnelStatus(value: unknown): TunnelStatus {
     profileExists: booleanField(value, 'profileExists'),
     message: nullableString(value.message),
     logPath: nullableString(value.logPath),
+    persistent: tunnelPersistentStatus(value.persistent),
   };
 }
 
@@ -208,6 +249,7 @@ function userSettings(value: unknown): UserSettings {
     startMinimized: booleanField(value, 'startMinimized'),
     tunnelAutoReconnect: booleanField(value, 'tunnelAutoReconnect'),
     tunnelMaxAutoRestarts: integerField(value, 'tunnelMaxAutoRestarts'),
+    recoveryRetentionDays: integerField(value, 'recoveryRetentionDays'),
     extensions: {
       mode,
       disabledServers: stringList(extensions.disabledServers),
@@ -260,6 +302,7 @@ function dashboard(value: unknown): DashboardSnapshot {
   }
   return {
     selectedWorkspace,
+    activeWorkspaces: workspaceList(value.activeWorkspaces),
     gitSummary: {
       branch: value.gitSummary.branch === null ? null : stringField(value.gitSummary, 'branch'),
       changedFiles: numberField(value.gitSummary, 'changedFiles'),
@@ -283,6 +326,7 @@ function dashboard(value: unknown): DashboardSnapshot {
     stdioStrictRoots: booleanField(value, 'stdioStrictRoots'),
     stdioAllowedRoots: stringList(value.stdioAllowedRoots),
     backups: backupSummaries(value.backups),
+    recovery: recoveryCenter(value.recovery),
     connectionModes: {
       httpUrl: nullableString(value.connectionModes.httpUrl),
       stdioCommand: stringField(value.connectionModes, 'stdioCommand'),
@@ -303,6 +347,38 @@ function backupSummaries(value: unknown): readonly BackupSummary[] {
     if (reason !== 'daily' && reason !== 'manual' && reason !== 'pre-update' && reason !== 'pre-migration') throw new Error('Invalid IPC response');
     return { id: stringField(entry, 'id'), createdAt: stringField(entry, 'createdAt'), reason, sizeBytes: numberField(entry, 'sizeBytes') };
   });
+}
+
+function recoveryCenter(value: unknown): DashboardSnapshot['recovery'] {
+  if (!isRecord(value) || !Array.isArray(value.trashItems) || !Array.isArray(value.checkpoints)) throw new Error('Invalid IPC response');
+  const trashItems = value.trashItems.map((entry) => {
+    if (!isRecord(entry)) throw new Error('Invalid IPC response');
+    const rawKind = entry.kind;
+    if (rawKind !== 'deleted' && rawKind !== 'replacement_backup') throw new Error('Invalid IPC response');
+    const kind: 'deleted' | 'replacement_backup' = rawKind;
+    return {
+      recoveryId: stringField(entry, 'recoveryId'),
+      workspaceId: stringField(entry, 'workspaceId'),
+      relativePath: stringField(entry, 'relativePath'),
+      deletedAt: stringField(entry, 'deletedAt'),
+      isDirectory: booleanField(entry, 'isDirectory'),
+      payloadAvailable: booleanField(entry, 'payloadAvailable'),
+      kind,
+    };
+  });
+  const checkpoints = value.checkpoints.map((entry) => {
+    if (!isRecord(entry) || !Array.isArray(entry.files)) throw new Error('Invalid IPC response');
+    return {
+      id: stringField(entry, 'id'),
+      workspaceId: stringField(entry, 'workspaceId'),
+      createdAt: stringField(entry, 'createdAt'),
+      files: entry.files.map((file) => {
+        if (!isRecord(file)) throw new Error('Invalid IPC response');
+        return { path: stringField(file, 'path'), contentSha256: stringField(file, 'contentSha256'), size: numberField(file, 'size') };
+      }),
+    };
+  });
+  return { trashRoot: nullableString(value.trashRoot), trashItems, checkpoints };
 }
 
 function capabilitySummaries(value: unknown): DashboardSnapshot['capabilities'] {
@@ -436,6 +512,16 @@ function selectWorkspace(request: SelectWorkspaceRequest): Promise<WorkspaceSumm
   return invoke(ipcChannels.selectWorkspace, { workspaceId: request.workspaceId }).then(workspaceSummary);
 }
 
+function setWorkspaceActive(request: SetWorkspaceActiveRequest): Promise<{ readonly workspace: WorkspaceSummary; readonly active: boolean }> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0 || typeof request.active !== 'boolean') {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.setWorkspaceActive, { workspaceId: request.workspaceId, active: request.active }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { workspace: workspaceSummary(value.workspace), active: booleanField(value, 'active') };
+  });
+}
+
 function setWorkspaceArchived(request: SetWorkspaceArchivedRequest): Promise<WorkspaceSummary> {
   if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0 || typeof request.archived !== 'boolean') {
     return Promise.reject(new Error('Invalid IPC request'));
@@ -443,13 +529,19 @@ function setWorkspaceArchived(request: SetWorkspaceArchivedRequest): Promise<Wor
   return invoke(ipcChannels.setWorkspaceArchived, { workspaceId: request.workspaceId, archived: request.archived }).then(workspaceSummary);
 }
 
-function deleteWorkspace(request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string }> {
-  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0) {
+function deleteWorkspace(request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string; readonly backupId: string }> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0
+    || typeof request.userConfirmed !== 'boolean') {
     return Promise.reject(new Error('Invalid IPC request'));
   }
-  return invoke(ipcChannels.deleteWorkspace, { workspaceId: request.workspaceId }).then((value: unknown) => {
+  return invoke(ipcChannels.deleteWorkspace, { workspaceId: request.workspaceId, userConfirmed: request.userConfirmed }).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
-    return { deleted: booleanField(value, 'deleted'), workspaceId: stringField(value, 'workspaceId'), rootPath: stringField(value, 'rootPath') };
+    return {
+      deleted: booleanField(value, 'deleted'),
+      workspaceId: stringField(value, 'workspaceId'),
+      rootPath: stringField(value, 'rootPath'),
+      backupId: stringField(value, 'backupId'),
+    };
   });
 }
 
@@ -518,6 +610,28 @@ function scheduleRestoreBackup(request: ScheduleRestoreBackupRequest): Promise<{
   return invoke(ipcChannels.scheduleRestoreBackup, { backupId: request.backupId }).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { scheduled: booleanField(value, 'scheduled'), restartRequired: booleanField(value, 'restartRequired') };
+  });
+}
+
+function restoreRecoveryItem(request: RestoreRecoveryItemRequest): Promise<{ readonly restored: boolean; readonly path: string; readonly rollbackRecoveryId: string | null }> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0
+    || typeof request.recoveryId !== 'string' || request.recoveryId.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.restoreRecoveryItem, { workspaceId: request.workspaceId, recoveryId: request.recoveryId }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { restored: booleanField(value, 'restored'), path: stringField(value, 'path'), rollbackRecoveryId: nullableString(value.rollbackRecoveryId) };
+  });
+}
+
+function restoreCheckpoint(request: RestoreCheckpointRequest): Promise<{ readonly restored: boolean; readonly paths: readonly string[]; readonly rollbackCheckpointId: string | null }> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0
+    || typeof request.checkpointId !== 'string' || request.checkpointId.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.restoreCheckpoint, { workspaceId: request.workspaceId, checkpointId: request.checkpointId }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return {
+      restored: booleanField(value, 'restored'),
+      paths: stringList(value.paths),
+      rollbackCheckpointId: nullableString(value.rollbackCheckpointId),
+    };
   });
 }
 
@@ -616,6 +730,19 @@ function configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise
   });
 }
 
+function openExternalSetupPage(request: OpenExternalSetupPageRequest): Promise<{ readonly opened: true }> {
+  if (
+    !isRecord(request) ||
+    (request.target !== 'openai_tunnels' && request.target !== 'openai_api_keys' && request.target !== 'chatgpt_plugins')
+  ) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.openExternalSetupPage, { target: request.target }).then((value: unknown) => {
+    if (!isRecord(value) || value.opened !== true) throw new Error('Invalid IPC response');
+    return { opened: true };
+  });
+}
+
 function launchManagedBrowser(): Promise<ManagedBrowserStatus> {
   return invoke(ipcChannels.launchManagedBrowser).then(managedBrowserStatus);
 }
@@ -670,7 +797,27 @@ function exportLogs(request: ExportLogsRequest): Promise<{ readonly exported: bo
   if (!isRecord(request) || !isLogSource(request.source)) {
     return Promise.reject(new Error('Invalid IPC request'));
   }
-  return invoke(ipcChannels.exportLogs, { source: request.source, filePath: request.filePath ?? '', ...scopePayload(request), ...(typeof request.query === 'string' && request.query.trim().length > 0 ? { query: request.query.trim().slice(0, 512) } : {}) }).then((value: unknown) => {
+  const lineIds = request.lineIds;
+  if (lineIds !== undefined && (!Array.isArray(lineIds) || lineIds.length > 5_000 || lineIds.some((id) => !Number.isSafeInteger(id) || id <= 0))) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.exportLogs, {
+    source: request.source,
+    filePath: request.filePath ?? '',
+    ...scopePayload(request),
+    ...(typeof request.query === 'string' && request.query.trim().length > 0 ? { query: request.query.trim().slice(0, 512) } : {}),
+    ...(lineIds === undefined ? {} : { lineIds: [...lineIds] }),
+  }).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { exported: booleanField(value, 'exported') };
+  });
+}
+
+function exportWorkLog(request: ExportWorkLogRequest): Promise<{ readonly exported: boolean }> {
+  if (!isRecord(request) || !Array.isArray(request.rows) || request.rows.length > 5_000 || request.rows.some((row) => typeof row !== 'string' || row.length > 16_384)) {
+    return Promise.reject(new Error('Invalid IPC request'));
+  }
+  return invoke(ipcChannels.exportWorkLog, { rows: [...request.rows] }).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { exported: booleanField(value, 'exported') };
   });
@@ -717,6 +864,7 @@ const api: LnwjudApi = {
   listWorkspaces: () => invoke(ipcChannels.listWorkspaces).then(workspaceList),
   addWorkspace,
   selectWorkspace,
+  setWorkspaceActive,
   setWorkspaceArchived,
   deleteWorkspace,
   getDashboard: () => invoke(ipcChannels.getDashboard).then(dashboard),
@@ -726,6 +874,8 @@ const api: LnwjudApi = {
   setStdioPolicy,
   createBackup,
   scheduleRestoreBackup,
+  restoreRecoveryItem,
+  restoreCheckpoint,
   listProcesses: () => invoke(ipcChannels.listProcesses).then(processList),
   startProcess,
   stopProcess,
@@ -742,11 +892,13 @@ const api: LnwjudApi = {
   setUserSettings,
   chooseTunnelClientPath,
   configureTunnelProfile,
+  openExternalSetupPage,
   launchManagedBrowser,
   runDoctor: () => invoke(ipcChannels.runDoctor).then(doctorReport),
   getLogSnapshot: () => invoke(ipcChannels.getLogSnapshot).then(logSnapshot),
   clearLogBuffer,
   exportLogs,
+  exportWorkLog,
   captureIncident,
   openLogViewer: () => invoke(ipcChannels.openLogViewer).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');

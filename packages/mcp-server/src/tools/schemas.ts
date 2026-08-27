@@ -41,19 +41,49 @@ export const gitRunSchema = z.object({
   timeoutSeconds: z.number().min(0.1).max(300).optional(),
   userConfirmed: z.boolean().optional(),
 }).strict();
-export const writeFileSchema = z.object({ workspaceId: optionalWorkspaceIdSchema, path: pathSchema, content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'File is too large'), userConfirmed: z.boolean().optional() }).strict();
+export const writeFileSchema = z.object({
+  workspaceId: optionalWorkspaceIdSchema,
+  path: pathSchema,
+  content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'File is too large'),
+  overwriteExisting: z.boolean().optional(),
+  userConfirmed: z.boolean().optional(),
+}).strict();
 export const applyPatchSchema = z.object({ workspaceId: optionalWorkspaceIdSchema, files: z.array(z.object({ path: pathSchema, content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'File is too large') }).strict()).min(1).max(20), userConfirmed: z.boolean().optional() }).strict();
-export const moveFileSchema = z.object({ workspaceId: optionalWorkspaceIdSchema, sourcePath: pathSchema, destinationPath: pathSchema }).strict();
-export const copyFileSchema = moveFileSchema;
+export const editFileSchema = z.object({
+  workspaceId: optionalWorkspaceIdSchema,
+  path: pathSchema,
+  oldText: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'Match text is too large'),
+  newText: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'Replacement text is too large'),
+  expectedOccurrences: z.number().int().min(1).max(100).optional(),
+  userConfirmed: z.boolean().optional(),
+}).strict();
+export const moveFileSchema = z.object({
+  workspaceId: optionalWorkspaceIdSchema,
+  sourcePath: pathSchema,
+  destinationPath: pathSchema,
+  userConfirmed: z.boolean().optional(),
+}).strict();
+export const copyFileSchema = z.object({ workspaceId: optionalWorkspaceIdSchema, sourcePath: pathSchema, destinationPath: pathSchema }).strict();
 export const deleteFileSchema = z.object({
   workspaceId: optionalWorkspaceIdSchema,
   path: pathSchema,
-  /** True after human confirmation. May be omitted only when a scoped destructive policy explicitly allows it. */
+  /** True after human confirmation. May be omitted only for exact, recoverable delete_file auto-approval. */
   userConfirmed: z.boolean().optional(),
 }).strict();
 export const restoreDeletedFileSchema = z.object({
   workspaceId: workspaceIdSchema,
   recoveryId: z.string().uuid(),
+  userConfirmed: z.boolean().optional(),
+}).strict();
+export const listRecoveryItemsSchema = z.object({ workspaceId: workspaceIdSchema }).strict();
+export const listCheckpointsSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  limit: z.number().int().min(1).max(500).optional(),
+}).strict();
+export const restoreCheckpointSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  checkpointId: z.string().uuid(),
+  userConfirmed: z.boolean().optional(),
 }).strict();
 
 export const workspaceListSchema = z.object({}).strict();
@@ -64,10 +94,13 @@ export const workspaceRegisterSchema = z.object({
 }).strict();
 export const processStartSchema = z.object({ workspaceId: workspaceIdSchema, executable: z.string().trim().min(1).max(1024), args: z.array(z.string().max(32_768)).max(128), cwd: pathSchema.optional(), timeoutMs: z.number().int().min(1).max(4 * 60 * 60 * 1000).optional(), userConfirmed: z.boolean().optional() }).strict();
 export const processHandleSchema = z.object({ workspaceId: workspaceIdSchema, processId: z.string().trim().min(1).max(128) }).strict();
+export const processStopSchema = processHandleSchema.extend({ userConfirmed: z.boolean().optional() }).strict();
+export const projectCommandSchema = z.object({ workspaceId: workspaceIdSchema, userConfirmed: z.boolean().optional() }).strict();
 export const processLogsSchema = processHandleSchema.extend({ tailLines: z.number().int().min(1).max(10_000).optional(), sinceSequence: z.number().int().min(0).optional() }).strict();
 export const codexStatusSchema = z.object({}).strict();
 export const codexRunSchema = z.object({ workspaceId: workspaceIdSchema, instruction: z.string().min(1).refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_INSTRUCTION_BYTES, 'Instruction is too large'), userConfirmed: z.boolean().optional() }).strict();
 export const codexTaskHandleSchema = z.object({ workspaceId: workspaceIdSchema, codexTaskId: z.string().trim().min(1).max(128) }).strict();
+export const codexStopSchema = codexTaskHandleSchema.extend({ userConfirmed: z.boolean().optional() }).strict();
 export const codexTaskLogsSchema = codexTaskHandleSchema.extend({ tailLines: z.number().int().min(1).max(10_000).optional(), sinceSequence: z.number().int().min(0).optional() }).strict();
 
 const batchCallSchema = z.object({
@@ -330,6 +363,7 @@ export const webFetchCapabilitySchema = z.object({
 }).strict();
 
 export const audioCapabilitySchema = z.object({
+  workspaceId: optionalWorkspaceIdSchema,
   action: z.enum(['record', 'play', 'stop']),
   output_path: z.string().max(MAX_PATH_LENGTH).optional(),
   file_path: z.string().max(MAX_PATH_LENGTH).optional(),
@@ -338,6 +372,7 @@ export const audioCapabilitySchema = z.object({
 }).strict();
 
 export const screenRecordCapabilitySchema = z.object({
+  workspaceId: optionalWorkspaceIdSchema,
   action: z.enum(['start', 'stop', 'status']),
   output_path: z.string().max(MAX_PATH_LENGTH).optional(),
   offset_x: z.number().int().min(-16_384).max(16_384).optional(),
@@ -349,6 +384,7 @@ export const screenRecordCapabilitySchema = z.object({
 }).strict();
 
 export const officeCapabilitySchema = z.object({
+  workspaceId: optionalWorkspaceIdSchema,
   app: z.enum(['excel', 'word', 'powerpoint', 'outlook']),
   action: z.enum(['read', 'write', 'read_text', 'replace', 'save_as', 'sheets', 'merge', 'list_folders', 'list_messages']),
   file_path: z.string().max(MAX_PATH_LENGTH).optional(),

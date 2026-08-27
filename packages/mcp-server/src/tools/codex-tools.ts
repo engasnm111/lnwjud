@@ -1,5 +1,5 @@
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
-import { codexRunSchema, codexStatusSchema, codexTaskHandleSchema, codexTaskLogsSchema } from './schemas.js';
+import { codexRunSchema, codexStatusSchema, codexStopSchema, codexTaskHandleSchema, codexTaskLogsSchema } from './schemas.js';
 
 export const CODEX_TOOL_NAMES = Object.freeze([
   'codex_status',
@@ -22,13 +22,13 @@ export function codexTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'codex_run',
-      description: 'Delegate an instruction to the local Codex CLI in a workspace.',
+      description: 'Delegate an instruction to the local Codex CLI in the Active Project. Starting Codex always requires explicit chat confirmation and userConfirmed: true.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: codexRunSchema,
       handler: async (input, signal) => context.services.codex === undefined
         ? missingService()
-        : context.services.codex.run(context.actor, input.workspaceId, input.instruction, signal),
+        : context.services.codex.run(context.actor, input.workspaceId, input.instruction, signal, input.userConfirmed === true),
     }),
     defineTool({
       name: 'codex_task_list',
@@ -65,13 +65,13 @@ export function codexTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'codex_stop',
-      description: 'Stop an owned Codex task process.',
+      description: 'Stop an owned Codex task process after explicit chat confirmation.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: codexTaskHandleSchema,
+      inputSchema: codexStopSchema,
       handler: async (input) => context.services.codex === undefined
         ? missingService()
-        : context.services.codex.stop(context.actor, input.workspaceId, input.codexTaskId),
+        : context.services.codex.stop(context.actor, input.workspaceId, input.codexTaskId, input.userConfirmed === true),
     }),
   ];
 }

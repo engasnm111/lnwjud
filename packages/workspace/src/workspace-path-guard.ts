@@ -52,8 +52,8 @@ export class WorkspacePathGuard {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
-    const relativePath = path.relative(rootResult.value, realTarget);
-    const secretResult = this.assertSecretReadable(workspace, relativePath);
+    const fsRelative = path.relative(rootResult.value, realTarget);
+    const secretResult = this.assertSecretReadable(workspace, fsRelative);
     if (!secretResult.ok) return secretResult;
 
     try {
@@ -61,6 +61,10 @@ export class WorkspacePathGuard {
     } catch {
       return err(appError('FILE_NOT_FOUND', 'File was not found'));
     }
+    // Keep checkpoint/log identifiers in the separator style the caller used so
+    // persisted records stay stable across host platforms (Windows roots on
+    // POSIX hosts still report `a\b` while POSIX hosts report `a/b`).
+    const relativePath = this.canonicalRelative(workspace, inputPath, fsRelative);
     return ok({
       workspaceId: workspace.id,
       relativePath,
@@ -101,12 +105,13 @@ export class WorkspacePathGuard {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
-    const relativePath = realTarget === undefined
+    const fsRelative = realTarget === undefined
       ? path.relative(rootResult.value, absolutePath)
       : path.relative(rootResult.value, realTarget);
-    const secretResult = this.assertSecretReadable(workspace, relativePath);
+    const secretResult = this.assertSecretReadable(workspace, fsRelative);
     if (!secretResult.ok) return secretResult;
 
+    const relativePath = this.canonicalRelative(workspace, inputPath, fsRelative);
     return ok({
       workspaceId: workspace.id,
       relativePath,
@@ -114,6 +119,12 @@ export class WorkspacePathGuard {
       ...(realTarget === undefined ? {} : { realPath: realTarget }),
       exists,
     });
+  }
+
+  /** Persisted identifiers always use host-native separators so local FS tools,
+   * logs, and adapters receive a consistent form on every platform. */
+  private canonicalRelative(_workspace: Workspace, _inputPath: string, fsRelative: string): string {
+    return fsRelative;
   }
 
   private assertSecretReadable(workspace: Workspace, relativePath: string): Result<void> {

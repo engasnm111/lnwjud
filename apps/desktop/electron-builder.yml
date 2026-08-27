@@ -17,23 +17,19 @@ publish:
   owner: engasnm111
   repo: lnwjud
   releaseType: release
+afterPack: scripts/capture-packaged-runtime-evidence.mjs
+afterSign: scripts/capture-packaged-runtime-evidence.mjs
 extraResources:
   - from: ../../packages/capabilities/src/windows-capability-bridge.ps1
     to: windows-capability-bridge.ps1
   - from: build/windows-capability-bridge.sha256
     to: windows-capability-bridge.sha256
-  - from: build/lnwjud-mcp-stdio.cjs
-    to: lnwjud-mcp-stdio.cjs
-  - from: build/lnwjud-mcp-stdio.cmd
-    to: lnwjud-mcp-stdio.cmd
-  - from: build/lnwjud-mcp-stdio
-    to: lnwjud-mcp-stdio
-  - from: build/lnwjud-node.exe
-    to: lnwjud-node.exe
-  - from: build/lnwjud-node
-    to: lnwjud-node
   - from: ../../native/windows-ocr/bin
     to: windows-ocr
+  - from: build/tunnel-client
+    to: tunnel-client
+  - from: build/runtime-tools
+    to: runtime-tools
 # Tunnel profile expects these next to lnwjud.exe / lnwjud (not only under resources/).
 extraFiles:
   - from: build/lnwjud-mcp-stdio.cjs
@@ -50,6 +46,9 @@ win:
   icon: build/icon.ico
   target:
     - target: nsis
+      arch:
+        - x64
+    - target: portable
       arch:
         - x64
   artifactName: lnwjud-Setup-${version}.${ext}
@@ -82,3 +81,5 @@ mac:
   darkModeSupport: true
 dmg:
   artifactName: lnwjud-${version}-${arch}.dmg
+portable:
+  artifactName: lnwjud-Portable-${version}.${ext}

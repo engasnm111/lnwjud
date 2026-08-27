@@ -12,8 +12,8 @@ export function workspaceTools(context: McpToolContext): McpToolDefinition[] {
     defineTool({
       name: 'workspace_list',
       description: 'List all registered workspaces/drive roots available to lnwjud. Call this first to discover workspace IDs. Entries include kind=machine_root|project.',
-      permission: 'DANGEROUS',
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: workspaceListSchema,
       handler: async () => context.services.workspaceInfo === undefined
         ? missingService()

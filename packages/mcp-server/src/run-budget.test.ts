@@ -1,39 +1,40 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CallToolResult } from '@modelcontextprotocol/server';
-import { DEFAULT_RUN_BUDGET_WARNING_MS, RUN_BUDGET_WARNING, RunBudgetGuard } from './run-budget.js';
+import { RunBudgetGuard } from './run-budget.js';
 
 function result(text = 'done'): CallToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
 describe('RunBudgetGuard', () => {
-  it('appends the budget warning to the tool result after 22 minutes from the first tool call', () => {
-    let now = 1_000;
-    const guard = new RunBudgetGuard({ now: (): number => now });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('never changes a tool result because elapsed wall-clock time passed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-25T00:00:00.000Z'));
+    const guard = new RunBudgetGuard();
     const context = { sessionId: 'run-1' };
 
     guard.begin(context);
-    expect(guard.finish(context, result()).content.at(-1)).toMatchObject({ text: 'done' });
+    const first = result();
+    expect(guard.finish(context, first)).toBe(first);
 
-    now += DEFAULT_RUN_BUDGET_WARNING_MS + 1;
+    vi.setSystemTime(new Date('2026-09-24T00:00:00.000Z'));
     guard.begin(context);
-    const warned = guard.finish(context, result('second result'));
+    const afterThirtyDays = result('still working');
 
-    expect(warned.content.at(-1)).toEqual({ type: 'text', text: RUN_BUDGET_WARNING });
-    expect(warned.content.at(-1)?.type === 'text' ? warned.content.at(-1)?.text : undefined).toBe(
-      'ใกล้หมด budget — อัปเดต tracker + สั่งงานยาวเป็น background เดี๋ยวนี้',
-    );
+    expect(guard.finish(context, afterThirtyDays)).toBe(afterThirtyDays);
+    expect(afterThirtyDays.content).toEqual([{ type: 'text', text: 'still working' }]);
   });
 
-  it('starts a new stateless run after the idle reset window', () => {
-    let now = 0;
-    const guard = new RunBudgetGuard({ warningAfterMs: 100, idleResetMs: 50, now: (): number => now });
+  it('does not inject handoff or background-work instructions into stateless results', () => {
+    const guard = new RunBudgetGuard();
+    const actual = result('operation completed');
 
     guard.begin(undefined);
-    now = 60;
-    guard.begin(undefined);
-    now = 120;
-
-    expect(guard.finish(undefined, result()).content.at(-1)).toMatchObject({ text: 'done' });
+    expect(guard.finish(undefined, actual)).toBe(actual);
+    expect(actual.content).toEqual([{ type: 'text', text: 'operation completed' }]);
   });
 });

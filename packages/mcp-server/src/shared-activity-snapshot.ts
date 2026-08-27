@@ -491,6 +491,7 @@ async function runWindowsProcessProbe(pid: number, timeoutMs: number): Promise<s
     ], { windowsHide: true, encoding: 'utf8', timeout: timeoutMs });
     return stdout;
   }
+  // POSIX hosts verify the same ownership contract with ps(1) lstart output.
   try {
     const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: timeoutMs });
     const trimmed = stdout.trim();
@@ -499,9 +500,7 @@ async function runWindowsProcessProbe(pid: number, timeoutMs: number): Promise<s
     if (Number.isNaN(date.getTime())) return 'GONE';
     return `LIVE|${date.toISOString()}`;
   } catch (error: unknown) {
-    if (isRecord(error) && typeof error.code === 'number' && error.code !== 0) {
-      return 'GONE';
-    }
+    if (isRecord(error) && typeof error.code === 'number' && error.code !== 0) return 'GONE';
     throw error;
   }
 }

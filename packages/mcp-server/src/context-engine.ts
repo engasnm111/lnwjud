@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { err, ok, type Result } from '@lnwjud/domain';
+import { err, ok, type AppError, type Result } from '@lnwjud/domain';
 import type { FileActor, GitService, SearchService } from '@lnwjud/application';
 import { classifyContextPath } from '@lnwjud/search';
 import type { McpApplicationServices } from './tools/tool-types.js';
@@ -185,7 +185,7 @@ export class ContextEngine {
 
     const settled = await Promise.allSettled(workspaceIds.value.map((workspaceId) => this.collectWorkspace(workspaceId, request)));
     const successful: WorkspaceCollection[] = [];
-    let firstError: { code: 'INVALID_INPUT' | 'WORKSPACE_NOT_FOUND' | 'PATH_OUTSIDE_WORKSPACE' | 'SECRET_ACCESS_DENIED' | 'PERMISSION_DENIED' | 'PERMISSION_REQUIRED' | 'FILE_NOT_FOUND' | 'FILE_TOO_LARGE' | 'BINARY_FILE' | 'PROCESS_NOT_FOUND' | 'PROCESS_TIMEOUT' | 'EXECUTABLE_NOT_FOUND' | 'GIT_NOT_REPOSITORY' | 'CODEX_NOT_AVAILABLE' | 'INTERNAL_ERROR'; message: string; recoverable: boolean } | undefined;
+    let firstError: AppError | undefined;
     for (const entry of settled) {
       if (entry.status === 'fulfilled' && entry.value.ok) successful.push(entry.value.value);
       else if (entry.status === 'fulfilled' && !entry.value.ok && firstError === undefined) firstError = entry.value.error;

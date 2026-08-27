@@ -1,8 +1,9 @@
-import { stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
-import { capabilityTaskOwnerMatches, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
+import { prohibitedAgentCommandReason, riskyAgentCommandReason } from './agent-command-policy.js';
+import { capabilityTaskOwnerMatches, readCapabilityActiveWorkspaceRoot, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
 
 type WslOperation = 'run' | 'status' | 'wait' | 'logs' | 'result' | 'cancel';
 type WslExecution = 'foreground' | 'background' | 'auto';
@@ -14,6 +15,7 @@ interface WslRequest {
   readonly executable?: string;
   readonly arguments: readonly string[];
   readonly cwd?: string;
+  readonly activeWorkspaceRoot?: string;
   readonly environment: Readonly<Record<string, string>>;
   readonly execution: WslExecution;
   readonly taskId?: string;
@@ -64,7 +66,6 @@ const WSL_OPERATIONS: readonly WslOperation[] = ['run', 'status', 'wait', 'logs'
 const WSL_EXECUTION_MODES: readonly WslExecution[] = ['foreground', 'background', 'auto'];
 const SHELL_STRING_FLAGS = new Set(['-c', '-lc', '-cl', '--command', '-command', '-encodedcommand', '-e', '--eval']);
 const SHELL_INTERPRETERS = new Set(['sh', 'dash', 'bash', 'zsh', 'fish', 'pwsh', 'powershell', 'cmd', 'node', 'python', 'python3', 'perl', 'ruby']);
-const DELETE_COMMANDS = new Set(['rm', 'rmdir', 'unlink', 'shred', 'del', 'erase']);
 
 export class WslCapabilityBackend implements CapabilityBackend {
   private readonly platform: NodeJS.Platform;
@@ -101,6 +102,7 @@ export class WslCapabilityBackend implements CapabilityBackend {
     if (taskOwner.workspaceId !== parsed.value.workspaceId) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another workspace'));
     if (taskOwner.distro !== parsed.value.distro) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another distribution'));
     if (!capabilityTaskOwnerMatches(taskOwner.owner, parsed.value.owner)) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another client session'));
+    if (parsed.value.operation === 'cancel' && !parsed.value.userConfirmed) return err(appError('PERMISSION_REQUIRED', 'Cancelling a WSL task requires explicit user confirmation'));
 
     const forwarded = this.forwardTaskRequest(parsed.value);
     const result = await this.runner.execute(forwarded, signal);
@@ -111,14 +113,28 @@ export class WslCapabilityBackend implements CapabilityBackend {
     if (this.platform !== 'win32') return ok({ available: false, ready: false, local: true, backend: 'wsl', reason: 'WSL is only available on Windows' });
     if (request.executable === undefined) return err(appError('INVALID_INPUT', 'WSL executable is required'));
     if (containsShellString(request.executable, request.arguments)) return err(appError('INVALID_INPUT', 'WSL execution accepts argv only; shell command strings are not allowed'));
-    if (isDeleteLikeCommand(request.executable, request.arguments) && !request.userConfirmed) {
-      return err(appError('PERMISSION_REQUIRED', 'Delete-like WSL commands require explicit user confirmation'));
+    if (!request.dryRun) {
+      const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.arguments);
+      if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
+      const riskyReason = riskyAgentCommandReason(request.executable, request.arguments);
+      if (riskyReason !== undefined && !request.userConfirmed) return err(appError('PERMISSION_REQUIRED', riskyReason));
     }
 
-    const cwd = await this.resolveWorkspaceCwd(request.cwd);
+    const cwd = await this.resolveWorkspaceCwd(request.cwd, request.activeWorkspaceRoot);
     if (!cwd.ok) return cwd;
     const linuxCwd = windowsToWslPath(cwd.value);
     if (!linuxCwd.ok) return linuxCwd;
+    if (request.dryRun) {
+      return ok({
+        dry_run: true,
+        backend: 'wsl',
+        workspace_id: request.workspaceId,
+        distro: request.distro,
+        linux_cwd: linuxCwd.value,
+        executable: request.executable,
+        arguments: [...request.arguments],
+      });
+    }
     const forwarded = {
       operation: 'run',
       executable: 'wsl.exe',
@@ -175,17 +191,59 @@ export class WslCapabilityBackend implements CapabilityBackend {
     return { backend: 'wsl', distro, ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }) };
   }
 
-  private async resolveWorkspaceCwd(requestedCwd: string | undefined): Promise<Result<string>> {
-    if (requestedCwd !== undefined && !path.win32.isAbsolute(requestedCwd)) {
+  private async resolveWorkspaceCwd(requestedCwd: string | undefined, activeWorkspaceRoot: string | undefined): Promise<Result<string>> {
+    if (requestedCwd !== undefined && !path.win32.isAbsolute(requestedCwd) && activeWorkspaceRoot === undefined) {
       return err(appError('INVALID_INPUT', 'WSL cwd must be an absolute Windows path'));
     }
     const configuredRoots = this.allowedRootsProvider === undefined ? this.allowedRoots : (await this.allowedRootsProvider()).map((root) => path.win32.resolve(root));
     if (configuredRoots.length === 0) return err(appError('FILE_NOT_FOUND', 'No registered workspace root is available'));
-    const candidate = path.win32.resolve(requestedCwd ?? configuredRoots[0]!);
-    if (!configuredRoots.some((root) => isWithinWindowsRoot(root, candidate))) {
+    if (activeWorkspaceRoot === undefined) {
+      const candidate = path.win32.resolve(requestedCwd ?? configuredRoots[0]!);
+      if (!configuredRoots.some((root) => isWithinWindowsRoot(root, candidate))) {
+        return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL cwd is outside registered workspace roots'));
+      }
+      return ok(candidate);
+    }
+    if (!path.win32.isAbsolute(activeWorkspaceRoot)) {
+      return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is invalid'));
+    }
+    const canonicalRoots: string[] = [];
+    for (const root of configuredRoots) {
+      try {
+        const canonicalRoot = await realpath(root);
+        if ((await stat(canonicalRoot)).isDirectory()) canonicalRoots.push(canonicalRoot);
+      } catch {
+        continue;
+      }
+    }
+    if (canonicalRoots.length === 0) return err(appError('FILE_NOT_FOUND', 'No registered workspace root is available'));
+    let canonicalActiveRoot: string;
+    try {
+      canonicalActiveRoot = await realpath(activeWorkspaceRoot);
+      if (!(await stat(canonicalActiveRoot)).isDirectory()) return err(appError('INVALID_INPUT', 'Host active workspace root must be a directory'));
+    } catch {
+      return err(appError('FILE_NOT_FOUND', 'Host active workspace root was not found'));
+    }
+    if (!canonicalRoots.some((root) => isWithinWindowsRoot(root, canonicalActiveRoot))) {
+      return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is outside registered workspace roots'));
+    }
+    const candidate = requestedCwd === undefined
+      ? canonicalActiveRoot
+      : path.win32.resolve(canonicalActiveRoot, requestedCwd);
+    let canonicalCandidate: string;
+    try {
+      canonicalCandidate = await realpath(candidate);
+      if (!(await stat(canonicalCandidate)).isDirectory()) return err(appError('INVALID_INPUT', 'WSL cwd must be a directory'));
+    } catch {
+      return err(appError('FILE_NOT_FOUND', 'WSL cwd was not found'));
+    }
+    if (!canonicalRoots.some((root) => isWithinWindowsRoot(root, canonicalCandidate))) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL cwd is outside registered workspace roots'));
     }
-    return ok(candidate);
+    if (!isWithinWindowsRoot(canonicalActiveRoot, canonicalCandidate)) {
+      return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL cwd is outside the host active workspace'));
+    }
+    return ok(canonicalCandidate);
   }
 }
 
@@ -297,9 +355,10 @@ function parseWslRequest(value: unknown, defaultDistro: string, defaultTimeoutSe
   const userConfirmed = value.userConfirmed === true;
   const owner = readCapabilityTaskOwner(value);
   const metadata = isRecord(value.metadata) ? value.metadata : undefined;
+  const activeWorkspaceRoot = readCapabilityActiveWorkspaceRoot(value);
   const environment = parseEnvironment(value.environment);
   if (!environment.ok) return environment;
-  return ok({ operation, ...(workspaceId === undefined ? {} : { workspaceId }), distro, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, ...(cwd === undefined ? {} : { cwd }), environment: environment.value, execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), includeStdout, includeStderr, dryRun, userConfirmed, owner, ...(metadata === undefined ? {} : { metadata }) });
+  return ok({ operation, ...(workspaceId === undefined ? {} : { workspaceId }), distro, ...(executable === undefined ? {} : { executable: executable.trim() }), arguments: rawArguments, ...(cwd === undefined ? {} : { cwd }), ...(activeWorkspaceRoot === undefined ? {} : { activeWorkspaceRoot }), environment: environment.value, execution, ...(taskId === undefined ? {} : { taskId }), timeoutSeconds, maxOutputBytes: requestedMaxBytes, ...(tailLines === undefined ? {} : { tailLines }), includeStdout, includeStderr, dryRun, userConfirmed, owner, ...(metadata === undefined ? {} : { metadata }) });
 }
 
 function parseEnvironment(value: unknown): Result<Readonly<Record<string, string>>> {
@@ -333,14 +392,6 @@ function containsShellString(executable: string, args: readonly string[]): boole
   return args.some((argument) => SHELL_STRING_FLAGS.has(argument.toLowerCase()));
 }
 
-function isDeleteLikeCommand(executable: string, args: readonly string[]): boolean {
-  const basename = path.posix.basename(executable.replaceAll('\\', '/')).toLowerCase();
-  if (basename === 'git') return false;
-  if (DELETE_COMMANDS.has(basename)) return true;
-  if (basename === 'find' && args.some((argument) => argument === '-delete' || argument === '-exec')) return true;
-  return false;
-}
-
 function windowsToWslPath(value: string): Result<string> {
   const normalized = path.win32.normalize(value);
   const match = /^([A-Za-z]):\\(.*)$/.exec(normalized);
@@ -367,7 +418,10 @@ function isWithinWindowsRoot(root: string, candidate: string): boolean {
   const normalizedRoot = path.win32.resolve(root).toLowerCase();
   const normalizedCandidate = path.win32.resolve(candidate).toLowerCase();
   const relative = path.win32.relative(normalizedRoot, normalizedCandidate);
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.win32.sep}`) && !path.win32.isAbsolute(relative));
+  if (relative === '') return true;
+  if (path.win32.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.win32.sep);
+  return firstSegment !== '..';
 }
 
 function normalizeDistro(value: string): string | undefined {

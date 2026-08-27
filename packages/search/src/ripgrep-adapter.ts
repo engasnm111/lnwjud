@@ -117,7 +117,8 @@ export class RipgrepAdapter {
     args.push('--', request.query, '.');
     const processResult = await this.runner.run(executable.value, args, request.rootPath, { timeoutMs: SEARCH_PROCESS_TIMEOUT_MS, ...(request.signal === undefined ? {} : { signal: request.signal }) });
     if (!processResult.timedOut && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
-      return err({ code: 'INTERNAL_ERROR', message: 'Search process failed', recoverable: true });
+      if (processResult.exitCode === 2) return err({ code: 'INVALID_INPUT', message: searchArgumentError(processResult.stderr), recoverable: false });
+      return err({ code: 'INTERNAL_ERROR', message: searchProcessError(processResult.stderr), recoverable: true });
     }
     const matches: SearchMatch[] = [];
     for (const line of processResult.stdout.split(/\r?\n/)) {
@@ -144,7 +145,8 @@ export class RipgrepAdapter {
     args.push('--');
     const processResult = await this.runner.run(executable.value, args, request.rootPath, { timeoutMs: SEARCH_PROCESS_TIMEOUT_MS, ...(request.signal === undefined ? {} : { signal: request.signal }) });
     if (!processResult.timedOut && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
-      return err({ code: 'INTERNAL_ERROR', message: 'Search process failed', recoverable: true });
+      if (processResult.exitCode === 2) return err({ code: 'INVALID_INPUT', message: searchArgumentError(processResult.stderr), recoverable: false });
+      return err({ code: 'INTERNAL_ERROR', message: searchProcessError(processResult.stderr), recoverable: true });
     }
     const discoveredPaths = processResult.stdout
       .split(/\r?\n/)
@@ -176,6 +178,20 @@ export class RipgrepAdapter {
     if (typeof data.line_number !== 'number' || typeof data.lines !== 'object' || data.lines === null || !('text' in data.lines) || typeof data.lines.text !== 'string') return false;
     return true;
   }
+}
+
+function searchArgumentError(stderr: string): string {
+  const detail = boundedSearchError(stderr);
+  return detail.length === 0 ? 'Search pattern or glob is invalid' : `Search pattern or glob is invalid: ${detail}`;
+}
+
+function searchProcessError(stderr: string): string {
+  const detail = boundedSearchError(stderr);
+  return detail.length === 0 ? 'Search process failed' : `Search process failed: ${detail}`;
+}
+
+function boundedSearchError(stderr: string): string {
+  return stderr.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 512);
 }
 
 interface MatchRecord {

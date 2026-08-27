@@ -49,4 +49,68 @@ describe('i18n translations', () => {
       expect(tTh(key)).not.toBe(tEn(key));
     }
   });
+
+  it('provides complete bilingual copy for guided tunnel onboarding', () => {
+    const tTh = createTranslator('th');
+    const tEn = createTranslator('en');
+    const guidedKeys: MessageKey[] = [
+      'guidedTunnel.tipTitle',
+      'guidedTunnel.tipBody',
+      'guidedTunnel.privacy',
+      'guidedTunnel.startSetup',
+      'guidedTunnel.later',
+      'guidedTunnel.openGuide',
+      'guidedTunnel.progress',
+      'guidedTunnel.stepTunnelTitle',
+      'guidedTunnel.stepTunnelBody',
+      'guidedTunnel.openTunnelSettings',
+      'guidedTunnel.tunnelIdLabel',
+      'guidedTunnel.tunnelIdHint',
+      'guidedTunnel.tunnelIdInvalid',
+      'guidedTunnel.next',
+      'guidedTunnel.back',
+      'guidedTunnel.stepKeyTitle',
+      'guidedTunnel.stepKeyBody',
+      'guidedTunnel.openApiKeys',
+      'guidedTunnel.apiKeyLabel',
+      'guidedTunnel.apiKeyHint',
+      'guidedTunnel.apiKeyRequired',
+      'guidedTunnel.saveKey',
+      'guidedTunnel.keyStored',
+      'guidedTunnel.stepConfigureTitle',
+      'guidedTunnel.stepConfigureBody',
+      'guidedTunnel.configure',
+      'guidedTunnel.configuring',
+      'guidedTunnel.configured',
+      'guidedTunnel.stepStartTitle',
+      'guidedTunnel.stepStartBody',
+      'guidedTunnel.startTunnel',
+      'guidedTunnel.starting',
+      'guidedTunnel.running',
+      'guidedTunnel.stepChatGptTitle',
+      'guidedTunnel.stepChatGptBody',
+      'guidedTunnel.openChatGptPlugins',
+      'guidedTunnel.localComplete',
+      'guidedTunnel.done',
+      'guidedTunnel.dismissedHint',
+      'guidedTunnel.linkError',
+      'guidedTunnel.copyLink',
+      'guidedTunnel.retry',
+      'guidedTunnel.externalRuntime',
+      'guidedTunnel.showApiKey',
+      'guidedTunnel.hideApiKey',
+      'guidedTunnel.advanced',
+    ];
+    const intentionallyIdentical = new Set<MessageKey>([
+      'guidedTunnel.tunnelIdLabel',
+      'guidedTunnel.apiKeyLabel',
+      'guidedTunnel.startTunnel',
+    ]);
+
+    for (const key of guidedKeys) {
+      expect(tTh(key).trim()).not.toBe('');
+      expect(tEn(key).trim()).not.toBe('');
+      if (!intentionallyIdentical.has(key)) expect(tTh(key)).not.toBe(tEn(key));
+    }
+  });
 });

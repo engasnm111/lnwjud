@@ -76,5 +76,8 @@ function normalize(value: string): string {
 
 function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  if (relative === '') return true;
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
+  return firstSegment !== '..';
 }

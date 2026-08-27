@@ -100,8 +100,8 @@ describe('DesktopRuntime persistence', () => {
           client.callTool({ name: 'workspace_info', arguments: { workspaceId: workspaceA.id } }),
           client.callTool({ name: 'workspace_info', arguments: { workspaceId: workspaceB.id } }),
         ]);
-        expect(infoA.isError).not.toBe(true);
-        expect(infoB.isError).not.toBe(true);
+        expect(infoA.isError, JSON.stringify(infoA.structuredContent)).not.toBe(true);
+        expect(infoB.isError, JSON.stringify(infoB.structuredContent)).not.toBe(true);
         expect(infoA.structuredContent).toMatchObject({ id: workspaceA.id });
         expect(infoB.structuredContent).toMatchObject({ id: workspaceB.id });
         const scopedWorkLog = (await runtime.services.getDashboard()).workLog.filter((entry) => entry.toolName === 'workspace_info');
@@ -139,6 +139,18 @@ describe('DesktopRuntime persistence', () => {
         .resolves.toMatchObject({ ok: true });
       await expect(readFile(path.join(workspaceRoot, 'delete-policy.txt'), 'utf8')).rejects.toThrow();
 
+      const recoveryDashboard = await runtime.services.getDashboard();
+      expect(recoveryDashboard.recovery.trashRoot).toBe(path.join(dataRoot, 'recovery-trash'));
+      expect(recoveryDashboard.recovery.trashItems).toEqual([
+        expect.objectContaining({ workspaceId: workspace.id, relativePath: 'delete-policy.txt', payloadAvailable: true }),
+      ]);
+      const recoveryId = recoveryDashboard.recovery.trashItems[0]?.recoveryId;
+      expect(recoveryId).toEqual(expect.any(String));
+      if (recoveryId === undefined) throw new Error('Recovery item was not created');
+      await expect(runtime.services.restoreRecoveryItem({ workspaceId: workspace.id, recoveryId }))
+        .resolves.toMatchObject({ restored: true, path: 'delete-policy.txt' });
+      await expect(readFile(path.join(workspaceRoot, 'delete-policy.txt'), 'utf8')).resolves.toBe('payload');
+
       await expect(runtime.services.setStdioPolicy({ profile: 'safe', strictRoots: true, allowedRoots: [workspaceRoot] }))
         .resolves.toMatchObject({ profile: 'safe', strictRoots: true, allowedRoots: [workspaceRoot] });
       await expect(runtime.services.getDashboard()).resolves.toMatchObject({
@@ -169,7 +181,7 @@ describe('DesktopRuntime persistence', () => {
     const markerPath = path.join(workspaceRootA, 'keep-me.txt');
     await writeFile(markerPath, 'project data must survive registration deletion', 'utf8');
 
-    const runtime = createDesktopRuntime(dataRoot);
+    const runtime = createDesktopRuntime(dataRoot, { hostMutationApprovalProvider: async () => true });
     try {
       const workspaceA = await runtime.services.addWorkspace({ rootPath: workspaceRootA });
       const workspaceB = await runtime.services.addWorkspace({ rootPath: workspaceRootB });
@@ -200,11 +212,18 @@ describe('DesktopRuntime persistence', () => {
         .resolves.toMatchObject({ ok: true });
 
       await runtime.services.selectWorkspace({ workspaceId: workspaceA.id });
-      await expect(runtime.services.deleteWorkspace({ workspaceId: workspaceA.id })).resolves.toEqual({
+      await expect(runtime.services.deleteWorkspace({ workspaceId: workspaceA.id, userConfirmed: false }))
+        .rejects.toThrow(/confirmation/i);
+      const deleted = await runtime.services.deleteWorkspace({ workspaceId: workspaceA.id, userConfirmed: true });
+      expect(deleted).toEqual({
         deleted: true,
         workspaceId: workspaceA.id,
         rootPath: workspaceRootA,
+        backupId: expect.stringMatching(/^backup-/),
       });
+      expect((await runtime.services.getDashboard()).backups).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: deleted.backupId, reason: 'manual' }),
+      ]));
       expect((await runtime.services.listWorkspaces()).some((entry) => entry.id === workspaceA.id)).toBe(false);
       await expect(readFile(markerPath, 'utf8')).resolves.toBe('project data must survive registration deletion');
       expect((await runtime.services.getDashboard()).selectedWorkspace?.id).not.toBe(workspaceA.id);
@@ -216,7 +235,7 @@ describe('DesktopRuntime persistence', () => {
         expect(machineRoot).toBeDefined();
         if (machineRoot !== undefined) {
           await expect(runtime.services.setWorkspaceArchived({ workspaceId: machineRoot.id, archived: true })).rejects.toThrow(/managed automatically/);
-          await expect(runtime.services.deleteWorkspace({ workspaceId: machineRoot.id })).rejects.toThrow(/managed automatically/);
+          await expect(runtime.services.deleteWorkspace({ workspaceId: machineRoot.id, userConfirmed: true })).rejects.toThrow(/managed automatically/);
         }
       }
     } finally {
@@ -367,7 +386,7 @@ describe('DesktopRuntime persistence', () => {
     temporaryRoots.push(rawDataRoot, rawWorkspaceRoot);
     const dataRoot = await realpath(rawDataRoot);
     const workspaceRoot = await realpath(rawWorkspaceRoot);
-    const runtime = createDesktopRuntime(dataRoot);
+    const runtime = createDesktopRuntime(dataRoot, { hostMutationApprovalProvider: async () => true });
     try {
       const workspace = await runtime.services.addWorkspace({ rootPath: workspaceRoot });
       const connection = await runtime.services.startMcp({ workspaceId: workspace.id });
@@ -380,14 +399,21 @@ describe('DesktopRuntime persistence', () => {
         const response = await client.callTool({ name: 'health', arguments: { operation: 'check_tool', tool: 'shell' } });
         expect(response.isError).not.toBe(true);
         expect(response.structuredContent).toMatchObject({ tool: 'shell', available: true });
+        await writeFile(
+          path.join(workspaceRoot, 'local-shell-task.mjs'),
+          "setTimeout(() => process.stdout.write('local-shell'), 5500);",
+          'utf8',
+        );
         const shellStartedAt = Date.now();
         const shellResponse = await client.callTool({
           name: 'shell',
           arguments: {
+            workspaceId: workspace.id,
             executable: process.execPath,
-            arguments: ['-e', "setTimeout(() => process.stdout.write('local-shell'), 5500)"],
+            arguments: ['local-shell-task.mjs'],
             cwd: workspaceRoot,
             execution: 'foreground',
+            userConfirmed: true,
           },
         });
         expect(Date.now() - shellStartedAt).toBeLessThan(4_000);
@@ -431,7 +457,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  }, 30_000);
+  }, 60_000);
 });
 
 async function closeRuntime(runtime: DesktopRuntime): Promise<void> {

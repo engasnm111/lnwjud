@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { workspaceScopeMatches } from '@lnwjud/ipc-contracts';
 import type {
   DashboardSnapshot,
   DestructiveDeletePolicy,
@@ -10,6 +11,8 @@ import type {
   UpdateStatus,
   UserSettings,
   IncidentClassification,
+  ExternalSetupTarget,
+  TunnelStatus,
   WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { AppShell, type Screen } from './features/shell/AppShell.js';
@@ -20,11 +23,20 @@ import { WorkLogPage } from './features/worklog/WorkLogPage.js';
 import { LiveLogsPage } from './features/live/LiveLogsPage.js';
 import type { LogScopeSelection } from './features/live/LogStreamPanel.js';
 import { applyLogSnapshot } from './features/live/log-buffer.js';
-import { SettingsPage } from './features/settings/SettingsPage.js';
+import { SettingsPage, type SettingsSection } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
+import { FirstRunTunnelTip } from './features/onboarding/FirstRunTunnelTip.js';
+import {
+  guidedTunnelLaunchDecision,
+  guidedTunnelPrerequisiteSignature,
+  isTunnelRunning,
+  readGuidedTunnelSetupState,
+  writeGuidedTunnelSetupState,
+} from './features/onboarding/guided-tunnel-setup-state.js';
 import { createTranslator } from './i18n/index.js';
+import { markStartupDoctorPassed, startupDoctorCorePassed, startupDoctorRequired } from './features/onboarding/startup-doctor-state.js';
 
-const MAX_CLIENT_LOG_LINES = 4_000;
+const MAX_CLIENT_LOG_LINES = 30_000;
 
 export function App(): ReactElement {
   const [screen, setScreen] = useState<Screen>('home');
@@ -43,11 +55,19 @@ export function App(): ReactElement {
   const [incidentNotice, setIncidentNotice] = useState<string | null>(null);
   const [incidentBusy, setIncidentBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [firstRunTunnelTipOpen, setFirstRunTunnelTipOpen] = useState(false);
+  const [guidedTunnelSetupOpen, setGuidedTunnelSetupOpen] = useState(false);
+  const [startupDoctorReady, setStartupDoctorReady] = useState(false);
+  const [requestedSettingsSection, setRequestedSettingsSection] = useState<{ readonly section: SettingsSection; readonly requestId: number } | undefined>(undefined);
   const incidentBusyRef = useRef(false);
   const logIds = useRef<Set<number>>(new Set());
+  const guidedTunnelLaunchSignature = useRef<string | null>(null);
+  const startupDoctorVersion = useRef<string | null>(null);
+  const settingsRequestId = useRef(0);
 
   const t = createTranslator(locale);
-  const activeWorkspaces = workspaces.filter((workspace) => workspace.archivedAt === undefined || workspace.archivedAt === null);
+  const appVersion = dashboard?.appVersion ?? null;
+  const projectWorkspaces = workspaces.filter((workspace) => workspace.kind !== 'machine_root' && (workspace.archivedAt === undefined || workspace.archivedAt === null));
 
   const appendLogLine = useCallback((line: LogLine): void => {
     if (logIds.current.has(line.id)) return;
@@ -98,7 +118,7 @@ export function App(): ReactElement {
         ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
         ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
       });
-      setLogLines((previous) => previous.filter((line) => line.source !== source || !lineMatchesScope(line, scope)));
+      setLogLines((previous) => previous.filter((line) => line.source !== source || !lineMatchesScope(line, scope, workspaces)));
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logBufferClear')));
     }
@@ -114,7 +134,7 @@ export function App(): ReactElement {
     }
   }
 
-  async function exportLogSource(source: LogSource, scope: LogScopeSelection, query: string): Promise<void> {
+  async function exportLogSource(source: LogSource, scope: LogScopeSelection, query: string, lineIds: readonly number[], rows: readonly string[]): Promise<void> {
     try {
       await window.lnwjud.exportLogs({
         source,
@@ -122,6 +142,8 @@ export function App(): ReactElement {
         ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
         ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
         ...(query.trim().length === 0 ? {} : { query: query.trim() }),
+        lineIds,
+        rows,
       });
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logExport')));
@@ -178,6 +200,80 @@ export function App(): ReactElement {
     return (): void => { window.clearInterval(interval); };
   }, [refresh]);
 
+  useEffect(() => {
+    if (dashboard === null || !startupDoctorReady) return;
+    const tunnel = dashboard.tunnel;
+    const signature = guidedTunnelPrerequisiteSignature(tunnel);
+    if (guidedTunnelLaunchSignature.current === signature) return;
+    guidedTunnelLaunchSignature.current = signature;
+    const state = readGuidedTunnelSetupState(window.localStorage);
+    const decision = guidedTunnelLaunchDecision(tunnel, state);
+    if (decision === 'show_tip') {
+      setFirstRunTunnelTipOpen(true);
+      return;
+    }
+    if (decision === 'resume_settings') openGuidedTunnelSettings(true);
+  }, [dashboard, startupDoctorReady]);
+
+  useEffect(() => {
+    if (appVersion === null || startupDoctorVersion.current === appVersion) return;
+    startupDoctorVersion.current = appVersion;
+    if (!startupDoctorRequired(window.localStorage, appVersion)) {
+      setStartupDoctorReady(true);
+      return;
+    }
+
+    setStartupDoctorReady(false);
+    void window.lnwjud.runDoctor().then((report) => {
+      setDoctor(report);
+      if (startupDoctorCorePassed(report)) {
+        try { markStartupDoctorPassed(window.localStorage, appVersion); } catch { /* Re-run next launch if storage is unavailable. */ }
+        setStartupDoctorReady(true);
+        return;
+      }
+      setFirstRunTunnelTipOpen(false);
+      setGuidedTunnelSetupOpen(false);
+      setScreen('doctor');
+    }).catch((cause: unknown) => {
+      setError(errorMessage(cause, createTranslator(locale)('error.doctorRun')));
+      setFirstRunTunnelTipOpen(false);
+      setGuidedTunnelSetupOpen(false);
+      setScreen('doctor');
+    });
+  }, [appVersion, locale]);
+
+  function requestSettingsSection(section: SettingsSection): void {
+    settingsRequestId.current += 1;
+    setRequestedSettingsSection({ section, requestId: settingsRequestId.current });
+    setError(null);
+    setScreen('settings');
+  }
+
+  function openGuidedTunnelSettings(markInProgress: boolean): void {
+    if (markInProgress) {
+      try { writeGuidedTunnelSetupState(window.localStorage, 'in_progress'); } catch { /* UI still works without storage. */ }
+    }
+    setFirstRunTunnelTipOpen(false);
+    setGuidedTunnelSetupOpen(true);
+    requestSettingsSection('tunnel');
+  }
+
+  function changeGuidedTunnelSetupOpen(open: boolean): void {
+    if (!open) {
+      setGuidedTunnelSetupOpen(false);
+      return;
+    }
+    openGuidedTunnelSettings(dashboard === null || !isTunnelRunning(dashboard.tunnel));
+  }
+
+  function completeGuidedTunnelSetup(): void {
+    try { writeGuidedTunnelSetupState(window.localStorage, 'completed'); } catch { /* Completion is also derived from tunnel state. */ }
+  }
+
+  async function openExternalSetupPage(target: ExternalSetupTarget): Promise<void> {
+    await window.lnwjud.openExternalSetupPage({ target });
+  }
+
   async function handleUpdateAction(): Promise<void> {
     try {
       if (updateStatus?.canInstall === true) {
@@ -213,6 +309,17 @@ export function App(): ReactElement {
     }
   }
 
+  async function setWorkspaceActive(workspaceId: string, active: boolean): Promise<void> {
+    setError(null);
+    try {
+      await window.lnwjud.setWorkspaceActive({ workspaceId, active });
+      await refresh();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, propsText(locale, 'ไม่สามารถเปลี่ยน Active Project ได้', 'Could not change Active Project')));
+      throw cause;
+    }
+  }
+
   async function setWorkspaceArchived(workspaceId: string, archived: boolean): Promise<void> {
     setError(null);
     try {
@@ -227,7 +334,7 @@ export function App(): ReactElement {
   async function deleteWorkspace(workspaceId: string): Promise<void> {
     setError(null);
     try {
-      await window.lnwjud.deleteWorkspace({ workspaceId });
+      await window.lnwjud.deleteWorkspace({ workspaceId, userConfirmed: true });
       await refresh();
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.workspaceDelete')));
@@ -311,15 +418,30 @@ export function App(): ReactElement {
     }
   }
 
-  async function startTunnel(): Promise<void> {
+  async function exportWorkLog(rows: readonly string[]): Promise<void> {
     try {
-      setTunnelBusy(true);
-      await window.lnwjud.startTunnel();
-      await refresh();
+      await window.lnwjud.exportWorkLog({ rows });
     } catch (cause: unknown) {
-      setError(errorMessage(cause, t('error.tunnelStart')));
+      setError(errorMessage(cause, t('error.logExport')));
+    }
+  }
+
+  async function startTunnelWithStatus(): Promise<TunnelStatus> {
+    setTunnelBusy(true);
+    try {
+      const status = await window.lnwjud.startTunnel();
+      await refresh();
+      return status;
     } finally {
       setTunnelBusy(false);
+    }
+  }
+
+  async function startTunnel(): Promise<void> {
+    try {
+      await startTunnelWithStatus();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, t('error.tunnelStart')));
     }
   }
 
@@ -344,6 +466,16 @@ export function App(): ReactElement {
     const result = await window.lnwjud.scheduleRestoreBackup({ backupId });
     await refresh();
     return result.restartRequired;
+  }
+
+  async function restoreRecoveryItem(workspaceId: string, recoveryId: string): Promise<void> {
+    await window.lnwjud.restoreRecoveryItem({ workspaceId, recoveryId });
+    await refresh();
+  }
+
+  async function restoreCheckpoint(workspaceId: string, checkpointId: string): Promise<void> {
+    await window.lnwjud.restoreCheckpoint({ workspaceId, checkpointId });
+    await refresh();
   }
 
   async function saveTunnelApiKey(apiKey: string): Promise<void> {
@@ -386,7 +518,15 @@ export function App(): ReactElement {
 
   async function runDoctor(): Promise<void> {
     try {
-      setDoctor(await window.lnwjud.runDoctor());
+      const report = await window.lnwjud.runDoctor();
+      setDoctor(report);
+      if (startupDoctorCorePassed(report) && appVersion !== null) {
+        try { markStartupDoctorPassed(window.localStorage, appVersion); } catch { /* Re-run next launch if storage is unavailable. */ }
+        startupDoctorVersion.current = appVersion;
+        setStartupDoctorReady(true);
+      } else {
+        setStartupDoctorReady(false);
+      }
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.doctorRun')));
     }
@@ -405,6 +545,10 @@ export function App(): ReactElement {
       screen={screen}
       onNavigate={(nextScreen) => {
         setError(null);
+        if (!startupDoctorReady && doctor?.exitCode === 1 && nextScreen !== 'doctor') {
+          setScreen('doctor');
+          return;
+        }
         setScreen(nextScreen);
       }}
       onLocaleChange={(next) => { void changeLocale(next); }}
@@ -414,7 +558,7 @@ export function App(): ReactElement {
       {screen === 'home' ? (
         <ControlCenterPage
           dashboard={dashboard}
-          workspaces={activeWorkspaces}
+          workspaces={projectWorkspaces}
           locale={locale}
           mcpBusy={mcpBusy}
           tunnelBusy={tunnelBusy}
@@ -422,9 +566,11 @@ export function App(): ReactElement {
           onStopMcp={stopMcp}
           onRestartMcp={restartMcp}
           onSelectWorkspace={selectWorkspace}
+          onSetWorkspaceActive={setWorkspaceActive}
           onAddWorkspace={addWorkspace}
           onStartTunnel={startTunnel}
           onStopTunnel={stopTunnel}
+          onOpenTunnelSetup={() => openGuidedTunnelSettings(!isTunnelRunning(dashboard.tunnel))}
           onCaptureIncident={captureIncident}
           incidentBusy={incidentBusy}
           incidentClassification={incidentClassification}
@@ -437,7 +583,9 @@ export function App(): ReactElement {
           locale={locale}
           workspaces={workspaces}
           selectedWorkspaceId={dashboard.selectedWorkspace?.id ?? null}
+          activeWorkspaceIds={dashboard.activeWorkspaces.map((workspace) => workspace.id)}
           onSelectWorkspace={selectWorkspace}
+          onSetWorkspaceActive={setWorkspaceActive}
           onAddWorkspace={addWorkspace}
           onSetWorkspaceArchived={setWorkspaceArchived}
           onDeleteWorkspace={deleteWorkspace}
@@ -448,13 +596,13 @@ export function App(): ReactElement {
           locale={locale}
           gitSummary={dashboard.gitSummary}
           selectedWorkspace={dashboard.selectedWorkspace}
-          workspaces={activeWorkspaces}
+          workspaces={projectWorkspaces}
           onSelectWorkspace={selectWorkspace}
           onRefresh={refresh}
         />
       ) : null}
       {screen === 'worklog' ? (
-        <WorkLogPage locale={locale} dashboard={dashboard} workspaces={workspaces} onClearWorkLog={clearWorkLog} />
+        <WorkLogPage locale={locale} dashboard={dashboard} workspaces={workspaces} onClearWorkLog={clearWorkLog} onExportWorkLog={exportWorkLog} />
       ) : null}
       {screen === 'live' ? (
         <LiveLogsPage
@@ -485,11 +633,21 @@ export function App(): ReactElement {
           onStdioPolicyChange={setStdioPolicy}
           onCreateBackup={createBackup}
           onScheduleRestoreBackup={scheduleRestoreBackup}
+          onRestoreRecoveryItem={restoreRecoveryItem}
+          onRestoreCheckpoint={restoreCheckpoint}
           onSaveTunnelApiKey={saveTunnelApiKey}
           onSetTunnelClientPath={setTunnelClientPath}
           onUserSettingsChange={setUserSettings}
           onChooseTunnelClientPath={chooseTunnelClientPath}
           onConfigureTunnelProfile={configureTunnelProfile}
+          onStartTunnel={startTunnelWithStatus}
+          onStopTunnel={stopTunnel}
+          onOpenExternalSetupPage={openExternalSetupPage}
+          onRefresh={refresh}
+          guidedTunnelSetupOpen={guidedTunnelSetupOpen}
+          onGuidedTunnelSetupOpenChange={changeGuidedTunnelSetupOpen}
+          onGuidedTunnelLocalComplete={completeGuidedTunnelSetup}
+          requestedSection={requestedSettingsSection}
         />
       ) : null}
       {screen === 'doctor' ? (
@@ -497,6 +655,16 @@ export function App(): ReactElement {
           <h1>{t('doctor.title')}</h1>
           <DoctorPanel locale={locale} report={doctor} onRunDoctor={runDoctor} />
         </div>
+      ) : null}
+      {firstRunTunnelTipOpen ? (
+        <FirstRunTunnelTip
+          locale={locale}
+          onStart={() => openGuidedTunnelSettings(true)}
+          onLater={() => {
+            try { writeGuidedTunnelSetupState(window.localStorage, 'dismissed'); } catch { /* Dismiss for this session even if storage is unavailable. */ }
+            setFirstRunTunnelTipOpen(false);
+          }}
+        />
       ) : null}
     </AppShell>
   );
@@ -510,8 +678,8 @@ function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
 }
 
-function lineMatchesScope(line: Pick<LogLine, 'workspaceId' | 'sessionId'>, scope: LogScopeSelection): boolean {
-  if (scope.workspaceId !== null && line.workspaceId !== scope.workspaceId) return false;
+function lineMatchesScope(line: Pick<LogLine, 'workspaceId' | 'sessionId'>, scope: LogScopeSelection, workspaces: readonly WorkspaceSummary[]): boolean {
+  if (scope.workspaceId !== null && !workspaceScopeMatches(workspaces, line.workspaceId, scope.workspaceId)) return false;
   if (scope.sessionId !== null && line.sessionId !== scope.sessionId) return false;
   return true;
 }

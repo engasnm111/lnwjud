@@ -5,6 +5,8 @@ import path from 'node:path';
 
 const KEY_PREFIX_V2 = 'dpapi:v2:';
 const KEY_PREFIX_V1 = 'dpapi:v1:';
+// Portable storage prefix used on platforms without Windows DPAPI so checkpoint
+// master keys can be created and reopened on macOS/Linux hosts as well.
 const KEY_PREFIX_RAW = 'raw:v1:';
 const DEFAULT_MAX_BUFFER = 1024 * 1024;
 
@@ -34,13 +36,15 @@ export function unprotectWithWindowsDpapi(cipherText: string): string {
   return runPowerShellDpapi(script, cipherText);
 }
 
-export function loadOrCreateProtectedKey(filePath: string, byteLength = 32): Buffer {
+export function loadOrCreateWindowsProtectedKey(filePath: string, byteLength = 32): Buffer {
   if (!Number.isInteger(byteLength) || byteLength < 16 || byteLength > 64) throw new Error('Invalid protected key length');
   const absolutePath = path.resolve(filePath);
   mkdirSync(path.dirname(absolutePath), { recursive: true });
   try {
     const stored = readFileSync(absolutePath, 'utf8');
     const decoded = decodeProtectedKey(stored, byteLength);
+    // Migrate legacy SecureString keys to DPAPI v2 only where DPAPI exists; raw
+    // portable keys stay format-stable across platforms.
     if (stored.trim().startsWith(KEY_PREFIX_V1) && process.platform === 'win32') writeProtectedKeyV2(absolutePath, decoded);
     return decoded;
   } catch (error) {
@@ -58,8 +62,6 @@ export function loadOrCreateProtectedKey(filePath: string, byteLength = 32): Buf
   }
 }
 
-export const loadOrCreateWindowsProtectedKey = loadOrCreateProtectedKey;
-
 export function loadCheckpointEncryptionKey(dataPath: string): Buffer {
   const configured = process.env.LNWJUD_CHECKPOINT_KEY_BASE64;
   if (configured !== undefined && configured.trim().length > 0) {
@@ -67,7 +69,7 @@ export function loadCheckpointEncryptionKey(dataPath: string): Buffer {
     if (key.byteLength !== 32) throw new Error('LNWJUD_CHECKPOINT_KEY_BASE64 must decode to 32 bytes');
     return key;
   }
-  return loadOrCreateProtectedKey(path.join(dataPath, 'checkpoint-master.key'), 32);
+  return loadOrCreateWindowsProtectedKey(path.join(dataPath, 'checkpoint-master.key'), 32);
 }
 
 function encodeProtectedKey(key: Buffer): string {
@@ -75,12 +77,8 @@ function encodeProtectedKey(key: Buffer): string {
   return KEY_PREFIX_RAW + key.toString('base64');
 }
 
-function encodeProtectedKeyV2(key: Buffer): string {
-  return KEY_PREFIX_V2 + protectWithWindowsDpapi(key.toString('base64'));
-}
-
 function writeProtectedKeyV2(filePath: string, key: Buffer): void {
-  writeFileSync(filePath, encodeProtectedKeyV2(key), { encoding: 'utf8' });
+  writeFileSync(filePath, KEY_PREFIX_V2 + protectWithWindowsDpapi(key.toString('base64')), { encoding: 'utf8', mode: 0o600 });
 }
 
 function decodeProtectedKey(value: string, expectedLength: number): Buffer {
@@ -113,9 +111,10 @@ function unprotectLegacySecureString(cipherText: string): string {
 
 function runPowerShellDpapi(script: string, input: string): string {
   if (process.platform !== 'win32') throw new Error('Windows DPAPI is only available on Windows');
-  const powershell = process.env.SystemRoot === undefined
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  const powershell = systemRoot === undefined
     ? 'powershell.exe'
-    : path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    : path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
     input,
     encoding: 'utf8',

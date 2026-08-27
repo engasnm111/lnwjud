@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: lnwjud version
-      description: "Example: v4.9.1"
+      description: "Example: v4.10.0"
       placeholder: v4.x.x
     validations:
       required: true

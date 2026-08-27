@@ -13,6 +13,8 @@ const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const START_CANCELLATION_RETRY_MS = 250;
 
+export const DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES = 24;
+
 interface ManagedRecord {
   readonly processId: string;
   readonly child: ChildProcess;
@@ -37,6 +39,7 @@ export class ProcessManager {
   public constructor(
     private readonly terminator: ProcessTreeTerminator = new WindowsProcessTree(),
     private readonly executableResolver: ExecutableResolver = new PathExecutableResolver(),
+    private readonly maxActiveProcesses: number = DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES,
   ) {}
 
   public async start(
@@ -44,6 +47,10 @@ export class ProcessManager {
     signal?: AbortSignal,
     onCreated?: (process: ManagedProcess) => void,
   ): Promise<Result<ManagedProcess>> {
+    const activeProcesses = this.activeProcessCount();
+    if (activeProcesses >= this.maxActiveProcesses) {
+      return err(appError('CONFLICT', `Too many managed processes are already active (${activeProcesses}/${this.maxActiveProcesses}); wait for existing work or stop a process before starting another.`, true));
+    }
     const validation = this.validateSpec(spec);
     if (!validation.ok) return validation;
     if (isAborted(signal)) return cancelledStart();
@@ -159,6 +166,12 @@ export class ProcessManager {
     }
     if (!verified) await this.waitForVerifiedTermination(record);
     return ok(undefined);
+  }
+
+  private activeProcessCount(): number {
+    return [...this.records.values()].filter((record) => (
+      record.state === 'starting' || record.state === 'running' || record.state === 'termination_unverified'
+    )).length;
   }
 
   private validateSpec(spec: ManagedProcessStart): Result<void> {

@@ -37,6 +37,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   startMinimized: false,
   tunnelAutoReconnect: true,
   tunnelMaxAutoRestarts: 5,
+  recoveryRetentionDays: 0,
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
@@ -206,7 +207,7 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
               <Field
                 label={locale === 'th' ? 'PDF Provider (pdftotext.exe)' : 'PDF Provider (pdftotext.exe)'}
                 value={draft.pdfProviderPath}
-                placeholder={'C:\\Program Files\\poppler\\Library\\bin\\pdftotext.exe'}
+                placeholder={locale === 'th' ? 'พาธไปยัง pdftotext.exe (ถ้ามี)' : 'Path to pdftotext.exe (optional)'}
                 onChange={(value) => patch({ pdfProviderPath: value })}
               />
               <TextArea
@@ -264,12 +265,10 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
       ) : null}
 
       {section === 'tunnel' ? (
-        <section className="panel settings-card settings-card-polished" aria-label="Tunnel reconnect">
-          <CardHeading icon="↻" title="Tunnel Reconnect" subtitle={locale === 'th' ? 'กำหนดการเชื่อมต่อใหม่เมื่อ tunnel-client หลุด' : 'Control automatic recovery when tunnel-client exits'} />
-          <div className="setting-grid two-col align-center">
-            <SettingSwitch checked={draft.tunnelAutoReconnect} label={locale === 'th' ? 'เชื่อมต่อใหม่อัตโนมัติ' : 'Automatic reconnect'} description={locale === 'th' ? 'พยายามกลับมาเชื่อมต่อเมื่อ Tunnel หลุด' : 'Attempt to recover after an unexpected tunnel exit'} onChange={(value) => patch({ tunnelAutoReconnect: value })} />
-            <NumberField label={locale === 'th' ? 'จำนวนครั้งสูงสุดเมื่อหลุดถี่ ๆ' : 'Maximum rapid reconnect attempts'} value={draft.tunnelMaxAutoRestarts} min={0} max={50} onChange={(value) => patch({ tunnelMaxAutoRestarts: value })} />
-          </div>
+        <section className="panel settings-card settings-card-polished" aria-label="Persistent tunnel runtime">
+          <CardHeading icon="↻" title="Persistent Tunnel Runtime" subtitle={locale === 'th' ? 'รักษา Tunnel ID เดิมและเชื่อมต่อใหม่ต่อเนื่องจนกว่าจะปิดเอง' : 'Keep the same tunnel identity and reconnect continuously until disabled'} badge={draft.tunnelAutoReconnect ? 'ON' : 'OFF'} />
+          <SettingSwitch checked={draft.tunnelAutoReconnect} label="Persistent runtime" description={locale === 'th' ? 'เมื่อเปิด ระบบจะ retry ต่อเนื่องด้วย backoff สูงสุดประมาณ 60 วินาที โดยไม่หยุดถาวรหลังหลุดหลายครั้ง' : 'Transient failures keep retrying with capped backoff instead of permanently giving up after a fixed number of exits.'} onChange={(value) => patch({ tunnelAutoReconnect: value })} />
+          <p className="hint">{locale === 'th' ? 'ค่า Maximum rapid reconnect เดิมยังเก็บไว้เพื่อ compatibility กับ v4.10 แต่ v4.11 ไม่ใช้เป็นจำนวนครั้งสูงสุดอีกต่อไป' : 'The legacy rapid-reconnect value is retained for v4.10 compatibility, but v4.11 no longer treats it as a permanent retry limit.'}</p>
         </section>
       ) : null}
 

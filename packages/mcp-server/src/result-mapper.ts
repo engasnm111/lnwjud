@@ -36,7 +36,14 @@ export function mapError(error: AppError): McpToolResponse {
   return {
     isError: true,
     content: [{ type: 'text', text: `${error.code}: ${message}` }],
-    structuredContent: { error: { code: error.code, message, recoverable: error.recoverable } },
+    structuredContent: {
+      error: {
+        code: error.code,
+        message,
+        recoverable: error.recoverable,
+        ...(error.details === undefined ? {} : { details: error.details }),
+      },
+    },
   };
 }
 

@@ -39,22 +39,40 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
     const request = parsed.value;
 
     try {
+      if (request.dryRun) {
+        return ok({
+          dry_run: true,
+          action: request.action,
+          ...(request.taskName.length === 0 ? {} : { task_name: request.taskName }),
+          ...(request.action === 'create' ? {
+            command: request.command,
+            arguments: request.arguments,
+            schedule: request.schedule,
+            start_time: request.startTime,
+          } : {}),
+        });
+      }
+      if (request.action !== 'list' && request.userConfirmed !== true) {
+        return err(appError(
+          'PERMISSION_REQUIRED',
+          'Creating, running, or deleting a scheduled task requires explicit user confirmation',
+        ));
+      }
       switch (request.action) {
         case 'list': return ok({ tasks: await this.list(signal) });
         case 'create': return ok(await this.create(request.taskName, request.command, request.arguments ?? [], request.schedule ?? 'DAILY', request.startTime ?? '09:00', signal));
-        case 'delete':
-          if (request.userConfirmed !== true) {
-            return err(appError(
-              'PERMISSION_REQUIRED',
-              'Deleting a scheduled task requires the user to confirm in chat first, then retry scheduler with userConfirmed: true',
-            ));
-          }
-          return ok(await this.delete(request.taskName, signal));
+        case 'delete': return ok(await this.delete(request.taskName, signal));
         case 'run': return ok(await this.run(request.taskName, signal));
       }
     } catch (error: unknown) {
-      if (isSignalAborted(signal) || (error instanceof Error && error.name === 'AbortError')) return cancelledOperation();
       const detail = extractDetail(error);
+      if (request.action !== 'list') {
+        const reason = isSignalAborted(signal) || (error instanceof Error && error.name === 'AbortError')
+          ? 'Scheduled task operation was cancelled or timed out after dispatch'
+          : (detail.length > 0 ? detail : 'Scheduled task operation failed after dispatch');
+        return uncertainMutationFailure(reason);
+      }
+      if (isSignalAborted(signal) || (error instanceof Error && error.name === 'AbortError')) return cancelledOperation();
       return err(appError('INTERNAL_ERROR', detail.length > 0 ? detail : 'Scheduled task operation failed', true));
     }
   }
@@ -91,7 +109,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
     const taskRun = buildTaskRun(command, args);
     await this.runCommand([
       '/Create', '/TN', taskName, '/TR', taskRun,
-      '/SC', schedule.toUpperCase(), '/ST', startTime, '/F',
+      '/SC', schedule.toUpperCase(), '/ST', startTime,
     ], signal);
     return { created: true, task_name: taskName, schedule, start_time: startTime };
   }
@@ -117,6 +135,14 @@ function cancelledOperation(): Result<never> {
   return err(appError('PROCESS_TIMEOUT', 'Scheduled task operation was cancelled', true));
 }
 
+function uncertainMutationFailure(reason: string): Result<never> {
+  return err(appError(
+    'PROCESS_TIMEOUT',
+    `${reason}. Scheduler mutation outcome may be unknown after dispatch; inspect the current task state before any manual retry. Do not retry automatically.`,
+    true,
+  ));
+}
+
 function isSignalAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
@@ -129,6 +155,7 @@ interface SchedulerRequest {
   readonly schedule: string;
   readonly startTime: string;
   readonly userConfirmed: boolean;
+  readonly dryRun: boolean;
 }
 
 function parseRequest(value: unknown): Result<SchedulerRequest> {
@@ -158,6 +185,7 @@ function parseRequest(value: unknown): Result<SchedulerRequest> {
     return err(appError('INVALID_INPUT', 'start_time must be HH:MM'));
   }
   const userConfirmed = value.userConfirmed === true;
+  const dryRun = value.dry_run === true;
   return ok({
     action,
     taskName: typeof taskName === 'string' ? taskName.trim() : '',
@@ -166,6 +194,7 @@ function parseRequest(value: unknown): Result<SchedulerRequest> {
     schedule: typeof schedule === 'string' ? schedule.toUpperCase() : 'DAILY',
     startTime: typeof startTime === 'string' ? startTime : '09:00',
     userConfirmed,
+    dryRun,
   });
 }
 

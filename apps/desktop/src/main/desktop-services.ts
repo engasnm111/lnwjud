@@ -1,12 +1,12 @@
 import { createServer } from 'node:net';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   DoctorService,
   CheckpointService,
   CodexService,
   FileService,
   GitService,
+  GoalContinuationService,
   ProjectService,
   ProjectSnapshotService,
   ProcessService,
@@ -35,8 +35,11 @@ import {
   createFileActivitySink,
   mcpActivityLogPath,
   type ActivitySinkEvent,
+  type HostMutationApprovalRequest,
   type McpApplicationServices,
   type McpHttpServerOptions,
+  type WorkspaceScope,
+
 } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
 import type { ManagedProcess } from '@lnwjud/process';
@@ -55,6 +58,8 @@ import {
   MAX_CONFIGURABLE_WAIT_SECONDS,
   DEFAULT_CODEX_TOOLS_ENABLED,
   DEFAULT_TUNNEL_MAX_AUTO_RESTARTS,
+  DEFAULT_RECOVERY_RETENTION_DAYS,
+
   DEFAULT_UPDATE_INTERVAL_MINUTES,
   STDIO_ALLOWED_ROOTS_SETTING_KEY,
   STDIO_PERMISSION_PROFILE_SETTING_KEY,
@@ -80,6 +85,8 @@ import {
   type DestructiveAutoApprovalPolicy,
 } from '@lnwjud/shared';
 import { AesGcmCheckpointCipher, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupSummary } from '@lnwjud/storage';
+import { SqliteGoalRepository } from '@lnwjud/storage';
+
 import type { Workspace } from '@lnwjud/workspace';
 import { isDriveRoot, machineRootPath, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
 import {
@@ -93,6 +100,7 @@ import {
   type DeleteWorkspaceRequest,
   type ConnectionModes,
   type DashboardSnapshot,
+  type DoctorCheck,
   type DoctorReport,
   type InFlightWorkItem,
   type LogSnapshot,
@@ -100,6 +108,9 @@ import {
   type McpConnectionStatus,
   type PermissionProfileName as IpcPermissionProfileName,
   type ProcessSummary,
+  type RestoreCheckpointRequest,
+  type RestoreRecoveryItemRequest,
+
   type SaveTunnelApiKeyRequest,
   type ScheduleRestoreBackupRequest,
   type SelectWorkspaceRequest,
@@ -122,19 +133,23 @@ import {
 } from '@lnwjud/ipc-contracts';
 import type { DesktopIpcServices } from './main.js';
 import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
-import { LogHub } from './log-hub.js';
+import { LogHub, classifyMcpWorkLogKind } from './log-hub.js';
+
 import { buildIncidentReport, collectRelevantListeners, collectRelevantProcessTree, type IncidentReport } from './incident-report.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
 import { CLIENT_PATH_SETTING, TunnelController } from './tunnel-controller.js';
-import { packagedStdioLauncherCandidates, preferredTunnelMcpCommand, resolveStdioLauncherPath } from './tunnel-profile.js';
+
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
 const permissionSettingKey = 'permission_profile';
 const selectedWorkspaceSettingKey = 'selected_workspace_id';
+const activeWorkspaceIdsSettingKey = 'active_workspace_ids';
 const workLogClearedSettingKey = 'work_log_cleared_at';
 const localeSettingKey = 'ui_locale';
+const tunnelIdentitySettingKey = 'tunnel_identity_id';
+
 
 export interface DesktopRuntime {
   readonly services: DesktopIpcServices;
@@ -145,14 +160,20 @@ export interface DesktopRuntime {
   getLocale(): UiLocale;
   getUserSettings(): UserSettings;
   getDestructivePolicy(): DestructiveAutoApprovalPolicy;
+  getActiveWorkspaceScope(): Promise<WorkspaceScope | null>;
+  getActiveWorkspaceScopes(): Promise<readonly WorkspaceScope[]>;
   createBackup(reason?: BackupReason): Promise<BackupSummary>;
   ensureDefaultWorkspace(rootPath: string): Promise<string>;
   autoStartMcp(): Promise<McpConnectionStatus>;
+  autoStartTunnel(): Promise<TunnelStatus | null>;
+
   close(): Promise<void>;
 }
 
 export interface DesktopRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
+  readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
+
 }
 
 export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOptions = {}): DesktopRuntime {
@@ -160,6 +181,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const backupDirectory = path.join(dataPath, 'backups');
   const database = new SqliteDatabase(databaseFilename, { backupDirectory });
   const workspaceRepository = new SqliteWorkspaceRepository(database);
+  const goalRepository = new SqliteGoalRepository(database);
+  const goalService = new GoalContinuationService(workspaceRepository, goalRepository);
+
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const workLogViewState = new WorkLogViewState(settingsRepository);
@@ -198,6 +222,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
     profileProvider: activePermissionProfile,
   });
+  const recoveryTrashRoot = path.join(dataPath, 'recovery-trash');
+
   const pathGuard = new WorkspacePathGuard(new SecretPolicy(), { unrestricted, trustedWorkspaceAccess: true });
   const fileService = new FileService(workspaceRepository, pathGuard, undefined, {
     checkpointService,
@@ -207,7 +233,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     allowDeleteWithoutConfirmation: allowAiDeleteProvider,
     protectCriticalFiles: (): boolean => destructivePolicyProvider().protectCriticalFiles,
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
-    recoveryTrashRoot: path.join(dataPath, 'recovery-trash'),
+    recoveryTrashRoot,
+
   });
   const workspaceInfoService = new WorkspaceInfoService(workspaceRepository, workspaceService, unrestricted);
   const workspaceQueryService = new WorkspaceQueryService(workspaceRepository, pathGuard);
@@ -227,6 +254,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   ), unrestricted, () => readSettings().capabilityRoots, () => readSettings().shellSynchronousWaitSeconds);
   // Start machine-root synchronization lazily so runtime construction cannot race
   // with the first workspace/database operation on slower Windows runners.
+
   const machineRootsReady = new Map<string, Promise<Workspace | null>>();
   const ensureMachineRoots = (preferredPath?: string): Promise<Workspace | null> => {
     const key = unrestricted ? '*' : machineRootPath(preferredPath).toLowerCase();
@@ -262,6 +290,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     projectSnapshot: projectSnapshotService,
     project: projectService,
     file: fileService,
+    checkpoint: checkpointService,
+    goals: goalService,
     search: searchService,
     workspaceIndex,
     git: gitService,
@@ -304,6 +334,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     createServerOptions: (): McpHttpServerOptions => ({
       // Prefer a dedicated loopback port so we never collide with common app ports (e.g. 5000).
       // startMcpHttp falls back to an ephemeral port when the preferred bind is busy.
+
       port: mcpPort,
       services: mcpServices,
       actor: mcpActor,
@@ -311,27 +342,37 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       profileProvider: activePermissionProfile,
       allowAiDeleteProvider,
       destructivePolicyProvider,
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => {
+        const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+        console.log('DBG_SCOPE_SINGLE', JSON.stringify({ id:selected?.id, root:selected?.realRootPath }));
+      return selected === null ? null : { workspaceId: selected.id, rootPath: selected.realRootPath };
+      },
+      activeWorkspaceScopesProvider: async (): Promise<readonly WorkspaceScope[]> => (
+        (await resolveActiveProjectWorkspaces()).map((workspace) => ({ workspaceId: workspace.id, rootPath: workspace.realRootPath }))
+      ),
+      ...(options.hostMutationApprovalProvider === undefined ? {} : { hostMutationApprovalProvider: options.hostMutationApprovalProvider }),
 
       codexToolsEnabled: readSettings().codexToolsEnabled,
     }),
   });
   const tunnelController = new TunnelController({
     getClientPath: (): string | null => settingsRepository.get(CLIENT_PATH_SETTING),
+    getBundledClientPath: bundledTunnelClientPath,
     setClientPath: (value: string): void => { settingsRepository.set(CLIENT_PATH_SETTING, value); },
     getDataPath: (): string => dataPath,
-    getStdioLauncherPath: (): string | null => {
-      const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-      const cmdPath = resolveStdioLauncherPath([
-        ...(typeof resourcesPath === 'string'
-          ? packagedStdioLauncherCandidates(process.execPath, resourcesPath)
-          : packagedStdioLauncherCandidates(process.execPath)),
-        path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'build', process.platform === 'win32' ? 'lnwjud-mcp-stdio.cmd' : 'lnwjud-mcp-stdio'),
-        path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'build', 'lnwjud-mcp-stdio.cmd'),
-      ]);
-      return preferredTunnelMcpCommand(process.execPath, cmdPath);
+    getMcpServerUrl: async (): Promise<string | null> => {
+      const status = await mcpLifecycle.start();
+      return status.url;
     },
+    ...(process.env.LNWJUD_E2E_FIXTURE === '1'
+      ? { isExternalTunnelRunning: async (): Promise<boolean> => false }
+      : {}),
     autoReconnect: (): boolean => readSettings().tunnelAutoReconnect,
     maxAutoRestarts: (): number => readSettings().tunnelMaxAutoRestarts,
+    getTunnelId: (): string | null => settingsRepository.get(tunnelIdentitySettingKey),
+    setTunnelId: (value: string): void => { settingsRepository.set(tunnelIdentitySettingKey, value.trim()); },
+
+
   });
   const logHub = new LogHub({
     tunnelLogPath: tunnelController.logPath(),
@@ -341,6 +382,53 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     logHub.feedIfNew('mcp', key, 'error', message);
   };
   const trackedProcesses = new Map<string, string>();
+  let lastRecoveryRetentionSweepAt = 0;
+  const recoveryRetentionSweepIntervalMs = 6 * 60 * 60 * 1000;
+
+  async function sweepRecoveryRetention(force = false): Promise<void> {
+    const retentionDays = readSettings().recoveryRetentionDays;
+    if (retentionDays <= 0) return;
+    const now = Date.now();
+    if (!force && now - lastRecoveryRetentionSweepAt < recoveryRetentionSweepIntervalMs) return;
+    const cutoffIso = new Date(now - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const [trashDeleted, checkpointsDeleted] = await Promise.all([
+      fileService.purgeRecoveryItemsOlderThan(cutoffIso),
+      checkpointRepository.deleteOlderThan(cutoffIso),
+    ]);
+    lastRecoveryRetentionSweepAt = now;
+    if (trashDeleted > 0 || checkpointsDeleted > 0) {
+      console.log('[Recovery] retention=' + retentionDays + 'd purged trash=' + trashDeleted + ' checkpoints=' + checkpointsDeleted);
+    }
+  }
+
+  function recordPersistentTunnelStatus(status: TunnelStatus): void {
+    const persistent = status.persistent;
+    if (persistent === null) return;
+    const stateKey = [persistent.mode, persistent.state, persistent.healthy, persistent.ready, persistent.pollHealthy, persistent.reconnectCount, persistent.lastErrorCode].join(':');
+    const level = persistent.state === 'error' || persistent.state === 'auth-required' ? 'error'
+      : persistent.state === 'reconnecting' || persistent.healthy === false || persistent.ready === false || persistent.pollHealthy === false ? 'warn'
+        : 'info';
+    const detail = [
+      '[persistent-runtime]',
+      'alias=' + persistent.runtimeAlias,
+      'tunnel=' + (persistent.tunnelIdMasked ?? 'unconfigured'),
+      'mode=' + persistent.mode,
+      'state=' + persistent.state,
+      'health=' + triStateLabel(persistent.healthy),
+      'ready=' + triStateLabel(persistent.ready),
+      'poll=' + triStateLabel(persistent.pollHealthy),
+      'reconnects=' + persistent.reconnectCount,
+      ...(persistent.lastErrorCode === null ? [] : ['error=' + persistent.lastErrorCode]),
+    ].join(' ');
+    logHub.feedIfNew('tunnel', 'persistent-runtime:' + stateKey, level, detail);
+  }
+
+  async function observedTunnelStatus(): Promise<TunnelStatus> {
+    const status = await tunnelController.status();
+    recordPersistentTunnelStatus(status);
+    return status;
+  }
+
 
   async function resolveManageableWorkspace(workspaceId: string): Promise<Workspace> {
     const workspace = await workspaceRepository.getAny(workspaceId);
@@ -350,6 +438,47 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     }
     return workspace;
   }
+
+  async function resolveActiveProjectWorkspaces(): Promise<readonly Workspace[]> {
+    const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+    if (workspaces.length === 0) {
+      settingsRepository.delete(activeWorkspaceIdsSettingKey);
+      settingsRepository.delete(selectedWorkspaceSettingKey);
+      return [];
+    }
+    const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+    const storedIds = parseStoredWorkspaceIds(settingsRepository.get(activeWorkspaceIdsSettingKey));
+    const ids = storedIds.filter((id) => byId.has(id));
+    const storedSelectedId = settingsRepository.get(selectedWorkspaceSettingKey);
+    let selectedId = storedSelectedId !== null && byId.has(storedSelectedId) ? storedSelectedId : null;
+    if (selectedId === null) {
+      selectedId = ids[0] ?? workspaces[0]!.id;
+      settingsRepository.set(selectedWorkspaceSettingKey, selectedId);
+    }
+    if (!ids.includes(selectedId)) ids.unshift(selectedId);
+    const orderedIds = [selectedId, ...ids.filter((id) => id !== selectedId)];
+    persistStoredWorkspaceIds(settingsRepository, activeWorkspaceIdsSettingKey, orderedIds);
+    return orderedIds.map((id) => byId.get(id)!).filter(Boolean);
+  }
+
+  async function activateWorkspace(workspaceId: string): Promise<void> {
+    const workspace = await resolveManageableWorkspace(workspaceId);
+    if (workspace.archivedAt !== undefined && workspace.archivedAt !== null) throw new Error('Archived workspace cannot be activated');
+    const ids = [...parseStoredWorkspaceIds(settingsRepository.get(activeWorkspaceIdsSettingKey))];
+    if (!ids.includes(workspace.id)) ids.push(workspace.id);
+    persistStoredWorkspaceIds(settingsRepository, activeWorkspaceIdsSettingKey, ids);
+  }
+
+  async function deactivateWorkspace(workspaceId: string): Promise<void> {
+    await resolveManageableWorkspace(workspaceId);
+    const active = [...await resolveActiveProjectWorkspaces()];
+    if (!active.some((workspace) => workspace.id === workspaceId)) return;
+    if (active.length <= 1) throw new Error('At least one Active Project is required');
+    const nextIds = active.filter((workspace) => workspace.id !== workspaceId).map((workspace) => workspace.id);
+    persistStoredWorkspaceIds(settingsRepository, activeWorkspaceIdsSettingKey, nextIds);
+    if (settingsRepository.get(selectedWorkspaceSettingKey) === workspaceId) settingsRepository.set(selectedWorkspaceSettingKey, nextIds[0]!);
+  }
+
 
   async function assertWorkspaceIdle(workspaceId: string): Promise<void> {
     if (activityTracker.listInFlight().some((entry) => entry.workspaceId === workspaceId)) {
@@ -366,16 +495,32 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   }
 
   async function repairSelectedWorkspace(removedWorkspaceId: string): Promise<void> {
+    const remainingIds = parseStoredWorkspaceIds(settingsRepository.get(activeWorkspaceIdsSettingKey)).filter((id) => id !== removedWorkspaceId);
+    persistStoredWorkspaceIds(settingsRepository, activeWorkspaceIdsSettingKey, remainingIds);
     if (settingsRepository.get(selectedWorkspaceSettingKey) !== removedWorkspaceId) return;
-    const next = (await workspaceService.list())[0];
-    if (next === undefined) settingsRepository.delete(selectedWorkspaceSettingKey);
-    else settingsRepository.set(selectedWorkspaceSettingKey, next.id);
+    const nextActive = (await resolveActiveProjectWorkspaces())[0];
+    if (nextActive === undefined) settingsRepository.delete(selectedWorkspaceSettingKey);
+    else settingsRepository.set(selectedWorkspaceSettingKey, nextActive.id);
   }
+
+  async function requireNativeAdministrativeApproval(request: HostMutationApprovalRequest): Promise<void> {
+    const provider = options.hostMutationApprovalProvider;
+    if (provider === undefined) throw new Error('Native host approval is unavailable for this administrative mutation');
+    let approved = false;
+    try {
+      approved = await provider(request);
+    } catch {
+      approved = false;
+    }
+    if (!approved) throw new Error('Native host approval was denied for this administrative mutation');
+  }
+
   const doctorService = new DoctorService({
-    os: async (): Promise<DoctorProbeResult> => ({ status: (process.platform === 'win32' || process.platform === 'darwin') ? 'pass' : 'warn', message: `${process.platform} ${process.arch}` }),
+    os: async (): Promise<DoctorProbeResult> => ({ status: process.platform === 'win32' && process.arch === 'x64' ? 'pass' : 'fail', message: `${process.platform} ${process.arch}` }),
+
     database: async (): Promise<DoctorProbeResult> => ({ status: 'pass', message: 'SQLite database ready' }),
-    git: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'git'),
-    ripgrep: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'rg'),
+    git: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'git', 'warn'),
+    ripgrep: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'rg', 'fail'),
     workspaces: async (): Promise<DoctorProbeResult> => ({ status: 'pass', message: `${(await workspaceService.list()).length} workspace(s) registered` }),
     mcpPort: checkLocalPort,
     codex: async (): Promise<DoctorProbeResult> => checkCodex(codexDiscovery),
@@ -389,8 +534,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 
   async function selectWorkspaceOnly(workspaceId: string): Promise<WorkspaceSummary> {
     const workspace = await resolveWorkspaceOrThrow(workspaceId);
+    if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
     await ensureMachineRoots(workspace.realRootPath);
+    await activateWorkspace(workspaceId);
     settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
+    await resolveActiveProjectWorkspaces();
+
     return toWorkspaceSummary(workspace);
   }
 
@@ -406,6 +555,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       if (existing !== undefined) {
         if (existing.archivedAt !== undefined && existing.archivedAt !== null) await workspaceRepository.restore(existing.id);
         settingsRepository.set(selectedWorkspaceSettingKey, existing.id);
+        await activateWorkspace(existing.id);
+
         if (!mcpLifecycle.status().running) await mcpLifecycle.start().catch(() => undefined);
         const restored = await workspaceRepository.getAny(existing.id);
         if (restored === null) throw new Error('Workspace could not be restored');
@@ -414,6 +565,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const displayName = path.basename(path.resolve(request.rootPath)) || 'Workspace';
       const workspace = unwrap(await workspaceService.add(displayName, request.rootPath), 'Workspace could not be added');
       settingsRepository.set(selectedWorkspaceSettingKey, workspace.id);
+      await activateWorkspace(workspace.id);
+
       if (!mcpLifecycle.status().running) {
         await mcpLifecycle.start().catch(() => undefined);
       }
@@ -423,6 +576,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       await ensureMachineRoots();
       return selectWorkspaceOnly(request.workspaceId);
     },
+    setWorkspaceActive: async (request): Promise<{ readonly workspace: WorkspaceSummary; readonly active: boolean }> => {
+      await ensureMachineRoots();
+      if (request.active) await activateWorkspace(request.workspaceId);
+      else await deactivateWorkspace(request.workspaceId);
+      const workspace = await resolveManageableWorkspace(request.workspaceId);
+      return { workspace: toWorkspaceSummary(workspace), active: request.active };
+    },
+
     setWorkspaceArchived: async (request: SetWorkspaceArchivedRequest): Promise<WorkspaceSummary> => {
       await ensureMachineRoots();
       const workspace = await resolveManageableWorkspace(request.workspaceId);
@@ -439,18 +600,33 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       if (updated === null) throw new Error('Workspace was not found');
       return toWorkspaceSummary(updated);
     },
-    deleteWorkspace: async (request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string }> => {
+    deleteWorkspace: async (request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string; readonly backupId: string }> => {
+      if (request.userConfirmed !== true) throw new Error('Deleting a workspace registration requires explicit confirmation');
       await ensureMachineRoots();
       const workspace = await resolveManageableWorkspace(request.workspaceId);
       await assertWorkspaceIdle(workspace.id);
+      await requireNativeAdministrativeApproval({
+        toolName: 'workspace_registration_delete',
+        mutationKind: 'delete',
+        reason: 'Deleting a persisted workspace registration changes application database state',
+        summary: `Delete workspace registration "${workspace.displayName}" (${workspace.id}). The project folder at ${workspace.realRootPath} will not be deleted. A SQLite backup will be created before the registration is removed.`,
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.realRootPath,
+      });
+      const backup = await backupService.create('manual');
       await workspaceIndex.forgetWorkspace(workspace.id);
       await workspaceRepository.delete(workspace.id);
       await repairSelectedWorkspace(workspace.id);
-      return { deleted: true, workspaceId: workspace.id, rootPath: workspace.realRootPath };
+      return { deleted: true, workspaceId: workspace.id, rootPath: workspace.realRootPath, backupId: backup.id };
     },
     getDashboard: async (): Promise<DashboardSnapshot> => {
       await ensureMachineRoots();
+      await sweepRecoveryRetention().catch((error: unknown) => {
+        console.error(`Recovery retention sweep failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      });
       const selectedWorkspace = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      const activeWorkspaces = await resolveActiveProjectWorkspaces();
+
       const gitSummary = selectedWorkspace === null
         ? { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' }
         : await buildGitSummary(selectedWorkspace, gitService, actor);
@@ -461,8 +637,20 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const mcp = mcpLifecycle.status();
       const workLog = await buildWorkLog(auditRepository, workLogViewState);
       const inFlight = activityTracker.listInFlight().map(toInFlightItem);
-      const tunnel = await tunnelController.status();
+      const tunnel = await observedTunnelStatus();
       const backups = await backupService.list();
+      let recovery: DashboardSnapshot['recovery'];
+      if (selectedWorkspace === null) {
+        recovery = { trashRoot: recoveryTrashRoot, trashItems: [], checkpoints: [] };
+      } else {
+        const trash = unwrap(await fileService.listRecoveryItems(selectedWorkspace.id), 'Recovery Trash could not be listed');
+        recovery = {
+          trashRoot: trash.recoveryTrashRoot,
+          trashItems: trash.items,
+          checkpoints: unwrap(await checkpointService.list(selectedWorkspace.id), 'Checkpoints could not be listed'),
+        };
+      }
+
       logHub.syncWorkLog(workLog, inFlight.map((item) => ({ callId: item.callId, toolName: item.toolName, targetSummary: item.targetSummary, startedAt: item.startedAt, workspaceId: item.workspaceId, sessionId: item.sessionId })));
       logHub.syncProcesses(processSummaries.map((summary) => ({
         id: summary.id,
@@ -475,6 +663,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       })));
       return {
         selectedWorkspace: selectedWorkspace === null ? null : toWorkspaceSummary(selectedWorkspace),
+        activeWorkspaces: activeWorkspaces.map(toWorkspaceSummary),
+
         gitSummary,
         mcp,
         codex,
@@ -493,6 +683,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         stdioStrictRoots: parseBooleanSetting(settingsRepository.get(STDIO_STRICT_ROOTS_SETTING_KEY), false),
         stdioAllowedRoots: parseAllowedRoots(settingsRepository.get(STDIO_ALLOWED_ROOTS_SETTING_KEY)),
         backups: backups.map(toIpcBackupSummary),
+        recovery,
+
         connectionModes: buildConnectionModes(mcp.url),
         workLog,
         inFlight,
@@ -532,9 +724,31 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const tunnelStatus = await tunnelController.status();
       if (tunnelStatus.state === 'running') throw new Error('Stop Secure MCP Tunnel before scheduling a database restore');
       if (mcpLifecycle.status().running) throw new Error('Stop local MCP before scheduling a database restore');
+      await requireNativeAdministrativeApproval({
+        toolName: 'database_restore',
+        mutationKind: 'replace',
+        reason: 'Scheduling a database restore will replace persisted application database state on the next restart',
+        summary: `Schedule application database restore from backup ${request.backupId}. The restore runtime will create an emergency SQLite pre-image before replacing the active database.`,
+      });
       await backupService.scheduleRestore(request.backupId);
       return { scheduled: true, restartRequired: true };
     },
+    restoreRecoveryItem: async (request: RestoreRecoveryItemRequest): Promise<{ readonly restored: boolean; readonly path: string; readonly rollbackRecoveryId: string | null }> => {
+      const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      if (selected === null || selected.id !== request.workspaceId) throw new Error('Recovery target must match the selected workspace');
+      const restored = unwrap(await fileService.restoreDeletedFile(actor, selected.id, {
+        recoveryId: request.recoveryId,
+        userConfirmed: true,
+      }), 'Recovery item could not be restored');
+      return { restored: true, path: restored.path, rollbackRecoveryId: restored.rollbackRecoveryId ?? null };
+    },
+    restoreCheckpoint: async (request: RestoreCheckpointRequest): Promise<{ readonly restored: boolean; readonly paths: readonly string[]; readonly rollbackCheckpointId: string | null }> => {
+      const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      if (selected === null || selected.id !== request.workspaceId) throw new Error('Checkpoint target must match the selected workspace');
+      const restored = unwrap(await checkpointService.restore(actor, selected.id, request.checkpointId, { userConfirmed: true }), 'Checkpoint could not be restored');
+      return { restored: true, paths: restored.restoredPaths, rollbackCheckpointId: restored.rollbackCheckpointId ?? null };
+    },
+
     listProcesses: async (): Promise<readonly ProcessSummary[]> => listTrackedProcesses(processService, trackedProcesses),
     startProcess: async (request: StartProcessRequest): Promise<ProcessSummary> => {
       if (request.mode === 'fixture' && process.env.LNWJUD_E2E_FIXTURE !== '1') {
@@ -545,8 +759,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           executable: fixtureNodeExecutable(),
           args: ['-e', "process.stdout.write('fixture-ready\\n'); setTimeout(() => {}, 30000);"],
           timeoutMs: 60_000,
+          userConfirmed: true,
         })
-        : await processService.startProjectCommand(actor, request.workspaceId, 'dev');
+        : await processService.startProjectCommand(actor, request.workspaceId, 'dev', undefined, true);
       const processValue = unwrap(started, 'Process could not be started');
       trackedProcesses.set(processValue.processId, request.workspaceId);
       return toProcessSummary(processValue, request.workspaceId, '');
@@ -554,7 +769,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     stopProcess: async (request: StopProcessRequest): Promise<{ readonly stopped: boolean }> => {
       const workspaceId = trackedProcesses.get(request.processId);
       if (workspaceId === undefined) return { stopped: false };
-      unwrap(await processService.stop(actor, workspaceId, request.processId), 'Process could not be stopped');
+      unwrap(await processService.stop(actor, workspaceId, request.processId, true), 'Process could not be stopped');
       return { stopped: true };
     },
     startMcp: async (request: StartMcpRequest): Promise<McpConnectionStatus> => {
@@ -573,14 +788,32 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     saveTunnelApiKey: async (request: SaveTunnelApiKeyRequest): Promise<{ readonly saved: boolean }> => {
       await tunnelController.saveApiKey(request.apiKey);
+      if (readSettings().tunnelAutoReconnect) {
+        const status = await tunnelController.status();
+        if (status.profileExists && status.clientPath !== null) await tunnelController.start();
+      }
       return { saved: true };
     },
-    startTunnel: (): Promise<TunnelStatus> => tunnelController.start(),
-    stopTunnel: (): Promise<TunnelStatus> => tunnelController.stop(),
-    getTunnelStatus: (): Promise<TunnelStatus> => tunnelController.status(),
-    setTunnelClientPath: async (request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> => ({
-      clientPath: tunnelController.setClientPath(request.clientPath),
-    }),
+    startTunnel: async (): Promise<TunnelStatus> => {
+      const status = await tunnelController.start();
+      recordPersistentTunnelStatus(status);
+      return status;
+    },
+    stopTunnel: async (): Promise<TunnelStatus> => {
+      const status = await tunnelController.stop();
+      recordPersistentTunnelStatus(status);
+      return status;
+    },
+    getTunnelStatus: (): Promise<TunnelStatus> => observedTunnelStatus(),
+    setTunnelClientPath: async (request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> => {
+      const clientPath = tunnelController.setClientPath(request.clientPath);
+      if (readSettings().tunnelAutoReconnect) {
+        const status = await tunnelController.status();
+        if (status.profileExists && status.hasApiKey) await tunnelController.start();
+      }
+      return { clientPath };
+    },
+
     setLocale: async (request: SetLocaleRequest): Promise<{ readonly locale: UiLocale }> => {
       settingsRepository.set(localeSettingKey, request.locale);
       return { locale: request.locale };
@@ -589,19 +822,34 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const previous = readSettings();
       persistUserSettings(settingsRepository, request.settings);
       const next = readSettings();
+      if (previous.recoveryRetentionDays !== next.recoveryRetentionDays) {
+        lastRecoveryRetentionSweepAt = 0;
+        await sweepRecoveryRetention(true).catch((error: unknown) => {
+          console.error(`Recovery retention sweep failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        });
+      }
       return { settings: next, restartRequired: runtimeRestartRequired(previous, next) };
     },
-    configureTunnelProfile: async (request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }> => ({
-      configured: true,
-      profilePath: await tunnelController.configureProfile(request.tunnelId),
-    }),
+    configureTunnelProfile: async (request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }> => {
+      const profilePath = await tunnelController.configureProfile(request.tunnelId);
+      if (readSettings().tunnelAutoReconnect) await tunnelController.start();
+      return { configured: true, profilePath };
+    },
+
     launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => {
       const result = await capabilityRuntime.service.execute('dom_cdp', { action: 'launch' });
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
     runDoctor: async (): Promise<DoctorReport> => {
       await ensureMachineRoots();
-      return doctorService.run();
+      const base = await doctorService.run();
+      const tunnel = await tunnelController.diagnosticStatus();
+      recordPersistentTunnelStatus(tunnel);
+      const mcp = mcpLifecycle.status();
+      const tunnelHealth = await tunnelController.incidentHealth();
+      const checks = [...base.checks, ...buildPersistentTunnelDoctorChecks({ tunnel, mcp, tunnelHealth, persistentEnabled: readSettings().tunnelAutoReconnect })];
+      return { checks, exitCode: checks.some((check) => check.required && check.status === 'fail') ? 1 : 0 };
+
     },
     getLogSnapshot: async (): Promise<LogSnapshot> => {
       await ensureMachineRoots();
@@ -621,11 +869,13 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return logHub.snapshot();
     },
     clearLogBuffer: async (request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }> => {
-      logHub.clear(request.source, request);
+      const workspaceSummaries = (await workspaceRepository.listAll()).map(toWorkspaceSummary);
+      logHub.clear(request.source, request, workspaceSummaries);
       return { cleared: true };
     },
     captureIncident: async (updaterEvents: readonly string[] = []): Promise<IncidentReport> => {
-      const tunnel = await tunnelController.status();
+      const tunnel = await observedTunnelStatus();
+
       const tunnelClientVersion = await tunnelController.clientVersion();
       const relevantPids = await tunnelController.incidentRelevantPids();
       return buildIncidentReport({
@@ -653,28 +903,48 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     getLocale: (): UiLocale => readLocale(settingsRepository),
     getUserSettings: (): UserSettings => readSettings(),
     getDestructivePolicy: (): DestructiveAutoApprovalPolicy => destructivePolicyProvider(),
+    getActiveWorkspaceScope: async (): Promise<WorkspaceScope | null> => {
+      const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      console.log('DBG_SCOPE_SINGLE', JSON.stringify({ id:selected?.id, root:selected?.realRootPath }));
+      return selected === null ? null : { workspaceId: selected.id, rootPath: selected.realRootPath };
+    },
+    getActiveWorkspaceScopes: async (): Promise<readonly WorkspaceScope[]> => {
+      const rows = await resolveActiveProjectWorkspaces();
+      console.log('DBG_SCOPE_LIST', JSON.stringify(rows.map((w)=>[w.id,w.realRootPath])));
+      return rows.map((workspace) => ({ workspaceId: workspace.id, rootPath: workspace.realRootPath }));
+    },
+
     createBackup: (reason: BackupReason = 'manual'): Promise<BackupSummary> => backupService.create(reason),
     ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
       await ensureMachineRoots(rootPath);
       const existing = await workspaceService.list();
-      const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === path.resolve(rootPath).toLowerCase());
-      if (matched !== undefined) {
+      const resolvedRoot = path.resolve(rootPath);
+      const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedRoot.toLowerCase());
+      if (matched !== undefined && !isDriveRoot(matched.realRootPath) && !isDriveRoot(matched.rootPath)) {
         settingsRepository.set(selectedWorkspaceSettingKey, matched.id);
+        await activateWorkspace(matched.id);
         return matched.id;
       }
+      const projects = existing.filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
       const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
       if (selectedId !== null) {
-        const selected = existing.find((workspace) => workspace.id === selectedId);
-        if (selected !== undefined) return selected.id;
+        const selected = projects.find((workspace) => workspace.id === selectedId);
+        if (selected !== undefined) { await activateWorkspace(selected.id); return selected.id; }
       }
-      if (existing[0] !== undefined) {
-        settingsRepository.set(selectedWorkspaceSettingKey, existing[0].id);
-        return existing[0].id;
+      if (!isDriveRoot(resolvedRoot)) {
+        const displayName = path.basename(resolvedRoot) || 'Workspace';
+        const added = unwrap(await workspaceService.add(displayName, resolvedRoot), 'Workspace could not be added');
+        settingsRepository.set(selectedWorkspaceSettingKey, added.id);
+        await activateWorkspace(added.id);
+        return added.id;
       }
-      const displayName = path.basename(path.resolve(rootPath)) || 'Workspace';
-      const added = unwrap(await workspaceService.add(displayName, rootPath), 'Workspace could not be added');
-      settingsRepository.set(selectedWorkspaceSettingKey, added.id);
-      return added.id;
+      if (projects[0] !== undefined) {
+        settingsRepository.set(selectedWorkspaceSettingKey, projects[0].id);
+        await activateWorkspace(projects[0].id);
+        return projects[0].id;
+      }
+      throw new Error('No project workspace is available');
+
     },
     autoStartMcp: async (): Promise<McpConnectionStatus> => {
       await ensureMachineRoots();
@@ -688,29 +958,31 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           ? unwrap(await workspaceService.add(path.basename(resolvedPath) || 'Workspace', resolvedPath), 'Workspace could not be added').id
           : matched.id;
         settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
+        await activateWorkspace(workspaceId);
+
         return mcpLifecycle.start();
       }
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       if (selected === null) {
-        const workspacePath = process.cwd();
-        await ensureMachineRoots(workspacePath);
-        const workspaceId = await (async (): Promise<string> => {
-          const existing = await workspaceService.list();
-          const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === path.resolve(workspacePath).toLowerCase());
-          if (matched !== undefined) return matched.id;
-          const displayName = path.basename(path.resolve(workspacePath)) || 'Workspace';
-          const added = unwrap(await workspaceService.add(displayName, workspacePath), 'Workspace could not be added');
-          return added.id;
-        })();
-        settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
+        // First run: machine-root workspaces are system scopes, not user projects.
+        // Start MCP without inventing a project from process.cwd(); the user can add a real project in the UI.
         return mcpLifecycle.start();
       }
+      await activateWorkspace(selected.id);
       return mcpLifecycle.start();
     },
+    autoStartTunnel: async (): Promise<TunnelStatus | null> => {
+      const settings = readSettings();
+      const status = await tunnelController.status();
+      if (!settings.tunnelAutoReconnect || !status.profileExists || !status.hasApiKey || status.clientPath === null) {
+        await tunnelController.stopPersistedNativeRuntimeIfOwned();
+        return tunnelController.status();
+      }
+      return tunnelController.startAutomatically();
+    },
     close: async (): Promise<void> => {
-      // Keep the rest of the runtime usable when the owned tunnel cannot be
-      // proven stopped. The caller may surface the failure and retry safely.
-      await tunnelController.stopOwned();
+      await tunnelController.shutdownForDesktopExit();
+
       logHub.stop();
       await mcpLifecycle.close();
       await extensionsService.close().catch(() => undefined);
@@ -718,6 +990,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       database.close();
     },
   };
+}
+
+function bundledTunnelClientPath(): string | null {
+  const resourcesPath = (process as NodeJS.Process & { readonly resourcesPath?: string }).resourcesPath;
+  if (typeof resourcesPath !== 'string' || resourcesPath.trim().length === 0) return null;
+  return path.join(resourcesPath, 'tunnel-client', 'tunnel-client.exe');
 }
 
 function fixtureNodeExecutable(): string {
@@ -732,12 +1010,31 @@ async function resolveSelectedWorkspace(
   workspaceService: WorkspaceService,
   settingsRepository: SqliteSettingsRepository,
 ): Promise<Workspace | null> {
-  const workspaces = await workspaceService.list();
+  const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+
   if (workspaces.length === 0) return null;
   const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
   const selected = selectedId === null ? undefined : workspaces.find((workspace) => workspace.id === selectedId);
   return selected ?? workspaces[0] ?? null;
 }
+
+function parseStoredWorkspaceIds(value: string | null): string[] {
+  if (value === null || value.trim().length === 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0).map((entry) => entry.trim()))];
+  } catch {
+    return [...new Set(value.split(/[;,\r\n]+/).map((entry) => entry.trim()).filter((entry) => entry.length > 0))];
+  }
+}
+
+function persistStoredWorkspaceIds(settingsRepository: SqliteSettingsRepository, key: string, ids: readonly string[]): void {
+  const unique = [...new Set(ids.map((id) => id.trim()).filter((id) => id.length > 0))];
+  if (unique.length === 0) settingsRepository.delete(key);
+  else settingsRepository.set(key, JSON.stringify(unique));
+}
+
 
 async function listTrackedProcesses(
   processService: ProcessService,
@@ -835,15 +1132,12 @@ async function buildWorkLog(
   repository: AuditEventRepository,
   viewState: WorkLogViewState,
 ): Promise<readonly WorkLogEntry[]> {
-  const events = await listVisibleMcpEvents(repository, viewState, 100);
+  const events = await listVisibleMcpEvents(repository, viewState, 500);
   return events.map((event) => {
     const toolName = typeof event.metadata.toolName === 'string' ? event.metadata.toolName : event.action.replace(/^mcp_tool:/, '');
     const phase = event.metadata.phase === 'started' ? 'started' : 'completed';
-    const kind = phase === 'started'
-      ? 'task'
-      : event.resultCode === 'SUCCESS' || event.resultCode === 'STARTED'
-        ? 'result'
-        : 'error';
+    const kind = classifyMcpWorkLogKind(toolName, phase, event.resultCode);
+
     const callId = typeof event.metadata.callId === 'string' ? event.metadata.callId : undefined;
     return {
       id: event.id,
@@ -899,10 +1193,11 @@ function deriveAgentState(running: boolean, inFlightCount: number): AgentState {
 
 function buildConnectionModes(httpUrl: string | null): ConnectionModes {
   const packaged = process.env.LNWJUD_PACKAGED_EXECUTABLE?.trim();
-  const defaultExecutable = process.platform === 'win32' ? 'lnwjud.exe' : 'lnwjud';
+const defaultExecutable = process.platform === 'win32' ? 'lnwjud.exe' : 'lnwjud';
   const stdioCommand = packaged && packaged.length > 0
     ? `${packaged} --mcp-stdio`
     : `${defaultExecutable} --mcp-stdio`;
+
   return { httpUrl, stdioCommand };
 }
 
@@ -929,6 +1224,8 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
     startMinimized: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.startMinimized), false),
     tunnelAutoReconnect: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.tunnelAutoReconnect), true),
     tunnelMaxAutoRestarts: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.tunnelMaxAutoRestarts), DEFAULT_TUNNEL_MAX_AUTO_RESTARTS, 0, 50),
+    recoveryRetentionDays: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.recoveryRetentionDays), DEFAULT_RECOVERY_RETENTION_DAYS, 0, 3650),
+
     extensions: toIpcExtensionsSettings(extensions),
   };
 }
@@ -954,6 +1251,8 @@ function persistUserSettings(settingsRepository: SqliteSettingsRepository, setti
   settingsRepository.set(USER_SETTING_KEYS.startMinimized, settings.startMinimized ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.tunnelAutoReconnect, settings.tunnelAutoReconnect ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.tunnelMaxAutoRestarts, String(settings.tunnelMaxAutoRestarts));
+  settingsRepository.set(USER_SETTING_KEYS.recoveryRetentionDays, String(settings.recoveryRetentionDays));
+
   const extraMcpServers = Object.fromEntries(settings.extensions.extraMcpServers.map((server) => [server.name, {
     command: server.command,
     ...(server.args.length === 0 ? {} : { args: [...server.args] }),
@@ -1019,6 +1318,7 @@ function readLocale(settingsRepository: SqliteSettingsRepository): UiLocale {
 }
 
 /** Dedicated lnwjud MCP HTTP port — keeps clear of common app ports like 5000/3000/8080. */
+
 export const DEFAULT_MCP_HTTP_PORT = 18_765;
 
 function readMcpPort(value: string | undefined): number {
@@ -1026,6 +1326,7 @@ function readMcpPort(value: string | undefined): number {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) throw new Error('LNWJUD_MCP_PORT must be an integer from 0 to 65535');
   // Never bind the user's typical app port by accident.
+
   if (port === 5_000) return DEFAULT_MCP_HTTP_PORT;
   return port;
 }
@@ -1043,9 +1344,58 @@ function toManagedBrowserStatus(value: unknown): ManagedBrowserStatus {
   return { ready: value.ready, port: value.port, launched: value.launched };
 }
 
-async function checkExecutable(resolver: PathExecutableResolver, executable: string): Promise<{ readonly status: 'pass' | 'warn'; readonly message: string }> {
+async function checkExecutable(resolver: PathExecutableResolver, executable: string, missingStatus: 'warn' | 'fail'): Promise<{ readonly status: 'pass' | 'warn' | 'fail'; readonly message: string }> {
+
   const result = await resolver.resolve(executable);
-  return result.ok ? { status: 'pass', message: `${executable} is available` } : { status: 'warn', message: `${executable} is not available` };
+  return result.ok ? { status: 'pass', message: `${executable} is available` } : { status: missingStatus, message: `${executable} is not available` };
+}
+
+function triStateLabel(value: boolean | null): string {
+  return value === null ? 'unknown' : value ? 'ok' : 'failed';
+}
+
+export function buildPersistentTunnelDoctorChecks(input: {
+  readonly tunnel: TunnelStatus;
+  readonly mcp: McpConnectionStatus;
+  readonly tunnelHealth: { readonly state: 'live' | 'unhealthy' | 'unavailable' | 'unknown'; readonly message: string | null };
+  readonly persistentEnabled: boolean;
+}): readonly DoctorCheck[] {
+  const persistent = input.tunnel.persistent;
+  const required = input.persistentEnabled;
+  const identityPresent = persistent?.tunnelIdMasked !== null && persistent?.tunnelIdMasked !== undefined;
+  const nativeRuntime = persistent?.mode === 'native-managed' || persistent?.runtimeAliasActive === true;
+  const runtimeRunning = input.tunnel.state === 'running' && (persistent === null || persistent.state === 'running');
+  const localBindingMatches = persistent?.localMcpUrl !== null && persistent?.localMcpUrl !== undefined
+    && input.mcp.url !== null && sameLocalMcpEndpoint(persistent.localMcpUrl, input.mcp.url);
+  const mismatch = persistent?.lastErrorCode === 'TUNNEL_ID_MISMATCH';
+  const controlPlaneHealthy = persistent?.pollHealthy;
+  const health = persistent?.healthy ?? (input.tunnelHealth.state === 'live' ? true : input.tunnelHealth.state === 'unhealthy' ? false : null);
+  const ready = persistent?.ready ?? null;
+
+  const check = (id: string, status: DoctorCheck['status'], message: string, isRequired = required): DoctorCheck => ({ id, required: isRequired, status, message });
+  return [
+    check('persistent_tunnel_identity', identityPresent ? 'pass' : required ? 'fail' : 'warn', identityPresent ? 'Saved tunnel identity is configured' : 'TUNNEL_ID_MISMATCH: persistent tunnel identity is not configured'),
+    check('runtime_alias_state', nativeRuntime ? 'pass' : persistent === null ? 'warn' : 'warn', nativeRuntime ? 'Native runtime alias lnwjud is active' : 'TUNNEL_RUNTIME_DOWN: native runtime alias is not active', false),
+    check('runtime_process_running', runtimeRunning ? 'pass' : required ? 'fail' : 'warn', runtimeRunning ? 'Tunnel runtime is running' : 'TUNNEL_RUNTIME_DOWN: tunnel runtime is not running'),
+    check('tunnel_health', health === true ? 'pass' : health === false ? 'fail' : 'warn', health === true ? 'Tunnel health is OK' : health === false ? 'TUNNEL_RUNTIME_DOWN: tunnel health probe failed' : 'Tunnel health is not currently observable'),
+    check('tunnel_ready', ready === true ? 'pass' : ready === false ? 'fail' : 'warn', ready === true ? 'Tunnel readiness is OK' : ready === false ? 'TUNNEL_RUNTIME_DOWN: tunnel is not ready' : 'Tunnel readiness is not currently observable'),
+    check('control_plane_poll_health', controlPlaneHealthy === true ? 'pass' : controlPlaneHealthy === false ? 'fail' : 'warn', controlPlaneHealthy === true ? 'Control-plane poll is healthy' : controlPlaneHealthy === false ? 'CONTROL_PLANE_OFFLINE: control-plane polling is unhealthy' : 'Control-plane poll health is not currently observable'),
+    check('local_mcp_binding', localBindingMatches ? 'pass' : required ? 'fail' : 'warn', localBindingMatches ? 'Tunnel is bound to the current Desktop MCP endpoint' : 'LOCAL_BINDING_STALE: tunnel local MCP binding does not match the active Desktop MCP endpoint'),
+    check('local_mcp_reachable', input.mcp.running && input.mcp.url !== null ? 'pass' : required ? 'fail' : 'warn', input.mcp.running && input.mcp.url !== null ? 'Desktop MCP listener is reachable locally' : 'LOCAL_MCP_DOWN: Desktop MCP listener is not running'),
+    check('tunnel_id_matches_saved_identity', mismatch ? 'fail' : identityPresent ? 'pass' : 'warn', mismatch ? 'TUNNEL_ID_MISMATCH: runtime alias reports a different tunnel identity' : identityPresent ? 'Runtime has not reported a tunnel identity mismatch' : 'Saved tunnel identity is unavailable'),
+    check('runtime_key_available', input.tunnel.hasApiKey ? 'pass' : required ? 'fail' : 'warn', input.tunnel.hasApiKey ? 'Runtime API key is available in secure storage' : 'AUTH_REQUIRED: runtime API key is not available'),
+  ];
+}
+
+function sameLocalMcpEndpoint(left: string, right: string): boolean {
+  try {
+    const a = new URL(left);
+    const b = new URL(right);
+    const normalizeHost = (host: string): string => host === 'localhost' || host === '::1' || host === '[::1]' ? '127.0.0.1' : host.toLowerCase();
+    return a.protocol === b.protocol && normalizeHost(a.hostname) === normalizeHost(b.hostname) && a.port === b.port && a.pathname.replace(/\/$/, '') === b.pathname.replace(/\/$/, '');
+  } catch {
+    return left.trim() === right.trim();
+  }
 }
 
 async function checkCodex(discovery: CodexDiscovery): Promise<{ readonly status: 'pass' | 'warn'; readonly message: string }> {

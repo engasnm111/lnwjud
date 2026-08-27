@@ -10,7 +10,7 @@ interface LiveLogsPageProps {
   readonly tunnelLogExists: boolean;
   readonly onClear: (source: LogSource, scope: LogScopeSelection) => Promise<void>;
   readonly onClearAll: () => Promise<void>;
-  readonly onExport: (source: LogSource, scope: LogScopeSelection, query: string) => Promise<void>;
+  readonly onExport: (source: LogSource, scope: LogScopeSelection, query: string, lineIds: readonly number[], rows: readonly string[]) => Promise<void>;
   readonly onPopOut: () => Promise<void>;
   readonly onCaptureIncident: () => Promise<void>;
   readonly incidentBusy: boolean;
@@ -79,7 +79,7 @@ export function LiveLogsPage(props: LiveLogsPageProps): ReactElement {
             sessionLabel={t('scope.session')}
             scopeAllLabel={t('scope.all')}
             onClear={(scope) => props.onClear(source, scope)}
-            onExport={(scope, query) => props.onExport(source, scope, query)}
+            onExport={(scope, query, lineIds, rows) => props.onExport(source, scope, query, lineIds, rows)}
           />
         ) : null
       ))}

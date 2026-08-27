@@ -1,8 +1,8 @@
 {
   "name": "@lnwjud/desktop",
-  "version": "4.9.1",
+  "version": "4.12.0",
   "private": true,
-  "description": "Windows-first local AI-agent runtime and MCP gateway with 214 configurable tools.",
+  "description": "Windows-first local AI-agent runtime and MCP gateway with 223 configurable tools.",
   "author": "Adisorn",
   "homepage": "https://github.com/engasnm111/lnwjud#readme",
   "repository": {
@@ -15,8 +15,9 @@
     "build": "node scripts/write-capability-integrity.mjs && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js && esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --conditions=development --external:electron --outfile=dist/preload/index.cjs && vite build --config vite.config.ts && esbuild ../cli/src/bin/mcp-stdio.ts --bundle --platform=node --format=cjs --outfile=build/lnwjud-mcp-stdio.cjs && node scripts/write-stdio-launcher.mjs",
     "build:main": "node scripts/write-capability-integrity.mjs && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js",
     "build:renderer": "vite build --config vite.config.ts",
-    "package:windows": "corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --win nsis --x64 --publish never",
+    "package:windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/prepare-tunnel-client.ps1 && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/prepare-ripgrep.ps1 && powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ../../scripts/prepare-windows-ocr.ps1 && corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --win nsis portable --x64 --publish never && node scripts/write-portable-update-manifest.mjs && node scripts/write-release-evidence.mjs && node scripts/verify-release-evidence.mjs",
     "package:mac": "corepack pnpm@10.15.0 build && electron-builder --config electron-builder.yml --mac --publish never",
+
     "test": "vitest run --config vitest.config.ts --passWithNoTests",
     "typecheck": "tsc -b",
     "test:e2e": "node node_modules/electron/install.js && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js && esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --conditions=development --external:electron --outfile=dist/preload/index.cjs && vite build --config vite.config.ts && playwright test --config playwright.config.ts",

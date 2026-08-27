@@ -35,6 +35,18 @@ describe('WebFetchCapabilityBackend', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it.each(['POST', 'PUT', 'DELETE'] as const)('requires confirmation before a %s request', async (method) => {
+    const fetchImpl = vi.fn(async (): Promise<Response> => textResponse('mutated'));
+    const backend = new WebFetchCapabilityBackend({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(backend.execute({ url: 'https://example.com/item/1', method }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await expect(backend.execute({ url: 'https://example.com/item/1', method, userConfirmed: true }))
+      .resolves.toMatchObject({ ok: true, value: { status: 200, text: 'mutated' } });
+  });
+
   it('rejects non-http protocols', async () => {
     const backend = new WebFetchCapabilityBackend({});
 
@@ -85,6 +97,32 @@ describe('WebFetchCapabilityBackend', () => {
     const result = await backend.execute({ url: 'https://example.com/slow', timeout_seconds: 1 });
 
     expect(result).toMatchObject({ ok: false, error: { recoverable: true } });
+  });
+
+  it('warns that a failed HTTP mutation may already have completed and never retries the request automatically', async () => {
+    const fetchImpl = vi.fn(async (): Promise<Response> => {
+      const error = new Error('timed out after dispatch');
+      error.name = 'TimeoutError';
+      throw error;
+    });
+    const backend = new WebFetchCapabilityBackend({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const result = await backend.execute({
+      url: 'https://example.com/item/1',
+      method: 'POST',
+      body: '{"name":"updated"}',
+      timeout_seconds: 1,
+      userConfirmed: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        recoverable: true,
+        message: expect.stringMatching(/outcome may be unknown.*do not retry automatically/i),
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('combines caller cancellation with the request timeout signal', async () => {

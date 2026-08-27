@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import type { DashboardSnapshot, IncidentClassification, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 
@@ -12,9 +12,11 @@ interface ControlCenterPageProps {
   readonly onStopMcp: () => Promise<void>;
   readonly onRestartMcp: () => Promise<void>;
   readonly onSelectWorkspace: (workspaceId: string) => Promise<void>;
+  readonly onSetWorkspaceActive: (workspaceId: string, active: boolean) => Promise<void>;
   readonly onAddWorkspace: (rootPath: string) => Promise<void>;
   readonly onStartTunnel: () => Promise<void>;
   readonly onStopTunnel: () => Promise<void>;
+  readonly onOpenTunnelSetup: () => void;
   readonly onCaptureIncident: () => Promise<void>;
   readonly incidentBusy: boolean;
   readonly incidentClassification: IncidentClassification | null;
@@ -28,6 +30,13 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [projectPath, setProjectPath] = useState('');
   const [selectedId, setSelectedId] = useState(dashboard.selectedWorkspace?.id ?? '');
+  const [projectBusyId, setProjectBusyId] = useState<string | null>(null);
+  const activeWorkspaceIds = new Set(dashboard.activeWorkspaces.map((workspace) => workspace.id));
+  const activeProjects = props.workspaces.filter((workspace) => activeWorkspaceIds.has(workspace.id));
+
+  useEffect(() => {
+    setSelectedId(dashboard.selectedWorkspace?.id ?? '');
+  }, [dashboard.selectedWorkspace?.id]);
 
   const agentLabel = dashboard.agentState === 'busy'
     ? t('agent.busy')
@@ -37,7 +46,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
 
   const tunnelLabel = dashboard.tunnel.state === 'running'
     ? dashboard.tunnel.source === 'external'
-      ? t('tunnel.runningExternal')
+      ? (!dashboard.tunnel.hasApiKey || !dashboard.tunnel.profileExists ? t('tunnel.incompleteExternal') : t('tunnel.runningExternal'))
       : t('tunnel.running')
     : dashboard.tunnel.state === 'starting'
       ? t('tunnel.starting')
@@ -55,6 +64,15 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
   async function copyText(value: string): Promise<void> {
     await navigator.clipboard.writeText(value);
     setCopyStatus(t('mcp.copied'));
+  }
+
+  async function changeProjectActive(workspaceId: string, active: boolean): Promise<void> {
+    setProjectBusyId(workspaceId);
+    try {
+      await props.onSetWorkspaceActive(workspaceId, active);
+    } finally {
+      setProjectBusyId(null);
+    }
   }
 
   return (
@@ -139,6 +157,12 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           {dashboard.tunnel.message ? <p className="hint error-text">{dashboard.tunnel.message}</p> : null}
           {!dashboard.tunnel.hasApiKey ? <p className="hint">{t('tunnel.needKey')}</p> : null}
           {!dashboard.tunnel.profileExists ? <p className="hint">{t('tunnel.needProfile')}</p> : null}
+          {dashboard.tunnel.hasApiKey && dashboard.tunnel.profileExists ? null : (
+            <div className="guided-tunnel-home-entry">
+              <p className="hint">{t('guidedTunnel.dismissedHint')}</p>
+              <button type="button" className="btn-save-gold" onClick={props.onOpenTunnelSetup}>{t('guidedTunnel.openGuide')}</button>
+            </div>
+          )}
           <div className="inline-actions">
             <button
               type="button"
@@ -159,45 +183,94 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
       </div>
 
       <div className="home-grid">
-        <section className="panel">
-          <h2>{t('project.active')}</h2>
-          <div className="form-row">
-            <select
-              aria-label={t('project.active')}
-              value={selectedId}
-              onChange={(event) => setSelectedId(event.target.value)}
-            >
-              {props.workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.displayName}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={selectedId.length === 0}
-              onClick={() => { void props.onSelectWorkspace(selectedId); }}
-            >
-              {t('project.setMain')}
-            </button>
+        <section className="panel active-projects-panel">
+          <div className="project-picker-heading">
+            <div>
+              <h2>{props.locale === 'th' ? 'โปรเจกต์ที่ใช้งานพร้อมกัน' : 'Active Projects'}</h2>
+              <p className="hint">{props.locale === 'th' ? 'เลือกหลายโปรเจกต์สำหรับหลายแชทได้พร้อมกัน โดยโปรเจกต์หลัก (Primary) จะใช้เมื่อ tool call ไม่ได้ระบุ workspaceId' : 'Enable multiple projects for parallel chats. Primary is used only when a tool call does not specify workspaceId.'}</p>
+            </div>
+            <span className="active-project-count">{dashboard.activeWorkspaces.length}/{props.workspaces.length} {props.locale === 'th' ? 'กำลังใช้งาน' : 'active'}</span>
           </div>
-          <label className="field-label" htmlFor="add-project-path">{t('project.add')}</label>
-          <p className="hint">{t('project.addHint')}</p>
-          <div className="form-row">
-            <input
-              id="add-project-path"
-              value={projectPath}
-              onChange={(event) => setProjectPath(event.target.value)}
-              placeholder="D:\\projects\\app"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                void props.onAddWorkspace(projectPath).then(() => setProjectPath(''));
-              }}
-            >
-              {t('project.add')}
-            </button>
+
+          {props.workspaces.length === 0 ? (
+            <div className="active-project-empty">{props.locale === 'th' ? 'ยังไม่มีโปรเจกต์ เพิ่มโฟลเดอร์โปรเจกต์ด้านล่างเพื่อเริ่มใช้งาน' : 'No projects yet. Add a project folder below to get started.'}</div>
+          ) : (
+            <div className="active-project-picker" role="group" aria-label={props.locale === 'th' ? 'โปรเจกต์ที่ใช้งานพร้อมกัน' : 'Active projects'}>
+              {props.workspaces.map((workspace) => {
+                const active = activeWorkspaceIds.has(workspace.id);
+                const primary = dashboard.selectedWorkspace?.id === workspace.id;
+                const lastActive = active && dashboard.activeWorkspaces.length <= 1;
+                const busy = projectBusyId !== null;
+                const title = lastActive
+                  ? (props.locale === 'th' ? 'ต้องมี Active Project อย่างน้อย 1 โปรเจกต์' : 'At least one Active Project is required')
+                  : workspace.realRootPath;
+                return (
+                  <label
+                    key={workspace.id}
+                    className={`active-project-option ${active ? 'is-active' : ''} ${primary ? 'is-primary' : ''} ${lastActive ? 'is-locked' : ''}`}
+                    title={title}
+                  >
+                    <input
+                      className="active-project-checkbox"
+                      type="checkbox"
+                      checked={active}
+                      disabled={busy || lastActive}
+                      onChange={(event) => { void changeProjectActive(workspace.id, event.target.checked); }}
+                    />
+                    <span className="active-project-check" aria-hidden="true">{active ? '✓' : ''}</span>
+                    <span className="active-project-copy">
+                      <strong>{workspace.displayName}</strong>
+                      <small>{workspace.realRootPath}</small>
+                    </span>
+                    <span className="active-project-state">
+                      {primary ? <em className="primary-project-badge">PRIMARY</em> : active ? <em className="active-project-badge">ACTIVE</em> : null}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="primary-project-control">
+            <div className="primary-project-copy">
+              <strong>{props.locale === 'th' ? 'โปรเจกต์หลัก (Primary)' : 'Primary project'}</strong>
+              <small>{props.locale === 'th' ? 'ใช้เป็นค่าเริ่มต้นเท่านั้น โปรเจกต์อื่นที่เปิด Active ยังทำงานพร้อมกันได้' : 'Used only as the default; other active projects remain available in parallel.'}</small>
+            </div>
+            <div className="form-row primary-project-row">
+              <select
+                aria-label={props.locale === 'th' ? 'โปรเจกต์หลัก' : 'Primary project'}
+                value={selectedId}
+                disabled={activeProjects.length === 0}
+                onChange={(event) => setSelectedId(event.target.value)}
+              >
+                {activeProjects.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.displayName}</option>)}
+              </select>
+              <button type="button" disabled={selectedId.length === 0 || selectedId === dashboard.selectedWorkspace?.id} onClick={() => { void props.onSelectWorkspace(selectedId); }}>
+                {t('project.setMain')}
+              </button>
+            </div>
+          </div>
+
+          <div className="add-project-control">
+            <label className="field-label" htmlFor="add-project-path">{t('project.add')}</label>
+            <p className="hint">{t('project.addHint')}</p>
+            <div className="form-row">
+              <input
+                id="add-project-path"
+                value={projectPath}
+                onChange={(event) => setProjectPath(event.target.value)}
+                placeholder="D:\\projects\\app"
+              />
+              <button
+                type="button"
+                disabled={projectPath.trim().length === 0}
+                onClick={() => {
+                  void props.onAddWorkspace(projectPath).then(() => setProjectPath(''));
+                }}
+              >
+                {t('project.add')}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -208,7 +281,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           </article>
           <article className="info-card">
             <p>{t('info.activeProject')}</p>
-            <strong>{dashboard.selectedWorkspace?.displayName ?? '—'}</strong>
+            <strong>{dashboard.activeWorkspaces.length === 0 ? '—' : dashboard.activeWorkspaces.map((workspace) => workspace.displayName).join(', ')}</strong>
             <span data-testid="workspace-id" hidden>{dashboard.selectedWorkspace?.id ?? ''}</span>
           </article>
           <article className="info-card">

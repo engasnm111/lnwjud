@@ -3,7 +3,7 @@ import { ok } from '@lnwjud/domain';
 import { LocalCapabilityService } from './local-capability-service.js';
 
 describe('LocalCapabilityService', () => {
-  it('dispatches each Khai-Hub capability to its local backend', async () => {
+  it('dispatches each local desktop capability to its local backend', async () => {
     const calls: string[] = [];
     const service = new LocalCapabilityService({
       shell: { execute: async (): Promise<ReturnType<typeof ok>> => { calls.push('shell'); return ok({ value: 'shell' }); } },

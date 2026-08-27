@@ -20,6 +20,7 @@ apps/desktop/build/lnwjud-node
 # Test & Coverage
 coverage/
 test-results/
+.local-artifacts/
 
 # Environment Variables & Secrets
 .env
@@ -54,6 +55,7 @@ docs/
 !docs/
 docs/*
 !docs/CHATGPT_LONG_SESSION.md
+!docs/USAGE_TH.md
 !docs/mcp/
 docs/mcp/*
 !docs/mcp/MCP_TASKS.md
@@ -62,7 +64,18 @@ docs/architecture/*
 !docs/architecture/UPGRADE_ARCHITECTURE.md
 !docs/architecture/TOOL_CONTRACT.md
 !docs/architecture/ROADMAP_PHASE_STATUS.md
+!docs/architecture/MUTATION_SAFETY_MATRIX.md
 !docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md
+!docs/architecture/PERSISTENT_OPENAI_TUNNEL_RUNTIME.md
+!docs/roadmap/
+docs/roadmap/*
+!docs/roadmap/2026-08-25-v4.11.0-persistent-openai-tunnel-runtime-plan.md
+!docs/development/
+docs/development/*
+!docs/development/OPENAI_TUNNEL_LOCAL_CONTINUITY.md
+!docs/development/PACKAGING_WINDOWS.md
+!docs/development/WINDOWS_DEFENDER_FALSE_POSITIVE.md
+apps/desktop/build/packaged-runtime-evidence.json
 !docs/benchmarks/
 docs/benchmarks/*
 !docs/benchmarks/BASELINE.md
@@ -83,3 +96,6 @@ docs/benchmarks/*
 Thumbs.db
 lnwjud-incident.json
 .codegraph
+apps/desktop/build/tunnel-client/
+apps/desktop/build/runtime-tools/
+apps/desktop/build/vendor/

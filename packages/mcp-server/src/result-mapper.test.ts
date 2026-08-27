@@ -22,4 +22,28 @@ describe('mapResult image payloads', () => {
     const response = mapError({ code: 'FILE_NOT_FOUND', message: 'File or directory was not found', recoverable: false });
     expect(response.content[0]?.text).toBe('FILE_NOT_FOUND: File or directory was not found');
   });
+
+  it('preserves structured recovery details on provider failures', () => {
+    const response = mapError({
+      code: 'INTERNAL_ERROR',
+      message: 'provider failed after backup',
+      recoverable: true,
+      details: {
+        replacementRecoveryId: 'recovery-123',
+        replacementRecoveryPath: 'E:\\recovery\\recovery-123\\payload',
+      },
+    });
+
+    expect(response.structuredContent).toMatchObject({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Operation failed',
+        recoverable: true,
+        details: {
+          replacementRecoveryId: 'recovery-123',
+          replacementRecoveryPath: 'E:\\recovery\\recovery-123\\payload',
+        },
+      },
+    });
+  });
 });

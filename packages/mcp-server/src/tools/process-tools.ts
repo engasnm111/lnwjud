@@ -1,5 +1,6 @@
+import type { CommandSpec } from '@lnwjud/domain';
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
-import { processHandleSchema, processLogsSchema, processStartSchema } from './schemas.js';
+import { processHandleSchema, processLogsSchema, processStartSchema, processStopSchema, projectCommandSchema } from './schemas.js';
 
 type ProjectCommandKind = 'dev' | 'test' | 'lint' | 'typecheck' | 'build';
 
@@ -7,7 +8,7 @@ export function processTools(context: McpToolContext): McpToolDefinition[] {
   return [
     defineTool({
       name: 'process_start',
-      description: 'Immediate-return managed process launcher. Starts one policy-checked executable with separate arguments and returns processId as soon as the child is spawned; it never waits for command completion. Follow with process_status/process_logs/process_stop. For restart-safe durable work, use shell, whose MCP run mode is forced to background.',
+      description: 'Immediate-return managed process launcher. Normal policy-allowed commands run without confirmation; only risky command shapes, protected scope changes, or permission-profile ASK decisions require explicit confirmation. Starts one policy-checked executable with separate arguments and returns processId as soon as the child is spawned; it never waits for command completion. Follow with process_status/process_logs/process_stop. For restart-safe durable work, use shell, whose MCP run mode is forced to background.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: processStartSchema,
@@ -18,6 +19,7 @@ export function processTools(context: McpToolContext): McpToolDefinition[] {
           args: input.args,
           ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
           ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+          ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
         }, signal),
     }),
     defineTool({
@@ -55,13 +57,13 @@ export function processTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'process_stop',
-      description: 'Stop an owned managed process tree.',
+      description: 'Stop an owned managed process tree after explicit chat confirmation.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: processHandleSchema,
+      inputSchema: processStopSchema,
       handler: async (input) => context.services.process === undefined
         ? missingService()
-        : context.services.process.stop(context.actor, input.workspaceId, input.processId),
+        : context.services.process.stop(context.actor, input.workspaceId, input.processId, input.userConfirmed === true),
     }),
     ...projectCommandTools(context),
   ];
@@ -77,12 +79,29 @@ function projectCommandTools(context: McpToolContext): McpToolDefinition[] {
   ];
   return definitions.map(({ name, kind }) => defineTool({
     name,
-    description: `Immediate-return launcher for the detected project ${kind} command. Returns processId after spawn and never waits for the command to finish; follow with process_status/process_logs. Prefer project_* over manually discovering package scripts. For restart-safe durable work, use shell, whose MCP run mode is forced to background.`,
+    description: `Immediate-return launcher for the detected project ${kind} command. The gateway previews the exact executable/argv for host approval and re-resolves it immediately before spawn; any change requires fresh approval. Project-owned script bodies remain opaque and are not covered by Recovery Trash.`,
     permission: 'EXECUTE',
     annotations: { readOnlyHint: false, destructiveHint: false },
-    inputSchema: processHandleSchema.pick({ workspaceId: true }),
+    inputSchema: projectCommandSchema,
     handler: async (input, signal) => context.services.process === undefined
       ? missingService()
-      : context.services.process.startProjectCommand(context.actor, input.workspaceId, kind, signal),
+      : context.services.process.startProjectCommand(
+        context.actor,
+        input.workspaceId,
+        kind,
+        signal,
+        input.userConfirmed === true,
+        readApprovedProjectCommand(input),
+      ),
   }));
+}
+
+function readApprovedProjectCommand(input: unknown): CommandSpec | undefined {
+  if (typeof input !== 'object' || input === null || !('__lnwjudApprovedProjectCommand' in input)) return undefined;
+  const value = (input as { __lnwjudApprovedProjectCommand?: unknown }).__lnwjudApprovedProjectCommand;
+  if (typeof value !== 'object' || value === null) return undefined;
+  const executable = (value as { executable?: unknown }).executable;
+  const args = (value as { args?: unknown }).args;
+  if (typeof executable !== 'string' || !Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) return undefined;
+  return { executable, args };
 }

@@ -225,7 +225,10 @@ async function isFile(filePath: string): Promise<boolean> {
 
 function isPathInside(root: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  if (relative === '') return true;
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
+  return firstSegment !== '..';
 }
 
 function dedupeById(skills: readonly SkillSummary[]): readonly SkillSummary[] {

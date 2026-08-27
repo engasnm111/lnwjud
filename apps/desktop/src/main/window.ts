@@ -45,6 +45,7 @@ export function createMainWindow(showOnReady = true): BrowserWindow {
   const rendererEntryPath = getRendererEntryPath();
   const iconPath = getWindowIconPath();
   const isMac = process.platform === 'darwin';
+
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -58,6 +59,7 @@ export function createMainWindow(showOnReady = true): BrowserWindow {
         height: 38,
       },
     }),
+
     ...(iconPath !== undefined ? { icon: iconPath } : {}),
     webPreferences: {
       preload: getPreloadPath(),
@@ -94,6 +96,7 @@ export function createLogViewerWindow(): BrowserWindow {
   const rendererEntryPath = getRendererEntryPath();
   const iconPath = getWindowIconPath();
   const isMac = process.platform === 'darwin';
+
   const viewerWindow = new BrowserWindow({
     width: 960,
     height: 680,
@@ -108,6 +111,7 @@ export function createLogViewerWindow(): BrowserWindow {
         height: 38,
       },
     }),
+
     ...(iconPath !== undefined ? { icon: iconPath } : {}),
     webPreferences: {
       preload: getPreloadPath(),

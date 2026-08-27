@@ -1,222 +1,176 @@
-# ChatGPT Codex App + lnwjud Plugins: คู่มือทำงานยาว (Long Session Guide)
+# ChatGPT Chat + lnwjud: Outcome-Driven Continuity
 
-> สถานะ: ใช้กับ lnwjud v4.7.1+ ผ่าน ChatGPT โหมดแชท + Plugins / MCP
-> เป้าหมาย: ยอมรับว่า AI run มี budget จำกัด แต่ทำให้งานที่เครื่อง **ไม่ถูกตัดตาม AI run** และให้ run ถัดไปต่อใน **แชทเดิม** ได้ทันที
-> นโยบายปัจจุบัน: กลุ่ม `codex_*` ปิดเป็นค่าเริ่มต้นและไม่ advertise ให้ agent เห็น เว้นแต่ผู้ใช้เปิดเอง
+> สถานะ: ใช้กับ lnwjud v4.11.0+ ผ่าน ChatGPT Chat + Plugins / MCP
+> เป้าหมาย: ให้ ChatGPT ใช้ lnwjud ทำงานต่อเนื่องจนผลลัพธ์ที่ผู้ใช้สั่งเสร็จ และให้ Scheduled Task ปลุก turn ใหม่มารับงานเดิมต่อได้อย่างปลอดภัยเมื่อ turn ก่อนถูก platform ขัดจังหวะ
+> นโยบาย: กลุ่ม `codex_*` ปิดเป็นค่าเริ่มต้นและไม่ advertise เว้นแต่ผู้ใช้เปิดเอง
 
----
+## 1. กติกาหลัก: จบตามผลลัพธ์ ไม่ใช่เวลา
 
-## 1. แยก "AI run" ออกจาก "งานที่เครื่อง"
+lnwjud ไม่มี elapsed-time cutoff และไม่เติมข้อความให้ ChatGPT หยุด, handoff หรือรอคำว่า “ทำต่อ” ตามเวลาที่ผ่านไป
 
-ChatGPT/Codex โหมดแชทมี budget ต่อ run และ Plugins ใช้โควต้าของแชท การที่ run จบหรือถูกตัดไม่ได้แปลว่าโปรเซสที่เครื่องต้องจบตามไปด้วย
+เมื่อเชื่อม MCP สำเร็จ server จะประกาศกติกาให้ client ว่า:
 
-lnwjud แยกงานออกเป็น 2 แบบ:
+- ใช้ tools ต่อจน requested outcome เสร็จ
+- ห้ามหยุดหรือขอให้ผู้ใช้พิมพ์ `continue` เพียงเพราะเวลาผ่านไป
+- หยุดเมื่อเสร็จจริง, ต้องการคำตัดสิน/สิทธิ์ใหม่จากผู้ใช้ หรือมี external blocker ที่ทำต่ออย่างปลอดภัยไม่ได้
+- background task ใช้ตามธรรมชาติของ command ไม่ใช่ใช้เพื่อหนี timer
 
-- **งานสั้น/โต้ตอบ**: tool call ปกติ, `project_*`, `search_text`, `read_file_page`
-- **งานยาวที่ต้องรอดข้าม run**: `shell` + `execution: "background"` → ได้ durable `task_id` → งานรันต่อที่เครื่อง → run ถัดไปใช้ `status` / `logs` / `result` ด้วย `task_id` เดิม
+ไม่มีค่าคงที่ 22, 25 หรือ 60 นาทีสำหรับความต่อเนื่องของ run
 
-กฎใช้งาน: ถ้าคาดว่างานจะเกินประมาณ **5 นาที** เช่น full build, full test, installer/package, dependency install ใหญ่ หรือ benchmark ยาว ให้ส่งเป็น durable background ตั้งแต่แรก ไม่ต้องให้ AI ถือ connection รอ
+## 2. งานโต้ตอบกับงาน background
 
-งานที่กิน 30–60 นาทีจึงทำได้จริงที่เครื่อง แม้ AI run จะจบไปก่อนแล้ว
+ChatGPT ควรเรียก tools ปกติและทำ reasoning ต่อเมื่อขั้นตอนถัดไปยังต้องอาศัยผลลัพธ์ก่อนหน้า เช่น อ่านโค้ด แก้ไฟล์ รัน targeted test และแก้ failure
 
-## 2. Budget Guard — เตือนก่อน run ถูกตัดกลางงาน
+ใช้ durable background task เมื่อ command มีลักษณะเหมาะสม เช่น:
 
-lnwjud เริ่มนับ budget ตั้งแต่ **tool call แรกของ run** ที่ dispatch กลางเดียวกับ progress heartbeat
+- full monorepo build/test ที่รันแยกได้
+- installer/package
+- dependency operation หรือ benchmark ที่ไม่ต้องตัดสินใจระหว่างทาง
+- service/process ที่ตั้งใจให้ทำงานต่อเบื้องหลัง
 
-เมื่อ elapsed ประมาณ **22 นาทีขึ้นไป** ทุก tool result จะมีข้อความท้ายผลลัพธ์:
+เมื่อเริ่ม background task แล้ว ให้เก็บ `task_id`, ทำงานส่วนอื่นที่ไม่ชนกัน และกลับมาเช็ก `status` / `logs` / `result` จน terminal ภายใน run เดิมตราบใดที่ยังทำต่อได้ ห้ามเริ่ม command เดิมซ้ำเพียงเพราะ ChatGPT turn ใหม่ไม่เห็น process เดิมใน context
 
-```text
-ใกล้หมด budget — อัปเดต tracker + สั่งงานยาวเป็น background เดี๋ยวนี้
-```
+## 3. Persistent tunnel กับ durable execution
 
-เมื่อเห็นข้อความนี้ให้ทำตามลำดับ:
+สองส่วนนี้แก้คนละเรื่อง:
 
-1. อัปเดต `docs/PHASE_PROGRESS.md` ทันที
-2. งานที่ยังต้องใช้เวลานานให้ย้ายไป `shell execution=background`
-3. เขียน `task_id` ลง tracker
-4. ถ้ายังมีเวลาให้ทำ targeted verification เท่านั้น
-5. ก่อนจบใช้ `session_handoff`
+- Persistent tunnel รักษา Tunnel ID เดิมและ reconnect local runtime โดยไม่ให้ผู้ใช้สร้าง connector ใหม่
+- Durable execution ทำให้ command ที่เครื่องไม่ตายเมื่อ transport หลุดชั่วคราว
 
-Budget Guard ไม่ได้พยายามยืด hard cap ของ ChatGPT แต่ทำหน้าที่ checkpoint ก่อนชน cap
+ทั้งสองส่วนสนับสนุน outcome-driven run แต่ไม่ควรเพิ่มคำสั่งหยุดตามเวลาเข้าไปใน tool result
 
-## 3. Tracker-First + Durable-Task-First
+## 4. Tracker ใช้เก็บสถานะ ไม่ใช่นาฬิกานับถอยหลัง
 
-Tracker หลักคือ `docs/PHASE_PROGRESS.md`
+ถ้า repository มี `docs/PHASE_PROGRESS.md` ให้ใช้เป็น source of truth สำหรับงานหลาย phase:
 
-กฎทุก run:
+1. อ่าน pending item ที่เกี่ยวข้องก่อน ไม่สำรวจใหม่ทั้ง repoโดยไม่จำเป็น
+2. อัปเดตหลัง milestone สำคัญหรือเมื่อสถานะจริงเปลี่ยน
+3. บันทึก durable `task_id` พร้อม acceptance ที่ต้องตรวจ
+4. ทำ phase ถัดไปต่อทันทีเมื่อยังมีงานที่ปลอดภัยและอยู่ใน scope
+5. ใช้ `session_handoff` เฉพาะเมื่อผู้ใช้ขอส่งต่องาน หรือเกิด client/platform interruption ที่หลีกเลี่ยงไม่ได้
 
-1. เริ่มจาก tracker + pending item แรก ไม่สำรวจใหม่ทั้ง repo ถ้า tracker บอกตำแหน่งไว้แล้ว
-2. หลัง sub-step สำคัญให้ update tracker ทันที ไม่รอท้าย run
-3. ถ้าสั่ง background task ต้องบันทึก `task_id`, คำสั่ง/เป้าหมาย และสิ่งที่ run ถัดไปต้องเช็ค
-4. Run ถัดไปดึงงานเดิมด้วย `shell status/logs/result` จาก task ID เดิม
-5. ห้าม tight-poll `process_status` หรือ task status ทุกไม่กี่วินาที; เช็คเมื่อมีเหตุผลหรือเมื่อคาดว่างานควรคืบหน้าแล้ว
-6. ก่อนจบ run ให้ tracker มี Resume note ที่บอกไฟล์/ฟังก์ชัน/คำสั่งถัดไปชัดเจน
+## 5. Context economy ระหว่างงานยาว
 
-### งานแบบไหนควรเป็น background
+- ไม่แน่ใจตำแหน่งโค้ด → `search_text` ก่อน
+- ไฟล์ใหญ่ → `read_file_page` / `read_file_page_continue`
+- ตรวจซ้ำหลัง diff เล็ก → `verify_incremental`
+- project command ปกติ → `project_*`
+- command ที่รันแยกได้ → durable `shell` background
+- `process_status` เป็น snapshot; อย่า tight-poll
 
-| งาน | แนวทาง |
-| --- | --- |
-| targeted typecheck สั้น | `verify_incremental` |
-| targeted test/lint/build | `project_test` / `project_lint` / `project_build` |
-| full monorepo test/build | `shell` background |
-| Windows installer/package | `shell` background |
-| install/dependency operation ที่นาน | `shell` background |
-| benchmark / e2e ยาว | `shell` background |
+การประหยัด context มีไว้เพิ่มพื้นที่ reasoning ไม่ใช่เป็นเหตุให้หยุดงานก่อนเสร็จ
 
-## 4. Context Economy — คืนเวลางานแก้จริง
+## 6. Durable Goal Continuation
 
-อย่าเสีย run กับการอ่าน/poll ซ้ำ:
+Durable Goal Continuation เป็น state/coordination layer สำหรับ **ChatGPT Web turn ใหม่** ที่กลับมาทำ objective เดิมต่อ ไม่ใช่ AI worker และไม่รัน model ภายใน lnwjud
 
-- ตำแหน่งโค้ดไม่แน่ชัด → ใช้ `search_text` ก่อน
-- ไฟล์ใหญ่ → `read_file_page` / `read_file_page_continue`; อย่าอ่านทั้งไฟล์ซ้ำ
-- ตรวจ typecheck ระหว่างแก้ → `verify_incremental`
-- งาน project command ปกติ → `project_*`
-- งานเกิน ~5 นาที → durable `shell background`
-- `process_status` เป็น snapshot ไม่ใช่ polling loop
+Public tools:
 
-### `verify_incremental`
+- `run_goal` — immediate-return create/resume + ขอ lease โดยใช้ `goalKey` คงที่
+- `get_goal` — อ่าน snapshot โดยไม่ mutate และไม่คืน lease token
+- `checkpoint_goal` — compare-and-swap checkpoint ด้วย `expectedRevision` + `leaseToken`
+- `finish_goal` — ปิดเป็น `completed`, `failed` หรือ `blocked`
+- `list_goals` — ค้น goal แบบ bounded เมื่อแชทจำ `goalId` ไม่ได้
 
-`verify_incremental` สร้าง cache key จาก Git status + staged diff + unstaged diff ของ workspace
+`run_goal` **ไม่ได้สร้าง ChatGPT turn ใหม่เอง** และไม่มี foreground wait ภายใน tool. Scheduled Task ของ ChatGPT เป็นตัวปลุก turn ใหม่ ส่วน goal tools ทำให้ turn ใหม่นั้นตัดสินใจได้ว่าต้อง resume อะไรและป้องกัน writer ซ้ำ
 
-- diff เดิม → `cache: "hit"` ไม่เสียเวลารัน typecheck ซ้ำ
-- diff เปลี่ยน → `cache: "miss"` แล้วรัน detected project typecheck ใหม่
-- ผลล้มเหลวก็ cache ตาม diff เดิม เพื่อไม่รันซ้ำจนกว่าจะมีการแก้ไฟล์
+Flow ที่ควรใช้:
 
-ใช้ตัวนี้หลัง edit unit เล็ก ๆ แทน full lint+test+build ทุกครั้ง แล้วค่อยรัน gate เต็มเมื่อจบ phase
+1. Scheduled turn เรียก `run_goal` ด้วย `workspaceId` และ `goalKey` เดิมทุกครั้ง
+2. ถ้า `acquired: false` แปลว่ามี turn อื่นถือ lease อยู่ ให้รายงานสถานะแล้ว **ห้ามเริ่ม mutation/process ซ้ำ**
+3. ถ้า `acquired: true` ให้ใช้ `currentPhase`, `pendingSteps`, `nextAction`, `activeTaskIds` และ `lastCheckpoint` เป็น continuation state
+4. ถ้า `activeTaskIds` มี task เดิม ให้ตรวจ task เดิมก่อนเริ่ม command ใหม่
+5. หลังผลลัพธ์สำคัญเรียก `checkpoint_goal` พร้อม `expectedRevision` ล่าสุด
+6. checkpoint ให้เก็บเฉพาะ bounded/redacted summary, path/hash/task ID/evidence ที่จำเป็น ห้ามเก็บ credential, source contents หรือ log ยาว
+7. ถ้า turn ตายก่อน release lease รอบถัดไป takeover ได้เมื่อ lease หมดอายุ
+8. เมื่อ acceptance ครบจริงจึง `finish_goal`
+9. Scheduled Task เห็น terminal state แล้วต้องหยุดตัวเอง ไม่เรียก tools ต่อ
 
-## 5. การต่อ run
+Goal state เป็น SQLite durable state และใช้ monotonic revision/CAS + append-only checkpoint history. Raw lease token ไม่ถูกเก็บใน authoritative state; repository เก็บ hash สำหรับตรวจสิทธิ์เท่านั้น และ activity logs ต้องไม่แสดง lease token
 
-**ค่าเริ่มต้นคือทำ run ถัดไปในแชทเดิม** ไม่ต้องเปิดแชทใหม่ทุก 30 นาที
+`session_checkpoint` เดิมยังเป็น summary checkpoint สำหรับ development session และ file checkpoint/Recovery Center ยังใช้กู้คืนไฟล์ ทั้งสองอย่าง backward compatible และ **ไม่ใช่ authoritative goal state**
 
-เหตุผล:
+### Owner scope และ session rotation
 
-- context การคุยและ intent ยังต่อเนื่อง
-- `session_handoff` สร้าง continuation prompt ให้พร้อมกดส่ง
-- durable task ID ทำให้งานที่เครื่องต่อข้าม run ได้
-- เปิดแชทใหม่โดยไม่จำเป็นทำให้เสียเวลาสร้าง context ใหม่
+Goal ownership ไม่ผูกกับ transient MCP `sessionId` เพียงอย่างเดียว. Session ใหม่ของ logical client เดิมสามารถ resume goal เดิมได้ แต่ workspace อื่นหรือ stable client identity อื่นถูกปฏิเสธ
 
-### ถ้า tool schema ดูเก่า
+ข้อจำกัด trust boundary ปัจจุบัน: Desktop HTTP/tunnel อาจเห็น host-level logical client identity แทน authenticated per-human principal ถ้าหลายคนแชร์ endpoint เดียวกัน ดังนั้นอย่าอ้างว่า Durable Goal Continuation เป็น cryptographic tenant isolation ระหว่างมนุษย์หลายคนที่แชร์ tunnel เดียวกัน
 
-1. Restart MCP/tunnel เฉพาะเมื่อ setting/tool registry เปลี่ยนจริง
-2. กด **Refresh connector**
-3. ทดสอบ tools/list ใหม่
-4. **เปิด chat ใหม่เฉพาะเมื่อ Refresh connector ยังแก้ schema ค้างไม่ได้**
+## 7. Scheduled Task ตัวอย่าง
 
-### 5A. `session_handoff` — ปุ่มต่อ run
+Scheduled Task ควรใช้ `goalKey` ที่คงที่และสั้น เช่น `release-v4.11.0-durable-goal` ไม่สร้าง key ใหม่ทุกชั่วโมง
 
-ก่อน run จบให้เรียก `session_handoff` โดยระบุ workspace
-
-Tool จะอ่านอัตโนมัติ:
-
-- `docs/PHASE_PROGRESS.md`
-- `git_status`
-- staged + unstaged `git_diff`
-- durable background task IDs จาก shell task store
-
-แล้วคืน `prompt` กระชับพร้อมส่งในแชทเดิม รูปแบบหลัก:
+ตัวอย่าง prompt สำหรับ Scheduled Task:
 
 ```text
-Continue this run in the same chat from docs/PHASE_PROGRESS.md.
+ทำงาน objective เดิมต่อในแชทนี้โดยใช้ lnwjud เท่านั้น
 
-Tracker excerpt:
-<ข้อมูลจริงจาก tracker>
-
-Current Git changes: <ไฟล์ที่เปลี่ยน>
-Durable background tasks:
-- <task_id> (<state>)
-
-Start by:
-1. Run the "Next chat startup probe" from the tracker.
-2. Recover durable jobs by task_id with shell status/logs/result; do not tight-poll.
-3. Inspect git status/diff only as needed for the current phase.
-4. Work one phase only and use search_text/read_file_page instead of re-reading large files.
-5. Use verify_incremental for repeated typecheck; use targeted project_* verification as needed.
-6. Before ending, update the tracker. Jobs expected to exceed ~5 minutes should run as durable shell background tasks and their task_id must be written to the tracker.
-
-Do not redo completed phases unless verification proves a regression.
-If tool schema looks stale, Refresh connector first; open a new chat only if Refresh connector does not fix it.
+1. เรียก run_goal ด้วย workspaceId เดิมและ goalKey="release-v4.11.0-durable-goal"
+2. ถ้า acquired=false ให้รายงานว่ายังมี lease อยู่และจบรอบ ห้ามเริ่มงานซ้ำ
+3. ถ้า acquired=true ให้ทำต่อจาก pendingSteps/nextAction/lastCheckpoint
+4. ถ้ามี activeTaskIds ให้ตรวจ status/log/result ของ task เดิมก่อนเริ่ม command ใหม่
+5. หลัง milestone หรือผลลัพธ์สำคัญทุกครั้งให้ checkpoint_goal ด้วย expectedRevision ล่าสุด
+6. งานยาวให้เริ่ม background แล้ว checkpoint task_id ทันที
+7. ห้ามใช้ Codex, AI CLI, OpenAI API worker หรือ browser automation เป็นสมองเพิ่มเติม
+8. เมื่อ acceptance ครบจริงให้ finish_goal(status="completed")
+9. ถ้า get_goal/run_goal เห็น terminal state ให้หยุด Scheduled Task นี้และไม่เรียก tools ต่อ
 ```
 
-ผู้ใช้จึงแค่กดส่ง prompt ที่ tool สร้าง ไม่ต้องจำ/พิมพ์ resume note เอง
+ครั้งแรกที่สร้าง goal ต้องส่ง `objective` และอาจส่ง structured `plan`; รอบหลังใช้ `goalKey` เดิมและไม่จำเป็นต้องส่ง objective ซ้ำ
 
-## 6. ชั้นการทำงาน
+## 8. การกู้คืนเมื่อ client/platform ขัดจังหวะจริง
 
-### ชั้น C — ChatGPT/Codex App Chat + Plugins (ทางหลัก)
+ถ้า run ถูก client หรือ platform ขัดจังหวะจากภายนอก:
 
-ใช้ lnwjud tools โดยตรง, tracker-first, Budget Guard, `verify_incremental`, durable background และ `session_handoff`
+1. ใช้แชทเดิมก่อน
+2. ถ้างานถูกจัดเป็น Durable Goal ให้ `run_goal` ด้วย `goalKey` เดิมก่อน mutation ใด ๆ
+3. ตรวจ `activeTaskIds` และ durable task เดิมด้วย `task_id`
+4. ตรวจ git status/diff เท่าที่จำเป็น
+5. ทำต่อจาก pending acceptance แรก
+6. Refresh connector เฉพาะเมื่อ tool schema เปลี่ยนหรือ cache ค้างจริง
 
-### ชั้น A — Codex Work delegation (`codex_*`) — ปิดตามนโยบาย
+`session_handoff` เป็น recovery tool ไม่ใช่ scheduled stop และไม่ควรถูกเรียกเพียงเพราะ elapsed time
 
-`codex_status`, `codex_run`, `codex_task_*`, `codex_stop` **ไม่ register/ไม่ advertise โดย default** เพื่อกัน agent ใช้ Work/Codex quota โดยไม่ได้ตั้งใจ
+## 9. Codex delegation
 
-เปิดได้เฉพาะเมื่อผู้ใช้ตั้งใจเปิด setting `Enable Codex delegation tools` และ restart MCP/Tunnel เพื่อสร้าง registry ใหม่ หลังเปิดแล้วจึงเห็น tool กลุ่มนี้
+`codex_status`, `codex_run`, `codex_task_*`, `codex_stop` ไม่ register/advertise โดย default เพื่อไม่ใช้ Codex quota โดยไม่ได้ตั้งใจ
 
-### ชั้น B — client ที่ต่อ MCP โดยตรง
+ChatGPT Chat สามารถอ่าน เขียน รันคำสั่ง และตรวจผลผ่าน lnwjud tools โดยตรง การเปิด `codex_*` ทำเฉพาะเมื่อผู้ใช้ตั้งใจมอบงานให้ Codex CLI แยกต่างหาก Durable Goal Continuation ไม่ต้องใช้ Codex หรือ AI CLI ใด ๆ
 
-CLI/IDE/client อื่นที่ต่อ stdio สามารถใช้ durable background contract เดียวกันได้ หลัก tracker/task ID ยังเหมือนเดิม
-
-## 7. Template prompts
-
-### A. Resume ในแชทเดิม
-
-แนะนำให้ใช้ `session_handoff` แทนการเขียนเอง ถ้าต้องเขียนเองใช้:
+## 10. Prompt แนะนำสำหรับงานแบบสั่งครั้งเดียว
 
 ```text
-Continue this run in the same chat from docs/PHASE_PROGRESS.md.
-
-Start by:
-1. Run the "Next chat startup probe" from the tracker.
-2. Recover any durable background task IDs with shell status/logs/result.
-3. Inspect git status/diff only as needed for the current phase.
-4. Work one phase only.
-5. Use verify_incremental for repeated typecheck and targeted project_* checks only as needed.
-6. Update docs/PHASE_PROGRESS.md before ending.
-
-If the run is near budget, update the tracker first and move long work to shell background.
-Do not redo completed phases unless verification proves a regression.
-If tool schema is stale, Refresh connector first; open a new chat only if refresh fails.
+ทำงานนี้ต่อเนื่องจน acceptance ครบทั้งหมด
+อย่าหยุดหรือรอคำว่า “ทำต่อ” เพียงเพราะเวลาผ่านไป
+ถ้ามี command ที่เหมาะกับ background ให้เก็บ task_id แล้วทำงานอื่นต่อ
+กลับมาตรวจ task จน terminal และแก้ failure ต่อใน run เดิม
+ถ้าต้อง resume ข้าม ChatGPT turn ให้ใช้ Durable Goal Continuation และ goalKey เดิม
+หยุดเฉพาะเมื่อเสร็จจริง หรือต้องการข้อมูล/สิทธิ์ใหม่จากฉันอย่างหลีกเลี่ยงไม่ได้
 ```
 
-### B. Long machine job
-
-```text
-งานนี้น่าจะเกิน 5 นาที ให้สั่งด้วย shell execution=background ทันที
-เขียน task_id ลง docs/PHASE_PROGRESS.md พร้อมคำสั่งและ acceptance ที่ต้องเช็ค
-อย่า tight-poll ระหว่างรอ ให้ทำงานอื่นที่ไม่ชนไฟล์ หรือจบ run ได้
-run ถัดไปใช้ task_id เดิมดึง status/logs/result แล้วเดินต่อ
-```
-
-### C. Planning run
-
-```text
-อ่าน docs/PHASE_PROGRESS.md แล้วเลือก pending phase แรก
-อย่าแก้โค้ด หน้าที่เดียวคือเขียน docs/PLAN_<phase>.md:
-- ไฟล์ที่จะแก้/สร้าง
-- จุดเปลี่ยนที่ชัดเจน
-- acceptance และคำสั่ง verify
-- รายการห้ามแตะ
-- ลำดับ sub-step
-แล้วอัปเดต tracker + Resume note ให้ execution run เริ่มทำได้ทันที
-```
-
-## 8. Checklist ก่อน run ยาว
+## 11. Checklist
 
 - [ ] MCP/Tunnel ออนไลน์และ workspace ถูกต้อง
-- [ ] `docs/PHASE_PROGRESS.md` เป็นปัจจุบัน
-- [ ] dependency หลักติดตั้งแล้ว
-- [ ] งานที่คาด >5 นาทีวางแผนเป็น durable background
-- [ ] มีพื้นที่ disk/power plan พอให้งานเครื่องรันต่อแม้ AI run จบ
-- [ ] ไม่รันสอง writer พร้อมกันบน workspace เดียว
-- [ ] Codex delegation tools ปิด เว้นแต่ผู้ใช้ตั้งใจเปิด
+- [ ] ไม่มี budget-warning/handoff instruction แบบกำหนดนาทีใน tool result
+- [ ] MCP initialize มี outcome-driven instructions
+- [ ] goalKey คงที่เมื่อใช้ Scheduled Task
+- [ ] ถ้า lease ถูกถืออยู่ ไม่มี mutation/process ซ้ำ
+- [ ] tracker ตรงกับสถานะจริง (ถ้ามี)
+- [ ] background task ทุกตัวมี `task_id` และ goal checkpoint เก็บ `activeTaskIds`
+- [ ] ไม่มี writer สองตัวชน workspace เดียวกัน
+- [ ] terminal goal ถูก `finish_goal` แล้วและ Scheduled Task หยุด
+- [ ] Codex delegation ปิด เว้นแต่ผู้ใช้ตั้งใจเปิด
 
-## 9. Troubleshooting
+## 12. Troubleshooting
 
-| อาการ | ทางแก้ |
+| อาการ | ตรวจ/แก้ |
 | --- | --- |
-| ใกล้หมด run budget | อัปเดต tracker → ย้ายงานยาวเป็น background → เก็บ task ID → `session_handoff` |
-| AI run จบแต่งาน package/test ยังต้องรัน | ไม่ต้องเริ่มใหม่; run ถัดไปดึง `shell status/logs/result` ด้วย task ID เดิม |
-| tool schema เก่า | Restart runtime ถ้าจำเป็น → Refresh connector; chat ใหม่เป็นทางเลือกสุดท้าย |
-| typecheck ซ้ำโดยไฟล์ไม่เปลี่ยน | ใช้ `verify_incremental`; ต้องเห็น `cache: hit` |
-| แต่ละรอบหมดกับการอ่านไฟล์ | `search_text` → `read_file_page`; อย่าอ่านทั้งไฟล์ซ้ำ |
-| หมดเวลากับ status polling | หยุด tight-poll; งานยาวใช้ durable background |
-| `codex_*` ไม่เห็น | ถูกต้องตาม default policy; เปิด setting เฉพาะเมื่อผู้ใช้ต้องการใช้ Codex quota |
+| ChatGPT หยุดแถว 22–25 นาที | ตรวจว่าใช้ build v4.11.0 ที่มี outcome-driven fix และ tool result ไม่มีข้อความ `ใกล้หมด budget` |
+| Scheduled turn เริ่มงานเดิมซ้ำ | ต้องเรียก `run_goal` ก่อน mutation และตรวจ `acquired` + `activeTaskIds` |
+| `checkpoint_goal` ได้ revision conflict | อ่าน `get_goal` ใหม่ ห้ามเขียนทับ snapshot เก่า แล้วตัดสินใจจาก revision ล่าสุด |
+| Turn ตายทั้งที่ถือ lease | รอ lease expiry; Scheduled turn ถัดไปใช้ `run_goal` takeover โดย goalKey เดิม |
+| Tunnel หลุด | ตรวจ persistent runtime doctor/reconnect ของ Tunnel ID เดิม |
+| Background task ยังรัน | ใช้ `status` / `logs` / `result`; ห้ามเริ่ม task เดิมซ้ำ |
+| Tool schema เก่า | Restart runtime ถ้าจำเป็น แล้ว Refresh connector; chat ใหม่เป็นทางเลือกสุดท้าย |
+| Typecheck ซ้ำทั้งที่ diff ไม่เปลี่ยน | ใช้ `verify_incremental` และตรวจ `cache: hit` |
+| Run ถูกขัดจังหวะจาก platform จริง | ใช้แชทเดิม + `run_goal`/goalKey + task ID; `session_handoff` เป็น recovery fallback |

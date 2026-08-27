@@ -1,9 +1,9 @@
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 import { skillsListSchema, skillsReadSchema } from './schemas.js';
 
-const fullAccess = {
-  permission: 'DANGEROUS' as const,
-  annotations: { readOnlyHint: false, destructiveHint: true },
+const readOnlyInspection = {
+  permission: 'READ' as const,
+  annotations: { readOnlyHint: true, destructiveHint: false },
 };
 
 export function skillTools(context: McpToolContext): McpToolDefinition[] {
@@ -11,7 +11,7 @@ export function skillTools(context: McpToolContext): McpToolDefinition[] {
     defineTool({
       name: 'skills_list',
       description: 'List local agent skills discovered from Cursor, Claude, Agents, workspace skill roots, and lnwjud settings. Filter with query or source.',
-      ...fullAccess,
+      ...readOnlyInspection,
       inputSchema: skillsListSchema,
       handler: async (input) => context.services.extensions === undefined
         ? missingService()
@@ -23,7 +23,7 @@ export function skillTools(context: McpToolContext): McpToolDefinition[] {
     defineTool({
       name: 'skills_read',
       description: 'Read a local skill SKILL.md (or a relative file inside the skill folder). Follow the skill instructions with lnwjud tools and mcp_call.',
-      ...fullAccess,
+      ...readOnlyInspection,
       inputSchema: skillsReadSchema,
       handler: async (input) => context.services.extensions === undefined
         ? missingService()

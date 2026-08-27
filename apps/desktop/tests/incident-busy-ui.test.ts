@@ -7,6 +7,7 @@ import { LiveLogsPage } from '../src/renderer/features/live/LiveLogsPage.js';
 
 const dashboard: DashboardSnapshot = {
   selectedWorkspace: null,
+  activeWorkspaces: [],
   gitSummary: { branch: null, changedFiles: 0, stagedFiles: 0, message: '' },
   mcp: { running: false, url: null, workspaceId: null },
   codex: { installed: false, version: null },
@@ -36,7 +37,7 @@ describe('shared incident capture busy UI', () => {
     const home = renderToStaticMarkup(createElement(ControlCenterPage, {
       ...common, dashboard, workspaces: [], mcpBusy: false, tunnelBusy: false,
       onRefresh: async () => undefined, onStopMcp: async () => undefined, onRestartMcp: async () => undefined,
-      onSelectWorkspace: async () => undefined, onAddWorkspace: async () => undefined, onStartTunnel: async () => undefined,
+      onSelectWorkspace: async () => undefined, onSetWorkspaceActive: async () => undefined, onAddWorkspace: async () => undefined, onStartTunnel: async () => undefined,
       onStopTunnel: async () => undefined,
     }));
     const live = renderToStaticMarkup(createElement(LiveLogsPage, {

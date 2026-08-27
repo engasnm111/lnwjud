@@ -220,22 +220,20 @@ export class LspRuntimeService {
   }
 
   private async resolveWorkspaceFiles(root: string, files: readonly string[]): Promise<Result<readonly string[]>> {
-    const p = process.platform === 'win32' ? path.win32 : path;
     let canonicalRoot: string;
     try {
-      canonicalRoot = p.normalize(await realpath(root));
+      canonicalRoot = path.win32.normalize(await realpath(root));
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root could not be resolved'));
     }
     const resolved: string[] = [];
     for (const file of files) {
-      const normalizedFile = process.platform === 'win32' ? file : file.replaceAll('\\', '/');
-      const candidate = p.isAbsolute(normalizedFile) ? p.normalize(normalizedFile) : p.join(canonicalRoot, normalizedFile);
+      const candidate = path.win32.isAbsolute(file) ? path.win32.normalize(file) : path.win32.join(canonicalRoot, file);
       if (!isWithin(canonicalRoot, candidate)) return err(appError('PATH_OUTSIDE_WORKSPACE', `LSP file is outside the registered workspace: ${file}`));
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `LSP file was not found: ${file}`));
       let canonicalFile: string;
       try {
-        canonicalFile = p.normalize(await realpath(candidate));
+        canonicalFile = path.win32.normalize(await realpath(candidate));
       } catch {
         return err(appError('FILE_NOT_FOUND', `LSP file could not be resolved: ${file}`));
       }
@@ -275,7 +273,6 @@ export class LspRuntimeService {
   }
 
   private async workspaceRoot(workspaceId: string): Promise<Result<string>> {
-    const p = process.platform === 'win32' ? path.win32 : path;
     const workspaceInfo = this.services.workspaceInfo;
     if (workspaceInfo === undefined) return err(appError('WORKSPACE_NOT_FOUND', 'Workspace service is not configured'));
     const info = await workspaceInfo.info(this.actor, workspaceId);
@@ -285,7 +282,7 @@ export class LspRuntimeService {
       : undefined;
     return rootPath === undefined
       ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(p.normalize(rootPath));
+      : ok(path.win32.normalize(rootPath));
   }
 }
 
@@ -302,18 +299,21 @@ function quietPeriod(quietMs: number, maxMs: number): Promise<void> {
 }
 
 function firstFile(input: Record<string, unknown>): string | undefined {
-  return readString(input.file ?? input.file_path ?? input.filePath ?? input.path);
+  if (typeof input.file === 'string' && input.file.trim().length > 0) return input.file.trim();
+  const files = Array.isArray(input.files) ? input.files : [];
+  const first = files.find((value) => typeof value === 'string' && value.trim().length > 0);
+  return typeof first === 'string' ? first.trim() : undefined;
 }
 
 function languageIdForFile(file: string, fallback: string): string {
-  const extension = path.extname(file).toLowerCase();
-  switch (extension) {
-    case '.ts': return 'typescript';
+  switch (path.extname(file).toLowerCase()) {
     case '.tsx': return 'typescriptreact';
-    case '.js':
-    case '.mjs':
-    case '.cjs': return 'javascript';
+    case '.ts':
+    case '.mts':
+    case '.cts': return 'typescript';
     case '.jsx': return 'javascriptreact';
+    case '.js':
+    case '.mjs': return 'javascript';
     case '.py': return 'python';
     case '.rs': return 'rust';
     case '.go': return 'go';
@@ -324,33 +324,24 @@ function languageIdForFile(file: string, fallback: string): string {
 }
 
 function pathToUri(file: string): string {
-  if (process.platform === 'win32') {
-    const normalized = path.win32.normalize(file).replaceAll('\\', '/').replace(/^\/+/, '');
-    return `file:///${encodeURI(normalized).replaceAll('#', '%23').replaceAll('?', '%3F')}`;
-  }
-  const resolved = path.resolve(file);
-  return `file://${encodeURI(resolved).replaceAll('#', '%23').replaceAll('?', '%3F')}`;
+  const normalized = path.win32.normalize(file).replaceAll('\\', '/').replace(/^\/+/, '');
+  return `file:///${encodeURI(normalized).replaceAll('#', '%23').replaceAll('?', '%3F')}`;
 }
 
 function uriToPath(uri: string): string {
-  if (process.platform === 'win32') {
-    try {
-      return decodeURIComponent(uri.replace(/^file:\/\/\//, '')).replaceAll('/', '\\');
-    } catch {
-      return uri.replace(/^file:\/\/\//, '').replaceAll('/', '\\');
-    }
-  }
   try {
-    return decodeURIComponent(uri.replace(/^file:\/\//, ''));
+    return decodeURIComponent(uri.replace(/^file:\/\/\//, '')).replaceAll('/', '\\');
   } catch {
-    return uri.replace(/^file:\/\//, '');
+    return uri.replace(/^file:\/\/\//, '').replaceAll('/', '\\');
   }
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const p = process.platform === 'win32' ? path.win32 : path;
-  const relative = p.relative(p.resolve(root), p.resolve(candidate));
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${p.sep}`) && !p.isAbsolute(relative));
+  const relative = path.win32.relative(root.toLowerCase(), candidate.toLowerCase());
+  if (relative === '') return true;
+  if (path.win32.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.win32.sep);
+  return firstSegment !== '..';
 }
 
 function readString(value: unknown): string | undefined {

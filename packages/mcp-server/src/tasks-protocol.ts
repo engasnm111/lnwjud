@@ -224,6 +224,7 @@ export class TasksProtocol {
     return capabilities.execute('shell', withCapabilityOwnerMetadata({
       operation,
       ...(taskId === undefined ? {} : { task_id: taskId }),
+      ...(operation === 'cancel' ? { userConfirmed: true } : {}),
       include_stdout: true,
       include_stderr: true,
     }, this.actor));

@@ -16,13 +16,14 @@ const sessionHandoffSchema = z.object({
 
 const verifyIncrementalSchema = z.object({
   workspaceId: z.string().trim().min(1).max(128),
+  userConfirmed: z.boolean().optional(),
 }).strict();
 
 export function sessionTools(context: McpToolContext, verifier: IncrementalVerifier): McpToolDefinition[] {
   return [
     defineTool({
       name: 'session_handoff',
-      description: 'Create a concise same-chat continuation message from the real phase tracker, current git status/diff, and durable background task IDs. Use near the end of a run so the next run can resume without re-reading the whole project. If a tool schema looks stale, Refresh connector first; open a new chat only if refresh does not fix it.',
+      description: 'Create a concise same-chat recovery message from the real phase tracker, current git status/diff, and durable background task IDs. Use only when the user requests a handoff or an unavoidable client/platform interruption requires recovery; never trigger it merely because elapsed time passed. If a tool schema looks stale, Refresh connector first; open a new chat only if refresh does not fix it.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: sessionHandoffSchema,
@@ -30,11 +31,11 @@ export function sessionTools(context: McpToolContext, verifier: IncrementalVerif
     }),
     defineTool({
       name: 'verify_incremental',
-      description: 'Run the detected project typecheck only when the current git status/diff fingerprint changed. Returns cache=hit when unchanged and cache=miss after a new verification. Prefer this during iterative edits; use project_test/project_lint/project_build only when that specific verification is needed. For full suites or packaging expected to exceed ~5 minutes, launch a durable shell background task and record its task_id in the tracker.',
+      description: 'Run the detected project typecheck only when the current git status/diff fingerprint changed. Starting a new verification process requires explicit user confirmation. Returns cache=hit when unchanged and cache=miss after a new verification. Prefer this during iterative edits; use project_test/project_lint/project_build only when that specific verification is needed. For full suites or packaging expected to exceed ~5 minutes, launch a durable shell background task and record its task_id in the tracker.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: verifyIncrementalSchema,
-      handler: async (input, signal) => verifier.verify(context, input.workspaceId, signal),
+      handler: async (input, signal) => verifier.verify(context, input.workspaceId, signal, input.userConfirmed === true),
     }),
   ];
 }
@@ -136,7 +137,7 @@ function buildHandoffPrompt(input: {
     '3. Inspect git status/diff only as needed for the current phase.',
     '4. Work one phase only and use search_text/read_file_page instead of re-reading large files.',
     '5. Use verify_incremental for repeated typecheck; use targeted project_* verification as needed.',
-    '6. Before ending, update the tracker. Jobs expected to exceed ~5 minutes should run as durable shell background tasks and their task_id must be written to the tracker.',
+    '6. Continue until the requested acceptance is complete. Update the tracker at meaningful milestones; use durable shell background tasks when a command is naturally asynchronous and keep checking them until terminal.',
     '',
     'Do not redo completed phases unless verification proves a regression. If tool schema looks stale, Refresh connector first; open a new chat only if Refresh connector does not fix it.',
   ].join('\n');

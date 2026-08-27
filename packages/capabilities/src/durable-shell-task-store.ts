@@ -68,10 +68,25 @@ const METADATA_READ_RETRIES = 4;
 const PROCESS_EXIT_RECONCILE_DELAY_MS = 75;
 const PROCESS_HANDLE_RELEASE_GRACE_MS = 150;
 
+export interface DurableShellTaskStoreOptions {
+  readonly maxConcurrentTasks?: number;
+}
+
+export const DEFAULT_MAX_CONCURRENT_DURABLE_TASKS = 16;
+
 export class DurableShellTaskStore {
-  public constructor(private readonly rootDirectory: string) {}
+  private readonly maxConcurrentTasks: number;
+
+  public constructor(private readonly rootDirectory: string, options: DurableShellTaskStoreOptions = {}) {
+    this.maxConcurrentTasks = normalizeMaxConcurrentTasks(options.maxConcurrentTasks);
+  }
 
   public async launch(request: DurableShellLaunchRequest): Promise<Result<Record<string, unknown>>> {
+    const activeTasks = await this.activeTaskCount();
+    if (activeTasks >= this.maxConcurrentTasks) {
+      return err(appError('CONFLICT', `Too many durable background tasks are already running (${activeTasks}/${this.maxConcurrentTasks}); inspect or stop existing tasks before starting another.`, true));
+    }
+
     const taskDirectory = this.taskDirectory(request.taskId);
     await mkdir(taskDirectory, { recursive: true });
     await mkdir(this.rootDirectory, { recursive: true });
@@ -116,7 +131,10 @@ export class DurableShellTaskStore {
       await writeFile(specPath, JSON.stringify(spec), 'utf8');
       const workerPath = await this.ensureWorkerScript();
       const worker = spawn(process.execPath, [workerPath, specPath], {
-        cwd: request.cwd,
+        // The durable worker only coordinates the real child process; it does not need
+        // the workspace as its own cwd. Keeping the worker outside the workspace avoids
+        // a transient Windows directory lock after the child has already completed.
+        cwd: path.dirname(process.execPath),
         detached: true,
         stdio: 'ignore',
         shell: false,
@@ -212,6 +230,11 @@ export class DurableShellTaskStore {
 
   public async has(taskId: string): Promise<boolean> {
     return (await this.readMetadata(taskId)).ok;
+  }
+
+  private async activeTaskCount(): Promise<number> {
+    const tasks = await this.list();
+    return tasks.filter((task) => task.state === 'running' || task.state === 'termination_unverified').length;
   }
 
   private async reconcile(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
@@ -520,3 +543,9 @@ try {
   await finish('failed', -1, 'Local task failed to start: ' + (error instanceof Error ? error.message : String(error)));
 }
 `;
+
+function normalizeMaxConcurrentTasks(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_CONCURRENT_DURABLE_TASKS;
+  if (!Number.isInteger(value) || value < 1 || value > 128) throw new Error('maxConcurrentTasks must be between 1 and 128');
+  return value;
+}

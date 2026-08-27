@@ -45,7 +45,7 @@ describe('MCP development flow', () => {
     const processService = new ProcessService(workspaceRepository, {
       projectService: {
         async getCommand(): Promise<Result<CommandSpec>> {
-          return ok({ executable: process.execPath, args: ['-e', "process.stdout.write('project-test-pass\\n')"] });
+          return ok({ executable: process.execPath, args: ['project-test.mjs'] });
         },
       },
     });
@@ -74,7 +74,10 @@ describe('MCP development flow', () => {
       git: gitService,
       process: processService,
     };
-    const registry = new ToolRegistry(services, actor);
+    const registry = new ToolRegistry(services, actor, {
+      activeWorkspaceScopeProvider: async (): Promise<{ workspaceId: string; rootPath: string }> => ({ workspaceId, rootPath: fixtureRoot }),
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
+    });
 
     try {
       const info = await registry.invoke('workspace_info', { workspaceId });
@@ -92,10 +95,11 @@ describe('MCP development flow', () => {
       const patch = await registry.invoke('apply_patch', {
         workspaceId,
         files: [{ path: 'src/app.ts', content: "export const value = 'after';\n" }],
+        userConfirmed: true,
       });
       expect(patch).toMatchObject({ structuredContent: { paths: [expect.stringContaining('app.ts')] } });
 
-      const projectTest = await registry.invoke('project_test', { workspaceId });
+      const projectTest = await registry.invoke('project_test', { workspaceId, userConfirmed: true });
       expect(projectTest).toMatchObject({ structuredContent: { processId: expect.any(String) } });
       const processId = stringField(projectTest, 'processId');
       const terminal = await waitForTerminalProcess(registry, workspaceId, processId);
@@ -150,15 +154,16 @@ async function createFixture(): Promise<string> {
   await writeFile(path.join(root, 'docs', 'PHASE_PROGRESS.md'), '# Phase tracker\n## Next chat startup probe\nREAL-TRACKER-PROBE-42\n', 'utf8');
   await writeFile(path.join(root, 'src', 'app.ts'), "export const value = 'before';\n", 'utf8');
   await writeFile(path.join(root, '.env'), 'SECRET_NOT_FOR_TOOLS=hidden\n', 'utf8');
+  await writeFile(path.join(root, 'project-test.mjs'), "process.stdout.write('project-test-pass\\n');\n", 'utf8');
   await writeFile(path.join(root, 'package.json'), JSON.stringify({
     name: 'lnwjud-flow-fixture',
-    scripts: { test: "node -e \"process.stdout.write('project-test-pass\\n')\"" },
+    scripts: { test: 'node project-test.mjs' },
   }), 'utf8');
   await writeFile(path.join(root, 'package-lock.json'), '{}', 'utf8');
   await execFileAsync('git', ['init', '--quiet'], { cwd: root, windowsHide: true });
   await execFileAsync('git', ['config', 'user.email', 'lnwjud-test@example.invalid'], { cwd: root, windowsHide: true });
   await execFileAsync('git', ['config', 'user.name', 'lnwjud integration'], { cwd: root, windowsHide: true });
-  await execFileAsync('git', ['add', '--', 'package.json', 'package-lock.json', 'src'], { cwd: root, windowsHide: true });
+  await execFileAsync('git', ['add', '--', 'package.json', 'package-lock.json', 'project-test.mjs', 'src'], { cwd: root, windowsHide: true });
   await execFileAsync('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: root, windowsHide: true });
   return root;
 }

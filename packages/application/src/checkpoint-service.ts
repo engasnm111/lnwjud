@@ -13,10 +13,25 @@ export interface CheckpointServicePort {
 export interface RestoreOptions {
   readonly profile?: PermissionProfile;
   readonly expectedCurrentHashes?: Readonly<Record<string, string>>;
+  /** Required after a human reviews and confirms the restore. */
+  readonly userConfirmed?: boolean;
 }
 
 export interface RestoreResult {
   readonly restoredPaths: readonly string[];
+  /** Snapshot of the live files immediately before this restore, for one-click undo. */
+  readonly rollbackCheckpointId?: string;
+}
+
+export interface CheckpointSummary {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly createdAt: string;
+  readonly files: readonly {
+    readonly path: string;
+    readonly contentSha256: string;
+    readonly size: number;
+  }[];
 }
 
 export interface CheckpointServiceDependencies {
@@ -68,7 +83,24 @@ export class CheckpointService implements CheckpointServicePort {
     return ok(checkpoint);
   }
 
+  public async list(workspaceId: string, limit = 100): Promise<Result<readonly CheckpointSummary[]>> {
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace.ok) return workspace;
+    const checkpoints = await this.repository.list(workspaceId, limit);
+    return ok(checkpoints.map((checkpoint) => ({
+      id: checkpoint.id,
+      workspaceId: checkpoint.workspaceId,
+      createdAt: checkpoint.createdAt,
+      files: checkpoint.files.map((file) => ({
+        path: file.path,
+        contentSha256: file.contentSha256,
+        size: file.size,
+      })),
+    })));
+  }
+
   public async restore(actor: FileActor, workspaceId: string, checkpointId: string, options: RestoreOptions = {}): Promise<Result<RestoreResult>> {
+    if (options.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires explicit user confirmation'));
     const checkpoint = await this.repository.get(checkpointId);
     if (checkpoint === null) return err(appError('FILE_NOT_FOUND', 'Checkpoint was not found'));
     if (checkpoint.workspaceId !== workspaceId) return err(appError('PERMISSION_DENIED', 'Checkpoint belongs to another workspace'));
@@ -79,6 +111,7 @@ export class CheckpointService implements CheckpointServicePort {
     for (const file of checkpoint.files) {
       const resolved = await this.guard.resolveForWrite(workspace.value, file.path);
       if (!resolved.ok) return resolved;
+      if (!resolved.value.exists) return err(appError('INVALID_INPUT', 'Checkpoint restore target is missing; use Recovery Trash for deleted paths'));
       if (options.expectedCurrentHashes !== undefined) {
         const currentHash = await this.hashCurrentFile(resolved.value.realPath ?? resolved.value.absolutePath);
         const expected = options.expectedCurrentHashes[file.path];
@@ -90,15 +123,16 @@ export class CheckpointService implements CheckpointServicePort {
     const profile = options.profile ?? this.profileProvider();
     const decision = this.permissionEngine.decide(profile, { action: 'restore_checkpoint', level: 'WRITE', workspaceId, target: checkpointId, destructive: false });
     if (decision === 'DENY') return err(appError('PERMISSION_DENIED', 'Checkpoint restore is denied'));
-    if (decision === 'ASK') return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires permission'));
+    if (decision === 'ASK' && options.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires permission'));
+    const rollback = await this.createForFiles(actor, workspaceId, checkpoint.files.map((file) => file.path));
+    if (!rollback.ok) return rollback;
     const restoredPaths: string[] = [];
     for (const resolved of resolvedFiles) {
       const result = await this.writer.write(resolved.absolutePath, resolved.file.content);
       if (!result.ok) return result;
       restoredPaths.push(resolved.file.path);
     }
-    void actor;
-    return ok({ restoredPaths });
+    return ok({ restoredPaths, rollbackCheckpointId: rollback.value.id });
   }
 
   private async readCheckpointFile(filePath: string, relativePath: string): Promise<Result<CheckpointFile>> {

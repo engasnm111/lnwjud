@@ -16,6 +16,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-'));
   const fixtureRealRoot = await realpath(fixtureRoot);
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dashboard-data-'));
+  const gitCeilingDirectories = [path.dirname(fixtureRoot), path.dirname(fixtureRealRoot)].filter((value, index, values) => values.indexOf(value) === index).join(path.delimiter);
   await writeFile(path.join(fixtureRoot, '.env'), 'SECRET_NOT_FOR_UI=do-not-display\n', 'utf8');
   const devToolsPort = await findEphemeralPort();
   const launchExecutable = packagedExecutable ?? electronExecutable;
@@ -28,11 +29,13 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     windowsHide: true,
     env: {
       ...process.env,
+      APPDATA: dataRoot,
       LNWJUD_DATA_PATH: dataRoot,
       LNWJUD_WORKSPACE: fixtureRoot,
       LNWJUD_UNRESTRICTED: '1',
       LNWJUD_E2E_FIXTURE: '1',
       LNWJUD_E2E_NODE_PATH: process.execPath,
+      GIT_CEILING_DIRECTORIES: gitCeilingDirectories,
     },
   });
   const stderr: string[] = [];
@@ -46,6 +49,10 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await expect.poll(() => context.pages().length).toBeGreaterThan(0);
     const page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
+
+    const firstRunDialog = page.getByRole('dialog', { name: /ตั้งค่า ChatGPT ให้ใช้ lnwjud|Set up ChatGPT to use lnwjud/ });
+    await page.getByRole('button', { name: /ไว้ทีหลัง|Set up later/ }).click({ timeout: 30_000 });
+    await expect(firstRunDialog).toBeHidden();
 
     await expect(page.getByRole('heading', { name: 'ศูนย์ควบคุม Agent' })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('mcp-status')).toHaveText(/Agent พร้อมทำงาน|Agent ready/, { timeout: 30_000 });
@@ -137,7 +144,11 @@ async function waitForDevTools(port: number, child: ChildProcess, stderr: string
 
 async function terminateProcessTree(child: ChildProcess): Promise<void> {
   if (child.pid !== undefined) {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true });
+    const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true });
+    await new Promise<void>((resolve) => {
+      killer.once('error', () => resolve());
+      killer.once('close', () => resolve());
+    });
   }
   await new Promise<void>((resolve) => {
     if (child.exitCode !== null) {
@@ -150,7 +161,14 @@ async function terminateProcessTree(child: ChildProcess): Promise<void> {
 }
 
 async function removeTemporaryRoot(root: string): Promise<void> {
-  await rm(root, { recursive: true, force: true });
+  await expect.poll(async () => {
+    try {
+      await rm(root, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }, { timeout: 10_000, intervals: [50, 100, 250] }).toBe(true);
 }
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {

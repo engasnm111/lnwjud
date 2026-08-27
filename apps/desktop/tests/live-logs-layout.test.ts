@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { LiveLogsPage } from '../src/renderer/features/live/LiveLogsPage.js';
-import { filterLogLinesByScope, formatLogCopyText, logDisplayParts, LogStreamPanel } from '../src/renderer/features/live/LogStreamPanel.js';
+import { filterLogLinesByScope, formatLogCopyText, logDisplayParts, LogStreamPanel, visibleLogLines } from '../src/renderer/features/live/LogStreamPanel.js';
 import { StandaloneLogViewer } from '../src/renderer/features/live/StandaloneLogViewer.js';
 
 const noop = async (): Promise<void> => undefined;
@@ -42,7 +42,11 @@ describe('viewport-sized log and list layout', () => {
     const result = { id: 11, source: 'mcp' as const, timestamp: '2026-08-22T00:00:11.000Z', level: 'info' as const, workspaceId: 'ws-a', sessionId: 'session-a', text: '[RESULT] shell SUCCESS callId=abc — powershell -NoProfile -NonInteractive -Command Write-Output full-command' };
     expect(logDisplayParts(task)).toEqual({ kind: 'task', detail: 'shell STARTED callId=abc — powershell -NoProfile -NonInteractive -Command Write-Output full-command' });
     expect(logDisplayParts(result).kind).toBe('result');
-    expect(formatLogCopyText(result)).toContain(result.text);
+    const copied = formatLogCopyText(result);
+    expect(copied).toContain(result.text);
+    const localDate = new Date(result.timestamp);
+    expect(copied.startsWith(`${localDate.toLocaleDateString()} ${localDate.toLocaleTimeString()}`)).toBe(true);
+    expect(copied).not.toContain(result.timestamp);
     const markup = renderToStaticMarkup(createElement(LogStreamPanel, {
       source: 'mcp', title: 'MCP activity', lines: [task, result], tunnelLogPath: null, tunnelLogExists: false,
       filterPlaceholder: 'filter', pauseLabel: 'pause', followLabel: 'follow', clearLabel: 'clear', clearSessionLabel: 'clear session', clearWorkspaceLabel: 'clear workspace', exportLabel: 'export',
@@ -81,6 +85,34 @@ describe('viewport-sized log and list layout', () => {
     expect(markup).toContain('scope-filter-bar');
     expect(markup).toContain('scope-badge workspace');
     expect(markup).toContain('scope-badge session');
+  });
+
+  it('treats legacy slash/case path workspace IDs as the registered project and exports the exact visible order', () => {
+    const workspaces = [
+      { id: 'project-a', displayName: 'lnwjud', rootPath: 'E:\\lnwjud', realRootPath: 'E:\\lnwjud', createdAt: '2026-08-01T00:00:00.000Z' },
+    ];
+    const lines = [
+      { id: 30, source: 'mcp' as const, timestamp: '2026-08-22T00:00:30.000Z', level: 'info' as const, text: 'backslash', workspaceId: 'E:\\lnwjud', sessionId: 'session-a' },
+      { id: 31, source: 'mcp' as const, timestamp: '2026-08-22T00:00:31.000Z', level: 'info' as const, text: 'slash', workspaceId: 'e:/LNWJUD/', sessionId: 'session-a' },
+      { id: 32, source: 'mcp' as const, timestamp: '2026-08-22T00:00:32.000Z', level: 'info' as const, text: 'other', workspaceId: 'other-workspace', sessionId: 'session-a' },
+    ];
+    expect(filterLogLinesByScope(lines, { workspaceId: 'project-a', sessionId: null }, '', workspaces).map((line) => line.id)).toEqual([30, 31]);
+    expect(visibleLogLines(lines, { workspaceId: 'project-a', sessionId: null }, '', workspaces).map((line) => line.id)).toEqual([31, 30]);
+  });
+
+  it('shows each project root once and hides machine roots in the workspace selector', () => {
+    const workspaces = [
+      { id: 'drive-e', displayName: 'Local Disk E:', rootPath: 'E:\\', realRootPath: 'E:\\', createdAt: '2026-08-01T00:00:00.000Z', kind: 'machine_root' as const },
+      { id: 'project-a', displayName: 'lnwjud', rootPath: 'E:\\lnwjud', realRootPath: 'E:\\lnwjud', createdAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'project-alias', displayName: 'lnwjud', rootPath: 'E:/lnwjud/', realRootPath: 'E:/lnwjud/', createdAt: '2026-08-01T00:00:00.000Z' },
+    ];
+    const markup = renderToStaticMarkup(createElement(LogStreamPanel, {
+      source: 'mcp', title: 'MCP', lines: [], tunnelLogPath: null, tunnelLogExists: false,
+      filterPlaceholder: 'filter', pauseLabel: 'pause', followLabel: 'follow', clearLabel: 'clear', clearSessionLabel: 'clear session', clearWorkspaceLabel: 'clear workspace', exportLabel: 'export',
+      workspaceLabel: 'Workspace', sessionLabel: 'Session', scopeAllLabel: 'All', onClear: noop, onExport: noop, workspaces,
+    }));
+    expect(markup).not.toContain('Local Disk E:');
+    expect((markup.match(/>lnwjud<\/option>/g) ?? [])).toHaveLength(1);
   });
 
   it('keeps Live Logs inside the window and scrolls only the log table', () => {

@@ -30,7 +30,7 @@ export class IncrementalVerifier {
     this.now = options.now ?? Date.now;
   }
 
-  public async verify(context: McpToolContext, workspaceId: string, signal: AbortSignal): Promise<Result<Record<string, unknown>>> {
+  public async verify(context: McpToolContext, workspaceId: string, signal: AbortSignal, userConfirmed = false): Promise<Result<Record<string, unknown>>> {
     const git = context.services.git;
     const processService = context.services.process;
     if (git === undefined || processService === undefined) {
@@ -50,7 +50,7 @@ export class IncrementalVerifier {
     }
 
     if (signal.aborted) return cancelledVerification();
-    const started = await processService.startProjectCommand(context.actor, workspaceId, 'typecheck', signal);
+    const started = await processService.startProjectCommand(context.actor, workspaceId, 'typecheck', signal, userConfirmed);
     if (!started.ok) return started;
     let process = started.value;
     const deadline = this.now() + this.maxWaitMs;
@@ -77,6 +77,7 @@ export class IncrementalVerifier {
       passed,
       process_id: process.processId,
       state: process.state,
+      command: { executable: process.executable, args: [...process.args], cwd: process.cwd },
       ...(process.exitCode === undefined ? {} : { exit_code: process.exitCode }),
       ...(process.error === undefined ? {} : { error: process.error }),
       logs: logs.value.entries,

@@ -1,5 +1,6 @@
 export type AppErrorCode =
   | 'INVALID_INPUT'
+  | 'CONFLICT'
   | 'WORKSPACE_NOT_FOUND'
   | 'PATH_OUTSIDE_WORKSPACE'
   | 'SECRET_ACCESS_DENIED'

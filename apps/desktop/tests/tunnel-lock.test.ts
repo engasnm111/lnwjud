@@ -14,7 +14,7 @@ function owner(pid: number, processStartedAt: string): TunnelLockOwner {
   return { pid, processStartedAt, acquiredAt: '2026-08-20T00:00:00.000Z' };
 }
 
-describe('lnwjud tunnel ownership lock', () => {
+describe.skipIf(process.platform !== 'win32')('lnwjud tunnel ownership lock', () => {
   it('reports the current owner to a simultaneous second starter', async () => {
     const directory = await temporaryDirectory();
     const firstOwner = owner(101, '2026-08-20T00:00:00.000Z');

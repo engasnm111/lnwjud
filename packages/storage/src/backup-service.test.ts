@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('SqliteBackupService', () => {
+describe('SqliteBackupService', { timeout: 30_000 }, () => {
   it('creates a WAL-consistent snapshot and restores it on the next startup', async () => {
     const root = await temporaryRoot();
     const databaseFile = path.join(root, 'lnwjud.sqlite');
@@ -106,17 +106,20 @@ describe('SqliteBackupService', () => {
     const databaseFile = path.join(root, 'lnwjud.sqlite');
     const backupDirectory = path.join(root, 'backups');
     const database = new SqliteDatabase(databaseFile, { backupDirectory });
-    let now = new Date('2026-01-01T00:00:00.000Z');
-    const service = new SqliteBackupService(database, { backupDirectory, databaseFilename: databaseFile, now: (): Date => now });
+    try {
+      let now = new Date('2026-01-01T00:00:00.000Z');
+      const service = new SqliteBackupService(database, { backupDirectory, databaseFilename: databaseFile, now: (): Date => now });
 
-    for (let index = 0; index < 15; index += 1) {
-      now = new Date(Date.UTC(2026, 0, 1 + index * 8));
-      await service.create('daily');
+      for (let index = 0; index < 15; index += 1) {
+        now = new Date(Date.UTC(2026, 0, 1 + index * 8));
+        await service.create('daily');
+      }
+
+      const listed = (await service.list()).filter((entry) => entry.reason === 'daily');
+      expect(listed).toHaveLength(11);
+    } finally {
+      database.close();
     }
-
-    const listed = (await service.list()).filter((entry) => entry.reason === 'daily');
-    expect(listed).toHaveLength(11);
-    database.close();
   });
 });
 

@@ -1,20 +1,20 @@
 <#Requires -Version 5.1
 .SYNOPSIS
-Starts the lnwjud Secure MCP Tunnel with long TTL, file logging, full-access
-(unrestricted) mode, and automatic restart when the tunnel drops.
+Starts the lnwjud Secure MCP Tunnel against the running Desktop loopback HTTP
+MCP with long TTL, file logging, and automatic restart when the tunnel drops.
 
 .DESCRIPTION
 - Reads the encrypted Runtime API key from %APPDATA%\tunnel-client\lnwjud.runtime.secret (DPAPI)
 - Runs `tunnel-client doctor` then `tunnel-client run`
 - Passes --mcp.connection-max-ttl 168h0m0s so ChatGPT connections do not drop every 10 minutes
 - Writes tunnel logs to %APPDATA%\tunnel-client\lnwjud-tunnel.log (tailed by the lnwjud dashboard)
-- Aligns LNWJUD_DATA_PATH with the desktop app so MCP activity shows in the Work Log / Live Logs
-- Sets LNWJUD_UNRESTRICTED=1 (full-access mode: all drives, cmd/powershell/npm.cmd allowed)
+- Requires the profile to target lnwjud Desktop's loopback HTTP MCP
+- Starts lnwjud Desktop first when it is not already running; Desktop Settings own Active Project, permission profile, and native approvals
 - Restarts the tunnel automatically when tunnel-client exits for any reason including TTL (exit 0)
 - Opens the lnwjud log viewer window after start (use -NoViewer to skip)
 
 .PARAMETER TunnelClientPath
-Path to tunnel-client.exe. Defaults to %USERPROFILE%\Downloads\tunnel\tunnel-client.exe
+Path to tunnel-client.exe. Defaults to the tunnel-client bundled with the per-user lnwjud installation.
 
 .PARAMETER LnwjudPath
 Path to lnwjud.exe (desktop app / viewer). Defaults to the per-user install location
@@ -70,11 +70,15 @@ foreach ($envFile in $candidateEnvFiles) {
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-if ([string]::IsNullOrWhiteSpace($TunnelClientPath)) {
-  $TunnelClientPath = if ($env:LNWJUD_TUNNEL_CLIENT_PATH) { $env:LNWJUD_TUNNEL_CLIENT_PATH } else { Join-Path $env:USERPROFILE 'Downloads\tunnel\tunnel-client.exe' }
-}
 if ([string]::IsNullOrWhiteSpace($LnwjudPath)) {
   $LnwjudPath = if ($env:LNWJUD_PATH) { $env:LNWJUD_PATH } else { Join-Path $env:LOCALAPPDATA 'Programs\lnwjud\lnwjud.exe' }
+}
+if ([string]::IsNullOrWhiteSpace($TunnelClientPath)) {
+  $TunnelClientPath = if ($env:LNWJUD_TUNNEL_CLIENT_PATH) {
+    $env:LNWJUD_TUNNEL_CLIENT_PATH
+  } else {
+    Join-Path (Split-Path -Parent $LnwjudPath) 'resources\tunnel-client\tunnel-client.exe'
+  }
 }
 
 $profileName = 'lnwjud'
@@ -104,7 +108,7 @@ function Test-LnwjudTunnelStopRequested {
 function Get-LnwjudTunnelExitHint {
   if (-not (Test-Path -LiteralPath $logPath)) { return '' }
   $tail = @(Get-Content -LiteralPath $logPath -Tail 120 -ErrorAction SilentlyContinue)
-  $pattern = 'TTL reached|stdio MCP command exited|requesting tunnel-client shutdown'
+  $pattern = 'TTL reached|stdio MCP command exited|MCP server|server_url|requesting tunnel-client shutdown'
   $hit = $tail | Where-Object { $_ -match $pattern } | Select-Object -Last 1
   if ([string]::IsNullOrWhiteSpace($hit)) { return '' }
   $compact = ([regex]::Replace([string]$hit, '\s+', ' ')).Trim()
@@ -112,10 +116,8 @@ function Get-LnwjudTunnelExitHint {
   return (' -- ' + $compact)
 }
 
-# Full-access mode: all fixed drives, cmd/powershell/npm.cmd allowed (delete commands stay blocked).
-$env:LNWJUD_UNRESTRICTED = '1'
-# Align with the desktop app data path so tool activity appears in the Work Log / Live Logs.
-if (-not $env:LNWJUD_DATA_PATH) { $env:LNWJUD_DATA_PATH = Join-Path $env:APPDATA 'lnwjud' }
+# Secure Tunnel forwards to the Desktop HTTP MCP. Desktop Settings, not this
+# transport-only launcher process, own Active Project and authorization policy.
 # Long connection ceiling so ChatGPT does not drop every 10 minutes (tunnel-client default).
 $env:MCP_CONNECTION_MAX_TTL = $mcpTtl
 $env:TUNNEL_CLIENT_PROFILE_DIR = $profileDir
@@ -149,6 +151,18 @@ try {
   }
   if ($ForceRestart) { Write-Host 'lnwjud tunnel: -ForceRestart cannot bypass the ownership lock.' }
   if (Test-LnwjudTunnelRunning) { Write-Host 'lnwjud tunnel: existing tunnel-client process detected as status evidence; the lock remains authoritative.' }
+  $profilePath = Join-Path $profileDir 'lnwjud.yaml'
+  if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Missing tunnel profile: $profilePath. Open lnwjud Desktop and run Configure Tunnel first." }
+  $profileText = Get-Content -LiteralPath $profilePath -Raw
+  if ($profileText -notmatch '(?m)^\s*server_urls:\s*$' -or $profileText -notmatch '(?i)https?://(?:127\.0\.0\.1|localhost|\[?::1\]?):\d+/mcp') {
+    throw 'Tunnel profile is not configured for lnwjud Desktop HTTP MCP. Open lnwjud Desktop and run Configure Tunnel again.'
+  }
+  if (-not (Test-Path -LiteralPath $LnwjudPath -PathType Leaf)) { throw "Missing lnwjud Desktop executable: $LnwjudPath" }
+  if ($null -eq (Get-Process -Name 'lnwjud' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+    Write-Host 'lnwjud tunnel: starting Desktop host required for HTTP MCP and native approvals ...'
+    Start-Process -FilePath $LnwjudPath
+    Start-Sleep -Seconds 2
+  }
 
   # Decrypt the DPAPI secret into this session only after ownership is secured.
   $encrypted = Get-Content $secretPath -Raw
@@ -161,7 +175,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "tunnel-client doctor failed with exit code $LASTEXITCODE" }
 
   Write-Host "lnwjud tunnel: starting (TTL $mcpTtl, log: $logPath)"
-  Write-Host "lnwjud tunnel: unrestricted mode = ON, data path = $env:LNWJUD_DATA_PATH"
+  Write-Host 'lnwjud tunnel: MCP target = Desktop loopback HTTP; Desktop Settings own Active Project and approvals.'
   Write-Host 'lnwjud tunnel: auto-restart is ON (TTL/exit 0 still restarts). Ctrl+C or LNWJUD_TUNNEL_STOP=1 to stop.'
 
   if (-not $NoViewer -and (Test-Path $LnwjudPath)) {
@@ -199,7 +213,7 @@ try {
     }
     $rapidRestartCount += 1
     if ($rapidRestartCount -gt $maxRapidRestarts) {
-      throw ("tunnel-client exited {0} times in a short window; automatic restart paused. Fix the MCP profile/stdio child and start again.{1}" -f $maxRapidRestarts, $hint)
+      throw ("tunnel-client exited {0} times in a short window; automatic restart paused. Fix the Desktop MCP/profile and start again.{1}" -f $maxRapidRestarts, $hint)
     }
     $delaySeconds = [int][Math]::Min(30, 3 * [Math]::Pow(2, $rapidRestartCount - 1))
     Write-Host ("lnwjud tunnel: tunnel-client exited ({0}){1} - restarting in {2} seconds (attempt {3}/{4}) ..." -f $exitCode, $hint, $delaySeconds, $rapidRestartCount, $maxRapidRestarts)

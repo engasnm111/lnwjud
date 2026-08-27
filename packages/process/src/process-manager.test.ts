@@ -206,6 +206,26 @@ describe('ProcessManager', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('caps simultaneous managed processes to prevent runaway child-process growth', async () => {
+    const manager = new ProcessManager(undefined, undefined, 1);
+    const first = await manager.start({
+      executable: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      cwd: process.cwd(),
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const second = await manager.start({
+      executable: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      cwd: process.cwd(),
+    });
+    expect(second).toMatchObject({ ok: false, error: { code: 'CONFLICT', recoverable: true } });
+
+    await expect(manager.stop(first.value.processId)).resolves.toMatchObject({ ok: true });
+  });
 });
 
 function delay(milliseconds: number): Promise<void> {

@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
 import { appError, err, ok } from '@lnwjud/domain';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
 import type { ActivitySinkEvent } from './activity-tracker.js';
-import { ToolRegistry, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
+import { ToolRegistry, type McpApplicationServices, type ToolRegistryOptions, type WorkspaceScope } from './tool-registry.js';
 import { CODEX_TOOL_NAMES } from './tools/codex-tools.js';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
 
 const actor = { clientId: 'client-1', clientName: 'test' };
+const approveMutation: NonNullable<ToolRegistryOptions['hostMutationApprovalProvider']> = async () => true;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -16,11 +18,10 @@ afterEach(() => {
 describe('MCP tool registry', () => {
   it('returns the exact deterministic tool order', () => {
     const registry = new ToolRegistry({}, actor);
-
     expect(registry.list().map((tool) => tool.name)).toEqual([
       'workspace_list', 'workspace_register', 'workspace_info', 'workspace_tree', 'project_snapshot', 'read_file', 'read_files',
       'search_files', 'search_text', 'git_status', 'git_diff', 'git_log', 'git', 'write_file',
-      'apply_patch', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'process_start', 'process_list', 'process_status',
+      'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'list_recovery_items', 'restore_deleted_file', 'list_checkpoints', 'restore_checkpoint', 'process_start', 'process_list', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build', 'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'vision_annotated_capture', 'ui_target_action', 'window', 'health',
       'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
@@ -32,6 +33,7 @@ describe('MCP tool registry', () => {
       'read_file_page', 'read_file_page_continue',
       'workspace_index', 'workspace_index_status', 'workspace_index_watch', 'workspace_index_stop',
       'session_handoff', 'verify_incremental',
+      'run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'list_goals',
       ...UPGRADE_TOOL_CATALOG.map((entry) => entry.name),
       'tool_batch',
     ]);
@@ -40,7 +42,6 @@ describe('MCP tool registry', () => {
   it('hides Codex delegation tools by default and exposes them only when explicitly enabled', () => {
     const hidden = new ToolRegistry({}, actor);
     const enabled = new ToolRegistry({}, actor, { codexToolsEnabled: true });
-
     expect(hidden.list().filter((tool) => tool.name.startsWith('codex_'))).toHaveLength(0);
     expect(enabled.list().filter((tool) => tool.name.startsWith('codex_')).map((tool) => tool.name)).toEqual([...CODEX_TOOL_NAMES]);
     expect(enabled.list()).toHaveLength(hidden.list().length + CODEX_TOOL_NAMES.length);
@@ -52,10 +53,38 @@ describe('MCP tool registry', () => {
     expect(registration?.description).not.toContain('E:\\');
   });
 
-  it('exposes the Khai-Hub-compatible local capability contract', () => {
+  it('marks workspace discovery as a genuine read-only operation', () => {
+    const registry = new ToolRegistry({}, actor);
+    const workspaceList = registry.list().find((tool) => tool.name === 'workspace_list');
+    expect(workspaceList).toMatchObject({
+      permission: 'READ',
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    });
+    expect(permissionProfiles.safe.defaults.READ).toBe('ALLOW');
+    expect(permissionProfiles.balanced.defaults.READ).toBe('ALLOW');
+    expect(permissionProfiles.full.defaults.READ).toBe('ALLOW');
+  });
+
+  it('lists workspaces without mutation approval in every built-in profile', async () => {
+    const list = vi.fn(async () => ok([{ id: 'workspace-1', displayName: 'Project', rootPath: 'D:\\Project', realRootPath: 'D:\\Project' }]));
+    const approval = vi.fn(async () => true);
+    const services = { workspaceInfo: { list } } as unknown as McpApplicationServices;
+    for (const profile of [permissionProfiles.safe, permissionProfiles.balanced, permissionProfiles.full]) {
+      const registry = new ToolRegistry(services, actor, {
+        profileProvider: (): typeof profile => profile,
+        hostMutationApprovalProvider: approval,
+      });
+      await expect(registry.invoke('workspace_list', {})).resolves.toMatchObject({
+        structuredContent: { value: [{ id: 'workspace-1' }] },
+      });
+    }
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(approval).not.toHaveBeenCalled();
+  });
+
+  it('exposes the local desktop capability contract', () => {
     const registry = new ToolRegistry({}, actor);
     const byName = new Map(registry.list().map((tool) => [tool.name, tool]));
-
     expect(byName.get('shell')?.parse({ operation: 'run', executable: 'node', arguments: [] })).toMatchObject({ ok: true });
     expect(byName.get('dom_cdp')?.parse({ action: 'query', parameters: { selector: '#app' } })).toMatchObject({ ok: true });
     expect(byName.get('accessibility')?.parse({})).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
@@ -77,18 +106,15 @@ describe('MCP tool registry', () => {
           return ok({ accepted: true });
         },
       },
-    }, actor);
+    }, actor, { hostMutationApprovalProvider: approveMutation });
     const byName = new Map(registry.list().map((tool) => [tool.name, tool]));
-
     expect(byName.get('shell')?.description).toContain('ALWAYS forced to execution=background');
     expect(byName.get('shell')?.parse({ operation: 'run', executable: 'node', arguments: [] })).toMatchObject({ ok: true, value: { execution: 'background' } });
     expect(byName.get('wsl_exec')?.parse({ operation: 'run', workspaceId: 'workspace-1', executable: 'true', arguments: [] })).toMatchObject({ ok: true, value: { execution: 'background' } });
-
-    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], execution: 'foreground' });
+    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], execution: 'foreground', userConfirmed: true });
     await registry.invoke('shell', { operation: 'wait', task_id: 'task-1', timeout_seconds: 60 });
-    await registry.invoke('wsl_exec', { operation: 'run', workspaceId: 'workspace-1', executable: 'true', arguments: [], execution: 'foreground' });
+    await registry.invoke('wsl_exec', { operation: 'run', workspaceId: 'workspace-1', executable: 'true', arguments: [], execution: 'foreground', userConfirmed: true });
     await registry.invoke('wsl_exec', { operation: 'wait', workspaceId: 'workspace-1', task_id: 'task-2', timeout_seconds: 60 });
-
     expect(calls).toHaveLength(4);
     expect(calls[0]).toMatchObject({ tool: 'shell', input: { operation: 'run', execution: 'background' } });
     expect(calls[1]).toMatchObject({ tool: 'shell', input: { operation: 'wait', timeout_seconds: 5 } });
@@ -109,42 +135,63 @@ describe('MCP tool registry', () => {
         },
       },
     }, actor);
-
     await registry.invoke('shell', { operation: 'wait', task_id: 'task-1', timeout_seconds: 60 });
     configured = 1;
     await registry.invoke('shell', { operation: 'wait', task_id: 'task-1', timeout_seconds: 60 });
     configured = 999;
     await registry.invoke('wsl_exec', { operation: 'wait', workspaceId: 'workspace-1', task_id: 'task-2', timeout_seconds: 60 });
-
     expect(waits).toEqual([30, 5, 60]);
     expect(registry.list().find((tool) => tool.name === 'shell')?.description).toContain('do not keep polling in the same chat turn');
   });
 
   it('blocks dangerous capability execution under the safe profile before reaching the backend', async () => {
     let executed = false;
-    const registry = new ToolRegistry({
-      capabilities: {
-        async execute(): Promise<ReturnType<typeof ok>> {
-          executed = true;
-          return ok({ executed: true });
-        },
-      },
-    }, actor, {
+    const registry = new ToolRegistry({ capabilities: { async execute(): Promise<ReturnType<typeof ok>> { executed = true; return ok({ executed: true }); } } }, actor, {
       profileProvider: (): typeof permissionProfiles.safe => permissionProfiles.safe,
     });
-
-    const response = await registry.invoke('dom_cdp', { action: 'query', parameters: { selector: 'body' } });
-
-    expect(response).toMatchObject({
-      isError: true,
-      structuredContent: { error: { code: 'PERMISSION_DENIED' } },
-    });
+    const response = await registry.invoke('dom_cdp', { action: 'type', parameters: { selector: 'input', text: 'unsafe' } });
+    expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
     expect(executed).toBe(false);
+  });
+
+  it('uses action-level permission for mixed tools so Safe can read without allowing mutations', async () => {
+    const calls: Array<{ tool: string; input: unknown }> = [];
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> { calls.push({ tool, input }); return ok({ executed: true }); } } }, actor, {
+      profileProvider: (): typeof permissionProfiles.safe => permissionProfiles.safe,
+    });
+    const read = await registry.invoke('web_fetch', { url: 'https://example.com', method: 'GET' });
+    expect(read.isError).not.toBe(true);
+    await expect(registry.invoke('web_fetch', { url: 'https://example.com', method: 'POST', userConfirmed: true })).resolves.toMatchObject({
+      isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } },
+    });
+    const clipboardRead = await registry.invoke('clipboard', { action: 'get_text' });
+    expect(clipboardRead.isError).not.toBe(true);
+    expect(calls.map((call) => call.tool)).toEqual(['web_fetch', 'clipboard']);
+  });
+
+  it('lets explicit confirmation satisfy ASK without overriding a profile DENY', async () => {
+    const calls: string[] = [];
+    const services: McpApplicationServices = {
+      capabilities: { async execute(tool): Promise<ReturnType<typeof ok>> { calls.push(tool); return ok({ executed: true }); } },
+    };
+    const balanced = new ToolRegistry(services, actor, {
+      profileProvider: (): typeof permissionProfiles.balanced => permissionProfiles.balanced,
+      hostMutationApprovalProvider: approveMutation,
+    });
+    const safe = new ToolRegistry(services, actor, {
+      profileProvider: (): typeof permissionProfiles.safe => permissionProfiles.safe,
+      hostMutationApprovalProvider: approveMutation,
+    });
+    const allowed = await balanced.invoke('web_fetch', { url: 'https://example.com/item/1', method: 'DELETE', userConfirmed: true });
+    expect(allowed.isError).not.toBe(true);
+    await expect(safe.invoke('web_fetch', { url: 'https://example.com/item/1', method: 'DELETE', userConfirmed: true })).resolves.toMatchObject({
+      isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } },
+    });
+    expect(calls).toEqual(['web_fetch']);
   });
 
   it('rejects invalid workspace IDs, line ranges, oversized results, and process log queries at the schema boundary', async () => {
     const registry = new ToolRegistry({}, actor);
-
     await expect(registry.invoke('read_file', { workspaceId: '', path: 'src\\file.ts' })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'INVALID_INPUT' } } });
     await expect(registry.invoke('read_file', { workspaceId: 'workspace-1', path: 'src\\file.ts', startLine: 10, endLine: 2 })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'INVALID_INPUT' } } });
     await expect(registry.invoke('search_text', { workspaceId: 'workspace-1', query: 'x', maxResults: 501 })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'INVALID_INPUT' } } });
@@ -154,14 +201,17 @@ describe('MCP tool registry', () => {
   it('marks read-only and destructive annotations accurately and excludes forbidden tools', () => {
     const registry = new ToolRegistry({}, actor);
     const byName = new Map(registry.list().map((tool) => [tool.name, tool]));
-
     expect(byName.get('read_file')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(byName.get('delete_file')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(byName.get('git')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(byName.get('write_file')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
-    expect(byName.get('skills_list')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(byName.get('edit_file')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(byName.get('list_recovery_items')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(byName.get('list_checkpoints')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(byName.get('restore_checkpoint')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(byName.get('skills_list')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(byName.get('mcp_call')?.permission).toBe('DANGEROUS');
-    expect(byName.get('tool_batch')?.permission).toBe('DANGEROUS');
+    expect(byName.get('tool_batch')?.permission).toBe('EXECUTE');
     expect(byName.get('tool_batch')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(byName.get('workspace_context')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(byName.get('read_file_page')?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
@@ -169,92 +219,57 @@ describe('MCP tool registry', () => {
   });
 
   it('maps application errors without exposing internal details', async () => {
-    const services: McpApplicationServices = {
-      file: { async readFile(): Promise<ReturnType<typeof err>> { return err(appError('INTERNAL_ERROR', 'internal stack must not escape', true)); } },
-    };
-
+    const services: McpApplicationServices = { file: { async readFile(): Promise<ReturnType<typeof err>> { return err(appError('INTERNAL_ERROR', 'internal stack must not escape', true)); } } };
     const response = await new ToolRegistry(services, actor).invoke('read_file', { workspaceId: 'workspace-1', path: 'src\\file.ts' });
-
     expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'INTERNAL_ERROR', recoverable: true } } });
     expect(response.content[0]?.text).not.toContain('stack');
   });
 
   it('does not impose a default 90-second response cutoff on long-running tools', async () => {
     vi.useFakeTimers();
-    const services: McpApplicationServices = {
-      search: {
-        async searchText() {
-          await new Promise((resolve) => setTimeout(resolve, 95_000));
-          return ok({ matches: [], truncated: false });
-        },
-        async searchFiles() {
-          return ok({ paths: [], truncated: false });
-        },
-      },
-    };
+    const services: McpApplicationServices = { search: {
+      async searchText() { await new Promise((resolve) => setTimeout(resolve, 95_000)); return ok({ matches: [], truncated: false }); },
+      async searchFiles() { return ok({ paths: [], truncated: false }); },
+    } };
     const registry = new ToolRegistry(services, actor);
     let settled = false;
     const pending = registry.invoke('search_text', { workspaceId: 'workspace-1', query: 'slow-but-valid' });
     void pending.then(() => { settled = true; });
-
     await vi.advanceTimersByTimeAsync(90_001);
     await Promise.resolve();
     expect(settled).toBe(false);
-
     await vi.advanceTimersByTimeAsync(4_999);
     await expect(pending).resolves.toMatchObject({ structuredContent: { matches: [], truncated: false } });
   });
 
   it('returns a recoverable timeout before a slow tool can outlive the MCP response budget', async () => {
-    const services: McpApplicationServices = {
-      search: {
-        async searchText() {
-          await new Promise((resolve) => setTimeout(resolve, 80));
-          return ok({ matches: [], truncated: false });
-        },
-        async searchFiles() {
-          return ok({ paths: [], truncated: false });
-        },
-      },
-    };
+    const services: McpApplicationServices = { search: {
+      async searchText() { await new Promise((resolve) => setTimeout(resolve, 80)); return ok({ matches: [], truncated: false }); },
+      async searchFiles() { return ok({ paths: [], truncated: false }); },
+    } };
     const registry = new ToolRegistry(services, actor, { maxToolDurationMs: 10 });
-
     const started = Date.now();
     const response = await registry.invoke('search_text', { workspaceId: 'workspace-1', query: 'slow' });
-
     expect(Date.now() - started).toBeLessThan(70);
-    expect(response).toMatchObject({
-      isError: true,
-      structuredContent: { error: { code: 'PROCESS_TIMEOUT', recoverable: true } },
-    });
+    expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'PROCESS_TIMEOUT', recoverable: true } } });
   });
 
   it('aborts a timed-out invocation before allowing the next MCP call to succeed', async () => {
     let firstInvocationAborted = false;
-    const services: McpApplicationServices = {
-      search: {
-        async searchText(_actor, _workspaceId, request, signal) {
-          if (request.query === 'fast') return ok({ matches: [], truncated: false });
-          return new Promise<ReturnType<typeof ok>>((resolve) => {
-            signal?.addEventListener('abort', () => {
-              firstInvocationAborted = true;
-              resolve(ok({ matches: [], truncated: true }));
-            }, { once: true });
-          });
-        },
-        async searchFiles() {
-          return ok({ paths: [], truncated: false });
-        },
+    const services: McpApplicationServices = { search: {
+      async searchText(_actor, _workspaceId, request, signal) {
+        if (request.query === 'fast') return ok({ matches: [], truncated: false });
+        return new Promise<ReturnType<typeof ok>>((resolve) => {
+          signal?.addEventListener('abort', () => { firstInvocationAborted = true; resolve(ok({ matches: [], truncated: true })); }, { once: true });
+        });
       },
-    };
+      async searchFiles() { return ok({ paths: [], truncated: false }); },
+    } };
     const registry = new ToolRegistry(services, actor, { maxToolDurationMs: 15 });
-
     await expect(registry.invoke('search_text', { workspaceId: 'workspace-1', query: 'slow' })).resolves.toMatchObject({
-      isError: true,
-      structuredContent: { error: { code: 'PROCESS_TIMEOUT', recoverable: true } },
+      isError: true, structuredContent: { error: { code: 'PROCESS_TIMEOUT', recoverable: true } },
     });
     expect(firstInvocationAborted).toBe(true);
-
     const followUp = await registry.invoke('search_text', { workspaceId: 'workspace-1', query: 'fast' });
     expect(followUp.isError).not.toBe(true);
     expect(followUp.structuredContent).toMatchObject({ matches: [], truncated: false });
@@ -262,20 +277,11 @@ describe('MCP tool registry', () => {
 
   it('maps thrown application exceptions to INTERNAL_ERROR and sends redacted diagnostics', async () => {
     const diagnostics: unknown[] = [];
-    const services: McpApplicationServices = {
-      search: {
-        async searchText(): Promise<never> {
-          throw new Error('Authorization: Bearer secret-token');
-        },
-        async searchFiles() {
-          return ok({ paths: [], truncated: false });
-        },
-      },
-    };
-
-    const response = await new ToolRegistry(services, actor, { diagnostic: (event: unknown): void => { diagnostics.push(event); } })
-      .invoke('search_text', { workspaceId: 'workspace-1', query: 'needle' });
-
+    const services: McpApplicationServices = { search: {
+      async searchText(): Promise<never> { throw new Error('Authorization: Bearer secret-token'); },
+      async searchFiles() { return ok({ paths: [], truncated: false }); },
+    } };
+    const response = await new ToolRegistry(services, actor, { diagnostic: (event: unknown): void => { diagnostics.push(event); } }).invoke('search_text', { workspaceId: 'workspace-1', query: 'needle' });
     expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'INTERNAL_ERROR', message: 'Operation failed' } } });
     expect(response.content[0]?.text).not.toContain('secret-token');
     expect(JSON.stringify(diagnostics)).not.toContain('secret-token');
@@ -284,40 +290,16 @@ describe('MCP tool registry', () => {
 
   it('records activity sink events for successful tool calls', async () => {
     const events: Array<{ phase: string; toolName: string; resultCode: string }> = [];
-    const services: McpApplicationServices = {
-      file: {
-        async readFile() {
-          return ok({ path: 'src\\file.ts', content: 'hello', truncated: false });
-        },
-        async readFiles() {
-          return ok({ files: [] });
-        },
-        async writeFile() {
-          return ok({ path: 'x' });
-        },
-        async applyPatch() {
-          return ok({ paths: [] });
-        },
-        async moveFile() {
-          return ok({ from: 'a', to: 'b' });
-        },
-        async copyFile() {
-          return ok({ sourcePath: 'a', destinationPath: 'b' });
-        },
-        async deleteFile() {
-          return ok({ path: 'x' });
-        },
-      },
-    };
-
-    const response = await new ToolRegistry(services, actor, {
-      activity: {
-        async record(event: ActivitySinkEvent): Promise<void> {
-          events.push({ phase: event.phase, toolName: event.toolName, resultCode: event.resultCode });
-        },
-      },
-    }).invoke('read_file', { workspaceId: 'workspace-1', path: 'src\\file.ts' });
-
+    const services: McpApplicationServices = { file: {
+      async readFile() { return ok({ path: 'src\\file.ts', content: 'hello', truncated: false }); },
+      async readFiles() { return ok({ files: [] }); },
+      async writeFile() { return ok({ path: 'x' }); },
+      async applyPatch() { return ok({ paths: [] }); },
+      async moveFile() { return ok({ from: 'a', to: 'b' }); },
+      async copyFile() { return ok({ sourcePath: 'a', destinationPath: 'b' }); },
+      async deleteFile() { return ok({ path: 'x' }); },
+    } };
+    const response = await new ToolRegistry(services, actor, { activity: { async record(event: ActivitySinkEvent): Promise<void> { events.push({ phase: event.phase, toolName: event.toolName, resultCode: event.resultCode }); } } }).invoke('read_file', { workspaceId: 'workspace-1', path: 'src\\file.ts' });
     expect(response.isError).not.toBe(true);
     expect(events).toEqual([
       { phase: 'started', toolName: 'read_file', resultCode: 'STARTED' },
@@ -331,32 +313,26 @@ describe('MCP tool registry', () => {
     const registry = new ToolRegistry({
       workspaceInfo: {
         async info(): Promise<ReturnType<typeof err>> { return err(appError('WORKSPACE_NOT_FOUND', 'not used')); },
-        async list(): Promise<ReturnType<typeof ok>> {
-          return ok([
-            { id: 'machine-root', displayName: 'E', rootPath: 'E:\\', realRootPath: 'E:\\' },
-            { id: 'workspace-project', displayName: 'lnwjud', rootPath: 'E:\\lnwjud', realRootPath: 'E:\\lnwjud' },
-          ]);
-        },
+        async list(): Promise<ReturnType<typeof ok>> { return ok([
+          { id: 'machine-root', displayName: 'E', rootPath: 'E:\\', realRootPath: 'E:\\' },
+          { id: 'workspace-project', displayName: 'lnwjud', rootPath: 'E:\\lnwjud', realRootPath: 'E:\\lnwjud' },
+        ]); },
       },
-      capabilities: {
-        async execute(tool, input): Promise<ReturnType<typeof ok>> {
-          expect(tool).toBe('shell');
-          const request = input as { operation?: string; task_id?: string };
-          if (request.operation === 'run') {
-            taskSequence += 1;
-            return ok({ task_id: `task-${taskSequence}`, state: 'running' });
-          }
-          return ok({ task_id: request.task_id, state: 'completed', exit_code: 0 });
-        },
-      },
+      capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> {
+        expect(tool).toBe('shell');
+        const request = input as { operation?: string; task_id?: string };
+        if (request.operation === 'run') { taskSequence += 1; return ok({ task_id: `task-${taskSequence}`, state: 'running' }); }
+        return ok({ task_id: request.task_id, state: 'completed', exit_code: 0 });
+      } },
     }, actor, {
       activity: { async record(event: ActivitySinkEvent): Promise<void> { events.push(event); } },
+      hostMutationApprovalProvider: approveMutation,
     });
-
-    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], cwd: 'E:\\lnwjud\\packages\\mcp-server' });
+    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], cwd: 'E:\\lnwjud\\packages\\mcp-server', userConfirmed: true });
     await registry.invoke('shell', { operation: 'wait', task_id: 'task-1' });
-    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], cwd: 'C:\\outside' });
-
+    await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], cwd: 'C:\\outside', userConfirmed: true });
+    expect(events[0]?.targetSummary).toBe('node --version');
+    expect(events[2]?.targetSummary).toBe('node --version');
     expect(events.slice(0, 4).map((event) => ({ phase: event.phase, workspaceId: event.workspaceId }))).toEqual([
       { phase: 'started', workspaceId: 'workspace-project' },
       { phase: 'completed', workspaceId: 'workspace-project' },
@@ -368,82 +344,44 @@ describe('MCP tool registry', () => {
 
   it('executes tool_batch children through the registry and records each child activity', async () => {
     const events: Array<{ phase: string; toolName: string; resultCode: string }> = [];
-    const registry = new ToolRegistry({
-      file: {
-        async readFile(input): Promise<ReturnType<typeof ok>> {
-          return ok({ path: input.path, content: `content:${input.path}`, truncated: false });
-        },
-      },
-    }, actor, {
-      activity: {
-        async record(event: ActivitySinkEvent): Promise<void> {
-          events.push({ phase: event.phase, toolName: event.toolName, resultCode: event.resultCode });
-        },
-      },
+    const registry = new ToolRegistry({ file: { async readFile(input): Promise<ReturnType<typeof ok>> { return ok({ path: input.path, content: `content:${input.path}`, truncated: false }); } } }, actor, {
+      activity: { async record(event: ActivitySinkEvent): Promise<void> { events.push({ phase: event.phase, toolName: event.toolName, resultCode: event.resultCode }); } },
     });
-
-    const response = await registry.invoke('tool_batch', {
-      parallel: true,
-      calls: [
-        { id: 'read-a', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'a.txt' } },
-        { id: 'read-b', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'b.txt' } },
-      ],
-    });
-
+    const response = await registry.invoke('tool_batch', { parallel: true, calls: [
+      { id: 'read-a', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'a.txt' } },
+      { id: 'read-b', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'b.txt' } },
+    ] });
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({ summary: { total: 2, succeeded: 2, failed: 0 } });
-    expect(events.filter((event) => event.phase === 'started').map((event) => event.toolName)).toEqual([
-      'tool_batch', 'read_file', 'read_file',
-    ]);
-    expect(events.filter((event) => event.phase === 'completed').map((event) => event.toolName).sort()).toEqual([
-      'read_file', 'read_file', 'tool_batch',
-    ]);
+    expect(events.filter((event) => event.phase === 'started').map((event) => event.toolName)).toEqual(['tool_batch', 'read_file', 'read_file']);
+    expect(events.filter((event) => event.phase === 'completed').map((event) => event.toolName).sort()).toEqual(['read_file', 'read_file', 'tool_batch']);
   });
 
   it('keeps successful batch siblings when one child returns an MCP error', async () => {
-    const registry = new ToolRegistry({
-      file: {
-        async readFile(input): Promise<ReturnType<typeof ok>> {
-          return ok({ path: input.path, content: 'ok', truncated: false });
-        },
-      },
-    }, actor);
-
-    const response = await registry.invoke('tool_batch', {
-      parallel: true,
-      calls: [
-        { id: 'good-a', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'a.txt' } },
-        { id: 'bad', tool: 'does_not_exist', arguments: {} },
-        { id: 'good-b', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'b.txt' } },
-      ],
-    });
-
+    const registry = new ToolRegistry({ file: { async readFile(input): Promise<ReturnType<typeof ok>> { return ok({ path: input.path, content: 'ok', truncated: false }); } } }, actor);
+    const response = await registry.invoke('tool_batch', { parallel: true, calls: [
+      { id: 'good-a', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'a.txt' } },
+      { id: 'bad', tool: 'does_not_exist', arguments: {} },
+      { id: 'good-b', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'b.txt' } },
+    ] });
     expect(response.isError).not.toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      summary: { total: 3, succeeded: 2, failed: 1 },
-      results: [
-        { id: 'good-a', status: 'succeeded' },
-        { id: 'bad', status: 'failed', error: { code: 'INVALID_INPUT' } },
-        { id: 'good-b', status: 'succeeded' },
-      ],
-    });
+    expect(response.structuredContent).toMatchObject({ summary: { total: 3, succeeded: 2, failed: 1 }, results: [
+      { id: 'good-a', status: 'succeeded' },
+      { id: 'bad', status: 'failed', error: { code: 'INVALID_INPUT' } },
+      { id: 'good-b', status: 'succeeded' },
+    ] });
   });
-  it('requires explicit confirmation before destructive git commands reach the backend', async () => {
-    let executed = 0;
-    const registry = new ToolRegistry({
-      git: {
-        async run(): Promise<ReturnType<typeof ok>> {
-          executed += 1;
-          return ok({ exitCode: 0, stdout: '', stderr: '' });
-        },
-      },
-    }, actor);
 
-    const blocked = await registry.invoke('git', { workspaceId: 'workspace-1', args: ['reset', '--hard'] });
+  it('requires explicit confirmation before recoverable Git mutations reach the backend', async () => {
+    let executed = 0;
+    const registry = new ToolRegistry({ git: { async run(): Promise<ReturnType<typeof ok>> { executed += 1; return ok({ exitCode: 0, stdout: '', stderr: '' }); } } }, actor, {
+      profileProvider: (): PermissionProfile => permissionProfiles.balanced,
+      hostMutationApprovalProvider: approveMutation,
+    });
+    const blocked = await registry.invoke('git', { workspaceId: 'workspace-1', args: ['add', '--', 'src/file.ts'] });
     expect(blocked).toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
     expect(executed).toBe(0);
-
-    const allowed = await registry.invoke('git', { workspaceId: 'workspace-1', args: ['reset', '--hard'], userConfirmed: true });
+    const allowed = await registry.invoke('git', { workspaceId: 'workspace-1', args: ['add', '--', 'src/file.ts'], userConfirmed: true });
     expect(allowed.isError).not.toBe(true);
     expect(executed).toBe(1);
   });
@@ -451,159 +389,244 @@ describe('MCP tool registry', () => {
   it('allows only scoped delete_file to bypass chat confirmation when the AI delete policy is enabled', async () => {
     let deletes = 0;
     const registry = new ToolRegistry({
-      file: {
-        async deleteFile(): Promise<ReturnType<typeof ok>> { deletes += 1; return ok(undefined); },
-      } as McpApplicationServices['file'],
-      capabilities: {
-        async execute(): Promise<ReturnType<typeof ok>> { return ok({ ok: true }); },
-      },
+      file: { async deleteFile(): Promise<ReturnType<typeof ok>> { deletes += 1; return ok(undefined); } } as McpApplicationServices['file'],
+      capabilities: { async execute(): Promise<ReturnType<typeof ok>> { return ok({ ok: true }); } },
     }, actor, {
       allowAiDeleteProvider: (): boolean => true,
-      workspaceScopeResolver: async (workspaceId): Promise<WorkspaceScope | null> => workspaceId === 'workspace-1'
-        ? { workspaceId, rootPath: 'E:\\project' }
-        : null,
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-1', rootPath: 'E:\\project' }),
     });
-
     const deleted = await registry.invoke('delete_file', { workspaceId: 'workspace-1', path: 'tmp.txt' });
     expect(deleted.isError).not.toBe(true);
     expect(deletes).toBe(1);
-    await expect(registry.invoke('shell', { operation: 'run', executable: 'rm', arguments: ['tmp.txt'] }))
-      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('shell', { operation: 'run', executable: 'rm', arguments: ['tmp.txt'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
   });
 
-  it('auto-approves only enabled destructive command families inside the active project', async () => {
+  it('auto-approves enabled exact scoped destructive command families but keeps broad or escaped forms interactive', async () => {
     const capabilityInputs: unknown[] = [];
     let gitRuns = 0;
     const registry = new ToolRegistry({
-      capabilities: {
-        async execute(_tool, input): Promise<ReturnType<typeof ok>> { capabilityInputs.push(input); return ok({ ok: true }); },
-      },
-      git: {
-        async run(): Promise<ReturnType<typeof ok>> { gitRuns += 1; return ok({ exitCode: 0, stdout: '', stderr: '' }); },
-      } as McpApplicationServices['git'],
+      capabilities: { async execute(_tool, input): Promise<ReturnType<typeof ok>> { capabilityInputs.push(input); return ok({ ok: true }); } },
+      git: { async run(): Promise<ReturnType<typeof ok>> { gitRuns += 1; return ok({ exitCode: 0, stdout: '', stderr: '' }); } } as McpApplicationServices['git'],
     }, actor, {
-      destructivePolicyProvider: (): DestructiveAutoApprovalPolicy => ({
-        ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY,
-        approvals: {
-          ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals,
-          git_rm: true,
-          shell_rm_unlink: true,
-        },
-      }),
-      workspaceScopeResolver: async (workspaceId): Promise<WorkspaceScope | null> => workspaceId === 'workspace-1'
-        ? { workspaceId, rootPath: 'E:\\project' }
-        : null,
+      destructivePolicyProvider: (): DestructiveAutoApprovalPolicy => ({ ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, approvals: { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals, git_rm: true, shell_rm_unlink: true } }),
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-1', rootPath: 'E:\\project' }),
     });
 
-    const gitRm = await registry.invoke('git', { workspaceId: 'workspace-1', args: ['rm', '--', 'src/old.ts'] });
-    expect(gitRm.isError).not.toBe(true);
+    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['rm', '--', 'src/old.ts'] })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['src/old.tmp'] })).resolves.not.toMatchObject({ isError: true });
     expect(gitRuns).toBe(1);
-
-    const shellRm = await registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['src/old.tmp'] });
-    expect(shellRm.isError).not.toBe(true);
     expect(capabilityInputs).toHaveLength(1);
     expect(capabilityInputs[0]).toMatchObject({ userConfirmed: true });
 
-    await expect(registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['..\\outside.tmp'] }))
-      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
-    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['clean', '-fd'] }))
-      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['..\\outside.tmp'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['-rf', 'src'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['clean', '-fd'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    expect(gitRuns).toBe(1);
+    expect(capabilityInputs).toHaveLength(1);
   });
 
-  it('resolves destructive scope from each call workspaceId and fails closed when scope is missing or crossed', async () => {
+  it('binds mutation authority to the host active workspace instead of request workspaceId', async () => {
     let deletes = 0;
-    const roots = new Map([
-      ['workspace-a', 'E:\\project-a'],
-      ['workspace-b', 'F:\\project-b'],
-    ]);
+    let projectStarts = 0;
     const registry = new ToolRegistry({
-      workspaceInfo: {
-        async info(_actor, workspaceId): Promise<ReturnType<typeof ok> | ReturnType<typeof err>> {
-          const rootPath = roots.get(workspaceId);
-          return rootPath === undefined
-            ? err(appError('WORKSPACE_NOT_FOUND', 'Workspace was not found'))
-            : ok({ id: workspaceId, rootPath, realRootPath: rootPath });
-        },
-      },
-      file: {
-        async deleteFile(): Promise<ReturnType<typeof ok>> { deletes += 1; return ok(undefined); },
-      } as McpApplicationServices['file'],
+      file: { async deleteFile(): Promise<ReturnType<typeof ok>> { deletes += 1; return ok(undefined); } } as McpApplicationServices['file'],
+      process: { async startProjectCommand(): Promise<ReturnType<typeof ok>> { projectStarts += 1; return ok({ processId: 'process-1', executable: 'pnpm', args: ['test'], cwd: 'E:\\project-a', state: 'running', startedAt: new Date(0).toISOString() }); } } as McpApplicationServices['process'],
     }, actor, {
-      destructivePolicyProvider: (): DestructiveAutoApprovalPolicy => ({
-        ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY,
-        approvals: { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals, delete_file: true },
-      }),
+      destructivePolicyProvider: (): DestructiveAutoApprovalPolicy => ({ ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, approvals: { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals, delete_file: true } }),
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' }),
     });
-
-    const [deletedA, deletedB] = await Promise.all([
-      registry.invoke('delete_file', { workspaceId: 'workspace-a', path: 'tmp-a.txt' }),
-      registry.invoke('delete_file', { workspaceId: 'workspace-b', path: 'tmp-b.txt' }),
-    ]);
+    const deletedA = await registry.invoke('delete_file', { workspaceId: 'workspace-a', path: 'tmp-a.txt' });
     expect(deletedA.isError).not.toBe(true);
-    expect(deletedB.isError).not.toBe(true);
-    expect(deletes).toBe(2);
-
-    await expect(registry.invoke('delete_file', { workspaceId: 'workspace-a', path: 'F:\\project-b\\cross.txt' }))
-      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
-    await expect(registry.invoke('delete_file', { path: 'no-workspace.txt' }))
-      .resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
-    expect(deletes).toBe(2);
+    expect(deletes).toBe(1);
+    await expect(registry.invoke('delete_file', { workspaceId: 'workspace-b', path: 'tmp-b.txt', userConfirmed: true })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    await expect(registry.invoke('delete_file', { path: 'no-workspace.txt' })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    await expect(registry.invoke('project_test', { workspaceId: 'workspace-b', userConfirmed: true })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    expect(deletes).toBe(1);
+    expect(projectStarts).toBe(0);
   });
-  it('allows non-destructive git commands without confirmation', async () => {
-    let executed = 0;
+
+  it('allows explicitly absolute Shell and WSL working directories outside the host active workspace root after approval', async () => {
+    const capabilityCalls: unknown[] = [];
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> { capabilityCalls.push({ tool, input }); return ok({ accepted: true }); } } }, actor, {
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' }),
+      hostMutationApprovalProvider: approveMutation,
+    });
+    await expect(registry.invoke('shell', { workspaceId: 'workspace-a', operation: 'run', executable: 'node.exe', arguments: ['script.js'], cwd: 'E:\\project-b', userConfirmed: true })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('wsl_exec', { workspaceId: 'workspace-a', operation: 'run', executable: 'node', arguments: ['script.js'], cwd: 'E:\\project-b', userConfirmed: true })).resolves.not.toMatchObject({ isError: true });
+    expect(capabilityCalls).toHaveLength(2);
+    expect(capabilityCalls[0]).toMatchObject({ tool: 'shell', input: { cwd: 'E:\\project-b' } });
+    expect(capabilityCalls[1]).toMatchObject({ tool: 'wsl_exec', input: { cwd: 'E:\\project-b' } });
+    expect((capabilityCalls[0] as { input: { metadata?: Record<string, unknown> } }).input.metadata).not.toHaveProperty('lnwjud.activeWorkspaceRoot.v1');
+    expect((capabilityCalls[1] as { input: { metadata?: Record<string, unknown> } }).input.metadata).not.toHaveProperty('lnwjud.activeWorkspaceRoot.v1');
+  });
+
+  it('anchors missing and relative Shell or WSL cwd values to the host active workspace root', async () => {
+    const capabilityCalls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> { capabilityCalls.push({ tool, input: input as Record<string, unknown> }); return ok({ accepted: true }); } } }, actor, {
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' }),
+      hostMutationApprovalProvider: approveMutation,
+    });
+    await registry.invoke('shell', { workspaceId: 'workspace-a', operation: 'run', executable: 'node.exe', arguments: ['script.js'], cwd: 'src', userConfirmed: true });
+    await registry.invoke('wsl_exec', { workspaceId: 'workspace-a', operation: 'run', executable: 'node', arguments: ['script.js'], userConfirmed: true });
+    expect(capabilityCalls).toHaveLength(2);
+    expect(capabilityCalls[0]).toMatchObject({ tool: 'shell', input: { cwd: 'E:\\project-a\\src', metadata: { 'lnwjud.activeWorkspaceRoot.v1': 'E:\\project-a' } } });
+    expect(capabilityCalls[1]).toMatchObject({ tool: 'wsl_exec', input: { cwd: 'E:\\project-a', metadata: { 'lnwjud.activeWorkspaceRoot.v1': 'E:\\project-a' } } });
+  });
+
+  it('lets a host-native exact-action approval veto risky execution while scoped recoverable auto-delete stays non-interactive', async () => {
+    let hostApproved = false;
+    let capabilityExecutions = 0;
+    let deletes = 0;
+    const approvalRequests: unknown[] = [];
     const registry = new ToolRegistry({
-      git: {
-        async run(): Promise<ReturnType<typeof ok>> {
-          executed += 1;
-          return ok({ exitCode: 0, stdout: '', stderr: '' });
-        },
-      },
+      capabilities: { async execute(): Promise<ReturnType<typeof ok>> { capabilityExecutions += 1; return ok({ accepted: true }); } },
+      file: { async deleteFile(): Promise<ReturnType<typeof ok>> { deletes += 1; return ok({ path: 'tmp.txt', recoverable: true, recoveryId: 'recovery-1' }); } } as McpApplicationServices['file'],
+    }, actor, {
+      destructivePolicyProvider: (): DestructiveAutoApprovalPolicy => ({ ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, approvals: { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals, delete_file: true } }),
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' }),
+      profileProvider: (): PermissionProfile => permissionProfiles.balanced,
+      hostMutationApprovalProvider: async (request: unknown): Promise<boolean> => { approvalRequests.push(request); return hostApproved; },
+    } as ToolRegistryOptions & { readonly hostMutationApprovalProvider: (request: unknown) => Promise<boolean> });
+    const denied = await registry.invoke('shell', { workspaceId: 'workspace-a', operation: 'run', executable: 'node.exe', arguments: ['--eval', 'require("fs").rmSync("x")'], cwd: 'tools', userConfirmed: true });
+    expect(denied).toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    expect(capabilityExecutions).toBe(0);
+    expect(approvalRequests).toHaveLength(1);
+    expect(approvalRequests[0]).toMatchObject({ toolName: 'shell', mutationKind: 'opaque_mutation', workspaceId: 'workspace-a', workspaceRoot: 'E:\\project-a' });
+    expect((approvalRequests[0] as { summary?: string }).summary).toContain('executable = node.exe');
+    hostApproved = true;
+    const approved = await registry.invoke('shell', { workspaceId: 'workspace-a', operation: 'run', executable: 'node.exe', arguments: ['--eval', 'require("fs").rmSync("x")'], cwd: 'tools', userConfirmed: true });
+    expect(approved.isError).not.toBe(true);
+    expect(capabilityExecutions).toBe(1);
+    expect(approvalRequests).toHaveLength(2);
+    const autoDeleted = await registry.invoke('delete_file', { workspaceId: 'workspace-a', path: 'tmp.txt' });
+    expect(autoDeleted.isError).not.toBe(true);
+    expect(deletes).toBe(1);
+    expect(approvalRequests).toHaveLength(2);
+  });
+
+  it('backs up and normalizes mutating Office targets inside the host active workspace', async () => {
+    const preparedInputs: unknown[] = [];
+    const capabilityInputs: unknown[] = [];
+    const registry = new ToolRegistry({
+      file: { async prepareExternalFileMutation(_actor, workspaceId, request): Promise<ReturnType<typeof ok>> {
+        preparedInputs.push({ workspaceId, request });
+        return ok({ sourcePaths: [], targetPath: 'E:\\project-a\\report.docx', targetRelativePath: 'report.docx', replacementBackup: { recoveryId: 'backup-1', recoveryPath: 'E:\\recovery\\backup-1\\payload' } });
+      } } as McpApplicationServices['file'],
+      capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> { capabilityInputs.push({ tool, input }); return ok({ replaced: true }); } },
+    }, actor, {
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' }),
+      profileProvider: (): PermissionProfile => permissionProfiles.balanced,
+      hostMutationApprovalProvider: approveMutation,
+    });
+    await expect(registry.invoke('office', { workspaceId: 'workspace-a', app: 'word', action: 'replace', file_path: 'report.docx', find: 'old', replace_with: 'new' })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('office', { workspaceId: 'workspace-b', app: 'word', action: 'replace', file_path: 'report.docx', find: 'old', replace_with: 'new', userConfirmed: true })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    const replaced = await registry.invoke('office', { workspaceId: 'workspace-a', app: 'word', action: 'replace', file_path: 'report.docx', find: 'old', replace_with: 'new', userConfirmed: true });
+    expect(replaced).toMatchObject({ structuredContent: { replaced: true, replacementBackup: { recoveryId: 'backup-1', recoveryPath: 'E:\\recovery\\backup-1\\payload' } } });
+    expect(preparedInputs).toEqual([{ workspaceId: 'workspace-a', request: { sourcePaths: [], targetPath: 'report.docx', userConfirmed: true } }]);
+    expect(capabilityInputs).toEqual([{ tool: 'office', input: expect.objectContaining({ workspaceId: 'workspace-a', file_path: 'E:\\project-a\\report.docx', userConfirmed: true }) }]);
+  });
+
+  it.each([
+    ['audio', { action: 'record', output_path: 'capture.wav' }, 'E:\\project-a\\capture.wav'],
+    ['screen_record', { action: 'start', output_path: 'capture.mp4' }, 'E:\\project-a\\capture.mp4'],
+  ] as const)('backs up and scopes %s output replacement to the host active workspace', async (tool, request, normalizedTarget) => {
+    const preparedInputs: unknown[] = [];
+    const capabilityInputs: unknown[] = [];
+    const registry = new ToolRegistry({
+      file: { async prepareExternalFileMutation(_actor, workspaceId, mutation): Promise<ReturnType<typeof ok>> {
+        preparedInputs.push({ workspaceId, mutation });
+        return ok({ sourcePaths: [], targetPath: normalizedTarget, targetRelativePath: path.win32.basename(normalizedTarget), replacementBackup: { recoveryId: 'media-backup-1', recoveryPath: 'E:\\recovery\\media-backup-1\\payload' } });
+      } } as McpApplicationServices['file'],
+      capabilities: { async execute(capability, input): Promise<ReturnType<typeof ok>> { capabilityInputs.push({ capability, input }); return ok({ started: true }); } },
+    }, actor, {
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' }),
+      hostMutationApprovalProvider: approveMutation,
+    });
+    await expect(registry.invoke(tool, { ...request, userConfirmed: true })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'INVALID_INPUT' } } });
+    await expect(registry.invoke(tool, { ...request, workspaceId: 'workspace-b', userConfirmed: true })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    const response = await registry.invoke(tool, { ...request, workspaceId: 'workspace-a', userConfirmed: true });
+    expect(response).toMatchObject({ structuredContent: { started: true, replacementBackup: { recoveryId: 'media-backup-1', recoveryPath: 'E:\\recovery\\media-backup-1\\payload' } } });
+    expect(preparedInputs).toEqual([{ workspaceId: 'workspace-a', mutation: { sourcePaths: [], targetPath: request.output_path, userConfirmed: true } }]);
+    expect(capabilityInputs).toEqual([{ capability: tool, input: expect.objectContaining({ workspaceId: 'workspace-a', output_path: normalizedTarget, userConfirmed: true }) }]);
+  });
+
+  it('blocks parser-bypass Git and interpreter invocations before any backend call', async () => {
+    const calls: string[] = [];
+    const registry = new ToolRegistry({
+      git: { async run(): Promise<ReturnType<typeof ok>> { calls.push('git'); return ok({ exitCode: 0, stdout: '', stderr: '' }); } } as McpApplicationServices['git'],
+      capabilities: { async execute(tool): Promise<ReturnType<typeof ok>> { calls.push(tool); return ok({ ok: true }); } },
+    }, actor);
+    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['-C', 'E:\\outside', 'clean', '-fd'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['-c', 'alias.wipe=!rm -rf .', 'wipe'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['clean', '-fd'], userConfirmed: true })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    await expect(registry.invoke('shell', { operation: 'run', executable: 'pwsh.exe', arguments: ['-EncodedCommand', 'VwByAGkAdABlAC0ATwB1AHQAcAB1AHQA'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'rm', arguments: ['victim.txt'], userConfirmed: true })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_DENIED' } } });
+    await expect(registry.invoke('wsl_exec', { workspaceId: 'workspace-1', operation: 'run', executable: 'cp', arguments: ['a', 'b'] })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('shell', { operation: 'run', executable: 'node.exe', arguments: ['cleanup.js'] })).resolves.not.toMatchObject({ isError: true });
+    expect(calls).toEqual(['wsl_exec', 'shell']);
+  });
+
+  it('allows Full profile non-destructive mutations without confirmation while delete still prompts', async () => {
+    const calls: string[] = [];
+    const fileInputs: unknown[] = [];
+    const registry = new ToolRegistry({
+      file: {
+        async writeFile(_actor, _workspaceId, input): Promise<ReturnType<typeof ok>> { fileInputs.push({ tool: 'write_file', input }); return ok({ path: 'a.txt', bytesWritten: 1 }); },
+        async applyPatch(_actor, _workspaceId, input): Promise<ReturnType<typeof ok>> { fileInputs.push({ tool: 'apply_patch', input }); return ok({ paths: ['a.txt'] }); },
+        async deleteFile(): Promise<ReturnType<typeof ok>> { calls.push('delete_file'); return ok({ path: 'a.txt', recoverable: true }); },
+      } as McpApplicationServices['file'],
+      git: { async run(): Promise<ReturnType<typeof ok>> { calls.push('git'); return ok({ exitCode: 0, stdout: '', stderr: '' }); } } as McpApplicationServices['git'],
+      process: { async start(): Promise<ReturnType<typeof ok>> { calls.push('process_start'); return ok({ processId: 'p1' }); } } as McpApplicationServices['process'],
+      capabilities: { async execute(tool): Promise<ReturnType<typeof ok>> { calls.push(tool); return ok({ ok: true }); } },
     }, actor);
 
+    await expect(registry.invoke('write_file', { workspaceId: 'workspace-1', path: 'a.txt', content: 'x' })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('apply_patch', { workspaceId: 'workspace-1', files: [{ path: 'a.txt', content: 'y' }] })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('git', { workspaceId: 'workspace-1', args: ['add', '--', 'a.txt'] })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('process_start', { workspaceId: 'workspace-1', executable: 'powershell.exe', args: ['-Command', 'Get-Item .'] })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('shell', { workspaceId: 'workspace-1', operation: 'run', executable: 'node.exe', arguments: ['-e', 'console.log(1)'] })).resolves.not.toMatchObject({ isError: true });
+    await expect(registry.invoke('delete_file', { workspaceId: 'workspace-1', path: 'a.txt' })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('mcp_call', { server: 'child', tool: 'delete_file', arguments: { path: 'a.txt' } })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    expect(fileInputs).toEqual([
+      { tool: 'write_file', input: expect.objectContaining({ userConfirmed: true }) },
+      { tool: 'apply_patch', input: expect.objectContaining({ userConfirmed: true }) },
+    ]);
+    expect(calls).toEqual(['git', 'process_start', 'shell']);
+  });
+
+  it('allows non-destructive git commands without confirmation', async () => {
+    let executed = 0;
+    const registry = new ToolRegistry({ git: { async run(): Promise<ReturnType<typeof ok>> { executed += 1; return ok({ exitCode: 0, stdout: '', stderr: '' }); } } }, actor);
     const response = await registry.invoke('git', { workspaceId: 'workspace-1', args: ['status', '--short'] });
     expect(response.isError).not.toBe(true);
     expect(executed).toBe(1);
   });
 
-  it('requires explicit confirmation for remote DELETE, child MCP calls, and destructive shell commands', async () => {
+  it('requires explicit confirmation for every remote mutation, child MCP calls, and opaque shell commands', async () => {
     const calls: string[] = [];
     const registry = new ToolRegistry({
-      capabilities: {
-        async execute(tool): Promise<ReturnType<typeof ok>> {
-          calls.push(tool);
-          return ok({ ok: true });
-        },
-      },
-      extensions: {
-        async callMcpTool(): Promise<ReturnType<typeof ok>> { calls.push('mcp_call'); return ok({ ok: true }); },
-      } as McpApplicationServices['extensions'],
-    }, actor);
-
+      capabilities: { async execute(tool): Promise<ReturnType<typeof ok>> { calls.push(tool); return ok({ ok: true }); } },
+      extensions: { async callMcpTool(): Promise<ReturnType<typeof ok>> { calls.push('mcp_call'); return ok({ ok: true }); } } as McpApplicationServices['extensions'],
+    }, actor, { profileProvider: (): PermissionProfile => permissionProfiles.balanced, hostMutationApprovalProvider: approveMutation });
     await expect(registry.invoke('web_fetch', { url: 'https://example.com/item/1', method: 'DELETE' })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
-    await expect(registry.invoke('shell', { operation: 'run', executable: 'git', arguments: ['clean', '-fd'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('web_fetch', { url: 'https://example.com/item/1', method: 'POST' })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    await expect(registry.invoke('web_fetch', { url: 'https://example.com/item/1', method: 'PUT' })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
+    expect((await registry.invoke('shell', { operation: 'run', executable: 'npm.cmd', arguments: ['run', 'cleanup'] })).isError).not.toBe(true);
     await expect(registry.invoke('mcp_call', { server: 'child', tool: 'delete_file', arguments: { path: 'x' } })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
-    expect(calls).toEqual([]);
-
+    expect(calls).toEqual(['shell']);
     expect((await registry.invoke('web_fetch', { url: 'https://example.com/item/1', method: 'DELETE', userConfirmed: true })).isError).not.toBe(true);
-    expect((await registry.invoke('shell', { operation: 'run', executable: 'git', arguments: ['clean', '-fd'], userConfirmed: true })).isError).not.toBe(true);
+    expect((await registry.invoke('shell', { operation: 'run', executable: 'npm.cmd', arguments: ['run', 'cleanup'], userConfirmed: true })).isError).not.toBe(true);
     expect((await registry.invoke('mcp_call', { server: 'child', tool: 'delete_file', arguments: { path: 'x' }, userConfirmed: true })).isError).not.toBe(true);
-    expect(calls).toEqual(['web_fetch', 'shell', 'mcp_call']);
+    expect(calls).toEqual(['shell', 'web_fetch', 'shell', 'mcp_call']);
   });
 
   it('guards opaque execution and UI side-effect boundaries', async () => {
     const calls: string[] = [];
     const registry = new ToolRegistry({
-      capabilities: {
-        async execute(tool): Promise<ReturnType<typeof ok>> { calls.push(tool); return ok({ ok: true }); },
-      },
-      process: {
-        async start(): Promise<ReturnType<typeof ok>> { calls.push('process_start'); return ok({ processId: 'p1' }); },
-      } as McpApplicationServices['process'],
-      codex: {
-        async run(): Promise<ReturnType<typeof ok>> { calls.push('codex_run'); return ok({ codexTaskId: 'c1' }); },
-      } as McpApplicationServices['codex'],
-    }, actor, { codexToolsEnabled: true });
-
+      capabilities: { async execute(tool): Promise<ReturnType<typeof ok>> { calls.push(tool); return ok({ ok: true }); } },
+      process: { async start(): Promise<ReturnType<typeof ok>> { calls.push('process_start'); return ok({ processId: 'p1' }); } } as McpApplicationServices['process'],
+      codex: { async run(): Promise<ReturnType<typeof ok>> { calls.push('codex_run'); return ok({ codexTaskId: 'c1' }); } } as McpApplicationServices['codex'],
+    }, actor, { codexToolsEnabled: true, profileProvider: (): PermissionProfile => permissionProfiles.balanced });
     await expect(registry.invoke('process_start', { workspaceId: 'workspace-1', executable: 'powershell', args: ['-Command', 'Remove-Item x.txt'] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
     for (const command of ['rm', 'del']) {
       await expect(registry.invoke('process_start', { workspaceId: 'workspace-1', executable: 'powershell', args: ['-Command', `${command} x.txt`] })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
@@ -613,5 +636,4 @@ describe('MCP tool registry', () => {
     await expect(registry.invoke('accessibility', { action: 'click', parameters: { name: 'button' } })).resolves.toMatchObject({ isError: true, structuredContent: { error: { code: 'PERMISSION_REQUIRED' } } });
     expect(calls).toEqual([]);
   });
-
 });

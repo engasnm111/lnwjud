@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import type { DashboardSnapshot, DestructiveApprovalKey, DestructiveDeletePolicy, PermissionProfileName, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
+import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PermissionProfileName, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
+import { GuidedTunnelSetup } from '../onboarding/GuidedTunnelSetup.js';
+import { isTunnelRunning } from '../onboarding/guided-tunnel-setup-state.js';
 import { SettingSwitch } from './SettingSwitch.js';
 import { UserConfigPanel, type UserConfigSection } from './UserConfigPanel.js';
 
@@ -14,18 +16,31 @@ interface SettingsPageProps {
   readonly onStdioPolicyChange: (profile: PermissionProfileName, strictRoots: boolean, allowedRoots: readonly string[]) => Promise<boolean>;
   readonly onCreateBackup: () => Promise<void>;
   readonly onScheduleRestoreBackup: (backupId: string) => Promise<boolean>;
+  readonly onRestoreRecoveryItem: (workspaceId: string, recoveryId: string) => Promise<void>;
+  readonly onRestoreCheckpoint: (workspaceId: string, checkpointId: string) => Promise<void>;
   readonly onSaveTunnelApiKey: (apiKey: string) => Promise<void>;
   readonly onSetTunnelClientPath: (clientPath: string) => Promise<void>;
   readonly onUserSettingsChange: (settings: UserSettings) => Promise<boolean>;
   readonly onChooseTunnelClientPath: () => Promise<string | null>;
   readonly onConfigureTunnelProfile: (tunnelId: string) => Promise<string>;
+  readonly onStartTunnel: () => Promise<TunnelStatus>;
+  readonly onStopTunnel: () => Promise<void>;
+  readonly onOpenExternalSetupPage: (target: ExternalSetupTarget) => Promise<void>;
+  readonly onRefresh: () => Promise<void>;
+  readonly guidedTunnelSetupOpen: boolean;
+  readonly onGuidedTunnelSetupOpenChange: (open: boolean) => void;
+  readonly onGuidedTunnelLocalComplete: () => void;
   readonly initialSection?: SettingsSection;
+  readonly requestedSection?: { readonly section: SettingsSection; readonly requestId: number } | undefined;
 }
 
-type SettingsSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunnel' | 'backup';
+export type SettingsSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunnel' | 'backup';
+type DestructiveApprovalKey = keyof DestructiveDeletePolicy['approvals'];
 
 export function SettingsPage(props: SettingsPageProps): ReactElement {
   const t = createTranslator(props.locale);
+  const guidedTunnelRunning = isTunnelRunning(props.dashboard.tunnel);
+  const guidedTunnelConfigured = props.dashboard.tunnel.hasApiKey && props.dashboard.tunnel.profileExists;
   const [activeSection, setActiveSection] = useState<SettingsSection>(props.initialSection ?? 'general');
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -44,6 +59,15 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [recoveryBusyId, setRecoveryBusyId] = useState<string | null>(null);
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [retentionBusy, setRetentionBusy] = useState(false);
+
+  useEffect(() => {
+    if (props.requestedSection === undefined) return;
+    setActiveSection(props.requestedSection.section);
+  }, [props.requestedSection]);
 
   const persistedRootsText = props.dashboard.stdioAllowedRoots.join('\n');
   useEffect(() => {
@@ -63,7 +87,51 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
 
   function setDestructiveApproval(key: DestructiveApprovalKey, enabled: boolean): void {
     const current = props.dashboard.destructiveDeletePolicy;
-    updateDestructivePolicy({ ...current, approvals: { ...current.approvals, [key]: enabled } });
+    updateDestructivePolicy({
+      ...current,
+      protectCriticalFiles: true,
+      recoverableDelete: true,
+      approvals: { ...current.approvals, [key]: enabled },
+    });
+  }
+
+  async function restoreTrashItem(workspaceId: string, recoveryId: string, relativePath: string, kind: 'deleted' | 'replacement_backup'): Promise<void> {
+    const isReplacementBackup = kind === 'replacement_backup';
+    const confirmed = window.confirm(props.locale === 'th'
+      ? isReplacementBackup
+        ? `ย้อน ${relativePath} กลับเป็นรุ่นก่อนเขียนทับ? ระบบจะเก็บรุ่นปัจจุบันเข้า Recovery Trash ไว้ให้ Undo ก่อน`
+        : `กู้คืน ${relativePath} กลับตำแหน่งเดิม? ระบบจะไม่เขียนทับไฟล์ที่มีอยู่`
+      : isReplacementBackup
+        ? `Restore the pre-replacement version of ${relativePath}? The current version will first be kept in Recovery Trash for undo.`
+        : `Restore ${relativePath} to its original location? Existing files will not be overwritten.`);
+    if (!confirmed) return;
+    setRecoveryBusyId(recoveryId);
+    setRecoveryError(null);
+    try {
+      await props.onRestoreRecoveryItem(workspaceId, recoveryId);
+      setRecoveryMessage(props.locale === 'th' ? `กู้คืน ${relativePath} แล้ว` : `Restored ${relativePath}.`);
+    } catch (cause: unknown) {
+      setRecoveryError(cause instanceof Error ? cause.message : (props.locale === 'th' ? 'กู้คืนไม่สำเร็จ' : 'Restore failed.'));
+    } finally {
+      setRecoveryBusyId(null);
+    }
+  }
+
+  async function restoreCheckpoint(workspaceId: string, checkpointId: string, paths: readonly string[]): Promise<void> {
+    const confirmed = window.confirm(props.locale === 'th'
+      ? `ย้อนกลับ ${paths.length} ไฟล์ตาม checkpoint นี้? ระบบจะสร้าง checkpoint ใหม่ของสถานะปัจจุบันไว้ให้ Undo ก่อน`
+      : `Restore ${paths.length} file(s) from this checkpoint? A new rollback checkpoint will be created first.`);
+    if (!confirmed) return;
+    setRecoveryBusyId(checkpointId);
+    setRecoveryError(null);
+    try {
+      await props.onRestoreCheckpoint(workspaceId, checkpointId);
+      setRecoveryMessage(props.locale === 'th' ? 'กู้ checkpoint แล้ว และสร้างจุด Undo ใหม่ไว้แล้ว' : 'Checkpoint restored and a new undo point was created.');
+    } catch (cause: unknown) {
+      setRecoveryError(cause instanceof Error ? cause.message : (props.locale === 'th' ? 'กู้ checkpoint ไม่สำเร็จ' : 'Checkpoint restore failed.'));
+    } finally {
+      setRecoveryBusyId(null);
+    }
   }
 
   async function saveStdioPolicy(): Promise<void> {
@@ -77,7 +145,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       const restartRequired = await props.onStdioPolicyChange(stdioProfile, strictRoots, roots);
       setStdioDirty(false);
       setStdioMessage(restartRequired
-        ? (props.locale === 'th' ? 'บันทึกแล้ว — Restart Tunnel เพื่อใช้ policy ใหม่กับ connection ปัจจุบัน' : 'Saved — restart Tunnel to apply the new policy to the current connection.')
+        ? (props.locale === 'th' ? 'บันทึกแล้ว — ค่าใหม่จะใช้กับ standalone/headless STDIO connection ครั้งถัดไป' : 'Saved — the new policy applies to the next standalone/headless STDIO connection.')
         : t('settings.saved'));
     } catch (cause: unknown) {
       setPolicyError(cause instanceof Error ? cause.message : 'Could not save STDIO policy');
@@ -113,6 +181,50 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     }
   }
 
+  async function reconnectSameTunnel(): Promise<void> {
+    setTunnelBusy(true);
+    setTunnelMessage(null);
+    try {
+      await props.onStartTunnel();
+      setTunnelMessage(props.locale === 'th' ? 'สั่ง Reconnect Tunnel ID เดิมแล้ว' : 'Reconnect of the same tunnel identity requested.');
+    } catch (cause: unknown) {
+      setTunnelMessage(cause instanceof Error ? cause.message : (props.locale === 'th' ? 'Reconnect ไม่สำเร็จ' : 'Reconnect failed.'));
+    } finally { setTunnelBusy(false); }
+  }
+
+  async function stopPersistentTunnel(): Promise<void> {
+    setTunnelBusy(true);
+    setTunnelMessage(null);
+    try {
+      await props.onStopTunnel();
+      setTunnelMessage(props.locale === 'th' ? 'หยุด Persistent Tunnel แล้ว' : 'Persistent tunnel stopped.');
+    } catch (cause: unknown) {
+      setTunnelMessage(cause instanceof Error ? cause.message : (props.locale === 'th' ? 'หยุด Tunnel ไม่สำเร็จ' : 'Could not stop tunnel.'));
+    } finally { setTunnelBusy(false); }
+  }
+
+  async function setRecoveryRetentionDays(days: number): Promise<void> {
+    const previousDays = props.dashboard.settings.recoveryRetentionDays;
+    if (days > 0 && (previousDays === 0 || days < previousDays)) {
+      const confirmed = window.confirm(props.locale === 'th'
+        ? `เปิดลบข้อมูลกู้คืนอัตโนมัติที่เก่ากว่า ${days} วัน? ข้อมูลที่เก่ากว่านี้อาจถูกลบทันทีและกู้คืนไม่ได้`
+        : `Enable automatic cleanup for recovery data older than ${days} days? Older recovery data may be removed immediately and cannot be restored.`);
+      if (!confirmed) return;
+    }
+    setRetentionBusy(true);
+    setRecoveryError(null);
+    try {
+      await props.onUserSettingsChange({ ...props.dashboard.settings, recoveryRetentionDays: days });
+      setRecoveryMessage(days === 0
+        ? (props.locale === 'th' ? 'ตั้งค่าให้เก็บข้อมูลกู้คืนไว้จนกว่าจะลบเอง' : 'Recovery data will be kept until you remove it manually.')
+        : (props.locale === 'th' ? `ตั้งค่าลบข้อมูลกู้คืนที่เก่ากว่า ${days} วันอัตโนมัติแล้ว` : `Recovery data older than ${days} days will be removed automatically.`));
+    } catch (cause: unknown) {
+      setRecoveryError(cause instanceof Error ? cause.message : (props.locale === 'th' ? 'บันทึกอายุข้อมูลกู้คืนไม่สำเร็จ' : 'Could not save recovery retention.'));
+    } finally {
+      setRetentionBusy(false);
+    }
+  }
+
   async function createBackupNow(): Promise<void> {
     setBackupBusy(true);
     setBackupError(null);
@@ -127,6 +239,10 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   }
 
   async function scheduleRestore(backupId: string): Promise<void> {
+    const confirmed = window.confirm(props.locale === 'th'
+      ? 'กู้ฐานข้อมูลโปรแกรมจาก Backup ชุดนี้เมื่อเปิด lnwjud ครั้งถัดไป? ระบบจะสร้าง Backup ฉุกเฉินของฐานข้อมูลปัจจุบันก่อนแทนที่'
+      : 'Restore the application database from this backup on the next lnwjud start? An emergency backup of the current database will be created before replacement.');
+    if (!confirmed) return;
     setBackupBusy(true);
     setBackupError(null);
     try {
@@ -147,7 +263,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     { id: 'tools', icon: '◎', title: props.locale === 'th' ? 'Tools' : 'Tools', description: props.locale === 'th' ? 'Codex, Timeout, Roots' : 'Codex, timeouts, roots' },
     { id: 'mcp', icon: '⬡', title: 'MCP & Extensions', description: props.locale === 'th' ? 'Servers, Skills, Allowlist' : 'Servers, skills, allowlist' },
     { id: 'tunnel', icon: '↗', title: 'Secure Tunnel', description: props.locale === 'th' ? 'API Key, Client, Reconnect' : 'API key, client, reconnect' },
-    { id: 'backup', icon: '▣', title: props.locale === 'th' ? 'สำรองข้อมูล' : 'Backup', description: props.locale === 'th' ? 'Backup และ Restore' : 'Backup and restore' },
+    { id: 'backup', icon: '▣', title: props.locale === 'th' ? 'กู้คืนข้อมูล' : 'Recovery', description: props.locale === 'th' ? 'Recovery Trash, Checkpoint, Backup' : 'Recovery Trash, checkpoints, backups' },
   ];
 
   const userConfigSection: UserConfigSection | null = activeSection === 'backup' ? null : activeSection;
@@ -226,50 +342,48 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <section className="panel settings-card settings-card-polished" aria-label="AI destructive action policy">
                 <SettingsCardHeading
                   icon="⌫"
-                  title={props.locale === 'th' ? 'สิทธิ์ AI ลบ / ทิ้งข้อมูล' : 'AI Destructive Actions'}
-                  subtitle={props.locale === 'th' ? 'Auto-approve แยกตามคำสั่ง — จำกัดเฉพาะ Active Project' : 'Per-command auto-approval — always scoped to the Active Project'}
-                  badge={Object.values(props.dashboard.destructiveDeletePolicy.approvals).some(Boolean) ? 'CUSTOM' : 'ASK'}
+                  title={props.locale === 'th' ? 'ความปลอดภัยการลบ / ทำข้อมูลหาย' : 'Delete & Data-Loss Safety'}
+                  subtitle={props.locale === 'th' ? 'Full จะถามเฉพาะ destructive family ที่ยังไม่ได้อนุญาต หรือพิสูจน์ขอบเขตไม่ได้' : 'Full prompts only for destructive families that are not safely auto-approved by these settings'}
+                  badge={`${Object.values(props.dashboard.destructiveDeletePolicy.approvals).filter(Boolean).length}/9`}
                 />
                 <div className="alert-box-warning" role="note">
                   ⚠️ {props.locale === 'th'
-                    ? 'เปิดสวิตช์แล้ว AI จะไม่ถามซ้ำเฉพาะคำสั่งนั้น เมื่อพิสูจน์ได้ว่าเป้าหมายอยู่ใน Active Project เท่านั้น ถ้า path คลุมเครือ, ออกนอกโปรเจกต์ หรือ Active Project เป็นทั้งไดรฟ์ ระบบจะกลับไปขออนุมัติ'
-                    : 'Enabled actions skip per-call approval only when every target is proven inside the Active Project. Ambiguous/out-of-project paths and whole-drive project roots fall back to approval.'}
+                    ? 'Full Access ไม่ถามงานปกติ การเปิด auto-approval ด้านล่างมีผลเฉพาะคำสั่งลบ/ทำข้อมูลหายที่แยก target ได้ชัดและอยู่ใน Active Project เท่านั้น; root, critical path, wildcard, recursive/broad และคำสั่งที่วิเคราะห์ไม่ได้ยังถาม ส่วนคำสั่งระดับเครื่องอันตรายยังถูกบล็อก'
+                    : 'Full Access does not prompt for ordinary work. Auto-approval below applies only to destructive actions with an exact target proven inside the Active Project; roots, critical paths, wildcards, recursive/broad or unparseable actions still ask, and dangerous machine-level commands remain blocked.'}
                 </div>
                 <div className="setting-grid two-col align-center">
-                  <SettingSwitch
-                    checked={props.dashboard.destructiveDeletePolicy.protectCriticalFiles}
-                    label={props.locale === 'th' ? 'Protected Critical Files' : 'Protected Critical Files'}
-                    description={props.locale === 'th' ? 'บังคับถามก่อนลบ .env, .git, key/cert, database, manifest/lockfile สำคัญ' : 'Always ask before deleting .env, .git, keys/certs, databases, and critical manifests/lockfiles'}
-                    onChange={(enabled) => updateDestructivePolicy({ ...props.dashboard.destructiveDeletePolicy, protectCriticalFiles: enabled })}
-                  />
-                  <SettingSwitch
-                    checked={props.dashboard.destructiveDeletePolicy.recoverableDelete}
-                    label={props.locale === 'th' ? 'Recoverable delete_file' : 'Recoverable delete_file'}
-                    description={props.locale === 'th' ? 'delete_file ย้ายของที่ลบเข้า Recovery Trash และสร้าง checkpoint เมื่อทำได้' : 'delete_file moves targets to Recovery Trash and checkpoints files when possible'}
-                    onChange={(enabled) => updateDestructivePolicy({ ...props.dashboard.destructiveDeletePolicy, recoverableDelete: enabled })}
-                  />
+                  <SettingSwitch checked disabled label={props.locale === 'th' ? 'Protected Critical Files — บังคับเปิด' : 'Protected Critical Files — always on'} description={props.locale === 'th' ? 'critical path และ workspace root ไม่ถูก auto-approve แม้เปิด destructive family นั้นไว้' : 'Critical paths and workspace roots are never auto-approved even when a destructive family is enabled'} onChange={() => undefined} />
+                  <SettingSwitch checked disabled label={props.locale === 'th' ? 'Recovery Trash — บังคับเปิดสำหรับ delete_file' : 'Recovery Trash — always on for delete_file'} description={props.locale === 'th' ? 'delete_file แบบมีโครงสร้างย้าย target เข้า Recovery Trash ก่อนเสมอ' : 'Structured delete_file moves its target into Recovery Trash before deletion'} onChange={() => undefined} />
                 </div>
-                <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'คำสั่งที่อนุญาตให้ AI ทำเอง' : 'Auto-approved command families'}</strong><span>Active Project only</span></div>
-                <div className="setting-grid two-col">
-                  {destructiveApprovalRows(props.locale).map((row) => (
-                    <SettingSwitch
-                      key={row.key}
-                      checked={props.dashboard.destructiveDeletePolicy.approvals[row.key]}
-                      label={row.label}
-                      description={row.description}
-                      onChange={(enabled) => setDestructiveApproval(row.key, enabled)}
-                    />
-                  ))}
+
+                <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'Structured delete — กู้คืนได้' : 'Structured delete — recoverable'}</strong><span>Host Active Project</span></div>
+                <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.delete_file} label="delete_file" description={props.locale === 'th' ? 'Auto-approve ได้เฉพาะ path เดียวใน Active Project, ไม่ใช่ root/critical/wildcard และมี Recovery Trash' : 'Auto-approves one exact Active Project path only; roots, critical paths, and wildcards remain guarded and Recovery Trash is required'} onChange={(enabled) => setDestructiveApproval('delete_file', enabled)} />
+
+                <div className="settings-mini-heading"><strong>Git destructive families</strong><span>{props.locale === 'th' ? 'exact scoped forms เท่านั้น' : 'exact scoped forms only'}</span></div>
+                <div className="setting-grid two-col align-center">
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.git_rm} label="git_rm" description={props.locale === 'th' ? 'อนุญาต git rm เฉพาะ target เดียวที่ระบุหลัง --; recursive/broad/critical ยังถาม' : 'Allows git rm only for one exact target after --; recursive, broad, and critical targets still ask'} onChange={(enabled) => setDestructiveApproval('git_rm', enabled)} />
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.git_clean} label="git_clean" description={props.locale === 'th' ? 'อนุญาต git clean เฉพาะ exact path; clean ทั้ง repo, -d/-x และ broad forms ยังถาม' : 'Allows git clean only for an exact path; repo-wide clean, -d/-x, and broad forms still ask'} onChange={(enabled) => setDestructiveApproval('git_clean', enabled)} />
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.git_reset_restore} label="git_reset_restore" description={props.locale === 'th' ? 'อนุญาต exact-path git restore; reset --hard และ restore แบบกว้างยังถามเพราะพิสูจน์ target ไม่ได้' : 'Allows exact-path git restore; reset --hard and broad restore still ask because the affected scope cannot be proven narrowly'} onChange={(enabled) => setDestructiveApproval('git_reset_restore', enabled)} />
                 </div>
-                <p className="hint">
-                  {props.locale === 'th'
-                    ? 'PowerShell/cmd/bash แบบ command string, Node/Python script ที่ลบไฟล์, robocopy /MIR /PURGE, force-push/ลบ remote history และ opaque UI actions ยังต้องขออนุมัติเสมอ เพราะพิสูจน์ target ล่วงหน้าไม่ได้อย่างปลอดภัย'
-                    : 'Opaque PowerShell/cmd/bash command strings, Node/Python delete scripts, robocopy /MIR or /PURGE, remote-history rewrites, and opaque UI actions still always require approval.'}
-                </p>
+
+                <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'Shell / Process destructive families' : 'Shell / Process destructive families'}</strong><span>{props.locale === 'th' ? 'ไม่อยู่ใน Recovery Trash' : 'not Recovery Trash-backed'}</span></div>
+                <div className="setting-grid two-col align-center">
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.shell_rm_unlink} label="shell_rm_unlink" description={props.locale === 'th' ? 'Auto-approve rm/unlink target เดียว; -r/-R/recursive, wildcard และ path นอกโปรเจกต์ยังถาม' : 'Auto-approves one rm/unlink target; recursive flags, wildcards, and paths outside the project still ask'} onChange={(enabled) => setDestructiveApproval('shell_rm_unlink', enabled)} />
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.shell_rmdir} label="shell_rmdir" description={props.locale === 'th' ? 'Auto-approve rmdir แบบ target เดียว; recursive/parents และ broad forms ยังถาม' : 'Auto-approves one rmdir target; recursive/parents and broad forms still ask'} onChange={(enabled) => setDestructiveApproval('shell_rmdir', enabled)} />
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.shell_del_erase} label="shell_del_erase" description={props.locale === 'th' ? 'Auto-approve del/erase แบบ exact target เมื่อ parser พิสูจน์รูปแบบได้; /s และ broad forms ยังถาม' : 'Auto-approves exact del/erase targets when the parser can prove the form; /s and broad forms still ask'} onChange={(enabled) => setDestructiveApproval('shell_del_erase', enabled)} />
+                </div>
+
+                <div className="settings-mini-heading"><strong>WSL destructive families</strong><span>{props.locale === 'th' ? 'exact scoped forms เท่านั้น' : 'exact scoped forms only'}</span></div>
+                <div className="setting-grid two-col align-center">
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.wsl_rm_unlink} label="wsl_rm_unlink" description={props.locale === 'th' ? 'Auto-approve WSL rm/unlink target เดียวใน Active Project; recursive/absolute Linux path/broad forms ยังถาม' : 'Auto-approves one WSL rm/unlink target in the Active Project; recursive, absolute Linux paths, and broad forms still ask'} onChange={(enabled) => setDestructiveApproval('wsl_rm_unlink', enabled)} />
+                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.wsl_rmdir} label="wsl_rmdir" description={props.locale === 'th' ? 'Auto-approve WSL rmdir target เดียว; parents/broad/outside forms ยังถาม' : 'Auto-approves one WSL rmdir target; parents, broad, and outside forms still ask'} onChange={(enabled) => setDestructiveApproval('wsl_rmdir', enabled)} />
+                </div>
+
+                <p className="hint">{props.locale === 'th' ? 'Full: READ / WRITE / EXECUTE และ mutation ปกติไม่ถาม ส่วน destructive family ที่ปิดไว้หรือพิสูจน์ exact scope ไม่ได้จะถามตามปกติ การ auto-approve command family ไม่ได้ทำให้ผลคำสั่งเข้า Recovery Trash' : 'Full: ordinary READ / WRITE / EXECUTE and normal mutations do not prompt. A destructive family still asks when disabled or when exact scope cannot be proven. Auto-approved command-family effects are not covered by Recovery Trash.'}</p>
               </section>
 
               <section className="panel settings-card settings-card-polished" aria-label="STDIO security policy">
-                <SettingsCardHeading icon="▦" title="STDIO / Tunnel Security Policy" subtitle={props.locale === 'th' ? 'Policy สำหรับ connection ที่เข้าผ่าน stdio และ Secure Tunnel' : 'Policy for stdio and Secure Tunnel connections'} badge={props.dashboard.stdioPermissionProfile.toUpperCase()} />
+                <SettingsCardHeading icon="▦" title="STDIO Security Policy" subtitle={props.locale === 'th' ? 'Policy สำหรับ standalone/headless stdio; Secure Tunnel ใช้ Desktop MCP และ native approval' : 'Policy for standalone/headless stdio; Secure Tunnel uses Desktop MCP and native approval'} badge={props.dashboard.stdioPermissionProfile.toUpperCase()} />
                 <div className="setting-grid two-col align-center">
                   <div className="setting-field">
                     <label className="field-label" htmlFor="stdio-profile">STDIO Permission Profile</label>
@@ -293,7 +407,29 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
           <UserConfigPanel locale={props.locale} settings={props.dashboard.settings} section={userConfigSection} onSave={props.onUserSettingsChange} />
 
           {activeSection === 'tunnel' ? (
-            <section className="panel settings-card settings-card-polished" aria-label={t('settings.tunnelTitle')}>
+            <>
+              <section className="panel settings-card settings-card-polished guided-tunnel-launch-card" aria-label={t('guidedTunnel.openGuide')}>
+                <SettingsCardHeading icon="↗" title={t('guidedTunnel.openGuide')} subtitle={t('guidedTunnel.privacy')} badge={guidedTunnelRunning ? 'RUNNING' : guidedTunnelConfigured ? 'READY' : 'SETUP'} />
+                <p className="hint">{guidedTunnelRunning ? t('guidedTunnel.localComplete') : t('guidedTunnel.dismissedHint')}</p>
+                <button type="button" className="btn-save-gold" onClick={() => props.onGuidedTunnelSetupOpenChange(true)}>{t('guidedTunnel.openGuide')}</button>
+              </section>
+
+              <GuidedTunnelSetup
+                locale={props.locale}
+                tunnel={props.dashboard.tunnel}
+                open={props.guidedTunnelSetupOpen}
+                onOpenChange={props.onGuidedTunnelSetupOpenChange}
+                onOpenExternal={props.onOpenExternalSetupPage}
+                onSaveApiKey={props.onSaveTunnelApiKey}
+                onConfigureProfile={props.onConfigureTunnelProfile}
+                onStartTunnel={props.onStartTunnel}
+                onRefresh={props.onRefresh}
+                onLocalComplete={props.onGuidedTunnelLocalComplete}
+              />
+
+              <details className="guided-tunnel-advanced">
+                <summary>{t('guidedTunnel.advanced')}</summary>
+                <section className="panel settings-card settings-card-polished" aria-label={t('settings.tunnelTitle')}>
               <SettingsCardHeading icon="↗" title={t('settings.tunnelTitle')} subtitle={props.locale === 'th' ? 'Credential, tunnel-client และ Setup Wizard' : 'Credentials, tunnel-client, and setup wizard'} badge={props.dashboard.tunnel.profileExists ? (props.locale === 'th' ? 'พร้อมใช้งาน' : 'READY') : (props.locale === 'th' ? 'ต้องตั้งค่า' : 'SETUP')} />
               <div className="setting-grid two-col">
                 <div className="setting-field">
@@ -302,8 +438,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <p className="hint">{props.dashboard.tunnel.hasApiKey ? 'Protected with Windows DPAPI' : t('tunnel.needKey')}</p>
                 </div>
                 <div className="setting-field">
-                  <label className="field-label" htmlFor="tunnel-client-path">{t('settings.clientPath')}</label>
-                  <div className="form-row"><input id="tunnel-client-path" placeholder="C:\tools\tunnel-client.exe" value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(t('settings.saved'))); }}>{t('settings.savePath')}</button></div>
+                  <label className="field-label" htmlFor="tunnel-client-path">{props.locale === 'th' ? 'tunnel-client (รวมมากับโปรแกรมแล้ว)' : 'tunnel-client (bundled)'}</label>
+                  <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.12 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.12 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
+                  <p className="hint">{props.locale === 'th' ? 'lnwjud ฝัง OpenAI tunnel-client v0.0.12 (Windows x64) ใน installer และเลือกให้เองอัตโนมัติ ช่องนี้ใช้เฉพาะกรณีต้องการ override/troubleshoot' : 'lnwjud bundles OpenAI tunnel-client v0.0.12 (Windows x64) in the installer and selects it automatically. Use this field only to override it for troubleshooting.'}</p>
                 </div>
               </div>
               <div className="tunnel-setup-box">
@@ -313,21 +450,86 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               </div>
               {savedMessage === null ? null : <div className="toast-success-banner" role="status">✓ {savedMessage}</div>}
               {tunnelMessage === null ? null : <div className="alert-box-warning" role="status">{tunnelMessage}</div>}
-            </section>
+              {props.dashboard.tunnel.persistent === null ? null : (
+                <div className="tunnel-setup-box persistent-runtime-card">
+                  <div className="settings-mini-heading"><strong>Persistent Tunnel Identity</strong><span>{props.dashboard.tunnel.persistent.runtimeAlias}</span></div>
+                  <div className="setting-grid two-col">
+                    <div className="setting-field"><span className="field-label">Tunnel ID</span><code className="settings-path-display">{props.dashboard.tunnel.persistent.tunnelIdMasked ?? '—'}</code></div>
+                    <div className="setting-field"><span className="field-label">Runtime mode</span><strong>{props.dashboard.tunnel.persistent.mode}</strong></div>
+                    <div className="setting-field"><span className="field-label">Status</span><strong>{props.dashboard.tunnel.persistent.state}</strong></div>
+                    <div className="setting-field"><span className="field-label">Reconnect count</span><strong>{props.dashboard.tunnel.persistent.reconnectCount}</strong></div>
+                    <div className="setting-field"><span className="field-label">Health / Ready / Poll</span><strong>{formatTunnelTriState(props.dashboard.tunnel.persistent.healthy)} / {formatTunnelTriState(props.dashboard.tunnel.persistent.ready)} / {formatTunnelTriState(props.dashboard.tunnel.persistent.pollHealthy)}</strong></div>
+                    <div className="setting-field"><span className="field-label">Local MCP</span><code className="settings-path-display">{props.dashboard.tunnel.persistent.localMcpUrl ?? '—'}</code></div>
+                  </div>
+                  <div className={props.dashboard.tunnel.persistent.strictZeroDowntime ? 'toast-success-banner' : 'alert-box-warning'}>
+                    {props.dashboard.tunnel.persistent.strictZeroDowntime
+                      ? (props.locale === 'th' ? '✓ Capability gate: strict zero-downtime handoff ผ่านการพิสูจน์' : '✓ Capability gate: strict zero-downtime handoff is proven')
+                      : (props.locale === 'th' ? 'ℹ ยังไม่อ้าง strict zero-downtime: tunnel-client รุ่นนี้ยังไม่มีหลักฐาน ready-before-retire overlap ที่พิสูจน์ได้' : 'ℹ Strict zero-downtime is not claimed: this tunnel-client has no proven ready-before-retire overlap primitive.')}
+                  </div>
+                  <div className="inline-actions"><button type="button" className="btn-save-gold" disabled={tunnelBusy} onClick={() => { void reconnectSameTunnel(); }}>{props.locale === 'th' ? 'Reconnect Tunnel เดิม' : 'Reconnect same tunnel'}</button><button type="button" disabled={tunnelBusy || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void stopPersistentTunnel(); }}>{props.locale === 'th' ? 'หยุด Tunnel' : 'Stop tunnel'}</button></div>
+                  {props.dashboard.tunnel.persistent.capabilityEvidence === null ? null : <p className="hint">{props.dashboard.tunnel.persistent.capabilityEvidence}</p>}
+                </div>
+              )}
+                </section>
+              </details>
+            </>
           ) : null}
 
           {activeSection === 'backup' ? (
-            <section className="panel settings-card settings-card-polished" aria-label="Backup and restore">
-              <SettingsCardHeading icon="▣" title={props.locale === 'th' ? 'สำรองและกู้คืนข้อมูล' : 'Backup & Restore'} subtitle="SQLite consistent snapshots" action={<button type="button" className="btn-save-gold" disabled={backupBusy} onClick={() => { void createBackupNow(); }}>{backupBusy ? (props.locale === 'th' ? 'กำลังทำงาน…' : 'Working…') : (props.locale === 'th' ? 'Backup ตอนนี้' : 'Backup Now')}</button>} />
-              {props.dashboard.backups.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี Backup' : 'No backups yet'}</div> : (
-                <div className="backup-list settings-backup-list">{props.dashboard.backups.slice(0, 5).map((backup) => (
-                  <div key={backup.id} className="backup-item"><div><strong>{new Date(backup.createdAt).toLocaleString(props.locale === 'th' ? 'th-TH' : 'en-US')}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
-                ))}</div>
-              )}
-              {(props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running) ? <div className="alert-box-warning">⚠️ {props.locale === 'th' ? 'หยุด Tunnel และ Local MCP ก่อน Restore' : 'Stop Tunnel and local MCP before scheduling a restore.'}</div> : null}
-              {backupError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {backupError}</div>}
-              {backupMessage === null ? null : <div className="toast-success-banner" role="status">✓ {backupMessage}</div>}
-            </section>
+            <>
+              <section className="panel settings-card settings-card-polished" aria-label="Recovery Center">
+                <SettingsCardHeading
+                  icon="↶"
+                  title={props.locale === 'th' ? 'Recovery Center' : 'Recovery Center'}
+                  subtitle={props.locale === 'th' ? 'ไฟล์ที่ลบ สำเนาก่อนไฟล์ไบนารีถูกเขียนทับ และ checkpoint ของโปรเจกต์หลัก (Primary)' : 'Deleted items, binary pre-replacement backups, and checkpoints for the Primary Project'}
+                  badge={`${props.dashboard.recovery.trashItems.length + props.dashboard.recovery.checkpoints.length} ITEMS`}
+                />
+                <div className="setting-field">
+                  <span className="field-label">{props.locale === 'th' ? 'ตำแหน่ง Recovery Trash บนเครื่อง' : 'Local Recovery Trash location'}</span>
+                  <code className="settings-path-display">{props.dashboard.recovery.trashRoot ?? (props.locale === 'th' ? 'ยังไม่ได้ตั้งค่า' : 'Not configured')}</code>
+                </div>
+                <div className="recovery-retention-row">
+                  <div>
+                    <strong>{props.locale === 'th' ? 'ลบข้อมูลกู้คืนอัตโนมัติ' : 'Automatic recovery cleanup'}</strong>
+                    <p className="hint">{props.locale === 'th' ? 'เลือกอายุที่ต้องการเก็บ Recovery Trash และ Checkpoint; ค่าเริ่มต้นคือไม่ลบอัตโนมัติ' : 'Choose how long to keep Recovery Trash and checkpoints. The default is never delete automatically.'}</p>
+                  </div>
+                  <select aria-label={props.locale === 'th' ? 'อายุข้อมูลกู้คืน' : 'Recovery retention'} disabled={retentionBusy} value={props.dashboard.settings.recoveryRetentionDays} onChange={(event) => { void setRecoveryRetentionDays(Number(event.target.value)); }}>
+                    <option value={0}>{props.locale === 'th' ? 'ไม่ลบอัตโนมัติ' : 'Never'}</option>
+                    {[7, 14, 30, 60, 90, 180, 365].map((days) => <option key={days} value={days}>{days} {props.locale === 'th' ? 'วัน' : 'days'}</option>)}
+                  </select>
+                </div>
+                <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'ไฟล์ที่ลบ / สำเนาก่อนเขียนทับ' : 'Deleted / pre-replacement backups'}</strong><span>{props.dashboard.recovery.trashItems.length}</span></div>
+                {props.dashboard.recovery.trashItems.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'Recovery Trash ยังว่าง' : 'Recovery Trash is empty'}</div> : (
+                  <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.trashItems.map((item) => (
+                    <div key={item.recoveryId} className="backup-item">
+                      <div><strong>{item.relativePath}</strong><p className="hint">{new Date(item.deletedAt).toLocaleString(props.locale === 'th' ? 'th-TH' : 'en-US')} · {item.kind === 'replacement_backup' ? (props.locale === 'th' ? 'สำเนาก่อนเขียนทับ' : 'pre-replacement') : item.isDirectory ? 'folder' : 'file'} · {item.payloadAvailable ? (props.locale === 'th' ? 'พร้อมกู้คืน' : 'ready') : (props.locale === 'th' ? 'payload ไม่ครบ' : 'payload missing')}</p></div>
+                      <button type="button" disabled={!item.payloadAvailable || recoveryBusyId !== null} onClick={() => { void restoreTrashItem(item.workspaceId, item.recoveryId, item.relativePath, item.kind); }}>{recoveryBusyId === item.recoveryId ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'กู้คืน' : 'Restore')}</button>
+                    </div>
+                  ))}</div>
+                )}
+                <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'Checkpoint ก่อนแก้/เขียนทับ' : 'Pre-change checkpoints'}</strong><span>{props.dashboard.recovery.checkpoints.length}</span></div>
+                {props.dashboard.recovery.checkpoints.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี checkpoint' : 'No checkpoints yet'}</div> : (
+                  <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.checkpoints.map((checkpoint) => {
+                    const paths = checkpoint.files.map((file) => file.path);
+                    return <div key={checkpoint.id} className="backup-item"><div><strong>{new Date(checkpoint.createdAt).toLocaleString(props.locale === 'th' ? 'th-TH' : 'en-US')}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><button type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'ย้อนกลับจุดนี้' : 'Restore point')}</button></div>;
+                  })}</div>
+                )}
+                {recoveryError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {recoveryError}</div>}
+                {recoveryMessage === null ? null : <div className="toast-success-banner" role="status">✓ {recoveryMessage}</div>}
+              </section>
+
+              <section className="panel settings-card settings-card-polished" aria-label="Backup and restore">
+                <SettingsCardHeading icon="▣" title={props.locale === 'th' ? 'สำรองฐานข้อมูลโปรแกรม' : 'Application Database Backup'} subtitle="SQLite consistent snapshots" action={<button type="button" className="btn-save-gold" disabled={backupBusy} onClick={() => { void createBackupNow(); }}>{backupBusy ? (props.locale === 'th' ? 'กำลังทำงาน…' : 'Working…') : (props.locale === 'th' ? 'Backup ตอนนี้' : 'Backup Now')}</button>} />
+                {props.dashboard.backups.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี Backup' : 'No backups yet'}</div> : (
+                  <div className="backup-list settings-backup-list">{props.dashboard.backups.slice(0, 5).map((backup) => (
+                    <div key={backup.id} className="backup-item"><div><strong>{new Date(backup.createdAt).toLocaleString(props.locale === 'th' ? 'th-TH' : 'en-US')}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
+                  ))}</div>
+                )}
+                {(props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running) ? <div className="alert-box-warning">⚠️ {props.locale === 'th' ? 'หยุด Tunnel และ Local MCP ก่อน Restore ฐานข้อมูล' : 'Stop Tunnel and local MCP before scheduling a database restore.'}</div> : null}
+                {backupError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {backupError}</div>}
+                {backupMessage === null ? null : <div className="toast-success-banner" role="status">✓ {backupMessage}</div>}
+              </section>
+            </>
           ) : null}
         </div>
       </div>
@@ -344,31 +546,6 @@ function SettingsCardHeading({ icon, title, subtitle, badge, action }: { readonl
   );
 }
 
-function destructiveApprovalRows(locale: UiLocale): readonly { readonly key: DestructiveApprovalKey; readonly label: string; readonly description: string }[] {
-  if (locale === 'th') return [
-    { key: 'delete_file', label: 'delete_file', description: 'ลบไฟล์/โฟลเดอร์ว่างแบบ scoped; ใช้ Recovery Trash ได้' },
-    { key: 'git_rm', label: 'git rm', description: 'ลบ tracked path ที่พิสูจน์ว่าอยู่ใน Active Project' },
-    { key: 'git_clean', label: 'git clean', description: 'ลบ untracked files; เมื่อ Critical Protection เปิด ต้องมี pathspec ชัดเจน' },
-    { key: 'git_reset_restore', label: 'git reset / restore', description: 'อนุญาตทิ้ง working-tree/index changes ภายใน repo ที่ active' },
-    { key: 'shell_rm_unlink', label: 'rm / unlink', description: 'เฉพาะ executable ตรง + argv path ภายใน Active Project' },
-    { key: 'shell_rmdir', label: 'rmdir / rd', description: 'เฉพาะ directory target ภายใน Active Project' },
-    { key: 'shell_del_erase', label: 'del / erase', description: 'Windows direct delete executable ภายใน Active Project' },
-    { key: 'wsl_rm_unlink', label: 'WSL rm / unlink', description: 'เฉพาะ relative path ที่ผูกกับ Active Project' },
-    { key: 'wsl_rmdir', label: 'WSL rmdir', description: 'เฉพาะ relative directory path ที่ผูกกับ Active Project' },
-  ];
-  return [
-    { key: 'delete_file', label: 'delete_file', description: 'Scoped file/empty-directory deletion; supports Recovery Trash' },
-    { key: 'git_rm', label: 'git rm', description: 'Tracked paths proven inside the Active Project' },
-    { key: 'git_clean', label: 'git clean', description: 'Untracked deletion; critical protection requires explicit pathspecs' },
-    { key: 'git_reset_restore', label: 'git reset / restore', description: 'Discard working-tree/index changes in the active repository' },
-    { key: 'shell_rm_unlink', label: 'rm / unlink', description: 'Direct executable + argv paths inside the Active Project only' },
-    { key: 'shell_rmdir', label: 'rmdir / rd', description: 'Directory targets inside the Active Project only' },
-    { key: 'shell_del_erase', label: 'del / erase', description: 'Direct Windows delete executable inside the Active Project' },
-    { key: 'wsl_rm_unlink', label: 'WSL rm / unlink', description: 'Relative paths anchored to the Active Project only' },
-    { key: 'wsl_rmdir', label: 'WSL rmdir', description: 'Relative directory paths anchored to the Active Project only' },
-  ];
-}
-
 function splitList(value: string): readonly string[] {
   const seen = new Set<string>();
   return value.split(/[;\r\n]+/).map((entry) => entry.trim()).filter((entry) => { if (entry.length === 0) return false; const key = entry.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
@@ -378,6 +555,10 @@ function profileHint(locale: UiLocale, profile: PermissionProfileName): string {
   const th = { safe: 'ปลอดภัยสูงสุด: งานเขียนและรันคำสั่งต้องขออนุญาต', balanced: 'สมดุล: งานทั่วไปใน workspace ทำได้คล่องขึ้น', full: 'เต็มสิทธิ์ตาม policy ที่ยังคงบล็อก operation อันตรายระดับระบบ', custom: 'ใช้กฎ READ / WRITE / EXECUTE / DANGEROUS และ executable ที่กำหนดเอง' } as const;
   const en = { safe: 'Maximum safety: writes and execution require approval.', balanced: 'Balanced: common workspace work is less restrictive.', full: 'Full access within policy; machine-destructive operations remain blocked.', custom: 'Uses your READ / WRITE / EXECUTE / DANGEROUS rules and custom executables.' } as const;
   return (locale === 'th' ? th : en)[profile];
+}
+
+function formatTunnelTriState(value: boolean | null): string {
+  return value === null ? '—' : value ? 'OK' : 'FAIL';
 }
 
 function formatBytes(value: number): string {

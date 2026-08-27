@@ -49,14 +49,18 @@ export async function resolveSharedWorkspace(
   return source;
 }
 
-function isWindowsStylePath(p: string): boolean {
-  return /^[A-Za-z]:[/\\]/i.test(p);
-}
-
 function workspaceContains(workspace: Workspace, inputPath: string): boolean {
-  const isWin = isWindowsStylePath(inputPath) || isWindowsStylePath(workspace.rootPath);
+  // Windows-style registered roots must stay matchable even when the host is
+  // POSIX (macOS/Linux), where path.resolve would otherwise reinterpret them.
+  const isWin = isWindowsStylePath(inputPath)
+    || isWindowsStylePath(workspace.rootPath)
+    || isWindowsStylePath(workspace.realRootPath);
   const absolutePath = isWin ? path.win32.normalize(inputPath) : path.resolve(inputPath);
   return isWithin(workspace.realRootPath, absolutePath) || isWithin(workspace.rootPath, absolutePath);
+}
+
+function isWindowsStylePath(p: string): boolean {
+  return /^[A-Za-z]:[/\\]/i.test(p);
 }
 
 function longestRoot(workspace: Workspace): string {

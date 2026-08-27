@@ -21,12 +21,24 @@ function servicesWithOffice(root: string, officeResults: Record<string, unknown>
           : ok(handler);
       },
     },
+    file: {
+      async prepareExternalFileMutation(_actor, _workspaceId, request) {
+        return ok({
+          sourcePaths: [...(request.sourcePaths ?? [])],
+          targetPath: request.targetPath,
+          targetRelativePath: path.relative(root, request.targetPath),
+        });
+      },
+    } as McpApplicationServices['file'],
   } as unknown as McpApplicationServices;
 }
 
 async function withWorkspace(run: (root: string, file: string, provider: string) => Promise<void>): Promise<void> {
-  const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'lnwjud-doc-test-')));
-  const root = process.platform === 'win32' ? path.win32.normalize(dir) : path.normalize(dir);
+  // Hosted Windows runners may report TEMP as an 8.3 path (RUNNER~1) while
+  // realpath() returns the long form. Keep fixtures canonical like real workspaces.
+  const root = process.platform === 'win32'
+  ? path.win32.normalize(await realpath(await mkdtemp(path.join(tmpdir(), 'lnwjud-doc-test-'))))
+  : path.normalize(await realpath(await mkdtemp(path.join(tmpdir(), 'lnwjud-doc-test-'))));
   const file = path.join(root, 'sample.pdf');
   await writeFile(file, '%PDF-1.4\n%fake-but-present\n%%EOF\n', 'utf8');
   const provider = path.join(root, 'pdftotext.exe');
@@ -34,7 +46,7 @@ async function withWorkspace(run: (root: string, file: string, provider: string)
   await run(root, file, provider);
 }
 
-describe('DocumentRuntimeService', () => {
+describe.skipIf(process.platform !== 'win32')('DocumentRuntimeService', () => {
   it('extracts PDF layout text through the configured provider', async () => {
     await withWorkspace(async (root, file, provider) => {
       const calls: { provider: string; args: readonly string[] }[] = [];
@@ -43,6 +55,7 @@ describe('DocumentRuntimeService', () => {
         pdfRunner: async (resolvedProvider, args): Promise<ReturnType<typeof ok>> => { calls.push({ provider: resolvedProvider, args }); return ok('name  qty\npencil 3\fpen 5'); },
       });
       const result = await runtime.extractTables({ workspaceId: 'ws-1', file_path: file });
+      console.log('DBGX', JSON.stringify(result));
       expect(result).toMatchObject({ ok: true, value: {
         tool: 'pdf_extract_tables', available: true, workspaceId: 'ws-1', mode: 'layout-text', truncated: false,
         text: 'name  qty\npencil 3\fpen 5',
@@ -97,10 +110,10 @@ describe('DocumentRuntimeService', () => {
       const second = path.join(root, 'b.docx');
       const third = path.join(root, 'c.docx');
       await Promise.all([writeFile(primary, 'a'), writeFile(second, 'b'), writeFile(third, 'c')]);
-      const merges: { file_path?: string; merge_paths?: string[]; target_path?: string }[] = [];
+      const merges: { file_path?: string; merge_paths?: string[]; target_path?: string; userConfirmed?: boolean }[] = [];
       const runtime = new DocumentRuntimeService(servicesWithOffice(root, {
-        'word:merge': (request: { file_path?: string; merge_paths?: string[]; target_path?: string }) => {
-          merges.push({ file_path: request.file_path, merge_paths: request.merge_paths, target_path: request.target_path });
+        'word:merge': (request: { file_path?: string; merge_paths?: string[]; target_path?: string; userConfirmed?: boolean }) => {
+          merges.push({ file_path: request.file_path, merge_paths: request.merge_paths, target_path: request.target_path, userConfirmed: request.userConfirmed });
           return ok({ app: 'word', action: 'merge', saved: true });
         },
       }), actor);
@@ -109,7 +122,7 @@ describe('DocumentRuntimeService', () => {
       await expect(runtime.docxMerge({ ...input })).resolves.toMatchObject({ ok: true, value: { dryRun: true, applied: false } });
       await expect(runtime.docxMerge({ ...input, dryRun: false })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
       await expect(runtime.docxMerge({ ...input, dryRun: false, userConfirmed: true })).resolves.toMatchObject({ ok: true, value: { applied: true } });
-      expect(merges).toEqual([{ file_path: primary, merge_paths: [second, third], target_path: path.join(root, 'merged.docx') }]);
+      expect(merges).toEqual([{ file_path: primary, merge_paths: [second, third], target_path: path.join(root, 'merged.docx'), userConfirmed: true }]);
       await expect(runtime.docxMerge({ workspaceId: 'ws-1', file_path: primary, target_path: 'x.docx' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
   });

@@ -1,15 +1,17 @@
 import path from 'node:path';
-import { appError } from '@lnwjud/domain';
+import { appError, type CommandSpec } from '@lnwjud/domain';
 import { sanitizeException, type DiagnosticLogger, type FileActor } from '@lnwjud/application';
+import { CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY } from '@lnwjud/capabilities';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
-import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
-import { ActivityTracker, type ActivitySink, type TraceContext } from './activity-tracker.js';
+import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, prohibitedAgentCommandReason, prohibitedAgentGitInvocationReason, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
+import { ActivityTracker, summarizeStructuredResultTarget, summarizeToolTarget, type ActivitySink, type TraceContext } from './activity-tracker.js';
 import { ContextEngine } from './context-engine.js';
 import { ContextEconomyRuntime } from './context-economy.js';
-import { hasExplicitUserConfirmation, inspectDestructiveOperation } from './destructive-policy.js';
+import { hasExplicitUserConfirmation } from './destructive-policy.js';
 import { isScopedAutoApprovalAllowed, type WorkspaceScope } from './destructive-scope.js';
 import { FilePageEngine } from './file-page-engine.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
+import { inspectMutationOperation, permissionLevelForMutationDecision, requiresMutationConfirmation, type MutationPolicyDecision } from './mutation-policy.js';
 import { mapError, mapResult, type McpToolResponse } from './result-mapper.js';
 import { batchTools } from './tools/batch-tools.js';
 import { contextTools } from './tools/context-tools.js';
@@ -21,6 +23,7 @@ import { codexTools } from './tools/codex-tools.js';
 import { capabilityTools } from './tools/capability-tools.js';
 import { fileTools } from './tools/file-tools.js';
 import { gitTools } from './tools/git-tools.js';
+import { goalTools } from './tools/goal-tools.js';
 import { mcpBridgeTools } from './tools/mcp-bridge-tools.js';
 import { processTools } from './tools/process-tools.js';
 import { sessionTools } from './tools/session-tools.js';
@@ -42,25 +45,50 @@ export interface ToolRegistryOptions {
   readonly allowAiDeleteProvider?: () => boolean;
   /** Fine-grained local destructive auto-approval policy. */
   readonly destructivePolicyProvider?: () => DestructiveAutoApprovalPolicy;
-  /** Resolves the registered workspace boundary for the workspaceId carried by this invocation. */
+  /** @deprecated Request-selected workspace lookup is not an authorization boundary. */
   readonly workspaceScopeResolver?: (workspaceId: string) => WorkspaceScope | null | Promise<WorkspaceScope | null>;
-  /** @deprecated Compatibility only. New callers must use request-scoped workspace resolution. */
+  /** Host-owned active workspace used as the mutation authorization boundary. */
+  readonly activeWorkspaceScopeProvider?: () => WorkspaceScope | null | Promise<WorkspaceScope | null>;
+  /** Host-owned active project set; first entry is the primary/default project. */
+  readonly activeWorkspaceScopesProvider?: () => readonly WorkspaceScope[] | Promise<readonly WorkspaceScope[]>;
+  /** @deprecated Compatibility alias for activeWorkspaceScopeProvider. */
   readonly activeProjectProvider?: () => WorkspaceScope | null;
+  /** Host-owned exact-action approval boundary, such as a native desktop confirmation dialog. */
+  readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   /** Exposes quota-consuming Codex delegation tools. Disabled unless explicitly enabled. */
   readonly codexToolsEnabled?: boolean;
   readonly incrementalVerifier?: IncrementalVerifier;
   readonly maxToolDurationMs?: number;
 }
 
+export interface HostMutationApprovalRequest {
+  readonly toolName: string;
+  readonly mutationKind: MutationPolicyDecision['kind'];
+  readonly reason: string;
+  readonly summary: string;
+  readonly workspaceId?: string;
+  readonly workspaceRoot?: string;
+}
+
 const DEFAULT_MCP_TOOL_RESPONSE_BUDGET_MS: number | null = null;
+const MAX_APPROVAL_SUMMARY_LENGTH = 8_192;
+const MAX_REMEMBERED_SHELL_TASKS = 512;
+const MAX_REMEMBERED_ACTIVITY_HANDLES = 512;
 
 interface BudgetedToolExecution {
   readonly response: McpToolResponse;
   readonly deferredSettlement?: Promise<void>;
 }
 
+type ProjectCommandKind = 'dev' | 'test' | 'lint' | 'typecheck' | 'build';
+
+type ApprovalPreparation =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly response: McpToolResponse; readonly code: string; readonly message: string };
+
 export class ToolRegistry {
   private readonly tools: readonly McpToolDefinition[];
+  private readonly services: McpApplicationServices;
   private readonly diagnostic: DiagnosticLogger | undefined;
   private readonly activity: ActivityTracker;
   private readonly schemaRegistry: ToolSchemaRegistry;
@@ -68,18 +96,28 @@ export class ToolRegistry {
   private readonly permissionEngine = new DefaultPermissionEngine();
   private readonly profileProvider: () => PermissionProfile;
   private readonly destructivePolicyProvider: () => DestructiveAutoApprovalPolicy;
-  private readonly workspaceScopeResolver: (workspaceId: string) => Promise<WorkspaceScope | null>;
+  private readonly activeWorkspaceScopeProvider: () => Promise<WorkspaceScope | null>;
+  private readonly activeWorkspaceScopesProvider: (() => Promise<readonly WorkspaceScope[]>) | undefined;
+  private readonly enforceActiveWorkspaceScope: boolean;
+  private readonly hostMutationApprovalProvider: ToolRegistryOptions['hostMutationApprovalProvider'];
   private readonly activityWorkspaceResolver: (cwd: string) => Promise<string | undefined>;
   private readonly shellTaskWorkspaces = new Map<string, string>();
+  private readonly shellTaskTargets = new Map<string, string>();
+  private readonly processTargets = new Map<string, string>();
+  private readonly codexTaskTargets = new Map<string, string>();
   private readonly maxToolDurationMs: number | null;
 
   public constructor(services: McpApplicationServices, actor: FileActor, options: ToolRegistryOptions = {}) {
+    this.services = services;
     this.diagnostic = options.diagnostic;
     this.activity = options.activityTracker ?? new ActivityTracker(options.activity);
     this.sessionId = options.sessionId;
     this.profileProvider = options.profileProvider ?? ((): PermissionProfile => permissionProfiles.full);
     this.destructivePolicyProvider = options.destructivePolicyProvider ?? ((): DestructiveAutoApprovalPolicy => legacyDeletePolicy(options.allowAiDeleteProvider?.() === true));
-    this.workspaceScopeResolver = normalizeWorkspaceScopeResolver(services, actor, options);
+    this.activeWorkspaceScopeProvider = normalizeActiveWorkspaceScopeProvider(options);
+    this.activeWorkspaceScopesProvider = normalizeActiveWorkspaceScopesProvider(options);
+    this.enforceActiveWorkspaceScope = options.activeWorkspaceScopesProvider !== undefined || options.activeWorkspaceScopeProvider !== undefined || options.activeProjectProvider !== undefined;
+    this.hostMutationApprovalProvider = options.hostMutationApprovalProvider;
     this.activityWorkspaceResolver = normalizeActivityWorkspaceResolver(services, actor);
     this.maxToolDurationMs = normalizeToolResponseBudget(options.maxToolDurationMs);
     const contextEconomy = new ContextEconomyRuntime();
@@ -104,6 +142,7 @@ export class ToolRegistry {
       ...filePageTools(filePageEngine),
       ...workspaceIndexTools(context),
       ...sessionTools(context, incrementalVerifier),
+      ...goalTools(context),
       ...upgradeTools(context),
     ];
     this.tools = [
@@ -117,25 +156,15 @@ export class ToolRegistry {
     for (const tool of this.tools) this.schemaRegistry.register(tool);
   }
 
-  public list(): readonly McpToolDefinition[] {
-    return this.tools;
-  }
-
-  public listInFlight(): ReturnType<ActivityTracker['listInFlight']> {
-    return this.activity.listInFlight();
-  }
-
-  public listSchemas(): ReturnType<ToolSchemaRegistry['list']> {
-    return this.schemaRegistry.list();
-  }
-
-  public describeSchema(name: string): ReturnType<ToolSchemaRegistry['describe']> {
-    return this.schemaRegistry.describe(name);
-  }
+  public list(): readonly McpToolDefinition[] { return this.tools; }
+  public listInFlight(): ReturnType<ActivityTracker['listInFlight']> { return this.activity.listInFlight(); }
+  public listSchemas(): ReturnType<ToolSchemaRegistry['list']> { return this.schemaRegistry.list(); }
+  public describeSchema(name: string): ReturnType<ToolSchemaRegistry['describe']> { return this.schemaRegistry.describe(name); }
 
   public async invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
     const activityWorkspaceId = await this.resolveActivityWorkspaceId(name, input);
-    const activityInput = withActivityWorkspaceId(input, activityWorkspaceId);
+    const workspaceActivityInput = withActivityWorkspaceId(input, activityWorkspaceId);
+    const activityInput = this.withRememberedActivityTarget(name, workspaceActivityInput);
     const callId = await this.activity.begin(name, activityInput, { ...(traceContext ?? {}), ...(this.sessionId === undefined ? {} : { sessionId: this.sessionId }) });
     const started = Date.now();
     try {
@@ -151,29 +180,58 @@ export class ToolRegistry {
         await this.activity.end(callId, parsed.error.code, Date.now() - started, parsed.error.message);
         return response;
       }
-      const destructiveDecision = inspectDestructiveOperation(tool.name, parsed.value);
+      const prohibitedReason = prohibitedInvocationReason(tool.name, parsed.value);
+      if (prohibitedReason !== undefined) {
+        const response = mapError(appError('PERMISSION_DENIED', prohibitedReason));
+        await this.activity.end(callId, 'PERMISSION_DENIED', Date.now() - started, prohibitedReason);
+        return response;
+      }
+      let mutationDecision = inspectMutationOperation(tool.name, parsed.value, tool.permission);
       const policy = this.destructivePolicyProvider();
-      const destructiveWorkspaceId = readExplicitWorkspaceId(parsed.value);
-      const workspaceScope = destructiveDecision.destructive && destructiveWorkspaceId !== undefined
-        ? await this.resolveWorkspaceScope(destructiveWorkspaceId)
-        : null;
-      const policyAllowsScopedDestructive = destructiveDecision.destructive
-        && destructiveWorkspaceId !== undefined
-        && isScopedAutoApprovalAllowed(tool.name, parsed.value, destructiveDecision, policy, workspaceScope);
-      if (destructiveDecision.destructive && !hasExplicitUserConfirmation(parsed.value) && !policyAllowsScopedDestructive) {
-        const message = `Destructive operation requires explicit user confirmation${destructiveDecision.reason === undefined ? '' : `: ${destructiveDecision.reason}`}. Ask the user in chat first, then retry with userConfirmed: true`;
+      const mutationWorkspaceId = readExplicitWorkspaceId(parsed.value);
+      const nativePathScopeRequired = requiresNativePathScope(tool.name, parsed.value);
+      const activeWorkspaceScope = !this.enforceActiveWorkspaceScope
+        || (mutationDecision.kind === 'read' && !nativePathScopeRequired)
+        ? null
+        : await this.resolveActiveWorkspaceScope(mutationWorkspaceId);
+      if (mutationDecision.kind === 'execute' && commandExecutionLeavesActiveWorkspace(tool.name, parsed.value, activeWorkspaceScope)) {
+        mutationDecision = { kind: 'opaque_mutation', reason: 'Command execution explicitly targets a working directory outside the host Active Project' };
+      }
+      const mutationScopeMismatch = mutationDecision.kind !== 'read'
+        && !COMMAND_EXECUTION_TOOLS.has(tool.name)
+        && (mutationWorkspaceId !== undefined || requiresActiveWorkspaceScope(tool.name, mutationDecision))
+        && (activeWorkspaceScope === null || mutationWorkspaceId === undefined || mutationWorkspaceId !== activeWorkspaceScope.workspaceId);
+      const nativePathScopeMismatch = nativePathScopeRequired
+        && (activeWorkspaceScope === null || (mutationWorkspaceId !== undefined && mutationWorkspaceId !== activeWorkspaceScope.workspaceId));
+      if (this.enforceActiveWorkspaceScope && (mutationScopeMismatch || nativePathScopeMismatch)) {
+        const message = nativePathScopeMismatch
+          ? 'Path-bearing native target does not match the host active workspace'
+          : 'Mutation target does not match the host active workspace';
+        const response = mapError(appError('PERMISSION_DENIED', message));
+        await this.activity.end(callId, 'PERMISSION_DENIED', Date.now() - started, message);
+        return response;
+      }
+      const profile = this.profileProvider();
+      const policyAllowsScopedDestructive = mutationWorkspaceId !== undefined
+        && isScopedAutoApprovalAllowed(tool.name, parsed.value, mutationDecision, policy, activeWorkspaceScope);
+      const mutationConfirmationRequired = requiresProfileMutationConfirmation(mutationDecision, profile);
+      if (mutationConfirmationRequired && !hasExplicitUserConfirmation(parsed.value) && !policyAllowsScopedDestructive) {
+        const message = `Mutation requires explicit user confirmation: ${mutationDecision.reason}. Ask the user in chat first, then retry with userConfirmed: true`;
         const response = mapError(appError('PERMISSION_REQUIRED', message, true));
         await this.activity.end(callId, 'PERMISSION_REQUIRED', Date.now() - started, message);
         return response;
       }
-      const permissionDecision = this.permissionEngine.decide(this.profileProvider(), {
+      const effectivePermission = permissionLevelForMutationDecision(mutationDecision);
+      const permissionDecision = this.permissionEngine.decide(profile, {
         action: 'mcp:' + tool.name,
-        level: policyAllowsScopedDestructive ? 'WRITE' : tool.permission,
+        level: policyAllowsScopedDestructive ? 'WRITE' : effectivePermission,
         workspaceId: readWorkspaceId(parsed.value),
         target: tool.name,
-        destructive: tool.annotations.destructiveHint,
+        destructive: isDestructiveMutation(mutationDecision),
       });
-      if (permissionDecision !== 'ALLOW') {
+      const permissionApproved = permissionDecision === 'ALLOW'
+        || (permissionDecision === 'ASK' && (hasExplicitUserConfirmation(parsed.value) || policyAllowsScopedDestructive));
+      if (!permissionApproved) {
         const code = permissionDecision === 'DENY' ? 'PERMISSION_DENIED' : 'PERMISSION_REQUIRED';
         const message = permissionDecision === 'DENY'
           ? 'MCP tool ' + tool.name + ' is denied by the active permission profile'
@@ -182,21 +240,65 @@ export class ToolRegistry {
         await this.activity.end(callId, code, Date.now() - started, message);
         return response;
       }
-      const executionInput = policyAllowsScopedDestructive ? withInternalUserConfirmation(parsed.value) : parsed.value;
-      const execution = await this.executeWithinResponseBudget(tool, executionInput, parentSignal);
+      const fullProfileAutoConfirmed = profile.name === 'full' && mutationDecision.kind !== 'read' && !mutationConfirmationRequired;
+      const confirmedExecutionInput = policyAllowsScopedDestructive || fullProfileAutoConfirmed
+        ? withInternalUserConfirmation(parsed.value)
+        : parsed.value;
+      const scopedExecutionInput = bindCommandExecutionToActiveWorkspace(tool.name, confirmedExecutionInput, activeWorkspaceScope);
+      if (!scopedExecutionInput.ok) {
+        const response = mapError(appError('PERMISSION_DENIED', scopedExecutionInput.message));
+        await this.activity.end(callId, 'PERMISSION_DENIED', Date.now() - started, scopedExecutionInput.message);
+        return response;
+      }
+      const approvalPreparation = await this.prepareApprovalInput(tool.name, scopedExecutionInput.value);
+      if (!approvalPreparation.ok) {
+        await this.activity.end(callId, approvalPreparation.code, Date.now() - started, approvalPreparation.message);
+        return approvalPreparation.response;
+      }
+      const approvalExecutionInput = approvalPreparation.value;
+      if (mutationConfirmationRequired && !policyAllowsScopedDestructive) {
+        if (this.hostMutationApprovalProvider === undefined) {
+          const message = 'Host exact-action approval is unavailable for this mutation; use Desktop or a trusted host approval adapter';
+          const response = mapError(appError('PERMISSION_DENIED', message));
+          await this.activity.end(callId, 'PERMISSION_DENIED', Date.now() - started, message);
+          return response;
+        }
+        let hostApproved = false;
+        try {
+          hostApproved = await this.hostMutationApprovalProvider({
+            toolName: tool.name,
+            mutationKind: mutationDecision.kind,
+            reason: mutationDecision.reason,
+            summary: summarizeMutationForApproval(tool.name, approvalExecutionInput, activeWorkspaceScope),
+            ...(mutationWorkspaceId === undefined ? {} : { workspaceId: mutationWorkspaceId }),
+            ...(activeWorkspaceScope === null ? {} : { workspaceRoot: activeWorkspaceScope.rootPath }),
+          });
+        } catch {
+          hostApproved = false;
+        }
+        if (!hostApproved) {
+          const message = 'The host denied or could not verify exact-action approval for this mutation';
+          const response = mapError(appError('PERMISSION_DENIED', message));
+          await this.activity.end(callId, 'PERMISSION_DENIED', Date.now() - started, message);
+          return response;
+        }
+      }
+      const resolvedActivityInput = this.withRememberedActivityTarget(
+        name,
+        withActivityWorkspaceId(approvalExecutionInput, activityWorkspaceId),
+      );
+      const resolvedTargetSummary = summarizeToolTarget(name, resolvedActivityInput);
+      this.activity.updateTarget(callId, resolvedTargetSummary);
+      const execution = await this.executeWithinResponseBudget(tool, approvalExecutionInput, parentSignal);
       const response = execution.response;
-      this.rememberShellTaskWorkspace(name, response, activityWorkspaceId);
-      const resultCode = response.isError === true
-        ? readErrorCode(response) ?? 'ERROR'
-        : 'SUCCESS';
+      const resultTargetSummary = summarizeStructuredResultTarget(response.structuredContent);
+      if (resultTargetSummary !== undefined) this.activity.updateTarget(callId, resultTargetSummary);
+      this.rememberActivityContext(name, response, activityWorkspaceId, resultTargetSummary ?? resolvedTargetSummary);
+
+      const resultCode = response.isError === true ? readErrorCode(response) ?? 'ERROR' : 'SUCCESS';
       const resultMessage = readErrorMessage(response);
       if (execution.deferredSettlement !== undefined) {
-        void execution.deferredSettlement.then(() => this.activity.end(
-          callId,
-          resultCode,
-          Date.now() - started,
-          resultMessage,
-        ));
+        void execution.deferredSettlement.then(() => this.activity.end(callId, resultCode, Date.now() - started, resultMessage));
       } else {
         await this.activity.end(callId, resultCode, Date.now() - started, resultMessage);
       }
@@ -208,33 +310,87 @@ export class ToolRegistry {
     }
   }
 
+  private async prepareApprovalInput(toolName: string, input: unknown): Promise<ApprovalPreparation> {
+    const kind = projectCommandKind(toolName);
+    if (kind === undefined) return { ok: true, value: input };
+    if (!isRecord(input)) {
+      const message = 'Project command input is invalid';
+      return { ok: false, response: mapError(appError('PERMISSION_DENIED', message)), code: 'PERMISSION_DENIED', message };
+    }
+    const workspaceId = readExplicitWorkspaceId(input);
+    if (workspaceId === undefined || this.services.process?.previewProjectCommand === undefined) {
+      const message = 'Project command preview is unavailable; exact-action approval cannot be verified';
+      return { ok: false, response: mapError(appError('PERMISSION_DENIED', message)), code: 'PERMISSION_DENIED', message };
+    }
+    const preview = await this.services.process.previewProjectCommand(workspaceId, kind);
+    if (!preview.ok) {
+      return { ok: false, response: mapError(preview.error), code: preview.error.code, message: preview.error.message };
+    }
+    return { ok: true, value: { ...input, __lnwjudApprovedProjectCommand: preview.value } };
+  }
+
   private async resolveActivityWorkspaceId(name: string, input: unknown): Promise<string | undefined> {
     const explicitWorkspaceId = readExplicitWorkspaceId(input);
     if (explicitWorkspaceId !== undefined) return explicitWorkspaceId;
-    if (name !== 'shell' || !isRecord(input)) return undefined;
-    const taskId = readTrimmedString(input.task_id);
-    if (taskId !== undefined) {
-      const remembered = this.shellTaskWorkspaces.get(taskId);
-      if (remembered !== undefined) return remembered;
+    if (!isRecord(input)) return undefined;
+    if (name === 'shell') {
+      const taskId = readTrimmedString(input.task_id);
+      if (taskId !== undefined) {
+        const remembered = this.shellTaskWorkspaces.get(taskId);
+        if (remembered !== undefined) return remembered;
+      }
     }
-    const cwd = readTrimmedString(input.cwd);
-    return cwd === undefined ? undefined : this.activityWorkspaceResolver(cwd);
+    const candidatePath = firstAbsoluteActivityPath(input);
+    return candidatePath === undefined ? undefined : this.activityWorkspaceResolver(candidatePath);
   }
 
-  private rememberShellTaskWorkspace(name: string, response: McpToolResponse, workspaceId: string | undefined): void {
-    if (name !== 'shell' || workspaceId === undefined || response.isError === true) return;
-    const taskId = readTrimmedString(response.structuredContent?.task_id);
-    if (taskId !== undefined) this.shellTaskWorkspaces.set(taskId, workspaceId);
+  private withRememberedActivityTarget(name: string, input: unknown): unknown {
+    if (!isRecord(input)) return input;
+    if (name === 'shell') {
+      const taskId = readTrimmedString(input.task_id);
+      const target = taskId === undefined ? undefined : this.shellTaskTargets.get(taskId);
+      if (target !== undefined) return { ...input, command: target };
+    }
+    const processId = readTrimmedString(input.processId);
+    const processTarget = processId === undefined ? undefined : this.processTargets.get(processId);
+    if (processTarget !== undefined) return { ...input, command: processTarget };
+    const codexTaskId = readTrimmedString(input.codexTaskId);
+    const codexTarget = codexTaskId === undefined ? undefined : this.codexTaskTargets.get(codexTaskId);
+    if (codexTarget !== undefined) return { ...input, command: codexTarget };
+    return input;
   }
 
-  private async resolveWorkspaceScope(workspaceId: string): Promise<WorkspaceScope | null> {
+  private rememberActivityContext(name: string, response: McpToolResponse, workspaceId: string | undefined, targetSummary: string | undefined): void {
+    if (response.isError === true) return;
+    const structured = response.structuredContent;
+    const processId = readTrimmedString(structured?.processId);
+    if (processId !== undefined && targetSummary !== undefined) rememberBounded(this.processTargets, processId, targetSummary, MAX_REMEMBERED_ACTIVITY_HANDLES);
+    const codexTaskId = readTrimmedString(structured?.codexTaskId);
+    if (codexTaskId !== undefined && targetSummary !== undefined) rememberBounded(this.codexTaskTargets, codexTaskId, targetSummary, MAX_REMEMBERED_ACTIVITY_HANDLES);
+    if (name !== 'shell') return;
+    const taskId = readTrimmedString(structured?.task_id);
+    if (taskId === undefined) return;
+    if (workspaceId !== undefined) this.shellTaskWorkspaces.set(taskId, workspaceId);
+    if (targetSummary !== undefined) this.shellTaskTargets.set(taskId, targetSummary);
+    while (this.shellTaskTargets.size > MAX_REMEMBERED_SHELL_TASKS || this.shellTaskWorkspaces.size > MAX_REMEMBERED_SHELL_TASKS) {
+      const oldestTaskId = this.shellTaskTargets.keys().next().value ?? this.shellTaskWorkspaces.keys().next().value;
+      if (typeof oldestTaskId !== 'string') break;
+      this.shellTaskTargets.delete(oldestTaskId);
+      this.shellTaskWorkspaces.delete(oldestTaskId);
+    }
+  }
+
+  private async resolveActiveWorkspaceScope(workspaceId?: string): Promise<WorkspaceScope | null> {
     try {
-      return await this.workspaceScopeResolver(workspaceId);
-    } catch {
-      // Scope lookup failures must fail closed to normal confirmation, not widen authorization.
-      return null;
-    }
+      if (this.activeWorkspaceScopesProvider !== undefined) {
+        const scopes = await this.activeWorkspaceScopesProvider();
+        if (workspaceId === undefined) return scopes[0] ?? null;
+        return scopes.find((scope) => scope.workspaceId === workspaceId) ?? null;
+      }
+      return await this.activeWorkspaceScopeProvider();
+    } catch { return null; }
   }
+
   private async executeWithinResponseBudget(tool: McpToolDefinition, input: unknown, parentSignal?: AbortSignal): Promise<BudgetedToolExecution> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -252,11 +408,7 @@ export class ToolRegistry {
         onParentAbort = (): void => {
           deadlineExceeded = true;
           controller.abort();
-          finish(mapError(appError(
-            'PROCESS_TIMEOUT',
-            `MCP tool ${tool.name} was cancelled because its parent request ended; cancellation was requested, but an underlying operation may still be finishing. Check task/process status before retrying.`,
-            true,
-          )));
+          finish(mapError(appError('PROCESS_TIMEOUT', `MCP tool ${tool.name} was cancelled because its parent request ended; cancellation was requested, but an underlying operation may still be finishing. Check task/process status before retrying.`, true)));
         };
         if (parentSignal?.aborted) {
           onParentAbort();
@@ -268,24 +420,15 @@ export class ToolRegistry {
           timer = setTimeout(() => {
             deadlineExceeded = true;
             controller.abort();
-            finish(mapError(appError(
-              'PROCESS_TIMEOUT',
-              `MCP tool ${tool.name} exceeded the ${Math.ceil(responseBudgetMs / 1000)}s response budget; cancellation was requested, but an underlying operation may still be finishing. Check task/process status before retrying.`,
-              true,
-            )));
+            finish(mapError(appError('PROCESS_TIMEOUT', `MCP tool ${tool.name} exceeded the ${Math.ceil(responseBudgetMs / 1000)}s response budget; cancellation was requested, but an underlying operation may still be finishing. Check task/process status before retrying.`, true)));
           }, responseBudgetMs);
         }
         operation = tool.execute(input, controller.signal).then(mapResult);
-        void operation.then(
-          finish,
-          reject,
-        );
+        void operation.then(finish, reject);
       });
       return {
         response,
-        ...(deadlineExceeded && operation !== undefined
-          ? { deferredSettlement: operation.then(() => undefined, () => undefined) }
-          : {}),
+        ...(deadlineExceeded && operation !== undefined ? { deferredSettlement: operation.then(() => undefined, () => undefined) } : {}),
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
@@ -301,22 +444,14 @@ function withInternalUserConfirmation(input: unknown): unknown {
 
 function legacyDeletePolicy(enabled: boolean): DestructiveAutoApprovalPolicy {
   if (!enabled) return DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY;
-  return {
-    ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY,
-    approvals: { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals, delete_file: true },
-  };
+  return { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, approvals: { ...DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY.approvals, delete_file: true } };
 }
 
 function normalizeToolResponseBudget(value: number | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? value
-    : DEFAULT_MCP_TOOL_RESPONSE_BUDGET_MS;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : DEFAULT_MCP_TOOL_RESPONSE_BUDGET_MS;
 }
 
-function normalizeActivityWorkspaceResolver(
-  services: McpApplicationServices,
-  actor: FileActor,
-): (cwd: string) => Promise<string | undefined> {
+function normalizeActivityWorkspaceResolver(services: McpApplicationServices, actor: FileActor): (cwd: string) => Promise<string | undefined> {
   return async (cwd: string): Promise<string | undefined> => {
     const infoPort = services.workspaceInfo;
     if (infoPort?.list === undefined || !isAbsoluteActivityPath(cwd)) return undefined;
@@ -336,9 +471,7 @@ function normalizeActivityWorkspaceResolver(
         }
       }
       return best?.workspaceId;
-    } catch {
-      return undefined;
-    }
+    } catch { return undefined; }
   };
 }
 
@@ -347,14 +480,12 @@ function withActivityWorkspaceId(input: unknown, workspaceId: string | undefined
   return { ...input, workspaceId };
 }
 
-function isAbsoluteActivityPath(value: string): boolean {
-  return path.win32.isAbsolute(value) || path.posix.isAbsolute(value);
-}
+function isAbsoluteActivityPath(value: string): boolean { return path.win32.isAbsolute(value) || path.posix.isAbsolute(value); }
 
 function activityPathContains(root: string, candidate: string): boolean {
   const api = path.win32.isAbsolute(root) || path.win32.isAbsolute(candidate) ? path.win32 : path.posix;
   const relative = api.relative(api.resolve(root), api.resolve(candidate));
-  return relative === '' || (!relative.startsWith('..') && !api.isAbsolute(relative));
+  return relativePathStaysWithin(api, relative);
 }
 
 function normalizedActivityPath(value: string): string {
@@ -362,43 +493,244 @@ function normalizedActivityPath(value: string): string {
   return api.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
 }
 
-function readTrimmedString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+function readTrimmedString(value: unknown): string | undefined { return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined; }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function rememberBounded(map: Map<string, string>, key: string, value: string, max: number): void {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  while (map.size > max) {
+    const oldest = map.keys().next().value;
+    if (typeof oldest !== 'string') break;
+    map.delete(oldest);
+  }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+
+function firstAbsoluteActivityPath(input: Readonly<Record<string, unknown>>): string | undefined {
+  for (const key of ['cwd', 'path', 'filePath', 'targetPath', 'sourcePath', 'destinationPath']) {
+    const value = readTrimmedString(input[key]);
+    if (value !== undefined && isAbsoluteActivityPath(value)) return value;
+  }
+  return undefined;
 }
 
-type WorkspaceScopeResolverOptions = Pick<ToolRegistryOptions, 'workspaceScopeResolver' | 'activeProjectProvider'>;
+type ActiveWorkspaceScopeOptions = Pick<ToolRegistryOptions, 'activeWorkspaceScopeProvider' | 'activeWorkspaceScopesProvider' | 'activeProjectProvider'>;
+function normalizeActiveWorkspaceScopeProvider(options: ActiveWorkspaceScopeOptions): () => Promise<WorkspaceScope | null> {
+  if (options.activeWorkspaceScopeProvider !== undefined) return async (): Promise<WorkspaceScope | null> => options.activeWorkspaceScopeProvider!();
+  if (options.activeProjectProvider !== undefined) return async (): Promise<WorkspaceScope | null> => options.activeProjectProvider!();
+  return async (): Promise<WorkspaceScope | null> => null;
+}
 
-function normalizeWorkspaceScopeResolver(
-  services: McpApplicationServices,
-  actor: FileActor,
-  options: WorkspaceScopeResolverOptions,
-): (workspaceId: string) => Promise<WorkspaceScope | null> {
-  if (options.workspaceScopeResolver !== undefined) {
-    return async (workspaceId: string): Promise<WorkspaceScope | null> => options.workspaceScopeResolver!(workspaceId);
-  }
-  if (options.activeProjectProvider !== undefined) {
-    return async (workspaceId: string): Promise<WorkspaceScope | null> => {
-      const scope = options.activeProjectProvider!();
-      return scope !== null && scope.workspaceId === workspaceId ? scope : null;
-    };
-  }
-  return async (workspaceId: string): Promise<WorkspaceScope | null> => {
-    const infoPort = services.workspaceInfo;
-    if (infoPort === undefined) return null;
-    const result = await infoPort.info(actor, workspaceId);
-    if (!result.ok || typeof result.value !== 'object' || result.value === null || Array.isArray(result.value)) return null;
-    const info = result.value as Record<string, unknown>;
-    if (info.id !== workspaceId) return null;
-    const realRootPath = typeof info.realRootPath === 'string' && info.realRootPath.trim().length > 0 ? info.realRootPath : undefined;
-    const rootPath = realRootPath ?? (typeof info.rootPath === 'string' && info.rootPath.trim().length > 0 ? info.rootPath : undefined);
-    return rootPath === undefined ? null : { workspaceId, rootPath };
+function normalizeActiveWorkspaceScopesProvider(options: ActiveWorkspaceScopeOptions): (() => Promise<readonly WorkspaceScope[]>) | undefined {
+  if (options.activeWorkspaceScopesProvider === undefined) return undefined;
+  return async (): Promise<readonly WorkspaceScope[]> => {
+    const scopes = await options.activeWorkspaceScopesProvider!();
+    const seen = new Set<string>();
+    return scopes.filter((scope) => {
+      if (scope === null || typeof scope.workspaceId !== 'string' || typeof scope.rootPath !== 'string') return false;
+      if (seen.has(scope.workspaceId)) return false;
+      seen.add(scope.workspaceId);
+      return true;
+    });
   };
 }
 
+const NATIVE_ACTIVE_SCOPE_TOOLS = new Set(['office', 'audio', 'screen_record']);
+const COMMAND_EXECUTION_TOOLS = new Set(['shell', 'wsl_exec', 'process_start']);
+type CommandScopeBinding = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly message: string };
+function bindCommandExecutionToActiveWorkspace(toolName: string, input: unknown, activeWorkspaceScope: WorkspaceScope | null): CommandScopeBinding {
+  const commandTool = toolName === 'shell' || toolName === 'wsl_exec' || toolName === 'process_start';
+  const nativePathTool = NATIVE_ACTIVE_SCOPE_TOOLS.has(toolName);
+  if ((!commandTool && !nativePathTool) || activeWorkspaceScope === null || !isRecord(input)) return { ok: true, value: input };
+  if (commandTool && toolName !== 'process_start') {
+    const operation = readTrimmedString(input.operation) ?? 'run';
+    if (operation !== 'run') return { ok: true, value: input };
+  }
+  const rawRootPath = readTrimmedString(activeWorkspaceScope.rootPath);
+  if (rawRootPath === undefined) return { ok: false, message: 'Host active workspace root is invalid' };
+  // Repair records canonicalized with foreign separators (see ShellCapabilityBackend).
+  const repaired = /^\\([^\\])/.test(rawRootPath) && !/^[A-Za-z]:/.test(rawRootPath)
+    ? { text: rawRootPath.replace(/\\/g, '/'), windowsStyle: false }
+    : { text: rawRootPath, windowsStyle: path.win32.isAbsolute(rawRootPath) };
+  const rootPath = repaired.text;
+  const pathApi = repaired.windowsStyle ? path.win32 : path.posix;
+  if (!pathApi.isAbsolute(rootPath)) return { ok: false, message: 'Host active workspace root is invalid' };
+  const normalizedRoot = pathApi.resolve(rootPath);
+  if (nativePathTool) {
+    const metadata = isRecord(input.metadata) ? input.metadata : {};
+    return { ok: true, value: { ...input, metadata: { ...metadata, [CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY]: normalizedRoot } } };
+  }
+  const requestedCwd = input.cwd === undefined ? undefined : readTrimmedString(input.cwd);
+  if (input.cwd !== undefined && requestedCwd === undefined) return { ok: false, message: 'Command working directory is invalid' };
+  const normalizedCwd = requestedCwd === undefined ? normalizedRoot : pathApi.resolve(normalizedRoot, requestedCwd);
+  const insideActiveWorkspace = scopePathContains(pathApi, normalizedRoot, normalizedCwd);
+  if (toolName === 'process_start') return { ok: true, value: { ...input, cwd: normalizedCwd } };
+  const metadata = isRecord(input.metadata) ? input.metadata : {};
+  if (!insideActiveWorkspace) {
+    const unscopedMetadata = { ...metadata };
+    delete unscopedMetadata[CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY];
+    return { ok: true, value: { ...input, cwd: normalizedCwd, metadata: unscopedMetadata } };
+  }
+  return { ok: true, value: { ...input, cwd: normalizedCwd, metadata: { ...metadata, [CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY]: normalizedRoot } } };
+}
+
+function scopePathContains(pathApi: typeof path.win32, root: string, candidate: string): boolean {
+  const caseInsensitive = pathApi === path.win32;
+  const normalizedRoot = caseInsensitive ? root.toLowerCase() : root;
+  const normalizedCandidate = caseInsensitive ? candidate.toLowerCase() : candidate;
+  return relativePathStaysWithin(pathApi, pathApi.relative(normalizedRoot, normalizedCandidate));
+}
+
+function relativePathStaysWithin(pathApi: typeof path.win32, relative: string): boolean {
+  if (relative === '') return true;
+  if (pathApi.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(pathApi.sep);
+  return firstSegment !== '..';
+}
+
+function summarizeMutationForApproval(toolName: string, input: unknown, activeWorkspaceScope: WorkspaceScope | null): string {
+  if (!isRecord(input)) return `tool = ${toolName}`;
+  const lines = [`tool = ${toolName}`];
+  if (toolName === 'mcp_call') {
+    appendApprovalValue(lines, 'server', readTrimmedString(input.server));
+    appendApprovalValue(lines, 'childTool', readTrimmedString(input.tool));
+    lines.push(`arguments = ${stableRedactedJson(input.arguments ?? {})}`);
+    lines.push('WARNING: child server controls its own filesystem/network scope.');
+    return boundedApprovalSummary(lines);
+  }
+  if (toolName === 'codex_run') {
+    appendApprovalValue(lines, 'workspaceRoot', activeWorkspaceScope?.rootPath);
+    appendApprovalValue(lines, 'instruction', typeof input.instruction === 'string' ? input.instruction : undefined);
+    lines.push('WARNING: workspace-write child agent execution is opaque and is not covered by Recovery Trash.');
+    return boundedApprovalSummary(lines);
+  }
+  const projectKind = projectCommandKind(toolName);
+  if (projectKind !== undefined) {
+    lines.push(`projectCommand = ${projectKind}`);
+    const approvedCommand = readApprovedProjectCommand(input);
+    appendApprovalValue(lines, 'executable', approvedCommand?.executable);
+    if (approvedCommand !== undefined) lines.push(`arguments = ${JSON.stringify(approvedCommand.args)}`);
+    lines.push('WARNING: project-owned script body is opaque and is not covered by Recovery Trash.');
+    return boundedApprovalSummary(lines);
+  }
+  appendApprovalValue(lines, 'operation', readTrimmedString(input.operation) ?? readTrimmedString(input.action));
+  appendApprovalValue(lines, 'cwd', readTrimmedString(input.cwd));
+  appendApprovalValue(lines, 'executable', readTrimmedString(input.executable));
+  const argumentsValue = readStringArray(input.arguments) ?? readStringArray(input.args);
+  if (argumentsValue !== undefined) lines.push(`arguments = ${JSON.stringify(argumentsValue)}`);
+  for (const key of ['path', 'sourcePath', 'destinationPath', 'targetPath', 'file_path', 'output_path'] as const) appendApprovalValue(lines, key, readTrimmedString(input[key]));
+  if (Array.isArray(input.files)) {
+    const paths = input.files.flatMap((entry) => isRecord(entry) && readTrimmedString(entry.path) !== undefined ? [readTrimmedString(entry.path)!] : []);
+    if (paths.length > 0) lines.push(`paths = ${JSON.stringify(paths)}`);
+  }
+  return boundedApprovalSummary(lines);
+}
+
+function boundedApprovalSummary(lines: readonly string[]): string {
+  return redactApprovalSummary(lines.join('\n')).slice(0, MAX_APPROVAL_SUMMARY_LENGTH);
+}
+
+function appendApprovalValue(lines: string[], label: string, value: string | undefined): void { if (value !== undefined) lines.push(`${label} = ${value}`); }
+function readStringArray(value: unknown): readonly string[] | undefined { return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : undefined; }
+function redactApprovalSummary(value: string): string {
+  return value
+    .replace(/(\bauthorization\s*[:=]\s*bearer\s+)[^\s"']+/gi, '$1[redacted]')
+    .replace(/\b(token|secret|password|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s"']+/gi, '$1=[redacted]');
+}
+
+function stableRedactedJson(value: unknown): string {
+  return JSON.stringify(stableRedactedValue(value));
+}
+
+function stableRedactedValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableRedactedValue);
+  if (!isRecord(value)) return value;
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    result[key] = isSensitiveApprovalKey(key) ? '[redacted]' : stableRedactedValue(value[key]);
+  }
+  return result;
+}
+
+function isSensitiveApprovalKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return normalized === 'authorization'
+    || normalized === 'token'
+    || normalized === 'secret'
+    || normalized === 'password'
+    || normalized === 'apikey'
+    || normalized === 'privatekey';
+}
+
+function readApprovedProjectCommand(input: Record<string, unknown>): CommandSpec | undefined {
+  const value = input.__lnwjudApprovedProjectCommand;
+  if (!isRecord(value)) return undefined;
+  const executable = readTrimmedString(value.executable);
+  const args = readStringArray(value.args);
+  return executable === undefined || args === undefined ? undefined : { executable, args };
+}
+
+function projectCommandKind(toolName: string): ProjectCommandKind | undefined {
+  if (toolName === 'project_dev') return 'dev';
+  if (toolName === 'project_test') return 'test';
+  if (toolName === 'project_lint') return 'lint';
+  if (toolName === 'project_typecheck') return 'typecheck';
+  if (toolName === 'project_build') return 'build';
+  return undefined;
+}
+
+function prohibitedInvocationReason(toolName: string, input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  if (toolName === 'git') {
+    const args = readStringArray(input.args);
+    return args === undefined ? 'Git arguments are invalid' : prohibitedAgentGitInvocationReason(args);
+  }
+  if (toolName === 'process_start') {
+    const executable = readTrimmedString(input.executable);
+    const args = readStringArray(input.args);
+    if (executable !== undefined && args !== undefined) return prohibitedAgentCommandReason(executable, args);
+    return 'Process executable or arguments are invalid';
+  }
+  if ((toolName === 'shell' || toolName === 'wsl_exec') && (readTrimmedString(input.operation) ?? 'run') === 'run' && input.dry_run !== true) {
+    const executable = readTrimmedString(input.executable);
+    const args = readStringArray(input.arguments);
+    if (executable !== undefined && args !== undefined) return prohibitedAgentCommandReason(executable, args);
+  }
+  return undefined;
+}
+
+const LOCAL_MUTATION_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_recovery_item', 'restore_checkpoint', 'git', 'shell', 'wsl_exec', 'process_start', 'process_stop', 'codex_run', 'codex_stop', 'office', 'office_ppt', 'docx_merge', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply']);
+const LOCAL_OUTPUT_REPLACEMENT_TOOLS = new Set(['audio', 'screen_record']);
+function requiresActiveWorkspaceScope(toolName: string, decision: MutationPolicyDecision): boolean {
+  return decision.kind !== 'read' && (LOCAL_MUTATION_TOOLS.has(toolName) || (decision.kind === 'replace' && LOCAL_OUTPUT_REPLACEMENT_TOOLS.has(toolName)));
+}
+function requiresNativePathScope(toolName: string, input: unknown): boolean {
+  if (!NATIVE_ACTIVE_SCOPE_TOOLS.has(toolName) || !isRecord(input)) return false;
+  for (const key of ['file_path', 'target_path', 'output_path'] as const) {
+    if (readTrimmedString(input[key]) !== undefined) return true;
+  }
+  return Array.isArray(input.merge_paths) && input.merge_paths.some((entry) => readTrimmedString(entry) !== undefined);
+}
+function commandExecutionLeavesActiveWorkspace(toolName: string, input: unknown, activeWorkspaceScope: WorkspaceScope | null): boolean {
+  if (!COMMAND_EXECUTION_TOOLS.has(toolName) || activeWorkspaceScope === null || !isRecord(input)) return false;
+  if (toolName !== 'process_start' && (readTrimmedString(input.operation) ?? 'run') !== 'run') return false;
+  const cwd = readTrimmedString(input.cwd);
+  const root = readTrimmedString(activeWorkspaceScope.rootPath);
+  if (cwd === undefined || root === undefined) return false;
+  const pathApi = path.win32.isAbsolute(root) ? path.win32 : path.posix;
+  if (!pathApi.isAbsolute(cwd)) return false;
+  return !scopePathContains(pathApi, pathApi.resolve(root), pathApi.resolve(cwd));
+}
+function isDestructiveMutation(decision: MutationPolicyDecision): boolean { return decision.kind === 'replace' || decision.kind === 'delete' || decision.kind === 'opaque_mutation'; }
+function requiresProfileMutationConfirmation(decision: MutationPolicyDecision, profile: PermissionProfile): boolean {
+  if (profile.name !== 'full') return requiresMutationConfirmation(decision);
+  if (decision.kind === 'delete') return true;
+  if (decision.kind !== 'opaque_mutation') return false;
+  const reason = decision.reason.toLowerCase();
+  if (reason.includes('outside the host active project')) return true;
+  if (!reason.startsWith('command-risk:')) return false;
+  return /delete|remove|discard|destructive|encoded|dynamically constructed|force|purge|clean|reset|restore|\brm\b|in-place|truncate|shred|overwrite/.test(reason);
+}
 function readExplicitWorkspaceId(input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null || !('workspaceId' in input)) return undefined;
   const value = (input as { workspaceId?: unknown }).workspaceId;
@@ -411,15 +743,8 @@ function readWorkspaceId(input: unknown): string {
   }
   return 'system';
 }
-
-function readErrorCode(response: McpToolResponse): string | undefined {
-  return readErrorField(response, 'code');
-}
-
-function readErrorMessage(response: McpToolResponse): string | undefined {
-  return readErrorField(response, 'message');
-}
-
+function readErrorCode(response: McpToolResponse): string | undefined { return readErrorField(response, 'code'); }
+function readErrorMessage(response: McpToolResponse): string | undefined { return readErrorField(response, 'message'); }
 function readErrorField(response: McpToolResponse, field: 'code' | 'message'): string | undefined {
   const content = response.structuredContent;
   if (typeof content !== 'object' || content === null || !('error' in content)) return undefined;

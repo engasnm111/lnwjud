@@ -7,6 +7,7 @@ import type { FileActor } from '@lnwjud/application';
 import { UpgradeRuntimeService } from './upgrade-runtime.js';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
 import { ToolRegistry } from './tool-registry.js';
+import type { McpApplicationServices } from './tools/tool-types.js';
 
 const actor: FileActor = { clientId: 'test', clientName: 'test' };
 
@@ -53,6 +54,31 @@ describe('upgrade runtime', () => {
     if (search.ok) expect(search.value.rankedCandidates[0]?.name).toBe('wsl_exec');
   });
 
+  it('ranks guarded exact file editing ahead of shell for source repairs', async () => {
+    const runtime = new UpgradeRuntimeService({}, actor);
+    const search = await runtime.execute('tool_function_find', {
+      prompt: 'replace exact text in a TypeScript source file without a shell script',
+      limit: 10,
+    });
+
+    expect(search).toMatchObject({ ok: true, value: { rankedCandidates: expect.any(Array) } });
+    if (search.ok) {
+      const names = search.value.rankedCandidates.map((candidate) => candidate.name);
+      expect(names[0]).toBe('edit_file');
+      const shellIndex = names.indexOf('shell');
+      if (shellIndex >= 0) expect(names.indexOf('edit_file')).toBeLessThan(shellIndex);
+    }
+  });
+
+  it('advertises guarded file editing as the preferred alternative to shell rewriting', () => {
+    const registry = new ToolRegistry({}, actor);
+    const byName = new Map(registry.list().map((tool) => [tool.name, tool.description]));
+    expect(byName.get('edit_file')).toContain('First choice');
+    expect(byName.get('edit_file')).toContain('instead of shell');
+    expect(byName.get('shell')).toContain('do not use it as a text editor');
+    expect(byName.get('shell')).toContain('prefer edit_file');
+  });
+
   it('returns route reason codes and a measurable deterministic model selection', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
     const route = await runtime.execute('route_intent', { prompt: 'debug the WSL task timeout and inspect live logs' });
@@ -71,6 +97,20 @@ describe('upgrade runtime', () => {
     const remove = await runtime.execute('permission_check', { action: 'filesystem.delete' });
     expect(read).toMatchObject({ ok: true, value: { decision: 'allow', contextAccess: 'unrestricted' } });
     expect(remove).toMatchObject({ ok: true, value: { decision: 'ask', contextAccess: 'unrestricted' } });
+  });
+
+  it('keeps hook and plugin installation create-only instead of silently replacing existing state', async () => {
+    const runtime = new UpgradeRuntimeService({}, actor);
+
+    await expect(runtime.execute('hook_register', { name: 'audit', event: 'beforeTool' }))
+      .resolves.toMatchObject({ ok: true, value: { registered: true } });
+    await expect(runtime.execute('hook_register', { name: 'audit', event: 'afterTool' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+    await expect(runtime.execute('plugin_install', { name: 'safe-plugin' }))
+      .resolves.toMatchObject({ ok: true, value: { changed: true, name: 'safe-plugin' } });
+    await expect(runtime.execute('plugin_install', { name: 'safe-plugin' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
   });
 
   it('shares context economy telemetry between workspace context and the stats tool', async () => {
@@ -139,6 +179,16 @@ describe('upgrade runtime', () => {
           return ok({ app: request.app, action: request.action, ok: true });
         },
       },
+      file: {
+        async prepareExternalFileMutation(_actor, _workspaceId, request): Promise<ReturnType<typeof ok>> {
+          return ok({
+            sourcePaths: [...(request.sourcePaths ?? [])],
+            targetPath: request.targetPath,
+            targetRelativePath: 'copy.pptx',
+            replacementBackup: { recoveryId: 'backup-1', recoveryPath: 'C:\\recovery\\backup-1\\payload' },
+          });
+        },
+      } as McpApplicationServices['file'],
     }, actor);
 
     await expect(runtime.execute('office_ppt', { action: 'read', file_path: 'C:\\work\\deck.pptx' })).resolves.toMatchObject({
@@ -147,11 +197,18 @@ describe('upgrade runtime', () => {
     await expect(runtime.execute('office_ppt', { action: 'save_as', file_path: 'C:\\work\\deck.pptx', target_path: 'C:\\work\\copy.pptx' })).resolves.toMatchObject({
       ok: true, value: { dryRun: true, executed: false },
     });
+    await expect(runtime.execute('office_ppt', {
+      workspaceId: 'ws-1', action: 'save_as', file_path: 'C:\\work\\deck.pptx', target_path: 'C:\\work\\copy.pptx', dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: { dryRun: false, executed: true, replacementBackup: { recoveryId: 'backup-1' } },
+    });
     await expect(runtime.execute('office_outlook', { action: 'list_messages', folder: '\\Mailbox\\Inbox', max_messages: 250 })).resolves.toMatchObject({
       ok: true, value: { available: true, action: 'list_messages' },
     });
     expect(calls).toEqual([
       { app: 'powerpoint', action: 'read', file_path: 'C:\\work\\deck.pptx' },
+      { app: 'powerpoint', action: 'save_as', file_path: 'C:\\work\\deck.pptx', target_path: 'C:\\work\\copy.pptx', userConfirmed: true },
       { app: 'outlook', action: 'list_messages', folder: '\\Mailbox\\Inbox', max_messages: 100 },
     ]);
   });

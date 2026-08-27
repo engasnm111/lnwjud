@@ -65,7 +65,7 @@ describe('SqliteAuditRepository', () => {
     await expect(repository.listScoped({ workspaceId: 'workspace-target', sessionId: 'session-b' }, 10))
       .resolves.toEqual([targetEvents[2]]);
     database.close();
-  });
+  }, 20_000);
 
   it('preserves legacy null session scope during migration and can query it explicitly', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-audit-legacy-db-'));

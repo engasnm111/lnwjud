@@ -19,6 +19,11 @@ interface BackupManifest extends BackupSummary {
   readonly databaseFile: string;
 }
 
+interface StoredBackupManifest {
+  readonly manifest: BackupManifest;
+  readonly directory: string;
+}
+
 interface RestoreMarker {
   readonly schemaVersion: 1;
   readonly backupId: string;
@@ -34,6 +39,8 @@ export interface SqliteBackupServiceOptions {
   readonly manualRetention?: number;
   readonly migrationRetention?: number;
 }
+
+const RETENTION_ARCHIVE_DIRECTORY = 'retention-archive';
 
 export class SqliteBackupService {
   private readonly backupDirectory: string;
@@ -65,7 +72,7 @@ export class SqliteBackupService {
     const sizeBytes = (await stat(destination)).size;
     const manifest: BackupManifest = { schemaVersion: 1, id, createdAt, reason, sizeBytes, databaseFile };
     await writeFile(manifestPath(this.backupDirectory, id), JSON.stringify(manifest, null, 2), 'utf8');
-    await this.prune();
+    await this.rotateRetention();
     return summary(manifest);
   }
 
@@ -90,10 +97,10 @@ export class SqliteBackupService {
 
   public async scheduleRestore(backupIdValue: string): Promise<void> {
     await mkdir(this.backupDirectory, { recursive: true });
-    const manifest = await readManifestById(this.backupDirectory, backupIdValue);
-    if (manifest === null) throw new Error('Backup was not found');
-    validateDatabase(path.join(this.backupDirectory, manifest.databaseFile));
-    const marker: RestoreMarker = { schemaVersion: 1, backupId: manifest.id, requestedAt: this.now().toISOString() };
+    const stored = await readStoredManifestById(this.backupDirectory, backupIdValue);
+    if (stored === null) throw new Error('Backup was not found');
+    validateDatabase(path.join(stored.directory, stored.manifest.databaseFile));
+    const marker: RestoreMarker = { schemaVersion: 1, backupId: stored.manifest.id, requestedAt: this.now().toISOString() };
     const markerPath = restoreMarkerPath(this.backupDirectory);
     const temporary = markerPath + '.tmp-' + randomUUID();
     await writeFile(temporary, JSON.stringify(marker, null, 2), { encoding: 'utf8', flag: 'wx' });
@@ -105,13 +112,13 @@ export class SqliteBackupService {
     }
   }
 
-  private async prune(): Promise<void> {
+  private async rotateRetention(): Promise<void> {
     const manifests = await listManifests(this.backupDirectory);
     const daily = manifests.filter((value) => value.reason === 'daily');
     const dailyKeep = selectDailyAndWeeklyRetention(daily, this.dailyRetention, this.weeklyRetention);
-    await removeNotKept(this.backupDirectory, daily, dailyKeep);
-    await removeBeyond(this.backupDirectory, manifests.filter((value) => value.reason === 'pre-migration'), this.migrationRetention);
-    await removeBeyond(this.backupDirectory, manifests.filter((value) => value.reason === 'manual' || value.reason === 'pre-update'), this.manualRetention);
+    await archiveNotKept(this.backupDirectory, daily, dailyKeep);
+    await archiveBeyond(this.backupDirectory, manifests.filter((value) => value.reason === 'pre-migration'), this.migrationRetention);
+    await archiveBeyond(this.backupDirectory, manifests.filter((value) => value.reason === 'manual' || value.reason === 'pre-update'), this.manualRetention);
   }
 }
 
@@ -158,9 +165,9 @@ export function applyPendingSqliteRestoreSync(databaseFilename: string, backupDi
 
   try {
     const marker = parseRestoreMarker(readFileSync(claimPath, 'utf8'));
-    const manifest = readManifestByIdSync(directory, marker.backupId);
-    if (manifest === null) throw new Error('Scheduled backup was not found');
-    const source = path.join(directory, manifest.databaseFile);
+    const stored = readStoredManifestByIdSync(directory, marker.backupId);
+    if (stored === null) throw new Error('Scheduled backup was not found');
+    const source = path.join(stored.directory, stored.manifest.databaseFile);
     validateDatabase(source);
     mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -268,6 +275,10 @@ function manifestPath(directory: string, id: string): string {
   return path.join(directory, id + '.json');
 }
 
+function retentionArchiveDirectory(directory: string): string {
+  return path.join(directory, RETENTION_ARCHIVE_DIRECTORY);
+}
+
 function restoreMarkerPath(directory: string): string {
   return path.join(directory, 'restore-pending.json');
 }
@@ -285,14 +296,30 @@ async function listManifests(directory: string): Promise<BackupManifest[]> {
   return values.filter((value): value is BackupManifest => value !== null).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-async function readManifestById(directory: string, id: string): Promise<BackupManifest | null> {
+async function readStoredManifestById(directory: string, id: string): Promise<StoredBackupManifest | null> {
   if (!isSafeBackupId(id)) return null;
-  try { return parseManifest(await readFile(manifestPath(directory, id), 'utf8'), directory); } catch { return null; }
+  for (const candidateDirectory of [directory, retentionArchiveDirectory(directory)]) {
+    try {
+      const manifest = parseManifest(await readFile(manifestPath(candidateDirectory, id), 'utf8'), candidateDirectory);
+      if (manifest !== null) return { manifest, directory: candidateDirectory };
+    } catch {
+      // Try the next recovery location.
+    }
+  }
+  return null;
 }
 
-function readManifestByIdSync(directory: string, id: string): BackupManifest | null {
+function readStoredManifestByIdSync(directory: string, id: string): StoredBackupManifest | null {
   if (!isSafeBackupId(id)) return null;
-  try { return parseManifest(readFileSync(manifestPath(directory, id), 'utf8'), directory); } catch { return null; }
+  for (const candidateDirectory of [directory, retentionArchiveDirectory(directory)]) {
+    try {
+      const manifest = parseManifest(readFileSync(manifestPath(candidateDirectory, id), 'utf8'), candidateDirectory);
+      if (manifest !== null) return { manifest, directory: candidateDirectory };
+    } catch {
+      // Try the next recovery location.
+    }
+  }
+  return null;
 }
 
 function parseManifest(raw: string, directory: string): BackupManifest | null {
@@ -320,19 +347,29 @@ function validateDatabase(filename: string): void {
   }
 }
 
-async function removeBeyond(directory: string, values: readonly BackupManifest[], keep: number): Promise<void> {
-  for (const value of values.slice(keep)) await removeBackup(directory, value);
+async function archiveBeyond(directory: string, values: readonly BackupManifest[], keep: number): Promise<void> {
+  for (const value of values.slice(keep)) await archiveBackup(directory, value);
 }
 
-async function removeNotKept(directory: string, values: readonly BackupManifest[], keep: ReadonlySet<string>): Promise<void> {
-  for (const value of values) if (!keep.has(value.id)) await removeBackup(directory, value);
+async function archiveNotKept(directory: string, values: readonly BackupManifest[], keep: ReadonlySet<string>): Promise<void> {
+  for (const value of values) if (!keep.has(value.id)) await archiveBackup(directory, value);
 }
 
-async function removeBackup(directory: string, value: BackupManifest): Promise<void> {
-  await Promise.all([
-    rm(path.join(directory, value.databaseFile), { force: true }),
-    rm(manifestPath(directory, value.id), { force: true }),
-  ]);
+async function archiveBackup(directory: string, value: BackupManifest): Promise<void> {
+  const archiveDirectory = retentionArchiveDirectory(directory);
+  await mkdir(archiveDirectory, { recursive: true });
+  const sourceDatabase = path.join(directory, value.databaseFile);
+  const sourceManifest = manifestPath(directory, value.id);
+  const archivedDatabase = path.join(archiveDirectory, value.databaseFile);
+  const archivedManifest = manifestPath(archiveDirectory, value.id);
+
+  await rename(sourceDatabase, archivedDatabase);
+  try {
+    await rename(sourceManifest, archivedManifest);
+  } catch (error) {
+    await rename(archivedDatabase, sourceDatabase).catch(() => undefined);
+    throw error;
+  }
 }
 
 function isSafeBackupId(value: string): boolean {

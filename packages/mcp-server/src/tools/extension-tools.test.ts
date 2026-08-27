@@ -4,7 +4,7 @@ import { ToolRegistry } from '../tool-registry.js';
 import type { ExtensionsService } from '@lnwjud/extensions';
 
 describe('skills and mcp bridge tools', () => {
-  it('registers full-access meta-tools and dispatches to ExtensionsService', async () => {
+  it('registers skill and MCP inspection as read-only while mcp_call remains opaque mutation', async () => {
     const extensions: ExtensionsService = {
       listSkills: async () => ok({ skills: [{ id: 'a/b', name: 'b', description: 'd', source: 'a', rootPath: '/', skillPath: '/SKILL.md' }] }),
       readSkill: async () => ok({ id: 'a/b', name: 'b', description: 'd', source: 'a', path: '/SKILL.md', content: '# b' }),
@@ -13,14 +13,29 @@ describe('skills and mcp bridge tools', () => {
       callMcpTool: async () => ok({ content: [{ type: 'text', text: 'pong' }] }),
       close: async () => undefined,
     };
-    const registry = new ToolRegistry({ extensions }, { clientId: 'test', clientName: 'test' });
-    const names = registry.list().map((tool) => tool.name);
+    const registry = new ToolRegistry({ extensions }, { clientId: 'test', clientName: 'test' }, {
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
+    });
+    const tools = registry.list();
+    const names = tools.map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining(['skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call']));
-    for (const name of ['skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call']) {
-      const tool = registry.list().find((entry) => entry.name === name);
-      expect(tool?.permission).toBe('DANGEROUS');
-      expect(tool?.annotations.readOnlyHint).toBe(false);
+
+    for (const name of ['skills_list', 'skills_read']) {
+      const tool = tools.find((entry) => entry.name === name);
+      expect(tool?.permission).toBe('READ');
+      expect(tool?.annotations.readOnlyHint).toBe(true);
+      expect(tool?.annotations.destructiveHint).toBe(false);
     }
+    for (const name of ['mcp_list', 'mcp_describe']) {
+      const tool = tools.find((entry) => entry.name === name);
+      expect(tool?.permission).toBe('READ');
+      expect(tool?.annotations.readOnlyHint).toBe(true);
+      expect(tool?.annotations.destructiveHint).toBe(false);
+    }
+    const mcpCall = tools.find((entry) => entry.name === 'mcp_call');
+    expect(mcpCall?.permission).toBe('DANGEROUS');
+    expect(mcpCall?.annotations.readOnlyHint).toBe(false);
+    expect(mcpCall?.annotations.destructiveHint).toBe(true);
 
     await expect(registry.invoke('skills_list', {})).resolves.toMatchObject({
       structuredContent: { skills: [expect.objectContaining({ id: 'a/b' })] },
@@ -30,7 +45,7 @@ describe('skills and mcp bridge tools', () => {
     });
   });
 
-  it('forwards the caller AbortSignal through mcp_describe and mcp_call', async () => {
+  it('forwards the caller AbortSignal through mcp_describe and approved mcp_call', async () => {
     const observed: AbortSignal[] = [];
     const extensions: ExtensionsService = {
       listSkills: async () => ok({ skills: [] }),
@@ -46,7 +61,9 @@ describe('skills and mcp bridge tools', () => {
       },
       close: async () => undefined,
     };
-    const registry = new ToolRegistry({ extensions }, { clientId: 'test', clientName: 'test' });
+    const registry = new ToolRegistry({ extensions }, { clientId: 'test', clientName: 'test' }, {
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
+    });
     const controller = new AbortController();
 
     await expect(registry.invoke('mcp_describe', { server: 'mock' }, undefined, controller.signal))

@@ -473,6 +473,18 @@
   background: rgba(255, 255, 255, .025);
 }
 
+.settings-path-display {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  border: 1px solid var(--settings-soft-border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .22);
+  color: var(--text-secondary);
+  font: 12px/1.5 Consolas, "Cascadia Mono", monospace;
+  user-select: text;
+}
+
 @media (max-width: 1100px) {
   .settings-shell-v2 {
     grid-template-columns: 205px minmax(0, 1fr);
@@ -536,5 +548,407 @@
 
   .settings-card-polished {
     padding: 14px;
+  }
+}
+
+
+.persistent-runtime-card {
+  display: grid;
+  gap: 14px;
+}
+
+.persistent-runtime-card > .settings-mini-heading,
+.persistent-runtime-card > .setting-grid,
+.persistent-runtime-card > .alert-box-warning,
+.persistent-runtime-card > .toast-success-banner,
+.persistent-runtime-card > .inline-actions,
+.persistent-runtime-card > .hint {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.recovery-scroll-list {
+  max-height: 560px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+.recovery-retention-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  align-items: center;
+  gap: 16px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--settings-soft-border);
+  border-radius: 12px;
+  background: var(--settings-soft-bg);
+}
+
+.recovery-retention-row strong { font-size: 12px; }
+.recovery-retention-row .hint { margin: 4px 0 0; }
+
+@media (max-width: 820px) {
+  .recovery-retention-row { grid-template-columns: 1fr; }
+}
+
+.guided-tunnel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 24px;
+  background: rgba(0, 0, 0, .68);
+  backdrop-filter: blur(10px);
+}
+
+.guided-tunnel-tip {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 16px 18px;
+  padding: 24px;
+  border: 1px solid rgba(230, 184, 74, .26);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(20, 24, 33, .99), rgba(9, 12, 18, .99));
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .48);
+}
+
+.guided-tunnel-tip-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(230, 184, 74, .24);
+  border-radius: 14px;
+  background: rgba(230, 184, 74, .1);
+  color: var(--settings-accent, var(--gold-primary));
+  font-size: 24px;
+}
+
+.guided-tunnel-tip-copy {
+  min-width: 0;
+}
+
+.guided-tunnel-tip-copy h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.guided-tunnel-tip-copy > p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+
+.guided-tunnel-privacy {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .035);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.guided-tunnel-tip-actions {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.guided-tunnel-launch-card {
+  display: grid;
+  gap: 10px;
+}
+
+.guided-tunnel-launch-card .settings-card-heading,
+.guided-tunnel-launch-card .hint {
+  margin-bottom: 0;
+}
+
+.guided-tunnel-launch-card > button {
+  justify-self: start;
+}
+
+.guided-tunnel-panel {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(230, 184, 74, .24);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(20, 24, 33, .96), rgba(10, 13, 19, .94));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .18);
+}
+
+.guided-tunnel-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.guided-tunnel-panel-header > div {
+  min-width: 0;
+}
+
+.guided-tunnel-panel-header h3 {
+  margin: 0 0 5px;
+  font-size: 17px;
+}
+
+.guided-tunnel-panel-header p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.guided-tunnel-close {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 9px;
+  font-size: 19px;
+}
+
+.guided-tunnel-progress {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guided-tunnel-progress li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .025);
+  color: var(--text-muted);
+}
+
+.guided-tunnel-progress li > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .06);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.guided-tunnel-progress li small {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guided-tunnel-progress li.is-current,
+.guided-tunnel-progress li.is-complete {
+  border-color: rgba(230, 184, 74, .24);
+  color: var(--text);
+}
+
+.guided-tunnel-progress li.is-current > span,
+.guided-tunnel-progress li.is-complete > span {
+  background: rgba(230, 184, 74, .16);
+  color: var(--settings-accent, var(--gold-primary));
+}
+
+.guided-tunnel-step {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 13px;
+  background: rgba(0, 0, 0, .16);
+}
+
+.guided-step-heading h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.guided-step-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.guided-tunnel-step > input,
+.guided-key-input,
+.guided-tunnel-step .settings-path-display {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.guided-tunnel-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.guided-tunnel-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.guided-tunnel-summary span {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.guided-tunnel-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.guided-tunnel-complete {
+  padding: 12px 14px;
+  border: 1px solid rgba(82, 211, 154, .24);
+  border-radius: 11px;
+  background: rgba(82, 211, 154, .08);
+  font-weight: 700;
+}
+
+.guided-link-fallback {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(255, 190, 90, .2);
+  border-radius: 11px;
+  background: rgba(255, 190, 90, .055);
+}
+
+.guided-link-fallback strong {
+  font-size: 11px;
+}
+
+.guided-link-fallback button {
+  justify-self: start;
+}
+
+.guided-tunnel-advanced {
+  min-width: 0;
+  border: 1px solid var(--settings-soft-border);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .018);
+}
+
+.guided-tunnel-advanced > summary {
+  padding: 13px 15px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.guided-tunnel-advanced > section {
+  margin: 0 12px 12px;
+}
+
+.guided-tunnel-home-entry {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 11px;
+  border: 1px solid rgba(230, 184, 74, .14);
+  border-radius: 10px;
+  background: rgba(230, 184, 74, .035);
+}
+
+.guided-tunnel-home-entry .hint {
+  margin: 0;
+}
+
+.guided-tunnel-home-entry button {
+  justify-self: start;
+}
+
+@media (max-width: 1100px) {
+  .guided-tunnel-progress {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .guided-tunnel-backdrop {
+    padding: 14px;
+  }
+
+  .guided-tunnel-tip {
+    max-height: calc(100vh - 28px);
+    grid-template-columns: 42px minmax(0, 1fr);
+    padding: 18px;
+  }
+
+  .guided-tunnel-tip-icon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .guided-tunnel-progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guided-tunnel-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .guided-tunnel-tip {
+    display: block;
+  }
+
+  .guided-tunnel-tip-icon {
+    margin-bottom: 14px;
+  }
+
+  .guided-tunnel-tip-actions {
+    margin-top: 16px;
+  }
+
+  .guided-tunnel-panel {
+    padding: 14px;
+  }
+
+  .guided-tunnel-progress {
+    grid-template-columns: 1fr;
+  }
+
+  .guided-tunnel-panel-header {
+    gap: 10px;
   }
 }

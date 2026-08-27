@@ -1,4 +1,4 @@
-﻿import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -45,6 +45,7 @@ const EMPTY_SHARED_STATE: UpgradeRuntimeSharedState = Object.freeze({ plugins: [
 export class UpgradeRuntimeStateStore {
   private readonly stateDirectory: string;
   private readonly sessionsDirectory: string;
+  private readonly recoveryDirectory: string;
   private readonly sessionFile: string;
   private readonly sharedFile: string;
   private readonly migrationMarkerFile: string;
@@ -56,6 +57,7 @@ export class UpgradeRuntimeStateStore {
     const basename = path.basename(legacyStatePath, path.extname(legacyStatePath));
     this.stateDirectory = path.join(path.dirname(legacyStatePath), `${basename}.state-v2`);
     this.sessionsDirectory = path.join(this.stateDirectory, 'sessions');
+    this.recoveryDirectory = path.join(this.stateDirectory, 'recovery');
     this.sessionKey = createHash('sha256').update(normalizedOwner).digest('hex').slice(0, 40);
     this.sessionFile = path.join(this.sessionsDirectory, `${this.sessionKey}.json`);
     this.sharedFile = path.join(this.stateDirectory, 'shared.json');
@@ -93,6 +95,8 @@ export class UpgradeRuntimeStateStore {
     return withFileLock(`${this.sharedFile}.lock`, async () => {
       const current = normalizeSharedState(await readAuthoritativeJsonRecord(this.sharedFile, false));
       const next = normalizeSharedState(mutate(current));
+      if (sharedStatesEqual(current, next)) return current;
+      await this.writeSharedRecoverySnapshot(current);
       await atomicWriteJson(this.sharedFile, { version: STATE_VERSION, ...next });
       return next;
     });
@@ -108,6 +112,19 @@ export class UpgradeRuntimeStateStore {
 
   private async readSession(): Promise<UpgradeRuntimeSessionState> {
     return normalizeSessionState(await readAuthoritativeJsonRecord(this.sessionFile, true));
+  }
+
+  private async writeSharedRecoverySnapshot(state: UpgradeRuntimeSharedState): Promise<void> {
+    await mkdir(this.recoveryDirectory, { recursive: true });
+    const createdAt = new Date().toISOString();
+    const id = `shared-state-${createdAt.replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
+    await atomicWriteJson(path.join(this.recoveryDirectory, `${id}.json`), {
+      version: STATE_VERSION,
+      kind: 'shared-state-preimage',
+      id,
+      createdAt,
+      ...state,
+    });
   }
 
   private async ensureMigrated(): Promise<void> {
@@ -153,6 +170,10 @@ function normalizeSharedState(value: unknown): UpgradeRuntimeSharedState {
     plugins: Array.isArray(record?.plugins) ? record.plugins : EMPTY_SHARED_STATE.plugins,
     worktrees: Array.isArray(record?.worktrees) ? record.worktrees : EMPTY_SHARED_STATE.worktrees,
   };
+}
+
+function sharedStatesEqual(left: UpgradeRuntimeSharedState, right: UpgradeRuntimeSharedState): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -13,6 +13,7 @@ afterEach(async () => {
 });
 
 describe.runIf(process.platform === 'win32')('PowerShell tunnel lock helper', () => {
+
   it('acquires a complete record and removes every publish temporary file', async () => {
     const root = await temporaryDirectory();
     const result = await runPowerShell(`
@@ -186,6 +187,7 @@ describe.runIf(process.platform === 'win32')('PowerShell tunnel lock helper', ()
 });
 
 describe.runIf(process.platform === 'win32')('production PowerShell tunnel starter integration', () => {
+
   it('loads the helper, reports its real concurrent owner, and never invokes the configured client', async () => {
     const root = await temporaryDirectory();
     const profileDir = path.join(root, 'tunnel-client');

@@ -31,6 +31,7 @@ interface BrowserRequest {
   readonly tabId?: string;
   readonly timeoutSeconds: number;
   readonly dryRun: boolean;
+  readonly userConfirmed: boolean;
 }
 
 const BROWSER_ACTIONS: readonly BrowserAction[] = ['launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot'];
@@ -81,6 +82,9 @@ export class BrowserCdpBackend implements CapabilityBackend {
     const aborted = cancellationResult(signal);
     if (aborted !== null) return aborted;
     if (request.dryRun) return ok({ dry_run: true, action, parameters });
+    if (!isReadOnlyBrowserAction(action) && request.userConfirmed !== true) {
+      return err(appError('PERMISSION_REQUIRED', 'Browser actions that can change local or remote state require explicit user confirmation'));
+    }
     switch (action) {
       case 'status': return ok(await this.protocol.status(signal));
       case 'launch':
@@ -172,7 +176,11 @@ function parseBrowserRequest(value: unknown): Result<BrowserRequest> {
       normalizedSteps.push({ action: step.action, parameters: stepParameters });
     }
   }
-  return ok({ ...(action === undefined ? {} : { action }), parameters, ...(stepsValue === undefined ? {} : { steps: normalizedSteps }), ...(tabId === undefined ? {} : { tabId }), timeoutSeconds, dryRun });
+  return ok({ ...(action === undefined ? {} : { action }), parameters, ...(stepsValue === undefined ? {} : { steps: normalizedSteps }), ...(tabId === undefined ? {} : { tabId }), timeoutSeconds, dryRun, userConfirmed: value.userConfirmed === true });
+}
+
+function isReadOnlyBrowserAction(action: BrowserAction): boolean {
+  return action === 'status' || action === 'list_tabs' || action === 'query' || action === 'wait' || action === 'screenshot';
 }
 
 function isBrowserAction(value: unknown): value is BrowserAction {

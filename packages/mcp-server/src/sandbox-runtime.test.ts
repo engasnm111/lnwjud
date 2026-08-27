@@ -30,17 +30,16 @@ function service(options: {
 }
 
 async function withTempRoot(run: (root: string) => Promise<void>): Promise<void> {
-  const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
-  const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
+  const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
   await writeFile(path.join(root, 'WindowsSandbox.exe'), 'stub');
   try {
-    await run(root);
+    await run(path.win32.normalize(root));
   } finally {
     // Best-effort cleanup; artifacts stay for audit in production too.
   }
 }
 
-describe('SandboxRuntimeService', () => {
+describe.skipIf(process.platform !== 'win32')('SandboxRuntimeService', () => {
   it('reports a truthful unavailable state when WindowsSandbox.exe is missing', async () => {
     const runtime = new SandboxRuntimeService(servicesWithRoot('C:\\nowhere'), actor, {
       platform: 'win32',

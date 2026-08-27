@@ -26,6 +26,22 @@ describe('SqliteCheckpointRepository', () => {
     database.close();
   });
 
+  it('lists only one workspace newest-first without exposing another workspace', async () => {
+    const root = await temporaryRoot();
+    const database = new SqliteDatabase(path.join(root, 'state.db'));
+    const repository = new SqliteCheckpointRepository(database);
+    const older = { ...fixtureCheckpoint('older'), id: 'checkpoint-a', createdAt: new Date(1).toISOString() };
+    const newer = { ...fixtureCheckpoint('newer'), id: 'checkpoint-b', createdAt: new Date(2).toISOString() };
+    const other = { ...fixtureCheckpoint('other'), id: 'checkpoint-c', workspaceId: 'workspace-2', createdAt: new Date(3).toISOString() };
+    await repository.insert(older);
+    await repository.insert(newer);
+    await repository.insert(other);
+
+    await expect(repository.list('workspace-1')).resolves.toEqual([newer, older]);
+    await expect(repository.list('workspace-2')).resolves.toEqual([other]);
+    database.close();
+  });
+
   it('encrypts checkpoint file content at rest with AES-256-GCM', async () => {
     const root = await temporaryRoot();
     const database = new SqliteDatabase(path.join(root, 'state.db'));

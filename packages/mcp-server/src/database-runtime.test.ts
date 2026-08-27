@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -22,8 +22,9 @@ function servicesWithRoot(root: string): McpApplicationServices {
 }
 
 async function withDatabase(run: (root: string, database: string) => Promise<void>): Promise<void> {
-  const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-'));
-  const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
+  const root = process.platform === 'win32'
+  ? path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')))
+  : path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
   const database = path.join(root, 'app.db');
   const connection = new DatabaseSync(database);
   connection.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE VIEW fancy_users AS SELECT id FROM users;\nCREATE INDEX users_name ON users(name);\nINSERT INTO users (name) VALUES (\'alice\'), (\'bob\');');
@@ -46,7 +47,7 @@ describe('DatabaseRuntimeService', () => {
         views: ['fancy_users'],
         indexes: [expect.objectContaining({ name: 'users_name', table: 'users' })],
       } });
-      if (result.ok) expect(result.value.target).toBe(database);
+      if (result.ok) expect(result.value.target).toBe(await realpath(database));
     });
   }, 15_000);
 
@@ -73,9 +74,28 @@ describe('DatabaseRuntimeService', () => {
     });
   });
 
+  it('rejects a junction or symlink whose canonical SQLite target escapes the workspace', async () => {
+    await withDatabase(async (root) => {
+      const outside = process.platform === 'win32'
+  ? path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-outside-')))
+  : path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-outside-')));
+      const outsideDatabase = path.join(outside, 'outside.db');
+      const connection = new DatabaseSync(outsideDatabase);
+      connection.exec('CREATE TABLE outside_data (id INTEGER PRIMARY KEY);');
+      connection.close();
+      const escape = path.join(root, 'escape');
+      await symlink(outside, escape, process.platform === 'win32' ? 'junction' : 'dir');
+
+      const runtime = new DatabaseRuntimeService(servicesWithRoot(root), actor);
+      await expect(runtime.inspect({ workspaceId: 'ws-1', target: path.join('escape', 'outside.db') }))
+        .resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+    });
+  });
+
   it('fails closed when the file is not a SQLite database', async () => {
-    const rawRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-'));
-    const root = process.platform === 'win32' ? path.win32.normalize(rawRoot) : rawRoot;
+    const root = process.platform === 'win32'
+  ? path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')))
+  : path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
     await writeFile(path.join(root, 'fake.db'), 'this is not sqlite', 'utf8');
     const runtime = new DatabaseRuntimeService(servicesWithRoot(root), actor);
     await expect(runtime.query({ workspaceId: 'ws-1', target: 'fake.db', sql: 'SELECT 1' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });

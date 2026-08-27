@@ -1,6 +1,6 @@
 {
   "name": "lnwjud",
-  "version": "4.9.1",
+  "version": "4.12.0",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "engines": {
@@ -12,9 +12,10 @@
     "lint": "eslint .",
     "typecheck": "tsc --build",
     "test": "corepack pnpm@10.15.0 -r --if-present test",
-    "test:acceptance": "corepack pnpm@10.15.0 --filter @lnwjud/desktop exec vitest run --config vitest.config.ts tests/session-resilience-acceptance.test.ts tests/production-ipc-acceptance.test.ts tests/multi-workspace-concurrency-acceptance.test.ts",
+    "test:release": "corepack pnpm@10.15.0 -r --workspace-concurrency=1 --if-present test",
+    "test:acceptance": "corepack pnpm@10.15.0 --filter @lnwjud/desktop exec vitest run --config vitest.config.ts --fileParallelism=false tests/session-resilience-acceptance.test.ts tests/production-ipc-acceptance.test.ts tests/multi-workspace-concurrency-acceptance.test.ts tests/tunnel-continuity-acceptance.test.ts tests/tunnel-tool-catalog-continuity.test.ts tests/tunnel-doctor-diagnostics.test.ts",
     "test:integration": "vitest run tests/integration/mcp-development-flow.test.ts tests/integration/codex-review-flow.test.ts",
-    "test:packaging": "vitest run tests/packaging/desktop-packaging.test.ts",
+    "test:packaging": "vitest run tests/packaging/desktop-packaging.test.ts tests/packaging/tunnel-stdio-layout.test.ts tests/packaging/windows-trust-evidence.test.ts --exclude=.local-artifacts/**",
     "test:release-gate": "vitest run tests/release/release-gate.test.ts",
     "benchmark:baseline": "node scripts/benchmark-mcp.mjs",
     "package:windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1",

@@ -13,10 +13,11 @@ import {
   parseStdioPermissionProfile,
   resolveLnwjudDataPath,
 } from '@lnwjud/shared';
-import { applyPendingSqliteRestoreSync, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
+import { applyPendingSqliteRestoreSync, SqliteBackupService, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import { machineRootPath, normalizeWorkspaceRoot, WorkspaceService, type Workspace } from '@lnwjud/workspace';
 import { createStdioMcpRuntime } from '../runtime/stdio-mcp-runtime.js';
 import { StrictWorkspaceRepository, canonicalizeAllowedRoots, requestedPathInsideAllowedRoot } from '../runtime/strict-workspace-repository.js';
+import { resetWorkspaceRegistrations } from '../runtime/workspace-reset.js';
 
 function readArg(flag: string): string | undefined {
   const index = process.argv.indexOf(flag);
@@ -79,8 +80,19 @@ async function main(): Promise<void> {
     || process.env.LNWJUD_RESET_WORKSPACES === '1'
     || process.env.LNWJUD_RESET_WORKSPACES === 'true';
   if (reset) {
-    for (const existing of await rawWorkspaceService.list()) await rawWorkspaceService.delete(existing.id);
-    process.stderr.write('lnwjud MCP stdio: cleared previous workspaces\n');
+    const backupService = new SqliteBackupService(database, {
+      databaseFilename: path.join(dataPath, 'lnwjud.sqlite'),
+      backupDirectory: path.join(dataPath, 'backups'),
+    });
+    const result = await resetWorkspaceRegistrations(
+      rawWorkspaceService,
+      backupService,
+      readArg('--confirm-reset-workspaces') ?? process.env.LNWJUD_CONFIRM_RESET_WORKSPACES,
+    );
+    process.stderr.write(
+      `lnwjud MCP stdio: cleared ${result.deleted} previous workspace registration(s)`
+      + `${result.backupId === null ? '' : ` after backup ${result.backupId}`}\n`,
+    );
   }
 
   const workspaceRepository = strictAllowedRoots === undefined
@@ -167,6 +179,7 @@ async function main(): Promise<void> {
     profileProvider: runtime.profileProvider,
     allowAiDeleteProvider: runtime.allowAiDeleteProvider,
     destructivePolicyProvider: runtime.destructivePolicyProvider,
+    activeWorkspaceScopeProvider: runtime.activeWorkspaceScopeProvider,
     onError: (error): void => {
       if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
         process.stderr.write(`lnwjud MCP stdio: peer closed (${error.message})\n`);

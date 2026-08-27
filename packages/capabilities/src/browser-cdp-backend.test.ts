@@ -40,6 +40,7 @@ describe('BrowserCdpBackend', () => {
         { action: 'click', parameters: { selector: '#one' } },
       ],
       tab_id: 'tab-1',
+      userConfirmed: true,
     });
 
     expect(result).toMatchObject({ ok: true, value: { steps: [{ ok: true }, { ok: true }] } });
@@ -82,7 +83,22 @@ describe('BrowserCdpBackend', () => {
       async closeTab() { return { closed: true }; },
       async request() { return {}; },
     };
-    const result = await new BrowserCdpBackend({ protocol }).execute({ action: 'click', parameters: { selector: '#app' } });
+    const result = await new BrowserCdpBackend({ protocol }).execute({ action: 'click', parameters: { selector: '#app' }, userConfirmed: true });
     expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+  });
+
+  it('does not dispatch a mutating DOM action without confirmation', async () => {
+    let dispatched = false;
+    const protocol: BrowserCdpProtocol = {
+      async status() { return { ready: true, port: 9222 }; },
+      async listTabs() { dispatched = true; return []; },
+      async newTab() { dispatched = true; return { id: 'tab-2', title: '', url: 'about:blank', webSocketDebuggerUrl: '' }; },
+      async closeTab() { dispatched = true; return { closed: true }; },
+      async request() { dispatched = true; return {}; },
+    };
+
+    await expect(new BrowserCdpBackend({ protocol }).execute({ action: 'click', parameters: { selector: '#delete' } }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
+    expect(dispatched).toBe(false);
   });
 });
