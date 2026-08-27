@@ -305,24 +305,6 @@ function firstFile(input: Record<string, unknown>): string | undefined {
   return readString(input.file ?? input.file_path ?? input.filePath ?? input.path);
 }
 
-function languageForFile(file: string): string {
-  const extension = path.extname(file).toLowerCase();
-  switch (extension) {
-    case '.ts':
-    case '.tsx': return 'typescript';
-    case '.js':
-    case '.jsx':
-    case '.mjs':
-    case '.cjs': return 'javascript';
-    case '.py': return 'python';
-    case '.rs': return 'rust';
-    case '.go': return 'go';
-    case '.java': return 'java';
-    case '.cs': return 'csharp';
-    default: return 'plaintext';
-  }
-}
-
 function languageIdForFile(file: string, fallback: string): string {
   const extension = path.extname(file).toLowerCase();
   switch (extension) {

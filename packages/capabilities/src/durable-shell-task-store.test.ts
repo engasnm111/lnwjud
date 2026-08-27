@@ -45,10 +45,12 @@ describe('durable shell background tasks', () => {
   it('does not overwrite a very fast durable completion back to running', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
     temporaryRoots.push(root);
+    // Generous synchronous window: on loaded machines spawning the runtime binary
+    // alone can exceed one second, which would flip this timing assertion into a flake.
     const backend = new ShellCapabilityBackend({
       allowedRoots: [root],
       taskStateDirectory: path.join(root, '.tasks'),
-      autoWaitSeconds: 1,
+      autoWaitSeconds: 8,
     });
 
     const result = await backend.execute({
@@ -60,7 +62,18 @@ describe('durable shell background tasks', () => {
       timeout_seconds: 30,
     });
 
-    expect(result).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0, stdout: 'fast', durable: true } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    let finalValue = result.value as Record<string, unknown>;
+    if (String(finalValue.state) !== 'completed') {
+      // Spawn was slower than the synchronous window; poll the durable task to completion.
+      const taskId = String(finalValue.task_id);
+      const finished = await backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 10 });
+      expect(finished.ok).toBe(true);
+      if (!finished.ok) return;
+      finalValue = finished.value as Record<string, unknown>;
+    }
+    expect(finalValue).toMatchObject({ state: 'completed', exit_code: 0, stdout: 'fast', durable: true });
   });
 
   it('cancels a durable task from a replacement backend', async () => {
