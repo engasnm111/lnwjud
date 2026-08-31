@@ -450,7 +450,13 @@ async function stopProcessTree(pid: number, relatedPids: readonly number[] = [])
     });
     if (exitCode !== 0 && trackedPids.some(isProcessRunning)) return false;
   } else {
-    try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { return !isProcessRunning(pid); } }
+    // The durable worker and its child are both detached posix process group
+    // leaders, so signalling each group reaches descendants. Escalate to
+    // SIGKILL after the grace window — Windows parity with taskkill /T /F.
+    signalPosixProcessGroups(trackedPids, 'SIGTERM');
+    if (!(await waitUntilNoneRunning(trackedPids, POSIX_TERMINATION_GRACE_MS))) {
+      signalPosixProcessGroups(trackedPids, 'SIGKILL');
+    }
   }
   const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
@@ -464,6 +470,29 @@ async function stopProcessTree(pid: number, relatedPids: readonly number[] = [])
     await delay(50);
   }
   return !trackedPids.some(isProcessRunning);
+}
+
+const POSIX_TERMINATION_GRACE_MS = 2500;
+
+function signalPosixProcessGroups(pids: readonly number[], signal: NodeJS.Signals): void {
+  for (const pid of pids) {
+    try {
+      process.kill(-pid, signal);
+      continue;
+    } catch {
+      // The process group may not exist (not a group leader, or already gone).
+    }
+    try { process.kill(pid, signal); } catch { /* already gone */ }
+  }
+}
+
+async function waitUntilNoneRunning(pids: readonly number[], durationMs: number): Promise<boolean> {
+  const deadline = Date.now() + durationMs;
+  while (Date.now() < deadline) {
+    if (!pids.some(isProcessRunning)) return true;
+    await delay(50);
+  }
+  return !pids.some(isProcessRunning);
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -535,7 +564,16 @@ async function stopTree(pid) {
     });
     if (code !== 0 && processRunning(pid)) return false;
   } else {
+    // The child leads its own process group (spawned detached), so the group
+    // signal reaches descendants. Escalate to SIGKILL when the graceful
+    // window lapses — Windows parity with taskkill /T /F.
     try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { return !processRunning(pid); } }
+    const graceDeadline = Date.now() + 2500;
+    while (Date.now() < graceDeadline) {
+      if (!processRunning(pid)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
   }
   const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
@@ -568,6 +606,10 @@ try {
     env: childEnvironment,
     shell: false,
     windowsHide: true,
+    // On posix the child must lead its own process group so group-wide
+    // termination (stopTree) can reach descendants; Windows keeps the default
+    // behavior because taskkill /T /F walks the tree by parent.
+    detached: process.platform !== 'win32',
     ...(spec.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: spec.windowsVerbatimArguments }),
   });
   metadata.child_pid = child.pid;

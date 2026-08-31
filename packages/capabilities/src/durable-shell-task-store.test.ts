@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -175,6 +175,111 @@ describe('durable shell background tasks', () => {
     expect(cancelled).toMatchObject({ ok: true, value: { state: 'cancelled' } });
   });
 });
+
+describe.skipIf(process.platform === 'win32')('durable shell termination escalation on posix', () => {
+  // The child installs a real SIGTERM handler (so it survives SIGTERM
+  // deterministically) and spawns a descendant, giving the killed tree real
+  // depth. It writes a readiness file only after the handler is installed, so
+  // the assertions never race the child's own startup; the 15s self-exit
+  // bounds any pre-fix (leaky) run.
+  function ignoringChild(readyPath: string): { readonly executable: string; readonly arguments: readonly string[] } {
+    const source = [
+      "const fs = require('node:fs');",
+      `const ready = ${JSON.stringify(readyPath)};`,
+      "process.on('SIGTERM', function () {});",
+      "require('node:child_process').spawn('/bin/sleep', ['15']);",
+      "fs.writeFileSync(ready, String(process.pid));",
+      'setTimeout(function () { process.exit(0); }, 15000);',
+      'setInterval(function () {}, 250);',
+    ].join('');
+    return { executable: process.execPath, arguments: ['-e', source] };
+  }
+
+  async function waitForChildReady(readyPath: string): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      try {
+        await readFile(readyPath, 'utf8');
+        return;
+      } catch {
+        await delayForTest(25);
+      }
+    }
+    throw new Error('durable child never became ready');
+  }
+
+  it('escalates to SIGKILL for a SIGTERM-ignoring task on timeout and converges the state', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-term-'));
+    temporaryRoots.push(root);
+    const readyPath = path.join(root, 'child-ready');
+    const store = new DurableShellTaskStore(path.join(root, '.tasks'));
+    const owner = { clientId: 'chatgpt', sessionId: 'session-term', workspaceId: 'workspace-term' };
+
+    const started = await store.launch({
+      taskId: 'term-ignore-timeout',
+      ...ignoringChild(readyPath),
+      cwd: root,
+      timeoutSeconds: 2,
+      maxOutputBytes: 1024,
+      includeStdout: true,
+      includeStderr: true,
+      owner,
+    });
+    expect(started).toMatchObject({ ok: true, value: { task_id: 'term-ignore-timeout', state: 'running' } });
+    await waitForChildReady(readyPath);
+
+    const finished = await store.wait('term-ignore-timeout', 12, undefined, owner);
+    expect(finished).toMatchObject({ ok: true, value: { state: 'timed_out' } });
+    if (!finished.ok) return;
+
+    const childPid = (finished.value as Record<string, unknown>).child_pid;
+    expect(typeof childPid).toBe('number');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(processAlive(childPid as number), 'the task child must actually be dead').toBe(false);
+  }, 15_000);
+
+  it('escalates to SIGKILL for a SIGTERM-ignoring task when cancelled', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-cancel-'));
+    temporaryRoots.push(root);
+    const readyPath = path.join(root, 'child-ready');
+    const store = new DurableShellTaskStore(path.join(root, '.tasks'));
+    const owner = { clientId: 'chatgpt', sessionId: 'session-cancel', workspaceId: 'workspace-cancel' };
+
+    const started = await store.launch({
+      taskId: 'term-ignore-cancel',
+      ...ignoringChild(readyPath),
+      cwd: root,
+      timeoutSeconds: 30,
+      maxOutputBytes: 1024,
+      includeStdout: true,
+      includeStderr: true,
+      owner,
+    });
+    expect(started).toMatchObject({ ok: true, value: { task_id: 'term-ignore-cancel', state: 'running' } });
+    await waitForChildReady(readyPath);
+
+    const cancelled = await store.cancel('term-ignore-cancel', owner);
+
+    expect(cancelled).toMatchObject({ ok: true, value: { state: 'cancelled' } });
+    const childPid = ((cancelled.value as Record<string, unknown>).child_pid);
+    expect(typeof childPid).toBe('number');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(processAlive(childPid as number), 'the task child must actually be dead').toBe(false);
+  }, 15_000);
+});
+
+function delayForTest(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function waitUntil(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
