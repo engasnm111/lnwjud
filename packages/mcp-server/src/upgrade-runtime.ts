@@ -19,6 +19,7 @@ import { ContextEconomyRuntime } from './context-economy.js';
 import { DatabaseRuntimeService } from './database-runtime.js';
 import { DocumentRuntimeService } from './document-runtime.js';
 import { LspRuntimeService } from './lsp-runtime.js';
+import { officeUnavailableReason } from './office-availability.js';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import { SandboxRuntimeService } from './sandbox-runtime.js';
 import { truthfulUnavailable } from './tool-delivery-contract.js';
@@ -648,6 +649,13 @@ export class UpgradeRuntimeService {
   private async officePowerPoint(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok({ tool: 'office_ppt', status: 'optional', available: false, reason: 'Office capability is not configured' });
+    // Refuse before any mutation prep: an office backend that cannot run on
+    // this platform must not report ready/executed, and save_as must not leave
+    // a recovery backup behind for work that never happened.
+    const officeReason = await officeUnavailableReason(capabilities);
+    if (officeReason !== null) {
+      return ok({ tool: 'office_ppt', status: 'unsupported', available: false, ready: false, executed: false, reason: officeReason, requirements: ['local PowerPoint provider (Office installation)'] });
+    }
     const action = readString(input, 'action') ?? 'read';
     if (action !== 'read' && action !== 'save_as') return err(appError('INVALID_INPUT', 'office_ppt action must be read or save_as'));
     const filePath = readString(input, 'file_path') ?? readString(input, 'path');
@@ -695,6 +703,10 @@ export class UpgradeRuntimeService {
   private async officeOutlook(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok({ tool: 'office_outlook', status: 'optional', available: false, reason: 'Office capability is not configured' });
+    const officeReason = await officeUnavailableReason(capabilities);
+    if (officeReason !== null) {
+      return ok({ tool: 'office_outlook', status: 'unsupported', available: false, ready: false, executed: false, reason: officeReason, requirements: ['local Outlook provider (Office installation)'] });
+    }
     const action = readString(input, 'action') ?? 'list_messages';
     if (action !== 'list_folders' && action !== 'list_messages') return err(appError('INVALID_INPUT', 'office_outlook action must be list_folders or list_messages'));
     const folder = readString(input, 'folder');

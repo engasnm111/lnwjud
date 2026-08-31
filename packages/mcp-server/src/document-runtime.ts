@@ -13,6 +13,7 @@ import {
 } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
+import { officeUnavailableReason } from './office-availability.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 /**
@@ -114,6 +115,12 @@ export class DocumentRuntimeService {
     if (capabilities === undefined) {
       return unavailable('inspect_workbook', 'Office capability is not configured', ['local Excel provider (Office installation)']);
     }
+    // A platform office backend that cannot run (e.g. the macOS stub) must
+    // surface as unavailable instead of an unexpected-shape internal error.
+    const officeReason = await officeUnavailableReason(capabilities);
+    if (officeReason !== null) {
+      return ok({ tool: 'inspect_workbook', status: 'unsupported', available: false, ready: false, executed: false, reason: officeReason, requirements: ['local Excel provider (Office installation)'] });
+    }
     const target = await this.boundedFile(workspaceId, file, authorization);
     if (!target.ok) return target;
 
@@ -166,6 +173,16 @@ export class DocumentRuntimeService {
 
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return unavailable('docx_merge', 'Office capability is not configured', ['local DOCX provider (Word installation)', 'edit approval']);
+    // Refuse before preparing the replacement backup: an office backend that
+    // cannot run on this platform must not leave a recovery item behind while
+    // claiming the merge was applied.
+    const officeReason = await officeUnavailableReason(capabilities);
+    if (officeReason !== null) {
+      return ok({
+        tool: 'docx_merge', status: 'unsupported', available: false, ready: false, executed: false, applied: false,
+        reason: officeReason, requirements: ['local DOCX provider (Word installation)', 'edit approval'],
+      });
+    }
     const fileSafety = this.services.file;
     if (fileSafety === undefined) return err(appError('INTERNAL_ERROR', 'File safety service is unavailable; refusing DOCX merge', true));
     const prepared = await fileSafety.prepareExternalFileMutation(this.actor, workspaceId, {

@@ -2,7 +2,8 @@ import { mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ok } from '@lnwjud/domain';
+import { MacosNativeCapabilityBackend } from '@lnwjud/capabilities';
+import { ok, type Result } from '@lnwjud/domain';
 import { DocumentRuntimeService } from './document-runtime.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
@@ -166,6 +167,79 @@ describe.skipIf(process.platform !== 'win32')('DocumentRuntimeService', () => {
       await expect(runtime.extractTables({ workspaceId: 'ws-1', file_path: outside }, undefined, fullBypassAuthorization))
         .resolves.toMatchObject({ ok: true, value: { file: await realpath(outside) } });
       expect(calls).toBe(1);
+    });
+  });
+});
+
+/**
+ * The real macOS office backend answers every office dispatch with a truthful
+ * "not available on macOS" payload; these tests pin that document runtimes
+ * surface that state instead of misreporting success (and creating recovery
+ * backups for work that never ran).
+ */
+describe.skipIf(process.platform !== 'darwin')('DocumentRuntimeService office dispatch on macOS', () => {
+  function servicesWithRealMacOfficeBackend(root: string, prepared: unknown[]): McpApplicationServices {
+    const officeBackend = new MacosNativeCapabilityBackend('office', 'darwin', {
+      allowedRootsProvider: async (): Promise<readonly string[]> => [root],
+    });
+    return {
+      workspaceInfo: { info: async () => ok({ id: 'ws-1', realRootPath: root, rootPath: root }) },
+      capabilities: {
+        execute: (tool: string, input: unknown, signal?: AbortSignal, authorization?: unknown): Promise<Result<unknown>> =>
+          tool === 'office'
+            ? officeBackend.execute(input, signal, authorization as never)
+            : Promise.resolve({ ok: false as const, error: { code: 'INVALID_INPUT' as const, message: `unexpected capability ${tool}`, recoverable: false } }),
+      },
+      file: {
+        async prepareExternalFileMutation(_actor, _workspaceId, request) {
+          prepared.push(request);
+          return ok({
+            sourcePaths: [...(request.sourcePaths ?? [])],
+            targetPath: request.targetPath,
+            targetRelativePath: path.relative(root, request.targetPath),
+          });
+        },
+      } as McpApplicationServices['file'],
+    } as unknown as McpApplicationServices;
+  }
+
+  it('reports docx_merge as unavailable without a recovery backup when the office backend cannot run', async () => {
+    await withWorkspace(async (root) => {
+      await Promise.all([writeFile(path.join(root, 'a.docx'), 'a'), writeFile(path.join(root, 'b.docx'), 'b')]);
+      const prepared: unknown[] = [];
+      const runtime = new DocumentRuntimeService(servicesWithRealMacOfficeBackend(root, prepared), actor);
+
+      const result = await runtime.docxMerge({
+        workspaceId: 'ws-1', file_path: 'a.docx', merge_paths: ['b.docx'], target_path: 'merged.docx',
+        dryRun: false, userConfirmed: true,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          tool: 'docx_merge', status: 'unsupported', available: false, ready: false, executed: false, applied: false,
+          reason: expect.stringContaining('not available on macOS'),
+          requirements: ['local DOCX provider (Word installation)', 'edit approval'],
+        },
+      });
+      expect(prepared, 'a recovery backup must not be prepared for work that cannot run').toEqual([]);
+    });
+  });
+
+  it('reports inspect_workbook as unavailable instead of an internal error', async () => {
+    await withWorkspace(async (root, file) => {
+      const prepared: unknown[] = [];
+      const runtime = new DocumentRuntimeService(servicesWithRealMacOfficeBackend(root, prepared), actor);
+
+      await expect(runtime.inspectWorkbook({ workspaceId: 'ws-1', file_path: file })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          tool: 'inspect_workbook', status: 'unsupported', available: false, ready: false, executed: false,
+          reason: expect.stringContaining('not available on macOS'),
+          requirements: ['local Excel provider (Office installation)'],
+        },
+      });
+      expect(prepared).toEqual([]);
     });
   });
 });

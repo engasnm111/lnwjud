@@ -166,7 +166,11 @@ describe('external replacement recovery evidence', () => {
         },
       },
       capabilities: {
-        async execute() {
+        async execute(_tool: string, input?: unknown) {
+          const request = (input ?? {}) as { dry_run?: boolean };
+          // Availability probes are side-effect-free dry runs: the backend is
+          // available here and only fails when it actually attempts the save_as.
+          if (request.dry_run === true) return ok({ dry_run: true, capability: 'office' });
           order.push('provider');
           return err(providerFailure);
         },

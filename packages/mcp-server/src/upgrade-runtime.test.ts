@@ -230,6 +230,8 @@ describe('upgrade runtime', () => {
       capabilities: {
         async execute(tool: string, request: Record<string, unknown>): Promise<ReturnType<typeof ok>> {
           expect(tool).toBe('office');
+          // Availability probes are side-effect-free dry runs; record only real dispatches.
+          if (request.dry_run === true) return ok({ dry_run: true, capability: 'office' });
           calls.push(request);
           return ok({ app: request.app, action: request.action, ok: true });
         },

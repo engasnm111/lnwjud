@@ -9,6 +9,13 @@ import { readCapabilityActiveWorkspaceRoot } from './task-ownership.js';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Truthful availability payload for the office capability, which has no native
+ * macOS automation backend yet. Consumers translate this into the runtime's
+ * truthful_unavailable result instead of misreading the stub as success.
+ */
+export const MACOS_OFFICE_UNAVAILABLE_REASON = 'Native Microsoft Office automation is not available on macOS yet.';
+
 export type MacosCapabilityName =
   | 'accessibility'
   | 'input_event'
@@ -43,7 +50,13 @@ export class MacosNativeCapabilityBackend implements CapabilityBackend {
   public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
     if (this.platform !== 'darwin') return err(appError('INTERNAL_ERROR', 'macOS capability is unavailable on this platform', true));
     if (!isRecord(input)) return err(appError('INVALID_INPUT', 'Native capability input must be an object'));
-    if (input.dry_run === true) return ok({ dry_run: true, capability: this.capability, platform: 'darwin' });
+    if (input.dry_run === true) {
+      // Availability must be visible even to dry runs so callers can refuse
+      // mutations (and their backups) before promising work they cannot do.
+      return this.capability === 'office'
+        ? ok({ dry_run: true, capability: this.capability, platform: 'darwin', available: false, ready: false, reason: MACOS_OFFICE_UNAVAILABLE_REASON })
+        : ok({ dry_run: true, capability: this.capability, platform: 'darwin' });
+    }
     if (signal?.aborted === true) return cancelledOperation();
     const pathCheck = await this.assertPathsAllowed(input);
     if (!pathCheck.ok) return pathCheck;
@@ -62,7 +75,7 @@ export class MacosNativeCapabilityBackend implements CapabilityBackend {
         case 'input_event': return ok(await executeInputEvent(input, signal));
         case 'audio': return ok(await executeAudio(input, signal));
         case 'screen_record': return ok(await executeScreenRecord(input, signal));
-        case 'office': return ok({ available: false, ready: false, reason: 'Native Microsoft Office automation is not available on macOS yet.' });
+        case 'office': return ok({ available: false, ready: false, reason: MACOS_OFFICE_UNAVAILABLE_REASON });
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.name === 'AbortError') return cancelledOperation();
