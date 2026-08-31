@@ -5,13 +5,14 @@ import { ProcessPanel } from '../processes/ProcessPanel.js';
 import { McpPanel } from '../mcp/McpPanel.js';
 import { WorkspacePanel } from '../workspaces/WorkspacePanel.js';
 import { CapabilityPanel } from '../capabilities/CapabilityPanel.js';
+import type { AddWorkspaceAction } from '../workspaces/workspace-add.js';
 
 interface DashboardPageProps {
   readonly dashboard: DashboardSnapshot;
   readonly workspaces: readonly WorkspaceSummary[];
   readonly processes: readonly ProcessSummary[];
   readonly selectedProcess: ProcessSummary | null;
-  readonly onAddWorkspace: (rootPath: string) => Promise<void>;
+  readonly onAddWorkspace: AddWorkspaceAction;
   readonly onPermissionProfileChange: (profile: PermissionProfileName) => Promise<void>;
   readonly onStartFixtureProcess: () => Promise<void>;
   readonly onStopProcess: (processId: string) => Promise<void>;

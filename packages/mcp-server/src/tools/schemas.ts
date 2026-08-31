@@ -67,7 +67,7 @@ export const copyFileSchema = z.object({ workspaceId: optionalWorkspaceIdSchema,
 export const deleteFileSchema = z.object({
   workspaceId: optionalWorkspaceIdSchema,
   path: pathSchema,
-  /** True after human confirmation. May be omitted only for exact, recoverable delete_file auto-approval. */
+  /** True only after caller-supplied human confirmation. Trusted policy/Full Bypass authorization is carried out-of-band and never forged into this field. */
   userConfirmed: z.boolean().optional(),
 }).strict();
 export const restoreDeletedFileSchema = z.object({
@@ -88,7 +88,7 @@ export const restoreCheckpointSchema = z.object({
 
 export const workspaceListSchema = z.object({}).strict();
 export const workspaceRegisterSchema = z.object({
-  parentWorkspaceId: workspaceIdSchema,
+  parentWorkspaceId: optionalWorkspaceIdSchema,
   path: pathSchema,
   displayName: z.string().trim().min(1).max(256).optional(),
 }).strict();
@@ -178,6 +178,35 @@ export const workspaceIndexStopSchema = workspaceInfoSchema;
 
 const capabilityMetadataSchema = z.record(z.string(), z.unknown());
 const capabilityParametersSchema = z.record(z.string(), z.unknown());
+
+function hasFiniteParameter(parameters: Record<string, unknown> | undefined, name: string): boolean {
+  return typeof parameters?.[name] === 'number' && Number.isFinite(parameters[name]);
+}
+
+function hasPositiveParameter(parameters: Record<string, unknown> | undefined, name: string): boolean {
+  return hasFiniteParameter(parameters, name) && (parameters?.[name] as number) > 0;
+}
+
+function hasNonEmptyStringParameter(parameters: Record<string, unknown> | undefined, name: string): boolean {
+  return typeof parameters?.[name] === 'string' && (parameters[name] as string).trim().length > 0;
+}
+
+function hasWindowSelector(parameters: Record<string, unknown> | undefined): boolean {
+  return parameters !== undefined && (
+    hasFiniteParameter(parameters, 'hwnd')
+    || hasFiniteParameter(parameters, 'window_index')
+    || hasNonEmptyStringParameter(parameters, 'title')
+    || hasNonEmptyStringParameter(parameters, 'process_name')
+  );
+}
+
+function hasSemanticUiTarget(parameters: Record<string, unknown> | undefined): boolean {
+  return hasNonEmptyStringParameter(parameters, 'automation_id') || hasNonEmptyStringParameter(parameters, 'name');
+}
+
+function addParameterIssue(ctx: z.RefinementCtx, message: string): void {
+  ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['parameters'], message });
+}
 const capabilityApprovalSchema = z.enum(['use_policy', 'always_ask', 'skip']).default('use_policy');
 const capabilityRequestSchema = {
   request_id: z.string().trim().min(1).max(128).optional(),
@@ -233,21 +262,43 @@ export const wslFilesystemCapabilitySchema = z.object({
   ...capabilityRequestSchema,
 }).strict();
 
+const domActionSchema = z.enum([
+  'launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate',
+  'evaluate', 'query', 'click', 'type', 'wait', 'screenshot',
+]);
+const domTargetActions = new Set([
+  'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot',
+]);
+
 const domStepSchema = z.object({
-  action: z.string().trim().min(1).max(128),
+  action: domActionSchema,
   parameters: capabilityParametersSchema.optional(),
 }).strict();
 
 export const domCdpCapabilitySchema = z.object({
-  action: z.enum(['launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot']).optional(),
+  action: domActionSchema.optional(),
   parameters: capabilityParametersSchema.optional(),
   steps: z.array(domStepSchema).min(1).max(100).optional(),
   tab_id: z.string().trim().min(1).max(256).optional(),
+  allow_protected_tab_action: z.boolean().default(false),
   display_id: z.string().trim().min(1).max(128).optional(),
   timeout_seconds: z.number().min(0.1).max(3600).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema,
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if ((value.action === undefined) === (value.steps === undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Provide exactly one of action or steps' });
+  }
+  const actions = value.steps?.map((step) => step.action) ?? (value.action === undefined ? [] : [value.action]);
+  if (actions.some((action) => domTargetActions.has(action)) && value.tab_id === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['tab_id'], message: 'Target-scoped DOM actions require tab_id' });
+  }
+  value.steps?.forEach((step, index) => {
+    if (step.parameters !== undefined && 'tab_id' in step.parameters) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['steps', index, 'parameters', 'tab_id'], message: 'Use the top-level tab_id for the whole batch' });
+    }
+  });
+});
 
 export const accessibilityCapabilitySchema = z.object({
   action: z.enum(['status', 'launch_app', 'activate_app', 'list_windows', 'observe', 'observe_summary', 'observe_changes', 'inspect_elements', 'find_element', 'click', 'focus', 'read_value', 'set_value', 'select_item', 'menu_select', 'close_window', 'minimize_window', 'maximize_window', 'restore_window', 'set_window_frame']),
@@ -256,7 +307,21 @@ export const accessibilityCapabilitySchema = z.object({
   timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema,
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const parameters = value.parameters;
+  if (value.action === 'launch_app' && !hasNonEmptyStringParameter(parameters, 'executable')) {
+    addParameterIssue(ctx, 'accessibility launch_app requires parameters.executable');
+  }
+  if (['activate_app', 'close_window', 'minimize_window', 'maximize_window', 'restore_window', 'set_window_frame'].includes(value.action) && !hasWindowSelector(parameters)) {
+    addParameterIssue(ctx, `accessibility ${value.action} requires a window selector`);
+  }
+  if (['find_element', 'click', 'focus', 'read_value', 'set_value', 'select_item', 'menu_select'].includes(value.action) && !hasSemanticUiTarget(parameters)) {
+    addParameterIssue(ctx, `accessibility ${value.action} requires parameters.name or parameters.automation_id`);
+  }
+  if (value.action === 'set_window_frame' && (!hasFiniteParameter(parameters, 'x') || !hasFiniteParameter(parameters, 'y') || !hasPositiveParameter(parameters, 'width') || !hasPositiveParameter(parameters, 'height'))) {
+    addParameterIssue(ctx, 'accessibility set_window_frame requires finite x/y and positive width/height');
+  }
+});
 
 export const inputEventCapabilitySchema = z.object({
   operation: z.enum(['type_text', 'paste_text', 'press_key', 'hotkey', 'key_down', 'key_up', 'mouse_move', 'click', 'double_click', 'right_click', 'drag', 'scroll', 'button_down', 'button_up', 'release_all', 'sequence']),
@@ -265,7 +330,35 @@ export const inputEventCapabilitySchema = z.object({
   timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   approval: capabilityApprovalSchema,
   ...capabilityRequestSchema,
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const parameters = value.parameters;
+  if (['type_text', 'paste_text'].includes(value.operation) && typeof parameters?.text !== 'string') {
+    addParameterIssue(ctx, `input_event ${value.operation} requires parameters.text`);
+  }
+  if (['press_key', 'hotkey', 'key_down', 'key_up'].includes(value.operation) && !(typeof parameters?.key === 'string' || typeof parameters?.key === 'number')) {
+    addParameterIssue(ctx, `input_event ${value.operation} requires parameters.key`);
+  }
+  if (value.operation === 'hotkey' && (!Array.isArray(parameters?.modifiers) || parameters.modifiers.length < 1)) {
+    addParameterIssue(ctx, 'input_event hotkey requires a non-empty parameters.modifiers array');
+  }
+  if (['mouse_move', 'click', 'double_click', 'right_click'].includes(value.operation) && (!hasFiniteParameter(parameters, 'x') || !hasFiniteParameter(parameters, 'y'))) {
+    addParameterIssue(ctx, `input_event ${value.operation} requires finite parameters.x/y`);
+  }
+  if (value.operation === 'scroll' && !hasFiniteParameter(parameters, 'delta_y')) {
+    addParameterIssue(ctx, 'input_event scroll requires finite parameters.delta_y');
+  }
+  if (value.operation === 'drag') {
+    const from = parameters?.from;
+    const to = parameters?.to;
+    const validPoint = (point: unknown): boolean => typeof point === 'object' && point !== null && !Array.isArray(point)
+      && typeof (point as Record<string, unknown>).x === 'number' && Number.isFinite((point as Record<string, unknown>).x)
+      && typeof (point as Record<string, unknown>).y === 'number' && Number.isFinite((point as Record<string, unknown>).y);
+    if (!validPoint(from) || !validPoint(to)) addParameterIssue(ctx, 'input_event drag requires finite parameters.from/to x/y points');
+  }
+  if (value.operation === 'sequence' && (!Array.isArray(parameters?.steps) || parameters.steps.length < 1 || parameters.steps.length > 100)) {
+    addParameterIssue(ctx, 'input_event sequence requires 1 to 100 parameters.steps');
+  }
+});
 
 export const visionCapabilitySchema = z.object({
   action: z.enum(['capture_display', 'capture_region', 'capture_window', 'annotate', 'ocr']),
@@ -311,12 +404,61 @@ export const uiTargetActionSchema = z.object({
   ...capabilityRequestSchema,
 }).strict();
 
+const computerUseTargetSchema = z.object({
+  name: z.string().trim().min(1).max(512).optional(),
+  automation_id: z.string().trim().min(1).max(512).optional(),
+  observationId: z.string().trim().min(1).max(128).optional(),
+  observationHash: z.string().trim().regex(/^[a-f0-9]{64}$/).optional(),
+  markId: z.string().trim().min(1).max(32).optional(),
+  x: z.number().finite().optional(),
+  y: z.number().finite().optional(),
+}).strict();
+
+const computerUsePointSchema = z.object({ x: z.number().finite(), y: z.number().finite() }).strict();
+
+export const computerUseSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  action: z.enum(['snapshot', 'inspect', 'click', 'double_click', 'right_click', 'mouse_move', 'type_text', 'press_key', 'hotkey', 'scroll', 'drag', 'activate_window']),
+  app: capabilityParametersSchema.optional(),
+  window_index: z.number().int().min(0).optional(),
+  capture: z.enum(['display', 'region', 'window']).default('display'),
+  region: capabilityParametersSchema.optional(),
+  display_id: z.string().trim().min(1).max(128).optional(),
+  target: computerUseTargetSchema.optional(),
+  text: z.string().max(1_000_000).optional(),
+  key: z.union([z.string().trim().min(1).max(64), z.number().int().min(0).max(65535)]).optional(),
+  modifiers: z.array(z.string().trim().min(1).max(32)).max(8).optional(),
+  delta_y: z.number().int().min(-120_000).max(120_000).optional(),
+  from: computerUsePointSchema.optional(),
+  to: computerUsePointSchema.optional(),
+  max_depth: z.number().int().min(0).max(12).optional(),
+  max_items: z.number().int().min(1).max(2_000).optional(),
+  max_marks: z.number().int().min(1).max(500).optional(),
+  ttl_seconds: z.number().min(1).max(300).optional(),
+  timeout_seconds: z.number().min(0.1).max(14_400).optional(),
+  ...capabilityRequestSchema,
+}).strict();
+
 export const windowCapabilitySchema = z.object({
   operation: z.enum(['list', 'get_active', 'get_bounds', 'get_display', 'activate', 'close', 'minimize', 'maximize', 'restore', 'move', 'resize', 'set_window_frame']),
   parameters: capabilityParametersSchema.optional(),
   timeout_seconds: z.number().min(0.1).max(14_400).optional(),
   ...capabilityRequestSchema,
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const parameters = value.parameters;
+  if (!['list', 'get_active'].includes(value.operation) && !hasWindowSelector(parameters)) {
+    addParameterIssue(ctx, `window ${value.operation} requires a window selector`);
+  }
+  if (value.operation === 'move' && (!hasFiniteParameter(parameters, 'x') || !hasFiniteParameter(parameters, 'y'))) {
+    addParameterIssue(ctx, 'window move requires finite parameters.x/y');
+  }
+  if (value.operation === 'resize' && (!hasPositiveParameter(parameters, 'width') || !hasPositiveParameter(parameters, 'height'))) {
+    addParameterIssue(ctx, 'window resize requires positive parameters.width/height');
+  }
+  if (value.operation === 'set_window_frame' && (!hasFiniteParameter(parameters, 'x') || !hasFiniteParameter(parameters, 'y') || !hasPositiveParameter(parameters, 'width') || !hasPositiveParameter(parameters, 'height'))) {
+    addParameterIssue(ctx, 'window set_window_frame requires finite x/y and positive width/height');
+  }
+});
 
 export const healthCapabilitySchema = z.object({
   operation: z.enum(['check_all', 'check_tool']).default('check_all'),

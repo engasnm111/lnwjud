@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, isApplicationAuthorized, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { CapabilityService } from '@lnwjud/capabilities';
 
 interface Bounds {
@@ -32,6 +32,7 @@ interface StoredObservation {
   readonly observationId: string;
   readonly observationHash: string;
   readonly workspaceId: string;
+  readonly ownerKey: string;
   readonly expiresAtMs: number;
   readonly expiresAt: string;
   readonly image: ImageData;
@@ -39,28 +40,44 @@ interface StoredObservation {
   readonly uiParameters: Readonly<Record<string, unknown>>;
 }
 
+export class SetOfMarksObservationStore {
+  private readonly observations = new Map<string, StoredObservation>();
+
+  public get(observationId: string): StoredObservation | undefined { return this.observations.get(observationId); }
+  public set(observation: StoredObservation): void { this.observations.set(observation.observationId, observation); }
+  public delete(observationId: string): void { this.observations.delete(observationId); }
+  public pruneExpired(now: number): void {
+    for (const [id, observation] of this.observations) if (now >= observation.expiresAtMs) this.observations.delete(id);
+  }
+}
+
 export interface SetOfMarksOptions {
   readonly now?: () => number;
   readonly defaultTtlSeconds?: number;
   readonly maxTtlSeconds?: number;
+  readonly store?: SetOfMarksObservationStore;
+  readonly ownerKey?: string;
 }
 
 export class SetOfMarksService {
   private readonly now: () => number;
   private readonly defaultTtlSeconds: number;
   private readonly maxTtlSeconds: number;
-  private readonly observations = new Map<string, StoredObservation>();
+  private readonly store: SetOfMarksObservationStore;
+  private readonly ownerKey: string;
 
   public constructor(
     private readonly capabilities: CapabilityService | undefined,
     options: SetOfMarksOptions = {},
   ) {
     this.now = options.now ?? Date.now;
-    this.defaultTtlSeconds = clamp(options.defaultTtlSeconds ?? 30, 1, 300);
+    this.defaultTtlSeconds = clamp(options.defaultTtlSeconds ?? 120, 1, 300);
     this.maxTtlSeconds = clamp(options.maxTtlSeconds ?? 300, this.defaultTtlSeconds, 300);
+    this.store = options.store ?? new SetOfMarksObservationStore();
+    this.ownerKey = options.ownerKey?.trim() || 'local';
   }
 
-  public async capture(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async capture(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const parsed = parseCaptureInput(input, this.defaultTtlSeconds, this.maxTtlSeconds);
     if (!parsed.ok) return parsed;
     if (signal?.aborted) return cancelledResult('Visual capture');
@@ -73,12 +90,12 @@ export class SetOfMarksService {
         max_depth: parsed.value.maxDepth,
         max_items: Math.min(parsed.value.maxMarks * 4, 2_000),
       },
-    }, signal);
+    }, signal, authorization);
     if (!observed.ok) return observed;
     if (signal?.aborted) return cancelledResult('Visual capture');
     const observedMarks = extractMarks(observed.value, parsed.value.maxMarks);
 
-    const captured = await this.executeCapability('vision', parsed.value.visionInput, signal);
+    const captured = await this.executeCapability('vision', parsed.value.visionInput, signal, authorization);
     if (!captured.ok) return captured;
     if (signal?.aborted) return cancelledResult('Visual capture');
     const sourceImage = normalizeImage(captured.value, false);
@@ -90,7 +107,7 @@ export class SetOfMarksService {
       image_base64: sourceImage.value.data_base64,
       marks: marks.map((mark) => ({ mark_id: mark.markId, label: mark.label, bounds: mark.annotationBounds })),
     };
-    const annotated = await this.executeCapability('vision', annotationInput, signal);
+    const annotated = await this.executeCapability('vision', annotationInput, signal, authorization);
     if (signal?.aborted) return cancelledResult('Visual capture');
     const annotatedImage = annotated.ok ? normalizeImage(annotated.value, true) : undefined;
     const image = annotatedImage?.ok === true
@@ -105,51 +122,77 @@ export class SetOfMarksService {
       observationId,
       observationHash,
       workspaceId: parsed.value.workspaceId,
+      ownerKey: this.ownerKey,
       expiresAtMs,
       expiresAt,
       image,
       marks,
       uiParameters: parsed.value.uiParameters,
     };
-    this.observations.set(observationId, observation);
+    this.store.set(observation);
     return ok(toPublicObservation(observation));
   }
 
-  public async act(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async act(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const parsed = parseActionInput(input);
     if (!parsed.ok) return parsed;
     if (signal?.aborted) return cancelledResult('Marked UI action');
-    const observation = this.observations.get(parsed.value.observationId);
+    const observation = this.store.get(parsed.value.observationId);
     if (observation === undefined) return err(appError('INVALID_INPUT', 'The visual observation is unknown or stale'));
     if (this.now() >= observation.expiresAtMs) {
-      this.observations.delete(observation.observationId);
+      this.store.delete(observation.observationId);
       return err(appError('INVALID_INPUT', 'The visual observation has expired'));
     }
+    if (observation.ownerKey !== this.ownerKey) return err(appError('PERMISSION_DENIED', 'The visual observation belongs to another MCP session'));
     if (observation.workspaceId !== parsed.value.workspaceId) return err(appError('PERMISSION_DENIED', 'The visual observation belongs to another workspace'));
     if (parsed.value.observationHash !== undefined && parsed.value.observationHash !== observation.observationHash) return err(appError('INVALID_INPUT', 'The visual observation hash is stale'));
     const mark = observation.marks.find((candidate) => candidate.markId === parsed.value.markId);
     if (mark === undefined) return err(appError('INVALID_INPUT', 'The visual mark is unknown or stale'));
-    if (isMutatingAction(parsed.value.action) && parsed.value.userConfirmed !== true && parsed.value.dryRun !== true) {
+    if (isMutatingAction(parsed.value.action) && !isApplicationAuthorized(authorization, parsed.value.userConfirmed) && parsed.value.dryRun !== true) {
       return err(appError('PERMISSION_REQUIRED', 'A marked UI action requires explicit user confirmation'));
     }
     if (parsed.value.dryRun === true) return ok({ dry_run: true, observationId: observation.observationId, markId: mark.markId, action: parsed.value.action });
 
     const targetParameters = { ...observation.uiParameters, ...mark.target };
-    const current = await this.executeCapability('accessibility', { action: 'find_element', parameters: targetParameters }, signal);
+    const current = await this.executeCapability('accessibility', { action: 'find_element', parameters: targetParameters }, signal, authorization);
     if (!current.ok) return current;
     if (signal?.aborted) return cancelledResult('Marked UI action');
     const actionParameters = parsed.value.value === undefined ? targetParameters : { ...targetParameters, value: parsed.value.value };
-    return this.executeCapability('accessibility', { action: parsed.value.action, parameters: actionParameters }, signal);
+    return this.executeCapability('accessibility', { action: parsed.value.action, parameters: actionParameters, userConfirmed: parsed.value.userConfirmed }, signal, authorization);
   }
 
-  private async executeCapability(tool: 'accessibility' | 'vision', input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async resolvePoint(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<{ readonly x: number; readonly y: number }>> {
+    const parsed = parseActionInput({ ...(isRecord(input) ? input : {}), action: 'read_value' });
+    if (!parsed.ok) return parsed;
+    if (signal?.aborted) return cancelledResult('Marked UI target resolution');
+    const observation = this.store.get(parsed.value.observationId);
+    if (observation === undefined) return err(appError('INVALID_INPUT', 'The visual observation is unknown or stale'));
+    if (this.now() >= observation.expiresAtMs) {
+      this.store.delete(observation.observationId);
+      return err(appError('INVALID_INPUT', 'The visual observation has expired'));
+    }
+    if (observation.ownerKey !== this.ownerKey) return err(appError('PERMISSION_DENIED', 'The visual observation belongs to another MCP session'));
+    if (observation.workspaceId !== parsed.value.workspaceId) return err(appError('PERMISSION_DENIED', 'The visual observation belongs to another workspace'));
+    if (parsed.value.observationHash !== undefined && parsed.value.observationHash !== observation.observationHash) return err(appError('INVALID_INPUT', 'The visual observation hash is stale'));
+    const mark = observation.marks.find((candidate) => candidate.markId === parsed.value.markId);
+    if (mark === undefined) return err(appError('INVALID_INPUT', 'The visual mark is unknown or stale'));
+
+    const targetParameters = { ...observation.uiParameters, ...mark.target };
+    const current = await this.executeCapability('accessibility', { action: 'find_element', parameters: targetParameters }, signal, authorization);
+    if (!current.ok) return current;
+    if (signal?.aborted) return cancelledResult('Marked UI target resolution');
+    const bounds = extractElementBounds(current.value);
+    if (bounds === undefined) return err(appError('INVALID_INPUT', 'The marked UI target no longer has usable screen bounds'));
+    return ok({ x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) });
+  }
+
+  private async executeCapability(tool: 'accessibility' | 'vision', input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (this.capabilities === undefined) return err(appError('INTERNAL_ERROR', 'Capability service is unavailable', true));
-    return this.capabilities.execute(tool, input, signal);
+    return this.capabilities.execute(tool, input, signal, authorization);
   }
 
   private pruneExpired(): void {
-    const now = this.now();
-    for (const [id, observation] of this.observations) if (now >= observation.expiresAtMs) this.observations.delete(id);
+    this.store.pruneExpired(this.now());
   }
 }
 
@@ -285,6 +328,12 @@ function toPublicObservation(observation: StoredObservation): Record<string, unk
     image: observation.image,
     marks: observation.marks.map((mark) => ({ markId: mark.markId, label: mark.label, bounds: mark.bounds, target: mark.target })),
   };
+}
+
+function extractElementBounds(value: unknown): Bounds | undefined {
+  if (!isRecord(value)) return undefined;
+  const element = isRecord(value.element) ? value.element : value;
+  return readBounds(element.bounds);
 }
 
 function readBounds(value: unknown): Bounds | undefined {

@@ -45,7 +45,8 @@ describe('viewport-sized log and list layout', () => {
     const copied = formatLogCopyText(result);
     expect(copied).toContain(result.text);
     const localDate = new Date(result.timestamp);
-    expect(copied.startsWith(`${localDate.toLocaleDateString()} ${localDate.toLocaleTimeString()}`)).toBe(true);
+    const expected = `${String(localDate.getDate()).padStart(2, '0')}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${localDate.getFullYear()} ${String(localDate.getHours()).padStart(2, '0')}:${String(localDate.getMinutes()).padStart(2, '0')}:${String(localDate.getSeconds()).padStart(2, '0')}`;
+    expect(copied.startsWith(expected)).toBe(true);
     expect(copied).not.toContain(result.timestamp);
     const markup = renderToStaticMarkup(createElement(LogStreamPanel, {
       source: 'mcp', title: 'MCP activity', lines: [task, result], tunnelLogPath: null, tunnelLogExists: false,

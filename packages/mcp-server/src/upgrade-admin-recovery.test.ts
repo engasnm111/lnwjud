@@ -9,19 +9,19 @@ import { UpgradeRuntimeService } from './upgrade-runtime.js';
 const actor: FileActor = { clientId: 'admin-recovery', clientName: 'admin-recovery-test', sessionId: 'session-a' };
 
 describe('upgrade administrative recovery snapshots', () => {
-  it('backs up shared plugin state before removing a persisted plugin descriptor', async () => {
+  it('does not create plugin recovery state for disabled plugin operations', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-upgrade-admin-'));
     const runtimeStatePath = path.join(directory, 'runtime.json');
     const recoveryDirectory = path.join(directory, 'runtime.state-v2', 'recovery');
     const runtime = new UpgradeRuntimeService({ runtimeStatePath }, actor);
 
     await expect(runtime.execute('plugin_install', { name: 'safe-plugin' }))
-      .resolves.toMatchObject({ ok: true, value: { changed: true } });
+      .resolves.toMatchObject({ ok: true, value: { status: 'disabled', executed: false } });
     await expect(runtime.execute('plugin_remove', { name: 'safe-plugin', userConfirmed: true }))
-      .resolves.toMatchObject({ ok: true, value: { changed: true } });
+      .resolves.toMatchObject({ ok: true, value: { status: 'disabled', executed: false } });
 
-    const snapshots = await readRecoverySnapshots(recoveryDirectory);
-    expect(snapshots.some((snapshot) => snapshot.plugins?.some((plugin) => plugin.name === 'safe-plugin'))).toBe(true);
+    const snapshots = await readRecoverySnapshots(recoveryDirectory).catch(() => []);
+    expect(snapshots.some((snapshot) => snapshot.plugins?.some((plugin) => plugin.name === 'safe-plugin'))).toBe(false);
   });
 
   it('keeps a recoverable worktree-ledger pre-image when a ledger entry is removed', async () => {

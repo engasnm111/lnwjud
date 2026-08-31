@@ -2,7 +2,16 @@ import { constants as fsConstants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { copyFile, cp, lstat, mkdir, readFile as readFsFile, readdir, rename, rm, rmdir, unlink, writeFile as writeFsFile } from 'node:fs/promises';
 import path from 'node:path';
-import { appError, err, MAX_MULTI_FILE_BYTES, ok, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  MAX_MULTI_FILE_BYTES,
+  ok,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import {
   AtomicFileWriter,
   MAX_FILE_WRITE_BYTES,
@@ -17,7 +26,7 @@ import {
 } from '@lnwjud/filesystem';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
 import { isProtectedCriticalPath } from '@lnwjud/shared';
-import { isWithin, WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
+import { isWithin, WorkspacePathGuard, type ResolvedWorkspacePath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { CheckpointServicePort } from './checkpoint-service.js';
 import { resolveSharedWorkspace, resolveWorkspaceForPath } from './workspace-locator.js';
 
@@ -111,7 +120,7 @@ export interface EditFileResult {
   readonly path: string;
   readonly replacements: number;
   readonly bytesWritten: number;
-  readonly checkpointId: string;
+  readonly checkpointId?: string;
 }
 
 export interface MoveFileRequest {
@@ -232,12 +241,17 @@ export class FileService {
     return this.unrestricted || this.trustedWorkspaceAccess;
   }
 
-  public async readFile(actor: FileActor, workspaceId: string | undefined, request: ReadFileRequest): Promise<Result<ReadFileResult>> {
+  public async readFile(
+    actor: FileActor,
+    workspaceId: string | undefined,
+    request: ReadFileRequest,
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<ReadFileResult>> {
     void actor;
-    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path);
+    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path, authorization);
     if (!workspaceResult.ok) return workspaceResult;
     const workspace = workspaceResult.value;
-    const resolved = await this.guard.resolveForRead(workspace, request.path);
+    const resolved = await this.guard.resolveForRead(workspace, request.path, authorization);
     if (!resolved.ok) return resolved;
 
     const absolute = resolved.value.realPath ?? resolved.value.absolutePath;
@@ -245,13 +259,13 @@ export class FileService {
       if (request.startLine !== undefined || request.endLine !== undefined) {
         const textResult = await this.reader.read(absolute, request);
         if (textResult.ok) {
-          return ok({ path: resolved.value.relativePath, ...textResult.value, encoding: 'utf8', mimeType: 'text/plain' });
+          return ok({ path: resultPath(resolved.value), ...textResult.value, encoding: 'utf8', mimeType: 'text/plain' });
         }
       }
       const unbounded = await this.unboundedReader.read(absolute);
       if (!unbounded.ok) return unbounded;
       return ok({
-        path: resolved.value.relativePath,
+        path: resultPath(resolved.value),
         content: unbounded.value.content,
         startLine: unbounded.value.startLine,
         endLine: unbounded.value.endLine,
@@ -263,29 +277,34 @@ export class FileService {
 
     const readResult = await this.reader.read(absolute, request);
     if (!readResult.ok) return readResult;
-    return ok({ path: resolved.value.relativePath, ...readResult.value, encoding: 'utf8' });
+    return ok({ path: resultPath(resolved.value), ...readResult.value, encoding: 'utf8' });
   }
 
-  public async readFiles(actor: FileActor, workspaceId: string | undefined, request: ReadFilesRequest): Promise<Result<ReadFilesResult>> {
+  public async readFiles(
+    actor: FileActor,
+    workspaceId: string | undefined,
+    request: ReadFilesRequest,
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<ReadFilesResult>> {
     void actor;
     if (!Array.isArray(request.files) || request.files.length > 20) {
       return err(appError('INVALID_INPUT', 'At most 20 files may be read'));
     }
     const firstPath = request.files[0]?.path;
     if (typeof firstPath !== 'string') return err(appError('INVALID_INPUT', 'At least one file is required'));
-    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, firstPath);
+    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, firstPath, authorization);
     if (!workspaceResult.ok) return workspaceResult;
     const trustedWorkspace = this.isTrustedWorkspace(workspaceResult.value);
 
     const files: ReadFileResult[] = [];
     let totalBytes = 0;
     for (const fileRequest of request.files) {
-      const fileWorkspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, fileRequest.path);
+      const fileWorkspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, fileRequest.path, authorization);
       if (!fileWorkspace.ok) return fileWorkspace;
       if (fileWorkspace.value.id !== workspaceResult.value.id) {
         return err(appError('PATH_OUTSIDE_WORKSPACE', 'All files must be in the same workspace'));
       }
-      const result = await this.readFile(actor, fileWorkspace.value.id, fileRequest);
+      const result = await this.readFile(actor, fileWorkspace.value.id, fileRequest, authorization);
       if (!result.ok) return result;
       totalBytes += result.value.byteLength
         ?? Buffer.byteLength(result.value.content, result.value.encoding === 'base64' ? 'base64' : 'utf8');
@@ -297,7 +316,7 @@ export class FileService {
     return ok({ files });
   }
 
-  public async writeFile(actor: FileActor, workspaceId: string | undefined, request: WriteFileRequest, signal?: AbortSignal): Promise<Result<WriteFileResult>> {
+  public async writeFile(actor: FileActor, workspaceId: string | undefined, request: WriteFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<WriteFileResult>> {
     if (typeof request?.path !== 'string' || typeof request.content !== 'string') {
       return err(appError('INVALID_INPUT', 'Write request is invalid'));
     }
@@ -305,11 +324,11 @@ export class FileService {
       return err(appError('FILE_TOO_LARGE', 'File exceeds the maximum write size'));
     }
     if (isAborted(signal)) return cancelledFileMutation();
-    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path);
+    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!workspaceResult.ok) return workspaceResult;
     const workspace = workspaceResult.value;
-    const resolved = await this.guard.resolveForWrite(workspace, request.path);
+    const resolved = await this.guard.resolveForWrite(workspace, request.path, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!resolved.ok) return resolved;
     const existing = await this.inspectExistingFile(resolved.value.absolutePath);
@@ -317,17 +336,18 @@ export class FileService {
     if (!existing.ok) return existing;
     if (existing.value === 'directory') return err(appError('INVALID_INPUT', 'Directories cannot be written as files'));
     const fullProfile = this.profileProvider().name === 'full';
+    const applicationApproved = isApplicationAuthorized(authorization, request.userConfirmed === true) || fullProfile;
     if (existing.value && request.overwriteExisting !== true && !fullProfile) {
       return err(appError('INVALID_INPUT', 'Target already exists; use edit_file for a narrow repair or set overwriteExisting after reviewing the full replacement'));
     }
-    if (existing.value && request.userConfirmed !== true && !fullProfile) {
+    if (existing.value && !applicationApproved) {
       return err(appError('PERMISSION_REQUIRED', 'Replacing an existing file requires explicit user confirmation'));
     }
-    const permission = this.decide(workspace.id, 'write_file', 'WRITE', resolved.value.relativePath, false, request.userConfirmed === true || fullProfile);
+    const permission = this.decide(workspace.id, 'write_file', 'WRITE', resolved.value.relativePath, false, applicationApproved, authorization);
     if (!permission.ok) return permission;
 
     let checkpointId: string | undefined;
-    if (existing.value) {
+    if (existing.value && resolved.value.outsideWorkspace !== true) {
       const checkpoint = await this.createCheckpoint(actor, workspace.id, [resolved.value.relativePath]);
       if (isAborted(signal)) return cancelledFileMutation();
       if (!checkpoint.ok) return checkpoint;
@@ -337,56 +357,61 @@ export class FileService {
     const writeResult = await this.writer.write(resolved.value.realPath ?? resolved.value.absolutePath, request.content);
     if (!writeResult.ok) return writeResult;
     return ok({
-      path: resolved.value.relativePath,
+      path: resultPath(resolved.value),
       bytesWritten: Buffer.byteLength(request.content, 'utf8'),
       ...(checkpointId === undefined ? {} : { checkpointId }),
     });
   }
 
-  public async applyPatch(actor: FileActor, workspaceId: string | undefined, request: ApplyPatchRequest, signal?: AbortSignal): Promise<Result<ApplyPatchResult>> {
+  public async applyPatch(actor: FileActor, workspaceId: string | undefined, request: ApplyPatchRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<ApplyPatchResult>> {
     const validation = this.patchApplier.validate(request?.files ?? []);
     if (!validation.ok) return validation;
     const firstPath = request.files[0]?.path;
     if (typeof firstPath !== 'string') return err(appError('INVALID_INPUT', 'At least one file is required'));
     if (isAborted(signal)) return cancelledFileMutation();
-    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, firstPath);
+    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, firstPath, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!workspaceResult.ok) return workspaceResult;
     const workspace = workspaceResult.value;
 
-    const resolvedFiles: { readonly patch: FilePatch; readonly absolutePath: string; readonly relativePath: string }[] = [];
-    const existingPaths: string[] = [];
+    const resolvedFiles: { readonly patch: FilePatch; readonly absolutePath: string; readonly path: string }[] = [];
+    const checkpointPaths: string[] = [];
+    let existingTargets = 0;
     for (const patch of request.files) {
       if (isAborted(signal)) return cancelledFileMutation();
-      const fileWorkspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, patch.path);
+      const fileWorkspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, patch.path, authorization);
       if (isAborted(signal)) return cancelledFileMutation();
       if (!fileWorkspace.ok) return fileWorkspace;
       if (fileWorkspace.value.id !== workspace.id) {
         return err(appError('PATH_OUTSIDE_WORKSPACE', 'All files must be in the same workspace'));
       }
-      const resolved = await this.guard.resolveForWrite(workspace, patch.path);
+      const resolved = await this.guard.resolveForWrite(workspace, patch.path, authorization);
       if (isAborted(signal)) return cancelledFileMutation();
       if (!resolved.ok) return resolved;
       const existing = await this.inspectExistingFile(resolved.value.absolutePath);
       if (isAborted(signal)) return cancelledFileMutation();
       if (!existing.ok) return existing;
       if (existing.value === 'directory') return err(appError('INVALID_INPUT', 'Directories cannot be patched as files'));
-      if (existing.value) existingPaths.push(resolved.value.relativePath);
+      if (existing.value) {
+        existingTargets += 1;
+        if (resolved.value.outsideWorkspace !== true) checkpointPaths.push(resolved.value.relativePath);
+      }
       resolvedFiles.push({
         patch,
         absolutePath: resolved.value.realPath ?? resolved.value.absolutePath,
-        relativePath: resolved.value.relativePath,
+        path: resultPath(resolved.value),
       });
     }
 
-    const permission = this.decide(workspace.id, 'apply_patch', 'WRITE', undefined, false, request.userConfirmed === true);
+    const applicationApproved = isApplicationAuthorized(authorization, request.userConfirmed === true);
+    const permission = this.decide(workspace.id, 'apply_patch', 'WRITE', undefined, false, applicationApproved, authorization);
     if (!permission.ok) return permission;
-    if (existingPaths.length > 0 && request.userConfirmed !== true) {
+    if (existingTargets > 0 && !applicationApproved) {
       return err(appError('PERMISSION_REQUIRED', 'Replacing existing file content with apply_patch requires explicit user confirmation; prefer edit_file for narrow repairs'));
     }
     let checkpointId: string | undefined;
-    if (existingPaths.length > 0) {
-      const checkpoint = await this.createCheckpoint(actor, workspace.id, existingPaths);
+    if (checkpointPaths.length > 0) {
+      const checkpoint = await this.createCheckpoint(actor, workspace.id, checkpointPaths);
       if (isAborted(signal)) return cancelledFileMutation();
       if (!checkpoint.ok) return checkpoint;
       checkpointId = checkpoint.value.id;
@@ -397,24 +422,25 @@ export class FileService {
       if (!writeResult.ok) return writeResult;
     }
     return ok({
-      paths: resolvedFiles.map((resolved) => resolved.relativePath),
+      paths: resolvedFiles.map((resolved) => resolved.path),
       ...(checkpointId === undefined ? {} : { checkpointId }),
     });
   }
 
-  public async editFile(actor: FileActor, workspaceId: string | undefined, request: EditFileRequest, signal?: AbortSignal): Promise<Result<EditFileResult>> {
+  public async editFile(actor: FileActor, workspaceId: string | undefined, request: EditFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<EditFileResult>> {
     const expectedOccurrences = request?.expectedOccurrences ?? 1;
     if (typeof request?.path !== 'string' || typeof request.oldText !== 'string' || request.oldText.length === 0
       || typeof request.newText !== 'string' || !Number.isInteger(expectedOccurrences) || expectedOccurrences < 1 || expectedOccurrences > 100) {
       return err(appError('INVALID_INPUT', 'Exact edit request is invalid'));
     }
     if (isAborted(signal)) return cancelledFileMutation();
-    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path);
+    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path, authorization);
     if (!workspaceResult.ok) return workspaceResult;
     const workspace = workspaceResult.value;
-    const resolved = await this.guard.resolveForRead(workspace, request.path);
+    const resolved = await this.guard.resolveForRead(workspace, request.path, authorization);
     if (!resolved.ok) return resolved;
-    if (request.userConfirmed !== true && this.protectCriticalFiles() && isProtectedCriticalPath(resolved.value.relativePath)) {
+    const applicationApproved = isApplicationAuthorized(authorization, request.userConfirmed === true);
+    if (!isFullBypassAuthorization(authorization) && !applicationApproved && this.protectCriticalFiles() && isProtectedCriticalPath(resolved.value.relativePath)) {
       return err(appError('PERMISSION_REQUIRED', 'Editing a protected critical file requires explicit user confirmation'));
     }
     const absolutePath = resolved.value.realPath ?? resolved.value.absolutePath;
@@ -434,23 +460,27 @@ export class FileService {
     }
     const nextContent = content.split(request.oldText).join(request.newText);
     if (Buffer.byteLength(nextContent, 'utf8') > MAX_FILE_WRITE_BYTES) return err(appError('FILE_TOO_LARGE', 'Edited file exceeds the maximum write size'));
-    const permission = this.decide(workspace.id, 'edit_file', 'WRITE', resolved.value.relativePath, false, request.userConfirmed === true);
+    const permission = this.decide(workspace.id, 'edit_file', 'WRITE', resolved.value.relativePath, false, applicationApproved, authorization);
     if (!permission.ok) return permission;
-    const checkpoint = await this.createCheckpoint(actor, workspace.id, [resolved.value.relativePath]);
-    if (!checkpoint.ok) return checkpoint;
+    let checkpointId: string | undefined;
+    if (resolved.value.outsideWorkspace !== true) {
+      const checkpoint = await this.createCheckpoint(actor, workspace.id, [resolved.value.relativePath]);
+      if (!checkpoint.ok) return checkpoint;
+      checkpointId = checkpoint.value.id;
+    }
     if (isAborted(signal)) return cancelledFileMutation();
     const writeResult = await this.writer.write(absolutePath, nextContent);
     if (!writeResult.ok) return writeResult;
     return ok({
-      path: resolved.value.relativePath,
+      path: resultPath(resolved.value),
       replacements: occurrences,
       bytesWritten: Buffer.byteLength(nextContent, 'utf8'),
-      checkpointId: checkpoint.value.id,
+      ...(checkpointId === undefined ? {} : { checkpointId }),
     });
   }
 
-  public async moveFile(actor: FileActor, workspaceId: string | undefined, request: MoveFileRequest, signal?: AbortSignal): Promise<Result<void>> {
-    const prepared = await this.prepareTransfer(actor, workspaceId, request, 'move_file', signal);
+  public async moveFile(actor: FileActor, workspaceId: string | undefined, request: MoveFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<void>> {
+    const prepared = await this.prepareTransfer(actor, workspaceId, request, 'move_file', signal, authorization);
     if (!prepared.ok) return prepared;
     if (isAborted(signal)) return cancelledFileMutation();
     const { sourceAbs, destinationAbs, isDirectory } = prepared.value;
@@ -474,8 +504,8 @@ export class FileService {
     return ok(undefined);
   }
 
-  public async copyFile(actor: FileActor, workspaceId: string | undefined, request: CopyFileRequest, signal?: AbortSignal): Promise<Result<CopyFileResult>> {
-    const prepared = await this.prepareTransfer(actor, workspaceId, request, 'copy_file', signal);
+  public async copyFile(actor: FileActor, workspaceId: string | undefined, request: CopyFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<CopyFileResult>> {
+    const prepared = await this.prepareTransfer(actor, workspaceId, request, 'copy_file', signal, authorization);
     if (!prepared.ok) return prepared;
     if (isAborted(signal)) return cancelledFileMutation();
     const { sourceAbs, destinationAbs, isDirectory, sourceRelative, destinationRelative } = prepared.value;
@@ -500,6 +530,7 @@ export class FileService {
     workspaceId: string,
     request: PrepareExternalFileMutationRequest,
     signal?: AbortSignal,
+    authorization?: InvocationAuthorization,
   ): Promise<Result<PreparedExternalFileMutation>> {
     if (typeof request?.targetPath !== 'string' || !Array.isArray(request.sourcePaths ?? [])) {
       return err(appError('INVALID_INPUT', 'External file mutation request is invalid'));
@@ -515,7 +546,7 @@ export class FileService {
     const resolvedSources: string[] = [];
     for (const sourcePath of sourcePaths) {
       if (isAborted(signal)) return cancelledFileMutation();
-      const source = await this.guard.resolveForRead(workspace, sourcePath);
+      const source = await this.guard.resolveForRead(workspace, sourcePath, authorization);
       if (!source.ok) return source;
       const sourceType = await this.inspectExistingFile(source.value.realPath ?? source.value.absolutePath);
       if (!sourceType.ok) return sourceType;
@@ -523,16 +554,17 @@ export class FileService {
       resolvedSources.push(source.value.realPath ?? source.value.absolutePath);
     }
 
-    const target = await this.guard.resolveForWrite(workspace, request.targetPath);
+    const target = await this.guard.resolveForWrite(workspace, request.targetPath, authorization);
     if (!target.ok) return target;
-    if (target.value.relativePath.length === 0) return err(appError('PERMISSION_DENIED', 'Workspace root cannot be an external mutation target'));
+    if (target.value.outsideWorkspace !== true && target.value.relativePath.length === 0) return err(appError('PERMISSION_DENIED', 'Workspace root cannot be an external mutation target'));
     const targetType = await this.inspectExistingFile(target.value.realPath ?? target.value.absolutePath);
     if (!targetType.ok) return targetType;
     if (targetType.value === 'directory') return err(appError('INVALID_INPUT', 'External mutation target must be a file'));
-    if (request.userConfirmed !== true) {
+    const applicationApproved = isApplicationAuthorized(authorization, request.userConfirmed === true);
+    if (!applicationApproved) {
       return err(appError('PERMISSION_REQUIRED', 'External file replacement requires explicit user confirmation'));
     }
-    if (this.protectCriticalFiles() && isProtectedCriticalPath(target.value.relativePath) && request.userConfirmed !== true) {
+    if (!isFullBypassAuthorization(authorization) && this.protectCriticalFiles() && isProtectedCriticalPath(target.value.relativePath) && !applicationApproved) {
       return err(appError('PERMISSION_REQUIRED', 'Replacing a protected critical file requires explicit user confirmation'));
     }
     const permission = this.decide(
@@ -541,12 +573,13 @@ export class FileService {
       'DANGEROUS',
       target.value.relativePath,
       true,
-      request.userConfirmed === true,
+      applicationApproved,
+      authorization,
     );
     if (!permission.ok) return permission;
 
     let replacementBackup: PreparedExternalFileMutation['replacementBackup'];
-    if (targetType.value === true) {
+    if (targetType.value === true && target.value.outsideWorkspace !== true) {
       if (this.recoveryTrashRoot === undefined) {
         return err(appError('INTERNAL_ERROR', 'Recovery Trash is unavailable; refusing external file replacement', true));
       }
@@ -563,29 +596,37 @@ export class FileService {
     return ok({
       sourcePaths: resolvedSources,
       targetPath: target.value.realPath ?? target.value.absolutePath,
-      targetRelativePath: target.value.relativePath,
+      targetRelativePath: resultPath(target.value),
       ...(replacementBackup === undefined ? {} : { replacementBackup }),
     });
   }
 
-  public async deleteFile(actor: FileActor, workspaceId: string | undefined, request: DeleteFileRequest, signal?: AbortSignal): Promise<Result<DeleteFileResult>> {
+  public async deleteFile(actor: FileActor, workspaceId: string | undefined, request: DeleteFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<DeleteFileResult>> {
     if (typeof request?.path !== 'string') return err(appError('INVALID_INPUT', 'Delete request is invalid'));
-    const policyAllowsDelete = this.allowDeleteWithoutConfirmation();
-    if (request.userConfirmed !== true && !policyAllowsDelete) {
+    const fullBypass = isFullBypassAuthorization(authorization);
+    const policyAllowsDelete = this.allowDeleteWithoutConfirmation() || fullBypass;
+    const applicationApproved = isApplicationAuthorized(authorization, request.userConfirmed === true) || policyAllowsDelete;
+    const protectedTargetApproved = fullBypass
+      || request.userConfirmed === true
+      || (authorization?.applicationApproved === true && authorization.source !== 'scoped_policy');
+    if (!applicationApproved) {
       return err(appError(
         'PERMISSION_REQUIRED',
         'Deletion requires the user to confirm in chat first, then retry delete_file with userConfirmed: true',
       ));
     }
     if (isAborted(signal)) return cancelledFileMutation();
-    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path);
+    const workspaceResult = await resolveWorkspaceForPath(this.workspaces, workspaceId, request.path, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!workspaceResult.ok) return workspaceResult;
-    const resolved = await this.guard.resolveForRead(workspaceResult.value, request.path);
+    const resolved = await this.guard.resolveForRead(workspaceResult.value, request.path, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!resolved.ok) return resolved;
-    if (resolved.value.relativePath.length === 0) return err(appError('PERMISSION_DENIED', 'Workspace root cannot be deleted'));
-    if (request.userConfirmed !== true && this.protectCriticalFiles() && isProtectedCriticalPath(resolved.value.relativePath)) {
+    if ((resolved.value.outsideWorkspace !== true && resolved.value.relativePath.length === 0)
+      || isFilesystemRoot(resolved.value.realPath ?? resolved.value.absolutePath)) {
+      return err(appError('PERMISSION_DENIED', 'Filesystem or workspace root cannot be deleted'));
+    }
+    if (!protectedTargetApproved && this.protectCriticalFiles() && isProtectedCriticalPath(resolved.value.relativePath)) {
       return err(appError('PERMISSION_REQUIRED', 'Protected critical files require explicit user confirmation'));
     }
     const permission = this.decide(
@@ -594,7 +635,8 @@ export class FileService {
       policyAllowsDelete ? 'WRITE' : 'DANGEROUS',
       resolved.value.relativePath,
       !policyAllowsDelete,
-      request.userConfirmed === true,
+      applicationApproved,
+      authorization,
     );
     if (!permission.ok) return permission;
     const targetPath = resolved.value.realPath ?? resolved.value.absolutePath;
@@ -608,16 +650,16 @@ export class FileService {
       }
 
       let checkpointId: string | undefined;
-      if (!target.isDirectory() && this.checkpointService !== undefined) {
+      if (resolved.value.outsideWorkspace !== true && !target.isDirectory() && this.checkpointService !== undefined) {
         const checkpoint = await this.checkpointService.createForFiles(actor, workspaceResult.value.id, [resolved.value.relativePath]);
         if (checkpoint.ok) checkpointId = checkpoint.value.id;
       }
 
-      if (this.recoverableDelete() && this.recoveryTrashRoot !== undefined) {
+      if (resolved.value.outsideWorkspace !== true && this.recoverableDelete() && this.recoveryTrashRoot !== undefined) {
         const recovery = await this.moveToRecoveryTrash(workspaceResult.value.id, resolved.value.relativePath, targetPath, target.isDirectory());
         if (!recovery.ok) return recovery;
         return ok({
-          path: resolved.value.relativePath,
+          path: resultPath(resolved.value),
           recoverable: true,
           ...(checkpointId === undefined ? {} : { checkpointId }),
           recoveryId: recovery.value.id,
@@ -627,7 +669,7 @@ export class FileService {
 
       if (target.isDirectory()) await rmdir(targetPath);
       else await unlink(targetPath);
-      return ok({ path: resolved.value.relativePath, recoverable: checkpointId !== undefined, ...(checkpointId === undefined ? {} : { checkpointId }) });
+      return ok({ path: resultPath(resolved.value), recoverable: checkpointId !== undefined, ...(checkpointId === undefined ? {} : { checkpointId }) });
     } catch (error: unknown) {
       return err(mapNodeFsError(error, 'File deletion failed'));
     }
@@ -687,10 +729,12 @@ export class FileService {
     workspaceId: string,
     request: RestoreDeletedFileRequest,
     signal?: AbortSignal,
+    authorization?: InvocationAuthorization,
   ): Promise<Result<RestoreDeletedFileResult>> {
     void actor;
     if (this.recoveryTrashRoot === undefined) return err(appError('INVALID_INPUT', 'Recovery Trash is not configured'));
-    if (request?.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Restoring a Recovery Trash item requires explicit user confirmation'));
+    const applicationApproved = isApplicationAuthorized(authorization, request?.userConfirmed === true);
+    if (!applicationApproved) return err(appError('PERMISSION_REQUIRED', 'Restoring a Recovery Trash item requires explicit user confirmation'));
     if (typeof request?.recoveryId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(request.recoveryId)) {
       return err(appError('INVALID_INPUT', 'Recovery ID is invalid'));
     }
@@ -714,11 +758,11 @@ export class FileService {
       return err(mapNodeFsError(error, 'Recovery metadata could not be read'));
     }
     if (isAborted(signal)) return cancelledFileMutation();
-    const destination = await this.guard.resolveForWrite(workspace, metadata.relativePath);
+    const destination = await this.guard.resolveForWrite(workspace, metadata.relativePath, authorization);
     if (!destination.ok) return destination;
     const kind = recoveryKind(metadata);
     if (destination.value.exists && kind === 'deleted') return err(appError('INVALID_INPUT', 'Restore target already exists; refusing to overwrite it'));
-    const permission = this.decide(workspaceId, 'restore_deleted_file', 'WRITE', destination.value.relativePath, false, request.userConfirmed === true);
+    const permission = this.decide(workspaceId, 'restore_deleted_file', 'WRITE', destination.value.relativePath, false, applicationApproved, authorization);
     if (!permission.ok) return permission;
     const parent = await ensureParentDirectory(destination.value.absolutePath);
     if (!parent.ok) return parent;
@@ -842,6 +886,7 @@ export class FileService {
     request: MoveFileRequest,
     action: 'move_file' | 'copy_file',
     signal?: AbortSignal,
+    authorization?: InvocationAuthorization,
   ): Promise<Result<{
     readonly sourceAbs: string;
     readonly destinationAbs: string;
@@ -854,14 +899,14 @@ export class FileService {
       return err(appError('INVALID_INPUT', 'Transfer request is invalid'));
     }
     if (isAborted(signal)) return cancelledFileMutation();
-    const workspaceResult = await resolveSharedWorkspace(this.workspaces, workspaceId, request.sourcePath, request.destinationPath);
+    const workspaceResult = await resolveSharedWorkspace(this.workspaces, workspaceId, request.sourcePath, request.destinationPath, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!workspaceResult.ok) return workspaceResult;
     const workspace = workspaceResult.value;
-    const source = await this.guard.resolveForRead(workspace, request.sourcePath);
+    const source = await this.guard.resolveForRead(workspace, request.sourcePath, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!source.ok) return source;
-    const destination = await this.guard.resolveForWrite(workspace, request.destinationPath);
+    const destination = await this.guard.resolveForWrite(workspace, request.destinationPath, authorization);
     if (isAborted(signal)) return cancelledFileMutation();
     if (!destination.ok) return destination;
     const sourceAbs = source.value.realPath ?? source.value.absolutePath;
@@ -877,17 +922,18 @@ export class FileService {
     if (sourceType.value === 'directory' && isWithin(sourceAbs, destinationAbs) && path.resolve(sourceAbs) !== path.resolve(destinationAbs)) {
       return err(appError('INVALID_INPUT', 'Destination cannot be inside the source directory'));
     }
-    if (action === 'move_file' && request.userConfirmed !== true) {
+    const applicationApproved = isApplicationAuthorized(authorization, request.userConfirmed === true);
+    if (action === 'move_file' && !applicationApproved) {
       return err(appError('PERMISSION_REQUIRED', 'Moving a file or directory removes the source path and requires explicit user confirmation'));
     }
-    const permission = this.decide(workspace.id, action, 'WRITE', source.value.relativePath, false, action === 'move_file' && request.userConfirmed === true);
+    const permission = this.decide(workspace.id, action, 'WRITE', source.value.relativePath, false, action === 'copy_file' || applicationApproved, authorization);
     if (!permission.ok) return permission;
     return ok({
       sourceAbs,
       destinationAbs,
       isDirectory: sourceType.value === 'directory',
-      sourceRelative: source.value.relativePath,
-      destinationRelative: destination.value.relativePath,
+      sourceRelative: resultPath(source.value),
+      destinationRelative: resultPath(destination.value),
     });
   }
 
@@ -898,7 +944,9 @@ export class FileService {
     target: string | undefined,
     destructive: boolean,
     userConfirmed = false,
+    authorization?: InvocationAuthorization,
   ): Result<void> {
+    if (authorization?.applicationApproved === true) return ok(undefined);
     const operation = { action, level, workspaceId, destructive, ...(target === undefined ? {} : { target }) };
     const decision = this.permissionEngine.decide(this.profileProvider(), operation);
     if (decision === 'DENY') return err(appError('PERMISSION_DENIED', `${action} is denied`));
@@ -922,6 +970,17 @@ export class FileService {
       return ok(false);
     }
   }
+}
+
+function resultPath(resolved: ResolvedWorkspacePath): string {
+  return resolved.outsideWorkspace === true
+    ? resolved.realPath ?? resolved.absolutePath
+    : resolved.relativePath;
+}
+
+function isFilesystemRoot(targetPath: string): boolean {
+  const normalized = path.resolve(targetPath);
+  return normalized === path.parse(normalized).root;
 }
 
 interface RecoveryMetadata {

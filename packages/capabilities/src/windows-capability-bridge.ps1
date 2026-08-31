@@ -121,7 +121,13 @@ try { Add-Type -TypeDefinition $nativeSource -ErrorAction Stop | Out-Null } catc
 
 function Resolve-Window {
   param([object]$Parameters)
-  $windows = [LnwjudNative]::Windows()
+  $windows = @([LnwjudNative]::Windows())
+  $windowIndex = Get-Field $Parameters 'window_index'
+  if ($windowIndex -is [int] -or $windowIndex -is [long]) {
+    $index = [int]$windowIndex
+    if ($index -lt 0 -or $index -ge $windows.Count) { return $null }
+    return $windows[$index]
+  }
   $handle = Get-Field $Parameters 'hwnd'
   if ($null -ne $handle) {
     $found = $windows | Where-Object { [int64]$_.hwnd -eq [int64]$handle } | Select-Object -First 1
@@ -152,7 +158,22 @@ function Invoke-WindowAction {
       $screen = [System.Windows.Forms.Screen]::FromHandle([IntPtr]([int64]$window.hwnd))
       return [ordered]@{ display_id = $screen.DeviceName; primary = $screen.Primary; bounds = [ordered]@{ x = $screen.Bounds.X; y = $screen.Bounds.Y; width = $screen.Bounds.Width; height = $screen.Bounds.Height } }
     }
-    'activate' { $window = Resolve-Window $Parameters; if ($null -eq $window) { throw 'Window not found' }; [void][LnwjudNative]::SetForegroundWindow([IntPtr]([int64]$window.hwnd)); return [ordered]@{ activated = $true; window = $window } }
+    'activate' {
+      $window = Resolve-Window $Parameters
+      if ($null -eq $window) { throw 'Window not found' }
+      $hwnd = [IntPtr]([int64]$window.hwnd)
+      if ([bool]$window.minimized) { [void][LnwjudNative]::ShowWindow($hwnd, 9); Start-Sleep -Milliseconds 40 }
+      $requested = [LnwjudNative]::SetForegroundWindow($hwnd)
+      Start-Sleep -Milliseconds 40
+      $activated = ([LnwjudNative]::GetForegroundWindow().ToInt64() -eq $hwnd.ToInt64())
+      if (-not $activated -and $requested) {
+        Start-Sleep -Milliseconds 40
+        [void][LnwjudNative]::SetForegroundWindow($hwnd)
+        $activated = ([LnwjudNative]::GetForegroundWindow().ToInt64() -eq $hwnd.ToInt64())
+      }
+      $reason = if ($activated) { $null } else { 'Windows did not grant foreground activation' }
+      return [ordered]@{ activated = $activated; requested = [bool]$requested; window = $window; reason = $reason }
+    }
     'close' { $window = Resolve-Window $Parameters; if ($null -eq $window) { throw 'Window not found' }; [void][LnwjudNative]::PostMessage([IntPtr]([int64]$window.hwnd), 0x0010, [IntPtr]::Zero, [IntPtr]::Zero); return [ordered]@{ closed = $true; hwnd = $window.hwnd } }
     'minimize' { $window = Resolve-Window $Parameters; if ($null -eq $window) { throw 'Window not found' }; [void][LnwjudNative]::ShowWindow([IntPtr]([int64]$window.hwnd), 6); return [ordered]@{ minimized = $true; hwnd = $window.hwnd } }
     'maximize' { $window = Resolve-Window $Parameters; if ($null -eq $window) { throw 'Window not found' }; [void][LnwjudNative]::ShowWindow([IntPtr]([int64]$window.hwnd), 3); return [ordered]@{ maximized = $true; hwnd = $window.hwnd } }
@@ -168,15 +189,60 @@ function Load-UiAutomation {
   try { Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop; Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop; return $true } catch { return $false }
 }
 
+function Get-FiniteUiBounds {
+  param([object]$Rect)
+  if ($null -eq $Rect) { return $null }
+  $x = [double]$Rect.X
+  $y = [double]$Rect.Y
+  $width = [double]$Rect.Width
+  $height = [double]$Rect.Height
+  foreach ($value in @($x, $y, $width, $height)) {
+    if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) { return $null }
+  }
+  return [ordered]@{ x = $x; y = $y; width = $width; height = $height }
+}
+
 function Get-ElementRecord {
   param([object]$Element)
   $current = $Element.Current
   $rect = $current.BoundingRectangle
-  return [ordered]@{ name = $current.Name; automation_id = $current.AutomationId; control_type = $current.ControlType.ProgrammaticName; class_name = $current.ClassName; enabled = $current.IsEnabled; offscreen = $current.IsOffscreen; bounds = [ordered]@{ x = $rect.X; y = $rect.Y; width = $rect.Width; height = $rect.Height } }
+  $bounds = Get-FiniteUiBounds $rect
+  $controlType = ''
+  if ($null -ne $current.ControlType) { $controlType = [string]$current.ControlType.ProgrammaticName }
+  return [ordered]@{ name = [string]$current.Name; automation_id = [string]$current.AutomationId; control_type = $controlType; class_name = [string]$current.ClassName; enabled = [bool]$current.IsEnabled; offscreen = [bool]$current.IsOffscreen; bounds = $bounds }
+}
+
+function Invoke-UiPointerClick {
+  param([object]$Element)
+  $current = $Element.Current
+  if ([bool]$current.IsOffscreen) { throw 'UI element is off-screen' }
+  $bounds = Get-FiniteUiBounds $current.BoundingRectangle
+  if ($null -eq $bounds -or $bounds.width -le 0 -or $bounds.height -le 0) { throw 'UI element does not have clickable bounds' }
+  $x = [int][Math]::Round($bounds.x + ($bounds.width / 2.0))
+  $y = [int][Math]::Round($bounds.y + ($bounds.height / 2.0))
+  if (-not [LnwjudNative]::SetCursorPos($x, $y)) { throw 'Pointer could not be moved to the UI element' }
+  [LnwjudNative]::MouseButton(0x2)
+  [LnwjudNative]::MouseButton(0x4)
+  return [ordered]@{ x = $x; y = $y }
+}
+
+function Test-UiWindowSelector {
+  param([object]$Parameters)
+  if ($null -eq $Parameters) { return $false }
+  foreach ($name in @('hwnd', 'title', 'process_name', 'window_index')) {
+    $value = Get-Field $Parameters $name
+    if ($null -ne $value) {
+      if ($value -isnot [string] -or $value.Length -gt 0) { return $true }
+    }
+  }
+  return $false
 }
 
 function Get-UiRoot {
   param([object]$Parameters)
+  if (-not (Test-UiWindowSelector $Parameters)) {
+    return [System.Windows.Automation.AutomationElement]::RootElement
+  }
   $window = Resolve-Window $Parameters
   if ($null -eq $window) { throw 'Window not found' }
   return [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]([int64]$window.hwnd))
@@ -184,14 +250,22 @@ function Get-UiRoot {
 
 function Add-UiTree {
   param([object]$Element, [System.Collections.Generic.List[object]]$Items, [int]$Depth, [int]$MaxDepth, [int]$MaxItems)
-  if ($Items.Count -ge $MaxItems) { return }
-  $Items.Add([ordered]@{ depth = $Depth; element = Get-ElementRecord $Element })
-  if ($Depth -ge $MaxDepth) { return }
+  if ($null -eq $Element -or $Items.Count -ge $MaxItems) { return }
+  try {
+    $record = Get-ElementRecord $Element
+    [void]$Items.Add([ordered]@{ depth = $Depth; element = $record })
+  } catch {
+    # UI Automation trees are live. A control can disappear between sibling
+    # enumeration and property reads; skip only that stale element instead of
+    # failing the entire observation.
+  }
+  if ($Depth -ge $MaxDepth -or $Items.Count -ge $MaxItems) { return }
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-  $child = $walker.GetFirstChild($Element)
+  try { $child = $walker.GetFirstChild($Element) } catch { return }
   while ($null -ne $child -and $Items.Count -lt $MaxItems) {
-    Add-UiTree $child $Items ($Depth + 1) $MaxDepth $MaxItems
-    $child = $walker.GetNextSibling($child)
+    $currentChild = $child
+    try { $child = $walker.GetNextSibling($currentChild) } catch { $child = $null }
+    Add-UiTree $currentChild $Items ($Depth + 1) $MaxDepth $MaxItems
   }
 }
 
@@ -224,26 +298,74 @@ function Invoke-AccessibilityAction {
     return [ordered]@{ started = $true; executable = $executable }
   }
   if ($Action -eq 'activate_app') { return Invoke-WindowAction 'activate' $Parameters }
-  if ($Action -in @('close_window', 'minimize_window', 'maximize_window', 'restore_window', 'set_window_frame')) { return Invoke-WindowAction ($Action -replace '_window', '') $Parameters }
+  if ($Action -eq 'set_window_frame') { return Invoke-WindowAction 'set_window_frame' $Parameters }
+  if ($Action -in @('close_window', 'minimize_window', 'maximize_window', 'restore_window')) { return Invoke-WindowAction ($Action -replace '_window', '') $Parameters }
   if (-not (Load-UiAutomation)) { throw 'Microsoft UI Automation is unavailable' }
   $root = Get-UiRoot $Parameters
   if ($Action -in @('observe', 'observe_summary', 'observe_changes', 'inspect_elements')) {
     $items = New-Object 'System.Collections.Generic.List[object]'
-    $maxDepth = [int](Get-Field $Parameters 'max_depth'); if ($maxDepth -le 0) { $maxDepth = 4 }
-    $maxItems = [int](Get-Field $Parameters 'max_items'); if ($maxItems -le 0) { $maxItems = 200 }
+    $maxDepthValue = Get-Field $Parameters 'max_depth'
+    $maxDepth = if ($null -eq $maxDepthValue) { 4 } else { [Math]::Max(0, [int]$maxDepthValue) }
+    $maxItemsValue = Get-Field $Parameters 'max_items'
+    $maxItems = if ($null -eq $maxItemsValue -or [int]$maxItemsValue -le 0) { 200 } else { [int]$maxItemsValue }
     Add-UiTree $root $items 0 $maxDepth $maxItems
-    return [ordered]@{ elements = @($items); count = $items.Count }
+    # Windows PowerShell 5.1 throws "Argument types do not match" when the
+    # array-subexpression operator wraps List[object]. ToArray() is stable on
+    # both Windows 10 and Windows 11 and keeps the JSON shape deterministic.
+    return [ordered]@{ elements = $items.ToArray(); count = $items.Count }
   }
   $element = Find-UiElement $root $Parameters
   if ($null -eq $element) { throw 'UI element was not found' }
   switch ($Action) {
     'find_element' { return [ordered]@{ element = Get-ElementRecord $element } }
     'focus' { [void]$element.SetFocus(); return [ordered]@{ focused = $true; element = Get-ElementRecord $element } }
-    'click' { $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern); $pattern.Invoke(); return [ordered]@{ clicked = $true; element = Get-ElementRecord $element } }
+    'click' {
+      $method = 'invoke_pattern'
+      try {
+        $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $pattern.Invoke()
+      } catch {
+        [void](Invoke-UiPointerClick $element)
+        $method = 'pointer_fallback'
+      }
+      return [ordered]@{ clicked = $true; method = $method; element = Get-ElementRecord $element }
+    }
     'read_value' { try { $pattern = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern); return [ordered]@{ value = $pattern.Current.Value } } catch { return [ordered]@{ value = $element.Current.Name } } }
     'set_value' { $pattern = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern); $pattern.SetValue([string](Get-Field $Parameters 'value')); return [ordered]@{ set = $true; value = [string](Get-Field $Parameters 'value') } }
-    'select_item' { $pattern = $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern); $pattern.Select(); return [ordered]@{ selected = $true; element = Get-ElementRecord $element } }
-    'menu_select' { $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern); $pattern.Invoke(); return [ordered]@{ selected = $true; element = Get-ElementRecord $element } }
+    'select_item' {
+      $method = 'selection_item_pattern'
+      try {
+        $pattern = $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+        $pattern.Select()
+      } catch {
+        try {
+          $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+          $pattern.Invoke()
+          $method = 'invoke_pattern'
+        } catch {
+          [void](Invoke-UiPointerClick $element)
+          $method = 'pointer_fallback'
+        }
+      }
+      return [ordered]@{ selected = $true; method = $method; element = Get-ElementRecord $element }
+    }
+    'menu_select' {
+      $method = 'invoke_pattern'
+      try {
+        $pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $pattern.Invoke()
+      } catch {
+        try {
+          $pattern = $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+          $pattern.Select()
+          $method = 'selection_item_pattern'
+        } catch {
+          [void](Invoke-UiPointerClick $element)
+          $method = 'pointer_fallback'
+        }
+      }
+      return [ordered]@{ selected = $true; method = $method; element = Get-ElementRecord $element }
+    }
     default { throw "Unsupported accessibility action: $Action" }
   }
 }
@@ -345,6 +467,8 @@ function Invoke-VisionAction {
       $window = Resolve-Window (Get-Field $Parameters 'app')
     }
     if ($null -eq $window) { throw 'Window not found' }
+    if ([bool]$window.minimized) { throw 'Window is minimized; restore it before capture' }
+    if (-not [bool]$window.visible) { throw 'Window is not visible; activate or restore it before capture' }
     $x = [int]$window.bounds.x; $y = [int]$window.bounds.y; $width = [int]$window.bounds.width; $height = [int]$window.bounds.height
   } else { throw "Unsupported vision action: $Action" }
   if ($width -lt 1 -or $height -lt 1 -or $width -gt 10000 -or $height -gt 10000) { throw 'Capture bounds are invalid' }
@@ -851,5 +975,14 @@ try {
   $result = Success $value
   Write-Output ($result | ConvertTo-Json -Compress -Depth 50)
 } catch {
-  Write-Output ((Failure 'INTERNAL_ERROR' 'Windows native capability failed' $true) | ConvertTo-Json -Compress -Depth 50)
+  $failureMessage = 'Windows native capability failed'
+  try {
+    $detail = [string]$_.Exception.Message
+    if (-not [string]::IsNullOrWhiteSpace($detail)) {
+      $detail = ($detail -replace '[\r\n]+', ' ').Trim()
+      if ($detail.Length -gt 1000) { $detail = $detail.Substring(0, 1000) }
+      $failureMessage = $failureMessage + ': ' + $detail
+    }
+  } catch { }
+  Write-Output ((Failure 'INTERNAL_ERROR' $failureMessage $true) | ConvertTo-Json -Compress -Depth 50)
 }

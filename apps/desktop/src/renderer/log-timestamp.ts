@@ -1,11 +1,9 @@
+import { formatDateTime } from './date-time.js';
+
 export function formatLogUiTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleTimeString();
+  return formatDateTime(value, value);
 }
 
 export function formatLogExportDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+  return formatDateTime(value, value);
 }

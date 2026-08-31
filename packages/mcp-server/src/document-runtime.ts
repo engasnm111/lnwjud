@@ -2,7 +2,15 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  ok,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
@@ -41,14 +49,14 @@ export class DocumentRuntimeService {
     this.pdfRunner = options.pdfRunner ?? runPdfProvider;
   }
 
-  public async extractTables(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async extractTables(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const file = readString(input.file_path ?? input.path ?? input.file);
     if (file === undefined) return err(appError('INVALID_INPUT', 'pdf tools require file_path'));
     const workspaceId = readString(input.workspaceId);
     if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'pdf tools require workspaceId'));
     const provider = this.resolveProvider();
     if (provider === null) return unavailable('pdf_extract_tables', 'no local PDF provider', ['local PDF provider', 'bounded document size']);
-    const target = await this.boundedFile(workspaceId, file);
+    const target = await this.boundedFile(workspaceId, file, authorization);
     if (!target.ok) return target;
 
     const layout = await this.pdfRunner(provider, ['-layout', target.value, '-'], signal);
@@ -64,19 +72,31 @@ export class DocumentRuntimeService {
     });
   }
 
-  public async inspectPdf(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
-    const result = await this.extractTables(input, signal);
+  public async inspectPdf(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    const result = await this.extractTables(input, signal, authorization);
     if (!result.ok) {
       const payload = result as { error?: { message?: string } };
       if (result.error?.code === 'INVALID_INPUT' || result.error?.code === 'PATH_OUTSIDE_WORKSPACE' || result.error?.code === 'FILE_NOT_FOUND') return result;
       return ok({
-        tool: 'inspect_pdf', status: 'optional', available: false, executed: false,
+        tool: 'inspect_pdf', status: 'needs_setup', available: false, ready: false, executed: false,
         reason: payload.error?.message ?? 'PDF provider unavailable',
         requirements: ['local PDF provider'],
         primitiveFallbacks: ['read_file', 'search_text'],
       });
     }
-    const value = result.value as { workspaceId: string; file: string; text: string; truncated: boolean };
+    const raw = result.value as { workspaceId?: unknown; file?: unknown; text?: unknown; truncated?: unknown; available?: unknown; status?: unknown; requirements?: unknown; reason?: unknown };
+    if (raw.available === false) {
+      return ok({
+        tool: 'inspect_pdf', status: raw.status === 'unsupported' ? 'unsupported' : 'needs_setup', available: false, ready: false, executed: false,
+        reason: typeof raw.reason === 'string' ? raw.reason : 'PDF provider unavailable',
+        requirements: Array.isArray(raw.requirements) ? raw.requirements : ['local PDF provider'],
+        primitiveFallbacks: ['read_file', 'search_text'],
+      });
+    }
+    if (typeof raw.workspaceId !== 'string' || typeof raw.file !== 'string' || typeof raw.text !== 'string') {
+      return err(appError('INTERNAL_ERROR', 'PDF provider returned an unexpected success shape', true));
+    }
+    const value = { workspaceId: raw.workspaceId, file: raw.file, text: raw.text, truncated: raw.truncated === true };
     const pages = Math.max(1, (value.text.match(/\f/g) ?? []).length);
     return ok({
       tool: 'inspect_pdf', status: 'ready', available: true,
@@ -86,7 +106,7 @@ export class DocumentRuntimeService {
     });
   }
 
-  public async inspectWorkbook(input: Record<string, unknown>): Promise<Result<unknown>> {
+  public async inspectWorkbook(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const file = readString(input.file_path ?? input.path ?? input.file);
     const workspaceId = readString(input.workspaceId);
     if (file === undefined || workspaceId === undefined) return err(appError('INVALID_INPUT', 'inspect_workbook requires workspaceId and file_path'));
@@ -94,14 +114,14 @@ export class DocumentRuntimeService {
     if (capabilities === undefined) {
       return unavailable('inspect_workbook', 'Office capability is not configured', ['local Excel provider (Office installation)']);
     }
-    const target = await this.boundedFile(workspaceId, file);
+    const target = await this.boundedFile(workspaceId, file, authorization);
     if (!target.ok) return target;
 
-    const sheetsResult = await capabilities.execute('office', { app: 'excel', action: 'sheets', file_path: target.value });
+    const sheetsResult = await capabilities.execute('office', { app: 'excel', action: 'sheets', file_path: target.value }, undefined, authorization);
     if (!sheetsResult.ok) return sheetsResult;
     const sheets = (sheetsResult.value as { sheets?: unknown }).sheets;
     if (!Array.isArray(sheets)) return err(appError('INTERNAL_ERROR', 'Workbook sheet listing returned an unexpected shape', true));
-    const sample = await capabilities.execute('office', { app: 'excel', action: 'read', file_path: target.value, range: 'A1:C8' });
+    const sample = await capabilities.execute('office', { app: 'excel', action: 'read', file_path: target.value, range: 'A1:C8' }, undefined, authorization);
     const sampleValues = sample.ok && typeof (sample.value as { values?: unknown }).values !== 'undefined'
       ? (sample.value as { values: unknown }).values
       : undefined;
@@ -115,7 +135,7 @@ export class DocumentRuntimeService {
     });
   }
 
-  public async docxMerge(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async docxMerge(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const workspaceId = readString(input.workspaceId);
     const primary = readString(input.file_path ?? input.primary);
     const target = readString(input.target_path ?? input.target);
@@ -124,15 +144,15 @@ export class DocumentRuntimeService {
       return err(appError('INVALID_INPUT', 'docx_merge requires workspaceId, file_path, merge_paths, and target_path'));
     }
 
-    const resolvedPrimary = await this.resolveWorkspacePath(workspaceId, primary, true);
+    const resolvedPrimary = await this.resolveWorkspacePath(workspaceId, primary, true, authorization);
     if (!resolvedPrimary.ok) return resolvedPrimary;
     const resolvedMergePaths: string[] = [];
     for (const mergePath of mergePaths) {
-      const resolved = await this.resolveWorkspacePath(workspaceId, mergePath, true);
+      const resolved = await this.resolveWorkspacePath(workspaceId, mergePath, true, authorization);
       if (!resolved.ok) return resolved;
       resolvedMergePaths.push(resolved.value);
     }
-    const resolvedTarget = await this.resolveWorkspacePath(workspaceId, target, false);
+    const resolvedTarget = await this.resolveWorkspacePath(workspaceId, target, false, authorization);
     if (!resolvedTarget.ok) return resolvedTarget;
 
     const plan = {
@@ -142,7 +162,7 @@ export class DocumentRuntimeService {
       provider: 'Word COM',
     };
     if (input.dryRun !== false && input.dry_run !== false) return ok({ ...plan, dryRun: true, applied: false });
-    if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'docx_merge requires explicit chat confirmation. Ask the user first, then retry with userConfirmed: true'));
+    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'docx_merge requires explicit chat confirmation. Ask the user first, then retry with userConfirmed: true'));
 
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return unavailable('docx_merge', 'Office capability is not configured', ['local DOCX provider (Word installation)', 'edit approval']);
@@ -151,8 +171,8 @@ export class DocumentRuntimeService {
     const prepared = await fileSafety.prepareExternalFileMutation(this.actor, workspaceId, {
       sourcePaths: [resolvedPrimary.value, ...resolvedMergePaths],
       targetPath: resolvedTarget.value,
-      userConfirmed: true,
-    }, signal);
+      ...(input.userConfirmed === true ? { userConfirmed: true } : {}),
+    }, signal, authorization);
     if (!prepared.ok) return prepared;
     const merged = await capabilities.execute('office', {
       app: 'word',
@@ -160,8 +180,8 @@ export class DocumentRuntimeService {
       file_path: prepared.value.sourcePaths[0],
       merge_paths: prepared.value.sourcePaths.slice(1),
       target_path: prepared.value.targetPath,
-      userConfirmed: true,
-    }, signal);
+      ...(input.userConfirmed === true ? { userConfirmed: true } : {}),
+    }, signal, authorization);
     if (!merged.ok) return withReplacementRecoveryDetails(merged, prepared.value.replacementBackup);
     return ok({
       ...plan,
@@ -196,8 +216,8 @@ export class DocumentRuntimeService {
     return null;
   }
 
-  private async boundedFile(workspaceId: string, requested: string): Promise<Result<string>> {
-    const resolved = await this.resolveWorkspacePath(workspaceId, requested, true);
+  private async boundedFile(workspaceId: string, requested: string, authorization?: InvocationAuthorization): Promise<Result<string>> {
+    const resolved = await this.resolveWorkspacePath(workspaceId, requested, true, authorization);
     if (!resolved.ok) return resolved;
     const size = await stat(resolved.value);
     if (!size.isFile()) return err(appError('INVALID_INPUT', 'Document target must be a file'));
@@ -205,7 +225,7 @@ export class DocumentRuntimeService {
     return resolved;
   }
 
-  private async resolveWorkspacePath(workspaceId: string, requested: string, mustExist: boolean): Promise<Result<string>> {
+  private async resolveWorkspacePath(workspaceId: string, requested: string, mustExist: boolean, authorization?: InvocationAuthorization): Promise<Result<string>> {
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
     let canonicalRoot: string;
@@ -217,13 +237,15 @@ export class DocumentRuntimeService {
     // Windows can expose the same physical location under an 8.3 short path
     // while realpath() returns the long spelling. Do not make a lexical
     // containment decision until the candidate (or its parent) is canonical.
-    const candidate = path.isAbsolute(requested) ? path.normalize(requested) : path.join(canonicalRoot, requested);
+    const absoluteRequest = path.isAbsolute(requested);
+    const candidate = absoluteRequest ? path.normalize(requested) : path.join(canonicalRoot, requested);
+    const allowOutsideAbsolute = absoluteRequest && isFullBypassAuthorization(authorization);
 
     if (mustExist) {
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `File was not found: ${candidate}`));
       try {
         const canonical = path.normalize(await realpath(candidate));
-        return isWithin(canonicalRoot, canonical)
+        return allowOutsideAbsolute || isWithin(canonicalRoot, canonical)
           ? ok(canonical)
           : err(appError('PATH_OUTSIDE_WORKSPACE', `Document path resolves outside the registered workspace: ${requested}`));
       } catch {
@@ -234,7 +256,7 @@ export class DocumentRuntimeService {
     const parent = path.dirname(candidate);
     try {
       const canonicalParent = path.normalize(await realpath(parent));
-      if (!isWithin(canonicalRoot, canonicalParent)) return err(appError('PATH_OUTSIDE_WORKSPACE', `Document target resolves outside the registered workspace: ${requested}`));
+      if (!allowOutsideAbsolute && !isWithin(canonicalRoot, canonicalParent)) return err(appError('PATH_OUTSIDE_WORKSPACE', `Document target resolves outside the registered workspace: ${requested}`));
       return ok(path.join(canonicalParent, path.basename(candidate)));
     } catch {
       return err(appError('FILE_NOT_FOUND', `Document target parent was not found: ${parent}`));
@@ -299,7 +321,7 @@ function runPdfProvider(provider: string, args: readonly string[], signal?: Abor
 
 function unavailable(tool: string, reason: string, requirements: readonly string[]): Result<unknown> {
   return ok({
-    tool, status: 'optional', available: false, ready: false, executed: false,
+    tool, status: 'needs_setup', available: false, ready: false, executed: false,
     reason, requirements,
     primitiveFallbacks: ['read_file', 'search_text', 'workspace_tree'],
   });

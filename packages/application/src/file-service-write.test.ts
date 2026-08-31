@@ -45,6 +45,31 @@ function checkpointService(): CheckpointServicePort & { calls: string[][] } {
 }
 
 describe('FileService writes', () => {
+  it('uses Full Bypass for exact outside-workspace file operations without inventing recovery evidence', async () => {
+    const workspace = await createWorkspace();
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-file-outside-'));
+    temporaryRoots.push(outsideRoot);
+    const outsideRealRoot = await realpath(outsideRoot);
+    const outsideFile = path.join(outsideRealRoot, 'proof.txt');
+    const checkpoints = checkpointService();
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      checkpointService: checkpoints,
+      profile: permissionProfiles.balanced,
+      recoverableDelete: (): boolean => true,
+      recoveryTrashRoot: path.join(workspace.rootPath, 'recovery'),
+    });
+    const authorization = { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' } as const;
+
+    await expect(service.writeFile(actor, workspace.id, { path: outsideFile, content: 'outside' }, undefined, authorization))
+      .resolves.toMatchObject({ ok: true, value: { path: outsideFile } });
+    await expect(service.readFile(actor, workspace.id, { path: outsideFile }, authorization))
+      .resolves.toMatchObject({ ok: true, value: { path: outsideFile, content: 'outside' } });
+    await expect(service.deleteFile(actor, workspace.id, { path: outsideFile }, undefined, authorization))
+      .resolves.toMatchObject({ ok: true, value: { path: outsideFile, recoverable: false } });
+    expect(checkpoints.calls).toEqual([]);
+    await expect(readFile(outsideFile, 'utf8')).rejects.toThrow();
+  });
+
   it('does not write after cancellation wins during checkpoint creation', async () => {
     const workspace = await createWorkspace();
     const target = path.join(workspace.rootPath, 'src', 'file.txt');

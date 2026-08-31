@@ -1,4 +1,4 @@
-import type { Result } from '@lnwjud/domain';
+import type { InvocationAuthorization, Result } from '@lnwjud/domain';
 
 export const capabilityToolNames = Object.freeze([
   'shell',
@@ -26,7 +26,7 @@ export type CapabilityToolName = (typeof capabilityToolNames)[number];
 export { prohibitedAgentCommandReason } from './agent-command-policy.js';
 
 export interface CapabilityService {
-  execute(tool: CapabilityToolName, input: unknown, signal?: AbortSignal): Promise<Result<unknown>>;
+  execute(tool: CapabilityToolName, input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>>;
 }
 
 export { LocalCapabilityService, type CapabilityBackend, type LocalCapabilityBackends } from './local-capability-service.js';

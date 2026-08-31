@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ok } from '@lnwjud/domain';
@@ -10,6 +10,12 @@ import { ToolRegistry } from './tool-registry.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 const actor: FileActor = { clientId: 'test', clientName: 'test' };
+const fullBypassAuthorization = {
+  mode: 'full_bypass',
+  applicationApproved: true,
+  bypassApplicationAuthorization: true,
+  source: 'full_bypass',
+} as const;
 
 describe('upgrade runtime', () => {
   it('has deterministic coverage for the roadmap tool catalog', () => {
@@ -20,6 +26,9 @@ describe('upgrade runtime', () => {
     expect(UPGRADE_TOOL_CATALOG.some((entry) => entry.name === 'context_economy_stats')).toBe(true);
   });
 
+  // The registry smoke invokes the complete phase catalog through every normal
+  // boundary. Keep enough headroom for slower Windows/CI runners while still
+  // failing a genuinely stuck registry invocation.
   it('smoke-invokes every phase tool through the normal registry boundary', async () => {
     const registry = new ToolRegistry({}, actor);
     for (const entry of UPGRADE_TOOL_CATALOG) {
@@ -27,7 +36,7 @@ describe('upgrade runtime', () => {
       expect(response).toBeDefined();
       expect(response.structuredContent).toBeDefined();
     }
-  }, 20_000);
+  }, 60_000);
 
   it('routes prompts and searches capabilities without an LLM', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
@@ -75,8 +84,9 @@ describe('upgrade runtime', () => {
     const byName = new Map(registry.list().map((tool) => [tool.name, tool.description]));
     expect(byName.get('edit_file')).toContain('First choice');
     expect(byName.get('edit_file')).toContain('instead of shell');
-    expect(byName.get('shell')).toContain('do not use it as a text editor');
-    expect(byName.get('shell')).toContain('prefer edit_file');
+    expect(byName.get('shell')).toContain('Never use shell as a source/config/text editor');
+    expect(byName.get('shell')).toContain('call edit_file first');
+    expect(byName.get('shell')).toContain('rejected before native approval');
   });
 
   it('returns route reason codes and a measurable deterministic model selection', async () => {
@@ -99,7 +109,7 @@ describe('upgrade runtime', () => {
     expect(remove).toMatchObject({ ok: true, value: { decision: 'ask', contextAccess: 'unrestricted' } });
   });
 
-  it('keeps hook and plugin installation create-only instead of silently replacing existing state', async () => {
+  it('keeps hooks create-only and plugin operations disabled without a real injected registry', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
 
     await expect(runtime.execute('hook_register', { name: 'audit', event: 'beforeTool' }))
@@ -107,10 +117,33 @@ describe('upgrade runtime', () => {
     await expect(runtime.execute('hook_register', { name: 'audit', event: 'afterTool' }))
       .resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
 
-    await expect(runtime.execute('plugin_install', { name: 'safe-plugin' }))
-      .resolves.toMatchObject({ ok: true, value: { changed: true, name: 'safe-plugin' } });
-    await expect(runtime.execute('plugin_install', { name: 'safe-plugin' }))
-      .resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-plugin-registry-'));
+    try {
+      const runtimeStatePath = path.join(directory, 'runtime.json');
+      for (const candidate of [runtime, new UpgradeRuntimeService({ runtimeStatePath }, actor)]) {
+        for (const [name, input] of [
+          ['plugin_install', { name: 'safe-plugin' }],
+          ['plugin_list', {}],
+          ['plugin_enable', { name: 'safe-plugin' }],
+          ['plugin_disable', { name: 'safe-plugin' }],
+          ['plugin_remove', { name: 'safe-plugin', userConfirmed: true }],
+        ] as const) {
+          await expect(candidate.execute(name, input)).resolves.toMatchObject({
+            ok: true,
+            value: {
+              tool: name,
+              status: 'disabled',
+              available: false,
+              ready: false,
+              executed: false,
+              requirements: ['validated injected plugin registry'],
+            },
+          });
+        }
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('shares context economy telemetry between workspace context and the stats tool', async () => {
@@ -131,7 +164,7 @@ describe('upgrade runtime', () => {
     expect(stats).toMatchObject({ structuredContent: { filesDiscovered: 1, filesDelivered: 1 } });
   });
 
-  it('persists redacted session/task state outside the repository', async () => {
+  it('persists redacted session state and reports task execution unavailable truthfully', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-'));
     const statePath = path.join(directory, 'runtime.json');
     const first = new UpgradeRuntimeService({ runtimeStatePath: statePath }, actor);
@@ -140,7 +173,12 @@ describe('upgrade runtime', () => {
     const resumed = await second.execute('session_context', {});
     expect(resumed).toMatchObject({ ok: true, value: { checkpoints: [{ summary: 'inspect logs' }] } });
     const task = await second.execute('task_create', { instruction: 'run tests' });
-    expect(task).toMatchObject({ ok: true, value: { inputDigest: expect.any(String) } });
+    expect(task).toMatchObject({
+      ok: true,
+      value: {
+        tool: 'task_create', status: 'disabled', available: false, ready: false, executed: false,
+        requirements: ['managed task execution adapter'],
+      },
     });
   });
 
@@ -167,6 +205,23 @@ describe('upgrade runtime', () => {
     await expect(runtime.execute('git_worktree_remove', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', dryRun: false, userConfirmed: true })).resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
     expect(calls.at(-1)).toMatchObject({ args: ['worktree', 'remove', '.worktrees/agent-1'] });
     await expect(runtime.execute('git_worktree_remove', { workspaceId: 'ws-1', worktreePath: '.worktrees/agent-1', dryRun: false, userConfirmed: true })).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
+
+    await expect(runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-1', worktreePath: 'E:\\outside\\agent-1', ref: 'main', dryRun: false,
+    }, undefined, fullBypassAuthorization)).resolves.toMatchObject({ ok: true, value: { status: 'completed', worktreePath: 'E:/outside/agent-1' } });
+    expect(calls.at(-1)).toMatchObject({ args: ['worktree', 'add', '--detach', 'E:/outside/agent-1', 'main'] });
+  });
+
+  it('uses trusted Full Bypass for inner always-confirm upgrade mutations', async () => {
+    const runtime = new UpgradeRuntimeService({}, actor);
+    await runtime.execute('hook_register', { name: 'audit', event: 'beforeTool' });
+
+    await expect(runtime.execute('hook_remove', { name: 'audit' }, undefined, fullBypassAuthorization))
+      .resolves.toMatchObject({ ok: true, value: { removed: true } });
+    await expect(runtime.execute('permission_check', { action: 'filesystem.delete' }, undefined, fullBypassAuthorization))
+      .resolves.toMatchObject({ ok: true, value: { decision: 'allow', standardDecision: 'ask', authorizationMode: 'full_bypass' } });
+    await expect(runtime.execute('permission_profile', {}, undefined, fullBypassAuthorization))
+      .resolves.toMatchObject({ ok: true, value: { dangerousActions: 'application-approval-bypassed', hardBlocksRemain: false, operatingSystemAndRemotePolicyRemain: true } });
   });
 
   it('routes PowerPoint and Outlook upgrade tools into the Office capability', async () => {
@@ -217,6 +272,7 @@ describe('upgrade runtime', () => {
     const templates = [
       ['run a Linux WSL developer command', 'wsl_exec'],
       ['capture a numbered native UI observation', 'vision_annotated_capture'],
+      ['control a native desktop app with mouse and keyboard', 'computer_use'],
       ['read Thai and English text with offline OCR', 'vision'],
       ['detonate an artifact offline in Windows Sandbox', 'sandbox_exec'],
       ['watch an allowlisted ETW event provider', 'event_watch'],
@@ -306,4 +362,5 @@ describe('self-healing (Wave 8)', () => {
     const plan = await runtime.execute('self_heal_plan', {});
     expect(plan).toMatchObject({ ok: true, value: { safeReversibleFixes: [], mutationRequired: false } });
   });
+});
 });

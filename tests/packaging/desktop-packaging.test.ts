@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,12 +7,33 @@ import { describe, expect, it } from 'vitest';
 const desktopRoot = path.resolve(import.meta.dirname, '..', '..', 'apps', 'desktop');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
 
-describe('desktop packaging', () => {
-  it('pins the product release to v4.12.0', async () => {
+describe('Windows desktop packaging', () => {
+  it('pins the product release to v4.31.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('4.12.0');
-    expect(desktopPackage.version).toBe('4.12.0');
+    expect(rootPackage.version).toBe('4.31.0');
+    expect(desktopPackage.version).toBe('4.31.0');
+  });
+
+  it('keeps every workspace package and runtime version aligned', async () => {
+    const packageDirectories = [
+      path.join(repositoryRoot, 'apps'),
+      path.join(repositoryRoot, 'packages'),
+    ];
+    const packagePaths = [path.join(repositoryRoot, 'package.json')];
+    for (const directory of packageDirectories) {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) packagePaths.push(path.join(directory, entry.name, 'package.json'));
+      }
+    }
+    for (const packagePath of packagePaths) {
+      const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
+      expect(packageJson.version, packagePath).toBe('4.31.0');
+    }
+    const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
+    const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
+    expect(ipcContracts).toContain("APP_VERSION = '4.31.0'");
+    expect(shared).toContain("APP_VERSION = '4.31.0'");
   });
 
   it('publishes complete desktop application metadata', async () => {
@@ -23,7 +44,7 @@ describe('desktop packaging', () => {
       repository?: { type?: unknown; url?: unknown };
     };
 
-    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway for macOS and Windows with 223 configurable tools.');
+    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway for macOS and Windows with 231 total tool definitions.');
     expect(desktopPackage.author).toBe('Adisorn');
     expect(desktopPackage.homepage).toBe('https://github.com/engasnm111/lnwjud#readme');
     expect(desktopPackage.repository).toEqual({ type: 'git', url: 'https://github.com/engasnm111/lnwjud.git' });
@@ -61,6 +82,9 @@ describe('desktop packaging', () => {
     expect(config).toContain('to: lnwjud-node.exe');
     expect(config).toContain('build/runtime-tools');
     expect(config).toContain('to: runtime-tools');
+    expect(config).toContain('from: ../../.agents/skills/lnwjud-scheduled-continuation');
+    expect(config).toContain('to: agent-skills/lnwjud-scheduled-continuation');
+    await access(path.join(repositoryRoot, '.agents', 'skills', 'lnwjud-scheduled-continuation', 'SKILL.md'));
     expect(desktopPackage.scripts?.['package:windows']).toContain('prepare-ripgrep.ps1');
     expect(desktopPackage.scripts?.['package:windows']).toContain('../../scripts/prepare-windows-ocr.ps1');
     const prepareOcr = await readFile(path.join(repositoryRoot, 'scripts', 'prepare-windows-ocr.ps1'), 'utf8');
@@ -162,12 +186,17 @@ describe('desktop packaging', () => {
 
   it('pins and verifies the official Windows x64 ripgrep runtime used by packaged search', async () => {
     const prepareRipgrep = await readFile(path.join(desktopRoot, 'scripts', 'prepare-ripgrep.ps1'), 'utf8');
+    const prepareTunnel = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.ps1'), 'utf8');
     expect(prepareRipgrep).toContain("$version = '15.2.0'");
     expect(prepareRipgrep).toContain('ripgrep-$version-x86_64-pc-windows-msvc.zip');
     expect(prepareRipgrep).toContain("$expectedSha256 = '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'");
     expect(prepareRipgrep).toContain("'runtime-tools\\ripgrep'");
     expect(prepareRipgrep).toContain("'BUNDLED_RIPGREP.txt'");
     expect(prepareRipgrep).toContain("-Filter 'rg.exe'");
+    for (const script of [prepareRipgrep, prepareTunnel]) {
+      expect(script).toContain('[System.Security.Cryptography.SHA256]::Create()');
+      expect(script).not.toContain('Get-FileHash');
+    }
   });
 
   it.skipIf(process.platform !== 'win32')('runs the stdio launcher with the bundled Node runtime even when PATH contains no system Node', async () => {

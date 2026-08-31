@@ -21,7 +21,7 @@ export interface WorkspaceInfo {
 }
 
 export interface RegisterWorkspaceRequest {
-  readonly parentWorkspaceId: string;
+  readonly parentWorkspaceId?: string;
   readonly path: string;
   readonly displayName?: string;
 }
@@ -66,20 +66,28 @@ export class WorkspaceInfoService {
       return err(appError('INTERNAL_ERROR', 'Workspace registration is unavailable'));
     }
 
-    const parent = await this.workspaces.get(request.parentWorkspaceId);
-    if (parent === null) {
-      return err(appError('WORKSPACE_NOT_FOUND', 'Parent workspace was not found'));
-    }
-    if (!isDriveRoot(parent.realRootPath) && !isDriveRoot(parent.rootPath)) {
-      return err(appError('INVALID_INPUT', 'parentWorkspaceId must be a drive-root machine root'));
-    }
+    let absolutePath: string;
+    if (request.parentWorkspaceId === undefined) {
+      if (!path.isAbsolute(request.path)) {
+        return err(appError('INVALID_INPUT', 'path must be absolute when parentWorkspaceId is omitted'));
+      }
+      absolutePath = path.resolve(request.path);
+    } else {
+      const parent = await this.workspaces.get(request.parentWorkspaceId);
+      if (parent === null) {
+        return err(appError('WORKSPACE_NOT_FOUND', 'Parent workspace was not found'));
+      }
+      if (!isDriveRoot(parent.realRootPath) && !isDriveRoot(parent.rootPath)) {
+        return err(appError('INVALID_INPUT', 'parentWorkspaceId must be a drive-root machine root'));
+      }
 
-    const absolutePath = path.isAbsolute(request.path)
-      ? path.resolve(request.path)
-      : path.resolve(parent.rootPath, request.path);
-    const parentRoot = path.resolve(parent.realRootPath || parent.rootPath);
-    if (!isWithin(parentRoot, absolutePath)) {
-      return err(appError('INVALID_INPUT', 'Registered path must be under its parent machine root'));
+      absolutePath = path.isAbsolute(request.path)
+        ? path.resolve(request.path)
+        : path.resolve(parent.rootPath, request.path);
+      const parentRoot = path.resolve(parent.realRootPath || parent.rootPath);
+      if (!isWithin(parentRoot, absolutePath)) {
+        return err(appError('INVALID_INPUT', 'Registered path must be under its parent machine root'));
+      }
     }
 
     const existing = await this.workspaces.list();

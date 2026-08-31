@@ -43,7 +43,9 @@ export class DoctorService {
       { id: 'database', required: true, probe: () => this.probes.database() },
       { id: 'git', required: false, probe: () => this.probes.git() },
       { id: 'ripgrep', required: true, probe: () => this.probes.ripgrep() },
-      { id: 'workspaces', required: true, probe: () => this.probes.workspaces() },
+      // A clean profile has no project yet. Keep that state visible in Doctor,
+      // but never make the recovery action itself a startup prerequisite.
+      { id: 'workspaces', required: false, probe: () => this.probes.workspaces() },
       { id: 'mcp-port', required: true, probe: () => this.probes.mcpPort() },
       { id: 'codex', required: false, probe: () => this.probes.codex() },
     ];

@@ -5,7 +5,15 @@ import { AUDIT_MIGRATION_SQL } from './migrations/audit-migration.js';
 import { AUDIT_SCOPE_MIGRATION_SQL } from './migrations/audit-scope-migration.js';
 import { CHECKPOINT_MIGRATION_SQL } from './migrations/checkpoint-migration.js';
 import { GOAL_CONTINUATION_MIGRATION_SQL } from './migrations/goal-continuation-migration.js';
+import { GOAL_CANCELLATION_MIGRATION_SQL } from './migrations/goal-cancellation-migration.js';
+import { GOAL_TRACKED_TASKS_MIGRATION_SQL } from './migrations/goal-tracked-tasks-migration.js';
+import { GOAL_LEASE_REPAIR_MIGRATION_SQL } from './migrations/goal-lease-repair-migration.js';
+import { GOAL_LIVE_CONTINUATION_LEASE_QUARANTINE_MIGRATION_SQL } from './migrations/goal-live-continuation-lease-quarantine-migration.js';
+import { SCHEDULED_CONTINUATION_MIGRATION_SQL } from './migrations/scheduled-continuation-migration.js';
+import { SCHEDULED_CONTINUATION_SESSION_FENCE_MIGRATION_SQL } from './migrations/scheduled-continuation-session-fence-migration.js';
+import { SCHEDULED_CONTINUATION_RESCHEDULE_MIGRATION_SQL } from './migrations/scheduled-continuation-reschedule-migration.js';
 import { WORKSPACE_ARCHIVE_MIGRATION_SQL } from './migrations/workspace-archive-migration.js';
+import { RETIRE_AUTO_MACHINE_ROOTS_MIGRATION_SQL } from './migrations/retire-auto-machine-roots-migration.js';
 
 export interface SqliteDatabaseOptions {
   readonly backupDirectory?: string;
@@ -49,6 +57,14 @@ export class SqliteDatabase {
     this.applyMigration({ id: '004_audit_scope', sql: AUDIT_SCOPE_MIGRATION_SQL });
     this.applyMigration({ id: '005_workspace_archive', sql: WORKSPACE_ARCHIVE_MIGRATION_SQL });
     this.applyMigration({ id: '006_goal_continuation', sql: GOAL_CONTINUATION_MIGRATION_SQL });
+    this.applyMigration({ id: '007_scheduled_continuations', sql: SCHEDULED_CONTINUATION_MIGRATION_SQL });
+    this.applyMigration({ id: '008_scheduled_continuation_session_fence', sql: SCHEDULED_CONTINUATION_SESSION_FENCE_MIGRATION_SQL });
+    this.applyMigration({ id: '009_scheduled_continuation_same_task_reschedule', sql: SCHEDULED_CONTINUATION_RESCHEDULE_MIGRATION_SQL });
+    this.applyMigration({ id: '010_goal_lease_repair', sql: GOAL_LEASE_REPAIR_MIGRATION_SQL });
+    this.applyMigration({ id: '011_goal_live_continuation_lease_quarantine', sql: GOAL_LIVE_CONTINUATION_LEASE_QUARANTINE_MIGRATION_SQL });
+    this.applyMigration({ id: '012_retire_auto_machine_roots', sql: RETIRE_AUTO_MACHINE_ROOTS_MIGRATION_SQL });
+    this.applyMigration({ id: '013_goal_cancellation', sql: GOAL_CANCELLATION_MIGRATION_SQL });
+    this.applyMigration({ id: '014_goal_tracked_tasks', sql: GOAL_TRACKED_TASKS_MIGRATION_SQL });
   }
 
   public applyMigration(migration: Migration): void {

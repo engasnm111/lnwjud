@@ -66,9 +66,10 @@ describe('guided tunnel setup state', () => {
     expect(guidedTunnelLaunchDecision(pristineTunnel({ hasApiKey: true, profileExists: true }), 'completed')).toBe('none');
   });
 
-  it('resumes an in-progress setup until a desktop-owned configured tunnel reaches running', () => {
+  it('never reopens onboarding for an already configured tunnel, including a detached persistent runtime', () => {
     expect(guidedTunnelLaunchDecision(pristineTunnel(), 'in_progress')).toBe('resume_settings');
-    expect(guidedTunnelLaunchDecision(pristineTunnel({ state: 'running', source: 'external' }), 'in_progress')).toBe('resume_settings');
+    expect(guidedTunnelLaunchDecision(pristineTunnel({ hasApiKey: true, profileExists: true }), 'in_progress')).toBe('none');
+    expect(guidedTunnelLaunchDecision(pristineTunnel({ state: 'running', source: 'external', hasApiKey: true, profileExists: true }), 'in_progress')).toBe('none');
     expect(guidedTunnelLaunchDecision(pristineTunnel({ state: 'running', source: 'desktop', hasApiKey: true, profileExists: true }), 'in_progress')).toBe('none');
   });
 
@@ -78,7 +79,7 @@ describe('guided tunnel setup state', () => {
     expect(guidedTunnelLaunchDecision(pristineTunnel({ profileExists: true }), 'dismissed')).toBe('resume_settings');
   });
 
-  it('derives fresh, configured, and running states from real prerequisites and ownership', () => {
+  it('derives fresh, configured, and running states from real prerequisites without coupling to Desktop process ownership', () => {
     expect(isFreshTunnelSetup(pristineTunnel())).toBe(true);
     expect(isFreshTunnelSetup(pristineTunnel({ persistent: {
       enabled: true,
@@ -103,15 +104,15 @@ describe('guided tunnel setup state', () => {
     } }))).toBe(true);
     expect(isTunnelConfigured(pristineTunnel({ hasApiKey: true, profileExists: true }))).toBe(true);
     expect(isTunnelConfigured(pristineTunnel({ hasApiKey: true }))).toBe(false);
-    expect(isTunnelRunning(pristineTunnel({ state: 'running', source: 'external', hasApiKey: true, profileExists: true }))).toBe(false);
+    expect(isTunnelRunning(pristineTunnel({ state: 'running', source: 'external', hasApiKey: true, profileExists: true }))).toBe(true);
     expect(isTunnelRunning(pristineTunnel({ state: 'running', source: 'desktop', hasApiKey: true, profileExists: true }))).toBe(true);
   });
 
-  it('changes the launch signature only when real prerequisites or runtime ownership change', () => {
+  it('changes the launch signature only when real prerequisites or runtime liveness change', () => {
     expect(guidedTunnelPrerequisiteSignature(pristineTunnel())).toBe('no-key:no-profile:not-running');
     expect(guidedTunnelPrerequisiteSignature(pristineTunnel({ hasApiKey: true }))).toBe('key:no-profile:not-running');
-    expect(guidedTunnelPrerequisiteSignature(pristineTunnel({ hasApiKey: true, profileExists: true, state: 'running', source: 'external' }))).toBe('key:profile:external-running');
-    expect(guidedTunnelPrerequisiteSignature(pristineTunnel({ hasApiKey: true, profileExists: true, state: 'running', source: 'desktop' }))).toBe('key:profile:desktop-running');
+    expect(guidedTunnelPrerequisiteSignature(pristineTunnel({ hasApiKey: true, profileExists: true, state: 'running', source: 'external' }))).toBe('key:profile:running');
+    expect(guidedTunnelPrerequisiteSignature(pristineTunnel({ hasApiKey: true, profileExists: true, state: 'running', source: 'desktop' }))).toBe('key:profile:running');
   });
 
   it('resumes at the first step required by the actual tunnel state', () => {
@@ -119,7 +120,7 @@ describe('guided tunnel setup state', () => {
     expect(initialGuidedTunnelStep(pristineTunnel({ hasApiKey: true }))).toBe('create_tunnel');
     expect(initialGuidedTunnelStep(pristineTunnel({ profileExists: true }))).toBe('save_key');
     expect(initialGuidedTunnelStep(pristineTunnel({ hasApiKey: true, profileExists: true }))).toBe('start');
-    expect(initialGuidedTunnelStep(pristineTunnel({ hasApiKey: true, profileExists: true, state: 'running', source: 'external' }))).toBe('start');
+    expect(initialGuidedTunnelStep(pristineTunnel({ hasApiKey: true, profileExists: true, state: 'running', source: 'external' }))).toBe('connect_chatgpt');
     expect(initialGuidedTunnelStep(pristineTunnel({ hasApiKey: true, profileExists: true, state: 'running', source: 'desktop' }))).toBe('connect_chatgpt');
   });
 

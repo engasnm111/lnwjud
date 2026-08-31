@@ -14,9 +14,26 @@ $bundleRoot = Join-Path $buildRoot 'tunnel-client'
 
 New-Item -ItemType Directory -Force -Path $vendorRoot | Out-Null
 
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha256.ComputeHash($stream)
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    return -join ($bytes | ForEach-Object { $_.ToString('x2') })
+}
+
 function Test-ExpectedHash([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
-    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual = Get-Sha256Hex $Path
     return $actual -eq $expectedSha256
 }
 
@@ -27,7 +44,7 @@ if (-not (Test-ExpectedHash $zipPath)) {
 }
 
 if (-not (Test-ExpectedHash $zipPath)) {
-    $actual = if (Test-Path -LiteralPath $zipPath) { (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { '<missing>' }
+    $actual = if (Test-Path -LiteralPath $zipPath) { Get-Sha256Hex $zipPath } else { '<missing>' }
     throw "tunnel-client SHA-256 mismatch. expected=$expectedSha256 actual=$actual"
 }
 
@@ -60,7 +77,7 @@ $manifest = @(
 ) -join "`r`n"
 [IO.File]::WriteAllText((Join-Path $bundleRoot 'BUNDLED_TUNNEL_CLIENT.txt'), $manifest + "`r`n", [Text.UTF8Encoding]::new($false))
 
-$exeHash = (Get-FileHash -LiteralPath (Join-Path $bundleRoot 'tunnel-client.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+$exeHash = Get-Sha256Hex (Join-Path $bundleRoot 'tunnel-client.exe')
 Write-Host "Bundled tunnel-client.exe: $(Join-Path $bundleRoot 'tunnel-client.exe')"
 Write-Host "Archive SHA-256: $expectedSha256"
 Write-Host "Executable SHA-256: $exeHash"

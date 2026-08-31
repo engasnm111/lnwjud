@@ -36,6 +36,28 @@ function repository(workspace: Workspace): WorkspaceRepository {
 }
 
 describe('GitService', () => {
+  it('accepts prohibited Git forms and an outside cwd only with trusted Full Bypass authorization', async () => {
+    const workspace = await createWorkspace();
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-git-outside-'));
+    temporaryRoots.push(outsideRoot);
+    const calls: Array<{ readonly cwd: string; readonly args: readonly string[] }> = [];
+    const adapter = {
+      async run(cwd: string, args: readonly string[]): Promise<{ ok: true; value: { exitCode: number; stdout: string; stderr: string } }> {
+        calls.push({ cwd, args });
+        return { ok: true, value: { exitCode: 0, stdout: '', stderr: '' } };
+      },
+    } as unknown as GitAdapter;
+    const service = new GitService(repository(workspace), undefined, adapter);
+    const authorization = { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' } as const;
+
+    await expect(service.run({ clientId: 'test', clientName: 'test' }, {
+      args: ['-C', outsideRoot, 'status'],
+      workspaceId: workspace.id,
+      cwd: outsideRoot,
+    }, undefined, authorization)).resolves.toMatchObject({ ok: true });
+    expect(calls).toEqual([{ cwd: await realpath(outsideRoot), args: ['-C', outsideRoot, 'status'] }]);
+  });
+
   it('forwards cancellation to every MCP-exposed Git adapter operation', async () => {
     const workspace = await createWorkspace();
     const observedSignals: Array<AbortSignal | undefined> = [];

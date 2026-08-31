@@ -1,3 +1,29 @@
+import type { TunnelStatus } from '@lnwjud/ipc-contracts';
+
+export interface UpdateTunnelStopConfirmationOptions {
+  readonly getTunnelStatus: () => Promise<TunnelStatus>;
+  readonly confirmStop: () => Promise<boolean>;
+}
+
+export function updateInstallNeedsTunnelStopConfirmation(status: TunnelStatus): boolean {
+  if (status.state === 'running' || status.state === 'starting') return true;
+  const persistent = status.persistent;
+  if (persistent === null) return false;
+  if (persistent.runtimeAliasActive === true) return true;
+  return persistent.state === 'starting' || persistent.state === 'running' || persistent.state === 'reconnecting';
+}
+
+export async function confirmTunnelStopForUpdate(options: UpdateTunnelStopConfirmationOptions): Promise<boolean> {
+  try {
+    const status = await options.getTunnelStatus();
+    if (!updateInstallNeedsTunnelStopConfirmation(status)) return true;
+  } catch {
+    // Fail safe: if the tunnel status cannot be verified, require explicit user
+    // consent before the installer attempts to stop it.
+  }
+  return options.confirmStop();
+}
+
 export interface UpdateReadyDialogOptions {
   readonly type: 'info';
   readonly title: string;
@@ -13,6 +39,8 @@ export interface UpdateInstallCoordinatorOptions {
   readonly tunnelRunning?: () => Promise<boolean | 'unverifiable'>;
   readonly sharedActivitySnapshot?: () => Promise<UpdateSharedActivitySnapshot>;
   readonly install: () => void;
+  /** Optional bounded grace period after explicit install confirmation. When reached, proceed even if stale activity never drains. */
+  readonly maxWaitMs?: number;
   readonly quietPeriodMs?: number;
   readonly pollIntervalMs?: number;
 }
@@ -80,6 +108,7 @@ export class UpdateInstallCoordinator {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quietUntil = 0;
   private quietRevision = '';
+  private forceInstallAt = 0;
   private evaluating = false;
 
   public constructor(private readonly options: UpdateInstallCoordinatorOptions) {
@@ -90,12 +119,17 @@ export class UpdateInstallCoordinator {
   public requestInstall(): void {
     if (this.shutdown || this.pending) return;
     this.pending = true;
+    const maxWaitMs = this.options.maxWaitMs;
+    this.forceInstallAt = maxWaitMs !== undefined && Number.isFinite(maxWaitMs) && maxWaitMs >= 0
+      ? Date.now() + maxWaitMs
+      : 0;
     void this.evaluate();
   }
 
   public cancel(): void {
     this.shutdown = true;
     this.pending = false;
+    this.forceInstallAt = 0;
     this.clearTimer();
   }
 
@@ -105,6 +139,7 @@ export class UpdateInstallCoordinator {
 
   private async evaluate(): Promise<void> {
     if (!this.pending || this.shutdown || this.evaluating) return;
+    if (this.maybeForceInstall()) return;
     this.evaluating = true;
     let activity: { readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string };
     try {
@@ -125,6 +160,7 @@ export class UpdateInstallCoordinator {
 
   private async waitForQuietPeriod(): Promise<void> {
     if (!this.pending || this.shutdown) return;
+    if (this.maybeForceInstall()) return;
     // Poll the existing tracker throughout the quiet period so a short call
     // that starts and ends inside the interval restarts the quiet clock.
     const activity = await this.observeActivity();
@@ -173,6 +209,15 @@ export class UpdateInstallCoordinator {
 
   private sampleLocalActivity(): LocalActivityObservation {
     return { activeCount: this.options.activeCallCount(), revision: this.options.activityRevision?.() ?? 0 };
+  }
+
+  private maybeForceInstall(): boolean {
+    if (!this.pending || this.shutdown || this.forceInstallAt <= 0 || Date.now() < this.forceInstallAt) return false;
+    this.pending = false;
+    this.forceInstallAt = 0;
+    this.clearTimer();
+    this.options.install();
+    return true;
   }
 
   private schedule(delayMs: number, action: () => void): void {

@@ -3,7 +3,7 @@ import { access, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/pro
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, isApplicationAuthorized, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
 
 const execFileAsync = promisify(execFile);
@@ -38,7 +38,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
     this.launchAgentsDirectory = options.launchAgentsDirectory ?? ((): string => path.join(os.homedir(), 'Library', 'LaunchAgents'));
   }
 
-  public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (this.platform !== 'win32' && this.platform !== 'darwin') return err(appError('INTERNAL_ERROR', 'Scheduled tasks are unavailable on this platform', true));
     const parsed = parseRequest(input);
     if (!parsed.ok) return parsed;
@@ -59,7 +59,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
           } : {}),
         });
       }
-      if (request.action !== 'list' && request.userConfirmed !== true) {
+      if (request.action !== 'list' && !isApplicationAuthorized(authorization, request.userConfirmed)) {
         return err(appError(
           'PERMISSION_REQUIRED',
           'Creating, running, or deleting a scheduled task requires explicit user confirmation',

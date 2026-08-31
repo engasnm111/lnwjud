@@ -16,6 +16,8 @@ export interface ResolvedWorkspacePath {
   readonly absolutePath: string;
   readonly realPath?: string;
   readonly exists: boolean;
+  /** True only when a per-invocation Full Bypass resolved an explicit absolute target outside the workspace. */
+  readonly outsideWorkspace?: boolean;
 }
 
 export interface CheckpointFile {

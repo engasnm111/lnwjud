@@ -1,5 +1,6 @@
 import { useState, type ReactElement } from 'react';
 import type { IncidentClassification, LogLine, LogSource, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { formatDateTime } from '../../date-time.js';
 import { createTranslator } from '../../i18n/index.js';
 import { LogStreamPanel, type LogScopeSelection } from './LogStreamPanel.js';
 
@@ -40,7 +41,7 @@ export function LiveLogsPage(props: LiveLogsPageProps): ReactElement {
           <button type="button" onClick={() => { void props.onPopOut(); }}>{t('live.popOut')}</button>
         </div>
       </div>
-      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p className="hint" role="status">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentSummary(t, props.incidentClassification!)} · ${props.incidentCapturedAt ?? ''}`}</p>}
+      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p className="hint" role="status">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentSummary(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt)}`}</p>}
       <div className="log-tabs" role="tablist" aria-label={t('live.title')}>
         {sources.map((source) => (
           <button

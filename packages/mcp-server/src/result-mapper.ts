@@ -59,11 +59,14 @@ function toStructuredContent(value: unknown): Readonly<Record<string, unknown>> 
 }
 
 function extractImageContent(value: unknown): McpImageContent | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
-  if (record.encoding !== 'base64' || typeof record.content !== 'string' || typeof record.mimeType !== 'string') {
-    return undefined;
+
+  if (record.encoding === 'base64' && typeof record.content === 'string' && typeof record.mimeType === 'string' && record.mimeType.startsWith('image/')) {
+    return { type: 'image', data: record.content, mimeType: record.mimeType };
   }
-  if (!record.mimeType.startsWith('image/')) return undefined;
-  return { type: 'image', data: record.content, mimeType: record.mimeType };
+  if (typeof record.data_base64 === 'string' && typeof record.mime_type === 'string' && record.mime_type.startsWith('image/')) {
+    return { type: 'image', data: record.data_base64, mimeType: record.mime_type };
+  }
+  return extractImageContent(record.image);
 }

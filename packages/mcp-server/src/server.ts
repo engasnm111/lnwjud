@@ -7,7 +7,8 @@ import { withProgressHeartbeat, type ProgressNotifyContext } from './progress-he
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard, type RunBudgetContext } from './run-budget.js';
 import { registerTasksProtocol } from './tasks-protocol.js';
-import { ToolRegistry, type ActiveProjectScope, type HostMutationApprovalRequest, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
+import { ToolRegistry, type ActiveProjectScope, type AuthorizationMode, type HostMutationApprovalRequest, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
+import type { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { actorForRequestScope, type McpRequestScope } from './request-scope.js';
 
 export const MCP_OUTCOME_DRIVEN_INSTRUCTIONS = [
@@ -25,6 +26,7 @@ export interface McpServerOptions {
   readonly activity?: ActivitySink;
   readonly activityTracker?: ActivityTracker;
   readonly profileProvider?: () => PermissionProfile;
+  readonly authorizationModeProvider?: () => AuthorizationMode;
   readonly allowAiDeleteProvider?: () => boolean;
   readonly destructivePolicyProvider?: () => DestructiveAutoApprovalPolicy;
   readonly activeWorkspaceScopeProvider?: () => WorkspaceScope | null | Promise<WorkspaceScope | null>;
@@ -39,6 +41,8 @@ export interface McpServerOptions {
   readonly codexToolsEnabled?: boolean;
   /** Shared across per-request server factories so repeated diff fingerprints can hit cache. */
   readonly incrementalVerifier?: IncrementalVerifier;
+  /** Shared by transport-scoped server factories so visual observations survive the next MCP request. */
+  readonly setOfMarksStore?: SetOfMarksObservationStore;
   /** Compatibility result guard; it must not apply elapsed-time behavior. */
   readonly runBudgetGuard?: RunBudgetGuard;
 }
@@ -51,6 +55,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.activityTracker === undefined ? {} : { activityTracker: options.activityTracker }),
     ...(options.requestScope === undefined ? {} : { sessionId: options.requestScope.sessionId }),
     ...(options.profileProvider === undefined ? {} : { profileProvider: options.profileProvider }),
+    ...(options.authorizationModeProvider === undefined ? {} : { authorizationModeProvider: options.authorizationModeProvider }),
     ...(options.allowAiDeleteProvider === undefined ? {} : { allowAiDeleteProvider: options.allowAiDeleteProvider }),
     ...(options.destructivePolicyProvider === undefined ? {} : { destructivePolicyProvider: options.destructivePolicyProvider }),
     ...(options.activeWorkspaceScopeProvider === undefined ? {} : { activeWorkspaceScopeProvider: options.activeWorkspaceScopeProvider }),
@@ -60,6 +65,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.activeProjectProvider === undefined ? {} : { activeProjectProvider: options.activeProjectProvider }),
     ...(options.codexToolsEnabled === undefined ? {} : { codexToolsEnabled: options.codexToolsEnabled }),
     ...(options.incrementalVerifier === undefined ? {} : { incrementalVerifier: options.incrementalVerifier }),
+    ...(options.setOfMarksStore === undefined ? {} : { setOfMarksStore: options.setOfMarksStore }),
   });
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   // tasks capability (MCP spec 2025-11-25) exposes existing durable shell

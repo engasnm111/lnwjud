@@ -14,24 +14,28 @@ describe('Windows 10/11 compatibility profile', () => {
     expect(windowsBuildFromRelease('invalid')).toBeNull();
   });
 
-  it('treats Windows 10 x64 as a supported release target and selects the conservative GPU profile', () => {
+  it('treats every Windows 10 x64 build from the original release boundary onward as supported', () => {
     expect(WINDOWS_10_MIN_BUILD).toBe(10240);
-    expect(windowsCompatibilityProfile('win32', '10.0.19045', 'x64')).toMatchObject({
-      generation: 'windows-10',
-      build: 19045,
-      supportedReleaseTarget: true,
-      disableHardwareAcceleration: true,
-    });
+    for (const build of [10240, 14393, 17763, 19041, 19045]) {
+      expect(windowsCompatibilityProfile('win32', `10.0.${build}`, 'x64')).toMatchObject({
+        generation: 'windows-10',
+        build,
+        supportedReleaseTarget: true,
+        disableHardwareAcceleration: true,
+      });
+    }
   });
 
-  it('treats Windows 11 x64 as a supported release target without disabling GPU acceleration', () => {
+  it('treats every Windows 11 x64 build from the original release boundary onward as supported', () => {
     expect(WINDOWS_11_MIN_BUILD).toBe(22000);
-    expect(windowsCompatibilityProfile('win32', '10.0.22631', 'x64')).toMatchObject({
-      generation: 'windows-11',
-      build: 22631,
-      supportedReleaseTarget: true,
-      disableHardwareAcceleration: false,
-    });
+    for (const build of [22000, 22621, 22631, 26100, 26200]) {
+      expect(windowsCompatibilityProfile('win32', `10.0.${build}`, 'x64')).toMatchObject({
+        generation: 'windows-11',
+        build,
+        supportedReleaseTarget: true,
+        disableHardwareAcceleration: false,
+      });
+    }
   });
 
   it('fails the release-target contract for pre-Windows-10, x86, and non-Windows hosts', () => {

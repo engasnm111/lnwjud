@@ -4,9 +4,12 @@ import type {
   DashboardSnapshot,
   DestructiveDeletePolicy,
   DoctorReport,
+  ToolCatalogSnapshot,
+  ResolvedRemediation,
   LogLine,
   LogSource,
   PermissionProfileName,
+  PdfProviderInstallResult,
   UiLocale,
   UpdateStatus,
   UserSettings,
@@ -23,18 +26,21 @@ import { WorkLogPage } from './features/worklog/WorkLogPage.js';
 import { LiveLogsPage } from './features/live/LiveLogsPage.js';
 import type { LogScopeSelection } from './features/live/LogStreamPanel.js';
 import { applyLogSnapshot } from './features/live/log-buffer.js';
-import { SettingsPage, type SettingsSection } from './features/settings/SettingsPage.js';
+import { SettingsPage, type SettingsFocusTarget, type SettingsSection } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
+import { ToolsPage } from './features/tools/ToolsPage.js';
+import { remediationNavigationForTarget } from './features/tools/remediation-navigation.js';
 import { FirstRunTunnelTip } from './features/onboarding/FirstRunTunnelTip.js';
 import {
   guidedTunnelLaunchDecision,
   guidedTunnelPrerequisiteSignature,
+  isTunnelConfigured,
   isTunnelRunning,
   readGuidedTunnelSetupState,
   writeGuidedTunnelSetupState,
 } from './features/onboarding/guided-tunnel-setup-state.js';
 import { createTranslator } from './i18n/index.js';
-import { markStartupDoctorPassed, startupDoctorCorePassed, startupDoctorRequired } from './features/onboarding/startup-doctor-state.js';
+import { markStartupDoctorPassed, startupDoctorCorePassed, startupDoctorNavigationTarget, startupDoctorRequired } from './features/onboarding/startup-doctor-state.js';
 
 const MAX_CLIENT_LOG_LINES = 30_000;
 const REFRESH_TIMEOUT_MS = 8_000;
@@ -56,7 +62,10 @@ export function App(): ReactElement {
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
   const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
+  const [toolCatalog, setToolCatalog] = useState<ToolCatalogSnapshot | null>(null);
+  const [toolCatalogLoading, setToolCatalogLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [locale, setLocale] = useState<UiLocale>('th');
@@ -71,7 +80,7 @@ export function App(): ReactElement {
   const [firstRunTunnelTipOpen, setFirstRunTunnelTipOpen] = useState(false);
   const [guidedTunnelSetupOpen, setGuidedTunnelSetupOpen] = useState(false);
   const [startupDoctorReady, setStartupDoctorReady] = useState(false);
-  const [requestedSettingsSection, setRequestedSettingsSection] = useState<{ readonly section: SettingsSection; readonly requestId: number } | undefined>(undefined);
+  const [requestedSettingsSection, setRequestedSettingsSection] = useState<{ readonly section: SettingsSection; readonly focus?: SettingsFocusTarget; readonly requestId: number } | undefined>(undefined);
   const incidentBusyRef = useRef(false);
   const refreshInFlight = useRef(false);
   const logIds = useRef<Set<number>>(new Set());
@@ -197,15 +206,23 @@ export function App(): ReactElement {
     if (refreshInFlight.current) return;
     refreshInFlight.current = true;
     try {
-      const [nextDashboard, nextWorkspaces] = await Promise.all([
+      const [dashboardResult, workspacesResult] = await Promise.allSettled([
         withTimeout(window.lnwjud.getDashboard(), REFRESH_TIMEOUT_MS, 'getDashboard'),
         withTimeout(window.lnwjud.listWorkspaces(), REFRESH_TIMEOUT_MS, 'listWorkspaces'),
       ]);
-      setDashboard(nextDashboard);
-      setWorkspaces(nextWorkspaces);
-      setLocale(nextDashboard.locale);
-    } catch (cause: unknown) {
-      setError(errorMessage(cause, createTranslator(locale)('error.desktopService')));
+      const failures: string[] = [];
+      if (dashboardResult.status === 'fulfilled') {
+        setDashboard(dashboardResult.value);
+        setLocale(dashboardResult.value.locale);
+      } else {
+        failures.push(errorMessage(dashboardResult.reason, createTranslator(locale)('error.desktopService')));
+      }
+      if (workspacesResult.status === 'fulfilled') {
+        setWorkspaces(workspacesResult.value);
+      } else {
+        failures.push(errorMessage(workspacesResult.reason, createTranslator(locale)('error.desktopService')));
+      }
+      setBootError(failures.length === 0 ? null : failures.join(' · '));
     } finally {
       refreshInFlight.current = false;
     }
@@ -223,7 +240,14 @@ export function App(): ReactElement {
     const signature = guidedTunnelPrerequisiteSignature(tunnel);
     if (guidedTunnelLaunchSignature.current === signature) return;
     guidedTunnelLaunchSignature.current = signature;
-    const state = readGuidedTunnelSetupState(window.localStorage);
+    let state = readGuidedTunnelSetupState(window.localStorage);
+    if (isTunnelConfigured(tunnel) && state !== 'completed') {
+      // Upgrades/reinstalls preserve the real tunnel prerequisites outside this
+      // renderer's localStorage. Normalize any stale onboarding marker so a
+      // previously configured user is never sent back to setup on next launch.
+      try { writeGuidedTunnelSetupState(window.localStorage, 'completed'); } catch { /* Real tunnel state remains authoritative. */ }
+      state = 'completed';
+    }
     const decision = guidedTunnelLaunchDecision(tunnel, state);
     if (decision === 'show_tip') {
       setFirstRunTunnelTipOpen(true);
@@ -241,8 +265,12 @@ export function App(): ReactElement {
     }
 
     setStartupDoctorReady(false);
-    void window.lnwjud.runDoctor().then((report) => {
+    void Promise.all([
+      window.lnwjud.runDoctor(),
+      window.lnwjud.getToolCatalog({ locale }),
+    ]).then(([report, catalog]) => {
       setDoctor(report);
+      setToolCatalog(catalog);
       if (startupDoctorCorePassed(report)) {
         try { markStartupDoctorPassed(window.localStorage, appVersion); } catch { /* Re-run next launch if storage is unavailable. */ }
         setStartupDoctorReady(true);
@@ -252,6 +280,7 @@ export function App(): ReactElement {
       setGuidedTunnelSetupOpen(false);
       setScreen('doctor');
     }).catch((cause: unknown) => {
+      setStartupDoctorReady(false);
       setError(errorMessage(cause, createTranslator(locale)('error.doctorRun')));
       setFirstRunTunnelTipOpen(false);
       setGuidedTunnelSetupOpen(false);
@@ -259,9 +288,9 @@ export function App(): ReactElement {
     });
   }, [appVersion, locale]);
 
-  function requestSettingsSection(section: SettingsSection): void {
+  function requestSettingsSection(section: SettingsSection, focus?: SettingsFocusTarget): void {
     settingsRequestId.current += 1;
-    setRequestedSettingsSection({ section, requestId: settingsRequestId.current });
+    setRequestedSettingsSection({ section, ...(focus === undefined ? {} : { focus }), requestId: settingsRequestId.current });
     setError(null);
     setScreen('settings');
   }
@@ -277,6 +306,9 @@ export function App(): ReactElement {
 
   function changeGuidedTunnelSetupOpen(open: boolean): void {
     if (!open) {
+      if (dashboard === null || !isTunnelRunning(dashboard.tunnel)) {
+        try { writeGuidedTunnelSetupState(window.localStorage, 'dismissed'); } catch { /* Closing still dismisses for this session. */ }
+      }
       setGuidedTunnelSetupOpen(false);
       return;
     }
@@ -304,13 +336,16 @@ export function App(): ReactElement {
     }
   }
 
-  async function addWorkspace(rootPath: string): Promise<void> {
+  async function addWorkspace(rootPath: string): Promise<boolean> {
     setError(null);
     try {
       await window.lnwjud.addWorkspace({ rootPath });
       await refresh();
+      await runDoctor();
+      return true;
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.workspaceAdd')));
+      return false;
     }
   }
 
@@ -508,7 +543,11 @@ export function App(): ReactElement {
   async function changeLocale(next: UiLocale): Promise<void> {
     await window.lnwjud.setLocale({ locale: next });
     setLocale(next);
+    const catalogPromise = screen === 'tools' || screen === 'doctor' ? window.lnwjud.getToolCatalog({ locale: next }) : null;
+    const doctorPromise = screen === 'doctor' ? window.lnwjud.runDoctor() : null;
     await refresh();
+    if (catalogPromise !== null) setToolCatalog(await catalogPromise);
+    if (doctorPromise !== null) setDoctor(await doctorPromise);
   }
 
   async function setUserSettings(settings: UserSettings): Promise<boolean> {
@@ -527,16 +566,96 @@ export function App(): ReactElement {
     return result.clientPath;
   }
 
+  async function installPdfProvider(): Promise<PdfProviderInstallResult> {
+    setError(null);
+    try {
+      const result = await window.lnwjud.installPdfProvider();
+      await refresh();
+      await loadToolCatalog(['local_pdf_provider']);
+      return result;
+    } catch (cause: unknown) {
+      const message = errorMessage(cause, propsText(locale, 'ดาวน์โหลดหรือติดตั้ง PDF Provider ไม่สำเร็จ', 'Could not download or install the PDF Provider'));
+      setError(message);
+      throw cause instanceof Error ? cause : new Error(message);
+    }
+  }
+
   async function configureTunnelProfile(tunnelId: string): Promise<string> {
     const result = await window.lnwjud.configureTunnelProfile({ tunnelId });
     await refresh();
     return result.profilePath;
   }
 
+  async function loadToolCatalog(forceRequirementIds?: readonly string[]): Promise<void> {
+    setToolCatalogLoading(true);
+    try {
+      if (forceRequirementIds === undefined) {
+        setToolCatalog(await window.lnwjud.getToolCatalog({ locale }));
+      } else {
+        const result = await window.lnwjud.recheckToolCatalog({ locale, requirementIds: forceRequirementIds });
+        setToolCatalog(result.catalog);
+        setDoctor(result.doctor);
+      }
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, propsText(locale, 'ไม่สามารถโหลดรายการเครื่องมือได้', 'Could not load the tool catalog')));
+    } finally {
+      setToolCatalogLoading(false);
+    }
+  }
+
+  async function handleToolRemediation(action: ResolvedRemediation['actions'][number]): Promise<void> {
+    if (action.kind === 'recheck') { await loadToolCatalog(action.requirementIds); return; }
+    if (action.kind === 'open_official_url' || action.kind === 'open_system_settings') { await window.lnwjud.openToolSetupTarget({ target: action.target }); return; }
+    if (action.kind === 'copy_command') { await window.lnwjud.copyToolCommand({ commandId: action.commandId }); return; }
+    if (action.kind === 'launch_managed_browser') {
+      setError(null);
+      try {
+        const status = await window.lnwjud.launchManagedBrowser();
+        if (!status.ready) throw new Error(propsText(locale, 'Managed Browser เปิดแล้วแต่ CDP ยังไม่พร้อม', 'Managed Browser started but CDP is not ready'));
+        await loadToolCatalog(['browser_cdp']);
+      } catch (cause: unknown) {
+        const message = errorMessage(cause, propsText(locale, 'ไม่สามารถเปิด Managed Browser ได้', 'Could not start Managed Browser'));
+        setError(message);
+        throw cause instanceof Error ? cause : new Error(message);
+      }
+      return;
+    }
+    if (action.kind === 'install_pdf_provider') { await installPdfProvider(); return; }
+    if (action.kind === 'set_user_setting') {
+      if (dashboard === null) return;
+      const restartRequired = await setUserSettings({ ...dashboard.settings, [action.setting]: action.value });
+      if (restartRequired) {
+        try {
+          setMcpBusy(true);
+          await window.lnwjud.restartMcp();
+          await refresh();
+        } catch (cause: unknown) {
+          setError(errorMessage(cause, t('error.mcpRestart')));
+          return;
+        } finally {
+          setMcpBusy(false);
+        }
+      }
+      await loadToolCatalog(action.setting === 'codexToolsEnabled' ? ['codex_runtime'] : undefined);
+      return;
+    }
+    const navigation = remediationNavigationForTarget(action.target);
+    if (navigation === null) {
+      setError(propsText(locale, `ไม่รู้จักเป้าหมายการตั้งค่า: ${action.target}`, `Unknown settings target: ${action.target}`));
+      return;
+    }
+    if (navigation.screen === 'projects') { setScreen('projects'); return; }
+    requestSettingsSection(navigation.section, navigation.focus);
+  }
+
   async function runDoctor(): Promise<void> {
     try {
-      const report = await window.lnwjud.runDoctor();
+      const [report, catalog] = await Promise.all([
+        window.lnwjud.runDoctor(),
+        window.lnwjud.getToolCatalog({ locale }),
+      ]);
       setDoctor(report);
+      setToolCatalog(catalog);
       if (startupDoctorCorePassed(report) && appVersion !== null) {
         try { markStartupDoctorPassed(window.localStorage, appVersion); } catch { /* Re-run next launch if storage is unavailable. */ }
         startupDoctorVersion.current = appVersion;
@@ -550,17 +669,20 @@ export function App(): ReactElement {
   }
 
   if (dashboard === null) {
-    if (error !== null) {
-      return (
-        <div className="boot-screen">
-          <div className="error-banner" role="alert">{error}</div>
-          <div style={{ marginTop: '1rem' }}>
-            <button type="button" onClick={() => { setError(null); void refresh(); }}>{t('action.retry')}</button>
+    return (
+      <div className="boot-screen">
+        {bootError === null ? t('app.loading') : (
+          <div className="boot-recovery" role="alert">
+            <strong>{locale === 'th' ? 'เปิด lnwjud ไม่สำเร็จ' : 'lnwjud could not finish starting'}</strong>
+            <p>{bootError}</p>
+            <div className="inline-actions">
+              <button type="button" onClick={() => { void refresh(); }}>{locale === 'th' ? 'ลองใหม่' : 'Retry'}</button>
+              <button type="button" onClick={() => { void popOutLogViewer(); }}>{locale === 'th' ? 'เปิดบันทึกการทำงาน' : 'Open Logs'}</button>
+            </div>
           </div>
-        </div>
-      );
-    }
-    return <div className="boot-screen">{t('app.loading')}</div>;
+        )}
+      </div>
+    );
   }
 
   return (
@@ -568,19 +690,25 @@ export function App(): ReactElement {
       locale={locale}
       appVersion={dashboard.appVersion}
       mcpRunning={dashboard.mcp.running}
+      desktopFullBypassOn={dashboard.permissionProfile === 'full' && dashboard.settings?.desktopFullBypassAll === true}
+      stdioFullBypassOn={dashboard.stdioPermissionProfile === 'full' && dashboard.settings?.stdioFullBypassAll === true}
       updateStatus={updateStatus}
       screen={screen}
       onNavigate={(nextScreen) => {
         setError(null);
-        if (!startupDoctorReady && doctor?.exitCode === 1 && nextScreen !== 'doctor') {
-          setScreen('doctor');
-          return;
-        }
-        setScreen(nextScreen);
+        const target = startupDoctorNavigationTarget(startupDoctorReady, nextScreen);
+        setScreen(target);
+        if (target === 'tools') void loadToolCatalog();
       }}
       onLocaleChange={(next) => { void changeLocale(next); }}
       onUpdateAction={() => { void handleUpdateAction(); }}
     >
+      {bootError === null ? null : (
+        <div className="error-banner boot-partial-error" role="alert">
+          <span>{bootError}</span>
+          <button type="button" onClick={() => { void refresh(); }}>{locale === 'th' ? 'ลองใหม่' : 'Retry'}</button>
+        </div>
+      )}
       {error === null ? null : <div className="error-banner" role="alert">{error}</div>}
       {screen === 'home' ? (
         <ControlCenterPage
@@ -616,6 +744,15 @@ export function App(): ReactElement {
           onAddWorkspace={addWorkspace}
           onSetWorkspaceArchived={setWorkspaceArchived}
           onDeleteWorkspace={deleteWorkspace}
+        />
+      ) : null}
+      {screen === 'tools' ? (
+        <ToolsPage
+          locale={locale}
+          snapshot={toolCatalog}
+          loading={toolCatalogLoading}
+          onRefresh={() => loadToolCatalog()}
+          onRemediation={handleToolRemediation}
         />
       ) : null}
       {screen === 'git' ? (
@@ -665,6 +802,7 @@ export function App(): ReactElement {
           onSaveTunnelApiKey={saveTunnelApiKey}
           onSetTunnelClientPath={setTunnelClientPath}
           onUserSettingsChange={setUserSettings}
+          onInstallPdfProvider={installPdfProvider}
           onChooseTunnelClientPath={chooseTunnelClientPath}
           onConfigureTunnelProfile={configureTunnelProfile}
           onStartTunnel={startTunnelWithStatus}
@@ -680,12 +818,22 @@ export function App(): ReactElement {
       {screen === 'doctor' ? (
         <div className="page-content">
           <h1>{t('doctor.title')}</h1>
-          <DoctorPanel locale={locale} report={doctor} onRunDoctor={runDoctor} />
+          <DoctorPanel
+            locale={locale}
+            report={doctor}
+            remediations={toolCatalog?.remediations ?? []}
+            onRunDoctor={runDoctor}
+            onRecheck={(requirementIds) => loadToolCatalog(requirementIds)}
+            onRemediation={handleToolRemediation}
+            onOpenProjects={() => setScreen('projects')}
+          />
         </div>
       ) : null}
       {firstRunTunnelTipOpen ? (
         <FirstRunTunnelTip
           locale={locale}
+          permissionProfile={dashboard.permissionProfile}
+          onPermissionProfileChange={(profile) => { void setPermissionProfile(profile); }}
           onStart={() => openGuidedTunnelSettings(true)}
           onLater={() => {
             try { writeGuidedTunnelSetupState(window.localStorage, 'dismissed'); } catch { /* Dismiss for this session even if storage is unavailable. */ }

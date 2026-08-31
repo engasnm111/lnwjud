@@ -13,14 +13,44 @@ const PYTHON_EXECUTABLES = new Set(['python', 'python3', 'py']);
 const INLINE_SCRIPT_EXECUTABLES = new Set(['perl', 'ruby']);
 const WINDOWS_EXECUTABLE_EXTENSIONS = new Set(['.exe', '.cmd', '.bat', '.com']);
 
-/** Hard blocks only machine-level commands that should never be AI-issued. */
+/**
+ * Hard blocks machine-level commands plus terminal-style inline text editing that
+ * must go through the guarded file tools. The latter is a routing safeguard: it
+ * prevents an AI from turning shell/process/WSL into an ad-hoc text editor and
+ * bypassing edit_file/apply_patch/write_file checkpoints and conflict checks.
+ */
 export function prohibitedAgentCommandReason(executable: string, args: readonly string[]): string | undefined {
   const basename = executableBasename(executable);
+  const fileEditReason = terminalTextEditRoutingReason(basename, args);
+  if (fileEditReason !== undefined) return fileEditReason;
   if (HARD_BLOCK_EXECUTABLES.has(basename)) return `${basename} is blocked for AI-issued execution`;
   const commandText = interpreterCommandText(basename, args);
   if (commandText !== undefined && /\b(?:format-volume|clear-disk|initialize-disk|remove-partition|restart-computer|stop-computer|shutdown\s+\/(?:s|r)|diskpart)\b/i.test(commandText)) {
     return 'Machine-level destructive command is blocked for AI-issued execution';
   }
+  return undefined;
+}
+
+function terminalTextEditRoutingReason(basename: string, args: readonly string[]): string | undefined {
+  const lowerArgs = args.map((arg) => arg.toLowerCase());
+  const route = 'Do not edit source/config/text files through shell, process_start, or wsl_exec. Use edit_file for exact replacements, apply_patch for reviewed multi-file or whole-file replacements, or write_file for file creation/replacement.';
+
+  if (JAVASCRIPT_EXECUTABLES.has(basename) && hasAnyArgument(lowerArgs, ['-e', '--eval', '-p', '--print', 'eval'])) {
+    const script = inlineArgument(args, lowerArgs, ['-e', '--eval', '-p', '--print', 'eval']);
+    if (script !== undefined && /(?:\b(?:writeFileSync|appendFileSync|writeFile|appendFile)\s*\(|\bfs\.(?:writeFile|appendFile)\s*\(|\bDeno\.(?:writeTextFile|writeFile)\s*\(|\bBun\.write\s*\()/i.test(script)) return route;
+  }
+
+  if (PYTHON_EXECUTABLES.has(basename) && hasAnyArgument(lowerArgs, ['-c'])) {
+    const script = inlineArgument(args, lowerArgs, ['-c']);
+    if (script !== undefined && /(?:\.write_(?:text|bytes)\s*\(|\bopen\s*\([^,\r\n]+,\s*['"][^'"]*[wax+][^'"]*['"])/i.test(script)) return route;
+  }
+
+  if (POWERSHELL_EXECUTABLES.has(basename)) {
+    const commandText = interpreterCommandText(basename, args);
+    if (commandText !== undefined && /(?:\b(?:set-content|add-content|out-file)\b|\[System\.IO\.File\]::(?:WriteAllText|WriteAllLines|AppendAllText)\s*\()/i.test(commandText)) return route;
+  }
+
+  if (basename === 'sed' && lowerArgs.some((arg) => arg === '-i' || (arg.length > 2 && arg.startsWith('-i')))) return route;
   return undefined;
 }
 

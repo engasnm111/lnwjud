@@ -2,7 +2,9 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { ToolRegistry } from './tool-registry.js';
 
+const expectedAdvertisedToolCount = new ToolRegistry({}, { clientId: 'count-test', clientName: 'count-test' }).list().length;
 const fixturePath = fileURLToPath(new URL('../tests/fixtures/stdio-server.mjs', import.meta.url));
 
 describe('MCP stdio transport', () => {
@@ -26,7 +28,7 @@ describe('MCP stdio transport', () => {
       const first = await client.listTools();
       const second = await client.listTools();
 
-      expect(first.tools.map((tool) => tool.name)).toHaveLength(217);
+      expect(first.tools.map((tool) => tool.name)).toHaveLength(expectedAdvertisedToolCount);
       expect(first.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
       expect(second.tools.map((tool) => tool.name)).toEqual(first.tools.map((tool) => tool.name));
       expect(diagnostics).toContain('lnwjud-stdio-test-diagnostic');

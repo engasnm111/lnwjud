@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { McpToolContext } from './tools/tool-types.js';
 
 const DEFAULT_VERIFY_WAIT_MS = 5 * 60 * 1000;
@@ -30,7 +30,7 @@ export class IncrementalVerifier {
     this.now = options.now ?? Date.now;
   }
 
-  public async verify(context: McpToolContext, workspaceId: string, signal: AbortSignal, userConfirmed = false): Promise<Result<Record<string, unknown>>> {
+  public async verify(context: McpToolContext, workspaceId: string, signal: AbortSignal, userConfirmed = false, authorization?: InvocationAuthorization): Promise<Result<Record<string, unknown>>> {
     const git = context.services.git;
     const processService = context.services.process;
     if (git === undefined || processService === undefined) {
@@ -50,7 +50,7 @@ export class IncrementalVerifier {
     }
 
     if (signal.aborted) return cancelledVerification();
-    const started = await processService.startProjectCommand(context.actor, workspaceId, 'typecheck', signal, userConfirmed);
+    const started = await processService.startProjectCommand(context.actor, workspaceId, 'typecheck', signal, userConfirmed, undefined, authorization);
     if (!started.ok) return started;
     let process = started.value;
     const deadline = this.now() + this.maxWaitMs;

@@ -4,6 +4,12 @@ Status: **complete; full verification passed**
 Owner scope: lnwjud desktop, HTTP MCP, STDIO/tunnel MCP, activity/audit/logging  
 Primary invariant: **one lnwjud installation can serve many concurrent AI sessions and many workspaces while all user settings remain global.**
 
+The dated phase evidence below preserves the catalog counts that were measured
+at each historical checkpoint (including the earlier 214/208 baseline). The
+current v4.31.0 runtime contract is 231 total definitions, 195 advertised by
+default, and 201 when Codex delegation is enabled; see the current catalog and
+release checklist for the authoritative release count.
+
 ## Goal
 
 Support scenarios such as:

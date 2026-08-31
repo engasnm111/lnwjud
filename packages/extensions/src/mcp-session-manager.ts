@@ -1,10 +1,11 @@
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
-import type { McpServerLaunchConfig, McpToolSummary } from './types.js';
+import type { McpResourceSummary, McpServerLaunchConfig, McpToolSummary } from './types.js';
 
 export interface McpClientSession {
   listTools(signal?: AbortSignal): Promise<readonly McpToolSummary[]>;
+  listResources(signal?: AbortSignal): Promise<readonly McpResourceSummary[]>;
   callTool(name: string, args: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<unknown>;
   close(): Promise<void>;
 }
@@ -53,6 +54,31 @@ export class McpSessionManager {
       if (isAborted(signal)) return cancelledCall();
       return ok({ connected: true, tools: managed.tools });
     } catch (error: unknown) {
+      if (isAborted(signal)) return cancelledCall();
+      return err(appError('INTERNAL_ERROR', sanitizeError(error), true));
+    }
+  }
+
+  public async listResources(
+    server: string,
+    config: McpServerLaunchConfig,
+    signal?: AbortSignal,
+  ): Promise<Result<{ readonly connected: boolean; readonly resources: readonly McpResourceSummary[] }>> {
+    try {
+      if (isAborted(signal)) return cancelledCall();
+      const managed = await this.ensure(server, config, signal);
+      if (isAborted(signal)) return cancelledCall();
+      const resources = await this.enqueue(managed, () => withTimeout(
+        (callSignal) => managed.session.listResources(callSignal),
+        this.callTimeoutMs,
+        `Timed out listing resources for ${server}`,
+        signal,
+      ));
+      managed.lastUsedAt = Date.now();
+      this.scheduleIdleSweep();
+      return ok({ connected: true, resources });
+    } catch (error: unknown) {
+      await this.drop(server);
       if (isAborted(signal)) return cancelledCall();
       return err(appError('INTERNAL_ERROR', sanitizeError(error), true));
     }
@@ -176,6 +202,15 @@ export const defaultMcpClientFactory: McpClientFactory = {
           name: tool.name,
           description: tool.description ?? '',
           ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
+        }));
+      },
+      async listResources(listSignal?: AbortSignal): Promise<readonly McpResourceSummary[]> {
+        const listed = await client.listResources(undefined, listSignal === undefined ? undefined : { signal: listSignal });
+        return listed.resources.map((resource) => ({
+          uri: resource.uri,
+          ...(resource.name === undefined ? {} : { name: resource.name }),
+          ...(resource.description === undefined ? {} : { description: resource.description }),
+          ...(resource.mimeType === undefined ? {} : { mimeType: resource.mimeType }),
         }));
       },
       async callTool(name: string, args: Readonly<Record<string, unknown>>, callSignal?: AbortSignal): Promise<unknown> {

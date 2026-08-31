@@ -1,6 +1,16 @@
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { appError, err, ok, type CommandSpec, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  ok,
+  type GoalTaskCancellationObservation,
+  type CommandSpec,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import { CommandPolicy, DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
 import { ProcessManager, type LogQuery, type ManagedProcess, type ManagedProcessStart, type ProcessLogResult } from '@lnwjud/process';
 import { JsCommandDetector, ProjectDetector, type ProjectCommandKind } from '@lnwjud/project';
@@ -22,7 +32,7 @@ export interface ProcessManagerPort {
   list?(): readonly ManagedProcess[];
   status(processId: string): Result<ManagedProcess>;
   logs(processId: string, query: LogQuery): Result<ProcessLogResult>;
-  stop(processId: string): Promise<Result<void>>;
+  stop(processId: string, autoRetry?: boolean): Promise<Result<void>>;
 }
 
 export interface ProjectCommandSource {
@@ -40,6 +50,8 @@ export interface ProcessServiceDependencies {
   readonly defaultTimeoutMsProvider?: () => number;
   /** Full-access mode can broaden executable policy and allow an explicitly absolute cwd outside the selected workspace. */
   readonly unrestricted?: boolean;
+  /** Full-profile Bypass All skips lnwjud command/profile authorization while retaining exact process ownership. */
+  readonly authorizationBypassProvider?: () => boolean;
 }
 
 interface ProcessOwner {
@@ -59,6 +71,7 @@ export class ProcessService {
   private readonly profileProvider: () => PermissionProfile;
   private readonly defaultTimeoutMsProvider: (() => number) | undefined;
   private readonly unrestricted: boolean;
+  private readonly authorizationBypassProvider: () => boolean;
   private readonly owners = new Map<string, ProcessOwner>();
 
   public constructor(
@@ -77,10 +90,11 @@ export class ProcessService {
     this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy({ unrestricted: this.unrestricted });
     this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
     this.defaultTimeoutMsProvider = dependencies.defaultTimeoutMsProvider;
+    this.authorizationBypassProvider = dependencies.authorizationBypassProvider ?? ((): boolean => false);
   }
 
-  public start(actor: FileActor, workspaceId: string, request: ProcessStartRequest, signal?: AbortSignal): Promise<Result<ManagedProcess>> {
-    return this.startInternal(actor, workspaceId, request, 'client', signal);
+  public start(actor: FileActor, workspaceId: string, request: ProcessStartRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<ManagedProcess>> {
+    return this.startInternal(actor, workspaceId, request, 'client', signal, authorization);
   }
 
   public previewProjectCommand(workspaceId: string, kind: ProjectCommandKind): Promise<Result<CommandSpec>> {
@@ -94,6 +108,7 @@ export class ProcessService {
     signal?: AbortSignal,
     userConfirmed = false,
     approvedCommand?: CommandSpec,
+    authorization?: InvocationAuthorization,
   ): Promise<Result<ManagedProcess>> {
     if (isAborted(signal)) return cancelledStart();
     const command = await this.projectService.getCommand(workspaceId, kind);
@@ -102,13 +117,53 @@ export class ProcessService {
     if (approvedCommand !== undefined && !commandsEqual(approvedCommand, command.value)) {
       return err(appError('PERMISSION_DENIED', 'Detected project command changed after approval; fresh approval is required'));
     }
-    return this.startInternal(actor, workspaceId, { executable: command.value.executable, args: command.value.args, userConfirmed }, 'project', signal);
+    return this.startInternal(actor, workspaceId, { executable: command.value.executable, args: command.value.args, userConfirmed }, 'project', signal, authorization);
   }
 
   public async status(actor: FileActor, workspaceId: string, processId: string): Promise<Result<ManagedProcess>> {
     const ownership = this.authorizeHandle(actor, workspaceId, processId);
     if (!ownership.ok) return ownership;
     return this.processManager.status(processId);
+  }
+
+  /** Trusted read-only host probe used only by durable-goal orphan detection. */
+  public statusForGoalLiveness(workspaceId: string, processId: string): Result<ManagedProcess> {
+    const owner = this.owners.get(processId);
+    if (owner === undefined) return err(appError('PROCESS_NOT_FOUND', 'Process was not found'));
+    if (owner.workspaceId !== workspaceId) return err(appError('PERMISSION_DENIED', 'Process belongs to another workspace'));
+    return this.processManager.status(processId);
+  }
+
+  /** Trusted cancellation path used by durable goals; it deliberately ignores the transient MCP session. */
+  public async cancelForGoal(
+    ownerClientId: string,
+    workspaceId: string,
+    processId: string,
+  ): Promise<Result<GoalTaskCancellationObservation>> {
+    const owner = this.owners.get(processId);
+    if (owner === undefined) return ok({ matched: false, state: 'not_found' });
+    if (owner.actorId !== ownerClientId || owner.workspaceId !== workspaceId) {
+      return err(appError('PERMISSION_DENIED', 'Process belongs to another client or workspace'));
+    }
+
+    const before = this.processManager.status(processId);
+    if (!before.ok) {
+      return before.error.code === 'PROCESS_NOT_FOUND'
+        ? ok({ matched: false, state: 'not_found' })
+        : before;
+    }
+    if (isVerifiedTerminalProcess(before.value.state)) {
+      return ok({ matched: true, state: 'already_terminal', detail: before.value.state });
+    }
+
+    const stopped = await this.processManager.stop(processId, true);
+    if (!stopped.ok) return stopped;
+    const after = this.processManager.status(processId);
+    if (!after.ok) return ok({ matched: true, state: 'termination_unverified', detail: 'Process status could not be re-read after cancellation' });
+    if (isVerifiedTerminalProcess(after.value.state)) {
+      return ok({ matched: true, state: 'cancelled', detail: after.value.state });
+    }
+    return ok({ matched: true, state: 'termination_unverified', detail: after.value.state });
   }
 
   public async list(actor: FileActor, workspaceId: string): Promise<Result<readonly ManagedProcess[]>> {
@@ -127,36 +182,49 @@ export class ProcessService {
     return this.processManager.logs(processId, query);
   }
 
-  public async stop(actor: FileActor, workspaceId: string, processId: string, userConfirmed = false): Promise<Result<void>> {
+  public async stop(actor: FileActor, workspaceId: string, processId: string, userConfirmed = false, authorization?: InvocationAuthorization): Promise<Result<void>> {
     const ownership = this.authorizeHandle(actor, workspaceId, processId);
     if (!ownership.ok) return ownership;
-    if (!userConfirmed) return err(appError('PERMISSION_REQUIRED', 'Stopping a process requires explicit user confirmation'));
+    if (this.authorizationBypassProvider() || isFullBypassAuthorization(authorization)) return this.processManager.stop(processId);
+    const permissionDecision = this.permissionEngine.decide(this.profileProvider(), {
+      action: 'process_stop',
+      level: 'EXECUTE',
+      workspaceId,
+      target: processId,
+      destructive: false,
+    });
+    if (permissionDecision === 'DENY') return err(appError('PERMISSION_DENIED', 'Stopping this owned process is denied'));
+    if (permissionDecision === 'ASK' && !isApplicationAuthorized(authorization, userConfirmed)) return err(appError('PERMISSION_REQUIRED', 'Stopping this owned process requires permission'));
     return this.processManager.stop(processId);
   }
 
-  private async startInternal(actor: FileActor, workspaceId: string, request: ProcessStartRequest, source: CommandSource, signal?: AbortSignal): Promise<Result<ManagedProcess>> {
+  private async startInternal(actor: FileActor, workspaceId: string, request: ProcessStartRequest, source: CommandSource, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<ManagedProcess>> {
     const validation = this.validateRequest(request);
     if (!validation.ok) return validation;
     if (isAborted(signal)) return cancelledStart();
     const workspace = await this.getWorkspace(workspaceId);
     if (isAborted(signal)) return cancelledStart();
     if (!workspace.ok) return workspace;
-    const cwd = await this.resolveCwd(workspace.value, request.cwd);
+    const bypassAuthorization = this.authorizationBypassProvider() || isFullBypassAuthorization(authorization);
+    const cwd = await this.resolveCwd(workspace.value, request.cwd, bypassAuthorization);
     if (isAborted(signal)) return cancelledStart();
     if (!cwd.ok) return cwd;
 
-    const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.args);
-    if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
-    const riskyReason = riskyAgentCommandReason(request.executable, request.args);
-    if (riskyReason !== undefined && request.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', riskyReason));
-    if (this.unrestricted && request.cwd !== undefined && path.isAbsolute(request.cwd) && !isWithinWorkspace(workspace.value.realRootPath, cwd.value) && request.userConfirmed !== true) {
-      return err(appError('PERMISSION_REQUIRED', 'Running outside the selected workspace requires explicit user confirmation'));
+    const applicationApproved = isApplicationAuthorized(authorization, request.userConfirmed === true);
+    if (!bypassAuthorization) {
+      const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.args);
+      if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
+      const riskyReason = riskyAgentCommandReason(request.executable, request.args);
+      if (riskyReason !== undefined && !applicationApproved) return err(appError('PERMISSION_REQUIRED', riskyReason));
+      if (this.unrestricted && request.cwd !== undefined && path.isAbsolute(request.cwd) && !isWithinWorkspace(workspace.value.realRootPath, cwd.value) && !applicationApproved) {
+        return err(appError('PERMISSION_REQUIRED', 'Running outside the selected workspace requires explicit user confirmation'));
+      }
     }
 
     const profile = this.profileProvider();
-    const commandDecision = this.commandPolicy.decide(profile, request.executable, source, request.args);
+    const commandDecision = bypassAuthorization ? 'ALLOW' : this.commandPolicy.decide(profile, request.executable, source, request.args);
     if (commandDecision === 'DENY') return err(appError('PERMISSION_DENIED', 'Executable is not permitted'));
-    const permissionDecision = this.permissionEngine.decide(profile, {
+    const permissionDecision = bypassAuthorization ? 'ALLOW' : this.permissionEngine.decide(profile, {
       action: 'process_start',
       level: 'EXECUTE',
       workspaceId,
@@ -165,7 +233,7 @@ export class ProcessService {
       destructive: false,
     });
     if (permissionDecision === 'DENY') return err(appError('PERMISSION_DENIED', 'Process execution is denied'));
-    if ((commandDecision === 'ASK' || permissionDecision === 'ASK') && request.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Process execution requires permission'));
+    if ((commandDecision === 'ASK' || permissionDecision === 'ASK') && !applicationApproved) return err(appError('PERMISSION_REQUIRED', 'Process execution requires permission'));
 
     if (isAborted(signal)) return cancelledStart();
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMsProvider?.();
@@ -177,12 +245,19 @@ export class ProcessService {
     }, signal, (process) => {
       this.owners.set(process.processId, { actorId: actor.clientId, sessionId: actorSessionId(actor), workspaceId });
     });
+    if (started.ok && isAborted(signal)) {
+      // A process can be spawned just before goal cancellation aborts the
+      // request. Stop that provisional child before returning so it cannot
+      // escape tracking as an unowned background worker.
+      await this.processManager.stop(started.value.processId, true).catch(() => undefined);
+      return cancelledStart();
+    }
     if (started.ok) this.owners.set(started.value.processId, { actorId: actor.clientId, sessionId: actorSessionId(actor), workspaceId });
     return started;
   }
 
-  private async resolveCwd(workspace: Workspace, requestedCwd: string | undefined): Promise<Result<string>> {
-    if (this.unrestricted && requestedCwd !== undefined && path.isAbsolute(requestedCwd) && !pathStaysWithinWorkspace(workspace.realRootPath, requestedCwd)) {
+  private async resolveCwd(workspace: Workspace, requestedCwd: string | undefined, bypassAuthorization: boolean): Promise<Result<string>> {
+    if ((this.unrestricted || bypassAuthorization) && requestedCwd !== undefined && path.isAbsolute(requestedCwd) && !pathStaysWithinWorkspace(workspace.realRootPath, requestedCwd)) {
       try {
         const canonical = await realpath(requestedCwd);
         if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Process cwd must be a directory'));
@@ -260,4 +335,8 @@ function isWithinWorkspace(root: string, candidate: string): boolean {
 
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
+}
+
+function isVerifiedTerminalProcess(state: ManagedProcess['state']): boolean {
+  return state === 'exited' || state === 'failed' || state === 'stopped' || state === 'timed_out';
 }

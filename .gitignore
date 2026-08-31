@@ -74,7 +74,10 @@ docs/roadmap/*
 docs/development/*
 !docs/development/OPENAI_TUNNEL_LOCAL_CONTINUITY.md
 !docs/development/PACKAGING_WINDOWS.md
+!docs/development/RELEASE_PROCESS.md
+!docs/development/RELEASE_CHECKLIST.md
 !docs/development/WINDOWS_DEFENDER_FALSE_POSITIVE.md
+!docs/development/SCHEDULED_CONTINUATION_CAPABILITY_EVIDENCE.md
 apps/desktop/build/packaged-runtime-evidence.json
 !docs/benchmarks/
 docs/benchmarks/*

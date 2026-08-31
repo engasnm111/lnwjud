@@ -26,6 +26,8 @@ export interface TunnelRuntimeReconcilerAdapter {
 export interface TunnelRuntimeReconcilerOptions {
   readonly adapter: TunnelRuntimeReconcilerAdapter | TunnelRuntimeAdapter;
   readonly desiredState: () => TunnelRuntimeDesiredState | Promise<TunnelRuntimeDesiredState>;
+  /** Manual Start may replace the dedicated lnwjud alias only after the prior runtime is confirmed stopped. */
+  readonly allowStoppedTunnelIdReplacement?: boolean;
   readonly now?: () => Date;
 }
 
@@ -85,7 +87,10 @@ export class TunnelRuntimeReconciler {
     }
 
     if (current.exists && current.tunnelId !== null && current.tunnelId !== desired.tunnelId) {
-      return this.publishFailure(desired, capabilities, 'operator', 'TUNNEL_ID_MISMATCH', 'Runtime alias is attached to a different tunnel ID; automatic replacement is refused', current);
+      const stoppedReplacementAllowed = this.options.allowStoppedTunnelIdReplacement === true && !current.running;
+      if (!stoppedReplacementAllowed) {
+        return this.publishFailure(desired, capabilities, 'operator', 'TUNNEL_ID_MISMATCH', 'Runtime alias is attached to a different tunnel ID; automatic replacement is refused. Press Start Tunnel to restart the persistent runtime with the saved configuration.', current);
+      }
     }
 
     const bindingStale = current.mcpServerUrl !== null && !sameMcpUrl(current.mcpServerUrl, desired.mcpServerUrl);

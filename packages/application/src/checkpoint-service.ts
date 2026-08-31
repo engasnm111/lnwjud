@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, isApplicationAuthorized, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import { AtomicFileWriter, MAX_FILE_WRITE_BYTES } from '@lnwjud/filesystem';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
 import { WorkspacePathGuard, type Checkpoint, type CheckpointFile, type CheckpointRepository, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
@@ -99,8 +99,14 @@ export class CheckpointService implements CheckpointServicePort {
     })));
   }
 
-  public async restore(actor: FileActor, workspaceId: string, checkpointId: string, options: RestoreOptions = {}): Promise<Result<RestoreResult>> {
-    if (options.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires explicit user confirmation'));
+  public async restore(
+    actor: FileActor,
+    workspaceId: string,
+    checkpointId: string,
+    options: RestoreOptions = {},
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<RestoreResult>> {
+    if (!isApplicationAuthorized(authorization, options.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires explicit user confirmation'));
     const checkpoint = await this.repository.get(checkpointId);
     if (checkpoint === null) return err(appError('FILE_NOT_FOUND', 'Checkpoint was not found'));
     if (checkpoint.workspaceId !== workspaceId) return err(appError('PERMISSION_DENIED', 'Checkpoint belongs to another workspace'));
@@ -123,7 +129,7 @@ export class CheckpointService implements CheckpointServicePort {
     const profile = options.profile ?? this.profileProvider();
     const decision = this.permissionEngine.decide(profile, { action: 'restore_checkpoint', level: 'WRITE', workspaceId, target: checkpointId, destructive: false });
     if (decision === 'DENY') return err(appError('PERMISSION_DENIED', 'Checkpoint restore is denied'));
-    if (decision === 'ASK' && options.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires permission'));
+    if (decision === 'ASK' && !isApplicationAuthorized(authorization, options.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires permission'));
     const rollback = await this.createForFiles(actor, workspaceId, checkpoint.files.map((file) => file.path));
     if (!rollback.ok) return rollback;
     const restoredPaths: string[] = [];

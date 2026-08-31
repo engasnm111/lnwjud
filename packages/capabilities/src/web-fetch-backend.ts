@@ -1,6 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, isApplicationAuthorized, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
@@ -28,7 +28,7 @@ export class WebFetchCapabilityBackend implements CapabilityBackend {
     });
   }
 
-  public async execute(input: unknown, parentSignal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(input: unknown, parentSignal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const parsed = parseRequest(input);
     if (!parsed.ok) return parsed;
     const request = parsed.value;
@@ -62,7 +62,7 @@ export class WebFetchCapabilityBackend implements CapabilityBackend {
     if (request.dryRun) {
       return ok({ dry_run: true, url: url.toString(), method: request.method });
     }
-    if (request.method !== 'GET' && request.method !== 'HEAD' && request.userConfirmed !== true) {
+    if (request.method !== 'GET' && request.method !== 'HEAD' && !isApplicationAuthorized(authorization, request.userConfirmed)) {
       return err(appError('PERMISSION_REQUIRED', 'HTTP mutation requests require explicit user confirmation'));
     }
 

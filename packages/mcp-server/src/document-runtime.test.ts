@@ -47,6 +47,13 @@ async function withWorkspace(run: (root: string, file: string, provider: string)
 }
 
 describe.skipIf(process.platform !== 'win32')('DocumentRuntimeService', () => {
+  const fullBypassAuthorization = {
+    mode: 'full_bypass',
+    applicationApproved: true,
+    bypassApplicationAuthorization: true,
+    source: 'full_bypass',
+  } as const;
+
   it('extracts PDF layout text through the configured provider', async () => {
     await withWorkspace(async (root, file, provider) => {
       const calls: { provider: string; args: readonly string[] }[] = [];
@@ -68,7 +75,7 @@ describe.skipIf(process.platform !== 'win32')('DocumentRuntimeService', () => {
       const runtime = new DocumentRuntimeService(servicesWithOffice(root, {}), actor, { environment: { PATH: '' }, pdfProvider: 'Z:\\missing\\pdftotext.exe' });
       const result = await runtime.extractTables({ workspaceId: 'ws-1', file_path: file });
       expect(result).toMatchObject({ ok: true, value: {
-        tool: 'pdf_extract_tables', available: false, status: 'optional',
+        tool: 'pdf_extract_tables', available: false, status: 'needs_setup',
         requirements: ['local PDF provider', 'bounded document size'],
       } });
     });
@@ -126,6 +133,26 @@ describe.skipIf(process.platform !== 'win32')('DocumentRuntimeService', () => {
     });
   });
 
+  it('applies docx_merge under trusted Full Bypass without caller confirmation', async () => {
+    await withWorkspace(async (root) => {
+      await Promise.all([
+        writeFile(path.join(root, 'a.docx'), 'a'),
+        writeFile(path.join(root, 'b.docx'), 'b'),
+      ]);
+      const runtime = new DocumentRuntimeService(servicesWithOffice(root, {
+        'word:merge': { app: 'word', action: 'merge', saved: true },
+      }), actor);
+
+      await expect(runtime.docxMerge({
+        workspaceId: 'ws-1',
+        file_path: 'a.docx',
+        merge_paths: ['b.docx'],
+        target_path: 'merged.docx',
+        dryRun: false,
+      }, undefined, fullBypassAuthorization)).resolves.toMatchObject({ ok: true, value: { applied: true } });
+    });
+  });
+
   it('rejects paths that escape the registered workspace before invoking a provider', async () => {
     await withWorkspace(async (root, _file, provider) => {
       const outside = path.join(root, '..', 'outside.pdf');
@@ -136,7 +163,9 @@ describe.skipIf(process.platform !== 'win32')('DocumentRuntimeService', () => {
         pdfRunner: async (): Promise<ReturnType<typeof ok>> => { calls += 1; return ok('should not run'); },
       });
       await expect(runtime.extractTables({ workspaceId: 'ws-1', file_path: '..\\outside.pdf' })).resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
-      expect(calls).toBe(0);
+      await expect(runtime.extractTables({ workspaceId: 'ws-1', file_path: outside }, undefined, fullBypassAuthorization))
+        .resolves.toMatchObject({ ok: true, value: { file: await realpath(outside) } });
+      expect(calls).toBe(1);
     });
   });
 });

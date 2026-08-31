@@ -60,7 +60,9 @@ The authoritative release gate is:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1
 ```
 
-Release verification is intentionally heavier than normal development checks; do not repeatedly run it while iterating on a small change.
+Release verification is intentionally heavier than normal development checks; do not repeatedly run it while iterating on a small change. Pull-request/non-main CI uses the same gate with `-SkipWindowsPackaging` to avoid rebuilding NSIS/Portable artifacts that cannot be published from a PR.
+
+For an actual release, follow the canonical [release process](docs/development/RELEASE_PROCESS.md). In particular, prepare on `dev`, wait for the required PR check, merge through branch protection, wait for the full exact-SHA `main` CI artifact, and only then create the `vX.Y.Z` tag. Never tag first and hope CI catches up later.
 
 ## Pull requests
 

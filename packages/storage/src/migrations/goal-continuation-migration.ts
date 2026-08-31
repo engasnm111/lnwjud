@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS goals (
   owner_client_id TEXT NOT NULL,
   objective TEXT NOT NULL,
   plan_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('active','completed','failed','blocked')),
+  status TEXT NOT NULL CHECK(status IN ('active','completed','failed','blocked','cancelled')),
   revision INTEGER NOT NULL CHECK(revision >= 0),
   current_phase TEXT NOT NULL,
   next_action TEXT NOT NULL,

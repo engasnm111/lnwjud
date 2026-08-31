@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,30 @@ afterEach(async () => {
 });
 
 describe('WorkspaceInfoService.register', () => {
+  it('registers an explicit absolute project without an automatically generated machine root', async () => {
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-register-direct-'));
+    temporaryRoots.push(projectRoot);
+    const projectRealRoot = await realpath(projectRoot);
+
+    const store = new Map<string, Workspace>();
+    const repository: WorkspaceRepository = {
+      async list(): Promise<Workspace[]> { return [...store.values()]; },
+      async get(id: string): Promise<Workspace | null> { return store.get(id) ?? null; },
+      async insert(workspace: Workspace): Promise<void> { store.set(workspace.id, workspace); },
+      async delete(id: string): Promise<void> { store.delete(id); },
+    };
+    const service = new WorkspaceInfoService(repository, new WorkspaceService(repository));
+    const actor = { clientId: 't', clientName: 't' };
+
+    const registered = await service.register(actor, { path: projectRoot });
+
+    expect(registered).toMatchObject({
+      ok: true,
+      value: { kind: 'project', realRootPath: projectRealRoot },
+    });
+    expect([...store.values()].some((entry) => /^[A-Za-z]:\\$/.test(entry.rootPath))).toBe(false);
+  });
+
   it('registers a project under whichever drive-root machine root owns it and is idempotent', async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-register-'));
     temporaryRoots.push(projectRoot);

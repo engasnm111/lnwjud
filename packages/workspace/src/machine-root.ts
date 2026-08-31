@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -70,30 +69,4 @@ export function machineRootPath(
     if (root !== null) return root;
   }
   return path.parse(path.resolve(preferredPath ?? '.')).root || (process.platform === 'win32' ? 'C:\\' : '/');
-}
-
-/** Lists every fixed drive root that exists on this machine (C:\\, D:\\, … or /). */
-export function allFixedDriveRoots(): readonly string[] {
-  if (process.platform !== 'win32') {
-    return ['/'];
-  }
-  const roots: string[] = [];
-  for (let code = 65; code <= 90; code += 1) {
-    const root = `${String.fromCharCode(code)}:\\`;
-    if (existsSync(root)) roots.push(root);
-  }
-  return roots;
-}
-
-/** Machine roots for the current access mode. */
-export function machineRootPaths(unrestricted: boolean, preferredPath?: string): readonly string[] {
-  if (unrestricted) {
-    const fixed = allFixedDriveRoots();
-    if (preferredPath) {
-      const preferredRoot = driveRootForPath(preferredPath);
-      if (preferredRoot && !fixed.includes(preferredRoot)) return [preferredRoot, ...fixed];
-    }
-    return fixed;
-  }
-  return [machineRootPath(preferredPath)];
 }

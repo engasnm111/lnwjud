@@ -31,11 +31,11 @@ export function sessionTools(context: McpToolContext, verifier: IncrementalVerif
     }),
     defineTool({
       name: 'verify_incremental',
-      description: 'Run the detected project typecheck only when the current git status/diff fingerprint changed. Starting a new verification process requires explicit user confirmation. Returns cache=hit when unchanged and cache=miss after a new verification. Prefer this during iterative edits; use project_test/project_lint/project_build only when that specific verification is needed. For full suites or packaging expected to exceed ~5 minutes, launch a durable shell background task and record its task_id in the tracker.',
+      description: 'Run the detected project typecheck only when the current git status/diff fingerprint changed. Starting a new verification process requires explicit user confirmation in standard mode; trusted Full Bypass skips that lnwjud gate. Returns cache=hit when unchanged and cache=miss after a new verification. Prefer this during iterative edits; use project_test/project_lint/project_build only when that specific verification is needed. For full suites or packaging expected to exceed ~5 minutes, launch a durable shell background task and record its task_id in the tracker.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: verifyIncrementalSchema,
-      handler: async (input, signal) => verifier.verify(context, input.workspaceId, signal, input.userConfirmed === true),
+      handler: async (input, signal, authorization) => verifier.verify(context, input.workspaceId, signal, input.userConfirmed === true, authorization),
     }),
   ];
 }

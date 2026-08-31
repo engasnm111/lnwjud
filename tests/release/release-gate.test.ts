@@ -79,11 +79,45 @@ describe('MVP release verification gate', () => {
     expect(rootPackage.scripts?.desktop).toContain('--filter @lnwjud/desktop electron:install');
   });
 
-  it('provisions ripgrep on fresh Windows CI before the authoritative gate', async () => {
+  it('provisions ripgrep on fresh Windows CI before both verification modes', async () => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     expect(workflow).toContain('Install ripgrep for E2E search');
+    expect(workflow).toContain('Get-Command rg');
     expect(workflow).toContain('choco install ripgrep -y --no-progress');
-    expect(workflow.indexOf('Install ripgrep for E2E search')).toBeLessThan(workflow.indexOf('Run authoritative verification gate'));
+    expect(workflow.indexOf('Install ripgrep for E2E search')).toBeLessThan(workflow.indexOf('Run pull-request verification gate'));
+    expect(workflow.indexOf('Install ripgrep for E2E search')).toBeLessThan(workflow.indexOf('Run authoritative release verification gate'));
+  });
+
+  it('keeps PR verification fast while reserving Windows packaging for exact-main CI', async () => {
+    const script = await readFile(path.join(repositoryRoot, 'scripts', 'verify-release.ps1'), 'utf8');
+    const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
+
+    expect(script).toContain('[switch]$SkipWindowsPackaging');
+    expect(script).toContain("if ($SkipWindowsPackaging)");
+    expect(script).toContain("package:windows (skipped for non-main CI)");
+    expect(workflow).toContain('name: Authoritative Release Verification (Windows)');
+    expect(workflow).toContain('Run pull-request verification gate');
+    expect(workflow).toContain('scripts/verify-release.ps1 -SkipWindowsPackaging');
+    expect(workflow).toContain("github.ref != 'refs/heads/main'");
+    expect(workflow).toContain('Run authoritative release verification gate');
+    expect(workflow).toContain("github.ref == 'refs/heads/main'");
+  });
+
+  it('documents one canonical exact-SHA release sequence', async () => {
+    const releaseProcess = await readFile(path.join(repositoryRoot, 'docs', 'development', 'RELEASE_PROCESS.md'), 'utf8');
+    const contributing = await readFile(path.join(repositoryRoot, 'CONTRIBUTING.md'), 'utf8');
+
+    for (const required of [
+      'dev -> PR -> main CI -> tag -> Release -> dev sync',
+      'Never create or push the release tag before',
+      'windows-release-<main merge SHA>',
+      '-SkipWindowsPackaging',
+      'exact `main` SHA',
+      'Synchronize branches',
+    ]) {
+      expect(releaseProcess).toContain(required);
+    }
+    expect(contributing).toContain('docs/development/RELEASE_PROCESS.md');
   });
 
   it('uploads the verified Windows installer and portable executable once in CI and reuses that exact SHA artifact for releases', async () => {
@@ -96,7 +130,7 @@ describe('MVP release verification gate', () => {
     expect(ci).toContain('apps/desktop/dist/installers/*.blockmap');
     expect(ci).toContain('windows-release-${{ github.sha }}');
     expect(ci).toContain('apps/desktop/dist/installers/*.exe');
-    expect(ci.indexOf('Run authoritative verification gate')).toBeLessThan(ci.indexOf('Upload verified Windows release artifact'));
+    expect(ci.indexOf('Run authoritative release verification gate')).toBeLessThan(ci.indexOf('Upload verified Windows release artifact'));
 
     expect(release).toContain('actions: read');
     expect(release).toContain('gh run list');
@@ -125,6 +159,8 @@ describe('MVP release verification gate', () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
     const acceptance = rootPackage.scripts?.['test:acceptance'] ?? '';
     expect(acceptance).toContain('tests/multi-workspace-concurrency-acceptance.test.ts');
+    expect(rootPackage.scripts?.['test:integration']).toContain('--exclude=.local-artifacts/**');
+    expect(rootPackage.scripts?.['test:release-gate']).toContain('--exclude=.local-artifacts/**');
   });
 
   it('keeps Secure Tunnel on the Desktop HTTP runtime instead of headless stdio', async () => {

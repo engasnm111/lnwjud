@@ -156,7 +156,8 @@ describe('WorkLogPanel', () => {
     const row = rows[0]!;
     const text = formatWorkLogCopyText(row);
     const localDate = new Date(row.timestamp);
-    expect(text.startsWith(`${localDate.toLocaleDateString()} ${localDate.toLocaleTimeString()}`)).toBe(true);
+    const expected = `${String(localDate.getDate()).padStart(2, '0')}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${localDate.getFullYear()} ${String(localDate.getHours()).padStart(2, '0')}:${String(localDate.getMinutes()).padStart(2, '0')}:${String(localDate.getSeconds()).padStart(2, '0')}`;
+    expect(text.startsWith(expected)).toBe(true);
     expect(text).not.toContain(row.timestamp);
   });
 

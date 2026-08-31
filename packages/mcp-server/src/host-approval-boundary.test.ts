@@ -31,6 +31,28 @@ describe('mandatory independent host approval', () => {
   });
 
   it.each([
+    ['shell inline Node editor', 'shell', { workspaceId: 'workspace-a', operation: 'run', executable: 'node.exe', arguments: ['-e', "const fs=require('fs'); const p='src/a.ts'; fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace('a', 'b'))"] }],
+    ['process_start inline PowerShell editor', 'process_start', { workspaceId: 'workspace-a', executable: 'powershell.exe', args: ['-NoProfile', '-Command', "Set-Content -LiteralPath 'src/a.ts' -Value 'next'"] }],
+  ] as const)('rejects misrouted text editor %s before native approval is requested', async (_label, tool, input) => {
+    const calls: string[] = [];
+    const approvals: string[] = [];
+    const registry = new ToolRegistry(servicesWithCalls(calls), actor, {
+      activeWorkspaceScopeProvider: activeScope,
+      profileProvider: balancedProfile,
+      hostMutationApprovalProvider: async (): Promise<boolean> => { approvals.push(tool); return true; },
+    });
+
+    const response = await registry.invoke(tool, input);
+
+    expect(response).toMatchObject({
+      isError: true,
+      structuredContent: { error: { code: 'PERMISSION_DENIED', message: expect.stringContaining('Use edit_file') } },
+    });
+    expect(approvals).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it.each([
     ['process_start', 'process_start', { workspaceId: 'workspace-a', executable: 'node.exe', args: ['script.js'] }],
     ['shell real run', 'shell', { workspaceId: 'workspace-a', operation: 'run', executable: 'node.exe', arguments: ['script.js'] }],
   ] as const)('allows ordinary %s without a native host approval provider', async (_label, tool, input) => {
@@ -45,9 +67,6 @@ describe('mandatory independent host approval', () => {
     ['scheduler run', 'scheduler', { action: 'run', task_name: 'LnwjudTask', userConfirmed: true }],
     ['scheduler delete', 'scheduler', { action: 'delete', task_name: 'LnwjudTask', userConfirmed: true }],
     ['hook removal', 'hook_remove', { name: 'audit', userConfirmed: true }],
-    ['plugin removal', 'plugin_remove', { name: 'safe-plugin', userConfirmed: true }],
-    ['plugin enable', 'plugin_enable', { name: 'safe-plugin', userConfirmed: true }],
-    ['plugin disable', 'plugin_disable', { name: 'safe-plugin', userConfirmed: true }],
     ['worktree removal', 'git_worktree_remove', { workspaceId: 'workspace-a', worktreePath: '.worktrees/agent-1', dryRun: false, userConfirmed: true }],
     ['self-heal apply', 'self_heal_apply', { workspaceId: 'workspace-a', planId: 'reviewed-plan', dryRun: false, userConfirmed: true }],
   ] as const)('denies destructive administrative operation %s without native host approval', async (_label, tool, input) => {

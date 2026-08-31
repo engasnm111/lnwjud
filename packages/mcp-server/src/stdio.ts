@@ -1,5 +1,6 @@
 import { serveStdio, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 import { createMcpServer, type McpServerOptions } from './server.js';
+import { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard } from './run-budget.js';
 import { createStdioRequestScope } from './request-scope.js';
@@ -23,9 +24,10 @@ function writeStdioDiagnostic(error: Error): void {
 export function startMcpStdio(options: McpStdioOptions): StdioServerHandle {
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
+  const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const requestScope = options.requestScope ?? createStdioRequestScope();
   return serveStdio(
-    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, requestScope }),
+    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, requestScope }),
     { legacy: 'reject', onerror: options.onError ?? writeStdioDiagnostic },
   );
 }

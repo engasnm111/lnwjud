@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PermissionProfileName, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
+import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PdfProviderInstallResult, PermissionProfileName, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
+import { formatDateTime } from '../../date-time.js';
 import { createTranslator } from '../../i18n/index.js';
 import { GuidedTunnelSetup } from '../onboarding/GuidedTunnelSetup.js';
 import { isTunnelRunning } from '../onboarding/guided-tunnel-setup-state.js';
@@ -21,6 +22,7 @@ interface SettingsPageProps {
   readonly onSaveTunnelApiKey: (apiKey: string) => Promise<void>;
   readonly onSetTunnelClientPath: (clientPath: string) => Promise<void>;
   readonly onUserSettingsChange: (settings: UserSettings) => Promise<boolean>;
+  readonly onInstallPdfProvider: () => Promise<PdfProviderInstallResult>;
   readonly onChooseTunnelClientPath: () => Promise<string | null>;
   readonly onConfigureTunnelProfile: (tunnelId: string) => Promise<string>;
   readonly onStartTunnel: () => Promise<TunnelStatus>;
@@ -31,10 +33,11 @@ interface SettingsPageProps {
   readonly onGuidedTunnelSetupOpenChange: (open: boolean) => void;
   readonly onGuidedTunnelLocalComplete: () => void;
   readonly initialSection?: SettingsSection;
-  readonly requestedSection?: { readonly section: SettingsSection; readonly requestId: number } | undefined;
+  readonly requestedSection?: { readonly section: SettingsSection; readonly focus?: SettingsFocusTarget; readonly requestId: number } | undefined;
 }
 
 export type SettingsSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunnel' | 'backup';
+export type SettingsFocusTarget = 'security-profile' | 'tools-codex' | 'tools-local-providers' | 'mcp-servers';
 type DestructiveApprovalKey = keyof DestructiveDeletePolicy['approvals'];
 
 export function SettingsPage(props: SettingsPageProps): ReactElement {
@@ -49,7 +52,6 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [tunnelMessage, setTunnelMessage] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
-  const [unrestrictedMessage, setUnrestrictedMessage] = useState<string | null>(null);
   const [stdioProfile, setStdioProfile] = useState<PermissionProfileName>(props.dashboard.stdioPermissionProfile);
   const [strictRoots, setStrictRoots] = useState(props.dashboard.stdioStrictRoots);
   const [allowedRootsText, setAllowedRootsText] = useState(props.dashboard.stdioAllowedRoots.join('\n'));
@@ -68,6 +70,17 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
     if (props.requestedSection === undefined) return;
     setActiveSection(props.requestedSection.section);
   }, [props.requestedSection]);
+
+  useEffect(() => {
+    const request = props.requestedSection;
+    if (request?.focus === undefined || activeSection !== request.section) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-settings-focus="${request.focus}"]`);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target?.focus({ preventScroll: true });
+    });
+    return (): void => { window.cancelAnimationFrame(frame); };
+  }, [activeSection, props.requestedSection]);
 
   const persistedRootsText = props.dashboard.stdioAllowedRoots.join('\n');
   useEffect(() => {
@@ -320,7 +333,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
 
           {activeSection === 'security' ? (
             <>
-              <section className="panel settings-card settings-card-polished" aria-label={t('settings.securityTitle')}>
+              <section className="panel settings-card settings-card-polished" aria-label={t('settings.securityTitle')} data-settings-focus="security-profile" tabIndex={-1}>
                 <SettingsCardHeading icon="◇" title={t('settings.securityTitle')} subtitle={profileHint(props.locale, props.dashboard.permissionProfile)} badge={props.dashboard.permissionProfile.toUpperCase()} />
                 <div className="setting-field max-field-width">
                   <label className="field-label" htmlFor="permission-profile">{t('settings.permissions')}</label>
@@ -333,11 +346,17 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 </div>
               </section>
 
-              <section className="panel settings-card settings-card-polished" aria-label={t('settings.unrestricted')}>
-                <SettingsCardHeading icon="⚡" title={t('settings.unrestricted')} subtitle={props.locale === 'th' ? 'ปลดข้อจำกัด machine roots สำหรับงานที่ต้องการสิทธิ์เต็ม' : 'Remove machine-root restrictions for full-power workflows'} badge={props.dashboard.unrestricted ? 'ON' : 'OFF'} />
-                <SettingSwitch checked={props.dashboard.unrestricted} label={props.locale === 'th' ? 'Unrestricted mode' : 'Unrestricted mode'} description={t('settings.unrestrictedHint')} onChange={(enabled) => { void props.onUnrestrictedChange(enabled).then((restartRequired) => setUnrestrictedMessage(restartRequired ? t('settings.restartRequired') : null)); }} />
-                {unrestrictedMessage === null ? null : <div className="alert-box-warning" role="status">⚠️ {unrestrictedMessage}</div>}
-              </section>
+              <UserConfigPanel
+                locale={props.locale}
+                permissionProfile={props.dashboard.permissionProfile}
+                stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
+                settings={props.dashboard.settings}
+                section="security"
+                unrestricted={props.dashboard.unrestricted}
+                onUnrestrictedChange={props.onUnrestrictedChange}
+                onSave={props.onUserSettingsChange}
+                onInstallPdfProvider={props.onInstallPdfProvider}
+              />
 
               <section className="panel settings-card settings-card-polished" aria-label="AI destructive action policy">
                 <SettingsCardHeading
@@ -348,8 +367,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 />
                 <div className="alert-box-warning" role="note">
                   ⚠️ {props.locale === 'th'
-                    ? 'Full Access ไม่ถามงานปกติ การเปิด auto-approval ด้านล่างมีผลเฉพาะคำสั่งลบ/ทำข้อมูลหายที่แยก target ได้ชัดและอยู่ใน Active Project เท่านั้น; root, critical path, wildcard, recursive/broad และคำสั่งที่วิเคราะห์ไม่ได้ยังถาม ส่วนคำสั่งระดับเครื่องอันตรายยังถูกบล็อก'
-                    : 'Full Access does not prompt for ordinary work. Auto-approval below applies only to destructive actions with an exact target proven inside the Active Project; roots, critical paths, wildcards, recursive/broad or unparseable actions still ask, and dangerous machine-level commands remain blocked.'}
+                    ? 'เมื่อ Full Bypass ปิด Full Access จะไม่ถามงานปกติ และ auto-approval ด้านล่างมีผลเฉพาะงานลบ/ทำข้อมูลหายที่พิสูจน์ target ได้ชัดใน Active Project; เมื่อเปิด Full Bypass จะข้ามการอนุมัติและขอบเขตระดับแอปทั้งหมด'
+                    : 'With Full Bypass OFF, Full Access does not prompt for ordinary work and the auto-approval controls below remain narrowly scoped to exact targets in the Active Project. With Full Bypass ON, all lnwjud application approvals and scope checks are skipped.'}
                 </div>
                 <div className="setting-grid two-col align-center">
                   <SettingSwitch checked disabled label={props.locale === 'th' ? 'Protected Critical Files — บังคับเปิด' : 'Protected Critical Files — always on'} description={props.locale === 'th' ? 'critical path และ workspace root ไม่ถูก auto-approve แม้เปิด destructive family นั้นไว้' : 'Critical paths and workspace roots are never auto-approved even when a destructive family is enabled'} onChange={() => undefined} />
@@ -404,13 +423,25 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
             </>
           ) : null}
 
-          <UserConfigPanel locale={props.locale} settings={props.dashboard.settings} section={userConfigSection} onSave={props.onUserSettingsChange} />
+          {userConfigSection === 'security' ? null : (
+            <UserConfigPanel
+              locale={props.locale}
+              permissionProfile={props.dashboard.permissionProfile}
+              stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
+              settings={props.dashboard.settings}
+              section={userConfigSection}
+              unrestricted={props.dashboard.unrestricted}
+              onUnrestrictedChange={props.onUnrestrictedChange}
+              onSave={props.onUserSettingsChange}
+              onInstallPdfProvider={props.onInstallPdfProvider}
+            />
+          )}
 
           {activeSection === 'tunnel' ? (
             <>
               <section className="panel settings-card settings-card-polished guided-tunnel-launch-card" aria-label={t('guidedTunnel.openGuide')}>
                 <SettingsCardHeading icon="↗" title={t('guidedTunnel.openGuide')} subtitle={t('guidedTunnel.privacy')} badge={guidedTunnelRunning ? 'RUNNING' : guidedTunnelConfigured ? 'READY' : 'SETUP'} />
-                <p className="hint">{guidedTunnelRunning ? t('guidedTunnel.localComplete') : t('guidedTunnel.dismissedHint')}</p>
+                <p className="hint">{guidedTunnelRunning ? t('guidedTunnel.localComplete') : guidedTunnelConfigured ? t('guidedTunnel.configured') : t('guidedTunnel.dismissedHint')}</p>
                 <button type="button" className="btn-save-gold" onClick={() => props.onGuidedTunnelSetupOpenChange(true)}>{t('guidedTunnel.openGuide')}</button>
               </section>
 
@@ -502,7 +533,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 {props.dashboard.recovery.trashItems.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'Recovery Trash ยังว่าง' : 'Recovery Trash is empty'}</div> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.trashItems.map((item) => (
                     <div key={item.recoveryId} className="backup-item">
-                      <div><strong>{item.relativePath}</strong><p className="hint">{new Date(item.deletedAt).toLocaleString(props.locale === 'th' ? 'th-TH' : 'en-US')} · {item.kind === 'replacement_backup' ? (props.locale === 'th' ? 'สำเนาก่อนเขียนทับ' : 'pre-replacement') : item.isDirectory ? 'folder' : 'file'} · {item.payloadAvailable ? (props.locale === 'th' ? 'พร้อมกู้คืน' : 'ready') : (props.locale === 'th' ? 'payload ไม่ครบ' : 'payload missing')}</p></div>
+                      <div><strong>{item.relativePath}</strong><p className="hint">{formatDateTime(item.deletedAt)} · {item.kind === 'replacement_backup' ? (props.locale === 'th' ? 'สำเนาก่อนเขียนทับ' : 'pre-replacement') : item.isDirectory ? 'folder' : 'file'} · {item.payloadAvailable ? (props.locale === 'th' ? 'พร้อมกู้คืน' : 'ready') : (props.locale === 'th' ? 'payload ไม่ครบ' : 'payload missing')}</p></div>
                       <button type="button" disabled={!item.payloadAvailable || recoveryBusyId !== null} onClick={() => { void restoreTrashItem(item.workspaceId, item.recoveryId, item.relativePath, item.kind); }}>{recoveryBusyId === item.recoveryId ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'กู้คืน' : 'Restore')}</button>
                     </div>
                   ))}</div>
@@ -511,7 +542,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 {props.dashboard.recovery.checkpoints.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี checkpoint' : 'No checkpoints yet'}</div> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.checkpoints.map((checkpoint) => {
                     const paths = checkpoint.files.map((file) => file.path);
-                    return <div key={checkpoint.id} className="backup-item"><div><strong>{new Date(checkpoint.createdAt).toLocaleString(props.locale === 'th' ? 'th-TH' : 'en-US')}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><button type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'ย้อนกลับจุดนี้' : 'Restore point')}</button></div>;
+                    return <div key={checkpoint.id} className="backup-item"><div><strong>{formatDateTime(checkpoint.createdAt)}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><button type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'ย้อนกลับจุดนี้' : 'Restore point')}</button></div>;
                   })}</div>
                 )}
                 {recoveryError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {recoveryError}</div>}
@@ -522,7 +553,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <SettingsCardHeading icon="▣" title={props.locale === 'th' ? 'สำรองฐานข้อมูลโปรแกรม' : 'Application Database Backup'} subtitle="SQLite consistent snapshots" action={<button type="button" className="btn-save-gold" disabled={backupBusy} onClick={() => { void createBackupNow(); }}>{backupBusy ? (props.locale === 'th' ? 'กำลังทำงาน…' : 'Working…') : (props.locale === 'th' ? 'Backup ตอนนี้' : 'Backup Now')}</button>} />
                 {props.dashboard.backups.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี Backup' : 'No backups yet'}</div> : (
                   <div className="backup-list settings-backup-list">{props.dashboard.backups.slice(0, 5).map((backup) => (
-                    <div key={backup.id} className="backup-item"><div><strong>{new Date(backup.createdAt).toLocaleString(props.locale === 'th' ? 'th-TH' : 'en-US')}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
+                    <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
                   ))}</div>
                 )}
                 {(props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running) ? <div className="alert-box-warning">⚠️ {props.locale === 'th' ? 'หยุด Tunnel และ Local MCP ก่อน Restore ฐานข้อมูล' : 'Stop Tunnel and local MCP before scheduling a database restore.'}</div> : null}
@@ -552,8 +583,8 @@ function splitList(value: string): readonly string[] {
 }
 
 function profileHint(locale: UiLocale, profile: PermissionProfileName): string {
-  const th = { safe: 'ปลอดภัยสูงสุด: งานเขียนและรันคำสั่งต้องขออนุญาต', balanced: 'สมดุล: งานทั่วไปใน workspace ทำได้คล่องขึ้น', full: 'เต็มสิทธิ์ตาม policy ที่ยังคงบล็อก operation อันตรายระดับระบบ', custom: 'ใช้กฎ READ / WRITE / EXECUTE / DANGEROUS และ executable ที่กำหนดเอง' } as const;
-  const en = { safe: 'Maximum safety: writes and execution require approval.', balanced: 'Balanced: common workspace work is less restrictive.', full: 'Full access within policy; machine-destructive operations remain blocked.', custom: 'Uses your READ / WRITE / EXECUTE / DANGEROUS rules and custom executables.' } as const;
+  const th = { safe: 'ปลอดภัยสูงสุด: งานเขียนและรันคำสั่งต้องขออนุญาต', balanced: 'สมดุล: งานทั่วไปใน workspace ทำได้คล่องขึ้น', full: 'เต็มสิทธิ์สำหรับงานปกติ; เปิด Full Bypass แยกต่างหากหากต้องการข้ามทุก approval/scope ของ lnwjud', custom: 'ใช้กฎ READ / WRITE / EXECUTE / DANGEROUS และ executable ที่กำหนดเอง' } as const;
+  const en = { safe: 'Maximum safety: writes and execution require approval.', balanced: 'Balanced: common workspace work is less restrictive.', full: 'Full access for ordinary work; enable Full Bypass separately to skip every lnwjud approval and scope check.', custom: 'Uses your READ / WRITE / EXECUTE / DANGEROUS rules and custom executables.' } as const;
   return (locale === 'th' ? th : en)[profile];
 }
 

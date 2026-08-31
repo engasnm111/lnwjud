@@ -22,7 +22,7 @@ describe.skipIf(process.platform !== 'win32')('LspRuntimeService', () => {
       spawner: (): ReturnType<typeof ok> => { spawns += 1; return ok({ kill: () => undefined } as never); },
     });
     await expect(runtime.diagnostics({ workspaceId: 'ws-1', files: ['src/a.ts'] })).resolves.toMatchObject({
-      ok: false, error: { code: 'PERMISSION_DENIED', message: expect.stringContaining('LNWJUD_LSP_TYPESCRIPT_COMMAND') },
+      ok: true, value: { tool: 'lsp_diagnostics', status: 'needs_setup', available: false, ready: false, executed: false },
     });
     expect(spawns).toBe(0);
   });

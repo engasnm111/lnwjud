@@ -103,9 +103,10 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
 
     await page.getByRole('button', { name: 'Doctor', exact: true }).click();
     await page.getByRole('button', { name: /รัน Doctor|Run doctor/ }).click();
+    await page.locator('details.doctor-passed > summary').click();
     await expect(page.getByTestId('doctor-check-os')).toBeVisible();
     await expect(page.getByTestId('doctor-check-database')).toBeVisible();
-    await expect(page.getByTestId('doctor-check-workspaces')).toBeVisible();
+    await expect(page.getByTestId('doctor-check-registered_workspace')).toBeVisible();
     await expect(page.locator('body')).not.toContainText('do-not-display');
     await browser.close();
   } finally {

@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactElement } from 'react';
 import type {
   ExtraMcpServerSettings,
   PermissionDecisionSetting,
+  PermissionProfileName,
+  PdfProviderInstallResult,
   UiLocale,
   UserSettings,
 } from '@lnwjud/ipc-contracts';
@@ -11,13 +13,20 @@ export type UserConfigSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunn
 
 interface UserConfigPanelProps {
   readonly locale: UiLocale;
+  readonly permissionProfile: PermissionProfileName;
+  readonly stdioPermissionProfile: PermissionProfileName;
   readonly settings?: UserSettings;
   readonly section: UserConfigSection | null;
+  readonly unrestricted: boolean;
+  readonly onUnrestrictedChange: (enabled: boolean) => Promise<boolean>;
   readonly onSave: (settings: UserSettings) => Promise<boolean>;
+  readonly onInstallPdfProvider: () => Promise<PdfProviderInstallResult>;
 }
 
 const DEFAULT_USER_SETTINGS: UserSettings = {
   customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
+  desktopFullBypassAll: false,
+  stdioFullBypassAll: false,
   mcpCallTimeoutMs: 60_000,
   mcpIdleTimeoutMs: 5 * 60_000,
   processTimeoutMs: 60 * 60_000,
@@ -41,13 +50,17 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
-export function UserConfigPanel({ locale, settings, section, onSave }: UserConfigPanelProps): ReactElement {
+export function UserConfigPanel({ locale, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider }: UserConfigPanelProps): ReactElement {
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
   const [draft, setDraft] = useState<UserSettings>(effectiveSettings);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pdfInstallBusy, setPdfInstallBusy] = useState(false);
+  const [pdfInstallMessage, setPdfInstallMessage] = useState<string | null>(null);
+  const [pdfInstallError, setPdfInstallError] = useState<string | null>(null);
+  const [unrestrictedMessage, setUnrestrictedMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!dirty) setDraft(effectiveSettings);
@@ -74,6 +87,16 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
     setError(null);
   }
 
+  function changeFullBypass(target: 'desktop' | 'stdio', enabled: boolean): void {
+    if (enabled) {
+      const confirmed = window.confirm(locale === 'th'
+        ? 'ยืนยันเปิด FULL BYPASS ON? lnwjud จะไม่ถามยืนยันอีก รวม tool ที่กำหนดว่าต้องยืนยันเสมอ คำสั่งอันตราย ขอบเขต Active Project, goalLease และ absolute path นอกโปรเจกต์ การแก้ไขหรือลบอาจกู้คืนไม่ได้ แต่การตรวจรูปแบบข้อมูล, Windows ACL/UAC และสิทธิ์บริการภายนอกยังคงมีผล'
+        : 'Enable FULL BYPASS ON? lnwjud will stop asking for approval, including always-confirm tools, risky commands, Active Project scope, goalLease, and absolute paths outside projects. Changes or deletes may not be recoverable. Input validation, Windows ACL/UAC, and remote-service authorization still apply.');
+      if (!confirmed) return;
+    }
+    patch(target === 'desktop' ? { desktopFullBypassAll: enabled } : { stdioFullBypassAll: enabled });
+  }
+
   function updateServer(index: number, next: Partial<ExtraMcpServerSettings>): void {
     patchExtensions({
       extraMcpServers: draft.extensions.extraMcpServers.map((server, current) => current === index ? { ...server, ...next } : server),
@@ -94,6 +117,24 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
         env: {},
       }],
     });
+  }
+
+  async function installPdf(): Promise<void> {
+    if (pdfInstallBusy) return;
+    setPdfInstallBusy(true);
+    setPdfInstallMessage(null);
+    setPdfInstallError(null);
+    try {
+      const result = await onInstallPdfProvider();
+      setDraft((previous) => ({ ...previous, pdfProviderPath: result.providerPath }));
+      setPdfInstallMessage(result.reused
+        ? (locale === 'th' ? `PDF Provider พร้อมใช้แล้ว: ${result.providerPath}` : `PDF Provider is ready: ${result.providerPath}`)
+        : (locale === 'th' ? `ติดตั้ง Poppler ${result.version} และตั้งค่า pdftotext.exe เรียบร้อยแล้ว` : `Installed Poppler ${result.version} and configured pdftotext.exe.`));
+    } catch (cause: unknown) {
+      setPdfInstallError(cause instanceof Error ? cause.message : (locale === 'th' ? 'ดาวน์โหลดหรือติดตั้ง PDF Provider ไม่สำเร็จ' : 'Could not download or install the PDF Provider.'));
+    } finally {
+      setPdfInstallBusy(false);
+    }
   }
 
   async function save(): Promise<void> {
@@ -148,24 +189,68 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
       ) : null}
 
       {section === 'security' ? (
-        <section className="panel settings-card settings-card-polished" aria-label="Custom permissions">
-          <CardHeading icon="◇" title="Custom Permission Profile" subtitle={locale === 'th' ? 'กำหนดสิทธิ์ละเอียดเมื่อเลือก Profile = Custom' : 'Fine-grained rules used when Profile = Custom'} badge="CUSTOM" />
-          <div className="setting-grid four-col">
-            <Decision label="READ" value={draft.customPermission.read} onChange={(value) => patchCustom({ read: value })} />
-            <Decision label="WRITE" value={draft.customPermission.write} onChange={(value) => patchCustom({ write: value })} />
-            <Decision label="EXECUTE" value={draft.customPermission.execute} onChange={(value) => patchCustom({ execute: value })} />
-            <Decision label="DANGEROUS" value={draft.customPermission.dangerous} onChange={(value) => patchCustom({ dangerous: value })} />
-          </div>
-          <div className="setting-field">
-            <label className="field-label" htmlFor="custom-executables">{locale === 'th' ? 'Allowed Executables เพิ่มเติม — หนึ่งรายการต่อบรรทัด' : 'Additional allowed executables — one per line'}</label>
-            <textarea id="custom-executables" className="settings-textarea" rows={4} value={draft.customPermission.allowedExecutables.join('\n')} placeholder={'python\ndocker\ndotnet'} onChange={(event) => patchCustom({ allowedExecutables: splitList(event.target.value) })} />
-          </div>
-        </section>
+        <>
+          <section className="panel settings-card settings-card-polished full-access-unrestricted-card" aria-label="Full Access (Unrestricted)">
+            <CardHeading
+              icon="⚡"
+              title={locale === 'th' ? 'โหมดเต็มสิทธิ์ (Unrestricted)' : 'Full Access (Unrestricted)'}
+              subtitle={locale === 'th' ? 'สิทธิ์ระดับเครื่องและตัวเลือกข้ามการอนุมัติของ lnwjud' : 'Machine-wide access and explicit lnwjud approval bypass controls'}
+              badge={(draft.desktopFullBypassAll || draft.stdioFullBypassAll) ? 'FULL BYPASS ON' : unrestricted ? 'UNRESTRICTED' : 'OFF'}
+            />
+            <SettingSwitch
+              checked={unrestricted}
+              label="Unrestricted mode"
+              description={locale === 'th' ? 'อนุญาต absolute path ที่ผู้ใช้หรือ AI ระบุ โดยไม่สแกนหรือลงทะเบียน drive letter อัตโนมัติ และยังใช้กฎยืนยันตาม Profile ตามปกติ' : 'Allow explicitly requested absolute paths without scanning or registering drive letters, while keeping the active profile approval rules in force.'}
+              onChange={(enabled) => { void onUnrestrictedChange(enabled).then((restartRequired) => setUnrestrictedMessage(restartRequired ? (locale === 'th' ? 'ต้อง Restart MCP/Tunnel เพื่อใช้ค่าครบถ้วน' : 'Restart MCP/Tunnel to apply this everywhere.') : null)); }}
+            />
+            {unrestrictedMessage === null ? null : <div className="alert-box-warning" role="status">⚠️ {unrestrictedMessage}</div>}
+            {permissionProfile === 'full' ? (
+              <div className="alert-box-warning full-bypass-control" role="group" aria-label="Desktop Full Bypass">
+                <strong>{draft.desktopFullBypassAll ? 'DESKTOP FULL BYPASS ON' : (locale === 'th' ? 'Desktop Full Bypass — ปิด' : 'Desktop Full Bypass — Off')}</strong>
+                <SettingSwitch
+                  checked={draft.desktopFullBypassAll}
+                  label={locale === 'th' ? 'ข้าม tool ที่ต้องยืนยันเสมอและทุกขอบเขตของ lnwjud' : 'Bypass always-confirm tools and every lnwjud scope check'}
+                  description={locale === 'th' ? 'Desktop HTTP และ Secure Tunnel จะผ่านทันที รวมคำสั่งเสี่ยง, path นอก Active Project และ goalLease โดยไม่ถาม' : 'Desktop HTTP and Secure Tunnel proceed without prompts, including risky commands, paths outside the Active Project, and goalLease.'}
+                  onChange={(value) => changeFullBypass('desktop', value)}
+                />
+              </div>
+            ) : <p className="hint">{locale === 'th' ? 'เลือก Desktop Profile = Full เพื่อเปิด Desktop Full Bypass' : 'Select Desktop Profile = Full to enable Desktop Full Bypass.'}</p>}
+            {stdioPermissionProfile === 'full' ? (
+              <div className="alert-box-warning full-bypass-control" role="group" aria-label="STDIO Full Bypass">
+                <strong>{draft.stdioFullBypassAll ? 'STDIO FULL BYPASS ON' : (locale === 'th' ? 'STDIO Full Bypass — ปิด' : 'STDIO Full Bypass — Off')}</strong>
+                <SettingSwitch
+                  checked={draft.stdioFullBypassAll}
+                  label={locale === 'th' ? 'ข้าม tool ที่ต้องยืนยันเสมอและทุกขอบเขตสำหรับ direct STDIO' : 'Bypass always-confirm tools and every scope check for direct STDIO'}
+                  description={locale === 'th' ? 'เป็นคนละค่ากับ Desktop/Secure Tunnel และต้องเปิดเอง; direct STDIO จะไม่ถามแม้เป็น path นอกโปรเจกต์' : 'Independent from Desktop/Secure Tunnel; direct STDIO will not prompt even for paths outside projects.'}
+                  onChange={(value) => changeFullBypass('stdio', value)}
+                />
+              </div>
+            ) : <p className="hint">{locale === 'th' ? 'เลือก STDIO Profile = Full เพื่อเปิด STDIO Full Bypass' : 'Select STDIO Profile = Full to enable STDIO Full Bypass.'}</p>}
+            <p className="hint">{locale === 'th'
+              ? 'เครื่องมือไฟล์แบบมีโครงสร้างใช้ Active Project แบบ canonical และ Recovery Trash / checkpoint. เมื่อ Full Bypass ปิด งานปกติของ Full Access จะไม่ถาม แต่ tool ที่ต้องยืนยันเสมอ งานลบ/ทำข้อมูลหาย และงานนอกขอบเขตยังถาม ส่วนคำสั่งระดับเครื่องอันตรายยังถูกบล็อก'
+              : 'Structured file tools use canonical Active Project paths and Recovery Trash / checkpoints. With Full Bypass OFF, ordinary Full Access work does not prompt; always-confirm, destructive, and out-of-scope actions still ask, while dangerous machine-level commands remain blocked.'}</p>
+            <p className="hint">{locale === 'th' ? 'FULL BYPASS ข้ามเฉพาะ authorization/policy ของ lnwjud การตรวจ input, path ที่ต้องมีอยู่, Windows ACL/UAC และสิทธิ์บริการภายนอกยังทำงานตามจริง' : 'FULL BYPASS skips lnwjud authorization policy only. Input validation, required path existence, Windows ACL/UAC, and remote-service authorization still apply.'}</p>
+          </section>
+
+          <section className="panel settings-card settings-card-polished custom-permission-card" aria-label="Custom Permission Profile">
+            <CardHeading icon="◇" title="Custom Permission Profile" subtitle={locale === 'th' ? 'กำหนดสิทธิ์ละเอียดเมื่อเลือก Profile = Custom' : 'Fine-grained rules used when Profile = Custom'} badge="CUSTOM" />
+            <div className="setting-grid four-col">
+              <Decision label="READ" value={draft.customPermission.read} onChange={(value) => patchCustom({ read: value })} />
+              <Decision label="WRITE" value={draft.customPermission.write} onChange={(value) => patchCustom({ write: value })} />
+              <Decision label="EXECUTE" value={draft.customPermission.execute} onChange={(value) => patchCustom({ execute: value })} />
+              <Decision label="DANGEROUS" value={draft.customPermission.dangerous} onChange={(value) => patchCustom({ dangerous: value })} />
+            </div>
+            <div className="setting-field">
+              <label className="field-label" htmlFor="custom-executables">{locale === 'th' ? 'Allowed Executables เพิ่มเติม — หนึ่งรายการต่อบรรทัด' : 'Additional allowed executables — one per line'}</label>
+              <textarea id="custom-executables" className="settings-textarea" rows={4} value={draft.customPermission.allowedExecutables.join('\n')} placeholder={'python.exe\ndocker.exe\ndotnet.exe'} onChange={(event) => patchCustom({ allowedExecutables: splitList(event.target.value) })} />
+            </div>
+          </section>
+        </>
       ) : null}
 
       {section === 'tools' ? (
         <>
-          <section className="panel settings-card settings-card-polished" aria-label="Codex delegation tools">
+          <section className="panel settings-card settings-card-polished" aria-label="Codex delegation tools" data-settings-focus="tools-codex" tabIndex={-1}>
             <CardHeading icon="◎" title={locale === 'th' ? 'Codex Delegation' : 'Codex Delegation'} subtitle={locale === 'th' ? 'ป้องกัน agent ใช้โควต้า Codex โดยไม่ตั้งใจ' : 'Protect Codex quota from accidental agent delegation'} badge={draft.codexToolsEnabled ? 'ENABLED' : 'DEFAULT OFF'} />
             <SettingSwitch
               checked={draft.codexToolsEnabled}
@@ -201,15 +286,29 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
             <p className="hint">{locale === 'th' ? 'ใช้กับ Shell, Office, Screen Record และ WSL โดยไม่ต้องแก้ environment variable เอง' : 'Used by Shell, Office, screen recording, and WSL without editing environment variables.'}</p>
           </section>
 
-          <section className="panel settings-card settings-card-polished" aria-label="Local providers">
+          <section className="panel settings-card settings-card-polished" aria-label="Local providers" data-settings-focus="tools-local-providers" tabIndex={-1}>
             <CardHeading icon="◫" title={locale === 'th' ? 'Local Providers' : 'Local Providers'} subtitle={locale === 'th' ? 'ตั้งค่า PDF และ Language Server โดยไม่ต้องแก้ Environment Variable' : 'Configure PDF and language-server providers without environment variables'} badge="ADVANCED" />
             <div className="setting-grid two-col">
-              <Field
-                label="PDF Provider (pdftotext)"
-                value={draft.pdfProviderPath}
-                placeholder={locale === 'th' ? 'พาธไปยัง pdftotext (ถ้ามี)' : 'Path to pdftotext (optional)'}
-                onChange={(value) => patch({ pdfProviderPath: value })}
-              />
+              <div className="pdf-provider-install-control">
+                <Field
+                  label={locale === 'th' ? 'PDF Provider (pdftotext.exe)' : 'PDF Provider (pdftotext.exe)'}
+                  value={draft.pdfProviderPath}
+                  placeholder={locale === 'th' ? 'พาธไปยัง pdftotext.exe (ถ้ามี)' : 'Path to pdftotext.exe (optional)'}
+                  onChange={(value) => patch({ pdfProviderPath: value })}
+                />
+                <div className="inline-actions">
+                  <button type="button" className="btn-save-gold" disabled={pdfInstallBusy} onClick={() => { void installPdf(); }}>
+                    {pdfInstallBusy
+                      ? (locale === 'th' ? 'กำลังดาวน์โหลดและติดตั้ง…' : 'Downloading and installing…')
+                      : (locale === 'th' ? 'ดาวน์โหลดและติดตั้งอัตโนมัติ' : 'Download & install automatically')}
+                  </button>
+                </div>
+                <p className="hint">{locale === 'th'
+                  ? 'ดาวน์โหลด Poppler for Windows รุ่นที่ lnwjud กำหนดไว้จาก GitHub Release ตรวจ SHA-256 ก่อนแตกไฟล์ แล้วเก็บไว้ในโฟลเดอร์ข้อมูลของ lnwjud โดยไม่ต้องเพิ่ม PATH หรือใช้สิทธิ์ Administrator'
+                  : 'Downloads the lnwjud-pinned Poppler for Windows release from GitHub, verifies SHA-256 before extraction, and installs it in the lnwjud data directory without changing PATH or requiring Administrator rights.'}</p>
+                {pdfInstallError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {pdfInstallError}</div>}
+                {pdfInstallMessage === null ? null : <div className="toast-success-banner" role="status">✓ {pdfInstallMessage}</div>}
+              </div>
               <TextArea
                 label={locale === 'th' ? 'LSP Commands — LANGUAGE=COMMAND' : 'LSP Commands — LANGUAGE=COMMAND'}
                 value={stringMapToText(draft.lspCommands)}
@@ -224,7 +323,7 @@ export function UserConfigPanel({ locale, settings, section, onSave }: UserConfi
       ) : null}
 
       {section === 'mcp' ? (
-        <section className="panel settings-card settings-card-polished" aria-label="Extensions and MCP servers">
+        <section className="panel settings-card settings-card-polished" aria-label="Extensions and MCP servers" data-settings-focus="mcp-servers" tabIndex={-1}>
           <CardHeading
             icon="⬡"
             title={locale === 'th' ? 'Extensions, Skills และ MCP Servers' : 'Extensions, Skills & MCP Servers'}

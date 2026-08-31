@@ -1,10 +1,11 @@
 import { useState, type FormEvent, type ReactElement } from 'react';
 import type { WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { settleWorkspaceAdd, type AddWorkspaceAction } from './workspace-add.js';
 
 interface WorkspacePanelProps {
   readonly selectedWorkspace: WorkspaceSummary | null;
   readonly workspaces: readonly WorkspaceSummary[];
-  readonly onAddWorkspace: (rootPath: string) => Promise<void>;
+  readonly onAddWorkspace: AddWorkspaceAction;
 }
 
 export function WorkspacePanel({ selectedWorkspace, workspaces, onAddWorkspace }: WorkspacePanelProps): ReactElement {
@@ -16,8 +17,7 @@ export function WorkspacePanel({ selectedWorkspace, workspaces, onAddWorkspace }
     if (rootPath.trim().length === 0) return;
     setPending(true);
     try {
-      await onAddWorkspace(rootPath);
-      setRootPath('');
+      setRootPath(await settleWorkspaceAdd(rootPath, onAddWorkspace));
     } finally {
       setPending(false);
     }

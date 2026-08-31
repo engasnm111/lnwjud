@@ -42,11 +42,11 @@ export function gitTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'git',
-      description: 'Run a Git subcommand with a separate args array. Full Access runs ordinary read and non-destructive Git mutations without confirmation. Destructive/data-loss Git forms ask unless their exact scoped family is enabled for auto-approval; scope overrides, aliases, unsafe pathspecs, unknown commands, and destructive remote/history rewrites remain guarded or denied. Mutating calls require workspaceId to match the host-selected Active Project. Do not wrap Git in PowerShell/cmd.',
+      description: 'Run a Git subcommand with a separate args array. With Full Bypass OFF, Full Access runs ordinary read and non-destructive Git mutations without confirmation while destructive/data-loss forms, scope overrides, aliases, unsafe pathspecs, unknown commands, and destructive remote/history rewrites remain guarded or denied. Trusted Full Bypass skips lnwjud approval, command-policy, and Active Project scope checks, including explicitly absolute outside paths, without bypassing Git or OS errors. Do not wrap Git in PowerShell/cmd.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: gitRunSchema,
-      handler: async (input, signal) => context.services.git === undefined
+      handler: async (input, signal, authorization) => context.services.git === undefined
         ? missingService()
         : context.services.git.run(context.actor, {
           args: input.args,
@@ -54,7 +54,7 @@ export function gitTools(context: McpToolContext): McpToolDefinition[] {
           ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
           ...(input.timeoutSeconds === undefined ? {} : { timeoutMs: Math.floor(input.timeoutSeconds * 1000) }),
           ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
-        }, signal),
+        }, signal, authorization),
     }),
   ];
 }

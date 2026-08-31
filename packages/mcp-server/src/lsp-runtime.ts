@@ -140,7 +140,12 @@ export class LspRuntimeService {
         if (uri !== undefined) this.published.set(uri, Array.isArray(params.diagnostics) ? params.diagnostics : []);
       });
     });
-    if (!session.ok) return session;
+    if (!session.ok) {
+      if (session.error.message.startsWith('No language server configured for ')) {
+        return ok({ tool: 'lsp_diagnostics', status: 'needs_setup', available: false, ready: false, executed: false, requirements: ['configured local language server'] });
+      }
+      return session;
+    }
     try {
       await this.openFiles(session.value.connection, session.value.files, session.value.language);
       await quietPeriod(DIAGNOSTICS_QUIET_MS, DIAGNOSTICS_MAX_WAIT_MS);
@@ -160,7 +165,12 @@ export class LspRuntimeService {
     const newName = readString(input.newName ?? input.new_name);
     if (requestedFile === undefined || newName === undefined) return err(appError('INVALID_INPUT', 'lsp_rename requires file and newName'));
     const session = await this.startSession(input, () => undefined);
-    if (!session.ok) return session;
+    if (!session.ok) {
+      if (session.error.message.startsWith('No language server configured for ')) {
+        return ok({ tool: 'lsp_rename', status: 'needs_setup', available: false, ready: false, executed: false, requirements: ['configured local language server'] });
+      }
+      return session;
+    }
     try {
       await this.openFiles(session.value.connection, session.value.files, session.value.language);
       const targetFile = session.value.files[0]!;
@@ -185,8 +195,6 @@ export class LspRuntimeService {
   ): Promise<Result<{ root: string; language: string; command: readonly string[]; files: readonly string[]; connection: LspConnection }>> {
     const workspaceId = readString(input.workspaceId);
     if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'LSP tools require workspaceId'));
-    const root = await this.workspaceRoot(workspaceId);
-    if (!root.ok) return root;
 
     const requestedFiles = (Array.isArray(input.files) ? input.files : [input.file].filter((value): value is string => typeof value === 'string'))
       .map((value) => String(value).trim())
@@ -199,6 +207,8 @@ export class LspRuntimeService {
     if (command === undefined) {
       return err(appError('PERMISSION_DENIED', `No language server configured for ${language}. Set LNWJUD_LSP_${language.toUpperCase()}_COMMAND (JSON argv preferred)`));
     }
+    const root = await this.workspaceRoot(workspaceId);
+    if (!root.ok) return root;
     const resolvedFiles = await this.resolveWorkspaceFiles(root.value, requestedFiles);
     if (!resolvedFiles.ok) return resolvedFiles;
 

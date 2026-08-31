@@ -68,4 +68,5 @@ export interface McpToolAuditInput {
   readonly durationMs: number;
   readonly traceId?: string;
   readonly traceParent?: string;
+  readonly authorizationMode?: 'standard' | 'full_bypass';
 }

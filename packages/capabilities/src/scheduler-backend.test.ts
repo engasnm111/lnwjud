@@ -94,6 +94,16 @@ describe('SchedulerCapabilityBackend', () => {
     expect(runImpl).toHaveBeenCalledWith('schtasks.exe', ['/Delete', '/TN', 'LnwjudTest', '/F']);
   });
 
+  it('accepts trusted Full Bypass authorization without caller confirmation', async () => {
+    const runImpl = vi.fn(async (): Promise<{ stdout: string; stderr: string }> => ({ stdout: 'SUCCESS', stderr: '' }));
+    const backend = new SchedulerCapabilityBackend({ platform: 'win32', runImpl });
+    const authorization = { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' } as const;
+
+    await expect(backend.execute({ action: 'delete', task_name: 'LnwjudTest' }, undefined, authorization))
+      .resolves.toMatchObject({ ok: true, value: { deleted: true } });
+    expect(runImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('previews a deletion without confirmation or schtasks side effects', async () => {
     const runImpl = vi.fn(async (): Promise<{ stdout: string; stderr: string }> => ({ stdout: 'SHOULD NOT RUN', stderr: '' }));
     const backend = new SchedulerCapabilityBackend({ platform: 'win32', runImpl });

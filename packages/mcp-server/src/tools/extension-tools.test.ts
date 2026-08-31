@@ -26,6 +26,8 @@ describe('skills and mcp bridge tools', () => {
       expect(tool?.annotations.readOnlyHint).toBe(true);
       expect(tool?.annotations.destructiveHint).toBe(false);
     }
+    expect(tools.find((entry) => entry.name === 'skills_list')?.description).toContain('Codex plugin');
+    expect(tools.find((entry) => entry.name === 'skills_list')?.description).toContain('machine-global');
     for (const name of ['mcp_list', 'mcp_describe']) {
       const tool = tools.find((entry) => entry.name === name);
       expect(tool?.permission).toBe('READ');

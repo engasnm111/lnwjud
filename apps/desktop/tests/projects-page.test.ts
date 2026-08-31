@@ -2,9 +2,10 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceSummary } from '@lnwjud/ipc-contracts';
-import { ProjectsPage } from '../src/renderer/features/projects/ProjectsPage.js';
+import { ProjectsPage, settleWorkspaceAdd } from '../src/renderer/features/projects/ProjectsPage.js';
 
 const noop = async (): Promise<void> => undefined;
+const added = async (): Promise<boolean> => true;
 const workspace = (id: string, overrides: Partial<WorkspaceSummary> = {}): WorkspaceSummary => ({
   id,
   displayName: id,
@@ -29,7 +30,7 @@ describe('Projects page lifecycle controls', () => {
       activeWorkspaceIds: ['active-project'],
       onSelectWorkspace: noop,
       onSetWorkspaceActive: noop,
-      onAddWorkspace: noop,
+      onAddWorkspace: added,
       onSetWorkspaceArchived: async (): Promise<void> => undefined,
       onDeleteWorkspace: noop,
     }));
@@ -53,10 +54,16 @@ describe('Projects page lifecycle controls', () => {
       activeWorkspaceIds: [],
       onSelectWorkspace: noop,
       onSetWorkspaceActive: noop,
-      onAddWorkspace: noop,
+      onAddWorkspace: added,
       onSetWorkspaceArchived: async (): Promise<void> => undefined,
       onDeleteWorkspace: noop,
     }));
     expect(source).toContain('ลบรายการ');
+  });
+
+  it('clears the path only after a successful Add Project and keeps failures handled', async () => {
+    await expect(settleWorkspaceAdd('E:\\good', async () => true)).resolves.toBe('');
+    await expect(settleWorkspaceAdd('E:\\rejected', async () => false)).resolves.toBe('E:\\rejected');
+    await expect(settleWorkspaceAdd('E:\\failed', async () => { throw new Error('failed'); })).resolves.toBe('E:\\failed');
   });
 });

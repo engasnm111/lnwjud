@@ -1,5 +1,7 @@
 export const USER_SETTING_KEYS = Object.freeze({
   customPermissionProfile: 'custom_permission_profile',
+  desktopFullBypassAll: 'desktop_full_bypass_all',
+  stdioFullBypassAll: 'stdio_full_bypass_all',
   mcpCallTimeoutMs: 'mcp_call_timeout_ms',
   mcpIdleTimeoutMs: 'mcp_idle_timeout_ms',
   processTimeoutMs: 'process_timeout_ms',

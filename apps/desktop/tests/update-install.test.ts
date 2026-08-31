@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { UpdateDownloadedDialogController, UpdateInstallCoordinator, updateReadyDialogOptions, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
+import type { TunnelStatus } from '@lnwjud/ipc-contracts';
+import { confirmTunnelStopForUpdate, UpdateDownloadedDialogController, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, updateReadyDialogOptions, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -12,6 +13,40 @@ describe('downloaded update installation', () => {
       defaultId: 1,
       cancelId: 1,
     });
+  });
+
+  it('requires explicit confirmation before installing while Secure Tunnel is running', async () => {
+    const confirmStop = vi.fn(async (): Promise<boolean> => false);
+    await expect(confirmTunnelStopForUpdate({
+      getTunnelStatus: async () => tunnelStatus('running'),
+      confirmStop,
+    })).resolves.toBe(false);
+    expect(confirmStop).toHaveBeenCalledOnce();
+  });
+
+  it('does not prompt for tunnel stop when the tunnel is already stopped', async () => {
+    const confirmStop = vi.fn(async (): Promise<boolean> => true);
+    await expect(confirmTunnelStopForUpdate({
+      getTunnelStatus: async () => tunnelStatus('stopped'),
+      confirmStop,
+    })).resolves.toBe(true);
+    expect(confirmStop).not.toHaveBeenCalled();
+  });
+
+  it('fails safe to confirmation when tunnel status cannot be verified', async () => {
+    const confirmStop = vi.fn(async (): Promise<boolean> => true);
+    await expect(confirmTunnelStopForUpdate({
+      getTunnelStatus: async () => { throw new Error('probe failed'); },
+      confirmStop,
+    })).resolves.toBe(true);
+    expect(confirmStop).toHaveBeenCalledOnce();
+  });
+
+  it('detects a surviving persistent runtime even when the top-level tunnel state is stale', () => {
+    expect(updateInstallNeedsTunnelStopConfirmation({
+      ...tunnelStatus('stopped'),
+      persistent: persistentStatus('reconnecting', true),
+    })).toBe(true);
   });
 
   it('defers Restart Now while MCP calls are active', async () => {
@@ -195,6 +230,26 @@ describe('downloaded update installation', () => {
     expect(sharedActivitySnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it('forces installation after a bounded grace period once the user has confirmed an update', async () => {
+    vi.useFakeTimers();
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 1,
+      install,
+      maxWaitMs: 50,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+
+    coordinator.requestInstall();
+    await vi.advanceTimersByTimeAsync(49);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(install).toHaveBeenCalledOnce();
+    expect(coordinator.hasPendingInstall()).toBe(false);
+  });
+
   it('cancels a pending idle wait during shutdown', async () => {
     vi.useFakeTimers();
     const install = vi.fn();
@@ -274,6 +329,47 @@ describe('downloaded update installation', () => {
     expect(requestInstall).toHaveBeenCalledOnce();
   });
 });
+
+function tunnelStatus(state: TunnelStatus['state']): TunnelStatus {
+  return {
+    state,
+    source: 'desktop',
+    hasApiKey: true,
+    clientPath: 'C:\\Program Files\\lnwjud\\resources\\tunnel-client\\tunnel-client.exe',
+    profileExists: true,
+    message: null,
+    logPath: null,
+    persistent: null,
+  };
+}
+
+function persistentStatus(
+  state: NonNullable<TunnelStatus['persistent']>['state'],
+  runtimeAliasActive: boolean,
+): NonNullable<TunnelStatus['persistent']> {
+  return {
+    enabled: true,
+    tunnelIdMasked: 'tunnel_0123********cdef',
+    runtimeAlias: 'lnwjud',
+    runtimeAliasActive,
+    mode: 'native-managed',
+    state,
+    healthy: true,
+    ready: true,
+    pollHealthy: true,
+    reconnectCount: 0,
+    lastConnectedAt: null,
+    lastReconnectAt: null,
+    nextReconnectAt: null,
+    lastErrorCode: null,
+    clientVersion: 'fixture',
+    localMcpUrl: 'http://127.0.0.1:18765/mcp',
+    uiUrl: null,
+    readyBeforeRetire: false,
+    strictZeroDowntime: false,
+    capabilityEvidence: 'fixture',
+  };
+}
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
   let resolve!: (value: T | PromiseLike<T>) => void;

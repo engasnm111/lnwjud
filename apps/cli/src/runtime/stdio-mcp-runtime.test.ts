@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import { permissionProfiles } from '@lnwjud/permissions';
+import { CAPABILITY_TASK_OWNER_METADATA_KEY } from '@lnwjud/capabilities';
 import { createStdioMcpRuntime } from './stdio-mcp-runtime.js';
 import { sharedActivityLeaseDirectoryPath } from '@lnwjud/mcp-server';
 
@@ -34,6 +35,18 @@ afterEach(async () => {
 });
 
 describe('stdio MCP runtime', () => {
+  it('wires durable goals and scheduled continuation orchestration from the same SQLite repository', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-continuation-'));
+    temporaryRoots.push(dataPath);
+    const runtime = createStdioMcpRuntime(dataPath, workspace);
+    try {
+      expect(runtime.services.goals).toBeDefined();
+      expect(runtime.services.scheduledContinuations).toBeDefined();
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it('does not overwrite the Desktop permission profile when using full tunnel access', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-profile-'));
     temporaryRoots.push(dataPath);
@@ -144,5 +157,91 @@ describe('stdio MCP runtime', () => {
       value: { task_id: taskId, state: 'completed', exit_code: 0, stdout: 'stdio-durable', durable: true },
     });
     await replacementRuntime.close();
+  }, 15_000);
+
+  it('reads durable shell task liveness after STDIO runtime replacement without treating another session as absence', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-goal-liveness-data-'));
+    const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-goal-liveness-workspace-'));
+    temporaryRoots.push(dataPath, workspaceRoot);
+    const durableWorkspace = {
+      id: 'goal-liveness-workspace',
+      displayName: 'goal liveness',
+      rootPath: workspaceRoot,
+      realRootPath: workspaceRoot,
+      createdAt: '2026-08-27T00:00:00.000Z',
+    };
+    const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    await new SqliteWorkspaceRepository(database).insert(durableWorkspace);
+    database.close();
+
+    const ownerMetadata = {
+      [CAPABILITY_TASK_OWNER_METADATA_KEY]: {
+        clientId: 'cli-mcp-stdio',
+        sessionId: 'predecessor-session',
+        workspaceId: durableWorkspace.id,
+      },
+    };
+    const firstRuntime = createStdioMcpRuntime(dataPath, durableWorkspace, true);
+    const started = await firstRuntime.services.capabilities?.execute('shell', {
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', 'setTimeout(() => process.exit(0), 10000)'],
+      cwd: workspaceRoot,
+      workspaceId: durableWorkspace.id,
+      execution: 'background',
+      timeout_seconds: 30,
+      userConfirmed: true,
+      metadata: ownerMetadata,
+    });
+    expect(started).toMatchObject({ ok: true, value: { task_id: expect.any(String), state: 'running', durable: true } });
+    if (started === undefined || !started.ok) {
+      await firstRuntime.close();
+      return;
+    }
+    const taskId = String((started.value as Record<string, unknown>).task_id);
+    const runGoal = await firstRuntime.services.goals?.runGoal(firstRuntime.actor, {
+      workspaceId: durableWorkspace.id,
+      goalKey: 'runtime-task-state-reader',
+      objective: 'Verify task liveness survives a transport replacement.',
+      plan: { steps: [] },
+      leaseSeconds: 600,
+    });
+    expect(runGoal).toMatchObject({ ok: true, value: { acquired: true, leaseToken: expect.any(String) } });
+    if (runGoal === undefined || !runGoal.ok || runGoal.value.leaseToken === undefined) {
+      await firstRuntime.close();
+      return;
+    }
+    const checkpointed = await firstRuntime.services.goals?.checkpointGoal(firstRuntime.actor, {
+      goalId: runGoal.value.goalId,
+      leaseToken: runGoal.value.leaseToken,
+      expectedRevision: runGoal.value.revision,
+      currentPhase: 'worker-running',
+      summary: 'A durable task is still running.',
+      stepUpdates: [],
+      nextAction: 'Wait for the task.',
+      blockers: [],
+      evidence: [],
+      activeTaskIds: [taskId],
+    });
+    expect(checkpointed).toMatchObject({ ok: true, value: { activeTaskIds: [taskId] } });
+    await firstRuntime.close();
+
+    const replacementRuntime = createStdioMcpRuntime(dataPath, durableWorkspace, true);
+    try {
+      const liveness = await replacementRuntime.services.goalMutationFence?.observe(runGoal.value.goalId, [taskId]);
+      expect(liveness).toMatchObject({
+        trustworthy: true,
+        activeTaskStates: [{ taskId, state: 'running' }],
+      });
+    } finally {
+      await replacementRuntime.services.capabilities?.execute('shell', {
+        operation: 'cancel',
+        task_id: taskId,
+        workspaceId: durableWorkspace.id,
+        userConfirmed: true,
+        metadata: ownerMetadata,
+      });
+      await replacementRuntime.close();
+    }
   }, 15_000);
 });

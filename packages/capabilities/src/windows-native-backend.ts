@@ -1,6 +1,14 @@
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  ok,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
 import { readCapabilityActiveWorkspaceRoot } from './task-ownership.js';
 
@@ -55,23 +63,23 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
     private readonly options: WindowsNativeBackendOptions = {},
   ) {}
 
-  public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (this.platform !== 'win32') return err(appError('INTERNAL_ERROR', 'Windows capability is unavailable on this platform', true));
     if (!isRecord(input)) return err(appError('INVALID_INPUT', 'Native capability input must be an object'));
     if (input.dry_run === true) return ok({ dry_run: true, capability: this.capability });
     if (isSignalAborted(signal)) return cancelledOperation();
 
-    const pathCheck = await this.assertPathsAllowed(input);
+    const pathCheck = await this.assertPathsAllowed(input, authorization);
     if (!pathCheck.ok) return pathCheck;
     if (isSignalAborted(signal)) return cancelledOperation();
-    if (requiresExplicitConfirmation(this.capability, input) && input.userConfirmed !== true) {
+    if (requiresExplicitConfirmation(this.capability, input) && !isApplicationAuthorized(authorization, input.userConfirmed === true)) {
       return err(appError('PERMISSION_REQUIRED', `${this.capability} action requires explicit user confirmation`));
     }
 
     return this.bridge.execute({ capability: this.capability, input }, signal);
   }
 
-  private async assertPathsAllowed(input: Record<string, unknown>): Promise<Result<void>> {
+  private async assertPathsAllowed(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<void>> {
     const targets: { readonly field: NativePathField; readonly value: string }[] = [];
     for (const field of PATH_FIELDS[this.capability]) {
       const value = input[field];
@@ -83,6 +91,15 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
       }
     }
     if (targets.length === 0) return ok(undefined);
+
+    if (isFullBypassAuthorization(authorization)) {
+      for (const target of targets) {
+        if (await canonicalizeNativePath(target.field, target.value) === null) {
+          return err(appError('INVALID_INPUT', `${this.capability} target path is unavailable`));
+        }
+      }
+      return ok(undefined);
+    }
 
     const roots = await this.canonicalAllowedRoots(input);
     if (roots.length === 0) {

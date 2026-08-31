@@ -84,7 +84,28 @@ describe('TunnelRuntimeReconciler', () => {
     const result = await reconciler.reconcile();
     expect(result.action).toBe('operator-required');
     expect(result.snapshot).toMatchObject({ state: 'error', lastErrorCode: 'TUNNEL_ID_MISMATCH' });
+    expect(result.snapshot.message).toContain('Press Start Tunnel');
     expect(runtimeAdapter.connect).not.toHaveBeenCalled();
+  });
+
+  it('allows manual replacement only after the previous alias is confirmed stopped', async () => {
+    const stoppedOther = runtime({
+      running: false,
+      healthy: false,
+      ready: false,
+      pollHealthy: false,
+      tunnelId: 'tunnel_other0123456',
+    });
+    const runtimeAdapter = adapter(stoppedOther, runtime());
+    const reconciler = new TunnelRuntimeReconciler({
+      adapter: runtimeAdapter,
+      desiredState: (): TunnelRuntimeDesiredState => desired,
+      allowStoppedTunnelIdReplacement: true,
+    });
+    const result = await reconciler.reconcile();
+    expect(result.action).toBe('reconnected');
+    expect(runtimeAdapter.connect).toHaveBeenCalledWith({ tunnelId: desired.tunnelId, mcpServerUrl: desired.mcpServerUrl });
+    expect(result.snapshot).toMatchObject({ state: 'running', tunnelId: desired.tunnelId });
   });
 
   it('classifies revoked credentials as auth-required instead of a transient reconnect', async () => {

@@ -78,8 +78,8 @@ Flow ที่ควรใช้:
 
 1. Scheduled turn เรียก `run_goal` ด้วย `workspaceId` และ `goalKey` เดิมทุกครั้ง
 2. ถ้า `acquired: false` แปลว่ามี turn อื่นถือ lease อยู่ ให้รายงานสถานะแล้ว **ห้ามเริ่ม mutation/process ซ้ำ**
-3. ถ้า `acquired: true` ให้ใช้ `currentPhase`, `pendingSteps`, `nextAction`, `activeTaskIds` และ `lastCheckpoint` เป็น continuation state
-4. ถ้า `activeTaskIds` มี task เดิม ให้ตรวจ task เดิมก่อนเริ่ม command ใหม่
+3. ถ้า `acquired: true` ให้ใช้ `currentPhase`, `pendingSteps`, `nextAction`, `trackedTasks`, `activeTaskIds` และ `lastCheckpoint` เป็น continuation state
+4. ถ้า `trackedTasks` มี `blocking_job` เดิม ให้ตรวจ task เดิมก่อนเริ่ม command ใหม่; `supporting_service` เป็น service กลางที่ไม่ควร block liveness หรือถูกยกเลิกโดยอัตโนมัติ
 5. หลังผลลัพธ์สำคัญเรียก `checkpoint_goal` พร้อม `expectedRevision` ล่าสุด
 6. checkpoint ให้เก็บเฉพาะ bounded/redacted summary, path/hash/task ID/evidence ที่จำเป็น ห้ามเก็บ credential, source contents หรือ log ยาว
 7. ถ้า turn ตายก่อน release lease รอบถัดไป takeover ได้เมื่อ lease หมดอายุ
@@ -87,6 +87,20 @@ Flow ที่ควรใช้:
 9. Scheduled Task เห็น terminal state แล้วต้องหยุดตัวเอง ไม่เรียก tools ต่อ
 
 Goal state เป็น SQLite durable state และใช้ monotonic revision/CAS + append-only checkpoint history. Raw lease token ไม่ถูกเก็บใน authoritative state; repository เก็บ hash สำหรับตรวจสิทธิ์เท่านั้น และ activity logs ต้องไม่แสดง lease token
+
+เมื่อยกเลิก goal ให้ตรวจ `taskCancellations` ครบทุก binding: `cancelWithGoal=false` ต้องปรากฏเป็น `status=skipped` และ binding ถูกเก็บไว้ใน checkpoint ส่วน provider ที่หายไปหรือหยุดงานไม่สำเร็จต้องเป็น `status=failed`; ห้ามใช้ `allTasksStopped=true` เพื่อกลบงานที่ยังมีชีวิตหรือยังตรวจสอบไม่ได้
+
+### Rolling one-time Scheduled Continuation
+
+เมื่อ run ปัจจุบันยังไม่เสร็จและผู้ใช้เปิดใช้ rolling continuation ให้ `prepare_scheduled_continuation` checkpoint + จอง successor แบบ **one-time/cloud** ด้วย delay แบบ adaptive 2–25 นาที และสร้าง native ChatGPT Scheduled Task เดียวในแชทเดิม จากนั้นบันทึก `created` receipt พร้อม native task ID และ `runsOn: cloud` ทันที. ถ้าไม่ระบุ delay ระบบจะ fail-safe ที่ **+2 นาที**; 5/10/25 นาทีเป็น watchdog ที่ต้องเลือก explicitly เฉพาะเมื่อ run เดิมจะทำงานต่อจริง โดย 25 นาทีเป็นเพียงค่าสูงสุด. ถ้า host turn กำลังจะจบหรือหลัง response จะไม่มี worker เหลือ ให้สร้าง successor ที่ +2 โดยตรง หรือเลื่อน task เดิมที่ยืนยันแล้วเป็น `now+2` และ record reschedule ก่อนจบ turn. ห้ามคืน control ขณะ durable continuation ยังมีเพียง `prepared`.
+
+ทุก mutation ใน rolling mode ต้องแนบ `goalLease` ซึ่งมี goal ID, per-run lease token และ lease generation. เมื่อ Full Bypass ปิด Registry ตรวจ token/generation ก่อน handler dispatch, strip raw token ออกจาก handler/log, เพิ่ม durable activity sequence และบันทึก fenced call ที่กำลังรัน. การใช้ MCP session เดิมจึงไม่ทำให้ token รุ่นเก่ากลับมาเขียนได้หลัง takeover. เมื่อ Full Bypass เปิด Registry จะข้าม application-level fence นี้ตามสเปก แต่ scheduled workflow ยังต้อง claim และแนบ proof เพื่อประสาน ownership; Full Bypass ไม่ทำให้ scheduled wake ที่ยังไม่ claim กลายเป็นเจ้าของ goal.
+
+เมื่อ successor ตื่นต้องเรียก `claim_scheduled_continuation` ก่อน mutation. Native wake ที่มาก่อน due ไม่เกิน 120 วินาที claim ได้เพื่อทนต่อ scheduling jitter ของ one-time host. ถ้า host metadata ยืนยันภายหลังว่า exact native one-time task รัน/ถูก consume ไปแล้ว แต่ durable continuation ยัง pending/live เพราะ claim ไม่จบ ให้ record `consumed` พร้อม exact native host run receipt; นี่เป็นการยืนยันว่า task ไม่ได้ pending แล้วเท่านั้น ไม่ใช่ goal completion และ goal ที่ยัง active ต้อง reserve/create successor ใหม่หลัง reconciliation. ถ้าชน worker ที่ยังทำงาน, lease หมดอายุแต่มี `blocking_job` running หรือหลักฐาน worker ไม่แน่นอน ให้ consume wake แล้ว reserve/create **successor ใหม่** ที่ `now+2`; ห้าม re-arm task ที่กำลัง firing. ถ้าพบ lease ค้างแต่ไม่มี worker จริง ต้องมี trustworthy no-worker probe สองรอบห่างอย่างน้อย 120 วินาที โดย goal revision, lease generation และ activity sequence ไม่เปลี่ยน, ไม่มี live fenced call และ blocking task ทุกตัว terminal/absent จึง CAS takeover เป็น `orphan_recovered`. หลักฐาน unknown ห้าม force-unlock.
+
+ถ้าพบ enumerated handoff risk ระหว่าง worker ปัจจุบันยังถือ lease หรือ host turn ต้องคืน control ทั้งที่ goal ยัง active ให้ `expedite_scheduled_continuation` ดึง **task เดิม** มา `now+2`. ระหว่างมี durable background task ให้เก็บ `trackedTasks` ใน checkpoint และใช้ bounded wait เฉพาะ `blocking_job` จนอ่าน terminal result; ห้ามส่ง final completion จาก progress log. เมื่อ acceptance ครบ ให้ `finish_goal` แล้วอ่าน `get_goal` ยืนยัน terminal ก่อนตอบผู้ใช้เสมอ แม้ผู้ใช้ปิด scheduled continuation ระหว่างทาง เพราะ opt-out ยกเลิกเฉพาะ successor ไม่ได้ปิด goal. จากนั้นลบ exact native task ตาม cancellation instruction, record `cancelled` พร้อม native host deletion receipt จาก task ID เดิม และอ่านสถานะกลับให้ได้ `cancelled`. ถ้าลบไม่ได้/ไม่แน่ใจให้คง `cancel_required`, `cancel_failed` หรือ `cancel_uncertain` ตามจริง. ห้าม fallback ไป Windows Task Scheduler, OS cron, shell timer, recurrence, browser automation หรือ undocumented OpenAI API.
+
+Timeline อ้างอิง: ค่า default คือ `claim T+00 -> successor T+02`; ถ้า worker จะทำงานต่อจริงและต้องการ watchdog สำหรับงานเปิดกว้างจึงระบุ `T+25` เอง หรือใช้ `T+10`/`T+05` ตามขอบเขตงาน. `terminal T+03 -> finish_goal -> cancel exact successor`; ถ้า turn ต้องจบที่ T+03 ทั้งที่ยัง active ให้ successor อยู่ที่/เลื่อนเป็น **now+2**; collision ที่ due ให้ consume wake ที่กำลังยิงและจอง **successor ใหม่** `now+2` (ห้ามเลื่อน task เดิมที่กำลังยิง); second unchanged trustworthy no-worker probe -> `orphan_recovered` + higher lease generation -> successor ใหม่ตาม delay ที่เหมาะกับงานคงเหลือ.
 
 `session_checkpoint` เดิมยังเป็น summary checkpoint สำหรับ development session และ file checkpoint/Recovery Center ยังใช้กู้คืนไฟล์ ทั้งสองอย่าง backward compatible และ **ไม่ใช่ authoritative goal state**
 
@@ -108,7 +122,7 @@ Scheduled Task ควรใช้ `goalKey` ที่คงที่และส
 1. เรียก run_goal ด้วย workspaceId เดิมและ goalKey="release-v4.11.0-durable-goal"
 2. ถ้า acquired=false ให้รายงานว่ายังมี lease อยู่และจบรอบ ห้ามเริ่มงานซ้ำ
 3. ถ้า acquired=true ให้ทำต่อจาก pendingSteps/nextAction/lastCheckpoint
-4. ถ้ามี activeTaskIds ให้ตรวจ status/log/result ของ task เดิมก่อนเริ่ม command ใหม่
+4. ถ้ามี `trackedTasks` ให้ตรวจ status/log/result ของ `blocking_job` เดิมก่อนเริ่ม command ใหม่; `supporting_service` ไม่ใช่งานที่ต้องรอ
 5. หลัง milestone หรือผลลัพธ์สำคัญทุกครั้งให้ checkpoint_goal ด้วย expectedRevision ล่าสุด
 6. งานยาวให้เริ่ม background แล้ว checkpoint task_id ทันที
 7. ห้ามใช้ Codex, AI CLI, OpenAI API worker หรือ browser automation เป็นสมองเพิ่มเติม
@@ -124,7 +138,7 @@ Scheduled Task ควรใช้ `goalKey` ที่คงที่และส
 
 1. ใช้แชทเดิมก่อน
 2. ถ้างานถูกจัดเป็น Durable Goal ให้ `run_goal` ด้วย `goalKey` เดิมก่อน mutation ใด ๆ
-3. ตรวจ `activeTaskIds` และ durable task เดิมด้วย `task_id`
+3. ตรวจ `trackedTasks` (หรือ legacy `activeTaskIds`) และ durable task เดิมด้วย `taskId`
 4. ตรวจ git status/diff เท่าที่จำเป็น
 5. ทำต่อจาก pending acceptance แรก
 6. Refresh connector เฉพาะเมื่อ tool schema เปลี่ยนหรือ cache ค้างจริง
@@ -156,7 +170,7 @@ ChatGPT Chat สามารถอ่าน เขียน รันคำส�
 - [ ] goalKey คงที่เมื่อใช้ Scheduled Task
 - [ ] ถ้า lease ถูกถืออยู่ ไม่มี mutation/process ซ้ำ
 - [ ] tracker ตรงกับสถานะจริง (ถ้ามี)
-- [ ] background task ทุกตัวมี `task_id` และ goal checkpoint เก็บ `activeTaskIds`
+- [ ] background task ทุกตัวมี `taskId`, explicit `provider`, `role` และ `cancelWithGoal`; goal checkpoint เก็บ `trackedTasks` (โดย `activeTaskIds` เป็น legacy view)
 - [ ] ไม่มี writer สองตัวชน workspace เดียวกัน
 - [ ] terminal goal ถูก `finish_goal` แล้วและ Scheduled Task หยุด
 - [ ] Codex delegation ปิด เว้นแต่ผู้ใช้ตั้งใจเปิด
@@ -166,7 +180,7 @@ ChatGPT Chat สามารถอ่าน เขียน รันคำส�
 | อาการ | ตรวจ/แก้ |
 | --- | --- |
 | ChatGPT หยุดแถว 22–25 นาที | ตรวจว่าใช้ build v4.11.0 ที่มี outcome-driven fix และ tool result ไม่มีข้อความ `ใกล้หมด budget` |
-| Scheduled turn เริ่มงานเดิมซ้ำ | ต้องเรียก `run_goal` ก่อน mutation และตรวจ `acquired` + `activeTaskIds` |
+| Scheduled turn เริ่มงานเดิมซ้ำ | ต้องเรียก `run_goal` ก่อน mutation และตรวจ `acquired` + `trackedTasks`/legacy `activeTaskIds` |
 | `checkpoint_goal` ได้ revision conflict | อ่าน `get_goal` ใหม่ ห้ามเขียนทับ snapshot เก่า แล้วตัดสินใจจาก revision ล่าสุด |
 | Turn ตายทั้งที่ถือ lease | รอ lease expiry; Scheduled turn ถัดไปใช้ `run_goal` takeover โดย goalKey เดิม |
 | Tunnel หลุด | ตรวจ persistent runtime doctor/reconnect ของ Tunnel ID เดิม |

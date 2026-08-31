@@ -33,7 +33,7 @@ export function mcpBridgeTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'mcp_call',
-      description: 'Call a tool on a discovered local MCP server. Child side effects and filesystem/network scope are controlled by that child server, so every mcp_call is treated as opaque mutation and requires explicit chat plus host exact-action approval.',
+      description: 'Call a tool on a discovered local MCP server. Child side effects and filesystem/network scope are controlled by that child server, so standard mode treats every mcp_call as opaque mutation and requires explicit chat plus host exact-action approval. Trusted Full Bypass skips lnwjud application approval; the child server still enforces its own policy.',
       ...opaqueChildMutation,
       inputSchema: mcpCallSchema,
       handler: async (input, signal) => context.services.extensions === undefined

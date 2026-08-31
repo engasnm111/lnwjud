@@ -7,6 +7,7 @@ import {
 export interface DesktopMcpStatus {
   readonly running: boolean;
   readonly url: string | null;
+  readonly lastStartError: string | null;
   /** Compatibility field: the desktop MCP listener is now application-global. */
   readonly workspaceId: null;
 }
@@ -28,6 +29,7 @@ export class DesktopMcpLifecycle {
   private handle: McpHttpServerHandle | null = null;
   private startOperation: Promise<DesktopMcpStatus> | null = null;
   private stopOperation: Promise<DesktopMcpStatus> | null = null;
+  private lastStartError: string | null = null;
 
   public constructor(options: DesktopMcpLifecycleOptions) {
     this.starter = options.starter ?? defaultStarter;
@@ -36,8 +38,8 @@ export class DesktopMcpLifecycle {
 
   public status(): DesktopMcpStatus {
     return this.handle === null
-      ? { running: false, url: null, workspaceId: null }
-      : { running: true, url: this.handle.endpoint.toString(), workspaceId: null };
+      ? { running: false, url: null, lastStartError: this.lastStartError, workspaceId: null }
+      : { running: true, url: this.handle.endpoint.toString(), lastStartError: null, workspaceId: null };
   }
 
   public start(): Promise<DesktopMcpStatus> {
@@ -85,9 +87,15 @@ export class DesktopMcpLifecycle {
   }
 
   private async startInternal(): Promise<DesktopMcpStatus> {
-    const handle = await this.starter.start(await this.createServerOptions());
-    this.handle = handle;
-    return this.status();
+    try {
+      const handle = await this.starter.start(await this.createServerOptions());
+      this.handle = handle;
+      this.lastStartError = null;
+      return this.status();
+    } catch (error: unknown) {
+      this.lastStartError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   private async stopInternal(): Promise<DesktopMcpStatus> {

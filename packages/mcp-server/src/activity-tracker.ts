@@ -13,6 +13,7 @@ export interface ActivitySinkEvent {
   readonly timestamp: string;
   readonly traceId?: string;
   readonly traceParent?: string;
+  readonly authorizationMode?: 'standard' | 'full_bypass';
 }
 
 export interface TraceContext {
@@ -36,6 +37,7 @@ export interface InFlightToolCall {
   readonly targetSummary?: string;
   readonly traceId?: string;
   readonly traceParent?: string;
+  readonly authorizationMode?: 'standard' | 'full_bypass';
 }
 
 export class ActivityTracker {
@@ -55,7 +57,12 @@ export class ActivityTracker {
     return this.activityRevision;
   }
 
-  public async begin(toolName: string, input: unknown, traceContext?: TraceContext): Promise<string> {
+  public async begin(
+    toolName: string,
+    input: unknown,
+    traceContext?: TraceContext,
+    authorizationMode?: ActivitySinkEvent['authorizationMode'],
+  ): Promise<string> {
     const callId = randomUUID();
     const timestamp = new Date().toISOString();
     const workspaceId = readWorkspaceId(input);
@@ -70,6 +77,7 @@ export class ActivityTracker {
       ...(targetSummary === undefined ? {} : { targetSummary }),
       ...(trace.traceId === undefined ? {} : { traceId: trace.traceId }),
       ...(trace.traceParent === undefined ? {} : { traceParent: trace.traceParent }),
+      ...(authorizationMode === undefined ? {} : { authorizationMode }),
     };
     this.inflight.set(callId, entry);
     this.activityRevision += 1;
@@ -85,6 +93,7 @@ export class ActivityTracker {
       ...(targetSummary === undefined ? {} : { targetSummary }),
       ...(trace.traceId === undefined ? {} : { traceId: trace.traceId }),
       ...(trace.traceParent === undefined ? {} : { traceParent: trace.traceParent }),
+      ...(authorizationMode === undefined ? {} : { authorizationMode }),
     });
     return callId;
   }
@@ -94,6 +103,13 @@ export class ActivityTracker {
     const existing = this.inflight.get(callId);
     if (existing === undefined || existing.targetSummary === targetSummary) return;
     this.inflight.set(callId, { ...existing, targetSummary });
+    this.activityRevision += 1;
+  }
+
+  public updateAuthorizationMode(callId: string, authorizationMode: 'standard' | 'full_bypass'): void {
+    const existing = this.inflight.get(callId);
+    if (existing === undefined || existing.authorizationMode === authorizationMode) return;
+    this.inflight.set(callId, { ...existing, authorizationMode });
     this.activityRevision += 1;
   }
 
@@ -114,6 +130,7 @@ export class ActivityTracker {
       ...(existing?.targetSummary === undefined ? {} : { targetSummary: existing.targetSummary }),
       ...(existing?.traceId === undefined ? {} : { traceId: existing.traceId }),
       ...(existing?.traceParent === undefined ? {} : { traceParent: existing.traceParent }),
+      ...(existing?.authorizationMode === undefined ? {} : { authorizationMode: existing.authorizationMode }),
       ...(resultMessage === undefined || resultMessage.length === 0 ? {} : { resultMessage }),
     });
   }

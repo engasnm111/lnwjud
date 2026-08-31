@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { ok } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { UpgradeRuntimeService } from './upgrade-runtime.js';
+import { UpgradeRuntimeStateStore } from './upgrade-runtime-state-store.js';
 
 const actorA: FileActor = { clientId: 'client', clientName: 'test', sessionId: 'session-a' };
 const actorB: FileActor = { clientId: 'client', clientName: 'test', sessionId: 'session-b' };
@@ -32,23 +33,22 @@ describe('upgrade runtime multi-session persistence', () => {
     expect(isolated).toMatchObject({ ok: true, value: { session: {}, checkpoints: [] } });
   });
 
-  it('merges global plugin mutations from independent sessions without lost updates', async () => {
+  it('does not synthesize global plugin mutations from independent sessions', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-concurrency-'));
     const runtimeStatePath = path.join(directory, 'upgrade-runtime.json');
     const first = new UpgradeRuntimeService({ runtimeStatePath }, actorA);
     const second = new UpgradeRuntimeService({ runtimeStatePath }, actorB);
 
-    await Promise.all([
+    const results = await Promise.all([
       first.execute('plugin_install', { name: 'plugin-a' }),
       second.execute('plugin_install', { name: 'plugin-b' }),
     ]);
-
-    const listed = await new UpgradeRuntimeService({ runtimeStatePath }, { ...actorA, sessionId: 'session-c' }).execute('plugin_list', {});
-    expect(listed).toMatchObject({ ok: true, value: { plugins: expect.arrayContaining([
-      { name: 'plugin-a', enabled: true },
-      { name: 'plugin-b', enabled: true },
-    ]) } });
-    if (listed.ok) expect(listed.value.plugins).toHaveLength(2);
+    expect(results).toEqual([
+      expect.objectContaining({ ok: true, value: expect.objectContaining({ status: 'disabled', executed: false }) }),
+      expect.objectContaining({ ok: true, value: expect.objectContaining({ status: 'disabled', executed: false }) }),
+    ]);
+    const shared = await new UpgradeRuntimeStateStore(runtimeStatePath, 'audit').readShared();
+    expect(shared.plugins).toEqual([]);
   });
 
   it('keeps shared worktree ledger entries session-owned', async () => {

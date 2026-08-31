@@ -16,6 +16,10 @@ describe('native main-process i18n', () => {
     expect(localizedUpdateStatusMessage(ready, 'en')).toContain('is ready');
     expect(nativeMessages('th').shutdownBlockedTitle).toContain('ยังทำงานอยู่');
     expect(nativeMessages('en').shutdownBlockedTitle).toBe('lnwjud is still running');
+    expect(nativeMessages('th').updaterTunnelStopConfirm).toContain('ติดตั้งต่อ');
+    expect(nativeMessages('en').updaterTunnelStopConfirm).toBe('Stop Tunnel and Install');
+    expect(nativeMessages('th').updaterTunnelStopDetail).toContain('Tunnel ID และ Key เดิม');
+    expect(nativeMessages('en').updaterTunnelStopDetail).toContain('same Tunnel ID and key');
   });
 
   it('keeps Thai native UI literals out of main and tray orchestration files', async () => {

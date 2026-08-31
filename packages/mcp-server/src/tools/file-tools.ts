@@ -23,13 +23,13 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: readFileSchema,
-      handler: async (input) => context.services.file === undefined
+      handler: async (input, _signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.readFile(context.actor, input.workspaceId, {
           path: input.path,
           ...(input.startLine === undefined ? {} : { startLine: input.startLine }),
           ...(input.endLine === undefined ? {} : { endLine: input.endLine }),
-        }),
+        }, authorization),
     }),
     defineTool({
       name: 'read_files',
@@ -37,7 +37,7 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: readFilesSchema,
-      handler: async (input) => context.services.file === undefined
+      handler: async (input, _signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.readFiles(context.actor, input.workspaceId, {
           files: input.files.map((file) => ({
@@ -45,7 +45,7 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
             ...(file.startLine === undefined ? {} : { startLine: file.startLine }),
             ...(file.endLine === undefined ? {} : { endLine: file.endLine }),
           })),
-        }),
+        }, authorization),
     }),
     defineTool({
       name: 'write_file',
@@ -53,14 +53,14 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: writeFileSchema,
-      handler: async (input, signal) => context.services.file === undefined
+      handler: async (input, signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.writeFile(context.actor, input.workspaceId, {
           path: input.path,
           content: input.content,
           ...(input.overwriteExisting === undefined ? {} : { overwriteExisting: input.overwriteExisting }),
           ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
-        }, signal),
+        }, signal, authorization),
     }),
     defineTool({
       name: 'apply_patch',
@@ -68,12 +68,12 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: applyPatchSchema,
-      handler: async (input, signal) => context.services.file === undefined
+      handler: async (input, signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.applyPatch(context.actor, input.workspaceId, {
           files: input.files,
           ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
-        }, signal),
+        }, signal, authorization),
     }),
     defineTool({
       name: 'edit_file',
@@ -81,7 +81,7 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: editFileSchema,
-      handler: async (input, signal) => context.services.file === undefined
+      handler: async (input, signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.editFile(context.actor, input.workspaceId, {
           path: input.path,
@@ -89,21 +89,21 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
           newText: input.newText,
           ...(input.expectedOccurrences === undefined ? {} : { expectedOccurrences: input.expectedOccurrences }),
           ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
-        }, signal),
+        }, signal, authorization),
     }),
     defineTool({
       name: 'move_file',
-      description: 'Move a file or directory within the Active Project, creating missing destination parents. Full Access performs ordinary moves without a confirmation prompt; conflicting or destructive forms remain policy-gated.',
+      description: 'Move a file or directory, creating missing destination parents. With Full Bypass OFF, Full Access performs ordinary in-project moves without a confirmation prompt while conflicting or destructive forms remain policy-gated. Trusted Full Bypass skips lnwjud approval/scope checks for explicit absolute outside paths; OS/filesystem errors still apply.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: moveFileSchema,
-      handler: async (input, signal) => context.services.file === undefined
+      handler: async (input, signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.moveFile(context.actor, input.workspaceId, {
           sourcePath: input.sourcePath,
           destinationPath: input.destinationPath,
           ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
-        }, signal),
+        }, signal, authorization),
     }),
     defineTool({
       name: 'copy_file',
@@ -111,22 +111,22 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: copyFileSchema,
-      handler: async (input, signal) => context.services.file === undefined
+      handler: async (input, signal, authorization) => context.services.file === undefined
         ? missingService()
-        : context.services.file.copyFile(context.actor, input.workspaceId, { sourcePath: input.sourcePath, destinationPath: input.destinationPath }, signal),
+        : context.services.file.copyFile(context.actor, input.workspaceId, { sourcePath: input.sourcePath, destinationPath: input.destinationPath }, signal, authorization),
     }),
     defineTool({
       name: 'delete_file',
-      description: 'Move one file or empty directory from the host-selected Active Project into Recovery Trash. This structured delete can be auto-approved when its saved setting is enabled and the exact target is proven safe. Other destructive Git/shell/WSL families have separate exact-scope settings; critical paths, workspace roots, non-empty directories, ambiguous paths, and mismatched workspaces remain guarded. Returns a recoveryId and local recovery path.',
+      description: 'Delete one file or empty directory. With Full Bypass OFF, eligible in-project targets move to Recovery Trash and exact safe targets can use scoped auto-approval; critical paths, roots, non-empty directories, ambiguous paths, and mismatched workspaces remain guarded. Trusted Full Bypass skips lnwjud approval/scope checks and permits an exact absolute outside target, which is deleted without Recovery Trash; root and non-empty-directory input guards still apply.',
       permission: 'DANGEROUS',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: deleteFileSchema,
-      handler: async (input, signal) => context.services.file === undefined
+      handler: async (input, signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.deleteFile(context.actor, input.workspaceId, {
           path: input.path,
           ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
-        }, signal),
+        }, signal, authorization),
     }),
     defineTool({
       name: 'list_recovery_items',
@@ -144,12 +144,12 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: restoreDeletedFileSchema,
-      handler: async (input, signal) => context.services.file === undefined
+      handler: async (input, signal, authorization) => context.services.file === undefined
         ? missingService()
         : context.services.file.restoreDeletedFile(context.actor, input.workspaceId, {
           recoveryId: input.recoveryId,
           ...(input.userConfirmed === undefined ? {} : { userConfirmed: input.userConfirmed }),
-        }, signal),
+        }, signal, authorization),
     }),
     defineTool({
       name: 'list_checkpoints',
@@ -163,15 +163,15 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'restore_checkpoint',
-      description: 'Restore a reviewed pre-mutation checkpoint. Requires explicit confirmation and creates a new rollback checkpoint before replacing current content.',
+      description: 'Restore a reviewed pre-mutation checkpoint. Standard mode requires explicit confirmation; trusted Full Bypass skips the lnwjud confirmation gate. A new rollback checkpoint is created before replacing current content when the target is inside a recoverable workspace.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: restoreCheckpointSchema,
-      handler: async (input) => {
-        if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires explicit user confirmation'));
+      handler: async (input, _signal, authorization) => {
+        if (input.userConfirmed !== true && authorization?.applicationApproved !== true) return err(appError('PERMISSION_REQUIRED', 'Checkpoint restore requires explicit user confirmation'));
         return context.services.checkpoint === undefined
           ? missingService()
-          : context.services.checkpoint.restore(context.actor, input.workspaceId, input.checkpointId, { userConfirmed: true });
+          : context.services.checkpoint.restore(context.actor, input.workspaceId, input.checkpointId, { userConfirmed: input.userConfirmed === true }, authorization);
       },
     }),
   ];

@@ -234,6 +234,17 @@
   min-width: 0;
 }
 
+.pdf-provider-install-control {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-content: start;
+}
+
+.pdf-provider-install-control .hint {
+  margin: 0;
+}
+
 .max-field-width {
   max-width: 420px;
 }

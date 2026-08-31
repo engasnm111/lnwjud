@@ -62,6 +62,223 @@ describe.skipIf(process.platform !== 'win32')('TunnelController lifecycle', () =
     await expect(controller.startAutomatically()).resolves.toMatchObject({ state: 'stopped' });
   });
 
+  it('re-adopts a surviving native runtime after status first observes it as external', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-restart-adopt-'));
+    temporaryRoots.push(dataPath);
+    const appData = path.join(dataPath, 'appdata');
+    vi.stubEnv('APPDATA', appData);
+    const profileDir = path.join(appData, 'tunnel-client');
+    await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
+    await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
+      control_plane: { tunnel_id: 'tunnel_fixture012345' },
+      mcp: { server_urls: [{ channel: 'main', url: 'http://127.0.0.1:17654/mcp' }] },
+    }, null, 2), 'utf8');
+    await writeFile(path.join(profileDir, 'lnwjud.runtime.secret'), 'encrypted-fixture', 'utf8');
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const capabilities: TunnelRuntimeCapabilities = {
+      clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+      pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+    };
+    const status = vi.fn(async () => ({
+      exists: true, running: true, healthy: true, ready: true, pollHealthy: true,
+      tunnelId: 'tunnel_fixture012345', mcpServerUrl: 'http://127.0.0.1:17654/mcp', pid: 4321, uiUrl: null, message: null,
+    }));
+    const connect = vi.fn(async () => ({
+      exists: true, running: true, healthy: true, ready: true, pollHealthy: true,
+      tunnelId: 'tunnel_fixture012345', mcpServerUrl: 'http://127.0.0.1:18765/mcp', pid: 4321, uiUrl: null, message: null,
+    }));
+    const adapter: TunnelRuntimeReconcilerAdapter = {
+      runtimeAlias: (): string => 'lnwjud',
+      capabilities: vi.fn(async () => capabilities),
+      status,
+      connect,
+      stop: vi.fn(async () => { throw new Error('stop should not be called'); }),
+    };
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getMcpServerUrl: (): string => 'http://127.0.0.1:18765/mcp',
+      getTunnelId: (): string => 'tunnel_fixture012345',
+      setTunnelId: (): void => undefined,
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      decryptSecret: async (): Promise<string> => 'runtime-key',
+      isExternalTunnelRunning: async (): Promise<boolean> => true,
+    });
+
+    await expect(controller.status()).resolves.toMatchObject({
+      state: 'running', source: 'external', persistent: { mode: 'external' },
+    });
+    await expect(controller.startAutomatically()).resolves.toMatchObject({
+      state: 'running', source: 'desktop', persistent: { mode: 'native-managed', localMcpUrl: 'http://127.0.0.1:18765/mcp' },
+    });
+    expect(connect).toHaveBeenCalledWith({
+      tunnelId: 'tunnel_fixture012345',
+      mcpServerUrl: 'http://127.0.0.1:18765/mcp',
+    });
+  });
+
+  it('manual Start safely stops a mismatched persistent runtime before reconnecting the saved Tunnel ID', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-manual-reconfigure-'));
+    temporaryRoots.push(dataPath);
+    const appData = path.join(dataPath, 'appdata');
+    vi.stubEnv('APPDATA', appData);
+    const profileDir = path.join(appData, 'tunnel-client');
+    await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
+    await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
+      control_plane: { tunnel_id: 'tunnel_new012345678' },
+      mcp: { server_urls: [{ channel: 'main', url: 'http://127.0.0.1:18765/mcp' }] },
+    }, null, 2), 'utf8');
+    await writeFile(path.join(profileDir, 'lnwjud.runtime.secret'), 'encrypted-fixture', 'utf8');
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const capabilities: TunnelRuntimeCapabilities = {
+      clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+      pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+    };
+    const oldRunning = {
+      exists: true, running: true, healthy: true, ready: true, pollHealthy: true,
+      tunnelId: 'tunnel_old012345678', mcpServerUrl: 'http://127.0.0.1:18765/mcp', pid: 4321, uiUrl: null, message: null,
+    } as const;
+    const oldStopped = { ...oldRunning, running: false, healthy: false, ready: false, pollHealthy: false, pid: null };
+    const newRunning = { ...oldRunning, tunnelId: 'tunnel_new012345678', pid: 5432 };
+    const status = vi.fn()
+      .mockResolvedValueOnce(oldRunning)
+      .mockResolvedValueOnce(oldStopped);
+    const stop = vi.fn(async () => oldStopped);
+    const connect = vi.fn(async () => newRunning);
+    const adapter: TunnelRuntimeReconcilerAdapter = {
+      runtimeAlias: (): string => 'lnwjud',
+      capabilities: vi.fn(async () => capabilities),
+      status,
+      connect,
+      stop,
+    };
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getMcpServerUrl: (): string => 'http://127.0.0.1:18765/mcp',
+      getTunnelId: (): string => 'tunnel_new012345678',
+      setTunnelId: (): void => undefined,
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      decryptSecret: async (): Promise<string> => 'runtime-key',
+      isExternalTunnelRunning: async (): Promise<boolean> => true,
+    });
+
+    await expect(controller.start()).resolves.toMatchObject({
+      state: 'running',
+      source: 'desktop',
+      persistent: { mode: 'native-managed', tunnelIdMasked: expect.stringContaining('tunnel_new') },
+    });
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledWith({ tunnelId: 'tunnel_new012345678', mcpServerUrl: 'http://127.0.0.1:18765/mcp' });
+  });
+
+  it('automatic reconnect never replaces a running persistent runtime with a different Tunnel ID', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-auto-mismatch-'));
+    temporaryRoots.push(dataPath);
+    const appData = path.join(dataPath, 'appdata');
+    vi.stubEnv('APPDATA', appData);
+    const profileDir = path.join(appData, 'tunnel-client');
+    await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
+    await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
+      control_plane: { tunnel_id: 'tunnel_new012345678' },
+      mcp: { server_urls: [{ channel: 'main', url: 'http://127.0.0.1:18765/mcp' }] },
+    }, null, 2), 'utf8');
+    await writeFile(path.join(profileDir, 'lnwjud.runtime.secret'), 'encrypted-fixture', 'utf8');
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const capabilities: TunnelRuntimeCapabilities = {
+      clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+      pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+    };
+    const stop = vi.fn();
+    const connect = vi.fn();
+    const adapter: TunnelRuntimeReconcilerAdapter = {
+      runtimeAlias: (): string => 'lnwjud',
+      capabilities: vi.fn(async () => capabilities),
+      status: vi.fn(async () => ({
+        exists: true, running: true, healthy: true, ready: true, pollHealthy: true,
+        tunnelId: 'tunnel_old012345678', mcpServerUrl: 'http://127.0.0.1:18765/mcp', pid: 4321, uiUrl: null, message: null,
+      })),
+      connect,
+      stop,
+    };
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getMcpServerUrl: (): string => 'http://127.0.0.1:18765/mcp',
+      getTunnelId: (): string => 'tunnel_new012345678',
+      setTunnelId: (): void => undefined,
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      decryptSecret: async (): Promise<string> => 'runtime-key',
+      isExternalTunnelRunning: async (): Promise<boolean> => true,
+    });
+
+    await expect(controller.startAutomatically()).resolves.toMatchObject({
+      state: 'error',
+      message: expect.stringContaining('Press Start Tunnel'),
+      persistent: { lastErrorCode: 'TUNNEL_ID_MISMATCH' },
+    });
+    expect(stop).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('manual Start restarts the same persistent Tunnel ID after credentials change', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-key-restart-'));
+    temporaryRoots.push(dataPath);
+    const appData = path.join(dataPath, 'appdata');
+    vi.stubEnv('APPDATA', appData);
+    const profileDir = path.join(appData, 'tunnel-client');
+    await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
+    await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
+      control_plane: { tunnel_id: 'tunnel_fixture012345' },
+      mcp: { server_urls: [{ channel: 'main', url: 'http://127.0.0.1:18765/mcp' }] },
+    }, null, 2), 'utf8');
+    await writeFile(path.join(profileDir, 'lnwjud.runtime.secret'), 'encrypted-fixture', 'utf8');
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const capabilities: TunnelRuntimeCapabilities = {
+      clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+      pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+    };
+    const running = {
+      exists: true, running: true, healthy: true, ready: true, pollHealthy: true,
+      tunnelId: 'tunnel_fixture012345', mcpServerUrl: 'http://127.0.0.1:18765/mcp', pid: 4321, uiUrl: null, message: null,
+    } as const;
+    const stopped = { ...running, running: false, healthy: false, ready: false, pollHealthy: false, pid: null };
+    const status = vi.fn().mockResolvedValueOnce(running).mockResolvedValueOnce(stopped);
+    const stop = vi.fn(async () => stopped);
+    const connect = vi.fn(async () => running);
+    const adapter: TunnelRuntimeReconcilerAdapter = {
+      runtimeAlias: (): string => 'lnwjud',
+      capabilities: vi.fn(async () => capabilities),
+      status,
+      connect,
+      stop,
+    };
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getMcpServerUrl: (): string => 'http://127.0.0.1:18765/mcp',
+      getTunnelId: (): string => 'tunnel_fixture012345',
+      setTunnelId: (): void => undefined,
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      decryptSecret: async (): Promise<string> => 'new-runtime-key',
+      isExternalTunnelRunning: async (): Promise<boolean> => true,
+    });
+    controllerInternals(controller).runtimeConfigurationDirty = true;
+
+    await expect(controller.start()).resolves.toMatchObject({ state: 'running', source: 'desktop' });
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(controllerInternals(controller).runtimeConfigurationDirty).toBe(false);
+  });
+
   it('invalidates a cached external-live probe when the operator explicitly stops the tunnel', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-stop-cache-'));
     temporaryRoots.push(dataPath);
@@ -791,6 +1008,7 @@ function controllerInternals(controller: TunnelController): {
   state: 'stopped' | 'starting' | 'running' | 'error';
   externalProbeAt: number;
   lastExternalProbe: 'live' | 'gone' | 'unverifiable';
+  runtimeConfigurationDirty: boolean;
 } {
   return controller as unknown as {
     child: ChildProcess | null;
@@ -799,6 +1017,7 @@ function controllerInternals(controller: TunnelController): {
     state: 'stopped' | 'starting' | 'running' | 'error';
     externalProbeAt: number;
     lastExternalProbe: 'live' | 'gone' | 'unverifiable';
+    runtimeConfigurationDirty: boolean;
   };
 }
 

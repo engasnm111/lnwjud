@@ -2,6 +2,7 @@ export type MessageKey =
   | 'brand'
   | 'nav.home'
   | 'nav.projects'
+  | 'nav.tools'
   | 'nav.git'
   | 'nav.workLog'
   | 'nav.live'
@@ -177,6 +178,7 @@ export type MessageKey =
   | 'guidedTunnel.configured'
   | 'guidedTunnel.stepStartTitle'
   | 'guidedTunnel.stepStartBody'
+  | 'guidedTunnel.persistentRestartNotice'
   | 'guidedTunnel.startTunnel'
   | 'guidedTunnel.starting'
   | 'guidedTunnel.running'
@@ -202,6 +204,7 @@ export const th: Messages = {
   brand: 'lnwjud',
   'nav.home': 'หน้าหลัก',
   'nav.projects': 'โปรเจกต์',
+  'nav.tools': 'เครื่องมือ',
   'nav.git': 'Git',
   'nav.workLog': 'บันทึกการทำงาน',
   'nav.live': 'Live Logs',
@@ -263,7 +266,8 @@ export const th: Messages = {
   'guidedTunnel.configuring': 'กำลังสร้างโปรไฟล์และตรวจสอบ…',
   'guidedTunnel.configured': 'โปรไฟล์ Tunnel พร้อมใช้งาน',
   'guidedTunnel.stepStartTitle': '4. เริ่ม Tunnel',
-  'guidedTunnel.stepStartBody': 'ตรวจสอบข้อมูลด้านล่าง แล้วกด Start Tunnel เมื่อสถานะเป็น Running โปรแกรมจะ reconnect Tunnel ID เดิมให้อัตโนมัติ',
+  'guidedTunnel.stepStartBody': 'ตรวจสอบข้อมูลด้านล่างแล้วกด Start Tunnel หาก Runtime API key หรือ Tunnel ID เปลี่ยน lnwjud จะหยุด Persistent Tunnel Runtime เดิมอย่างปลอดภัยก่อน แล้วเชื่อมต่อใหม่ด้วยค่าที่บันทึกไว้',
+  'guidedTunnel.persistentRestartNotice': 'ค่าที่บันทึกไว้ต่างจาก Persistent Tunnel Runtime ที่กำลังใช้งาน กด Start Tunnel เพื่อให้ lnwjud หยุด Runtime เดิมอย่างปลอดภัย แล้วเชื่อมต่อใหม่ด้วย Tunnel ID และคีย์ล่าสุด',
   'guidedTunnel.startTunnel': 'Start Tunnel',
   'guidedTunnel.starting': 'กำลังเริ่ม Tunnel…',
   'guidedTunnel.running': 'Tunnel กำลังทำงาน',
@@ -324,7 +328,7 @@ export const th: Messages = {
   'settings.savePath': 'บันทึก path',
   'settings.permissions': 'โปรไฟล์สิทธิ์',
   'settings.unrestricted': 'โหมดเต็มสิทธิ์ (Unrestricted)',
-  'settings.unrestrictedHint': 'ค่าเริ่มต้นเปิด: อนุญาต root ที่ระบบลงทะเบียนไว้ รันคำสั่ง shell/CLI ได้ อ่านไฟล์ตามขอบเขตที่กำหนด และรัน Git ได้ทุกคำสั่ง — การลบไฟล์ยังต้องยืนยัน',
+  'settings.unrestrictedHint': 'อนุญาต absolute path ที่ระบุชัดเจน แต่ไม่สแกนหรือลงทะเบียน drive letter อัตโนมัติ; กฎยืนยันและ Full Bypass ยังแยกจากกัน',
   'settings.restartRequired': 'ต้องรีสตาร์ทแอพเพื่อให้มีผล',
   'settings.saved': 'บันทึกเรียบร้อย',
   'badge.unrestricted': 'Unrestricted',
@@ -342,8 +346,8 @@ export const th: Messages = {
   'security.disabled': 'ปิด',
   'security.registeredWorkspaces': 'workspace ที่ลงทะเบียน',
   'security.allowedRoots': 'Allowed Roots',
-  'security.machineRoots': 'Machine roots / workspace ที่ลงทะเบียน',
-  'security.warningBroad': 'Standalone/headless STDIO ใช้ Full โดยปิด Strict Roots อยู่ จึงอาจมองเห็น machine roots ที่ระบบลงทะเบียนไว้ ควรเปิด Strict Roots เมื่อต้องการจำกัดเฉพาะโฟลเดอร์ที่เลือก',
+  'security.machineRoots': 'Project / root ที่ระบุไว้',
+  'security.warningBroad': 'Standalone/headless STDIO ใช้ Full โดยปิด Strict Roots อยู่ จึงเข้าถึง absolute path ที่ระบุได้ แม้ระบบจะไม่สแกน drive อัตโนมัติ ควรเปิด Strict Roots เมื่อต้องการจำกัดเฉพาะโฟลเดอร์ที่เลือก',
   'security.strictHint': 'Strict Roots จำกัด standalone/headless STDIO และไม่ใช่ OS sandbox; Secure Tunnel ใช้ Active Project ของ Desktop',
   'live.title': 'Live Logs',
   'live.subtitle': 'ดู log ของ tunnel, กิจกรรม MCP และ process แบบ realtime',
@@ -401,6 +405,7 @@ export const en: Messages = {
   brand: 'lnwjud',
   'nav.home': 'Home',
   'nav.projects': 'Projects',
+  'nav.tools': 'Tools',
   'nav.git': 'Git',
   'nav.workLog': 'Work Log',
   'nav.live': 'Live Logs',
@@ -462,7 +467,8 @@ export const en: Messages = {
   'guidedTunnel.configuring': 'Creating the profile and checking it…',
   'guidedTunnel.configured': 'Tunnel profile is ready.',
   'guidedTunnel.stepStartTitle': '4. Start the Tunnel',
-  'guidedTunnel.stepStartBody': 'Review the details below, then select Start Tunnel. Once it is Running, the app will reconnect the same Tunnel ID automatically.',
+  'guidedTunnel.stepStartBody': 'Review the details below, then select Start Tunnel. If the Runtime API key or Tunnel ID changed, lnwjud safely stops the previous Persistent Tunnel Runtime before reconnecting with the saved configuration.',
+  'guidedTunnel.persistentRestartNotice': 'The saved configuration differs from the active Persistent Tunnel Runtime. Select Start Tunnel to safely stop the previous runtime and reconnect with the latest Tunnel ID and key.',
   'guidedTunnel.startTunnel': 'Start Tunnel',
   'guidedTunnel.starting': 'Starting Tunnel…',
   'guidedTunnel.running': 'Tunnel is running',
@@ -523,7 +529,7 @@ export const en: Messages = {
   'settings.savePath': 'Save path',
   'settings.permissions': 'Permission profile',
   'settings.unrestricted': 'Unrestricted mode',
-  'settings.unrestrictedHint': 'Default on: allows registered roots, shell/CLI commands, file access within the configured scope, and all Git commands — filesystem deletes still require confirmation',
+  'settings.unrestrictedHint': 'Allows explicitly requested absolute paths without scanning or registering drive letters; approval rules and Full Bypass remain separate.',
   'settings.restartRequired': 'Restart the app to apply',
   'settings.saved': 'Saved successfully',
   'badge.unrestricted': 'Unrestricted',
@@ -541,8 +547,8 @@ export const en: Messages = {
   'security.disabled': 'Off',
   'security.registeredWorkspaces': 'registered workspaces',
   'security.allowedRoots': 'Allowed Roots',
-  'security.machineRoots': 'Machine roots / registered workspaces',
-  'security.warningBroad': 'Standalone/headless STDIO is using Full with Strict Roots off, so registered machine roots may be visible. Enable Strict Roots to limit access to selected folders.',
+  'security.machineRoots': 'Explicit projects / roots',
+  'security.warningBroad': 'Standalone/headless STDIO is using Full with Strict Roots off, so explicitly requested absolute paths are accessible even though drives are not scanned. Enable Strict Roots to limit access to selected folders.',
   'security.strictHint': 'Strict Roots scopes standalone/headless STDIO and is not an OS sandbox; Secure Tunnel uses the Desktop Active Project.',
   'live.title': 'Live Logs',
   'live.subtitle': 'Real-time tunnel, MCP activity, and process logs',

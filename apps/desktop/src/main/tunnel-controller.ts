@@ -11,6 +11,7 @@ import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
 import { acquireTunnelLock, readTunnelLock, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
 import { extractTunnelId, extractTunnelMcpServerUrl, normalizeLoopbackMcpUrl, rewriteTunnelYamlMcpServerUrl, rewriteTunnelYamlRuntimeApiKeyRef } from './tunnel-profile.js';
+import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 import { TunnelRuntimeAdapter, type TunnelRuntimeAdapterOptions } from './tunnel-runtime-adapter.js';
 import { TunnelRuntimeReconciler, type TunnelRuntimeDesiredState, type TunnelRuntimeReconcilerAdapter } from './tunnel-runtime-reconciler.js';
 import { TunnelRuntimeSupervisor } from './tunnel-runtime-supervisor.js';
@@ -90,6 +91,8 @@ export class TunnelController {
   private runtimeSupervisor: TunnelRuntimeSupervisor | null = null;
   private runtimeSnapshot: TunnelRuntimeSnapshot | null = null;
   private runtimeMode: 'native-managed' | 'profile-child' | null = null;
+  /** Saved credentials/profile/client changed; apply them on the next explicit Start without disrupting edits in progress. */
+  private runtimeConfigurationDirty = false;
 
   public constructor(private readonly options: TunnelControllerOptions) {}
 
@@ -136,9 +139,10 @@ export class TunnelController {
     const trimmed = apiKey.trim();
     if (trimmed.length === 0) throw new Error('Runtime API key is required');
     await mkdir(this.profileDirectory(), { recursive: true });
-    const encrypted = await (this.options.encryptSecret?.(trimmed) ?? encryptWithDpapi(trimmed));
+    const encrypted = await (this.options.encryptSecret?.(trimmed) ?? protectTunnelSecret(trimmed));
     await writeFile(this.secretPath(), encrypted, 'utf8');
     this.lastApiKey = trimmed;
+    this.runtimeConfigurationDirty = true;
     if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
   }
 
@@ -150,7 +154,7 @@ export class TunnelController {
     const mcpServerUrl = await this.requireMcpServerUrl();
     if (!(await this.hasApiKey())) throw new Error('Save a Runtime API key first');
     const encryptedSecret = await readFile(this.secretPath(), 'utf8');
-    const apiKey = (await (this.options.decryptSecret?.(encryptedSecret) ?? decryptWithDpapi(encryptedSecret))).trim();
+    const apiKey = (await (this.options.decryptSecret?.(encryptedSecret) ?? unprotectTunnelSecret(encryptedSecret))).trim();
     if (apiKey.length === 0) throw new Error('Saved Runtime API key is empty; save it again in Settings');
     await mkdir(this.profileDirectory(), { recursive: true });
     try {
@@ -167,6 +171,7 @@ export class TunnelController {
     await this.repairDesktopTunnelProfile();
     await runTunnelDoctor(clientPath, apiKey, this.profileDirectory());
     this.options.setTunnelId?.(normalizedTunnelId);
+    this.runtimeConfigurationDirty = true;
     this.disposeRuntimeSupervisor();
     return this.profilePath();
   }
@@ -175,12 +180,14 @@ export class TunnelController {
     const trimmed = clientPath.trim();
     if (trimmed.length === 0) {
       this.options.setClientPath('');
+      this.runtimeConfigurationDirty = true;
       if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
       return '';
     }
     const resolved = path.resolve(trimmed);
     if (!existsSync(resolved)) throw new Error('tunnel-client was not found');
     this.options.setClientPath(resolved);
+    this.runtimeConfigurationDirty = true;
     if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
     return resolved;
   }
@@ -304,13 +311,17 @@ export class TunnelController {
 
   public startAutomatically(): Promise<TunnelStatus> {
     if (this.intentionalStop) return this.status();
-    return this.start();
+    return this.startWithIntent(false);
   }
 
   public start(): Promise<TunnelStatus> {
+    return this.startWithIntent(true);
+  }
+
+  private startWithIntent(allowPersistentConfigurationReplacement: boolean): Promise<TunnelStatus> {
     if (this.startInFlight !== null && this.startAbortController?.signal.aborted !== true) return this.startInFlight;
     const controller = new AbortController();
-    const operation = this.enqueueLifecycle(() => this.startOnce(controller.signal));
+    const operation = this.enqueueLifecycle(() => this.startOnce(controller.signal, allowPersistentConfigurationReplacement));
     const tracked = operation.finally(() => {
       if (this.startInFlight === tracked) this.startInFlight = null;
       if (this.startAbortController === controller) this.startAbortController = null;
@@ -320,7 +331,7 @@ export class TunnelController {
     return tracked;
   }
 
-  private async startOnce(signal: AbortSignal): Promise<TunnelStatus> {
+  private async startOnce(signal: AbortSignal, allowPersistentConfigurationReplacement: boolean): Promise<TunnelStatus> {
     this.intentionalStop = false;
     this.clearRestartTimer();
     this.clearStableTimer();
@@ -337,11 +348,15 @@ export class TunnelController {
           return this.statusFromRuntimeSnapshot(this.runtimeSnapshot, this.resolveClientPath());
         }
       }
-      if (this.state === 'running' || this.state === 'starting') return this.status();
+      // A status probe may have marked a surviving persistent runtime as
+      // running/external before Desktop has re-adopted the native alias. Only
+      // short-circuit for a process we actually own; otherwise continue into
+      // native reconciliation so update/restart can rebind the same Tunnel ID
+      // to the current Desktop MCP endpoint without spawning a duplicate.
       if (this.child !== null && this.child.exitCode === null) return this.status();
       const externalProbe = this.tunnelLock === null ? await this.probeExternalRunning(true) : 'gone';
       throwIfStartCancelled(signal);
-      const managedStatus = await this.tryStartNativeManagedRuntime(externalProbe, signal);
+      const managedStatus = await this.tryStartNativeManagedRuntime(externalProbe, signal, allowPersistentConfigurationReplacement);
       if (managedStatus !== null) return managedStatus;
       if (externalProbe === 'live') {
         this.state = 'running';
@@ -370,7 +385,7 @@ export class TunnelController {
 
       const encryptedSecret = await readFile(this.secretPath(), 'utf8');
       throwIfStartCancelled(signal);
-      const apiKey = (await (this.options.decryptSecret?.(encryptedSecret) ?? decryptWithDpapi(encryptedSecret))).trim();
+      const apiKey = (await (this.options.decryptSecret?.(encryptedSecret) ?? unprotectTunnelSecret(encryptedSecret))).trim();
       throwIfStartCancelled(signal);
       if (apiKey.length === 0) throw new Error('Saved Runtime API key is empty; save it again in Settings');
       this.lastApiKey = apiKey;
@@ -385,6 +400,7 @@ export class TunnelController {
       this.runtimeMode = 'profile-child';
       this.spawnRun(clientPath, apiKey);
       this.state = 'running';
+      this.runtimeConfigurationDirty = false;
       this.scheduleStableReset();
       return this.status();
     } catch (error: unknown) {
@@ -789,7 +805,11 @@ export class TunnelController {
     return this.options.createRuntimeAdapter?.(options) ?? new TunnelRuntimeAdapter(options);
   }
 
-  private async tryStartNativeManagedRuntime(externalProbe: ExternalTunnelProbe, signal: AbortSignal): Promise<TunnelStatus | null> {
+  private async tryStartNativeManagedRuntime(
+    externalProbe: ExternalTunnelProbe,
+    signal: AbortSignal,
+    allowPersistentConfigurationReplacement: boolean,
+  ): Promise<TunnelStatus | null> {
     // Native supervision is opt-in at the composition boundary. Legacy/test
     // controllers without persistent identity storage keep the v4.10 fallback.
     if (this.options.getTunnelId === undefined || this.options.setTunnelId === undefined) return null;
@@ -799,7 +819,7 @@ export class TunnelController {
 
     const encryptedSecret = await readFile(this.secretPath(), 'utf8').catch(() => null);
     if (encryptedSecret === null) return null;
-    const apiKey = (await (this.options.decryptSecret?.(encryptedSecret) ?? decryptWithDpapi(encryptedSecret))).trim();
+    const apiKey = (await (this.options.decryptSecret?.(encryptedSecret) ?? unprotectTunnelSecret(encryptedSecret))).trim();
     throwIfStartCancelled(signal);
     if (apiKey.length === 0) return null;
     this.lastApiKey = apiKey;
@@ -823,6 +843,26 @@ export class TunnelController {
       return this.status();
     }
     throwIfStartCancelled(signal);
+    const tunnelIdMismatch = nativeStatus.exists && nativeStatus.tunnelId !== null && nativeStatus.tunnelId !== desiredTunnelId;
+    const restartPersistentRuntime = allowPersistentConfigurationReplacement
+      && nativeStatus.exists
+      && (tunnelIdMismatch || this.runtimeConfigurationDirty);
+    if (restartPersistentRuntime) {
+      this.state = 'starting';
+      this.message = tunnelIdMismatch
+        ? 'Tunnel configuration changed; stopping the previous Persistent Tunnel Runtime before applying the new Tunnel ID.'
+        : 'Tunnel credentials or runtime configuration changed; restarting the Persistent Tunnel Runtime before reconnecting.';
+      try {
+        if (nativeStatus.running) nativeStatus = await adapter.stop();
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : 'runtime stop failed';
+        this.state = 'error';
+        this.message = `Could not stop Persistent Tunnel Runtime before applying the saved configuration. Stop the existing runtime and retry Start Tunnel. ${detail}`;
+        return this.status();
+      }
+      throwIfStartCancelled(signal);
+      this.invalidateExternalProbeCache();
+    }
     // A legacy/profile process may already be running outside native alias
     // supervision. Never create a second tunnel-client in that case.
     if (!nativeStatus.exists && externalProbe === 'live') return null;
@@ -840,6 +880,7 @@ export class TunnelController {
         tunnelId: desiredTunnelId,
         mcpServerUrl: await this.requireMcpServerUrl(),
       }),
+      allowStoppedTunnelIdReplacement: allowPersistentConfigurationReplacement,
     });
     const supervisor = new TunnelRuntimeSupervisor({
       reconciler,
@@ -864,6 +905,9 @@ export class TunnelController {
     }
     this.runtimeSnapshot = supervisor.snapshot() ?? result.snapshot;
     this.applyRuntimeSnapshot(this.runtimeSnapshot);
+    if (this.runtimeSnapshot.state === 'running' && (allowPersistentConfigurationReplacement || !this.runtimeConfigurationDirty)) {
+      this.runtimeConfigurationDirty = false;
+    }
     return this.statusFromRuntimeSnapshot(this.runtimeSnapshot, clientPath);
   }
 
@@ -997,59 +1041,6 @@ export function buildTunnelInitArgs(tunnelId: string, mcpServerUrl: string, prof
     '--health-listen-addr', '127.0.0.1:0',
     '--mcp-server-url', normalizeLoopbackMcpUrl(mcpServerUrl),
   ];
-}
-
-async function encryptWithDpapi(plain: string): Promise<string> {
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    '$plain = [Console]::In.ReadToEnd()',
-    '$secure = ConvertTo-SecureString -String $plain -AsPlainText -Force',
-    'ConvertFrom-SecureString -SecureString $secure',
-  ].join('; ');
-  return runPowerShellWithStdin(script, plain);
-}
-
-async function decryptWithDpapi(encrypted: string): Promise<string> {
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    '$encrypted = [Console]::In.ReadToEnd().Trim()',
-    '$secure = ConvertTo-SecureString -String $encrypted',
-    '$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)',
-    'try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }',
-  ].join('; ');
-  return runPowerShellWithStdin(script, encrypted);
-}
-
-function runPowerShellWithStdin(command: string, input: string): Promise<string> {
-  if (process.platform !== 'win32') {
-    return Promise.reject(new Error('Windows DPAPI secret storage is only available on Windows; a platform secret provider must be injected'));
-  }
-  return new Promise((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr.trim() || `PowerShell exited with code ${code ?? 'unknown'}`));
-        return;
-      }
-      const value = stdout.replace(/\r?\n$/, '');
-      if (value.length === 0) {
-        reject(new Error('PowerShell returned an empty result'));
-        return;
-      }
-      resolve(value);
-    });
-    child.stdin.end(input, 'utf8');
-  });
 }
 
 export function tunnelClientEnv(apiKey: string, profileDirectory: string): NodeJS.ProcessEnv {

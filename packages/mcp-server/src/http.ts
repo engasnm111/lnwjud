@@ -10,12 +10,15 @@ import {
   type McpServer,
 } from '@modelcontextprotocol/server';
 import { createMcpServer, type McpServerOptions } from './server.js';
+import { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { createHttpRequestScope, createProtocolHttpRequestScope } from './request-scope.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard } from './run-budget.js';
 import { createOriginPolicy, type OriginPolicy } from './origin-policy.js';
+import { APP_NAME, APP_VERSION } from '@lnwjud/shared';
 
 export const MAX_MCP_HTTP_BODY_BYTES = 1_048_576;
+export const LNWJUD_MCP_IDENTITY_PATH = '/_lnwjud/identity';
 
 export interface McpHttpServerOptions extends McpServerOptions {
   readonly port: number;
@@ -159,11 +162,13 @@ function sessionNotFoundResponse(): Response {
 function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandler {
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
+  const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const endpointFallbackSessionId = randomUUID();
   const factory = (request?: Request): McpServer => createMcpServer({
     ...options,
     runBudgetGuard,
     incrementalVerifier,
+    setOfMarksStore,
     requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
   });
   const modernHandler = createMcpHandler((context) => factory(context.requestInfo), { legacy: 'reject', onerror: writeDiagnostic });
@@ -183,6 +188,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       ...options,
       runBudgetGuard,
       incrementalVerifier,
+      setOfMarksStore,
       requestScope: createProtocolHttpRequestScope(protocolSessionId),
     });
     let registeredSessionId: string | undefined;
@@ -248,7 +254,7 @@ async function handleRequest(
   maxBodyBytes: number,
 ): Promise<void> {
   const requestedPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-  if (requestedPath !== '/mcp') {
+  if (requestedPath !== '/mcp' && requestedPath !== LNWJUD_MCP_IDENTITY_PATH) {
     sendStatus(response, 404, 'Not found');
     return;
   }
@@ -264,6 +270,25 @@ async function handleRequest(
     ?? originPolicy.validate(fetchRequest);
   if (rejected !== undefined) {
     await writeFetchResponse(response, rejected);
+    return;
+  }
+
+  if (requestedPath === LNWJUD_MCP_IDENTITY_PATH) {
+    if (fetchRequest.method !== 'GET') {
+      sendStatus(response, 405, 'Method not allowed');
+      return;
+    }
+    await writeFetchResponse(response, Response.json({
+      product: APP_NAME,
+      service: 'desktop-mcp',
+      protocol: 1,
+      version: APP_VERSION,
+    }, {
+      headers: {
+        'cache-control': 'no-store',
+        'x-lnwjud-service': 'desktop-mcp',
+      },
+    }));
     return;
   }
 

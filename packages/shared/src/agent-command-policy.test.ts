@@ -12,6 +12,15 @@ describe('agent command policy', () => {
   });
 
   it.each([
+    ['node.exe', ['-e', "const fs=require('fs'); fs.writeFileSync('src/a.ts', 'next')"]],
+    ['python.exe', ['-c', "open('src/a.py', 'w', encoding='utf8').write('next')"]],
+    ['powershell.exe', ['-NoProfile', '-Command', "Set-Content -LiteralPath 'src/a.txt' -Value 'next'"]],
+    ['sed', ['-i.bak', 's/a/b/', 'src/a.txt']],
+  ] as const)('routes terminal-style text editing away from command tool %s', (executable, args) => {
+    expect(prohibitedAgentCommandReason(executable, args)).toContain('Use edit_file');
+  });
+
+  it.each([
     ['rm.exe', ['-rf', 'target']],
     ['C:/Windows/System32/DEL.CMD', ['target']],
     ['Remove-Item.bat', ['target']],
@@ -23,7 +32,6 @@ describe('agent command policy', () => {
     ['python3.exe', ['-c', 'import os; os.remove("x")']],
     ['robocopy.exe', ['source', 'target', '/MIR']],
     ['rsync', ['-a', '--delete', 'source/', 'target/']],
-    ['sed', ['-i.bak', 's/a/b/', 'target']],
   ] as const)('requires confirmation for risky command %s', (executable, args) => {
     expect(prohibitedAgentCommandReason(executable, args)).toBeUndefined();
     expect(riskyAgentCommandReason(executable, args)).toBeDefined();

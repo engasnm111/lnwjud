@@ -2,7 +2,16 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  ok,
+  type GoalTaskCancellationObservation,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import { PathExecutableResolver, WindowsProcessTree, toWindowsSpawnInvocation, type ExecutableResolver, type ProcessTreeTerminator } from '@lnwjud/process';
 import type { CapabilityBackend } from './local-capability-service.js';
 import { prohibitedAgentCommandReason, riskyAgentCommandReason } from './agent-command-policy.js';
@@ -118,20 +127,20 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     this.unrestricted = options.unrestricted === true;
   }
 
-  public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const parsed = parseShellRequest(input, this.defaultTimeoutSeconds, this.defaultBackgroundTimeoutSeconds, this.maxOutputBytes);
     if (!parsed.ok) return parsed;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled', true));
 
     switch (parsed.value.operation) {
-      case 'run': return this.run(parsed.value, signal);
+      case 'run': return this.run(parsed.value, signal, authorization);
       case 'list': return this.listTasks(parsed.value.owner);
       case 'status': return this.taskSnapshot(parsed.value.taskId, undefined, parsed.value.owner);
       case 'wait': return this.wait(parsed.value);
       case 'logs': return this.taskSnapshot(parsed.value.taskId, parsed.value.tailLines, parsed.value.owner);
       case 'result': return this.taskSnapshot(parsed.value.taskId, undefined, parsed.value.owner);
       case 'cancel':
-        if (!parsed.value.userConfirmed) return err(appError('PERMISSION_REQUIRED', 'Cancelling a task requires explicit user confirmation'));
+        if (!isApplicationAuthorized(authorization, parsed.value.userConfirmed)) return err(appError('PERMISSION_REQUIRED', 'Cancelling a task requires explicit user confirmation'));
         return this.cancel(parsed.value.taskId, false, parsed.value.owner);
       case 'resume':
       case 'approve':
@@ -140,28 +149,72 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     }
   }
 
-  private async run(request: ShellRequest, signal?: AbortSignal): Promise<Result<unknown>> {
+  /** Trusted read-only host probe scoped to the durable goal's workspace. */
+  public async statusForGoalLiveness(workspaceId: string, taskId: string): Promise<Result<unknown>> {
+    const record = this.tasks.get(taskId);
+    if (record !== undefined) {
+      if (record.owner.workspaceId !== workspaceId) {
+        return err(appError('PERMISSION_DENIED', 'Task belongs to another or unknown workspace'));
+      }
+      return ok(this.snapshot(record));
+    }
+    if (this.durableStore !== undefined) return this.durableStore.snapshotForGoalLiveness(taskId, workspaceId);
+    return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
+  }
+
+  /** Trusted cancellation path used by durable goals; it deliberately ignores the transient MCP session. */
+  public async cancelForGoal(
+    ownerClientId: string,
+    workspaceId: string,
+    taskId: string,
+  ): Promise<Result<GoalTaskCancellationObservation>> {
+    const record = this.tasks.get(taskId);
+    if (record !== undefined) {
+      if (record.owner.clientId !== ownerClientId || record.owner.workspaceId !== workspaceId) {
+        return err(appError('PERMISSION_DENIED', 'Task belongs to another client or workspace'));
+      }
+      if (isVerifiedTerminal(record.state)) {
+        return ok({ matched: true, state: 'already_terminal', detail: record.state });
+      }
+      const verified = await this.tryTerminate(record, 'cancelled');
+      if (verified && isVerifiedTerminal(record.state)) {
+        return ok({ matched: true, state: 'cancelled', detail: record.state });
+      }
+      return ok({ matched: true, state: 'termination_unverified', detail: record.state });
+    }
+    if (this.durableStore !== undefined) return this.durableStore.cancelForGoal(taskId, ownerClientId, workspaceId);
+    return ok({ matched: false, state: 'not_found' });
+  }
+
+  private async run(request: ShellRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (request.executable === undefined) return err(appError('INVALID_INPUT', 'Executable is required'));
     if (request.privilege === 'admin') return err(appError('PERMISSION_DENIED', 'Administrator access is not available to the local runner'));
 
-    const cwd = await this.resolveCwd(request.cwd, request.activeWorkspaceRoot);
+    const fullBypass = isFullBypassAuthorization(authorization);
+    const cwd = await this.resolveCwd(request.cwd, request.activeWorkspaceRoot, authorization);
     if (!cwd.ok) return cwd;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
     if (request.dryRun) {
       return ok({ dry_run: true, executable: request.executable, arguments: [...request.arguments], cwd: cwd.value });
     }
-    const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.arguments);
-    if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
-    const riskyReason = riskyAgentCommandReason(request.executable, request.arguments);
-    if (riskyReason !== undefined && !request.userConfirmed) return err(appError('PERMISSION_REQUIRED', riskyReason));
+    if (!fullBypass) {
+      const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.arguments);
+      if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
+      const riskyReason = riskyAgentCommandReason(request.executable, request.arguments);
+      if (riskyReason !== undefined && !isApplicationAuthorized(authorization, request.userConfirmed)) return err(appError('PERMISSION_REQUIRED', riskyReason));
+    }
     const executable = await this.executableResolver.resolve(request.executable);
     if (!executable.ok) return executable;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
-    const invocation = toWindowsSpawnInvocation(executable.value, request.arguments, { allowMetacharacters: this.unrestricted });
+    const invocation = toWindowsSpawnInvocation(executable.value, request.arguments, { allowMetacharacters: this.unrestricted || fullBypass });
     if (!invocation.ok) return invocation;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
 
     if (this.durableStore !== undefined && request.execution !== 'foreground') {
+      // Durable tasks intentionally outlive the originating MCP request. Goal
+      // cancellation reaches them through GoalTaskCancellationService using
+      // the tracked task id, while an ordinary caller/response timeout must
+      // not cancel a task that has already been submitted.
       return this.runDurable(request, cwd.value, invocation.value);
     }
 
@@ -405,7 +458,11 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       : err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
   }
 
-  private async resolveCwd(requestedCwdRaw: string | undefined, activeWorkspaceRootInput: string | undefined): Promise<Result<string>> {
+  private async resolveCwd(
+    requestedCwdRaw: string | undefined,
+    activeWorkspaceRootInput: string | undefined,
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<string>> {
     // Cross-host hardening: a POSIX path can arrive with Windows separators when
     // a record was canonicalized on another platform; flip it back so the
     // containment checks below operate on the host-native form.
@@ -416,7 +473,8 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     const requestedCwd = requestedCwdRaw === undefined ? undefined : repair(requestedCwdRaw);
     let activeWorkspaceRoot = activeWorkspaceRootInput === undefined ? undefined : repair(activeWorkspaceRootInput);
     if (activeWorkspaceRoot !== undefined && !path.isAbsolute(activeWorkspaceRoot)) activeWorkspaceRoot = undefined;
-    if (this.unrestricted && activeWorkspaceRoot === undefined && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
+    const fullBypass = isFullBypassAuthorization(authorization);
+    if ((this.unrestricted && activeWorkspaceRoot === undefined || fullBypass) && requestedCwd !== undefined && path.isAbsolute(requestedCwd)) {
       try {
         const canonical = await realpath(requestedCwd);
         if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Working directory must be a directory'));

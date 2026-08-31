@@ -27,7 +27,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v4.12.0 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v4.31.0 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
@@ -46,6 +46,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 - The Windows capability bridge is copied as an extra resource.
 - The generated `lnwjud-mcp-stdio.cjs`, `lnwjud-mcp-stdio.cmd`, and private `lnwjud-node.exe` have one canonical packaged copy beside `lnwjud.exe` for tunnel/local stdio use. They are not duplicated under `resources`, reducing AV scan surface and keeping one runtime hash authoritative.
 - Pinned ripgrep is shipped under `resources/runtime-tools/ripgrep`; both Desktop and the stdio launcher resolve this private `rg.exe` before any system PATH copy.
+- The repository's `lnwjud-scheduled-continuation` skill is shipped under `resources/agent-skills` in both Setup/NSIS and Portable. The runtime adds that bundled root to `skills_list` without replacing machine-global or active-workspace Cursor, Claude, Agents, Codex, Codex-plugin, GitHub workspace, or configured skill roots.
 - The launcher never falls back to Program Files, LocalAppData, or Node from PATH; a missing bundled Node runtime fails closed.
 - Generated stdio runtime files are ignored by Git and must be regenerated from source for each build/release.
 
@@ -69,12 +70,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v4.12.0:
+For v4.31.0:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.12.0.exe
-apps/desktop/dist/installers/lnwjud-Setup-4.12.0.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-4.12.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.31.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.31.0.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-4.31.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt
@@ -101,10 +102,11 @@ Use a clean Windows 10/11 x64 account or VM with no repository checkout:
 5. Confirm the loopback MCP endpoint auto-starts and the displayed endpoint is usable by a local MCP client.
 6. Run Doctor and confirm SQLite/platform dependency checks are reported truthfully.
 7. If stdio/Secure Tunnel is part of the smoke test, verify `lnwjud-mcp-stdio.cmd` works on the clean machine **without** installing system Node.js.
-8. Close the app, uninstall it from Windows Settings, and confirm the application binaries are removed while user data remains according to `deleteAppDataOnUninstall: false`.
-9. Launch `lnwjud-Portable-*.exe` without installing it and repeat dashboard/workspace/Doctor/tunnel smoke checks.
-10. Confirm no visible CMD/PowerShell window flashes during normal internal operations. Short-lived hidden `conhost.exe` processes are acceptable; sustained high CPU is not.
-11. From an installed build, verify an available update resolves through `latest.yml` to the next Setup executable; from a Portable build, verify it resolves through `portable.yml` to the next Portable executable and never switches distribution type.
-12. For Portable replacement, verify the same outer EXE path restarts after update and that a forced replacement failure restores the backup instead of leaving the app missing.
+8. Call `skills_list` and confirm it includes bundled `lnwjud-scheduled-continuation`, a test machine-global skill, and a test active-workspace skill; call `skills_read` with each source-qualified ID. Verify the same contract through Desktop HTTP MCP and the packaged stdio launcher.
+9. Close the app, uninstall it from Windows Settings, and confirm the application binaries are removed while user data remains according to `deleteAppDataOnUninstall: false`.
+10. Launch `lnwjud-Portable-*.exe` without installing it and repeat dashboard/workspace/Doctor/tunnel/skill smoke checks.
+11. Confirm no visible CMD/PowerShell window flashes during normal internal operations. Short-lived hidden `conhost.exe` processes are acceptable; sustained high CPU is not.
+12. From an installed build, verify an available update resolves through `latest.yml` to the next Setup executable; from a Portable build, verify it resolves through `portable.yml` to the next Portable executable and never switches distribution type.
+13. For Portable replacement, verify the same outer EXE path restarts after update and that a forced replacement failure restores the backup instead of leaving the app missing.
 
 Record artifact path, OS architecture, launch result, database creation, workspace add, Doctor result, stdio/tunnel result when tested, and uninstall/portable result. Do not record credentials, environment-variable values, runtime API keys, or full terminal history.

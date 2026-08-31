@@ -1,6 +1,14 @@
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  ok,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import {
   GitAdapter,
   type GitCommandResult,
@@ -78,21 +86,23 @@ export class GitService {
     return this.adapter.log(workspace.value.realRootPath, request, signal);
   }
 
-  public async run(actor: FileActor, request: GitRunRequest, signal?: AbortSignal): Promise<Result<GitCommandResult>> {
+  public async run(actor: FileActor, request: GitRunRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<GitCommandResult>> {
     void actor;
-    if (!isProvablyReadOnlyGitInvocation(request.args) && request.userConfirmed !== true) {
+    if (!isProvablyReadOnlyGitInvocation(request.args) && !isApplicationAuthorized(authorization, request.userConfirmed === true)) {
       return err(appError('PERMISSION_REQUIRED', 'Git mutation or unclassified invocation requires explicit user confirmation'));
     }
-    const prohibitedReason = prohibitedAgentGitInvocationReason(request.args);
-    if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
-    const cwd = await this.resolveCwd(request.workspaceId, request.cwd);
+    if (!isFullBypassAuthorization(authorization)) {
+      const prohibitedReason = prohibitedAgentGitInvocationReason(request.args);
+      if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
+    }
+    const cwd = await this.resolveCwd(request.workspaceId, request.cwd, authorization);
     if (!cwd.ok) return cwd;
     return this.adapter.run(cwd.value, request.args, request.timeoutMs, signal);
   }
 
-  private async resolveCwd(workspaceId: string | undefined, requestedCwd: string | undefined): Promise<Result<string>> {
+  private async resolveCwd(workspaceId: string | undefined, requestedCwd: string | undefined, authorization?: InvocationAuthorization): Promise<Result<string>> {
     if (requestedCwd !== undefined && isAbsoluteFsPath(requestedCwd)) {
-      const workspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, requestedCwd);
+      const workspace = await resolveWorkspaceForPath(this.workspaces, workspaceId, requestedCwd, authorization);
       if (!workspace.ok) return workspace;
       return this.existingDirectory(requestedCwd);
     }
@@ -105,7 +115,7 @@ export class GitService {
     if (!workspace.ok) return workspace;
     if (requestedCwd === undefined) return ok(workspace.value.realRootPath);
 
-    const resolved = await this.guard.resolveForRead(workspace.value, requestedCwd);
+    const resolved = await this.guard.resolveForRead(workspace.value, requestedCwd, authorization);
     if (!resolved.ok) return resolved;
     return this.existingDirectory(resolved.value.realPath ?? resolved.value.absolutePath);
   }

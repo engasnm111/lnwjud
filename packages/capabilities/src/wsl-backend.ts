@@ -1,6 +1,14 @@
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  ok,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
 import { prohibitedAgentCommandReason, riskyAgentCommandReason } from './agent-command-policy.js';
 import { capabilityTaskOwnerMatches, readCapabilityActiveWorkspaceRoot, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
@@ -90,37 +98,37 @@ export class WslCapabilityBackend implements CapabilityBackend {
     this.maxOutputBytes = Math.floor(clampNumber(options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES, 1, MAX_OUTPUT_BYTES));
   }
 
-  public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const parsed = parseWslRequest(input, this.defaultDistro, this.defaultTimeoutSeconds, this.maxOutputBytes);
     if (!parsed.ok) return parsed;
     if (parsed.value.operation === 'status' && parsed.value.taskId === undefined) return this.status();
     if (parsed.value.workspaceId === undefined) return err(appError('INVALID_INPUT', 'workspaceId is required for WSL task operations'));
 
-    if (parsed.value.operation === 'run') return this.run(parsed.value, signal);
+    if (parsed.value.operation === 'run') return this.run(parsed.value, signal, authorization);
     const taskOwner = this.taskOwners.get(parsed.value.taskId ?? '');
     if (taskOwner === undefined) return err(appError('PROCESS_NOT_FOUND', 'WSL task was not found'));
     if (taskOwner.workspaceId !== parsed.value.workspaceId) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another workspace'));
     if (taskOwner.distro !== parsed.value.distro) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another distribution'));
     if (!capabilityTaskOwnerMatches(taskOwner.owner, parsed.value.owner)) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another client session'));
-    if (parsed.value.operation === 'cancel' && !parsed.value.userConfirmed) return err(appError('PERMISSION_REQUIRED', 'Cancelling a WSL task requires explicit user confirmation'));
+    if (parsed.value.operation === 'cancel' && !isApplicationAuthorized(authorization, parsed.value.userConfirmed)) return err(appError('PERMISSION_REQUIRED', 'Cancelling a WSL task requires explicit user confirmation'));
 
     const forwarded = this.forwardTaskRequest(parsed.value);
-    const result = await this.runner.execute(forwarded, signal);
+    const result = await this.runner.execute(forwarded, signal, authorization);
     return annotateResult(result, this.metadata(parsed.value.workspaceId, parsed.value.distro));
   }
 
-  private async run(request: WslRequest, signal?: AbortSignal): Promise<Result<unknown>> {
+  private async run(request: WslRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (this.platform !== 'win32') return ok({ available: false, ready: false, local: true, backend: 'wsl', reason: 'WSL is only available on Windows' });
     if (request.executable === undefined) return err(appError('INVALID_INPUT', 'WSL executable is required'));
     if (containsShellString(request.executable, request.arguments)) return err(appError('INVALID_INPUT', 'WSL execution accepts argv only; shell command strings are not allowed'));
-    if (!request.dryRun) {
+    if (!request.dryRun && !isFullBypassAuthorization(authorization)) {
       const prohibitedReason = prohibitedAgentCommandReason(request.executable, request.arguments);
       if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
       const riskyReason = riskyAgentCommandReason(request.executable, request.arguments);
-      if (riskyReason !== undefined && !request.userConfirmed) return err(appError('PERMISSION_REQUIRED', riskyReason));
+      if (riskyReason !== undefined && !isApplicationAuthorized(authorization, request.userConfirmed)) return err(appError('PERMISSION_REQUIRED', riskyReason));
     }
 
-    const cwd = await this.resolveWorkspaceCwd(request.cwd, request.activeWorkspaceRoot);
+    const cwd = await this.resolveWorkspaceCwd(request.cwd, request.activeWorkspaceRoot, authorization);
     if (!cwd.ok) return cwd;
     const linuxCwd = windowsToWslPath(cwd.value);
     if (!linuxCwd.ok) return linuxCwd;
@@ -152,7 +160,7 @@ export class WslCapabilityBackend implements CapabilityBackend {
       userConfirmed: request.userConfirmed,
       ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
     };
-    const result = await this.runner.execute(forwarded, signal);
+    const result = await this.runner.execute(forwarded, signal, authorization);
     const annotated = annotateResult(result, {
       ...this.metadata(request.workspaceId, request.distro),
       linux_cwd: linuxCwd.value,
@@ -191,9 +199,22 @@ export class WslCapabilityBackend implements CapabilityBackend {
     return { backend: 'wsl', distro, ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }) };
   }
 
-  private async resolveWorkspaceCwd(requestedCwd: string | undefined, activeWorkspaceRoot: string | undefined): Promise<Result<string>> {
+  private async resolveWorkspaceCwd(
+    requestedCwd: string | undefined,
+    activeWorkspaceRoot: string | undefined,
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<string>> {
     if (requestedCwd !== undefined && !path.win32.isAbsolute(requestedCwd) && activeWorkspaceRoot === undefined) {
       return err(appError('INVALID_INPUT', 'WSL cwd must be an absolute Windows path'));
+    }
+    if (isFullBypassAuthorization(authorization) && requestedCwd !== undefined && path.win32.isAbsolute(requestedCwd)) {
+      try {
+        const canonical = await realpath(requestedCwd);
+        if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'WSL cwd must be a directory'));
+        return ok(canonical);
+      } catch {
+        return err(appError('FILE_NOT_FOUND', 'WSL cwd was not found'));
+      }
     }
     const configuredRoots = this.allowedRootsProvider === undefined ? this.allowedRoots : (await this.allowedRootsProvider()).map((root) => path.win32.resolve(root));
     if (configuredRoots.length === 0) return err(appError('FILE_NOT_FOUND', 'No registered workspace root is available'));
@@ -263,7 +284,7 @@ export class WslFilesystemCapabilityBackend implements CapabilityBackend {
     this.defaultDistro = normalizeDistro(options.defaultDistro ?? 'default') ?? 'default';
   }
 
-  public async execute(input: unknown): Promise<Result<unknown>> {
+  public async execute(input: unknown, _signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (!isRecord(input)) return err(appError('INVALID_INPUT', 'WSL filesystem input must be an object'));
     if (input.operation === 'status') {
       if (this.platform === 'win32' && this.availabilityProbe !== undefined) {
@@ -288,7 +309,7 @@ export class WslFilesystemCapabilityBackend implements CapabilityBackend {
     if (direction === 'windows_to_wsl') {
       const candidate = path.win32.resolve(rawPath);
       const roots = this.allowedRootsProvider === undefined ? this.allowedRoots : (await this.allowedRootsProvider()).map((root) => path.win32.resolve(root));
-      if (!roots.some((root) => isWithinWindowsRoot(root, candidate))) return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL filesystem path is outside registered workspace roots'));
+      if (!isFullBypassAuthorization(authorization) && !roots.some((root) => isWithinWindowsRoot(root, candidate))) return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL filesystem path is outside registered workspace roots'));
       const translated = windowsToWslPath(candidate);
       if (!translated.ok) return translated;
       if (operation === 'metadata') return this.windowsMetadata(workspaceId, candidate, translated.value, distro);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { CapabilityService, CapabilityToolName } from '@lnwjud/capabilities';
-import { SetOfMarksService } from './set-of-marks-service.js';
+import { SetOfMarksObservationStore, SetOfMarksService } from './set-of-marks-service.js';
 
 const image = {
   format: 'png',
@@ -73,6 +73,31 @@ describe('SetOfMarksService', () => {
     now = 11_001;
     await expect(service.act({ workspaceId: 'ws-1', observationId: captured.value.observationId, markId: 'm1', observationHash: captured.value.observationHash, action: 'click', userConfirmed: true })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     expect(calls.some((call) => isRecord(call.input) && call.input.action === 'find_element')).toBe(true);
+    expect(calls.find((call) => isRecord(call.input) && call.input.action === 'click')?.input).toMatchObject({ userConfirmed: true });
+  });
+
+  it('keeps observations across request-scoped service instances while isolating MCP owners', async () => {
+    const store = new SetOfMarksObservationStore();
+    const capabilities: CapabilityService = {
+      execute: async (tool, input): Promise<Result<unknown>> => {
+        if (tool === 'accessibility' && isRecord(input) && input.action === 'observe') {
+          return ok({ elements: [{ element: { name: 'Save', automation_id: 'save', enabled: true, offscreen: false, bounds: { x: 20, y: 30, width: 100, height: 40 } } }] });
+        }
+        if (tool === 'accessibility' && isRecord(input) && input.action === 'find_element') return ok({ element: { name: 'Save', automation_id: 'save', bounds: { x: 20, y: 30, width: 100, height: 40 } } });
+        if (tool === 'accessibility' && isRecord(input) && input.action === 'click') return ok({ clicked: true });
+        return ok(image);
+      },
+    };
+    const captureRequest = new SetOfMarksService(capabilities, { store, ownerKey: 'client:session-1' });
+    const actionRequest = new SetOfMarksService(capabilities, { store, ownerKey: 'client:session-1' });
+    const otherSession = new SetOfMarksService(capabilities, { store, ownerKey: 'client:session-2' });
+    const captured = await captureRequest.capture({ workspaceId: 'ws-1', capture: 'display' });
+    if (!captured.ok) throw new Error('capture failed');
+
+    await expect(actionRequest.act({ workspaceId: 'ws-1', observationId: captured.value.observationId, markId: 'm1', observationHash: captured.value.observationHash, action: 'click', userConfirmed: true }))
+      .resolves.toMatchObject({ ok: true, value: { clicked: true } });
+    await expect(otherSession.act({ workspaceId: 'ws-1', observationId: captured.value.observationId, markId: 'm1', action: 'click', userConfirmed: true }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
   });
 
   it('does not dispatch a marked UI action when cancellation wins during revalidation', async () => {

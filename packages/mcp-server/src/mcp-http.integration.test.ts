@@ -2,7 +2,10 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { ok } from '@lnwjud/domain';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ActivityTracker } from './activity-tracker.js';
-import { startMcpHttp, type McpHttpServerHandle } from './http.js';
+import { ToolRegistry } from './tool-registry.js';
+import { LNWJUD_MCP_IDENTITY_PATH, startMcpHttp, type McpHttpServerHandle } from './http.js';
+
+const expectedAdvertisedToolCount = new ToolRegistry({}, { clientId: 'count-test', clientName: 'count-test' }).list().length;
 
 describe('MCP localhost HTTP transport', () => {
   let handle: McpHttpServerHandle;
@@ -50,7 +53,7 @@ describe('MCP localhost HTTP transport', () => {
       const first = await client.listTools();
       const second = await client.listTools();
 
-      expect(first.tools.map((tool) => tool.name)).toHaveLength(217);
+      expect(first.tools.map((tool) => tool.name)).toHaveLength(expectedAdvertisedToolCount);
       expect(first.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
       expect(second.tools.map((tool) => tool.name)).toEqual(first.tools.map((tool) => tool.name));
     } finally {
@@ -83,7 +86,7 @@ describe('MCP localhost HTTP transport', () => {
 
       expect(transport.sessionId).toEqual(expect.any(String));
       const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toHaveLength(217);
+      expect(tools.tools.map((tool) => tool.name)).toHaveLength(expectedAdvertisedToolCount);
       expect(tools.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
 
       const first = await client.callTool({ name: 'workspace_list', arguments: {} });
@@ -211,6 +214,63 @@ describe('MCP localhost HTTP transport', () => {
       releaseCalls?.();
       await client.close();
     }
+  });
+
+  it('keeps a Set-of-Marks observation alive across modern HTTP request-scoped server instances', async () => {
+    await handle.close();
+    const png = { format: 'png', mime_type: 'image/png', data_base64: 'cG5n', width: 640, height: 480, origin_x: 0, origin_y: 0 };
+    handle = await startMcpHttp({
+      port: 0,
+      services: {
+        capabilities: {
+          async execute(tool, input) {
+            const request = input as Record<string, unknown>;
+            if (tool === 'accessibility' && request.action === 'observe') {
+              return ok({ elements: [{ element: { name: 'Save', automation_id: 'save', enabled: true, offscreen: false, bounds: { x: 20, y: 30, width: 100, height: 40 } } }] });
+            }
+            if (tool === 'accessibility' && request.action === 'find_element') return ok({ element: { name: 'Save', automation_id: 'save', bounds: { x: 20, y: 30, width: 100, height: 40 } } });
+            if (tool === 'accessibility' && request.action === 'click') return ok({ clicked: true });
+            if (tool === 'vision') return ok(png);
+            return ok({});
+          },
+        },
+      },
+      actor: { clientId: 'som-http-test', clientName: 'som-http-test' },
+      hostMutationApprovalProvider: async () => true,
+    });
+
+    const client = new Client(
+      { name: 'som-modern-client', version: '0.1.0' },
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+    );
+    const transport = new StreamableHTTPClientTransport(handle.endpoint);
+    try {
+      await client.connect(transport);
+      const captured = await client.callTool({ name: 'vision_annotated_capture', arguments: { workspaceId: 'workspace-1' } });
+      expect(captured.isError).not.toBe(true);
+      const observationId = captured.structuredContent?.observationId;
+      const observationHash = captured.structuredContent?.observationHash;
+      expect(observationId).toEqual(expect.any(String));
+      expect(observationHash).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/));
+
+      const clicked = await client.callTool({
+        name: 'ui_target_action',
+        arguments: { workspaceId: 'workspace-1', observationId, observationHash, markId: 'm1', action: 'click', userConfirmed: true },
+      });
+      expect(clicked.isError, JSON.stringify(clicked)).not.toBe(true);
+      expect(clicked.structuredContent).toMatchObject({ clicked: true });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('serves a loopback identity document that Doctor can distinguish from an unrelated listener', async () => {
+    const identityUrl = new URL(LNWJUD_MCP_IDENTITY_PATH, handle.endpoint);
+    const response = await fetch(identityUrl);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-lnwjud-service')).toBe('desktop-mcp');
+    await expect(response.json()).resolves.toMatchObject({ product: 'lnwjud', service: 'desktop-mcp', protocol: 1 });
   });
 
   it('does not poison a legacy session after one protocol-level tool error', async () => {

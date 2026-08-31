@@ -61,6 +61,16 @@ describe('WebFetchCapabilityBackend', () => {
       .resolves.toMatchObject({ ok: true, value: { status: 200, text: 'mutated' } });
   });
 
+  it('accepts trusted Full Bypass authorization for an HTTP mutation', async () => {
+    const fetchImpl = vi.fn(async (): Promise<Response> => textResponse('mutated'));
+    const backend = new WebFetchCapabilityBackend({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const authorization = { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' } as const;
+
+    await expect(backend.execute({ url: 'https://example.com/item/1', method: 'POST' }, undefined, authorization))
+      .resolves.toMatchObject({ ok: true, value: { text: 'mutated' } });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects non-http protocols', async () => {
     const backend = createBackend(vi.fn());
 

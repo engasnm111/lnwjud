@@ -40,6 +40,13 @@ async function withTempRoot(run: (root: string) => Promise<void>): Promise<void>
 }
 
 describe.skipIf(process.platform !== 'win32')('SandboxRuntimeService', () => {
+  const fullBypassAuthorization = {
+    mode: 'full_bypass',
+    applicationApproved: true,
+    bypassApplicationAuthorization: true,
+    source: 'full_bypass',
+  } as const;
+
   it('reports a truthful unavailable state when WindowsSandbox.exe is missing', async () => {
     const runtime = new SandboxRuntimeService(servicesWithRoot('C:\\nowhere'), actor, {
       platform: 'win32',
@@ -66,6 +73,30 @@ describe.skipIf(process.platform !== 'win32')('SandboxRuntimeService', () => {
       const runtime = service({ root });
       await expect(runtime.execute({ workspaceId: 'ws-1', executable: 'node', arguments: ['--version'], dryRun: false })).resolves.toMatchObject({
         ok: false, error: { code: 'PERMISSION_REQUIRED' },
+      });
+    });
+  });
+
+  it('detonates under trusted Full Bypass without caller confirmation', async () => {
+    await withTempRoot(async (root) => {
+      const runtime = new SandboxRuntimeService(servicesWithRoot(root), actor, {
+        platform: 'win32',
+        sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
+        launcher: async (): Promise<ReturnType<typeof ok>> => ok(undefined),
+        waiter: async (file): Promise<boolean> => {
+          const output = path.dirname(file);
+          await writeFile(path.join(output, 'exit-code.txt'), '0');
+          await writeFile(path.join(output, 'stdout.log'), 'bypassed');
+          await writeFile(path.join(output, 'stderr.log'), '');
+          return true;
+        },
+      });
+
+      await expect(runtime.execute({
+        workspaceId: 'ws-1', executable: 'node', arguments: ['--version'],
+        dryRun: false, jobId: 'job-full-bypass', timeoutSeconds: 60,
+      }, undefined, fullBypassAuthorization)).resolves.toMatchObject({
+        ok: true, value: { executed: true, jobId: 'job-full-bypass', stdout: 'bypassed' },
       });
     });
   });

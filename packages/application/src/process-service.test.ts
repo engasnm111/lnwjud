@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ok, type CommandSpec, type Result } from '@lnwjud/domain';
+import { permissionProfiles } from '@lnwjud/permissions';
 import type { ManagedProcess, ManagedProcessStart, ProcessLogResult } from '@lnwjud/process';
 import type { Workspace, WorkspaceRepository } from '@lnwjud/workspace';
 import { ProcessService, type ProcessServiceDependencies, type ProjectCommandSource } from './process-service.js';
@@ -48,6 +49,13 @@ function processHandle(id = 'process-1'): ManagedProcess {
 }
 
 describe('ProcessService', () => {
+  const fullBypassAuthorization = {
+    mode: 'full_bypass',
+    applicationApproved: true,
+    bypassApplicationAuthorization: true,
+    source: 'full_bypass',
+  } as const;
+
   it('allows a detected pnpm project command under Balanced and starts it in the guarded root', async () => {
     const workspace = await createWorkspace();
     const calls: ManagedProcessStart[] = [];
@@ -161,6 +169,29 @@ describe('ProcessService', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('accepts trusted Full Bypass for a risky command outside the workspace without caller confirmation', async () => {
+    const workspace = await createWorkspace();
+    const outsideRaw = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-process-full-bypass-'));
+    temporaryRoots.push(outsideRaw);
+    const outside = await realpath(outsideRaw);
+    const calls: ManagedProcessStart[] = [];
+    const service = new ProcessService(repository(workspace), {
+      processManager: fakeManager(calls),
+      profile: permissionProfiles.safe,
+    });
+
+    const result = await service.start(
+      { clientId: 'client-1', clientName: 'test' },
+      workspace.id,
+      { executable: 'powershell.exe', args: ['-Command', 'Remove-Item target'], cwd: outside },
+      undefined,
+      fullBypassAuthorization,
+    );
+
+    expect(result).toMatchObject({ ok: true, value: { processId: 'process-1' } });
+    expect(calls).toEqual([{ executable: 'powershell.exe', args: ['-Command', 'Remove-Item target'], cwd: outside }]);
+  });
+
   it('enforces process ownership for status, logs, and stop handles', async () => {
     const workspace = await createWorkspace();
     const service = new ProcessService(repository(workspace), { processManager: fakeManager([]) });
@@ -253,6 +284,42 @@ describe('ProcessService', () => {
     await expect(starting).resolves.toMatchObject({ ok: true });
   });
 
+  it('stops a process spawned just before its invocation is cancelled', async () => {
+    const workspace = await createWorkspace();
+    const handle = processHandle('process-cancelled-after-spawn');
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => { releaseStart = resolve; });
+    let resolveCreated!: () => void;
+    const created = new Promise<void>((resolve) => { resolveCreated = resolve; });
+    let stops = 0;
+    const manager: NonNullable<ProcessServiceDependencies['processManager']> = {
+      async start(_spec, _signal, onCreated): Promise<Result<ManagedProcess>> {
+        onCreated?.(handle);
+        resolveCreated();
+        await startGate;
+        return ok(handle);
+      },
+      list(): readonly ManagedProcess[] { return [handle]; },
+      status(): Result<ManagedProcess> { return ok(handle); },
+      logs(): Result<ProcessLogResult> { return ok({ entries: [], truncated: false, nextSequence: 0 }); },
+      async stop(): Promise<Result<void>> { stops += 1; return ok(undefined); },
+    };
+    const service = new ProcessService(repository(workspace), { processManager: manager });
+    const controller = new AbortController();
+    const starting = service.start(
+      { clientId: 'client-1', clientName: 'test' },
+      workspace.id,
+      { executable: 'pnpm', args: ['test'], userConfirmed: true },
+      controller.signal,
+    );
+    await created;
+    controller.abort();
+    releaseStart();
+
+    await expect(starting).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_TIMEOUT' } });
+    expect(stops).toBe(1);
+  });
+
   it('isolates process handles between sessions of the same client and workspace', async () => {
     const workspace = await createWorkspace();
     const service = new ProcessService(repository(workspace), { processManager: fakeManager([]) });
@@ -267,6 +334,41 @@ describe('ProcessService', () => {
     await expect(service.stop(otherSession, workspace.id, started.value.processId)).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
     await expect(service.list(otherSession, workspace.id)).resolves.toMatchObject({ ok: true, value: [] });
     await expect(service.status(owner, workspace.id, started.value.processId)).resolves.toMatchObject({ ok: true });
+    expect(service.statusForGoalLiveness(workspace.id, started.value.processId)).toMatchObject({ ok: true, value: { state: 'running' } });
+    expect(service.statusForGoalLiveness('another-workspace', started.value.processId)).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+  });
+
+  it('cancels a tracked process across MCP sessions while enforcing stable client/workspace ownership', async () => {
+    const workspace = await createWorkspace();
+    let current = processHandle('process-goal-cancel');
+    const stopCalls: Array<{ processId: string; autoRetry: boolean | undefined }> = [];
+    const manager: NonNullable<ProcessServiceDependencies['processManager']> = {
+      async start(): Promise<Result<ManagedProcess>> { return ok(current); },
+      list(): readonly ManagedProcess[] { return [current]; },
+      status(): Result<ManagedProcess> { return ok(current); },
+      logs(): Result<ProcessLogResult> { return ok({ entries: [], truncated: false, nextSequence: 0 }); },
+      async stop(processId, autoRetry): Promise<Result<void>> {
+        stopCalls.push({ processId, autoRetry });
+        current = { ...current, state: 'stopped', finishedAt: new Date(1).toISOString(), exitCode: -1 };
+        return ok(undefined);
+      },
+    };
+    const service = new ProcessService(repository(workspace), { processManager: manager });
+    const started = await service.start(
+      { clientId: 'client-1', clientName: 'test', sessionId: 'session-a' },
+      workspace.id,
+      { executable: 'pnpm', args: ['test'], userConfirmed: true },
+    );
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await expect(service.cancelForGoal('client-2', workspace.id, started.value.processId))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    await expect(service.cancelForGoal('client-1', workspace.id, started.value.processId))
+      .resolves.toMatchObject({ ok: true, value: { matched: true, state: 'cancelled' } });
+    expect(stopCalls).toEqual([{ processId: 'process-goal-cancel', autoRetry: true }]);
+    await expect(service.cancelForGoal('client-1', workspace.id, started.value.processId))
+      .resolves.toMatchObject({ ok: true, value: { matched: true, state: 'already_terminal' } });
   });
 });
 

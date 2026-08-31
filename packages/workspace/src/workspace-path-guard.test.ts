@@ -118,4 +118,26 @@ describe('WorkspacePathGuard', () => {
 
     expectError(await guard.resolveForRead(workspace, '..\\..\\Windows\\System32'), 'PATH_OUTSIDE_WORKSPACE');
   });
+
+  it('allows only explicit absolute outside paths under per-invocation Full Bypass', async () => {
+    const workspace = await createWorkspace();
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-outside-'));
+    temporaryRoots.push(outsideRoot);
+    const outsideFile = path.join(outsideRoot, 'proof.txt');
+    const outsideNewFile = path.join(outsideRoot, 'new.txt');
+    await writeFile(outsideFile, 'proof', 'utf8');
+    const guard = new WorkspacePathGuard();
+    const authorization = { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' } as const;
+
+    const outsideRealFile = await realpath(outsideFile);
+    await expect(guard.resolveForRead(workspace, outsideFile, authorization)).resolves.toMatchObject({
+      ok: true,
+      value: { outsideWorkspace: true, realPath: outsideRealFile },
+    });
+    await expect(guard.resolveForWrite(workspace, outsideNewFile, authorization)).resolves.toMatchObject({
+      ok: true,
+      value: { outsideWorkspace: true, absolutePath: outsideNewFile, exists: false },
+    });
+    expectError(await guard.resolveForRead(workspace, '..' + path.sep + path.basename(outsideRoot) + path.sep + 'proof.txt', authorization), 'PATH_OUTSIDE_WORKSPACE');
+  });
 });

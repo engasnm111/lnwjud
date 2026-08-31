@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { TunnelStatus } from '@lnwjud/ipc-contracts';
+import { autoStartPersistentTunnel } from '../src/main/desktop-services.js';
 import { TunnelRuntimeReconciler, type TunnelRuntimeDesiredState, type TunnelRuntimeReconcilerAdapter } from '../src/main/tunnel-runtime-reconciler.js';
 import { TunnelRuntimeSupervisor, TRANSIENT_BACKOFF_MS } from '../src/main/tunnel-runtime-supervisor.js';
 import type { NativeRuntimeConnectRequest } from '../src/main/tunnel-runtime-adapter.js';
@@ -172,5 +174,48 @@ describe('v4.11 persistent tunnel continuity acceptance', () => {
       snapshot: { tunnelId: TUNNEL_ID, state: 'error', lastErrorCode: 'TUNNEL_ID_MISMATCH' },
     });
     expect(adapter.connectRequests).toHaveLength(0);
+  });
+
+  it('keeps a surviving tunnel untouched when startup prerequisites are temporarily unavailable during reinstall', async () => {
+    const baseStatus: TunnelStatus = {
+      state: 'running',
+      source: 'external',
+      hasApiKey: true,
+      clientPath: 'C:\\Program Files\\lnwjud\\resources\\tunnel-client\\tunnel-client.exe',
+      profileExists: true,
+      message: null,
+      logPath: 'C:\\Users\\fixture\\AppData\\Roaming\\tunnel-client\\lnwjud.log',
+      persistent: null,
+    };
+    const prerequisiteGaps: TunnelStatus[] = [
+      { ...baseStatus, hasApiKey: false },
+      { ...baseStatus, profileExists: false },
+      { ...baseStatus, clientPath: null },
+    ];
+
+    for (const status of prerequisiteGaps) {
+      const startAutomatically = vi.fn(async (): Promise<TunnelStatus> => status);
+      const controller = { status: vi.fn(async (): Promise<TunnelStatus> => status), startAutomatically };
+      await expect(autoStartPersistentTunnel(controller, true)).resolves.toBe(status);
+      expect(startAutomatically).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not stop or replace an already-observed tunnel when persistent auto reconnect is disabled at startup', async () => {
+    const status: TunnelStatus = {
+      state: 'running',
+      source: 'external',
+      hasApiKey: true,
+      clientPath: 'C:\\Program Files\\lnwjud\\resources\\tunnel-client\\tunnel-client.exe',
+      profileExists: true,
+      message: null,
+      logPath: 'C:\\Users\\fixture\\AppData\\Roaming\\tunnel-client\\lnwjud.log',
+      persistent: null,
+    };
+    const startAutomatically = vi.fn(async (): Promise<TunnelStatus> => status);
+    const controller = { status: vi.fn(async (): Promise<TunnelStatus> => status), startAutomatically };
+
+    await expect(autoStartPersistentTunnel(controller, false)).resolves.toBe(status);
+    expect(startAutomatically).not.toHaveBeenCalled();
   });
 });

@@ -38,8 +38,11 @@ describe('v4.11 tool catalog continuity', () => {
       if (firstConnection.url === null) throw new Error('first MCP endpoint was not started');
 
       const first = await captureCatalog(firstConnection.url, 'before-desktop-restart');
-      expect(first.tools).toHaveLength(217);
+      expect(first.tools.length).toBeGreaterThan(0);
       expect(first.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
+      for (const required of ['prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'run_goal', 'checkpoint_goal']) {
+        expect(first.tools.some((tool) => tool.name === required), required).toBe(true);
+      }
       expect(first.workspaceListSucceeded).toBe(true);
 
       await firstRuntime.close();

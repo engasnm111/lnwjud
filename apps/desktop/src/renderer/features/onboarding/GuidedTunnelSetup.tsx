@@ -272,6 +272,9 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
               <SummaryRow label={t('guidedTunnel.apiKeyLabel')} value={props.tunnel.hasApiKey ? t('guidedTunnel.keyStored') : '—'} />
               <SummaryRow label={t('guidedTunnel.progress')} value={props.tunnel.profileExists ? t('guidedTunnel.configured') : t('tunnel.needProfile')} />
             </div>
+            {props.tunnel.persistent?.lastErrorCode === 'TUNNEL_ID_MISMATCH' ? (
+              <div className="alert-box-warning" role="status">⚠️ {t('guidedTunnel.persistentRestartNotice')}</div>
+            ) : null}
             <div className="inline-actions">
               <button type="button" onClick={goBack}>{t('guidedTunnel.back')}</button>
               <button type="button" className="btn-save-gold" disabled={!canStart} onClick={() => { void startTunnel(); }}>

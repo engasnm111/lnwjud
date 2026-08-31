@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, ok, type GoalTaskCancellationObservation, type Result } from '@lnwjud/domain';
 import { capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
 
 export type DurableShellTaskState = 'running' | 'completed' | 'failed' | 'timed_out' | 'cancelled' | 'termination_unverified';
@@ -183,6 +183,42 @@ export class DurableShellTaskStore {
     return ok(await this.snapshotFromMetadata(reconciled, tailLines));
   }
 
+  /** Trusted read-only host probe scoped to the durable goal's workspace. */
+  public async snapshotForGoalLiveness(taskId: string, workspaceId: string): Promise<Result<Record<string, unknown>>> {
+    const metadata = await this.readMetadata(taskId);
+    if (!metadata.ok) return metadata;
+    if (metadataOwner(metadata.value).workspaceId !== workspaceId) {
+      return err(appError('PERMISSION_DENIED', 'Task belongs to another or unknown workspace'));
+    }
+    const reconciled = await this.reconcile(metadata.value);
+    return ok(await this.snapshotFromMetadata(reconciled));
+  }
+
+  /** Trusted cancellation path used by durable goals; it deliberately ignores the transient MCP session. */
+  public async cancelForGoal(
+    taskId: string,
+    ownerClientId: string,
+    workspaceId: string,
+  ): Promise<Result<GoalTaskCancellationObservation>> {
+    const metadataResult = await this.readMetadata(taskId);
+    if (!metadataResult.ok) return metadataResult;
+    const storedOwner = metadataOwner(metadataResult.value);
+    if (storedOwner.clientId !== ownerClientId || storedOwner.workspaceId !== workspaceId) {
+      return err(appError('PERMISSION_DENIED', 'Task belongs to another client or workspace'));
+    }
+
+    const before = await this.reconcile(metadataResult.value);
+    if (isTerminal(before.state)) {
+      return ok({ matched: true, state: 'already_terminal', detail: before.state });
+    }
+    const cancelled = await this.cancel(taskId, storedOwner);
+    if (!cancelled.ok) return cancelled;
+    const state = cancelled.value.state;
+    if (state === 'cancelled') return ok({ matched: true, state: 'cancelled' });
+    if (isTerminalValue(state)) return ok({ matched: true, state: 'already_terminal', detail: state });
+    return ok({ matched: true, state: 'termination_unverified', detail: typeof state === 'string' ? state : 'unknown' });
+  }
+
   public async wait(taskId: string, seconds: number, tailLines?: number, owner?: CapabilityTaskOwner): Promise<Result<Record<string, unknown>>> {
     const deadline = Date.now() + Math.max(0, seconds) * 1000;
     let snapshot = await this.snapshot(taskId, tailLines, owner);
@@ -361,6 +397,10 @@ function metadataOwner(metadata: DurableTaskMetadata): CapabilityTaskOwner {
 
 function isTerminal(state: DurableShellTaskState): boolean {
   return state === 'completed' || state === 'failed' || state === 'timed_out' || state === 'cancelled';
+}
+
+function isTerminalValue(value: unknown): value is DurableShellTaskState {
+  return typeof value === 'string' && isTerminal(value as DurableShellTaskState);
 }
 
 async function readBoundedText(filename: string, maxBytes: number, tailLines?: number): Promise<string> {

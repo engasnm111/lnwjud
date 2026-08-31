@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_EXTENSIONS_SETTINGS } from './types.js';
 import { LocalExtensionsService } from './extensions-service.js';
@@ -13,10 +16,48 @@ function settingsWithMockServer(): typeof DEFAULT_EXTENSIONS_SETTINGS {
 }
 
 describe('LocalExtensionsService MCP bridge', () => {
+  it('includes a packaged bundled-skill root without hiding global or workspace skills', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-bundled-skills-'));
+    try {
+      const home = path.join(root, 'home');
+      const workspace = path.join(root, 'workspace');
+      const bundled = path.join(root, 'agent-skills');
+      for (const [skillRoot, name] of [
+        [path.join(home, '.agents', 'skills', 'global-skill'), 'global-skill'],
+        [path.join(workspace, '.agents', 'skills', 'workspace-skill'), 'workspace-skill'],
+        [path.join(bundled, 'lnwjud-scheduled-continuation'), 'lnwjud-scheduled-continuation'],
+      ] as const) {
+        await mkdir(skillRoot, { recursive: true });
+        await writeFile(path.join(skillRoot, 'SKILL.md'), `---\nname: ${name}\ndescription: Use when testing ${name}\n---\n# ${name}\n`, 'utf8');
+      }
+      const service = new LocalExtensionsService({
+        settings: DEFAULT_EXTENSIONS_SETTINGS,
+        homeDir: home,
+        workspaceRootProvider: async () => workspace,
+        bundledSkillRoots: [bundled],
+      } as never);
+
+      const listed = await service.listSkills({});
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      expect(listed.value.skills.map((skill) => skill.name).sort()).toEqual([
+        'global-skill',
+        'lnwjud-scheduled-continuation',
+        'workspace-skill',
+      ]);
+      await expect(service.readSkill({ skillId: 'lnwjud-scheduled-continuation' }))
+        .resolves.toMatchObject({ ok: true, value: { name: 'lnwjud-scheduled-continuation' } });
+      await service.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('lists, describes, and calls child MCP tools through the session manager', async () => {
     const calls: string[] = [];
     const session: McpClientSession = {
       listTools: async () => [{ name: 'ping', description: 'Ping tool', inputSchema: { type: 'object' } }],
+      listResources: async () => [{ uri: 'file:///docs/readme.md', name: 'README', description: 'Project docs', mimeType: 'text/markdown' }],
       callTool: async (name, args) => {
         calls.push(`${name}:${JSON.stringify(args)}`);
         return { content: [{ type: 'text', text: 'pong' }] };
@@ -43,6 +84,12 @@ describe('LocalExtensionsService MCP bridge', () => {
         server: 'mock',
         tools: [{ name: 'ping', description: 'Ping tool' }],
       },
+    });
+
+    const resources = await service.listMcpResources({ server: 'mock' });
+    expect(resources).toMatchObject({
+      ok: true,
+      value: { server: 'mock', connected: true, resources: [{ uri: 'file:///docs/readme.md', name: 'README', mimeType: 'text/markdown' }] },
     });
 
     const called = await service.callMcpTool({ server: 'mock', tool: 'ping', arguments: { n: 1 } });
@@ -85,6 +132,7 @@ describe('LocalExtensionsService MCP bridge', () => {
     let closes = 0;
     const session: McpClientSession = {
       listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
       callTool: async (_name, _args, signal) => {
         observedSignal = signal;
         releaseStarted();

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, safeStorage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { access } from 'node:fs/promises';
@@ -17,11 +17,17 @@ import {
   type DashboardSnapshot,
   type DestructiveDeletePolicy,
   type DoctorReport,
+  type ToolCatalogSnapshot,
+  type GetToolCatalogRequest,
+  type RecheckToolCatalogRequest,
+  type OpenToolSetupTargetRequest,
+  type CopyToolCommandRequest,
   type ExportLogsRequest,
   type ExportWorkLogRequest,
   type IpcResponseMap,
   type LogSnapshot,
   type ManagedBrowserStatus,
+  type PdfProviderInstallResult,
   type McpConnectionStatus,
   type ProcessSummary,
   type RestoreCheckpointRequest,
@@ -52,12 +58,13 @@ import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalReq
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
 import { createDesktopRuntime, type DesktopRuntime, type DesktopRuntimeOptions } from './desktop-services.js';
+import { installPdfProvider } from './pdf-provider-installer.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, getRendererEntryPath, getWindowIconPath, isAllowedRendererUrl } from './window.js';
 import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, prepareTrayIcon, shouldHideMainWindowOnClose } from './tray.js';
-import { UpdateInstallCoordinator, type UpdateSharedActivitySnapshot } from './update-install.js';
+import { confirmTunnelStopForUpdate, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, type UpdateSharedActivitySnapshot } from './update-install.js';
 import { UpdateCheckScheduler } from './update-check-scheduler.js';
 import {
   configureUpdaterForDistribution,
@@ -73,6 +80,7 @@ import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
+import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
 
 export interface DesktopIpcServices {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
@@ -106,7 +114,10 @@ export interface DesktopIpcServices {
   setUserSettings(request: SetUserSettingsRequest): Promise<{ readonly settings: UserSettings; readonly restartRequired: boolean }>;
   configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }>;
   launchManagedBrowser(): Promise<ManagedBrowserStatus>;
+  installPdfProvider(): Promise<PdfProviderInstallResult>;
   runDoctor(): Promise<DoctorReport>;
+  getToolCatalog(request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot>;
+  recheckToolCatalog(request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }>;
   getLogSnapshot(): Promise<LogSnapshot>;
   clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }>;
   captureIncident(updaterEvents?: readonly string[]): Promise<IncidentReport>;
@@ -137,6 +148,8 @@ const emptyTunnel: TunnelStatus = {
 };
 const defaultUserSettings: UserSettings = {
   customPermission: { read: 'ALLOW', write: 'ASK', execute: 'ASK', dangerous: 'DENY', allowedExecutables: [] },
+  desktopFullBypassAll: false,
+  stdioFullBypassAll: false,
   mcpCallTimeoutMs: 60_000,
   mcpIdleTimeoutMs: 5 * 60_000,
   processTimeoutMs: 60 * 60_000,
@@ -181,7 +194,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     selectedWorkspace: null,
     activeWorkspaces: [],
     gitSummary: { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' },
-    mcp: { running: false, url: null, workspaceId: null },
+    mcp: { running: false, url: null, lastStartError: null, workspaceId: null },
     codex: { installed: false, version: null },
     managedProcessCount: 0,
     auditEventCount: 0,
@@ -203,7 +216,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     stdioAllowedRoots: [],
     backups: [],
     recovery: { trashRoot: null, trashItems: [], checkpoints: [] },
-    connectionModes: { httpUrl: null, stdioCommand: 'lnwjud.exe --mcp-stdio' },
+    connectionModes: { httpUrl: null, stdioCommand: 'lnwjud-mcp-stdio.cmd --profile full' },
     workLog: [],
     inFlight: [],
     tunnel: emptyTunnel,
@@ -244,9 +257,15 @@ const defaultDesktopServices: DesktopIpcServices = {
   setUserSettings: async (request): Promise<{ readonly settings: UserSettings; readonly restartRequired: boolean }> => ({ settings: request.settings, restartRequired: false }),
   configureTunnelProfile: async (): Promise<{ readonly configured: boolean; readonly profilePath: string }> => ({ configured: false, profilePath: '' }),
   launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => ({ ready: false, port: 9222, launched: false }),
+  installPdfProvider: async (): Promise<PdfProviderInstallResult> => { throw new Error('PDF provider installer is not configured'); },
   runDoctor: async (): Promise<DoctorReport> => ({
-    checks: [{ id: 'desktop', required: true, status: 'fail', message: 'Desktop services are not configured' }],
+    checks: [{ id: 'desktop', required: true, status: 'fail', title: 'Desktop services', summary: 'Desktop services are not configured', affectedToolNames: [], checkedAt: new Date(0).toISOString(), durationMs: 0, message: 'Desktop services are not configured' }],
     exitCode: 1,
+  }),
+  getToolCatalog: async (request): Promise<ToolCatalogSnapshot> => ({ generatedAt: new Date(0).toISOString(), locale: request.locale, items: [], remediations: [] }),
+  recheckToolCatalog: async (request): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }> => ({
+    catalog: { generatedAt: new Date(0).toISOString(), locale: request.locale, items: [], remediations: [] },
+    doctor: { checks: [], exitCode: 1 },
   }),
   getLogSnapshot: async (): Promise<LogSnapshot> => ({
     lines: [],
@@ -445,10 +464,45 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     return services.launchManagedBrowser();
   });
+  ipcMain.handle(ipcChannels.installPdfProvider, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    return services.installPdfProvider();
+  });
   ipcMain.handle(ipcChannels.runDoctor, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.runDoctor();
+  });
+  ipcMain.handle(ipcChannels.getToolCatalog, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.getToolCatalog(parseGetToolCatalogRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.recheckToolCatalog, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.recheckToolCatalog(parseRecheckToolCatalogRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.openToolSetupTarget, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    const request = parseOpenToolSetupTargetRequest(payload);
+    if (request.target === 'windows_optional_features') {
+      const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows';
+      const openError = await shell.openPath(path.join(windowsRoot, 'System32', 'OptionalFeatures.exe'));
+      if (openError.length > 0) throw new Error(`Could not open Windows Optional Features: ${openError}`);
+      return { opened: true as const };
+    }
+    const url = OFFICIAL_URL_TARGETS[request.target as keyof typeof OFFICIAL_URL_TARGETS];
+    if (url === undefined) throw new Error('Unknown tool setup target');
+    await shell.openExternal(url);
+    return { opened: true as const };
+  });
+  ipcMain.handle(ipcChannels.copyToolCommand, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    const request = parseCopyToolCommandRequest(payload);
+    const command = COPY_COMMANDS[request.commandId as keyof typeof COPY_COMMANDS];
+    if (command === undefined) throw new Error('Unknown tool command id');
+    clipboard.writeText(command);
+    return { copied: true as const };
   });
   ipcMain.handle(ipcChannels.getLogSnapshot, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -744,6 +798,23 @@ function parseSetTunnelClientPathRequest(payload: unknown): SetTunnelClientPathR
   return { clientPath: nonEmptyString(payload.clientPath, 'clientPath') };
 }
 
+function parseGetToolCatalogRequest(payload: unknown): GetToolCatalogRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale') || (payload.locale !== 'th' && payload.locale !== 'en')) throw new Error('Invalid tool catalog request');
+  return { locale: payload.locale };
+}
+function parseRecheckToolCatalogRequest(payload: unknown): RecheckToolCatalogRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale' && key !== 'requirementIds') || (payload.locale !== 'th' && payload.locale !== 'en') || !Array.isArray(payload.requirementIds) || payload.requirementIds.length > 128 || payload.requirementIds.some((id: unknown) => typeof id !== 'string' || id.length === 0 || id.length > 128)) throw new Error('Invalid tool catalog recheck request');
+  return { locale: payload.locale, requirementIds: payload.requirementIds as string[] };
+}
+function parseOpenToolSetupTargetRequest(payload: unknown): OpenToolSetupTargetRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'target') || typeof payload.target !== 'string' || payload.target.length === 0 || payload.target.length > 128) throw new Error('Invalid tool setup target request');
+  return { target: payload.target };
+}
+function parseCopyToolCommandRequest(payload: unknown): CopyToolCommandRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'commandId') || typeof payload.commandId !== 'string' || payload.commandId.length === 0 || payload.commandId.length > 128) throw new Error('Invalid tool command request');
+  return { commandId: payload.commandId };
+}
+
 function parseSetLocaleRequest(payload: unknown): SetLocaleRequest {
   if (!isRecord(payload) || (payload.locale !== 'th' && payload.locale !== 'en')) throw new Error('Invalid IPC payload: locale');
   return { locale: payload.locale };
@@ -768,6 +839,8 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
       dangerous: permissionDecision(customPermission.dangerous, 'customPermission.dangerous'),
       allowedExecutables: stringArray(customPermission.allowedExecutables, 'customPermission.allowedExecutables', 256),
     },
+    desktopFullBypassAll: booleanField(record.desktopFullBypassAll, 'desktopFullBypassAll'),
+    stdioFullBypassAll: booleanField(record.stdioFullBypassAll, 'stdioFullBypassAll'),
     mcpCallTimeoutMs: boundedInteger(record.mcpCallTimeoutMs, 'mcpCallTimeoutMs', 1_000, 60 * 60_000),
     mcpIdleTimeoutMs: boundedInteger(record.mcpIdleTimeoutMs, 'mcpIdleTimeoutMs', 30_000, 24 * 60 * 60_000),
     processTimeoutMs: boundedInteger(record.processTimeoutMs, 'processTimeoutMs', 1_000, 4 * 60 * 60_000),
@@ -877,6 +950,7 @@ let autoUpdaterInitialized = false;
 let quitRequested = false;
 let desktopShutdownCoordinator: DesktopShutdownCoordinator | null = null;
 let updateInstallCoordinator: UpdateInstallCoordinator | null = null;
+let updateInstallConfirmationPending = false;
 let updateCheckScheduler: UpdateCheckScheduler | null = null;
 let pendingUpdateCheckSource: 'automatic' | 'tray' | 'renderer' | null = null;
 const windowsDistribution = detectWindowsDistribution(app.isPackaged);
@@ -1020,22 +1094,82 @@ function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateSt
   return status;
 }
 
-function requestUpdateInstall(): { readonly accepted: boolean; readonly status: UpdateStatus } {
-  if (!app.isPackaged || currentUpdateStatus.phase !== 'ready' || updateInstallCoordinator === null) {
+async function requestUpdateInstall(): Promise<{ readonly accepted: boolean; readonly status: UpdateStatus }> {
+  if (!app.isPackaged || currentUpdateStatus.phase !== 'ready' || updateInstallCoordinator === null || updateInstallConfirmationPending) {
     return { accepted: false, status: currentUpdateStatus };
   }
-  const status = patchUpdateStatus({
-    phase: 'installing',
-    message: nativeMessages(desktopLocale).updaterInstallWaiting,
-    canInstall: false,
-  });
-  updateInstallCoordinator.requestInstall();
-  return { accepted: true, status };
+  const runtime = desktopRuntime;
+  if (runtime === null) return { accepted: false, status: currentUpdateStatus };
+
+  updateInstallConfirmationPending = true;
+  try {
+    const approved = await confirmTunnelStopForUpdate({
+      getTunnelStatus: () => runtime.services.getTunnelStatus(),
+      confirmStop: async (): Promise<boolean> => {
+        const messages = nativeMessages(desktopLocale);
+        const options = {
+          type: 'warning' as const,
+          title: messages.updaterTunnelStopTitle,
+          message: messages.updaterTunnelStopMessage,
+          detail: messages.updaterTunnelStopDetail,
+          buttons: [messages.updaterTunnelStopConfirm, messages.cancel],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        };
+        const parent = mainWindow !== null && !mainWindow.isDestroyed() ? mainWindow : null;
+        const result = parent === null
+          ? await dialog.showMessageBox(options)
+          : await dialog.showMessageBox(parent, options);
+        return result.response === 0;
+      },
+    });
+    if (!approved) return { accepted: false, status: currentUpdateStatus };
+
+    const tunnelStopped = await stopTunnelForUpdateInstall(runtime);
+    if (!tunnelStopped) return { accepted: false, status: currentUpdateStatus };
+
+    const status = patchUpdateStatus({
+      phase: 'installing',
+      message: nativeMessages(desktopLocale).updaterInstallWaiting,
+      canInstall: false,
+    });
+    updateInstallCoordinator.requestInstall();
+    return { accepted: true, status };
+  } finally {
+    updateInstallConfirmationPending = false;
+  }
+}
+
+async function stopTunnelForUpdateInstall(runtime: DesktopRuntime): Promise<boolean> {
+  try {
+    const status = await runtime.services.stopTunnel();
+    if (status.state !== 'stopped' || updateInstallNeedsTunnelStopConfirmation(status)) {
+      throw new Error(status.message ?? 'Secure Tunnel did not reach the stopped state');
+    }
+    return true;
+  } catch (error: unknown) {
+    const messages = nativeMessages(desktopLocale);
+    const detail = error instanceof Error ? error.message : messages.updaterTunnelStopFailedMessage;
+    patchUpdateStatus({
+      phase: 'ready',
+      message: messages.updaterTunnelStopFailedMessage,
+      canInstall: true,
+    });
+    void dialog.showMessageBox({
+      type: 'error',
+      title: messages.updaterTunnelStopFailedTitle,
+      message: messages.updaterTunnelStopFailedMessage,
+      detail,
+      buttons: [messages.ok],
+    });
+    return false;
+  }
 }
 
 function checkForUpdatesFromTray(): void {
   if (currentUpdateStatus.phase === 'ready') {
-    requestUpdateInstall();
+    void requestUpdateInstall();
     revealMainWindow();
     return;
   }
@@ -1232,31 +1366,35 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
           ? { state: 'available', activeCallCount: snapshot.activeCount, revision: snapshot.revision, ownerKey: snapshot.ownerKey }
           : { state: snapshot.state, reason: snapshot.reason };
       },
+      maxWaitMs: 5_000,
       install: (): void => {
-        void runtime.createBackup('pre-update').catch((error: unknown) => {
-          console.error(`Pre-update backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-        }).finally(() => {
-          if (windowsDistribution === 'installer') {
-            void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
-            return;
-          }
-          const portableUpdate = pendingPortableUpdate;
-          if (portableUpdate === null) {
-            patchUpdateStatus({ phase: 'error', message: 'Portable update file is unavailable. Check for updates again.', canInstall: false });
-            return;
-          }
-          void preparePortableReplacement({
-            downloadedFile: portableUpdate.downloadedFile,
-            currentExecutablePath: currentPortableExecutablePath(),
-          }).then((prepared) => {
-            void desktopShutdownCoordinator?.requestQuit(() => {
-              launchPortableReplacement(prepared);
-              app.quit();
-            }, 'install');
-          }).catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : 'Portable update could not be prepared.';
-            console.error(`[AutoUpdater] portable install preparation failed: ${message}`);
-            patchUpdateStatus({ phase: 'error', message, canInstall: false });
+        void stopTunnelForUpdateInstall(runtime).then((tunnelStopped) => {
+          if (!tunnelStopped) return;
+          void runtime.createBackup('pre-update').catch((error: unknown) => {
+            console.error(`Pre-update backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+          }).finally(() => {
+            if (windowsDistribution === 'installer') {
+              void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
+              return;
+            }
+            const portableUpdate = pendingPortableUpdate;
+            if (portableUpdate === null) {
+              patchUpdateStatus({ phase: 'error', message: 'Portable update file is unavailable. Check for updates again.', canInstall: false });
+              return;
+            }
+            void preparePortableReplacement({
+              downloadedFile: portableUpdate.downloadedFile,
+              currentExecutablePath: currentPortableExecutablePath(),
+            }).then((prepared) => {
+              void desktopShutdownCoordinator?.requestQuit(() => {
+                launchPortableReplacement(prepared);
+                app.quit();
+              }, 'install');
+            }).catch((error: unknown) => {
+              const message = error instanceof Error ? error.message : 'Portable update could not be prepared.';
+              console.error(`[AutoUpdater] portable install preparation failed: ${message}`);
+              patchUpdateStatus({ phase: 'error', message, canInstall: false });
+            });
           });
         });
       },
@@ -1385,6 +1523,17 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
+function createNativeDesktopRuntime(dataPath: string): DesktopRuntime {
+  return createDesktopRuntime(dataPath, {
+    hostMutationApprovalProvider: requestNativeMutationApproval,
+    pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
+      fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
+    }),
+    // macOS: Keychain-backed tunnel secret envelope (safeStorage + legacy raw:v1 read).
+    ...macosTunnelSecretProvider(),
+  });
+}
+
 function bootstrapDesktop(): void {
   if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   const dataPath = configureDataPath();
@@ -1395,7 +1544,7 @@ function bootstrapDesktop(): void {
     );
 
     prependBundledRuntimeToolsToPath();
-    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval, ...macosTunnelSecretProvider() });
+    const runtime = createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -1430,7 +1579,7 @@ function bootstrapLogViewerOnly(): void {
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.lnwjud.desktop');
     prependBundledRuntimeToolsToPath();
-    const runtime = createDesktopRuntime(dataPath, { hostMutationApprovalProvider: requestNativeMutationApproval, ...macosTunnelSecretProvider() });
+    const runtime = createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));

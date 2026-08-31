@@ -62,7 +62,7 @@ describe('Security Overview', () => {
     expect(markup).toContain('Restricted scope');
     expect(markup).toContain('BALANCED');
     expect(markup).toContain('Allowed Roots');
-    expect(markup).not.toContain('registered machine roots may be visible');
+    expect(markup).not.toContain('explicitly requested absolute paths are accessible');
   });
 
   it('warns when standalone/headless STDIO has broad full access without Strict Roots', () => {
@@ -75,7 +75,8 @@ describe('Security Overview', () => {
       allowAiDelete: true,
     });
     expect(markup).toContain('Broad access');
-    expect(markup).toContain('registered machine roots may be visible');
+    expect(markup).toContain('explicitly requested absolute paths are accessible');
+    expect(markup).toContain('drives are not scanned');
     expect(markup).toContain('AI File Delete');
   });
 

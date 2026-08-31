@@ -1,20 +1,23 @@
 import { release as nodeRelease } from 'node:os';
 import { createServer } from 'node:net';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import {
-  DoctorService,
   CheckpointService,
   CodexService,
   FileService,
   GitService,
   GoalContinuationService,
+  GoalRequestCancellationService,
+  GoalTaskCancellationService,
+  GoalMutationFenceService,
+  ScheduledContinuationService,
   ProjectService,
   ProjectSnapshotService,
   ProcessService,
   SearchService,
   JsonWorkspaceIndexStore,
   WorkspaceIndexService,
-  syncMachineRoots,
   WorkspaceInfoService,
   WorkspaceQueryService,
   type FileActor,
@@ -32,6 +35,8 @@ import {
 } from '@lnwjud/extensions';
 import {
   ActivityTracker,
+  LNWJUD_MCP_IDENTITY_PATH,
+  RuntimeGoalManagedTaskStateReader,
   composeActivitySinks,
   createFileActivitySink,
   mcpActivityLogPath,
@@ -89,7 +94,7 @@ import { AesGcmCheckpointCipher, SqliteAuditRepository, SqliteBackupService, Sql
 import { SqliteGoalRepository } from '@lnwjud/storage';
 
 import type { Workspace } from '@lnwjud/workspace';
-import { isDriveRoot, machineRootPath, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
+import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
 import {
   type AddWorkspaceRequest,
   type BackupSummary as IpcBackupSummary,
@@ -103,9 +108,15 @@ import {
   type DashboardSnapshot,
   type DoctorCheck,
   type DoctorReport,
+  type ToolCatalogSnapshot,
+  type GetToolCatalogRequest,
+  type RecheckToolCatalogRequest,
+  type ToolCatalogItem,
+  type ToolProfileDecision,
   type InFlightWorkItem,
   type LogSnapshot,
   type ManagedBrowserStatus,
+  type PdfProviderInstallResult,
   type McpConnectionStatus,
   type PermissionProfileName as IpcPermissionProfileName,
   type ProcessSummary,
@@ -135,11 +146,16 @@ import {
 import type { DesktopIpcServices } from './main.js';
 import { windowsCompatibilityProfile } from './windows-compatibility.js';
 import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
+import { RequirementRegistry, type RequirementDefinition, type RequirementProbeResult } from './tool-catalog/requirement-registry.js';
+import { RemediationRegistry } from './tool-catalog/remediation-registry.js';
+import { ToolCatalogService, type ToolCatalogServiceOptions } from './tool-catalog/tool-catalog-service.js';
+import { projectExternalMcpTools } from './tool-catalog/external-tool-catalog-adapter.js';
 import { LogHub, classifyMcpWorkLogKind } from './log-hub.js';
 
 import { buildIncidentReport, collectRelevantListeners, collectRelevantProcessTree, type IncidentReport } from './incident-report.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
+import { installPdfProvider, type InstalledPdfProvider } from './pdf-provider-installer.js';
 import { CLIENT_PATH_SETTING, TunnelController } from './tunnel-controller.js';
 
 
@@ -177,6 +193,26 @@ export interface DesktopRuntimeOptions {
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly encryptTunnelSecret?: (plain: string) => Promise<string>;
   readonly decryptTunnelSecret?: (encrypted: string) => Promise<string>;
+  readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
+}
+
+interface StartupTunnelController {
+  status(): Promise<TunnelStatus>;
+  startAutomatically(): Promise<TunnelStatus>;
+}
+
+/**
+ * Desktop startup is recovery-only: it may start/reconcile the saved tunnel,
+ * but it must never stop a surviving persistent runtime merely because a local
+ * prerequisite is temporarily unavailable during an update or reinstall.
+ */
+export async function autoStartPersistentTunnel(
+  tunnelController: StartupTunnelController,
+  autoReconnect: boolean,
+): Promise<TunnelStatus> {
+  const status = await tunnelController.status();
+  if (!autoReconnect || !status.profileExists || !status.hasApiKey || status.clientPath === null) return status;
+  return tunnelController.startAutomatically();
 }
 
 export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOptions = {}): DesktopRuntime {
@@ -185,8 +221,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const database = new SqliteDatabase(databaseFilename, { backupDirectory });
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const goalRepository = new SqliteGoalRepository(database);
-  const goalService = new GoalContinuationService(workspaceRepository, goalRepository);
-
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const workLogViewState = new WorkLogViewState(settingsRepository);
@@ -209,6 +243,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const activePermissionProfile = (): PermissionProfile => profileName === 'custom'
     ? customPermissionProfile(settingsRepository)
     : permissionProfiles[profileName];
+  const desktopFullBypassEnabled = (): boolean => profileName === 'full' && readSettings().desktopFullBypassAll;
   const unrestricted = isUnrestricted(process.env, settingsRepository.get(UNRESTRICTED_SETTING_KEY));
   const destructivePolicyProvider = (): DestructiveAutoApprovalPolicy => parseDestructiveAutoApprovalPolicy(
     settingsRepository.get(DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY),
@@ -221,6 +256,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     profileProvider: activePermissionProfile,
     defaultTimeoutMsProvider: (): number => readSettings().processTimeoutMs,
     unrestricted,
+    authorizationBypassProvider: desktopFullBypassEnabled,
   });
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
     profileProvider: activePermissionProfile,
@@ -233,8 +269,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     profileProvider: activePermissionProfile,
     unrestricted,
     trustedWorkspaceAccess: true,
-    allowDeleteWithoutConfirmation: allowAiDeleteProvider,
-    protectCriticalFiles: (): boolean => destructivePolicyProvider().protectCriticalFiles,
+    allowDeleteWithoutConfirmation: (): boolean => desktopFullBypassEnabled() || allowAiDeleteProvider(),
+    protectCriticalFiles: (): boolean => !desktopFullBypassEnabled() && destructivePolicyProvider().protectCriticalFiles,
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot,
 
@@ -253,20 +289,29 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     profileProvider: activePermissionProfile,
   });
   const capabilityRuntime = createLocalCapabilityRuntime(dataPath, async (): Promise<readonly string[]> => (
-    (await workspaceRepository.list()).map((workspace) => workspace.realRootPath)
+    (await workspaceRepository.list())
+      .filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath))
+      .map((workspace) => workspace.realRootPath)
   ), unrestricted, () => readSettings().capabilityRoots, () => readSettings().shellSynchronousWaitSeconds);
-  // Start machine-root synchronization lazily so runtime construction cannot race
-  // with the first workspace/database operation on slower Windows runners.
-
-  const machineRootsReady = new Map<string, Promise<Workspace | null>>();
-  const ensureMachineRoots = (preferredPath?: string): Promise<Workspace | null> => {
-    const key = unrestricted ? '*' : machineRootPath(preferredPath).toLowerCase();
-    const existing = machineRootsReady.get(key);
-    if (existing !== undefined) return existing;
-    const pending = syncMachineRoots(workspaceService, unrestricted, preferredPath);
-    machineRootsReady.set(key, pending);
-    return pending;
-  };
+  const taskCancellation = new GoalTaskCancellationService([
+    { provider: 'process', cancelForGoal: processService.cancelForGoal.bind(processService) },
+    { provider: 'codex', cancelForGoal: codexService.cancelForGoal.bind(codexService) },
+    { provider: 'shell', cancelForGoal: capabilityRuntime.shell.cancelForGoal.bind(capabilityRuntime.shell) },
+  ]);
+  const requestCancellation = new GoalRequestCancellationService();
+  const goalService = new GoalContinuationService(workspaceRepository, goalRepository, {
+    scheduledContinuations: goalRepository,
+    taskCancellation,
+    requestCancellation,
+  });
+  const goalMutationFence = new GoalMutationFenceService(goalRepository, {
+    taskStateReader: new RuntimeGoalManagedTaskStateReader({
+      process: processService,
+      codex: codexService,
+      shell: capabilityRuntime.shell,
+    }),
+  });
+  const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     workspaceRootProvider: async (): Promise<string | undefined> => {
@@ -295,6 +340,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     file: fileService,
     checkpoint: checkpointService,
     goals: goalService,
+    goalRequestCancellation: requestCancellation,
+    scheduledContinuations: scheduledContinuationService,
+    goalMutationFence,
     search: searchService,
     workspaceIndex,
     git: gitService,
@@ -320,6 +368,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           ...(event.resultMessage === undefined ? {} : { resultMessage: event.resultMessage }),
           ...(event.traceId === undefined ? {} : { traceId: event.traceId }),
           ...(event.traceParent === undefined ? {} : { traceParent: event.traceParent }),
+          ...(event.authorizationMode === undefined ? {} : { authorizationMode: event.authorizationMode }),
           durationMs: event.durationMs,
           timestamp: event.timestamp,
         });
@@ -343,6 +392,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       actor: mcpActor,
       activityTracker,
       profileProvider: activePermissionProfile,
+      authorizationModeProvider: (): 'standard' | 'full_bypass' => desktopFullBypassEnabled() ? 'full_bypass' : 'standard',
       allowAiDeleteProvider,
       destructivePolicyProvider,
       activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => {
@@ -519,16 +569,123 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     if (!approved) throw new Error('Native host approval was denied for this administrative mutation');
   }
 
-  const doctorService = new DoctorService({
-    os: async (): Promise<DoctorProbeResult> => ({ status: windowsCompatibilityProfile(process.platform, nodeRelease(), process.arch).supportedReleaseTarget ? 'pass' : 'fail', message: `${process.platform} ${process.arch}` }),
-
-    database: async (): Promise<DoctorProbeResult> => ({ status: 'pass', message: 'SQLite database ready' }),
-    git: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'git', 'warn'),
-    ripgrep: async (): Promise<DoctorProbeResult> => checkExecutable(executableResolver, 'rg', 'fail'),
-    workspaces: async (): Promise<DoctorProbeResult> => ({ status: 'pass', message: `${(await workspaceService.list()).length} workspace(s) registered` }),
-    mcpPort: checkLocalPort,
-    codex: async (): Promise<DoctorProbeResult> => checkCodex(codexDiscovery),
-  });
+  const requirementProbeFromDoctor = async (probe: () => Promise<DoctorProbeResult>): Promise<RequirementProbeResult> => {
+    const result = await probe();
+    return { status: result.status, detail: result.message };
+  };
+  const capabilityRequirement = async (name: string): Promise<RequirementProbeResult> => {
+    const result = await capabilityRuntime.health.execute({ operation: 'check_tool', tool: name });
+    if (!result.ok) return { status: 'unknown', detail: result.error.message };
+    if (!isRecord(result.value)) return { status: 'unknown', detail: `${name} capability health response was invalid` };
+    const available = result.value.available !== false;
+    const ready = result.value.ready !== false;
+    const reason = typeof result.value.reason === 'string' ? result.value.reason : undefined;
+    if (ready) return { status: 'pass', detail: reason ?? `${name} is ready` };
+    return {
+      status: available ? 'fail' : 'unknown',
+      detail: reason ?? (available ? `${name} needs setup` : `${name} is unavailable`),
+    };
+  };
+  const resolveConfiguredExecutable = async (raw: string): Promise<boolean> => {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return false;
+    let executable = trimmed;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed) && typeof parsed[0] === 'string') executable = parsed[0];
+    } catch {
+      const quoted = /^"([^"]+)"/.exec(trimmed);
+      executable = quoted?.[1] ?? trimmed.split(/\s+/, 1)[0] ?? trimmed;
+    }
+    return (await executableResolver.resolve(executable)).ok;
+  };
+  const localPdfProviderRequirement = async (): Promise<RequirementProbeResult> => {
+    const configured = readSettings().pdfProviderPath.trim();
+    if (configured.length > 0) {
+      const available = await resolveConfiguredExecutable(configured);
+      return { status: available ? 'pass' : 'warn', detail: available ? 'Configured local PDF provider is available' : 'Configured local PDF provider could not be resolved' };
+    }
+    for (const candidate of ['pdftotext.exe', 'pdftotext']) {
+      if ((await executableResolver.resolve(candidate)).ok) return { status: 'pass', detail: `${candidate} is available on PATH` };
+    }
+    return { status: 'warn', detail: 'No local PDF text provider is configured or available on PATH' };
+  };
+  const configuredLspRequirement = async (): Promise<RequirementProbeResult> => {
+    const commands = Object.values(readSettings().lspCommands).map((value) => value.trim()).filter(Boolean);
+    if (commands.length === 0) return { status: 'warn', detail: 'No local language-server command is configured' };
+    const availability = await Promise.all(commands.map(resolveConfiguredExecutable));
+    return availability.some(Boolean)
+      ? { status: 'pass', detail: `${availability.filter(Boolean).length} configured language-server command(s) resolved` }
+      : { status: 'warn', detail: 'Configured language-server commands could not be resolved' };
+  };
+  const windowsSandboxRequirement = async (): Promise<RequirementProbeResult> => {
+    if (process.platform !== 'win32') return { status: 'fail', detail: 'Windows Sandbox is supported only on Windows' };
+    const root = process.env.SystemRoot ?? process.env.WINDIR;
+    const executable = root === undefined ? '' : path.join(root, 'System32', 'WindowsSandbox.exe');
+    return executable.length > 0 && existsSync(executable)
+      ? { status: 'pass', detail: 'WindowsSandbox.exe is available' }
+      : { status: 'warn', detail: 'Windows Sandbox feature is not installed or enabled' };
+  };
+  const requirementDefinitions: readonly RequirementDefinition[] = [
+    { id: 'os', required: true, summaryKey: 'requirement.os', probe: async () => ({ status: windowsCompatibilityProfile(process.platform, nodeRelease(), process.arch).supportedReleaseTarget ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
+    { id: 'database', required: true, summaryKey: 'requirement.database', probe: async () => ({ status: 'pass', detail: 'SQLite database ready' }) },
+    { id: 'mcp-port', required: true, summaryKey: 'requirement.mcp_port', probe: () => requirementProbeFromDoctor(() => checkConfiguredMcpPort(mcpLifecycle.status(), mcpPort)) },
+    { id: 'platform_windows', required: false, summaryKey: 'requirement.platform_windows', probe: async () => ({ status: process.platform === 'win32' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
+    { id: 'registered_workspace', required: false, summaryKey: 'requirement.registered_workspace', remediationId: 'add_project', probe: async () => ({ status: (await workspaceService.list()).some((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath)) ? 'pass' : 'fail' }) },
+    { id: 'active_project', required: false, summaryKey: 'requirement.active_project', remediationId: 'add_project', probe: async () => ({ status: (await resolveActiveProjectWorkspaces()).length > 0 ? 'pass' : 'fail' }) },
+    { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
+    { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
+    { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: () => requirementProbeFromDoctor(() => checkCodex(codexDiscovery)) },
+    { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', probe: () => capabilityRequirement('wsl_exec') },
+    { id: 'local_mcp_listener', required: true, summaryKey: 'requirement.local_mcp_listener', probe: async () => ({ status: mcpLifecycle.status().running ? 'pass' : 'fail', detail: mcpLifecycle.status().url ?? 'Desktop MCP listener is stopped' }) },
+    { id: 'browser_cdp', required: false, summaryKey: 'requirement.browser_cdp', remediationId: 'configure_browser_cdp', probe: () => capabilityRequirement('dom_cdp') },
+    { id: 'windows_ui_automation', required: false, summaryKey: 'requirement.windows_ui_automation', probe: () => capabilityRequirement('accessibility') },
+    { id: 'windows_input', required: false, summaryKey: 'requirement.windows_input', probe: () => capabilityRequirement('input_event') },
+    { id: 'windows_window', required: false, summaryKey: 'requirement.windows_window', probe: () => capabilityRequirement('window') },
+    { id: 'windows_ocr', required: false, summaryKey: 'requirement.windows_ocr', probe: () => capabilityRequirement('vision') },
+    { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', probe: () => capabilityRequirement('office') },
+    { id: 'network_access', required: false, summaryKey: 'requirement.network_access', probe: () => capabilityRequirement('web_fetch') },
+    { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
+    { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
+    { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); return !listed.ok ? { status: 'unknown', detail: listed.error.message } : { status: listed.value.servers.some((server) => server.enabled && server.connected) ? 'pass' : 'warn', detail: `${listed.value.servers.length} external MCP server(s) discovered` }; } },
+    { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
+    { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
+    { id: 'database_target', required: false, summaryKey: 'requirement.database_target', remediationId: 'configure_database_target', probe: async () => ({ status: 'pass', detail: 'Input-dependent: provide a read-only SQLite target inside a registered workspace for each call' }) },
+    { id: 'windows_sandbox', required: false, summaryKey: 'requirement.windows_sandbox', remediationId: 'configure_windows_sandbox', probe: windowsSandboxRequirement },
+    { id: 'browser_event_stream', required: false, summaryKey: 'requirement.browser_event_stream', remediationId: 'configure_browser_events', probe: async () => ({ status: 'pass', detail: 'Input-dependent: console/network event retention is established for the selected live CDP tab at call time' }) },
+    { id: 'feature_delivery', required: false, summaryKey: 'requirement.feature_delivery', probe: async () => ({ status: 'pass', detail: 'Delivery state comes from the canonical upgrade catalog' }) },
+  ];
+  const requirementRegistry = new RequirementRegistry(requirementDefinitions, { ttlMs: 30_000, timeoutMs: 2_000 });
+  const remediationRegistry = new RemediationRegistry();
+  const toolCatalogOptions: ToolCatalogServiceOptions = {
+    profileDecision: (permission): ToolProfileDecision => permission === 'UNKNOWN' ? 'UNKNOWN' : activePermissionProfile().defaults[permission],
+    codexEnabled: (): boolean => readSettings().codexToolsEnabled,
+    externalItems: (locale): Promise<readonly ToolCatalogItem[]> => projectExternalMcpTools(extensionsService, locale),
+  };
+  const toolCatalogService = new ToolCatalogService(requirementRegistry, remediationRegistry, toolCatalogOptions);
+  const tunnelDoctorCheckIds = new Set([
+    'persistent_tunnel_identity', 'runtime_alias_state', 'runtime_process_running', 'tunnel_health', 'tunnel_ready',
+    'control_plane_poll_health', 'local_mcp_binding', 'local_mcp_reachable', 'tunnel_id_matches_saved_identity', 'runtime_key_available',
+  ]);
+  const requirementIdSet = new Set(requirementRegistry.ids());
+  const buildFullDoctorReport = async (locale: UiLocale): Promise<DoctorReport> => {
+    const base = await toolCatalogService.runDoctor(undefined, locale);
+    const tunnel = await tunnelController.diagnosticStatus();
+    recordPersistentTunnelStatus(tunnel);
+    const mcp = mcpLifecycle.status();
+    const tunnelHealth = await tunnelController.incidentHealth();
+    const checks = [...base.checks, ...buildPersistentTunnelDoctorChecks({ tunnel, mcp, tunnelHealth, persistentEnabled: readSettings().tunnelAutoReconnect })];
+    return { checks, exitCode: checks.some((check) => check.required && (check.status === 'fail' || check.status === 'unknown')) ? 1 : 0 };
+  };
+  const recheckCatalogAndDoctor = async (request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }> => {
+    const unknown = request.requirementIds.filter((id) => !requirementIdSet.has(id) && !tunnelDoctorCheckIds.has(id));
+    if (unknown.length > 0) throw new Error(`Unknown Doctor check id: ${unknown.join(', ')}`);
+    const canonicalIds = request.requirementIds.filter((id) => requirementIdSet.has(id));
+    const catalog = canonicalIds.length > 0
+      ? (await toolCatalogService.recheck(canonicalIds, request.locale)).catalog
+      : await toolCatalogService.getSnapshot(request.locale);
+    return { catalog, doctor: await buildFullDoctorReport(request.locale) };
+  };
 
   async function resolveWorkspaceOrThrow(workspaceId: string): Promise<Workspace> {
     const workspace = await workspaceRepository.get(workspaceId);
@@ -539,7 +696,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   async function selectWorkspaceOnly(workspaceId: string): Promise<WorkspaceSummary> {
     const workspace = await resolveWorkspaceOrThrow(workspaceId);
     if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
-    await ensureMachineRoots(workspace.realRootPath);
     await activateWorkspace(workspaceId);
     settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
     await resolveActiveProjectWorkspaces();
@@ -549,19 +705,18 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 
   const services: DesktopIpcServices = {
     listWorkspaces: async (): Promise<readonly WorkspaceSummary[]> => {
-      await ensureMachineRoots();
-      return (await workspaceRepository.listAll()).map(toWorkspaceSummary);
+      return (await workspaceRepository.listAll())
+        .filter((workspace) => !isGeneratedAutoMachineRoot(workspace))
+        .map(toWorkspaceSummary);
     },
     addWorkspace: async (request: AddWorkspaceRequest): Promise<WorkspaceSummary> => {
-      await ensureMachineRoots(request.rootPath);
       const requestedRoot = path.resolve(request.rootPath).toLowerCase();
       const existing = (await workspaceRepository.listAll()).find((entry) => path.resolve(entry.rootPath).toLowerCase() === requestedRoot);
       if (existing !== undefined) {
         if (existing.archivedAt !== undefined && existing.archivedAt !== null) await workspaceRepository.restore(existing.id);
         settingsRepository.set(selectedWorkspaceSettingKey, existing.id);
         await activateWorkspace(existing.id);
-
-        if (!mcpLifecycle.status().running) await mcpLifecycle.start().catch(() => undefined);
+        if (!mcpLifecycle.status().running) await mcpLifecycle.start();
         const restored = await workspaceRepository.getAny(existing.id);
         if (restored === null) throw new Error('Workspace could not be restored');
         return toWorkspaceSummary(restored);
@@ -572,16 +727,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       await activateWorkspace(workspace.id);
 
       if (!mcpLifecycle.status().running) {
-        await mcpLifecycle.start().catch(() => undefined);
+        await mcpLifecycle.start();
       }
       return toWorkspaceSummary(workspace);
     },
     selectWorkspace: async (request: SelectWorkspaceRequest): Promise<WorkspaceSummary> => {
-      await ensureMachineRoots();
       return selectWorkspaceOnly(request.workspaceId);
     },
     setWorkspaceActive: async (request): Promise<{ readonly workspace: WorkspaceSummary; readonly active: boolean }> => {
-      await ensureMachineRoots();
       if (request.active) await activateWorkspace(request.workspaceId);
       else await deactivateWorkspace(request.workspaceId);
       const workspace = await resolveManageableWorkspace(request.workspaceId);
@@ -589,7 +742,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
 
     setWorkspaceArchived: async (request: SetWorkspaceArchivedRequest): Promise<WorkspaceSummary> => {
-      await ensureMachineRoots();
       const workspace = await resolveManageableWorkspace(request.workspaceId);
       if (request.archived) {
         if (workspace.archivedAt !== undefined && workspace.archivedAt !== null) return toWorkspaceSummary(workspace);
@@ -606,7 +758,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     deleteWorkspace: async (request: DeleteWorkspaceRequest): Promise<{ readonly deleted: boolean; readonly workspaceId: string; readonly rootPath: string; readonly backupId: string }> => {
       if (request.userConfirmed !== true) throw new Error('Deleting a workspace registration requires explicit confirmation');
-      await ensureMachineRoots();
       const workspace = await resolveManageableWorkspace(request.workspaceId);
       await assertWorkspaceIdle(workspace.id);
       await requireNativeAdministrativeApproval({
@@ -624,7 +775,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return { deleted: true, workspaceId: workspace.id, rootPath: workspace.realRootPath, backupId: backup.id };
     },
     getDashboard: async (): Promise<DashboardSnapshot> => {
-      await ensureMachineRoots();
       await sweepRecoveryRetention().catch((error: unknown) => {
         console.error(`Recovery retention sweep failed: ${error instanceof Error ? error.message : 'unknown error'}`);
       });
@@ -688,8 +838,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         stdioAllowedRoots: parseAllowedRoots(settingsRepository.get(STDIO_ALLOWED_ROOTS_SETTING_KEY)),
         backups: backups.map(toIpcBackupSummary),
         recovery,
-
-        connectionModes: buildConnectionModes(mcp.url),
+        connectionModes: buildConnectionModes({
+          httpUrl: mcp.url,
+          ...(selectedWorkspace === null ? {} : { workspaceRoot: selectedWorkspace.realRootPath }),
+          profile: parseStdioPermissionProfile(settingsRepository.get(STDIO_PERMISSION_PROFILE_SETTING_KEY), 'full'),
+          strictRoots: parseBooleanSetting(settingsRepository.get(STDIO_STRICT_ROOTS_SETTING_KEY), false),
+          allowedRoots: parseAllowedRoots(settingsRepository.get(STDIO_ALLOWED_ROOTS_SETTING_KEY)),
+          fullBypassAll: readSettings().stdioFullBypassAll,
+        }),
         workLog,
         inFlight,
         tunnel,
@@ -777,15 +933,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return { stopped: true };
     },
     startMcp: async (request: StartMcpRequest): Promise<McpConnectionStatus> => {
-      const workspace = await resolveWorkspaceOrThrow(request.workspaceId);
-      await ensureMachineRoots(workspace.realRootPath);
+      await resolveWorkspaceOrThrow(request.workspaceId);
       return mcpLifecycle.start();
     },
     stopMcp: (): Promise<McpConnectionStatus> => mcpLifecycle.stop(),
-    restartMcp: async (): Promise<McpConnectionStatus> => {
-      await ensureMachineRoots();
-      return mcpLifecycle.restart();
-    },
+    restartMcp: (): Promise<McpConnectionStatus> => mcpLifecycle.restart(),
     clearWorkLog: async (request: ClearWorkLogRequest = {}): Promise<{ readonly cleared: boolean }> => {
       workLogViewState.clear(request);
       return { cleared: true };
@@ -841,22 +993,23 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
 
     launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => {
-      const result = await capabilityRuntime.service.execute('dom_cdp', { action: 'launch' });
+      // This path is invoked only by the user clicking the desktop UI action.
+      // Preserve the normal MCP authorization boundary while carrying that explicit click
+      // through to the capability backend so launch is not rejected as unconfirmed.
+      const result = await capabilityRuntime.service.execute('dom_cdp', { action: 'launch', userConfirmed: true });
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
-    runDoctor: async (): Promise<DoctorReport> => {
-      await ensureMachineRoots();
-      const base = await doctorService.run();
-      const tunnel = await tunnelController.diagnosticStatus();
-      recordPersistentTunnelStatus(tunnel);
-      const mcp = mcpLifecycle.status();
-      const tunnelHealth = await tunnelController.incidentHealth();
-      const checks = [...base.checks, ...buildPersistentTunnelDoctorChecks({ tunnel, mcp, tunnelHealth, persistentEnabled: readSettings().tunnelAutoReconnect })];
-      return { checks, exitCode: checks.some((check) => check.required && check.status === 'fail') ? 1 : 0 };
-
+    installPdfProvider: async (): Promise<PdfProviderInstallResult> => {
+      const installed = await (options.pdfProviderInstaller ?? installPdfProvider)(dataPath);
+      const previous = readSettings();
+      settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, installed.providerPath);
+      const next = readSettings();
+      return { ...installed, restartRequired: runtimeRestartRequired(previous, next) };
     },
+    runDoctor: async (): Promise<DoctorReport> => buildFullDoctorReport(readLocale(settingsRepository)),
+    getToolCatalog: async (request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot> => toolCatalogService.getSnapshot(request.locale),
+    recheckToolCatalog: recheckCatalogAndDoctor,
     getLogSnapshot: async (): Promise<LogSnapshot> => {
-      await ensureMachineRoots();
       const workLog = await buildWorkLog(auditRepository, workLogViewState);
       const inFlight = activityTracker.listInFlight().map(toInFlightItem);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
@@ -918,7 +1071,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 
     createBackup: (reason: BackupReason = 'manual'): Promise<BackupSummary> => backupService.create(reason),
     ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
-      await ensureMachineRoots(rootPath);
       const existing = await workspaceService.list();
       const resolvedRoot = path.resolve(rootPath);
       const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedRoot.toLowerCase());
@@ -949,10 +1101,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 
     },
     autoStartMcp: async (): Promise<McpConnectionStatus> => {
-      await ensureMachineRoots();
       const envWorkspacePath = process.env.LNWJUD_WORKSPACE?.trim();
       if (envWorkspacePath !== undefined && envWorkspacePath.length > 0) {
-        await ensureMachineRoots(envWorkspacePath);
         const resolvedPath = path.resolve(envWorkspacePath);
         const existing = await workspaceService.list();
         const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedPath.toLowerCase());
@@ -966,22 +1116,17 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       }
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       if (selected === null) {
-        // First run: machine-root workspaces are system scopes, not user projects.
-        // Start MCP without inventing a project from process.cwd(); the user can add a real project in the UI.
+        // First run: start MCP without scanning or registering drive letters.
+        // The user can add an explicit project in the UI when ready.
         return mcpLifecycle.start();
       }
       await activateWorkspace(selected.id);
       return mcpLifecycle.start();
     },
-    autoStartTunnel: async (): Promise<TunnelStatus | null> => {
-      const settings = readSettings();
-      const status = await tunnelController.status();
-      if (!settings.tunnelAutoReconnect || !status.profileExists || !status.hasApiKey || status.clientPath === null) {
-        await tunnelController.stopPersistedNativeRuntimeIfOwned();
-        return tunnelController.status();
-      }
-      return tunnelController.startAutomatically();
-    },
+    autoStartTunnel: async (): Promise<TunnelStatus | null> => autoStartPersistentTunnel(
+      tunnelController,
+      readSettings().tunnelAutoReconnect,
+    ),
     close: async (): Promise<void> => {
       await tunnelController.shutdownForDesktopExit();
 
@@ -1079,6 +1224,10 @@ function toWorkspaceSummary(workspace: Workspace): WorkspaceSummary {
     archivedAt: workspace.archivedAt ?? null,
     kind: isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath) ? 'machine_root' : 'project',
   };
+}
+
+function isGeneratedAutoMachineRoot(workspace: Workspace): boolean {
+  return isDriveRoot(workspace.rootPath) && /^Local Disk [A-Z]:$/i.test(workspace.displayName.trim());
 }
 
 async function buildGitSummary(
@@ -1194,20 +1343,45 @@ function deriveAgentState(running: boolean, inFlightCount: number): AgentState {
   return inFlightCount > 0 ? 'busy' : 'idle';
 }
 
-function buildConnectionModes(httpUrl: string | null): ConnectionModes {
-  const packaged = process.env.LNWJUD_PACKAGED_EXECUTABLE?.trim();
-const defaultExecutable = process.platform === 'win32' ? 'lnwjud.exe' : 'lnwjud';
-  const stdioCommand = packaged && packaged.length > 0
-    ? `${packaged} --mcp-stdio`
-    : `${defaultExecutable} --mcp-stdio`;
+function buildConnectionModes(input: {
+  readonly httpUrl: string | null;
+  readonly workspaceRoot?: string;
+  readonly profile: PermissionProfileName;
+  readonly strictRoots: boolean;
+  readonly allowedRoots: readonly string[];
+  readonly fullBypassAll: boolean;
+}): ConnectionModes {
+  // Platform-scoped stdio launcher: Windows ships the .cmd shim next to
+  // lnwjud.exe; macOS ships the sh launcher `lnwjud-mcp-stdio` next to the
+  // app binary in Contents/MacOS. Dev falls back to PATH lookup.
+  const launcher = process.platform === 'win32'
+    ? (path.win32.basename(process.execPath).toLowerCase() === 'lnwjud.exe'
+      ? path.join(path.dirname(process.execPath), 'lnwjud-mcp-stdio.cmd')
+      : 'lnwjud-mcp-stdio.cmd')
+    : (path.basename(process.execPath).toLowerCase() === 'lnwjud'
+      ? path.join(path.dirname(process.execPath), 'lnwjud-mcp-stdio')
+      : 'lnwjud-mcp-stdio');
+  const args = [quoteCommandArgument(launcher)];
+  if (input.workspaceRoot !== undefined) args.push('--workspace', quoteCommandArgument(input.workspaceRoot));
+  args.push('--profile', input.profile);
+  if (input.fullBypassAll && input.profile === 'full') args.push('--full-bypass-all');
+  if (input.strictRoots && !(input.fullBypassAll && input.profile === 'full')) {
+    args.push('--strict-roots');
+    for (const root of input.allowedRoots) args.push('--allowed-root', quoteCommandArgument(root));
+  }
+  return { httpUrl: input.httpUrl, stdioCommand: args.join(' ') };
+}
 
-  return { httpUrl, stdioCommand };
+function quoteCommandArgument(value: string): string {
+  return /[\s&()[\]{}^=;!'+,`~]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 function readUserSettings(settingsRepository: SqliteSettingsRepository, env: NodeJS.ProcessEnv): UserSettings {
   const extensions = parseExtensionsSettings(settingsRepository.get(EXTENSIONS_SETTINGS_KEY));
   return {
     customPermission: parseCustomPermissionSettings(settingsRepository.get(USER_SETTING_KEYS.customPermissionProfile)),
+    desktopFullBypassAll: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.desktopFullBypassAll), false),
+    stdioFullBypassAll: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.stdioFullBypassAll), false),
     mcpCallTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpCallTimeoutMs), DEFAULT_MCP_CALL_TIMEOUT_MS, 1_000, 60 * 60_000),
     mcpIdleTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpIdleTimeoutMs), DEFAULT_MCP_IDLE_TIMEOUT_MS, 30_000, 24 * 60 * 60_000),
     processTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.processTimeoutMs), DEFAULT_PROCESS_TIMEOUT_MS, 1_000, 4 * 60 * 60_000),
@@ -1235,6 +1409,8 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
 
 function persistUserSettings(settingsRepository: SqliteSettingsRepository, settings: UserSettings): void {
   settingsRepository.set(USER_SETTING_KEYS.customPermissionProfile, serializeCustomPermissionSettings(settings.customPermission));
+  settingsRepository.set(USER_SETTING_KEYS.desktopFullBypassAll, settings.desktopFullBypassAll ? 'true' : 'false');
+  settingsRepository.set(USER_SETTING_KEYS.stdioFullBypassAll, settings.stdioFullBypassAll ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.mcpCallTimeoutMs, String(settings.mcpCallTimeoutMs));
   settingsRepository.set(USER_SETTING_KEYS.mcpIdleTimeoutMs, String(settings.mcpIdleTimeoutMs));
   settingsRepository.set(USER_SETTING_KEYS.processTimeoutMs, String(settings.processTimeoutMs));
@@ -1301,18 +1477,19 @@ function customPermissionProfile(settingsRepository: SqliteSettingsRepository): 
 }
 
 function runtimeRestartRequired(previous: UserSettings, next: UserSettings): boolean {
-  return previous.mcpCallTimeoutMs !== next.mcpCallTimeoutMs
+  return previous.desktopFullBypassAll !== next.desktopFullBypassAll
+    || previous.stdioFullBypassAll !== next.stdioFullBypassAll
+    || previous.mcpCallTimeoutMs !== next.mcpCallTimeoutMs
     || previous.mcpIdleTimeoutMs !== next.mcpIdleTimeoutMs
     || previous.mcpHttpPort !== next.mcpHttpPort
     || previous.codexToolsEnabled !== next.codexToolsEnabled
-    || previous.pdfProviderPath !== next.pdfProviderPath
     || JSON.stringify(previous.lspCommands) !== JSON.stringify(next.lspCommands)
     || JSON.stringify(previous.customPermission) !== JSON.stringify(next.customPermission)
     || JSON.stringify(previous.extensions) !== JSON.stringify(next.extensions);
 }
 
 function readPermissionProfile(value: string | null): PermissionProfileName {
-  return value === 'safe' || value === 'balanced' || value === 'full' || value === 'custom' ? value : 'full';
+  return value === 'safe' || value === 'balanced' || value === 'full' || value === 'custom' ? value : 'balanced';
 }
 
 function readLocale(settingsRepository: SqliteSettingsRepository): UiLocale {
@@ -1357,6 +1534,20 @@ function triStateLabel(value: boolean | null): string {
   return value === null ? 'unknown' : value ? 'ok' : 'failed';
 }
 
+function toStructuredDoctorCheck(id: string, required: boolean, status: DoctorCheck['status'], message: string): DoctorCheck {
+  return {
+    id,
+    required,
+    status,
+    title: id.replaceAll('_', ' ').replaceAll('-', ' '),
+    summary: message,
+    affectedToolNames: [],
+    checkedAt: new Date().toISOString(),
+    durationMs: 0,
+    message,
+  };
+}
+
 export function buildPersistentTunnelDoctorChecks(input: {
   readonly tunnel: TunnelStatus;
   readonly mcp: McpConnectionStatus;
@@ -1375,7 +1566,7 @@ export function buildPersistentTunnelDoctorChecks(input: {
   const health = persistent?.healthy ?? (input.tunnelHealth.state === 'live' ? true : input.tunnelHealth.state === 'unhealthy' ? false : null);
   const ready = persistent?.ready ?? null;
 
-  const check = (id: string, status: DoctorCheck['status'], message: string, isRequired = required): DoctorCheck => ({ id, required: isRequired, status, message });
+  const check = (id: string, status: DoctorCheck['status'], message: string, isRequired = required): DoctorCheck => toStructuredDoctorCheck(id, isRequired, status, message);
   return [
     check('persistent_tunnel_identity', identityPresent ? 'pass' : required ? 'fail' : 'warn', identityPresent ? 'Saved tunnel identity is configured' : 'TUNNEL_ID_MISMATCH: persistent tunnel identity is not configured'),
     check('runtime_alias_state', nativeRuntime ? 'pass' : persistent === null ? 'warn' : 'warn', nativeRuntime ? 'Native runtime alias lnwjud is active' : 'TUNNEL_RUNTIME_DOWN: native runtime alias is not active', false),
@@ -1407,18 +1598,78 @@ async function checkCodex(discovery: CodexDiscovery): Promise<{ readonly status:
   return result.value.status.installed ? { status: 'pass', message: `Codex ${result.value.status.version ?? 'installed'}` } : { status: 'warn', message: 'Codex is not installed' };
 }
 
-async function checkLocalPort(): Promise<{ readonly status: 'pass' | 'fail'; readonly message: string }> {
+export type McpIdentityProbe = (endpoint: URL) => Promise<boolean>;
+
+export async function checkConfiguredMcpPort(
+  status: McpConnectionStatus,
+  configuredPort: number,
+  identityProbe: McpIdentityProbe = probeLnwjudMcpIdentity,
+): Promise<DoctorProbeResult> {
+  if (status.running && status.url !== null) {
+    try {
+      const endpoint = new URL(status.url);
+      const livePort = Number(endpoint.port);
+      if (!(await identityProbe(endpoint))) {
+        return { status: 'fail', message: `Desktop MCP endpoint failed the lnwjud identity check at ${endpoint.origin}` };
+      }
+      if (configuredPort === 0 || livePort === configuredPort) {
+        return { status: 'pass', message: `lnwjud Desktop MCP identity verified at ${endpoint.origin}${endpoint.pathname}` };
+      }
+      return {
+        status: 'warn',
+        message: `lnwjud Desktop MCP identity verified at fallback port ${livePort}; configured port ${configuredPort} was unavailable`,
+      };
+    } catch {
+      return { status: 'fail', message: `Desktop MCP reported an invalid endpoint: ${status.url}` };
+    }
+  }
+  if (status.lastStartError !== null && status.lastStartError !== undefined) {
+    return { status: 'fail', message: `Desktop MCP failed to start on configured port ${configuredPort}: ${status.lastStartError}` };
+  }
+
   const server = createServer();
+  let listening = false;
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen({ host: '127.0.0.1', port: 0 }, () => resolve());
+      server.listen({ host: '127.0.0.1', port: configuredPort }, () => {
+        listening = true;
+        resolve();
+      });
     });
-    return { status: 'pass', message: '127.0.0.1 is available' };
-  } catch {
-    return { status: 'fail', message: '127.0.0.1 is unavailable' };
+    return { status: 'fail', message: `Desktop MCP is not running; configured port ${configuredPort} is available` };
+  } catch (error: unknown) {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'unknown';
+    const endpoint = new URL(`http://127.0.0.1:${configuredPort}/mcp`);
+    const isLnwjud = await identityProbe(endpoint);
+    return isLnwjud
+      ? { status: 'fail', message: `Configured MCP port ${configuredPort} is owned by an lnwjud listener that this Desktop instance is not managing (${code})` }
+      : { status: 'fail', message: `Configured MCP port ${configuredPort} is occupied by a listener that is not an lnwjud Desktop MCP (${code})` };
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+async function probeLnwjudMcpIdentity(endpoint: URL): Promise<boolean> {
+  const identityUrl = new URL(LNWJUD_MCP_IDENTITY_PATH, endpoint.origin);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 750);
+  try {
+    const response = await fetch(identityUrl, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') return false;
+    const body: unknown = await response.json();
+    return typeof body === 'object' && body !== null
+      && 'product' in body && body.product === 'lnwjud'
+      && 'service' in body && body.service === 'desktop-mcp'
+      && 'protocol' in body && body.protocol === 1;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

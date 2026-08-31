@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { ToolRegistry } from '@lnwjud/mcp-server';
 import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
@@ -71,8 +72,15 @@ describe('public repository hygiene', () => {
     expect(readme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
     expect(readme).not.toContain('current source/release candidate is');
     expect(readme).not.toContain('pending publication');
-    expect(readme).toContain('223 configurable tools');
-    expect(readme).toContain('217 advertised by default');
+    const actor = { clientId: 'public-repo-hygiene', clientName: 'public-repo-hygiene' };
+    const defaultRegistry = new ToolRegistry({}, actor);
+    const codexRegistry = new ToolRegistry({}, actor, { codexToolsEnabled: true });
+    const totalDefinitions = codexRegistry.listAll().length;
+    const defaultAdvertised = defaultRegistry.list().length;
+    const codexAdvertised = codexRegistry.list().length;
+    expect(readme).toContain(`${totalDefinitions} total tool definitions`);
+    expect(readme).toContain(`${defaultAdvertised} advertised by default`);
+    expect(readme).toContain(`${codexAdvertised} with Codex enabled`);
     expect(readme).not.toContain(['Verify the ', '184-tool catalog'].join(''));
     expect(readme).not.toContain(['current v3.0.0 catalog contains ', '184 tools'].join(''));
     expect(readme).not.toContain('packaged v3.0.0 build');
@@ -111,7 +119,26 @@ describe('public repository hygiene', () => {
 
   it('does not retain stale permission examples in the detailed README guide', async () => {
     const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
-    expect(readme).not.toContain('| workspace_list | DANGEROUS |');
-    expect(readme).toContain('| workspace_list | EXECUTE |');
+    expect(readme).not.toMatch(/^\| (?:\d+ \| `)?workspace_list`? \| (?:EXECUTE|DANGEROUS) \|/m);
+    expect(readme).toMatch(/^\| 1 \| `workspace_list` \| READ \|/m);
+    expect(readme).toContain('| workspace_list | READ |');
+  });
+
+  it('keeps release documentation canonical instead of preserving stale candidate instructions', async () => {
+    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+    const legacyChecklist = await readFile(path.join(repositoryRoot, 'docs', 'development', 'RELEASE_CHECKLIST.md'), 'utf8');
+    const releaseProcess = await readFile(path.join(repositoryRoot, 'docs', 'development', 'RELEASE_PROCESS.md'), 'utf8');
+
+    expect(readme).toContain('docs/development/RELEASE_PROCESS.md');
+    expect(legacyChecklist).toContain('[RELEASE_PROCESS.md](RELEASE_PROCESS.md)');
+    expect(legacyChecklist).not.toContain('v4.9.1');
+    expect(releaseProcess).toContain('canonical release sequence');
+  });
+
+  it('keeps terminal one-time scheduled wakes eligible for natural host completion', async () => {
+    const skill = await readFile(path.join(repositoryRoot, '.agents', 'skills', 'lnwjud-scheduled-continuation', 'SKILL.md'), 'utf8');
+    expect(skill).toContain('let this already-firing one-time host task return naturally');
+    expect(skill).toContain('do not delete, disable, pause, or reschedule that current host task');
+    expect(skill).toContain('Never use pause/disable as fake deletion or completion proof');
   });
 });

@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$SkipWindowsPackaging
+)
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -70,28 +72,34 @@ try {
     Invoke-ReleaseStage 'docs:tools:check' @('docs:tools:check')
     Invoke-ReleaseStage 'test:packaging' @('test:packaging')
     Invoke-ReleaseStage 'test:release-gate' @('test:release-gate')
-    Invoke-ReleaseStage 'package:windows' @('package:windows')
 
-    $installerDirectory = Join-Path $repositoryRoot 'apps\desktop\dist\installers'
-    if (-not (Test-Path -LiteralPath $installerDirectory -PathType Container)) {
-        throw "Packaged-app smoke could not find installer directory: $installerDirectory"
+    if ($SkipWindowsPackaging) {
+        Write-Host '==> package:windows (skipped for non-main CI)'
     }
-    $rootPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot 'package.json') -Raw | ConvertFrom-Json
-    $requiredWindowsArtifacts = @(
-        "lnwjud-Setup-$($rootPackage.version).exe",
-        "lnwjud-Setup-$($rootPackage.version).exe.blockmap",
-        "lnwjud-Portable-$($rootPackage.version).exe",
-        'latest.yml',
-        'portable.yml',
-        'SHA256SUMS.txt',
-        'PROVENANCE.json'
-    )
-    foreach ($artifactName in $requiredWindowsArtifacts) {
-        $artifactPath = Join-Path $installerDirectory $artifactName
-        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
-            throw "Packaged-app smoke could not find required Windows artifact '$artifactName' in: $installerDirectory"
+    else {
+        Invoke-ReleaseStage 'package:windows' @('package:windows')
+
+        $installerDirectory = Join-Path $repositoryRoot 'apps\desktop\dist\installers'
+        if (-not (Test-Path -LiteralPath $installerDirectory -PathType Container)) {
+            throw "Packaged-app smoke could not find installer directory: $installerDirectory"
         }
-        Write-Host "Packaged-app smoke artifact: $artifactPath"
+        $rootPackage = Get-Content -LiteralPath (Join-Path $repositoryRoot 'package.json') -Raw | ConvertFrom-Json
+        $requiredWindowsArtifacts = @(
+            "lnwjud-Setup-$($rootPackage.version).exe",
+            "lnwjud-Setup-$($rootPackage.version).exe.blockmap",
+            "lnwjud-Portable-$($rootPackage.version).exe",
+            'latest.yml',
+            'portable.yml',
+            'SHA256SUMS.txt',
+            'PROVENANCE.json'
+        )
+        foreach ($artifactName in $requiredWindowsArtifacts) {
+            $artifactPath = Join-Path $installerDirectory $artifactName
+            if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+                throw "Packaged-app smoke could not find required Windows artifact '$artifactName' in: $installerDirectory"
+            }
+            Write-Host "Packaged-app smoke artifact: $artifactPath"
+        }
     }
     Assert-RepositoryChecks
     Write-Host 'Release verification gate completed.'

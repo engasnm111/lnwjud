@@ -1,5 +1,6 @@
 export * from './activity-log-file.js';
 export * from './activity-tracker.js';
+export * from './goal-managed-task-state-reader.js';
 export * from './http.js';
 export * from './origin-policy.js';
 export * from './parallel-tool-executor.js';
@@ -9,6 +10,7 @@ export * from './server.js';
 export * from './shared-activity-snapshot.js';
 export * from './stdio.js';
 export * from './tool-registry.js';
+export * from './tool-delivery-contract.js';
 export * from './mutation-policy.js';
 export * from './plugin-sdk.js';
 export * from './tool-schema-registry.js';

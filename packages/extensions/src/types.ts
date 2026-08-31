@@ -52,6 +52,13 @@ export interface McpToolSummary {
   readonly inputSchema?: unknown;
 }
 
+export interface McpResourceSummary {
+  readonly uri: string;
+  readonly name?: string;
+  readonly description?: string;
+  readonly mimeType?: string;
+}
+
 export interface ExtensionsService {
   listSkills(input: { readonly query?: string; readonly source?: string }): Promise<Result<{ readonly skills: readonly SkillSummary[] }>>;
   readSkill(input: { readonly skillId: string; readonly relativePath?: string }): Promise<Result<SkillContent>>;
@@ -61,6 +68,12 @@ export interface ExtensionsService {
     readonly enabled: boolean;
     readonly connected: boolean;
     readonly tools: readonly McpToolSummary[];
+  }>>;
+  listMcpResources(input: { readonly server: string }, signal?: AbortSignal): Promise<Result<{
+    readonly server: string;
+    readonly enabled: boolean;
+    readonly connected: boolean;
+    readonly resources: readonly McpResourceSummary[];
   }>>;
   callMcpTool(input: {
     readonly server: string;

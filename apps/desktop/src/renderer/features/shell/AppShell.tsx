@@ -3,12 +3,14 @@ import type { UiLocale, UpdateStatus } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import type { MessageKey } from '../../i18n/messages.js';
 
-export type Screen = 'home' | 'projects' | 'git' | 'worklog' | 'live' | 'settings' | 'doctor';
+export type Screen = 'home' | 'projects' | 'tools' | 'git' | 'worklog' | 'live' | 'settings' | 'doctor';
 
 interface AppShellProps {
   readonly locale: UiLocale;
   readonly appVersion: string;
   readonly mcpRunning: boolean;
+  readonly desktopFullBypassOn: boolean;
+  readonly stdioFullBypassOn: boolean;
   readonly updateStatus: UpdateStatus | null;
   readonly screen: Screen;
   readonly onNavigate: (screen: Screen) => void;
@@ -20,6 +22,7 @@ interface AppShellProps {
 const navItems: ReadonlyArray<{ readonly screen: Screen; readonly key: MessageKey }> = [
   { screen: 'home', key: 'nav.home' },
   { screen: 'projects', key: 'nav.projects' },
+  { screen: 'tools', key: 'nav.tools' },
   { screen: 'git', key: 'nav.git' },
   { screen: 'worklog', key: 'nav.workLog' },
   { screen: 'live', key: 'nav.live' },
@@ -55,6 +58,8 @@ export function AppShell(props: AppShellProps): ReactElement {
             <div className="titlebar-status-indicator">
               <span className={`titlebar-dot ${props.mcpRunning ? 'active' : ''}`}></span>
               <span>{props.mcpRunning ? (props.locale === 'th' ? 'MCP Gateway ออนไลน์' : 'MCP Gateway Active') : (props.locale === 'th' ? 'MCP พร้อมทำงาน' : 'MCP Ready')}</span>
+              {props.desktopFullBypassOn ? <strong className="pill-badge danger" role="status">DESKTOP FULL BYPASS ON</strong> : null}
+              {props.stdioFullBypassOn ? <strong className="pill-badge danger" role="status">STDIO FULL BYPASS ON</strong> : null}
             </div>
           </div>
         </div>

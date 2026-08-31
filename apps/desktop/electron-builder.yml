@@ -24,6 +24,8 @@ extraResources:
     to: tunnel-client
   - from: build/runtime-tools
     to: runtime-tools
+  - from: ../../.agents/skills/lnwjud-scheduled-continuation
+    to: agent-skills/lnwjud-scheduled-continuation
 # The MCP bundle is common; platform launchers/runtimes are scoped below so
 # macOS packages never carry .cmd/.exe/PowerShell/OCR Windows payloads.
 extraFiles:

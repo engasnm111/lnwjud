@@ -22,15 +22,16 @@ export function isTunnelConfigured(tunnel: TunnelStatus): boolean {
 }
 
 export function isTunnelRunning(tunnel: TunnelStatus): boolean {
-  return isTunnelConfigured(tunnel) && tunnel.state === 'running' && tunnel.source === 'desktop';
+  // A managed persistent runtime intentionally survives Desktop restarts and
+  // installer/update handoffs. During that detached window TunnelController may
+  // report source=external even though this is the same configured lnwjud tunnel.
+  // Runtime usability is therefore defined by the saved prerequisites + live
+  // state, not by which process currently owns the child handle.
+  return isTunnelConfigured(tunnel) && tunnel.state === 'running';
 }
 
 export function guidedTunnelPrerequisiteSignature(tunnel: TunnelStatus): string {
-  const runtime = isTunnelRunning(tunnel)
-    ? 'desktop-running'
-    : tunnel.source === 'external' && tunnel.state === 'running'
-      ? 'external-running'
-      : 'not-running';
+  const runtime = isTunnelRunning(tunnel) ? 'running' : 'not-running';
   return `${tunnel.hasApiKey ? 'key' : 'no-key'}:${tunnel.profileExists ? 'profile' : 'no-profile'}:${runtime}`;
 }
 
@@ -38,9 +39,12 @@ export function guidedTunnelLaunchDecision(
   tunnel: TunnelStatus,
   state: GuidedTunnelSetupState,
 ): GuidedTunnelLaunchDecision {
-  if (isTunnelRunning(tunnel)) return 'none';
+  // Existing configured users must never be redirected back into onboarding on
+  // update/reinstall/restart. The persistent runtime may still be reconciling for
+  // a moment, but the saved Tunnel ID/profile + DPAPI key are already sufficient.
+  if (isTunnelConfigured(tunnel)) return 'none';
   if (state === 'dismissed') return isFreshTunnelSetup(tunnel) ? 'none' : 'resume_settings';
-  if (state === 'completed') return isFreshTunnelSetup(tunnel) ? 'show_tip' : isTunnelConfigured(tunnel) ? 'none' : 'resume_settings';
+  if (state === 'completed') return isFreshTunnelSetup(tunnel) ? 'show_tip' : 'resume_settings';
   if (state === 'in_progress') return 'resume_settings';
   return isFreshTunnelSetup(tunnel) ? 'show_tip' : 'resume_settings';
 }

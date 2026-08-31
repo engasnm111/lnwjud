@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   verify:
+    # Keep this check name stable because main branch protection requires it.
     name: Authoritative Release Verification (Windows)
     runs-on: windows-latest
 
@@ -36,9 +37,21 @@ jobs:
 
       - name: Install ripgrep for E2E search
         shell: powershell
-        run: choco install ripgrep -y --no-progress
+        run: |
+          if (Get-Command rg -ErrorAction SilentlyContinue) {
+            rg --version
+          }
+          else {
+            choco install ripgrep -y --no-progress
+          }
 
-      - name: Run authoritative verification gate
+      - name: Run pull-request verification gate
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        shell: powershell
+        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1 -SkipWindowsPackaging
+
+      - name: Run authoritative release verification gate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: powershell
         env:
           # Signing secrets are exposed only on main pushes. Same-repo pull_request

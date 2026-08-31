@@ -11,7 +11,7 @@ export function workspaceTools(context: McpToolContext): McpToolDefinition[] {
   return [
     defineTool({
       name: 'workspace_list',
-      description: 'List all registered workspaces/drive roots available to lnwjud. Call this first to discover workspace IDs. Entries include kind=machine_root|project.',
+      description: 'List registered project workspaces available to lnwjud. Legacy explicitly registered drive roots may also appear as kind=machine_root.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: workspaceListSchema,
@@ -23,14 +23,14 @@ export function workspaceTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'workspace_register',
-      description: 'Register an existing project directory under a machine-root drive. parentWorkspaceId must be a machine root from workspace_list. Idempotent for the same path.',
+      description: 'Register an existing project directory by absolute path. parentWorkspaceId is optional and retained only for legacy machine-root-relative registration. Idempotent for the same path.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: workspaceRegisterSchema,
       handler: async (input) => {
         if (context.services.workspaceInfo === undefined || context.services.workspaceInfo.register === undefined) return missingService();
         const registered = await context.services.workspaceInfo.register(context.actor, {
-          parentWorkspaceId: input.parentWorkspaceId,
+          ...(input.parentWorkspaceId === undefined ? {} : { parentWorkspaceId: input.parentWorkspaceId }),
           path: input.path,
           ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
         });

@@ -24,11 +24,11 @@ import {
 import type { Result } from '@lnwjud/domain';
 import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS } from '@lnwjud/shared';
-import { allFixedDriveRoots } from '@lnwjud/workspace';
 
 export interface LocalCapabilityRuntime {
   readonly service: LocalCapabilityService;
   readonly health: HealthCapabilityBackend;
+  readonly shell: ShellCapabilityBackend;
 }
 
 export function createLocalCapabilityRuntime(
@@ -41,9 +41,7 @@ export function createLocalCapabilityRuntime(
   const capabilityRootsProvider = async (): Promise<readonly string[]> => {
     const workspaceRoots = await workspaceRootsProvider();
     const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()];
-    const roots = unrestricted
-      ? [...workspaceRoots, ...configuredRoots, ...allFixedDriveRoots()]
-      : [...workspaceRoots, ...configuredRoots];
+    const roots = [...workspaceRoots, ...configuredRoots];
     return roots.length === 0 ? [dataPath] : roots;
   };
   const shellBackend = new ShellCapabilityBackend({
@@ -127,7 +125,7 @@ export function createLocalCapabilityRuntime(
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });
-  return { service, health };
+  return { service, health, shell: shellBackend };
 }
 
 export async function buildCapabilitySummary(health: HealthCapabilityBackend): Promise<DashboardSnapshot['capabilities']> {

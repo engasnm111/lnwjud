@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.12.0';
+export const APP_VERSION = '4.31.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -35,7 +35,12 @@ export const ipcChannels = {
   configureTunnelProfile: 'lnwjud:configure-tunnel-profile',
   openExternalSetupPage: 'lnwjud:open-external-setup-page',
   launchManagedBrowser: 'lnwjud:launch-managed-browser',
+  installPdfProvider: 'lnwjud:install-pdf-provider',
   runDoctor: 'lnwjud:run-doctor',
+  getToolCatalog: 'lnwjud:get-tool-catalog',
+  recheckToolCatalog: 'lnwjud:recheck-tool-catalog',
+  openToolSetupTarget: 'lnwjud:open-tool-setup-target',
+  copyToolCommand: 'lnwjud:copy-tool-command',
   getLogSnapshot: 'lnwjud:get-log-snapshot',
   clearLogBuffer: 'lnwjud:clear-log-buffer',
   exportLogs: 'lnwjud:export-logs',
@@ -71,6 +76,95 @@ export interface DestructiveDeletePolicy {
   readonly approvals: Readonly<Record<DestructiveApprovalKey, boolean>>;
 }
 export type UiLocale = 'th' | 'en';
+
+export type ToolOrigin = 'lnwjud' | 'external_mcp';
+export type ToolCategory =
+  | 'workspace'
+  | 'files'
+  | 'search_context'
+  | 'git'
+  | 'process'
+  | 'browser_desktop'
+  | 'system'
+  | 'office_media'
+  | 'automation'
+  | 'agent_goals'
+  | 'extensions';
+export type ToolRiskMode = 'fixed' | 'input_dependent';
+export type ToolReadinessStatus = 'ready' | 'needs_setup' | 'blocked' | 'disabled' | 'unsupported' | 'unknown';
+export type ToolDeclaredPermission = 'READ' | 'WRITE' | 'EXECUTE' | 'DANGEROUS' | 'UNKNOWN';
+export type ToolProfileDecision = 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN';
+
+export interface ToolCatalogDefinition {
+  readonly name: string;
+  readonly category: ToolCategory;
+  readonly titleKey: string;
+  readonly shortDescriptionKey: string;
+  readonly longDescriptionKey: string;
+  readonly requirementIds: readonly string[];
+  readonly riskMode: ToolRiskMode;
+  readonly supportsCancel: boolean;
+  readonly supportsDryRun: boolean;
+  readonly documentationTarget?: string;
+}
+
+export interface RequirementResult {
+  readonly id: string;
+  readonly status: 'pass' | 'warn' | 'fail' | 'unknown';
+  readonly required: boolean;
+  readonly checkedAt: string;
+  readonly summaryKey: string;
+  readonly detail?: string;
+  readonly remediationId?: string;
+}
+
+export type RemediationAction =
+  | { readonly kind: 'open_settings'; readonly target: string }
+  | { readonly kind: 'open_official_url'; readonly target: string }
+  | { readonly kind: 'open_system_settings'; readonly target: 'windows_optional_features' }
+  | { readonly kind: 'copy_command'; readonly commandId: string }
+  | { readonly kind: 'launch_managed_browser' }
+  | { readonly kind: 'install_pdf_provider' }
+  | { readonly kind: 'set_user_setting'; readonly setting: 'codexToolsEnabled'; readonly value: boolean }
+  | { readonly kind: 'recheck'; readonly requirementIds: readonly string[] };
+
+export interface ToolCatalogItem {
+  readonly name: string;
+  readonly origin: ToolOrigin;
+  readonly serverName?: string;
+  readonly category: ToolCategory;
+  readonly title: string;
+  readonly shortDescription: string;
+  readonly longDescription: string;
+  readonly declaredPermission: ToolDeclaredPermission;
+  readonly profileDecision: ToolProfileDecision;
+  readonly riskMode: ToolRiskMode | 'external_unknown';
+  readonly readiness: ToolReadinessStatus;
+  readonly stale: boolean;
+  readonly checkedAt: string | null;
+  readonly supportsCancel: boolean | null;
+  readonly supportsDryRun: boolean | null;
+  readonly requirements: readonly RequirementResult[];
+  readonly remediationIds: readonly string[];
+  readonly inputSchema: Record<string, unknown> | null;
+  readonly searchText: readonly string[];
+}
+
+export interface ResolvedRemediation {
+  readonly id: string;
+  readonly title: string;
+  readonly explanation: string;
+  readonly steps: readonly string[];
+  readonly actions: readonly RemediationAction[];
+}
+
+export interface ToolCatalogSnapshot {
+  readonly generatedAt: string;
+  readonly locale: UiLocale;
+  readonly items: readonly ToolCatalogItem[];
+  readonly remediations: readonly ResolvedRemediation[];
+}
+
 export type AgentState = 'stopped' | 'idle' | 'busy';
 export type TunnelRunState = 'stopped' | 'starting' | 'running' | 'error';
 export type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'installing' | 'up-to-date' | 'error' | 'unavailable';
@@ -108,6 +202,10 @@ export interface ExtraMcpServerSettings {
 
 export interface UserSettings {
   readonly customPermission: CustomPermissionSettings;
+  /** Full profile only. Explicitly bypasses lnwjud application authorization on Desktop HTTP/Secure Tunnel. */
+  readonly desktopFullBypassAll: boolean;
+  /** Full profile only. Explicitly bypasses lnwjud application authorization for direct STDIO. */
+  readonly stdioFullBypassAll: boolean;
   readonly mcpCallTimeoutMs: number;
   readonly mcpIdleTimeoutMs: number;
   readonly processTimeoutMs: number;
@@ -385,6 +483,7 @@ export interface DashboardSnapshot {
   readonly mcp: {
     readonly running: boolean;
     readonly url: string | null;
+    readonly lastStartError?: string | null;
     readonly workspaceId: string | null;
   };
   readonly codex: {
@@ -433,18 +532,40 @@ export interface ProcessSummary {
   readonly logSummary: string;
 }
 
-export type DoctorCheckStatus = 'pass' | 'warn' | 'fail';
+export type DoctorCheckStatus = 'pass' | 'warn' | 'fail' | 'unknown';
 
 export interface DoctorCheck {
   readonly id: string;
   readonly required: boolean;
   readonly status: DoctorCheckStatus;
-  readonly message: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly detail?: string;
+  readonly affectedToolNames: readonly string[];
+  readonly remediationId?: string;
+  readonly checkedAt: string;
+  readonly durationMs: number;
+  /** Legacy compatibility while renderer migration is in progress. */
+  readonly message?: string;
 }
 
 export interface DoctorReport {
   readonly checks: readonly DoctorCheck[];
   readonly exitCode: 0 | 1;
+}
+
+export interface GetToolCatalogRequest {
+  readonly locale: UiLocale;
+}
+export interface RecheckToolCatalogRequest {
+  readonly locale: UiLocale;
+  readonly requirementIds: readonly string[];
+}
+export interface OpenToolSetupTargetRequest {
+  readonly target: string;
+}
+export interface CopyToolCommandRequest {
+  readonly commandId: string;
 }
 
 export interface AddWorkspaceRequest {
@@ -553,6 +674,7 @@ export interface OpenExternalSetupPageRequest {
 export interface McpConnectionStatus {
   readonly running: boolean;
   readonly url: string | null;
+  readonly lastStartError?: string | null;
   readonly workspaceId: string | null;
 }
 
@@ -560,6 +682,15 @@ export interface ManagedBrowserStatus {
   readonly ready: boolean;
   readonly port: number;
   readonly launched: boolean;
+}
+
+export interface PdfProviderInstallResult {
+  readonly providerPath: string;
+  readonly version: string;
+  readonly sourceUrl: string;
+  readonly archiveSha256: string;
+  readonly reused: boolean;
+  readonly restartRequired: boolean;
 }
 
 export interface IpcRequestMap {
@@ -596,6 +727,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.configureTunnelProfile]: ConfigureTunnelProfileRequest;
   readonly [ipcChannels.openExternalSetupPage]: OpenExternalSetupPageRequest;
   readonly [ipcChannels.launchManagedBrowser]: undefined;
+  readonly [ipcChannels.installPdfProvider]: undefined;
   readonly [ipcChannels.runDoctor]: undefined;
   readonly [ipcChannels.getLogSnapshot]: undefined;
   readonly [ipcChannels.clearLogBuffer]: ClearLogBufferRequest;
@@ -642,7 +774,12 @@ export interface IpcResponseMap {
   readonly [ipcChannels.configureTunnelProfile]: { readonly configured: boolean; readonly profilePath: string };
   readonly [ipcChannels.openExternalSetupPage]: { readonly opened: true };
   readonly [ipcChannels.launchManagedBrowser]: ManagedBrowserStatus;
+  readonly [ipcChannels.installPdfProvider]: PdfProviderInstallResult;
   readonly [ipcChannels.runDoctor]: DoctorReport;
+  readonly [ipcChannels.getToolCatalog]: ToolCatalogSnapshot;
+  readonly [ipcChannels.recheckToolCatalog]: { readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport };
+  readonly [ipcChannels.openToolSetupTarget]: { readonly opened: true };
+  readonly [ipcChannels.copyToolCommand]: { readonly copied: true };
   readonly [ipcChannels.getLogSnapshot]: LogSnapshot;
   readonly [ipcChannels.clearLogBuffer]: { readonly cleared: boolean };
   readonly [ipcChannels.exportLogs]: { readonly exported: boolean };
@@ -688,7 +825,12 @@ export interface LnwjudApi {
   configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise<IpcResponseMap[typeof ipcChannels.configureTunnelProfile]>;
   openExternalSetupPage(request: OpenExternalSetupPageRequest): Promise<IpcResponseMap[typeof ipcChannels.openExternalSetupPage]>;
   launchManagedBrowser(): Promise<IpcResponseMap[typeof ipcChannels.launchManagedBrowser]>;
+  installPdfProvider(): Promise<IpcResponseMap[typeof ipcChannels.installPdfProvider]>;
   runDoctor(): Promise<IpcResponseMap[typeof ipcChannels.runDoctor]>;
+  getToolCatalog(request: GetToolCatalogRequest): Promise<IpcResponseMap[typeof ipcChannels.getToolCatalog]>;
+  recheckToolCatalog(request: RecheckToolCatalogRequest): Promise<IpcResponseMap[typeof ipcChannels.recheckToolCatalog]>;
+  openToolSetupTarget(request: OpenToolSetupTargetRequest): Promise<IpcResponseMap[typeof ipcChannels.openToolSetupTarget]>;
+  copyToolCommand(request: CopyToolCommandRequest): Promise<IpcResponseMap[typeof ipcChannels.copyToolCommand]>;
   getLogSnapshot(): Promise<IpcResponseMap[typeof ipcChannels.getLogSnapshot]>;
   clearLogBuffer(request: ClearLogBufferRequest): Promise<IpcResponseMap[typeof ipcChannels.clearLogBuffer]>;
   exportLogs(request: ExportLogsRequest): Promise<IpcResponseMap[typeof ipcChannels.exportLogs]>;

@@ -4,15 +4,21 @@ This document is the release-time inventory for every MCP tool advertised by `To
 
 ## Safety contract
 
+The Desktop Tool Catalog/Doctor readiness layer is observational only and is not a new mutation authority. Its probes may inspect owned/read-only dependency/status surfaces with bounded timeouts, but may not invoke a tool to test it, create project files, run project commands, control input, or open Office documents. Remediation is limited to typed allowlisted actions (`open_settings`, official URL, copy command, recheck); every later mutation still re-enters the normal policy described below.
+
+Unless a row explicitly says otherwise, the matrix below describes **standard mode / Full Bypass OFF**. With a Full profile and the transport-specific Full Bypass toggle ON, `ToolRegistry` creates a trusted per-invocation authorization and skips all lnwjud application approvals and scope enforcement: chat confirmation, host exact-action approval, profile/command policy, Active Project/allowed roots/protected paths, always-confirm families, and `goalLease`. That authorization is propagated to inner services/backends and is never represented as forged `userConfirmed: true`.
+
+Full Bypass does not disable schema/input validation, existence checks, task/process/worktree ownership, concurrency ledgers, Windows ACL/UAC, antivirus/locks, missing providers, Git/Office/WSL/runtime failures, remote/child-MCP policy, or network/authentication errors. Explicit absolute outside paths may dispatch; relative traversal remains invalid. Outside-workspace mutation may have no Recovery Trash/checkpoint pre-image.
+
 | Field | Meaning |
 | --- | --- |
 | Mutation kind | `read`, `create`, `replace`, `delete`, or `opaque`; mixed tools are operation-dependent. `opaque` means the implementation cannot prove a narrower side effect before dispatch. |
-| Chat confirmation | Profile-aware. Full Access does not prompt for ordinary read/write/replace/execute or normal automation. Destructive/data-loss actions ask unless an enabled exact-scope destructive family can be proven safe; Safe/Balanced/Custom retain their configured ASK/DENY behavior. |
-| Host approval | Used when the active profile/action requires confirmation; Full ordinary actions do not require a duplicate native prompt. Destructive actions that remain interactive still require the trusted approval path when available. |
+| Chat confirmation | With Full Bypass OFF, profile-aware. Full Access does not prompt for ordinary work; always-confirm and destructive/data-loss actions ask unless an enabled exact-scope destructive family can be proven safe. Full Bypass ON skips this application prompt. |
+| Host approval | With Full Bypass OFF, used when the active profile/action requires confirmation. Full Bypass ON skips the lnwjud host approval provider. |
 | Recoverable | `yes` means lnwjud owns a pre-image/recovery path before replacement/deletion. `external/unknown` means the remote/native side effect cannot be restored by lnwjud. |
 | Auto-approvable | Saved destructive-family switches may auto-approve only exact targets proven inside the host Active Project: recoverable `delete_file`, Git rm/clean/exact restore forms, shell rm/rmdir/del, and WSL rm/rmdir. Root, critical, wildcard, recursive/broad, outside-project, and unparseable forms never gain auto-approval. |
-| Active Project | User/workspace file and command mutations are bound to the host-owned Active Project. Canonical path checks use real paths and segment-aware `path.relative`; string-prefix path authorization is forbidden. |
-| Command policy | Command-bearing tools share the prohibited/risky command policy. Machine-level destructive commands and scope/alias bypasses are denied; detected data-loss forms require confirmation unless an exact scoped family is enabled. Ordinary explicit argv execution is allowed by Full without a prompt. |
+| Active Project | With Full Bypass OFF, user/workspace file and command mutations are bound to the host-owned Active Project. Full Bypass ON accepts explicit absolute outside targets; relative traversal remains invalid. |
+| Command policy | With Full Bypass OFF, command-bearing tools share prohibited/risky command policy. Full Bypass ON skips this lnwjud policy; argv/schema and OS/runtime checks remain. |
 | Packaged transports | Desktop HTTP and Desktop `--mcp-stdio` install the native approval provider. Standalone CLI/HTTP/STDIO traverse the same registry policy but, without a trusted provider, deny mutations requiring host approval. |
 
 ## Reviewed families
@@ -29,9 +35,11 @@ This document is the release-time inventory for every MCP tool advertised by `To
 
 **Covered tools:** `workspace_register`, `workspace_index`, `workspace_index_watch`, `workspace_index_stop`, `session_handoff`, `verify_incremental`, `recipe_run`, `run_affected_tests`, `cache_clear`, `cache_invalidate`, `hook_register`, `hook_remove`, `plugin_install`, `plugin_enable`, `plugin_disable`, `plugin_remove`, `session_checkpoint`, `project_profile_set`, `tool_schema_register`, `task_create`, `task_cancel`, `delegate`, `delegate_cancel`, `parallel_delegate`, `debug_attach`, `debug_step`, `skills_import`, `agent_swarm_run`.
 
-**Durable Goal Continuation:** `get_goal` and `list_goals` are bounded `read` operations. `run_goal` performs app-owned create/resume plus lease acquisition, while `checkpoint_goal` and `finish_goal` replace only the matching app-owned goal state under lease-token and revision CAS. Their authoritative SQLite rows/checkpoint history are internal state, not authority to mutate source files; lease tokens are hashed at rest and never logged.
+**Durable Goal Continuation:** `get_goal` and `list_goals` are bounded `read` operations. `run_goal` performs app-owned create/resume plus lease acquisition, while `checkpoint_goal` and `finish_goal` replace only the matching app-owned goal state under lease-token and revision CAS. `cancel_goal` is a destructive app-owned mutation that records cancellation under revision CAS and attempts to stop only goal-relative `trackedTasks` whose `cancelWithGoal` policy is true; shared `supporting_service` or non-owned entries remain running by default and are returned as `taskCancellations` with `status=skipped`. An explicitly bound unavailable provider or unverifiable termination is returned as `failed`, so `allTasksStopped` remains false until the unresolved task is inspected. It does not by itself delete a scheduled successor. Their authoritative SQLite rows/checkpoint history are internal state, not authority to mutate source files; lease tokens are hashed at rest and never logged.
 
-**Covered goal tools:** `run_goal`, `get_goal`, `checkpoint_goal`, `finish_goal`, `list_goals`.
+**Covered goal tools:** `run_goal`, `get_goal`, `checkpoint_goal`, `finish_goal`, `cancel_goal`, `list_goals`, `prepare_scheduled_continuation`, `record_scheduled_continuation_receipt`, `cancel_scheduled_continuation`, `claim_scheduled_continuation`, `get_scheduled_continuation`, `expedite_scheduled_continuation`.
+
+**Scheduled-continuation ownership:** `get_scheduled_continuation` is bounded `read`; prepare/receipt/claim/expedite mutate only app-owned durable continuation/lease state. `cancel_scheduled_continuation` is an independent destructive mutation: it marks the exact/latest continuation for host deletion and returns a receipt-required instruction, without cancelling the goal or its running tasks. `expedite_scheduled_continuation` only advances the durable due time/version and returns an update request for the exact existing native task; it never creates a replacement task or reaches file/Git/process backends. With Full Bypass OFF, a durable `goalLease` token/generation fence is checked before workspace-changing dispatch. Full Bypass ON intentionally skips registry enforcement of that proof; scheduled-continuation agents must still claim/attach it as a cooperative ownership rule.
 
 | Mutation kind | Chat confirmation | Host approval | Recoverable | Auto-approvable | Active Project | Command policy | Packaged transports |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -73,7 +81,7 @@ This document is the release-time inventory for every MCP tool advertised by `To
 
 ### 7. Mixed native desktop/UI/media capabilities
 
-**Covered tools:** `dom_cdp`, `input_event`, `ui_target_action`, `window`, `notification`, `file_dialog`, `clipboard`, `audio`, `screen_record`.
+**Covered tools:** `dom_cdp`, `computer_use`, `input_event`, `ui_target_action`, `window`, `notification`, `file_dialog`, `clipboard`, `audio`, `screen_record`.
 
 | Mutation kind | Chat confirmation | Host approval | Recoverable | Auto-approvable | Active Project | Command policy | Packaged transports |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -145,7 +153,7 @@ The database runtime rejects DML/DDL such as `DELETE`, `UPDATE`, `DROP`, and mul
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `self_heal_apply` is `opaque` at the wrapper and only executes allowlisted reviewed fixes from a fresh matching plan; `tool_batch` is `read` only when every child is read and becomes `opaque` when any child can mutate | required for mutating apply/batch child | required for every mutation; parent confirmation/approval cannot be used to escalate a child | self-heal preserves the recovery semantics of each allowlisted fix; batch recovery is the child tool's contract | no | each selected fix/child remains independently bound to the host Active Project where applicable | each command-bearing child is independently prohibited/approved; the batch wrapper cannot bypass command policy | same central registry on all transports; providerless mutation denies |
 
-`self_heal_apply` regenerates evidence and requires the caller's `planId` to match before applying each selected fix once. It reports `automaticDestructiveRetry: false`. `tool_batch` cannot inherit stronger authorization from the wrapper: each child is dispatched back through `ToolRegistry.invoke` and therefore keeps child-level scope, confirmation, host approval, and command-policy checks.
+`self_heal_apply` regenerates evidence and requires the caller's `planId` to match before applying each selected fix once. It reports `automaticDestructiveRetry: false`. `tool_batch` dispatches every child back through `ToolRegistry.invoke`: in standard mode each child keeps its own scope/confirmation/host/command checks; while the transport is in Full Bypass, each child independently recomputes the same trusted bypass mode.
 
 ## Primitive inventory audit
 

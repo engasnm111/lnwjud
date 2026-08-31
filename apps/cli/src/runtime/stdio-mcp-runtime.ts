@@ -7,6 +7,10 @@ import {
   FileService,
   GitService,
   GoalContinuationService,
+  GoalRequestCancellationService,
+  GoalTaskCancellationService,
+  GoalMutationFenceService,
+  ScheduledContinuationService,
   ProcessService,
   ProjectService,
   ProjectSnapshotService,
@@ -44,7 +48,7 @@ import {
   createLocalExtensionsService,
   type ExtensionsService,
 } from '@lnwjud/extensions';
-import { ActivityTracker, SharedActivitySnapshotLease, composeActivitySinks, createFileActivitySink, currentSharedActivityOwner, mcpActivityLogPath, type ActivitySink, type ActivitySinkEvent, type McpApplicationServices, type WorkspaceScope } from '@lnwjud/mcp-server';
+import { ActivityTracker, RuntimeGoalManagedTaskStateReader, SharedActivitySnapshotLease, composeActivitySinks, createFileActivitySink, currentSharedActivityOwner, mcpActivityLogPath, type ActivitySink, type ActivitySinkEvent, type McpApplicationServices, type WorkspaceScope } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
 import {
   AesGcmCheckpointCipher,
@@ -55,7 +59,7 @@ import {
   SqliteSettingsRepository,
   SqliteWorkspaceRepository,
 } from '@lnwjud/storage';
-import { allFixedDriveRoots, machineRootPath, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
 import { StrictWorkspaceRepository } from './strict-workspace-repository.js';
 
 export interface StdioMcpRuntime {
@@ -76,6 +80,7 @@ export interface StdioMcpRuntime {
 export interface StdioMcpRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly strictAllowedRoots?: readonly string[];
+  readonly fullBypassAll?: boolean;
 }
 
 export function createStdioMcpRuntime(
@@ -91,7 +96,6 @@ export function createStdioMcpRuntime(
     ? rawWorkspaceRepository
     : new StrictWorkspaceRepository(rawWorkspaceRepository, options.strictAllowedRoots);
   const goalRepository = new SqliteGoalRepository(database);
-  const goalService = new GoalContinuationService(workspaceRepository, goalRepository);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const auditRepository = new SqliteAuditRepository(database);
@@ -100,14 +104,15 @@ export function createStdioMcpRuntime(
   const workspaceService = new WorkspaceService(workspaceRepository);
   const profileName = options.permissionProfile ?? 'full';
   const activeProfile = profileName === 'custom' ? customPermissionProfile(settingsRepository) : permissionProfiles[profileName];
-  const strictRoots = options.strictAllowedRoots !== undefined;
-  const effectiveUnrestricted = strictRoots ? false : unrestricted;
+  const fullBypassAll = profileName === 'full' && options.fullBypassAll === true;
+  const strictRoots = options.strictAllowedRoots !== undefined && !fullBypassAll;
+  const effectiveUnrestricted = strictRoots ? false : unrestricted || fullBypassAll;
   const profileProvider = (): PermissionProfile => activeProfile;
   const destructivePolicyProvider = (): DestructiveAutoApprovalPolicy => parseDestructiveAutoApprovalPolicy(
     settingsRepository.get(DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY),
     parseBooleanSetting(settingsRepository.get(ALLOW_AI_DELETE_SETTING_KEY), false),
   );
-  const allowAiDeleteProvider = (): boolean => destructivePolicyProvider().approvals.delete_file;
+  const allowAiDeleteProvider = (): boolean => fullBypassAll || destructivePolicyProvider().approvals.delete_file;
 
   const projectService = new ProjectService(workspaceRepository);
   const processService = new ProcessService(workspaceRepository, {
@@ -115,6 +120,7 @@ export function createStdioMcpRuntime(
     profileProvider,
     defaultTimeoutMsProvider: (): number => parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.processTimeoutMs), DEFAULT_PROCESS_TIMEOUT_MS, 1_000, 4 * 60 * 60_000),
     unrestricted: effectiveUnrestricted,
+    authorizationBypassProvider: (): boolean => fullBypassAll,
   });
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
     profile: activeProfile,
@@ -126,7 +132,7 @@ export function createStdioMcpRuntime(
     unrestricted: effectiveUnrestricted,
     trustedWorkspaceAccess: !strictRoots,
     allowDeleteWithoutConfirmation: allowAiDeleteProvider,
-    protectCriticalFiles: (): boolean => destructivePolicyProvider().protectCriticalFiles,
+    protectCriticalFiles: (): boolean => !fullBypassAll && destructivePolicyProvider().protectCriticalFiles,
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot: path.join(dataPath, 'recovery-trash'),
   });
@@ -142,13 +148,34 @@ export function createStdioMcpRuntime(
     auditService,
     profileProvider,
   });
-  const capabilityService = createStdioCapabilityService(dataPath, machineRootPath(workspace.realRootPath), async () => {
+  const capabilityRuntime = createStdioCapabilityService(dataPath, workspace.realRootPath, async () => {
     const listed = await workspaceRepository.list();
-    const roots = listed.map((entry) => entry.realRootPath);
-    if (roots.length === 0) return effectiveUnrestricted ? [...allFixedDriveRoots()] : [workspace.realRootPath];
+    const roots = listed
+      .filter((entry) => !isDriveRoot(entry.realRootPath) && !isDriveRoot(entry.rootPath))
+      .map((entry) => entry.realRootPath);
+    if (roots.length === 0) return [workspace.realRootPath];
     return roots;
   }, effectiveUnrestricted, options.strictAllowedRoots, () => parsePathList(settingsRepository.get(USER_SETTING_KEYS.capabilityRoots)),
   () => parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.shellSynchronousWaitSeconds), DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS));
+  const taskCancellation = new GoalTaskCancellationService([
+    { provider: 'process', cancelForGoal: processService.cancelForGoal.bind(processService) },
+    { provider: 'codex', cancelForGoal: codexService.cancelForGoal.bind(codexService) },
+    { provider: 'shell', cancelForGoal: capabilityRuntime.shell.cancelForGoal.bind(capabilityRuntime.shell) },
+  ]);
+  const requestCancellation = new GoalRequestCancellationService();
+  const goalService = new GoalContinuationService(workspaceRepository, goalRepository, {
+    scheduledContinuations: goalRepository,
+    taskCancellation,
+    requestCancellation,
+  });
+  const goalMutationFence = new GoalMutationFenceService(goalRepository, {
+    taskStateReader: new RuntimeGoalManagedTaskStateReader({
+      process: processService,
+      codex: codexService,
+      shell: capabilityRuntime.shell,
+    }),
+  });
+  const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
   const sharedActivityLease = createSharedActivityLease(process.env.TUNNEL_CLIENT_PROFILE_DIR);
   const activityReady = sharedActivityLease.then(async (lease) => lease?.initialize());
@@ -174,6 +201,7 @@ export function createStdioMcpRuntime(
           ...(event.resultMessage === undefined ? {} : { resultMessage: event.resultMessage }),
           ...(event.traceId === undefined ? {} : { traceId: event.traceId }),
           ...(event.traceParent === undefined ? {} : { traceParent: event.traceParent }),
+          ...(event.authorizationMode === undefined ? {} : { authorizationMode: event.authorizationMode }),
           durationMs: event.durationMs,
           timestamp: event.timestamp,
         });
@@ -198,7 +226,7 @@ export function createStdioMcpRuntime(
       ...(settingsRepository.get(USER_SETTING_KEYS.pdfProviderPath)?.trim() ? { pdfProvider: settingsRepository.get(USER_SETTING_KEYS.pdfProviderPath)!.trim() } : {}),
       lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     }),
-    capabilities: capabilityService,
+    capabilities: capabilityRuntime.service,
     extensions,
     workspaceInfo: new WorkspaceInfoService(workspaceRepository, workspaceService, effectiveUnrestricted),
     workspaceQuery,
@@ -212,6 +240,9 @@ export function createStdioMcpRuntime(
     file: fileService,
     checkpoint: checkpointService,
     goals: goalService,
+    goalRequestCancellation: requestCancellation,
+    scheduledContinuations: scheduledContinuationService,
+    goalMutationFence,
     search: new SearchService(workspaceRepository),
     workspaceIndex,
     git: gitService,
@@ -253,6 +284,11 @@ async function createSharedActivityLease(profileDirectory: string | undefined): 
   return new SharedActivitySnapshotLease({ profileDirectory: path.resolve(profileDirectory), owner: await currentSharedActivityOwner() });
 }
 
+interface StdioCapabilityRuntime {
+  readonly service: LocalCapabilityService;
+  readonly shell: ShellCapabilityBackend;
+}
+
 function createStdioCapabilityService(
   dataPath: string,
   restrictedRoot: string,
@@ -261,15 +297,15 @@ function createStdioCapabilityService(
   strictAllowedRoots?: readonly string[],
   configuredRootsProvider: () => readonly string[] = () => [],
   synchronousWaitSecondsProvider: () => number = () => DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS,
-): LocalCapabilityService {
+): StdioCapabilityRuntime {
   const capabilityRootsProvider = async (): Promise<readonly string[]> => {
     const workspaceRoots = await workspaceRootsProvider();
     if (strictAllowedRoots !== undefined) return workspaceRoots.length > 0 ? workspaceRoots : strictAllowedRoots;
     const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()];
-    const roots = [...workspaceRoots, ...configuredRoots, ...(unrestricted ? [...allFixedDriveRoots()] : [restrictedRoot])];
+    const roots = [...workspaceRoots, ...configuredRoots, restrictedRoot];
     return roots.length === 0 ? [dataPath] : roots;
   };
-  const initialCapabilityRoots = strictAllowedRoots ?? [dataPath, ...(unrestricted ? [...allFixedDriveRoots()] : [restrictedRoot])];
+  const initialCapabilityRoots = strictAllowedRoots ?? [dataPath, restrictedRoot];
   const shellBackend = new ShellCapabilityBackend({
     allowedRoots: initialCapabilityRoots,
     allowedRootsProvider: capabilityRootsProvider,
@@ -326,7 +362,7 @@ function createStdioCapabilityService(
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });
-  return new LocalCapabilityService({
+  const service = new LocalCapabilityService({
     shell: shellBackend,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
@@ -346,6 +382,7 @@ function createStdioCapabilityService(
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });
+  return { service, shell: shellBackend };
 }
 
 function readCapabilityRoots(value: string | undefined): readonly string[] {

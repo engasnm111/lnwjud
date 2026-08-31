@@ -55,6 +55,11 @@ describe('ActivityTracker', () => {
     expect(summarizeToolTarget('mcp_call', { server: 'child', tool: 'search', arguments: { secret: 'do-not-log' } })).toBe('child/search');
     expect(summarizeToolTarget('office', { app: 'excel', action: 'read', file_path: 'E:\\book.xlsx', values: { password: 'secret' } })).toBe('E:\\book.xlsx');
     expect(summarizeToolTarget('workspace_index', { workspaceId: 'workspace-1', rebuild: true })).toContain('rebuild=true');
+    expect(summarizeToolTarget('dom_cdp', {
+      action: 'navigate',
+      tab_id: 'supabase-tab',
+      parameters: { url: 'https://supabase.com/dashboard/project/sql' },
+    })).toBe('dom_cdp:navigate tab=supabase-tab');
   });
 
   it('uses resolved command details for completion after a generic task start', async () => {

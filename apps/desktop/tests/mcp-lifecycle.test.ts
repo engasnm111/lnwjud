@@ -1,5 +1,7 @@
+import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import type { McpHttpServerHandle, McpHttpServerOptions } from '@lnwjud/mcp-server';
+import { checkConfiguredMcpPort } from '../src/main/desktop-services.js';
 import { DesktopMcpLifecycle, type McpHttpServerStarter } from '../src/main/mcp-lifecycle.js';
 
 function createHandle(url: string, onClose: () => void): McpHttpServerHandle {
@@ -34,12 +36,14 @@ describe('DesktopMcpLifecycle', () => {
     await expect(lifecycle.start()).resolves.toEqual({
       running: true,
       url: 'http://127.0.0.1:43123/mcp',
+      lastStartError: null,
       workspaceId: null,
     });
     expect(starts).toBe(1);
     expect(lifecycle.status()).toEqual({
       running: true,
       url: 'http://127.0.0.1:43123/mcp',
+      lastStartError: null,
       workspaceId: null,
     });
   });
@@ -61,8 +65,8 @@ describe('DesktopMcpLifecycle', () => {
     resolveStart?.(createHandle('http://127.0.0.1:43124/mcp', () => {}));
 
     await expect(Promise.all([first, second])).resolves.toEqual([
-      { running: true, url: 'http://127.0.0.1:43124/mcp', workspaceId: null },
-      { running: true, url: 'http://127.0.0.1:43124/mcp', workspaceId: null },
+      { running: true, url: 'http://127.0.0.1:43124/mcp', lastStartError: null, workspaceId: null },
+      { running: true, url: 'http://127.0.0.1:43124/mcp', lastStartError: null, workspaceId: null },
     ]);
     expect(starts).toBe(1);
   });
@@ -75,9 +79,9 @@ describe('DesktopMcpLifecycle', () => {
     const lifecycle = new DesktopMcpLifecycle({ starter, createServerOptions: createOptions });
 
     await lifecycle.start();
-    await expect(lifecycle.stop()).resolves.toEqual({ running: false, url: null, workspaceId: null });
+    await expect(lifecycle.stop()).resolves.toEqual({ running: false, url: null, lastStartError: null, workspaceId: null });
     expect(closes).toBe(1);
-    expect(lifecycle.status()).toEqual({ running: false, url: null, workspaceId: null });
+    expect(lifecycle.status()).toEqual({ running: false, url: null, lastStartError: null, workspaceId: null });
   });
 
   it('leaves state stopped when server startup fails and can retry', async () => {
@@ -94,8 +98,76 @@ describe('DesktopMcpLifecycle', () => {
     });
 
     await expect(lifecycle.start()).rejects.toThrow('EADDRINUSE');
-    expect(lifecycle.status()).toEqual({ running: false, url: null, workspaceId: null });
-    await expect(lifecycle.start()).resolves.toMatchObject({ running: true, workspaceId: null });
+    expect(lifecycle.status()).toEqual({ running: false, url: null, lastStartError: 'EADDRINUSE', workspaceId: null });
+    await expect(lifecycle.start()).resolves.toMatchObject({ running: true, lastStartError: null, workspaceId: null });
     expect(starts).toBe(2);
+  });
+
+  it('Doctor accepts the live configured Desktop MCP listener and retains startup errors', async () => {
+    await expect(checkConfiguredMcpPort(
+      { running: true, url: 'http://127.0.0.1:18765/mcp', lastStartError: null, workspaceId: null },
+      18765,
+      async () => true,
+    )).resolves.toMatchObject({ status: 'pass' });
+    const failed = await checkConfiguredMcpPort({ running: false, url: null, lastStartError: 'EADDRINUSE', workspaceId: null }, 18765);
+    expect(failed.status).toBe('fail');
+    expect(failed.message).toContain('EADDRINUSE');
+  });
+
+  it('Doctor treats an identity-verified fallback port as usable but warns about the configured-port mismatch', async () => {
+    const probed: string[] = [];
+    const result = await checkConfiguredMcpPort(
+      { running: true, url: 'http://127.0.0.1:43123/mcp', lastStartError: null, workspaceId: null },
+      18765,
+      async (endpoint) => {
+        probed.push(endpoint.origin);
+        return true;
+      },
+    );
+    expect(result).toMatchObject({ status: 'warn' });
+    expect(result.message).toContain('43123');
+    expect(result.message).toContain('18765');
+    expect(probed).toEqual(['http://127.0.0.1:43123']);
+  });
+
+  it('Doctor still fails a fallback listener when its lnwjud identity cannot be verified', async () => {
+    const result = await checkConfiguredMcpPort(
+      { running: true, url: 'http://127.0.0.1:43123/mcp', lastStartError: null, workspaceId: null },
+      18765,
+      async () => false,
+    );
+    expect(result).toMatchObject({ status: 'fail' });
+    expect(result.message).toContain('identity');
+  });
+
+  it('Doctor rejects a reported running listener when the lnwjud identity probe does not match', async () => {
+    const result = await checkConfiguredMcpPort(
+      { running: true, url: 'http://127.0.0.1:18765/mcp', lastStartError: null, workspaceId: null },
+      18765,
+      async () => false,
+    );
+    expect(result).toMatchObject({ status: 'fail' });
+    expect(result.message).toContain('identity');
+  });
+
+  it('Doctor reports when the configured MCP port is occupied by another listener', async () => {
+    const server = createServer((_request, response) => {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ product: 'someone-else' }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ host: '127.0.0.1', port: 0 }, () => resolve());
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string') throw new Error('Expected TCP address');
+      const result = await checkConfiguredMcpPort({ running: false, url: null, lastStartError: null, workspaceId: null }, address.port);
+      expect(result.status).toBe('fail');
+      expect(result.message).toContain('not an lnwjud Desktop MCP');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, isApplicationAuthorized, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import type { McpApplicationServices } from './tools/tool-types.js';
 import { buildSandboxExecutionPlan } from './sandbox-contract.js';
@@ -75,7 +75,7 @@ export class SandboxRuntimeService {
     this.waiter = options.waiter ?? defaultWaiter(this.pollMs);
   }
 
-  public async execute(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (this.platform !== 'win32' || !existsSync(this.sandboxExecutable)) {
       return ok(this.unavailable('windows_sandbox_feature_missing'));
     }
@@ -100,7 +100,7 @@ export class SandboxRuntimeService {
     if (!plan.ok) return plan;
     if (input.dryRun !== false) return ok({ ...plan.value, dryRun: true, executed: false });
     if (signal?.aborted === true) return err(appError('PROCESS_TIMEOUT', 'Sandbox detonation was cancelled', true));
-    if (input.userConfirmed !== true) {
+    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) {
       return err(appError('PERMISSION_REQUIRED', 'Sandbox detonation requires explicit chat confirmation. Ask the user first, then retry with userConfirmed: true'));
     }
 
@@ -154,7 +154,7 @@ export class SandboxRuntimeService {
 
   private unavailable(reason: string): Record<string, unknown> {
     return {
-      tool: 'sandbox_exec', status: 'optional', available: false, ready: false, executed: false,
+      tool: 'sandbox_exec', status: this.platform === 'win32' ? 'needs_setup' : 'unsupported', available: false, ready: false, executed: false,
       reason, requirements: ['Windows Sandbox feature', 'interactive user session', 'artifact output directory'],
       primitiveFallbacks: ['read_file', 'search_text', 'workspace_tree'],
     };

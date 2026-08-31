@@ -1,6 +1,16 @@
+import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import {
+  appError,
+  err,
+  isApplicationAuthorized,
+  isFullBypassAuthorization,
+  ok,
+  type InvocationAuthorization,
+  type Result,
+} from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { capabilityDescriptors, EventLogCapabilityBackend, type CapabilityDescriptor } from '@lnwjud/capabilities';
 import type { McpApplicationServices } from './tools/tool-types.js';
@@ -11,6 +21,7 @@ import { DocumentRuntimeService } from './document-runtime.js';
 import { LspRuntimeService } from './lsp-runtime.js';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import { SandboxRuntimeService } from './sandbox-runtime.js';
+import { truthfulUnavailable } from './tool-delivery-contract.js';
 import { UPGRADE_TOOL_CATALOG, type UpgradeToolCatalogEntry } from './upgrade-catalog.js';
 import { UpgradeRuntimeStateStore, type UpgradeRuntimeSessionState, type UpgradeRuntimeSharedState } from './upgrade-runtime-state-store.js';
 
@@ -34,6 +45,7 @@ interface CacheCounters {
   hits: number;
   misses: number;
   bytesSaved: number;
+  generation: number;
 }
 
 interface SearchCatalogEntry extends UpgradeToolCatalogEntry {
@@ -87,6 +99,7 @@ const PRIMITIVE_SEARCH_ENTRIES: readonly SearchCatalogEntry[] = [
   primitiveEntry('apply_patch', 'Apply a guarded workspace patch.', 'WRITE', ['workspace', 'file', 'write']),
   primitiveEntry('edit_file', 'First-choice exact guarded text replacement for narrow source and config repairs; use instead of shell editing scripts.', 'WRITE', ['workspace', 'file', 'write', 'edit', 'replace', 'source', 'config', 'text']),
   primitiveEntry('shell', 'Run builds, tests, package managers, and system operations; not a text editor when edit_file, apply_patch, or write_file can perform the change.', 'EXECUTE', ['shell', 'process', 'execute', 'build', 'test']),
+  primitiveEntry('computer_use', 'Codex-style native Windows desktop control with semantic, visual-mark, pointer, and keyboard routing.', 'EXECUTE', ['computer', 'desktop', 'ui', 'mouse', 'keyboard', 'click', 'type', 'vision', 'execute']),
   primitiveEntry('vision', 'Capture local screen content or use the OCR boundary.', 'READ', ['vision', 'display', 'read']),
   primitiveEntry('vision_annotated_capture', 'Capture an expiring Set-of-Marks observation.', 'READ', ['vision', 'ui', 'read']),
   primitiveEntry('ui_target_action', 'Act on a revalidated visual mark.', 'EXECUTE', ['vision', 'ui', 'execute']),
@@ -108,7 +121,7 @@ export class UpgradeRuntimeService {
   private readonly checkpoints: SessionCheckpoint[] = [];
   private readonly hooks = new Map<string, { readonly name: string; readonly event: string }>();
   private readonly plugins = new Map<string, { readonly name: string; enabled: boolean }>();
-  private readonly cache: CacheCounters = { hits: 0, misses: 0, bytesSaved: 0 };
+  private readonly cache: CacheCounters = { hits: 0, misses: 0, bytesSaved: 0, generation: 0 };
   private readonly session = new Map<string, unknown>();
   private readonly worktrees: WorktreeLedgerEntry[] = [];
   private readonly eventLog: EventLogCapabilityBackend;
@@ -137,7 +150,7 @@ export class UpgradeRuntimeService {
     this.documents = new DocumentRuntimeService(services, actor);
   }
 
-  public async execute(name: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     await this.loadState();
     switch (name) {
       case 'tool_search':
@@ -165,18 +178,32 @@ export class UpgradeRuntimeService {
         return ok({ ...planFor(readString(input, 'prompt') ?? readString(input, 'query') ?? ''), sideEffects: { writes: [], shell: [], gitMutations: [], network: [] }, sideEffectsStarted: false });
       case 'response_mode':
         return ok({ mode: normalizeMode(readString(input, 'mode')), omittedDetailsRemainFetchable: true, continuationSupported: true });
-      case 'permission_check':
-        return ok(permissionDecision(readString(input, 'action') ?? readString(input, 'permission') ?? 'filesystem.read'));
+      case 'permission_check': {
+        const standard = permissionDecision(readString(input, 'action') ?? readString(input, 'permission') ?? 'filesystem.read');
+        return ok(isFullBypassAuthorization(authorization)
+          ? { ...standard, decision: 'allow', standardDecision: standard.decision, authorizationMode: 'full_bypass', bypassApplicationAuthorization: true }
+          : { ...standard, authorizationMode: 'standard', bypassApplicationAuthorization: false });
+      }
       case 'permission_profile':
-        return ok({ profile: 'full', contextReads: 'unrestricted-for-allowed-workspaces', dangerousActions: 'policy-gated', hardBlocksRemain: true });
+        return ok(isFullBypassAuthorization(authorization)
+          ? { profile: 'full', authorizationMode: 'full_bypass', contextReads: 'application-scope-bypassed', dangerousActions: 'application-approval-bypassed', hardBlocksRemain: false, operatingSystemAndRemotePolicyRemain: true }
+          : { profile: 'full', authorizationMode: 'standard', contextReads: 'unrestricted-for-allowed-workspaces', dangerousActions: 'policy-gated', hardBlocksRemain: true });
       case 'cache_stats':
         return ok({ ...this.cache, hitRate: hitRate(this.cache), entries: 0, invalidation: 'mtime/content-hash/filesystem-event', contextEconomy: this.contextEconomy.snapshot() });
       case 'cache_clear':
-      case 'cache_invalidate':
+      case 'cache_invalidate': {
+        const previousGeneration = this.cache.generation;
         this.cache.hits = 0;
         this.cache.misses = 0;
         this.cache.bytesSaved = 0;
-        return ok({ cleared: true, scope: name === 'cache_clear' ? 'all' : readString(input, 'path') ?? 'workspace' });
+        this.cache.generation += 1;
+        return ok({
+          cleared: true,
+          scope: name === 'cache_clear' ? 'all' : readString(input, 'path') ?? 'workspace',
+          previousGeneration,
+          generation: this.cache.generation,
+        });
+      }
       case 'hook_list':
         return ok({ hooks: [...this.hooks.values()], lifecycleEvents: lifecycleEvents() });
       case 'hook_register': {
@@ -188,24 +215,19 @@ export class UpgradeRuntimeService {
         return ok({ registered: true, hook });
       }
       case 'hook_remove': {
-        if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Removing a lifecycle hook requires explicit user confirmation'));
+        if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Removing a lifecycle hook requires explicit user confirmation'));
         const hookName = readString(input, 'name');
         return ok({ removed: hookName === undefined ? false : this.hooks.delete(hookName), name: hookName ?? null });
       }
       case 'skill_match':
-        return ok({ query: readString(input, 'query') ?? readString(input, 'prompt') ?? '', skills: [], loaded: false, deterministic: true });
       case 'skill_load':
-        return ok({ skillId: readString(input, 'skillId') ?? null, loaded: false, source: 'local-workspace-or-configured-skill-provider' });
+        return this.skillInsight(name, input);
       case 'plugin_list':
-        await this.refreshSharedState();
-        return ok({ plugins: [...this.plugins.values()] });
       case 'plugin_install':
       case 'plugin_enable':
       case 'plugin_disable':
-        return this.changePlugin(name, readString(input, 'name') ?? readString(input, 'plugin'));
       case 'plugin_remove':
-        if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Removing a plugin requires explicit user confirmation'));
-        return this.changePlugin(name, readString(input, 'name') ?? readString(input, 'plugin'));
+        return ok(truthfulUnavailable(name, 'disabled', ['validated injected plugin registry']));
       case 'session_context':
       case 'session_resume':
         return ok({ session: Object.fromEntries(this.session), checkpoints: this.checkpoints });
@@ -220,27 +242,23 @@ export class UpgradeRuntimeService {
       case 'session_history':
         return ok({ checkpoints: this.checkpoints });
       case 'task_create':
-      case 'delegate': {
-        const task = await this.createTask(name === 'delegate' ? 'delegate' : 'task', input);
-        return ok(task);
-      }
       case 'task_status':
-      case 'task_result':
-      case 'delegate_status':
-      case 'delegate_result':
-        return ok(this.taskView(readString(input, 'taskId') ?? readString(input, 'delegateId') ?? readString(input, 'id')));
-      case 'task_list':
-        return ok({ tasks: [...this.tasks.values()].map(publicTask) });
       case 'task_cancel':
+      case 'task_result':
+      case 'task_list':
+        return ok(truthfulUnavailable(name, 'disabled', ['managed task execution adapter']));
+      case 'delegate':
+      case 'delegate_status':
       case 'delegate_cancel':
-        return ok(await this.cancelTask(readString(input, 'taskId') ?? readString(input, 'delegateId') ?? readString(input, 'id')));
+      case 'delegate_result':
+        return ok(truthfulUnavailable(name, 'disabled', ['subagent provider']));
       case 'parallel_delegate':
-        return ok(parallelDelegatePlan(input));
+        return ok(truthfulUnavailable(name, 'disabled', ['subagent provider', 'ownership/collision adapter']));
       case 'repo_map':
         return this.repositoryMap(readString(input, 'workspaceId'));
       case 'context_expand':
       case 'dependency_context':
-        return this.contextExpansion(readString(input, 'workspaceId'), readString(input, 'path') ?? readString(input, 'symbol'));
+        return this.contextExpansion(name, readString(input, 'workspaceId'), readString(input, 'path') ?? readString(input, 'symbol'));
       case 'symbol_search':
       case 'find_definition':
       case 'find_references':
@@ -256,11 +274,10 @@ export class UpgradeRuntimeService {
       case 'workspace_index':
         return ok({});
       case 'live_logs_status':
-        return ok({ healthy: true, sources: ['mcp', 'tunnel', 'process'], correlationIds: true, redaction: 'secrets-not-retained' });
       case 'live_logs_query':
-        return ok({ entries: [], source: readString(input, 'source') ?? 'all', continuation: null, queryApplied: true });
+        return ok(truthfulUnavailable(name, 'needs_setup', ['structured live-log provider']));
       case 'telemetry_dashboard':
-        return ok({ mcpCalls: 0, internalOperations: 0, averageLatencyMs: 0, p95LatencyMs: 0, cacheHitRate: hitRate(this.cache), contextBytes: this.contextEconomy.snapshot().contextSentBytes, streamedBytes: 0, filesScanned: this.contextEconomy.snapshot().filesDiscovered, filesDelivered: this.contextEconomy.snapshot().filesDelivered, errors: 0, retries: 0, contextEconomy: this.contextEconomy.snapshot() });
+        return ok(truthfulUnavailable(name, 'needs_setup', ['runtime telemetry provider']));
       case 'context_economy_stats':
         return ok({ ...this.contextEconomy.snapshot(), policy: { automaticDiscovery: 'filtered-and-progressive', explicitAccess: 'full-and-unrestricted-by-economy', ledger: 'bounded-in-memory' } });
       case 'execution_plan':
@@ -270,56 +287,76 @@ export class UpgradeRuntimeService {
       case 'tool_schema_list':
         return ok({ schemas: UPGRADE_TOOL_CATALOG.map((entry) => ({ id: entry.name, version: '1.0.0', permissions: [entry.permission], streamable: entry.streamable === true, parallelSafe: entry.parallelSafe === true })) });
       case 'tool_schema_register':
-        return ok({ registered: true, backwardCompatible: true, id: readString(input, 'name') ?? null });
+        return ok(truthfulUnavailable(name, 'disabled', ['versioned schema registry']));
       case 'mcp_discover':
       case 'mcp_health':
+        return this.externalMcpInsight(name);
       case 'mcp_resources':
-        return ok({ servers: this.services.extensions === undefined ? [] : 'available', nativeToolsRemainVisible: true, connectionPooling: true, timeoutIsolation: true });
+        return this.externalMcpResources(input);
       case 'mcp_hub':
-        return ok({ tool: name, status: 'optional', available: this.services.extensions !== undefined, flattenChildTools: false, credentialsStoredInRepository: false, statelessTransport: true, tasksExtension: true, cacheMetadata: true, tracePropagation: true, authorizationUnchanged: true });
+        return this.externalMcpHub();
       case 'self_heal_plan':
-        return this.selfHealPlan(input);
+        return this.selfHealPlan(input, authorization);
       case 'self_heal_apply':
-        return this.selfHealApply(input);
+        return this.selfHealApply(input, authorization);
       case 'git_worktree_spawn':
-        return this.gitWorktreeSpawn(input);
+        return this.gitWorktreeSpawn(input, authorization);
       case 'event_watch':
       case 'crash_trace':
         return this.eventLogQuery(name, input, signal);
       case 'sandbox_exec':
-        return this.sandbox.execute(input, signal);
+        return this.sandbox.execute(input, signal, authorization);
       case 'db_inspect':
+        if (readString(input, 'workspaceId') === undefined || (readString(input, 'target') ?? readString(input, 'path') ?? readString(input, 'database')) === undefined) {
+          return ok(truthfulUnavailable(name, 'needs_setup', ['registered workspace', 'SQLite target file']));
+        }
         return this.database.inspect(input);
       case 'db_query':
+        if (readString(input, 'workspaceId') === undefined || (readString(input, 'target') ?? readString(input, 'path') ?? readString(input, 'database')) === undefined) {
+          return ok(truthfulUnavailable(name, 'needs_setup', ['registered workspace', 'SQLite target file']));
+        }
         return this.database.query(input);
       case 'lsp_diagnostics':
         return this.lsp.diagnostics(input);
       case 'lsp_rename':
         return this.lsp.renamePlan(input);
       case 'git_worktree_remove':
-        return this.gitWorktreeRemove(input);
+        return this.gitWorktreeRemove(input, authorization);
       case 'pdf_extract_tables':
-        return this.documents.extractTables(input, signal);
+        return this.documents.extractTables(input, signal, authorization);
       case 'inspect_pdf':
-        return this.documents.inspectPdf(input, signal);
+        return this.documents.inspectPdf(input, signal, authorization);
       case 'inspect_workbook':
-        return this.documents.inspectWorkbook(input);
+        return this.documents.inspectWorkbook(input, authorization);
       case 'docx_merge':
-        return this.documents.docxMerge(input, signal);
+        return this.documents.docxMerge(input, signal, authorization);
       case 'office_ppt':
-        return this.officePowerPoint(input, signal);
+        return this.officePowerPoint(input, signal, authorization);
       case 'office_outlook':
-        return this.officeOutlook(input);
+        return this.officeOutlook(input, authorization);
       case 'handoff_context':
-        return ok({ goal: summarize(readString(input, 'prompt') ?? readString(input, 'goal') ?? ''), workspaceId: readString(input, 'workspaceId') ?? null, branch: null, filesChanged: [], filesInspected: [], tests: [], failures: [], decisions: [], openQuestions: [], recommendedNextActions: ['inspect current status', 'continue with primitive tools'] });
+        return this.compoundContext(name, input);
       case 'benchmark_run':
-        return ok({ started: false, preview: true, command: 'corepack pnpm@10.15.0 run benchmark:baseline -- --runs 3', scenario: readString(input, 'scenario') ?? 'all' });
+        return ok(truthfulUnavailable(name, 'disabled', ['managed benchmark execution adapter']));
       case 'regression_report':
-        return ok({ status: 'available', scenarios: ['small repository', 'large generated source tree', 'concurrent tool calls', 'tunnel connection', 'local stdio connection'], regressions: [] });
+        return ok(truthfulUnavailable(name, 'disabled', ['persisted benchmark result store']));
       case 'project_profile_get':
-        return ok({ profile: null, source: '.lnwjud/project.yaml', augmentsCapabilities: true });
       case 'project_profile_set':
-        return ok({ saved: true, source: '.lnwjud/project.yaml', accessRestrictionsChanged: false });
+        return ok(truthfulUnavailable(name, 'disabled', ['validated project-profile persistence adapter']));
+      case 'compare_workbook_layout':
+        return ok(truthfulUnavailable(name, 'disabled', ['spreadsheet layout plugin adapter']));
+      case 'render_excel_preview':
+        return ok(truthfulUnavailable(name, 'disabled', ['Excel preview renderer adapter']));
+      case 'compare_pdf_pages':
+        return ok(truthfulUnavailable(name, 'disabled', ['PDF page renderer adapter']));
+      case 'debug_attach':
+        return ok(truthfulUnavailable(name, 'disabled', ['owned DAP execution adapter', 'registered workspace']));
+      case 'debug_step':
+        return ok(truthfulUnavailable(name, 'disabled', ['owned DAP execution adapter', 'owned debug session']));
+      case 'skills_import':
+        return ok(truthfulUnavailable(name, 'disabled', ['validated skill import adapter', 'validated local skill source']));
+      case 'agent_swarm_run':
+        return ok(truthfulUnavailable(name, 'disabled', ['subagent provider', 'ownership ledger', 'mutation policy']));
       case 'debug_context':
       case 'review_context':
       case 'change_context':
@@ -333,10 +370,14 @@ export class UpgradeRuntimeService {
       case 'affected_modules':
       case 'git_history_context':
       case 'git_blame_context':
+        return this.gitInsight(name, input, signal);
       case 'discover_tests':
       case 'test_failures':
       case 'coverage_context':
       case 'test_history':
+        return this.testInsight(name, input, signal);
+      case 'run_affected_tests':
+        return this.runAffectedTests(input, signal, authorization);
       case 'inspect_web_app':
       case 'debug_ui':
       case 'capture_ui_state':
@@ -344,6 +385,7 @@ export class UpgradeRuntimeService {
       case 'network_context':
       case 'console_context':
       case 'browser_debug_context':
+        return this.browserInsight(name, input, signal, authorization);
       case 'windows_environment':
       case 'service_context':
       case 'process_context':
@@ -353,18 +395,17 @@ export class UpgradeRuntimeService {
       case 'installed_runtime_context':
       case 'path_context':
       case 'startup_context':
+        return this.windowsInsight(name, input, signal, authorization);
       case 'capture_screenshot':
       case 'compare_screenshot':
       case 'dom_snapshot':
       case 'layout_metadata':
       case 'visual_context':
-        return ok({ tool: name, status: 'ready', executed: [], primitiveFallbacks: ['read_file', 'search_text', 'workspace_tree'], metadataOnly: true, inputKeys: Object.keys(input).sort() });
-      case 'run_affected_tests':
-        return ok({ tool: name, started: false, affectedTests: [], fullRunStillAvailable: true, command: null });
+        return this.visualInsight(name, input, signal, authorization);
       case 'context_ranking':
         return ok({ signals: { exactSymbol: 100, exactFilename: 80, recentChange: 60, sameModule: 50, dependency: 40, test: 30, text: 20, proximity: 10 }, lowerRankedResultsRemainAvailable: true });
       case 'dev_context':
-        return ok({ prompt: summarize(readString(input, 'prompt') ?? ''), route: routeIntent(readString(input, 'prompt') ?? '').route, executed: ['route_intent', 'workspace_context', 'git_context', 'test_context'], continuationPaths: true, primitiveToolsRemainAvailable: true });
+        return this.compoundContext(name, input);
       default:
         return ok(contractStatus(name, input));
     }
@@ -421,32 +462,6 @@ export class UpgradeRuntimeService {
     return { categories: [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([category, tools]) => ({ category, tools })) };
   }
 
-  private async changePlugin(operation: string, name: string | undefined): Promise<Result<unknown>> {
-    if (name === undefined || name.trim().length === 0) return err(appError('INVALID_INPUT', 'Plugin name is required'));
-    let changed = false;
-    let exists = false;
-    if (operation === 'plugin_remove') {
-      await this.mutateSharedState((plugins) => { changed = plugins.delete(name); });
-      return ok({ changed, name });
-    }
-    const plugin = { name, enabled: operation !== 'plugin_disable' };
-    await this.mutateSharedState((plugins) => {
-      exists = plugins.has(name);
-      if (operation === 'plugin_install') {
-        if (!exists) { plugins.set(name, plugin); changed = true; }
-        return;
-      }
-      if (exists) { plugins.set(name, plugin); changed = true; }
-    });
-    if (operation === 'plugin_install' && exists) {
-      return err(appError('INVALID_INPUT', 'Plugin already exists; remove it explicitly before installing a replacement'));
-    }
-    if (operation !== 'plugin_install' && !exists) {
-      return err(appError('INVALID_INPUT', 'Plugin must be installed before it can be enabled or disabled'));
-    }
-    return ok({ changed, ...plugin });
-  }
-
   private async createTask(kind: RuntimeTask['kind'], input: Record<string, unknown>): Promise<RuntimeTask> {
     const task: RuntimeTask = { id: randomUUID(), kind, createdAt: new Date().toISOString(), inputDigest: digest(input), state: 'queued' };
     this.tasks.set(task.id, task);
@@ -467,7 +482,83 @@ export class UpgradeRuntimeService {
     return { cancelled: true, id };
   }
 
-  private async selfHealPlan(input: Record<string, unknown>): Promise<Result<unknown>> {
+  private async externalMcpInsight(name: 'mcp_discover' | 'mcp_health'): Promise<Result<unknown>> {
+    const extensions = this.services.extensions;
+    if (extensions === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['configured external MCP catalog']));
+    const listed = await extensions.listMcpServers();
+    if (!listed.ok) return listed;
+    if (name === 'mcp_discover') {
+      return ok({
+        tool: name,
+        status: 'ready',
+        available: true,
+        ready: true,
+        executed: true,
+        servers: listed.value.servers,
+        nativeToolsRemainVisible: true,
+        flattenChildTools: false,
+      });
+    }
+    const servers = listed.value.servers.map((server) => ({
+      name: server.name,
+      enabled: server.enabled,
+      connected: server.connected,
+      excluded: server.excluded,
+      ...(server.exclusionReason === undefined ? {} : { exclusionReason: server.exclusionReason }),
+    }));
+    return ok({
+      tool: name,
+      status: 'ready',
+      available: true,
+      ready: true,
+      executed: true,
+      servers,
+      connected: servers.filter((server) => server.connected).length,
+      enabled: servers.filter((server) => server.enabled).length,
+    });
+  }
+
+  private async externalMcpHub(): Promise<Result<unknown>> {
+    const extensions = this.services.extensions;
+    if (extensions === undefined) return ok(truthfulUnavailable('mcp_hub', 'needs_setup', ['configured external MCP catalog']));
+    const listed = await extensions.listMcpServers();
+    if (!listed.ok) return listed;
+    const servers = listed.value.servers.map((server) => ({
+      name: server.name,
+      enabled: server.enabled,
+      connected: server.connected,
+      excluded: server.excluded,
+    }));
+    return ok({
+      tool: 'mcp_hub', status: 'ready', available: true, ready: true, executed: true,
+      servers, connected: servers.filter((server) => server.connected).length,
+      flattenChildTools: false, credentialsStoredInRepository: false, authorizationUnchanged: true,
+    });
+  }
+
+  private async externalMcpResources(input: Record<string, unknown>): Promise<Result<unknown>> {
+    const extensions = this.services.extensions;
+    if (extensions === undefined) return ok(truthfulUnavailable('mcp_resources', 'needs_setup', ['configured external MCP server with resources capability']));
+    const server = readString(input, 'server');
+    if (server !== undefined) {
+      const listed = await extensions.listMcpResources({ server });
+      if (!listed.ok) return listed;
+      return ok({ tool: 'mcp_resources', status: 'ready', available: true, ready: true, executed: true, ...listed.value });
+    }
+    const discovered = await extensions.listMcpServers();
+    if (!discovered.ok) return discovered;
+    const candidates = discovered.value.servers.filter((entry) => entry.enabled && !entry.excluded);
+    if (candidates.length === 0) return ok(truthfulUnavailable('mcp_resources', 'needs_setup', ['configured external MCP server with resources capability']));
+    const servers: Record<string, unknown>[] = [];
+    for (const candidate of candidates) {
+      const listed = await extensions.listMcpResources({ server: candidate.name });
+      if (listed.ok) servers.push({ server: candidate.name, connected: listed.value.connected, resources: listed.value.resources });
+      else servers.push({ server: candidate.name, connected: candidate.connected, status: 'unknown', error: summarize(listed.error.message) });
+    }
+    return ok({ tool: 'mcp_resources', status: 'ready', available: true, ready: true, executed: true, servers });
+  }
+
+  private async selfHealPlan(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const workspaceId = readString(input, 'workspaceId');
     const evidence: Record<string, unknown> = {};
     const fixes: SelfHealFix[] = [];
@@ -486,7 +577,7 @@ export class UpgradeRuntimeService {
     }
 
     if (this.services.capabilities !== undefined) {
-      const list = await this.services.capabilities.execute('shell', { operation: 'list' });
+      const list = await this.services.capabilities.execute('shell', { operation: 'list' }, undefined, authorization);
       if (list.ok && typeof list.value === 'object' && list.value !== null && Array.isArray((list.value as { tasks?: unknown }).tasks)) {
         const tasks = (list.value as { tasks: Record<string, unknown>[] }).tasks;
         const cutoff = Date.now() - 24 * 60 * 60 * 1_000;
@@ -514,8 +605,8 @@ export class UpgradeRuntimeService {
     });
   }
 
-  private async selfHealApply(input: Record<string, unknown>): Promise<Result<unknown>> {
-    const plan = await this.selfHealPlan(input);
+  private async selfHealApply(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    const plan = await this.selfHealPlan(input, authorization);
     if (!plan.ok) return plan;
     const planValue = plan.value as { planId: string; safeReversibleFixes: SelfHealFix[] };
     const requested = Array.isArray(input.fixIds) ? input.fixIds.map(String) : undefined;
@@ -528,7 +619,7 @@ export class UpgradeRuntimeService {
       auditTarget: 'recovery-mutation',
     };
     if (input.dryRun !== false && input.dry_run !== false) return ok({ ...preview, dryRun: true, applied: [] });
-    if (input.userConfirmed !== true) {
+    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) {
       return err(appError('PERMISSION_REQUIRED', 'Applying a recovery plan requires explicit chat confirmation. Review self_heal_plan first, then retry with userConfirmed: true'));
     }
     const approvedPlanId = readString(input, 'planId');
@@ -545,7 +636,7 @@ export class UpgradeRuntimeService {
         const result = await this.services.workspaceIndex.indexWorkspace(String(fix.args.workspaceId));
         applied.push({ id: fix.id, kind: fix.kind, ok: result.ok, ...(result.ok ? {} : { error: result.error.message }) });
       } else if (fix.kind === 'cancel_stale_task' && this.services.capabilities !== undefined) {
-        const result = await this.services.capabilities.execute('shell', fix.args);
+        const result = await this.services.capabilities.execute('shell', fix.args, undefined, authorization);
         applied.push({ id: fix.id, kind: fix.kind, ok: result.ok, ...(result.ok ? {} : { error: result.error.message }) });
       } else {
         applied.push({ id: fix.id, kind: fix.kind, ok: false, error: 'unsupported-fix-kind' });
@@ -554,7 +645,7 @@ export class UpgradeRuntimeService {
     return ok({ ...preview, dryRun: false, applied, automaticDestructiveRetry: false });
   }
 
-  private async officePowerPoint(input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+  private async officePowerPoint(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok({ tool: 'office_ppt', status: 'optional', available: false, reason: 'Office capability is not configured' });
     const action = readString(input, 'action') ?? 'read';
@@ -565,7 +656,7 @@ export class UpgradeRuntimeService {
     if (action === 'save_as' && targetPath === undefined) return err(appError('INVALID_INPUT', 'office_ppt save_as requires target_path'));
     const plan = { tool: 'office_ppt', status: 'ready', available: true, app: 'powerpoint', action, file_path: filePath, ...(targetPath === undefined ? {} : { target_path: targetPath }) };
     if (action === 'save_as' && input.dryRun !== false && input.dry_run !== false) return ok({ ...plan, dryRun: true, executed: false });
-    if (action === 'save_as' && input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'PowerPoint save_as requires explicit user confirmation'));
+    if (action === 'save_as' && !isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'PowerPoint save_as requires explicit user confirmation'));
     let safeFilePath = filePath;
     let safeTargetPath = targetPath;
     let replacementBackup: { readonly recoveryId: string; readonly recoveryPath: string } | undefined;
@@ -577,8 +668,8 @@ export class UpgradeRuntimeService {
       const prepared = await fileSafety.prepareExternalFileMutation(this.actor, workspaceId, {
         sourcePaths: [filePath],
         targetPath: targetPath!,
-        userConfirmed: true,
-      }, signal);
+        ...(input.userConfirmed === true ? { userConfirmed: true } : {}),
+      }, signal, authorization);
       if (!prepared.ok) return prepared;
       safeFilePath = prepared.value.sourcePaths[0]!;
       safeTargetPath = prepared.value.targetPath;
@@ -589,8 +680,8 @@ export class UpgradeRuntimeService {
       action,
       file_path: safeFilePath,
       ...(safeTargetPath === undefined ? {} : { target_path: safeTargetPath }),
-      ...(action === 'save_as' ? { userConfirmed: true } : {}),
-    }, signal);
+      ...(action === 'save_as' && input.userConfirmed === true ? { userConfirmed: true } : {}),
+    }, signal, authorization);
     if (!result.ok) return withReplacementRecoveryDetails(result, replacementBackup);
     return ok({
       ...plan,
@@ -601,14 +692,14 @@ export class UpgradeRuntimeService {
     });
   }
 
-  private async officeOutlook(input: Record<string, unknown>): Promise<Result<unknown>> {
+  private async officeOutlook(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok({ tool: 'office_outlook', status: 'optional', available: false, reason: 'Office capability is not configured' });
     const action = readString(input, 'action') ?? 'list_messages';
     if (action !== 'list_folders' && action !== 'list_messages') return err(appError('INVALID_INPUT', 'office_outlook action must be list_folders or list_messages'));
     const folder = readString(input, 'folder');
     const maxMessages = typeof input.max_messages === 'number' ? Math.min(100, Math.max(1, Math.trunc(input.max_messages))) : undefined;
-    const result = await capabilities.execute('office', { app: 'outlook', action, ...(folder === undefined ? {} : { folder }), ...(maxMessages === undefined ? {} : { max_messages: maxMessages }) });
+    const result = await capabilities.execute('office', { app: 'outlook', action, ...(folder === undefined ? {} : { folder }), ...(maxMessages === undefined ? {} : { max_messages: maxMessages }) }, undefined, authorization);
     return result.ok ? ok({ tool: 'office_outlook', status: 'ready', available: true, action, result: result.value }) : result;
   }
 
@@ -630,12 +721,16 @@ export class UpgradeRuntimeService {
     });
   }
 
-  private async gitWorktreeSpawn(input: Record<string, unknown>): Promise<Result<unknown>> {
+  private async gitWorktreeSpawn(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const workspaceId = readString(input, 'workspaceId');
     if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'workspaceId is required for a Git worktree'));
     const worktreePath = readString(input, 'worktreePath') ?? `.worktrees/agent-${randomUUID().slice(0, 8)}`;
-    const normalizedPath = worktreePath.replaceAll('\\', '/');
-    if (normalizedPath.startsWith('/') || /^[A-Za-z]:/.test(normalizedPath) || normalizedPath.split('/').some((part) => part === '..') || !(normalizedPath.startsWith('.worktrees/') || normalizedPath.startsWith('.lnwjud/worktrees/'))) {
+    const absolutePath = path.win32.isAbsolute(worktreePath);
+    const normalizedPath = path.win32.normalize(worktreePath).replaceAll('\\', '/');
+    const scopedRelativePath = !absolutePath
+      && !normalizedPath.split('/').some((part) => part === '..')
+      && (normalizedPath.startsWith('.worktrees/') || normalizedPath.startsWith('.lnwjud/worktrees/'));
+    if (!scopedRelativePath && !(absolutePath && isFullBypassAuthorization(authorization))) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Git worktree path must remain under .worktrees or .lnwjud/worktrees'));
     }
     const ref = readString(input, 'ref') ?? 'HEAD';
@@ -653,7 +748,7 @@ export class UpgradeRuntimeService {
     };
     const dryRun = input.dryRun !== false && input.dry_run !== false;
     if (dryRun) return ok({ ...plan, dryRun: true });
-    if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Creating a Git worktree requires explicit user confirmation'));
+    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Creating a Git worktree requires explicit user confirmation'));
     await this.refreshSharedState();
     if (this.worktrees.some((candidate) => candidate.workspaceId === workspaceId && candidate.worktreePath === normalizedPath)) {
       return err(appError('INVALID_INPUT', 'Git worktree path is already present in the shared ownership ledger'));
@@ -663,7 +758,7 @@ export class UpgradeRuntimeService {
       workspaceId,
       args: ['worktree', 'add', '--detach', normalizedPath, ref],
       ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
-    });
+    }, undefined, authorization);
     if (!result.ok) return result;
     const ledgerEntry: WorktreeLedgerEntry = { workspaceId, worktreePath: normalizedPath, ref, owner: this.actor.clientId, ownerSessionId: actorSessionId(this.actor), createdAt: new Date().toISOString() };
     await this.mutateSharedState((_plugins, worktrees) => {
@@ -672,7 +767,7 @@ export class UpgradeRuntimeService {
     return ok({ ...plan, dryRun: false, sideEffectsStarted: true, status: 'completed', result: result.value, ownershipLedger: true });
   }
 
-  private async gitWorktreeRemove(input: Record<string, unknown>): Promise<Result<unknown>> {
+  private async gitWorktreeRemove(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const workspaceId = readString(input, 'workspaceId');
     const worktreePath = readString(input, 'worktreePath')?.replaceAll('\\', '/');
     if (workspaceId === undefined || worktreePath === undefined) return err(appError('INVALID_INPUT', 'workspaceId and worktreePath are required'));
@@ -688,13 +783,13 @@ export class UpgradeRuntimeService {
       mutationPolicy: 'explicit-confirmation-and-dry-run',
     };
     if (input.dryRun !== false && input.dry_run !== false) return ok({ ...plan, dryRun: true });
-    if (input.userConfirmed !== true) return err(appError('PERMISSION_REQUIRED', 'Removing a Git worktree requires explicit user confirmation'));
+    if (!isApplicationAuthorized(authorization, input.userConfirmed === true)) return err(appError('PERMISSION_REQUIRED', 'Removing a Git worktree requires explicit user confirmation'));
     if (this.services.git === undefined) return ok({ ...plan, dryRun: false, status: 'optional', available: false, reason: 'Git service is not configured' });
     const result = await this.services.git.run(this.actor, {
       workspaceId,
       args: ['worktree', 'remove', worktreePath],
       ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
-    });
+    }, undefined, authorization);
     if (!result.ok) return result;
     await this.mutateSharedState((_plugins, worktrees) => {
       const index = worktrees.findIndex((candidate) => candidate.workspaceId === workspaceId && candidate.worktreePath === worktreePath);
@@ -711,8 +806,9 @@ export class UpgradeRuntimeService {
     return ok({ workspaceId, indexed: status.value.indexed, traversable: true, counts: countKinds(entries), entries: entries.map((entry) => ({ path: entry.relativePath, kind: entry.kind, language: entry.language, isTest: entry.isTest })) });
   }
 
-  private async contextExpansion(workspaceId: string | undefined, query: string | undefined): Promise<Result<unknown>> {
-    if (workspaceId === undefined || this.services.workspaceIndex === undefined) return ok({ workspaceId: workspaceId ?? null, query: query ?? '', references: [], optional: true });
+  private async contextExpansion(name: string, workspaceId: string | undefined, query: string | undefined): Promise<Result<unknown>> {
+    if (workspaceId === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['registered workspace']));
+    if (this.services.workspaceIndex === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['workspace index service']));
     const status = await this.services.workspaceIndex.status(workspaceId);
     if (!status.ok) return status;
     const needle = (query ?? '').toLowerCase();
@@ -721,7 +817,8 @@ export class UpgradeRuntimeService {
   }
 
   private async indexQuery(name: string, workspaceId: string | undefined, query: string): Promise<Result<unknown>> {
-    if (workspaceId === undefined || this.services.workspaceIndex === undefined) return ok({ tool: name, query, indexed: false, matches: [], primitiveFallback: 'search_text' });
+    if (workspaceId === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['registered workspace']));
+    if (this.services.workspaceIndex === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['workspace index service']));
     const status = await this.services.workspaceIndex.status(workspaceId);
     if (!status.ok) return status;
     const needle = query.toLowerCase();
@@ -732,6 +829,13 @@ export class UpgradeRuntimeService {
 
   private async compoundContext(name: string, input: Record<string, unknown>): Promise<Result<unknown>> {
     const workspaceId = readString(input, 'workspaceId');
+    const requirements = [
+      ...(workspaceId === undefined ? ['registered workspace'] : []),
+      ...(this.services.search === undefined ? ['workspace search service'] : []),
+      ...(this.services.file === undefined ? ['workspace file service'] : []),
+      ...(this.services.git === undefined ? ['configured Git service'] : []),
+    ];
+    if (requirements.length > 0) return ok(truthfulUnavailable(name, 'needs_setup', requirements));
     const query = readString(input, 'query') ?? readString(input, 'prompt') ?? name;
     const context = await this.contextEngine.collect({
       query,
@@ -739,17 +843,252 @@ export class UpgradeRuntimeService {
       intent: name.includes('review') ? 'review' : name.includes('test') ? 'explore' : name.includes('symbol') ? 'trace' : name.includes('debug') ? 'debug' : 'auto',
       mode: 'full',
     });
-    const git = workspaceId === undefined || this.services.git === undefined
-      ? ok(null)
-      : await this.services.git.status(this.actorForOperation(), workspaceId);
+    if (!context.ok) return context;
+    const git = await this.services.git!.status(this.actorForOperation(), workspaceId!);
+    if (!git.ok) return git;
     return ok({
       tool: name,
       query,
-      context: context.ok ? context.value : { error: context.error },
-      git: git.ok ? git.value : { error: git.error },
+      context: context.value,
+      git: git.value,
       internalOperations: ['workspace search', 'indexed symbol lookup', 'git status', 'test relevance'],
       rawToolsRemainAvailable: true,
     });
+  }
+
+  private async skillInsight(name: string, input: Record<string, unknown>): Promise<Result<unknown>> {
+    const extensions = this.services.extensions;
+    if (extensions === undefined) {
+      return ok(truthfulUnavailable(name, 'needs_setup', ['configured local skill catalog']));
+    }
+
+    if (name === 'skill_match') {
+      const query = readString(input, 'query') ?? readString(input, 'prompt') ?? '';
+      const source = readString(input, 'source');
+      const listed = await extensions.listSkills({
+        ...(query.length === 0 ? {} : { query }),
+        ...(source === undefined ? {} : { source }),
+      });
+      return listed.ok
+        ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, query, skills: listed.value.skills })
+        : listed;
+    }
+
+    const skillId = readString(input, 'skillId') ?? readString(input, 'id') ?? readString(input, 'name');
+    if (skillId === undefined) return err(appError('INVALID_INPUT', 'skill_load requires skillId'));
+    const relativePath = readString(input, 'relativePath') ?? readString(input, 'path');
+    const loaded = await extensions.readSkill({
+      skillId,
+      ...(relativePath === undefined ? {} : { relativePath }),
+    });
+    return loaded.ok
+      ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, skill: loaded.value })
+      : loaded;
+  }
+
+  private async gitInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+    const workspaceId = readString(input, 'workspaceId');
+    if (workspaceId === undefined) return err(appError('INVALID_INPUT', `${name} requires workspaceId`));
+    const git = this.services.git;
+    if (git === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['configured Git service']));
+
+    if (name === 'git_history_context') {
+      const history = await git.log(this.actor, workspaceId, { maxCommits: boundedInteger(input.maxCommits, 25, 1, 100) }, signal);
+      return history.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, history: history.value }) : history;
+    }
+    if (name === 'git_blame_context') {
+      const filePath = readString(input, 'path');
+      if (filePath === undefined) return err(appError('INVALID_INPUT', 'git_blame_context requires path'));
+      const blame = await git.run(this.actor, { workspaceId, args: ['blame', '--line-porcelain', '--', filePath] }, signal);
+      return blame.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, path: filePath, blame: blame.value }) : blame;
+    }
+
+    const status = await git.status(this.actor, workspaceId, signal);
+    if (!status.ok) return status;
+    if (name === 'affected_modules') {
+      const changedPaths = status.value.entries.map((entry) => entry.path);
+      const modules = [...new Set(changedPaths.map((changedPath) => changedPath.replaceAll('\\', '/').split('/')[0]).filter((value): value is string => typeof value === 'string' && value.length > 0))].sort();
+      let index: unknown = null;
+      if (this.services.workspaceIndex !== undefined) {
+        const indexed = await this.services.workspaceIndex.status(workspaceId);
+        index = indexed.ok ? indexed.value : { error: indexed.error };
+      }
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, changedPaths, modules, index });
+    }
+
+    const diff = await git.diff(this.actor, workspaceId, { maxBytes: boundedInteger(input.maxBytes, 64_000, 1_000, 4 * 1024 * 1024) }, signal);
+    if (!diff.ok) return diff;
+    const history = await git.log(this.actor, workspaceId, { maxCommits: boundedInteger(input.maxCommits, 20, 1, 100) }, signal);
+    if (!history.ok) return history;
+    return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, gitStatus: status.value, diff: diff.value, history: history.value });
+  }
+
+  private async testInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+    const workspaceId = readString(input, 'workspaceId');
+    if (workspaceId === undefined) return err(appError('INVALID_INPUT', `${name} requires workspaceId`));
+
+    if (name === 'discover_tests') {
+      if (this.services.workspaceIndex !== undefined) {
+        const indexed = await this.services.workspaceIndex.status(workspaceId);
+        if (!indexed.ok) return indexed;
+        const tests = (indexed.value.snapshot?.entries ?? []).filter((entry) => entry.isTest).map((entry) => ({ path: entry.relativePath, language: entry.language, symbols: entry.symbols }));
+        return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, source: 'workspace-index', tests });
+      }
+      if (this.services.search !== undefined) {
+        const searched = await this.services.search.searchFiles(this.actor, workspaceId, { glob: '**/*{test,spec}*', maxResults: 500, discovery: 'explicit' }, signal);
+        return searched.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, source: 'search-files', tests: searched.value }) : searched;
+      }
+      return ok(truthfulUnavailable(name, 'needs_setup', ['workspace index or search service']));
+    }
+
+    if (name === 'coverage_context') {
+      if (this.services.search === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['search service', 'project coverage artifacts']));
+      const coverage = await this.services.search.searchFiles(this.actor, workspaceId, { glob: '**/coverage*', maxResults: 200, discovery: 'explicit' }, signal);
+      return coverage.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, artifacts: coverage.value }) : coverage;
+    }
+
+    if (this.services.process === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['managed process service']));
+    const processes = await this.services.process.list(this.actor, workspaceId);
+    if (!processes.ok) return processes;
+    return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, processHistory: processes.value, interpretation: name === 'test_failures' ? 'Inspect non-zero completed project test processes and their logs.' : 'Managed project-process history.' });
+  }
+
+  private async runAffectedTests(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    const workspaceId = readString(input, 'workspaceId');
+    if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'run_affected_tests requires workspaceId'));
+    const processService = this.services.process;
+    if (processService === undefined) return ok(truthfulUnavailable('run_affected_tests', 'needs_setup', ['managed process service', 'detected project test command']));
+    const preview = await processService.previewProjectCommand(workspaceId, 'test');
+    if (!preview.ok) return preview;
+    const dryRun = input.dryRun !== false && input.dry_run !== false;
+    if (dryRun) return ok({ tool: 'run_affected_tests', status: 'ready', available: true, ready: true, executed: true, started: false, dryRun: true, command: preview.value, selection: 'project test command; project runner may apply its own affected-test selection' });
+    const started = await processService.startProjectCommand(this.actor, workspaceId, 'test', signal, input.userConfirmed === true, preview.value, authorization);
+    return started.ok ? ok({ tool: 'run_affected_tests', status: 'ready', available: true, ready: true, executed: true, started: true, process: started.value }) : started;
+  }
+
+  private async browserInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    const capabilities = this.services.capabilities;
+    if (name === 'network_context') return ok(truthfulUnavailable(name, 'needs_setup', ['CDP network event subscription and retained event stream']));
+    if (name === 'console_context') return ok(truthfulUnavailable(name, 'needs_setup', ['CDP Runtime/Log event subscription and retained event stream']));
+    if (capabilities === undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['DOM/CDP capability']));
+    const target = requireBrowserTabId(name, input);
+    if (!target.ok) return target;
+    const tabId = target.value;
+    const invoke = (action: string, parameters: Record<string, unknown> = {}): Promise<Result<unknown>> => capabilities.execute('dom_cdp', { action, parameters, tab_id: tabId }, signal, authorization);
+    const status = await invoke('status');
+    if (!status.ok) return status;
+
+    if (name === 'form_context') {
+      const selector = readString(input, 'selector') ?? 'form, input, select, textarea, button';
+      const form = await invoke('query', { selector });
+      return form.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, selector, form: form.value }) : form;
+    }
+
+    const tabs = await invoke('list_tabs');
+    if (!tabs.ok) return tabs;
+    const body = await invoke('query', { selector: readString(input, 'selector') ?? 'body' });
+    if (!body.ok) return body;
+    if (name === 'inspect_web_app') return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, backendStatus: status.value, tabs: tabs.value, body: body.value });
+    if (name === 'debug_ui') return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, tabs: tabs.value, body: body.value, diagnostics: ['DOM query', 'tab metadata'] });
+    if (name === 'capture_ui_state') {
+      const screenshot = await invoke('screenshot');
+      return screenshot.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, tabs: tabs.value, body: body.value, screenshot: screenshot.value }) : screenshot;
+    }
+    const screenshot = await invoke('screenshot');
+    return screenshot.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, tabs: tabs.value, body: body.value, screenshot: screenshot.value, unavailableStreams: ['console', 'network'] }) : screenshot;
+  }
+
+  private async visualInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    if (name === 'compare_screenshot') {
+      const baseline = readString(input, 'baseline_base64') ?? readString(input, 'left_base64');
+      const actual = readString(input, 'actual_base64') ?? readString(input, 'right_base64');
+      if (baseline === undefined || actual === undefined) return err(appError('INVALID_INPUT', 'compare_screenshot requires baseline_base64/actual_base64 or left_base64/right_base64'));
+      const baselineHash = createHash('sha256').update(baseline).digest('hex');
+      const actualHash = createHash('sha256').update(actual).digest('hex');
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, equal: baselineHash === actualHash, baseline: { sha256: baselineHash, encodedBytes: Buffer.byteLength(baseline, 'utf8') }, actual: { sha256: actualHash, encodedBytes: Buffer.byteLength(actual, 'utf8') }, comparison: 'exact artifact identity; pixel-diff renderer remains optional' });
+    }
+    const capabilities = this.services.capabilities;
+    if (capabilities === undefined) return ok({ tool: name, status: 'optional', available: false, ready: false, executed: false, requirements: ['DOM/CDP capability'] });
+    const target = requireBrowserTabId(name, input);
+    if (!target.ok) return target;
+    const tabId = target.value;
+    const invoke = (action: string, parameters: Record<string, unknown> = {}): Promise<Result<unknown>> => capabilities.execute('dom_cdp', { action, parameters, tab_id: tabId }, signal, authorization);
+    if (name === 'capture_screenshot') {
+      const screenshot = await invoke('screenshot');
+      return screenshot.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, screenshot: screenshot.value }) : screenshot;
+    }
+    const dom = await invoke('query', { selector: readString(input, 'selector') ?? (name === 'dom_snapshot' ? 'html' : 'body') });
+    if (!dom.ok) return dom;
+    if (name === 'dom_snapshot') return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, snapshot: dom.value, bounded: true });
+    if (name === 'layout_metadata') return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, layout: dom.value });
+    const screenshot = await invoke('screenshot');
+    return screenshot.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, dom: dom.value, screenshot: screenshot.value }) : screenshot;
+  }
+
+  private async windowsInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    if (process.platform !== 'win32') return ok(truthfulUnavailable(name, 'unsupported', ['Windows host']));
+
+    if (name === 'windows_environment') {
+      let systemInfo: unknown = null;
+      if (this.services.capabilities !== undefined) {
+        const info = await this.services.capabilities.execute('system_info', { operation: 'all' }, signal, authorization);
+        systemInfo = info.ok ? info.value : { error: info.error };
+      }
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, platform: process.platform, arch: process.arch, hostname: os.hostname(), release: os.release(), node: process.version, cwd: process.cwd(), systemInfo });
+    }
+    if (name === 'process_context') {
+      if (this.services.capabilities !== undefined) {
+        const processes = await this.services.capabilities.execute('system_info', { operation: 'processes', top_count: boundedInteger(input.top_count, 50, 1, 500) }, signal, authorization);
+        return processes.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, processes: processes.value }) : processes;
+      }
+      const processes = await runBoundedProcess('tasklist.exe', ['/FO', 'CSV', '/NH'], signal);
+      return processes.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, processes: processes.value.stdout }) : processes;
+    }
+    if (name === 'service_context') {
+      const serviceName = readString(input, 'service') ?? readString(input, 'name');
+      const result = await runBoundedProcess('sc.exe', serviceName === undefined ? ['query', 'state=', 'all'] : ['query', serviceName], signal);
+      return result.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, service: serviceName ?? null, output: result.value.stdout }) : result;
+    }
+    if (name === 'port_context') {
+      const result = await runBoundedProcess('netstat.exe', ['-ano', '-p', 'tcp'], signal);
+      if (!result.ok) return result;
+      const listening = result.value.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\bLISTENING\b/i.test(line)).slice(0, 1000);
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, listening });
+    }
+    if (name === 'registry_context') {
+      const key = readString(input, 'key') ?? 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+      if (!/^(HKCU|HKLM)\\[A-Za-z0-9 _.,{}()\-\\]+$/i.test(key)) return err(appError('PERMISSION_DENIED', 'registry_context only allows read-only HKCU/HKLM key paths with safe characters'));
+      const result = await runBoundedProcess('reg.exe', ['query', key], signal);
+      return result.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, key, output: result.value.stdout }) : result;
+    }
+    if (name === 'event_log_context') {
+      const event = await this.eventLog.execute({ operation: 'query', log_name: readString(input, 'log_name') ?? 'Application', ...(readString(input, 'provider') === undefined ? {} : { provider: readString(input, 'provider') }), max_events: boundedInteger(input.max_events, 100, 1, 500) }, signal);
+      return event.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, eventLog: event.value }) : event;
+    }
+    if (name === 'installed_runtime_context') {
+      const checks: readonly [string, string, readonly string[]][] = [
+        ['node', 'node.exe', ['--version']], ['npm', 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd --version']], ['corepack', 'cmd.exe', ['/d', '/s', '/c', 'corepack.cmd --version']],
+        ['git', 'git.exe', ['--version']], ['python', 'python.exe', ['--version']], ['pwsh', 'pwsh.exe', ['--version']],
+      ];
+      const runtimes: Record<string, unknown>[] = [];
+      for (const [runtime, executable, args] of checks) {
+        const result = await runBoundedProcess(executable, args, signal, 5_000, 64 * 1024);
+        runtimes.push(result.ok ? { runtime, available: true, version: result.value.stdout.trim() } : { runtime, available: false });
+      }
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, runtimes });
+    }
+    if (name === 'path_context') {
+      const pathValue = process.env.Path ?? process.env.PATH ?? '';
+      const entries = pathValue.split(path.delimiter).filter((entry) => entry.length > 0);
+      const executable = readString(input, 'executable');
+      if (executable === undefined) return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, entries });
+      if (!/^[A-Za-z0-9_.-]+$/.test(executable)) return err(appError('INVALID_INPUT', 'path_context executable must be a simple executable name'));
+      const found = await runBoundedProcess('where.exe', [executable], signal, 5_000, 64 * 1024);
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, entries, executable, matches: found.ok ? found.value.stdout.split(/\r?\n/).filter(Boolean) : [] });
+    }
+    const userStartup = await runBoundedProcess('reg.exe', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal);
+    const machineStartup = await runBoundedProcess('reg.exe', ['query', 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal);
+    return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, user: userStartup.ok ? userStartup.value.stdout : null, machine: machineStartup.ok ? machineStartup.value.stdout : null, errors: [userStartup.ok ? null : userStartup.error.message, machineStartup.ok ? null : machineStartup.error.message].filter(Boolean) });
   }
 
   private actorForOperation(): FileActor {
@@ -785,21 +1124,25 @@ export class UpgradeRuntimeService {
     for (const worktree of state.worktrees) if (isWorktreeLedgerEntry(worktree)) this.worktrees.push(worktree);
   }
 
-  private async refreshSharedState(): Promise<void> {
-    if (this.stateStore === undefined) return;
+  private async refreshSharedState(): Promise<boolean> {
+    if (this.stateStore === undefined) return false;
     try {
       this.replaceSharedState(await this.stateStore.readShared());
+      return true;
     } catch {
       // Keep the last known in-memory shared state when persistence is unavailable.
+      return false;
     }
   }
 
   private async mutateSharedState(
     mutate: (plugins: Map<string, { readonly name: string; enabled: boolean }>, worktrees: WorktreeLedgerEntry[]) => void,
-  ): Promise<void> {
+    failClosed = false,
+  ): Promise<boolean> {
     if (this.stateStore === undefined) {
+      if (failClosed) return false;
       mutate(this.plugins, this.worktrees);
-      return;
+      return true;
     }
     try {
       const next = await this.stateStore.updateShared((current) => {
@@ -811,8 +1154,10 @@ export class UpgradeRuntimeService {
         return { plugins: [...plugins.values()], worktrees };
       });
       this.replaceSharedState(next);
+      return true;
     } catch {
-      mutate(this.plugins, this.worktrees);
+      if (!failClosed) mutate(this.plugins, this.worktrees);
+      return false;
     }
   }
 
@@ -842,9 +1187,75 @@ export class UpgradeRuntimeService {
 
 }
 
+function runBoundedProcess(
+  executable: string,
+  args: readonly string[],
+  signal?: AbortSignal,
+  timeoutMs = 15_000,
+  maxBytes = 1024 * 1024,
+): Promise<Result<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }>> {
+  return new Promise((resolve) => {
+    if (signal?.aborted === true) {
+      resolve(err(appError('PROCESS_TIMEOUT', `${executable} query was cancelled`, true)));
+      return;
+    }
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(executable, [...args], { windowsHide: true, shell: false });
+    } catch {
+      resolve(err(appError('PROCESS_NOT_FOUND', `${executable} could not be started`, true)));
+      return;
+    }
+    const finish = (result: Result<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }>): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(result);
+    };
+    const append = (current: string, chunk: Buffer): string => {
+      if (Buffer.byteLength(current, 'utf8') >= maxBytes) return current;
+      const remaining = maxBytes - Buffer.byteLength(current, 'utf8');
+      return current + chunk.subarray(0, remaining).toString('utf8');
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(err(appError('PROCESS_TIMEOUT', `${executable} query timed out`, true)));
+    }, timeoutMs);
+    const onAbort = (): void => {
+      child.kill();
+      finish(err(appError('PROCESS_TIMEOUT', `${executable} query was cancelled`, true)));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    child.stdout?.on('data', (chunk: Buffer) => { stdout = append(stdout, chunk); });
+    child.stderr?.on('data', (chunk: Buffer) => { stderr = append(stderr, chunk); });
+    child.once('error', () => finish(err(appError('PROCESS_NOT_FOUND', `${executable} is unavailable`, true))));
+    child.once('close', (code) => {
+      const exitCode = code ?? -1;
+      if (exitCode !== 0) {
+        finish(err(appError('INTERNAL_ERROR', `${executable} query failed with exit code ${exitCode}`, true)));
+        return;
+      }
+      finish(ok({ exitCode, stdout, stderr }));
+    });
+    child.stdin?.end();
+  });
+}
+
 function readString(input: Record<string, unknown>, key: string): string | undefined {
   const value = input[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+function requireBrowserTabId(toolName: string, input: Record<string, unknown>): Result<string> {
+  const tabId = readString(input, 'tab_id') ?? readString(input, 'tabId');
+  if (tabId === undefined || tabId.trim().length === 0) {
+    return err(appError('INVALID_INPUT', `${toolName} requires tab_id; call dom_cdp list_tabs or new_tab first`));
+  }
+  return ok(tabId.trim());
 }
 
 function digest(input: unknown): string {
@@ -877,7 +1288,7 @@ function lifecycleEvents(): readonly string[] {
 }
 
 function primitiveEntry(name: string, description: string, permission: UpgradeToolCatalogEntry['permission'], tags: readonly string[]): SearchCatalogEntry {
-  return { name, phase: 0, description, permission, tags, parallelSafe: permission === 'READ', primitive: true };
+  return { name, phase: 0, description, permission, tags, deliveryState: 'operational', parallelSafe: permission === 'READ', primitive: true };
 }
 
 function capabilitySearchEntry(descriptor: CapabilityDescriptor): SearchCatalogEntry {
@@ -887,6 +1298,7 @@ function capabilitySearchEntry(descriptor: CapabilityDescriptor): SearchCatalogE
     description: `${descriptor.name} local capability (${descriptor.auditTarget})`,
     permission: descriptor.permission,
     tags: [descriptor.name, descriptor.auditTarget, 'capability'],
+    deliveryState: 'operational',
     parallelSafe: descriptor.permission === 'READ',
     primitive: true,
     auditTarget: descriptor.auditTarget,
@@ -1030,12 +1442,6 @@ function permissionDecision(action: string): { readonly action: string; readonly
   const normalized = action.toLowerCase();
   const dangerousAction = /(delete|destructive|admin|system\.admin|shell\.destructive|git\.destructive)/.test(normalized);
   return { action, decision: dangerousAction ? 'ask' : 'allow', class: dangerousAction ? 'dangerous' : 'read-or-safe', contextAccess: 'unrestricted' };
-}
-
-function parallelDelegatePlan(input: Record<string, unknown>): unknown {
-  const tasks = Array.isArray(input.tasks) ? input.tasks : [];
-  const writesRequested = tasks.some((task) => typeof task === 'object' && task !== null && JSON.stringify(task).toLowerCase().includes('write'));
-  return { tasks: tasks.map((task, index) => ({ id: `delegate-${index + 1}`, mode: writesRequested ? 'serialized-mutation' : 'read-only-parallel', inputDigest: digest(task) })), collisionDetected: writesRequested, mutationPolicy: 'one-writer-at-a-time', cancellationSupported: true };
 }
 
 function actorSessionId(actor: FileActor): string {

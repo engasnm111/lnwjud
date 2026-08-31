@@ -1,6 +1,9 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import type { UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
+import { settleWorkspaceAdd, type AddWorkspaceAction } from '../workspaces/workspace-add.js';
+
+export { settleWorkspaceAdd } from '../workspaces/workspace-add.js';
 
 interface ProjectsPageProps {
   readonly locale: UiLocale;
@@ -9,8 +12,7 @@ interface ProjectsPageProps {
   readonly activeWorkspaceIds: readonly string[];
   readonly onSelectWorkspace: (workspaceId: string) => Promise<void>;
   readonly onSetWorkspaceActive: (workspaceId: string, active: boolean) => Promise<void>;
-
-  readonly onAddWorkspace: (rootPath: string) => Promise<void>;
+  readonly onAddWorkspace: AddWorkspaceAction;
   readonly onSetWorkspaceArchived: (workspaceId: string, archived: boolean) => Promise<void>;
   readonly onDeleteWorkspace: (workspaceId: string) => Promise<void>;
 }
@@ -30,6 +32,10 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
     } finally {
       setBusyWorkspaceId(null);
     }
+  }
+
+  async function addCurrentWorkspace(): Promise<void> {
+    setRootPath(await settleWorkspaceAdd(rootPath, props.onAddWorkspace));
   }
 
   function renderProjectRow(workspace: WorkspaceSummary, archived: boolean): ReactElement {
@@ -101,7 +107,7 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
             value={rootPath}
             onChange={(event) => setRootPath(event.target.value)}
           />
-          <button type="button" disabled={rootPath.trim().length === 0} onClick={() => { void props.onAddWorkspace(rootPath).then(() => setRootPath('')); }}>
+          <button type="button" disabled={rootPath.trim().length === 0} onClick={() => { void addCurrentWorkspace(); }}>
             {t('project.add')}
           </button>
         </div>

@@ -12,8 +12,15 @@ export interface NativeMessages {
   readonly updaterChecking: string;
   readonly updaterCheckFailed: string;
   readonly updaterInstallWaiting: string;
+  readonly updaterTunnelStopTitle: string;
+  readonly updaterTunnelStopMessage: string;
+  readonly updaterTunnelStopDetail: string;
+  readonly updaterTunnelStopConfirm: string;
+  readonly updaterTunnelStopFailedTitle: string;
+  readonly updaterTunnelStopFailedMessage: string;
   readonly updaterAvailableTitle: string;
   readonly ok: string;
+  readonly cancel: string;
   readonly shutdownBlockedTitle: string;
   readonly shutdownBlockedMessage: string;
   updateAvailableStatus(version: string): string;
@@ -38,9 +45,16 @@ const th: NativeMessages = {
   updaterAlreadyChecking: 'กำลังตรวจอัปเดตอยู่ กรุณารอผลการตรวจสอบ',
   updaterChecking: 'กำลังตรวจหาเวอร์ชันใหม่…',
   updaterCheckFailed: 'ไม่สามารถตรวจอัปเดตได้',
-  updaterInstallWaiting: 'กำลังรอให้งานที่ใช้งานอยู่เสร็จก่อนรีสตาร์ตเพื่อติดตั้ง…',
+  updaterInstallWaiting: 'หยุด Secure Tunnel แล้ว กำลังปิดงานที่ค้างอยู่ จากนั้น lnwjud จะปิดและติดตั้งอัปเดตให้อัตโนมัติ…',
+  updaterTunnelStopTitle: 'หยุด Secure Tunnel เพื่อติดตั้งอัปเดต',
+  updaterTunnelStopMessage: 'ต้องหยุด Secure Tunnel ชั่วคราวก่อนติดตั้งอัปเดต',
+  updaterTunnelStopDetail: 'การเชื่อมต่อ ChatGPT จะหยุดชั่วคราวระหว่างติดตั้ง หลังเปิด lnwjud เวอร์ชันใหม่ โปรแกรมจะใช้ Tunnel ID และ Key เดิมเพื่อเชื่อมต่อกลับอัตโนมัติ',
+  updaterTunnelStopConfirm: 'หยุด Tunnel และติดตั้งต่อ',
+  updaterTunnelStopFailedTitle: 'ยังหยุด Secure Tunnel ไม่สำเร็จ',
+  updaterTunnelStopFailedMessage: 'ยังติดตั้งอัปเดตไม่ได้ เพราะไม่สามารถยืนยันได้ว่า Secure Tunnel หยุดทำงานแล้ว กรุณาลองอีกครั้ง',
   updaterAvailableTitle: 'พบอัปเดต - lnwjud',
   ok: 'ตกลง',
+  cancel: 'ยกเลิก',
   shutdownBlockedTitle: 'lnwjud ยังทำงานอยู่',
   shutdownBlockedMessage: 'ยังยืนยันไม่ได้ว่า Tunnel ที่ lnwjud ดูแลหยุดทำงานแล้ว โปรแกรมจะยังเปิดอยู่ กรุณาตรวจสอบสถานะ Tunnel แล้วลองปิดโปรแกรมอีกครั้ง',
   updateAvailableStatus: (version) => `พบ v${version} — กำลังดาวน์โหลดในเบื้องหลัง`,
@@ -65,9 +79,16 @@ const en: NativeMessages = {
   updaterAlreadyChecking: 'An update check is already running. Please wait for it to finish.',
   updaterChecking: 'Checking for a newer version…',
   updaterCheckFailed: 'Unable to check for updates',
-  updaterInstallWaiting: 'Waiting for active work to finish before restarting to install…',
+  updaterInstallWaiting: 'Secure Tunnel is stopped. Finishing any in-flight work, then lnwjud will close and install the update automatically…',
+  updaterTunnelStopTitle: 'Stop Secure Tunnel to Install Update',
+  updaterTunnelStopMessage: 'Secure Tunnel must stop temporarily before the update can be installed.',
+  updaterTunnelStopDetail: 'ChatGPT connections will pause during installation. When the new lnwjud version opens, it will reuse the same Tunnel ID and key and reconnect automatically.',
+  updaterTunnelStopConfirm: 'Stop Tunnel and Install',
+  updaterTunnelStopFailedTitle: 'Secure Tunnel Did Not Stop',
+  updaterTunnelStopFailedMessage: 'The update cannot be installed yet because lnwjud could not confirm that Secure Tunnel stopped. Please try again.',
   updaterAvailableTitle: 'Update Available - lnwjud',
   ok: 'OK',
+  cancel: 'Cancel',
   shutdownBlockedTitle: 'lnwjud is still running',
   shutdownBlockedMessage: 'The owned tunnel could not be confirmed stopped. lnwjud will remain open; check the tunnel status and retry Quit.',
   updateAvailableStatus: (version) => `v${version} found — downloading in the background`,

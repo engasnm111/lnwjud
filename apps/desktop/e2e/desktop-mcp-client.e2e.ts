@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { UPGRADE_TOOL_CATALOG } from '@lnwjud/mcp-server';
+import { isAdvertisedDeliveryState, UPGRADE_TOOL_CATALOG } from '@lnwjud/mcp-server';
 import { chromium, expect, test, type Page } from '@playwright/test';
 
 const execFileAsync = promisify(execFile);
@@ -89,7 +89,7 @@ test('desktop serves the real MCP client development workflow', async () => {
       'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'list_recovery_items', 'restore_deleted_file', 'list_checkpoints', 'restore_checkpoint', 'process_start', 'process_list', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build',
-      'shell', 'dom_cdp', 'accessibility', 'input_event', 'vision', 'vision_annotated_capture', 'ui_target_action', 'window', 'health',
+      'shell', 'dom_cdp', 'computer_use', 'accessibility', 'input_event', 'vision', 'vision_annotated_capture', 'ui_target_action', 'window', 'health',
       'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
       'audio', 'screen_record', 'office', 'scheduler', 'wsl_exec', 'wsl_fs',
       'skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call',
@@ -97,15 +97,20 @@ test('desktop serves the real MCP client development workflow', async () => {
       'workspace_snapshot', 'search_all', 'read_many_files', 'read_file_page', 'read_file_page_continue',
       'workspace_index', 'workspace_index_status', 'workspace_index_watch', 'workspace_index_stop',
       'session_handoff', 'verify_incremental',
-      'run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'list_goals',
+      'run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'cancel_goal', 'list_goals',
+      'prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'cancel_scheduled_continuation',
     ];
     const advertisedTools = tools.tools.map((tool) => tool.name);
     expect(advertisedTools).toEqual([
       ...expectedCoreTools,
-      ...UPGRADE_TOOL_CATALOG.map((entry) => entry.name),
+      ...UPGRADE_TOOL_CATALOG.filter((entry) => isAdvertisedDeliveryState(entry.deliveryState)).map((entry) => entry.name),
       'tool_batch',
     ]);
-    expect(advertisedTools).toHaveLength(217);
+    expect(advertisedTools).toHaveLength(
+      expectedCoreTools.length
+      + UPGRADE_TOOL_CATALOG.filter((entry) => isAdvertisedDeliveryState(entry.deliveryState)).length
+      + 1,
+    );
     expect(advertisedTools.some((name) => name.startsWith('codex_'))).toBe(false);
 
     if (process.platform === 'win32') {

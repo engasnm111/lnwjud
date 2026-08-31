@@ -1,4 +1,4 @@
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, isApplicationAuthorized, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
 import { NodeBrowserCdpProtocol } from './browser-cdp-protocol.js';
 
@@ -29,12 +29,15 @@ interface BrowserRequest {
   readonly parameters: Record<string, unknown>;
   readonly steps?: readonly { readonly action: BrowserAction; readonly parameters: Record<string, unknown> }[];
   readonly tabId?: string;
+  readonly allowProtectedTabAction: boolean;
   readonly timeoutSeconds: number;
   readonly dryRun: boolean;
   readonly userConfirmed: boolean;
 }
 
 const BROWSER_ACTIONS: readonly BrowserAction[] = ['launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot'];
+const TARGET_SCOPED_ACTIONS = new Set<BrowserAction>(['close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot']);
+const PROTECTED_TAB_MUTATIONS = new Set<BrowserAction>(['close_tab', 'navigate', 'evaluate', 'click', 'type']);
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const MAX_TIMEOUT_SECONDS = 3600;
 
@@ -47,29 +50,29 @@ export class BrowserCdpBackend implements CapabilityBackend {
     this.launcher = options.launcher;
   }
 
-  public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
+  public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const aborted = cancellationResult(signal);
     if (aborted !== null) return aborted;
     const parsed = parseBrowserRequest(input);
     if (!parsed.ok) return parsed;
     try {
       const result = parsed.value.steps !== undefined
-        ? await this.executeSteps(parsed.value, signal)
+        ? await this.executeSteps(parsed.value, signal, authorization)
         : parsed.value.action === undefined
           ? err(appError('INVALID_INPUT', 'DOM action is required'))
-          : await this.executeAction(parsed.value, parsed.value.action, parsed.value.parameters, signal);
+          : await this.executeAction(parsed.value, parsed.value.action, parsed.value.parameters, signal, authorization);
       return cancellationResult(signal) ?? result;
     } catch {
       return cancellationResult(signal) ?? err(appError('INTERNAL_ERROR', 'Browser CDP operation failed', true));
     }
   }
 
-  private async executeSteps(request: BrowserRequest, signal?: AbortSignal): Promise<Result<unknown>> {
+  private async executeSteps(request: BrowserRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const values: unknown[] = [];
     for (const step of request.steps ?? []) {
       const aborted = cancellationResult(signal);
       if (aborted !== null) return aborted;
-      const result = await this.executeAction(request, step.action, step.parameters, signal);
+      const result = await this.executeAction(request, step.action, step.parameters, signal, authorization);
       if (!result.ok) return result;
       const abortedAfterStep = cancellationResult(signal);
       if (abortedAfterStep !== null) return abortedAfterStep;
@@ -78,11 +81,17 @@ export class BrowserCdpBackend implements CapabilityBackend {
     return ok({ steps: values });
   }
 
-  private async executeAction(request: BrowserRequest, action: BrowserAction, parameters: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+  private async executeAction(
+    request: BrowserRequest,
+    action: BrowserAction,
+    parameters: Record<string, unknown>,
+    signal?: AbortSignal,
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<unknown>> {
     const aborted = cancellationResult(signal);
     if (aborted !== null) return aborted;
-    if (request.dryRun) return ok({ dry_run: true, action, parameters });
-    if (!isReadOnlyBrowserAction(action) && request.userConfirmed !== true) {
+    if (request.dryRun) return ok({ dry_run: true, action, parameters, ...(request.tabId === undefined ? {} : { tab_id: request.tabId }) });
+    if (!isReadOnlyBrowserAction(action) && !isApplicationAuthorized(authorization, request.userConfirmed)) {
       return err(appError('PERMISSION_REQUIRED', 'Browser actions that can change local or remote state require explicit user confirmation'));
     }
     switch (action) {
@@ -92,20 +101,19 @@ export class BrowserCdpBackend implements CapabilityBackend {
         return this.launcher(readString(parameters, 'url'), signal);
       case 'list_tabs': return ok({ tabs: await this.protocol.listTabs(signal) });
       case 'new_tab': return ok(await this.protocol.newTab(readString(parameters, 'url') ?? 'about:blank', signal));
-      case 'close_tab': {
-        const tabId = request.tabId ?? readString(parameters, 'tab_id');
-        return tabId === undefined ? err(appError('INVALID_INPUT', 'Tab ID is required')) : ok(await this.protocol.closeTab(tabId, signal));
-      }
-      case 'navigate': return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, 'Page.navigate', { url: readString(parameters, 'url') ?? '' }, signal), signal);
+      case 'close_tab': return this.withTab(request, action, async (tab) => ok(await this.protocol.closeTab(tab.id, signal)), signal);
+      case 'navigate': return this.withTab(request, action, async (tab) => this.evaluateProtocol(tab.id, 'Page.navigate', { url: readString(parameters, 'url') ?? '' }, signal), signal);
       case 'evaluate': {
         const expression = readString(parameters, 'expression');
-        return expression === undefined ? err(appError('INVALID_INPUT', 'JavaScript expression is required')) : this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, signal), signal);
+        return expression === undefined
+          ? err(appError('INVALID_INPUT', 'JavaScript expression is required'))
+          : this.withTab(request, action, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, signal), signal);
       }
-      case 'query': return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression: queryScript(readString(parameters, 'selector') ?? ''), returnByValue: true, awaitPromise: true }, signal), signal);
-      case 'click': return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression: clickScript(readString(parameters, 'selector') ?? ''), returnByValue: true, awaitPromise: true }, signal), signal);
-      case 'type': return this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression: typeScript(readString(parameters, 'selector') ?? '', readString(parameters, 'text') ?? ''), returnByValue: true, awaitPromise: true }, signal), signal);
+      case 'query': return this.withTab(request, action, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression: queryScript(readString(parameters, 'selector') ?? ''), returnByValue: true, awaitPromise: true }, signal), signal);
+      case 'click': return this.withTab(request, action, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression: clickScript(readString(parameters, 'selector') ?? ''), returnByValue: true, awaitPromise: true }, signal), signal);
+      case 'type': return this.withTab(request, action, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', { expression: typeScript(readString(parameters, 'selector') ?? '', readString(parameters, 'text') ?? ''), returnByValue: true, awaitPromise: true }, signal), signal);
       case 'wait': return this.waitFor(request, parameters, signal);
-      case 'screenshot': return this.withTab(request, parameters, async (tab) => {
+      case 'screenshot': return this.withTab(request, action, async (tab) => {
         const result = await this.protocol.request(tab.id, 'Page.captureScreenshot', { format: 'png' }, signal);
         const data = readScreenshotData(result);
         return data === undefined ? err(appError('INTERNAL_ERROR', 'Browser screenshot response was invalid', true)) : ok({ format: 'png', data_base64: data });
@@ -127,7 +135,7 @@ export class BrowserCdpBackend implements CapabilityBackend {
     while (Date.now() <= deadline) {
       const aborted = cancellationResult(signal);
       if (aborted !== null) return aborted;
-      const result = await this.withTab(request, parameters, async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', {
+      const result = await this.withTab(request, 'wait', async (tab) => this.evaluateProtocol(tab.id, 'Runtime.evaluate', {
         expression: selector === undefined ? expression! : `Boolean(document.querySelector(${JSON.stringify(selector)}))`,
         returnByValue: true,
         awaitPromise: true,
@@ -139,13 +147,23 @@ export class BrowserCdpBackend implements CapabilityBackend {
     return ok({ ready: false, timed_out: true });
   }
 
-  private async withTab(request: BrowserRequest, parameters: Record<string, unknown>, callback: (tab: BrowserCdpTab) => Promise<Result<unknown>>, signal?: AbortSignal): Promise<Result<unknown>> {
-    const tabId = request.tabId ?? readString(parameters, 'tab_id');
+  private async withTab(
+    request: BrowserRequest,
+    action: BrowserAction,
+    callback: (tab: BrowserCdpTab) => Promise<Result<unknown>>,
+    signal?: AbortSignal,
+  ): Promise<Result<unknown>> {
+    if (request.tabId === undefined) {
+      return err(appError('INVALID_INPUT', `${action} requires tab_id; call list_tabs or new_tab first`));
+    }
     const tabs = await this.protocol.listTabs(signal);
     const aborted = cancellationResult(signal);
     if (aborted !== null) return aborted;
-    const tab = tabId === undefined ? tabs[0] : tabs.find((candidate) => candidate.id === tabId);
-    return tab === undefined ? err(appError('INVALID_INPUT', 'A managed Chrome tab is required')) : callback(tab);
+    const tab = tabs.find((candidate) => candidate.id === request.tabId);
+    if (tab === undefined) return err(appError('INVALID_INPUT', 'The requested managed Chrome tab was not found'));
+    const protectedDecision = authorizeProtectedTabAction(request, action, tab);
+    if (!protectedDecision.ok) return protectedDecision;
+    return callback(tab);
   }
 
   private async evaluateProtocol(tabId: string, method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
@@ -162,27 +180,93 @@ function parseBrowserRequest(value: unknown): Result<BrowserRequest> {
   const actionValue = value.action;
   const action = actionValue === undefined ? undefined : isBrowserAction(actionValue) ? actionValue : null;
   if (action === null) return err(appError('INVALID_INPUT', 'DOM action is invalid'));
+
   const parametersValue = value.parameters;
-  const parameters = parametersValue === undefined ? {} : parametersValue;
-  if (!isRecord(parameters)) return err(appError('INVALID_INPUT', 'DOM parameters must be an object'));
-  const tabId = value.tab_id;
-  if (tabId !== undefined && typeof tabId !== 'string') return err(appError('INVALID_INPUT', 'Tab ID is invalid'));
+  const rawParameters = parametersValue === undefined ? {} : parametersValue;
+  if (!isRecord(rawParameters)) return err(appError('INVALID_INPUT', 'DOM parameters must be an object'));
+
+  const topLevelTabId = parseOptionalTabId(value.tab_id);
+  if (!topLevelTabId.ok) return topLevelTabId;
+  const nestedTabId = parseOptionalTabId(rawParameters.tab_id);
+  if (!nestedTabId.ok) return nestedTabId;
+  if (topLevelTabId.value !== undefined && nestedTabId.value !== undefined && topLevelTabId.value !== nestedTabId.value) {
+    return err(appError('INVALID_INPUT', 'Conflicting top-level and parameters.tab_id values'));
+  }
+  const tabId = topLevelTabId.value ?? nestedTabId.value;
+  const parameters = nestedTabId.value === undefined ? rawParameters : omitKey(rawParameters, 'tab_id');
+
+  const allowProtectedTabAction = value.allow_protected_tab_action === undefined ? false : value.allow_protected_tab_action;
+  if (typeof allowProtectedTabAction !== 'boolean') return err(appError('INVALID_INPUT', 'Protected-tab override flag is invalid'));
   const timeoutSeconds = value.timeout_seconds === undefined ? DEFAULT_TIMEOUT_SECONDS : value.timeout_seconds;
   if (typeof timeoutSeconds !== 'number' || !Number.isFinite(timeoutSeconds) || timeoutSeconds < 0.1 || timeoutSeconds > MAX_TIMEOUT_SECONDS) return err(appError('INVALID_INPUT', 'DOM timeout is invalid'));
   const dryRun = value.dry_run === undefined ? false : value.dry_run;
   if (typeof dryRun !== 'boolean') return err(appError('INVALID_INPUT', 'Dry-run flag is invalid'));
+
   const stepsValue = value.steps;
   if (stepsValue !== undefined && (!Array.isArray(stepsValue) || stepsValue.length < 1 || stepsValue.length > 100)) return err(appError('INVALID_INPUT', 'DOM steps must contain 1 to 100 items'));
+  if ((action === undefined) === (stepsValue === undefined)) return err(appError('INVALID_INPUT', 'Provide exactly one of DOM action or steps'));
+
   const normalizedSteps: { readonly action: BrowserAction; readonly parameters: Record<string, unknown> }[] = [];
   if (stepsValue !== undefined) {
+    if (tabId === undefined) return err(appError('INVALID_INPUT', 'DOM steps require top-level tab_id; call list_tabs or new_tab first'));
+    if (nestedTabId.value !== undefined) return err(appError('INVALID_INPUT', 'DOM steps require top-level tab_id, not parameters.tab_id'));
     for (const step of stepsValue) {
       if (!isRecord(step) || !isBrowserAction(step.action)) return err(appError('INVALID_INPUT', 'DOM step is invalid'));
       const stepParameters = step.parameters === undefined ? {} : step.parameters;
       if (!isRecord(stepParameters)) return err(appError('INVALID_INPUT', 'DOM step parameters are invalid'));
+      if ('tab_id' in stepParameters) return err(appError('INVALID_INPUT', 'Use the top-level tab_id for the whole DOM steps batch'));
       normalizedSteps.push({ action: step.action, parameters: stepParameters });
     }
   }
-  return ok({ ...(action === undefined ? {} : { action }), parameters, ...(stepsValue === undefined ? {} : { steps: normalizedSteps }), ...(tabId === undefined ? {} : { tabId }), timeoutSeconds, dryRun, userConfirmed: value.userConfirmed === true });
+
+  const actions = normalizedSteps.length > 0 ? normalizedSteps.map((step) => step.action) : action === undefined ? [] : [action];
+  if (actions.some((candidate) => TARGET_SCOPED_ACTIONS.has(candidate)) && tabId === undefined) {
+    return err(appError('INVALID_INPUT', 'Target-scoped DOM actions require tab_id; call list_tabs or new_tab first'));
+  }
+
+  return ok({
+    ...(action === undefined ? {} : { action }),
+    parameters,
+    ...(stepsValue === undefined ? {} : { steps: normalizedSteps }),
+    ...(tabId === undefined ? {} : { tabId }),
+    allowProtectedTabAction,
+    timeoutSeconds,
+    dryRun,
+    userConfirmed: value.userConfirmed === true,
+  });
+}
+
+function parseOptionalTabId(value: unknown): Result<string | undefined> {
+  if (value === undefined) return ok(undefined);
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > 256) return err(appError('INVALID_INPUT', 'Tab ID is invalid'));
+  return ok(value.trim());
+}
+
+function omitKey(value: Record<string, unknown>, key: string): Record<string, unknown> {
+  const copy = { ...value };
+  delete copy[key];
+  return copy;
+}
+
+function authorizeProtectedTabAction(request: BrowserRequest, action: BrowserAction, tab: BrowserCdpTab): Result<void> {
+  if (!PROTECTED_TAB_MUTATIONS.has(action) || !isProtectedAgentTab(tab)) return ok(undefined);
+  if (request.allowProtectedTabAction && request.userConfirmed) return ok(undefined);
+  return err(appError(
+    'PERMISSION_DENIED',
+    'Refusing to mutate a protected ChatGPT tab without allow_protected_tab_action=true and explicit user confirmation',
+  ));
+}
+
+function isProtectedAgentTab(tab: BrowserCdpTab): boolean {
+  try {
+    const hostname = new URL(tab.url).hostname.toLowerCase().replace(/\.$/, '');
+    return hostname === 'chatgpt.com'
+      || hostname.endsWith('.chatgpt.com')
+      || hostname === 'chat.openai.com'
+      || hostname.endsWith('.chat.openai.com');
+  } catch {
+    return false;
+  }
 }
 
 function isReadOnlyBrowserAction(action: BrowserAction): boolean {

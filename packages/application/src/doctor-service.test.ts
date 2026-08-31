@@ -38,6 +38,15 @@ describe('DoctorService', () => {
     expect(report.checks.find((check) => check.id === 'ripgrep')).toMatchObject({ status: 'fail', required: true });
   });
 
+  it('keeps a clean profile without a registered project recoverable', async () => {
+    const report = await new DoctorService(probes({
+      workspaces: () => Promise.resolve({ status: 'warn', message: 'No project workspace is registered yet' }),
+    })).run();
+
+    expect(report.exitCode).toBe(0);
+    expect(report.checks.find((check) => check.id === 'workspaces')).toMatchObject({ status: 'warn', required: false });
+  });
+
   it('returns a nonzero exit code for a fatal core check', async () => {
     const report = await new DoctorService(probes({
       database: () => Promise.resolve({ status: 'fail', message: 'database unavailable' }),

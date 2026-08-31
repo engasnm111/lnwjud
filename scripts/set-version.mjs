@@ -86,7 +86,21 @@ async function syncAllVersions() {
     // skip if missing
   }
 
-  // 7. Update README.md current-version references without rewriting release history.
+  // 7. Update Desktop UI version assertion.
+  const mutationSafetyUiTestPath = path.join(rootDir, 'apps', 'desktop', 'tests', 'mutation-safety-ui.test.ts');
+  try {
+    let testContent = await readFile(mutationSafetyUiTestPath, 'utf8');
+    testContent = testContent
+      .replace(/renders the actual [0-9.]+ application version/g, `renders the actual ${version} application version`)
+      .replace(/expect\(APP_VERSION\)\.toBe\(['"][^'"]+['"]\);/g, `expect(APP_VERSION).toBe('${version}');`)
+      .replace(/expect\(markup\)\.toContain\(['"]v[0-9.]+['"]\);/g, `expect(markup).toContain('v${version}');`);
+    await writeFile(mutationSafetyUiTestPath, testContent, 'utf8');
+    console.log(`Updated apps/desktop/tests/mutation-safety-ui.test.ts -> v${version}`);
+  } catch {
+    // skip if missing
+  }
+
+  // 8. Update README.md current-version references without rewriting release history.
   const readmePath = path.join(rootDir, 'README.md');
   try {
     let readmeContent = await readFile(readmePath, 'utf8');
@@ -96,6 +110,10 @@ async function syncAllVersions() {
       .replace(/current source\/release candidate is `v[0-9.]+`/g, 'current version is `v' + version + '`')
       .replace(/The Windows installer for the current version is `lnwjud-Setup-[0-9.]+\.exe`/g, 'The Windows installer for the current version is `lnwjud-Setup-' + version + '.exe`')
       .replace(/Current Windows 10\/11 x64 artifacts are `lnwjud-Setup-[0-9.]+\.exe` \(recommended installer\) and `lnwjud-Portable-[0-9.]+\.exe`/g, 'Current Windows 10/11 x64 artifacts are `lnwjud-Setup-' + version + '.exe` (recommended installer) and `lnwjud-Portable-' + version + '.exe`')
+      .replace(/If you prefer not to install the app, run `lnwjud-Portable-[0-9.]+\.exe` directly\./g, 'If you prefer not to install the app, run `lnwjud-Portable-' + version + '.exe` directly.')
+      .replace(/1\. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-[0-9.]+\.exe` แล้วติดตั้งตามปกติ/g, '1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-' + version + '.exe` แล้วติดตั้งตามปกติ')
+      .replace(/2\. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-[0-9.]+\.exe` แล้วเปิดได้ทันที/g, '2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-' + version + '.exe` แล้วเปิดได้ทันที')
+      .replace(/ถ้าใช้ `lnwjud-Setup-[0-9.]+\.exe` หรือ `lnwjud-Portable-[0-9.]+\.exe` บน Windows x64/g, 'ถ้าใช้ `lnwjud-Setup-' + version + '.exe` หรือ `lnwjud-Portable-' + version + '.exe` บน Windows x64')
       .replace(/single-file \*\*`lnwjud-Portable-[0-9.]+\.exe`\*\*/g, 'single-file **`lnwjud-Portable-' + version + '.exe`**')
       .replace(/validated local test installer `lnwjud-Setup-[0-9.]+\.exe`/g, 'validated local test installer `lnwjud-Setup-' + version + '.exe`')
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, 'apps/desktop/dist/installers/lnwjud-Setup-' + version + '.exe')
@@ -109,7 +127,7 @@ async function syncAllVersions() {
     // skip if missing
   }
 
-  // 8. Update current-version Markdown references without rewriting release history.
+  // 9. Update current-version Markdown references without rewriting release history.
   const markdownTargets = [
     ['.github/RELEASE_CHECKLIST.md', (content) => content
       .replace(/\*\*Current (?:version|release candidate):\*\* `v[0-9.]+`/g, `**Current version:** ` + '`v' + version + '`')
@@ -121,6 +139,7 @@ async function syncAllVersions() {
       .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${version}.exe`)],
     ['docs/development/PACKAGING_WINDOWS.md', (content) => content
       .replace(/For v[0-9.]+:/g, `For v${version}:`)
+      .replace(/current v[0-9.]+ packaging contract/g, `current v${version} packaging contract`)
       .replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)
       .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${version}.exe`)],
     ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`)],

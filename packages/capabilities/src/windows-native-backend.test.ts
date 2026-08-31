@@ -89,6 +89,25 @@ describe('WindowsNativeCapabilityBackend', () => {
     expect(called).toBe(false);
   });
 
+  it('accepts an outside path and mutating native action only under trusted Full Bypass authorization', async () => {
+    const activeRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-native-root-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lnwjud-native-outside-'));
+    const report = path.join(outsideRoot, 'report.docx');
+    await writeFile(report, 'fixture', 'utf8');
+    let called = false;
+    const bridge: WindowsCapabilityBridge = {
+      execute: async () => { called = true; return ok({ done: true }); },
+    };
+    const backend = new WindowsNativeCapabilityBackend('office', bridge, 'win32', {
+      allowedRootsProvider: async (): Promise<readonly string[]> => [activeRoot],
+    });
+    const authorization = { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' } as const;
+
+    await expect(backend.execute({ app: 'word', action: 'replace', file_path: report }, undefined, authorization))
+      .resolves.toMatchObject({ ok: true, value: { done: true } });
+    expect(called).toBe(true);
+  });
+
   it.each([
     ['audio', { action: 'record', output_path: 'capture.wav', userConfirmed: true }],
     ['screen_record', { action: 'start', output_path: 'capture.mp4', userConfirmed: true }],

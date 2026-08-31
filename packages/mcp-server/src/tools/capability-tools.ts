@@ -1,13 +1,15 @@
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
-import { appError, err, ok, type Result } from '@lnwjud/domain';
+import { appError, err, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS } from '@lnwjud/shared';
-import { SetOfMarksService } from '../set-of-marks-service.js';
+import { SetOfMarksObservationStore, SetOfMarksService } from '../set-of-marks-service.js';
+import { ComputerUseService } from '../computer-use-service.js';
 import { withReplacementRecoveryDetails } from '../replacement-recovery.js';
 import { withCapabilityOwnerMetadata } from '../request-scope.js';
 import {
   accessibilityCapabilitySchema,
   audioCapabilitySchema,
   clipboardCapabilitySchema,
+  computerUseSchema,
   domCdpCapabilitySchema,
   fileDialogCapabilitySchema,
   healthCapabilitySchema,
@@ -45,20 +47,25 @@ function normalizeNonBlockingCliInput(input: unknown, maxPollWaitSeconds: number
   return input;
 }
 
-export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
-  const execute = async (tool: Parameters<NonNullable<McpToolContext['services']['capabilities']>['execute']>[0], input: unknown, signal?: AbortSignal): Promise<Result<unknown>> => {
+export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOfMarksObservationStore): McpToolDefinition[] {
+  const execute = async (
+    tool: Parameters<NonNullable<McpToolContext['services']['capabilities']>['execute']>[0],
+    input: unknown,
+    signal?: AbortSignal,
+    authorization?: InvocationAuthorization,
+  ): Promise<Result<unknown>> => {
     if (context.services.capabilities === undefined) return Promise.resolve(missingService());
     let normalized = tool === 'shell' || tool === 'wsl_exec'
       ? normalizeNonBlockingCliInput(input, currentMcpPollWaitSeconds(context))
       : input;
     let replacementBackup: { readonly recoveryId: string; readonly recoveryPath: string } | undefined;
     if (tool === 'office') {
-      const prepared = await prepareOfficeMutation(context, normalized, signal);
+      const prepared = await prepareOfficeMutation(context, normalized, signal, authorization);
       if (!prepared.ok) return prepared;
       normalized = prepared.value.input;
       replacementBackup = prepared.value.replacementBackup;
     } else if (tool === 'audio' || tool === 'screen_record') {
-      const prepared = await prepareMediaOutputMutation(context, tool, normalized, signal);
+      const prepared = await prepareMediaOutputMutation(context, tool, normalized, signal, authorization);
       if (!prepared.ok) return prepared;
       normalized = prepared.value.input;
       replacementBackup = prepared.value.replacementBackup;
@@ -66,30 +73,43 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
     const owned = tool === 'shell' || tool === 'wsl_exec'
       ? withCapabilityOwnerMetadata(normalized, context.actor)
       : normalized;
-    const result = await context.services.capabilities.execute(tool, owned, signal);
+    const result = await context.services.capabilities.execute(tool, owned, signal, authorization);
     if (!result.ok) return withReplacementRecoveryDetails(result, replacementBackup);
     if (replacementBackup === undefined) return result;
     const value = isRecord(result.value) ? result.value : { result: result.value };
     return ok({ ...value, replacementBackup });
   };
-  const setOfMarks = new SetOfMarksService(context.services.capabilities);
+  const setOfMarksOwnerKey = `${context.actor.clientId}:${context.actor.sessionId?.trim() || context.actor.clientId}`;
+  const setOfMarks = new SetOfMarksService(context.services.capabilities, {
+    ...(setOfMarksStore === undefined ? {} : { store: setOfMarksStore }),
+    ownerKey: setOfMarksOwnerKey,
+  });
+  const computerUse = new ComputerUseService(context.services.capabilities, setOfMarks);
 
   return [
     defineTool({
       name: 'shell',
-      description: 'Non-blocking command runner for system operations and CLI tasks. Use shell for command execution, builds/tests, package managers, and system operations; do not use it as a text editor. For source/config/text changes, prefer edit_file for exact replacements, apply_patch for reviewed multi-file or whole-file replacements, and write_file for creation/replacement. Do not wrap Node, Python, or PowerShell inline scripts around fs.writeFile, writeFileSync, Set-Content, or equivalent when a guarded file tool can perform the edit. MCP run calls are ALWAYS forced to execution=background, even if a client requests foreground or auto, so the call returns a task_id immediately instead of waiting for command completion. Follow with status/logs/result; wait uses the user-configurable MCP poll window (5-60 seconds, default 5). After one or two checks still show running, do not keep polling in the same chat turn: preserve task_id and return control so the durable task can continue without risking a ChatGPT turn timeout. Full Access runs ordinary policy-allowed commands without confirmation. Destructive/data-loss command forms ask unless an exact scoped destructive family is enabled for auto-approval; broad, recursive, critical, outside-project, or unparseable destructive forms remain interactive. dry_run and task observation are non-mutating. Active Project is the default cwd/ownership context, but an explicitly absolute cwd outside it may be used when the active capability policy allows that location; executable paths are never required to live inside the Active Project.',
+      description: 'Non-blocking command runner for real command execution, builds/tests, package managers, and system operations. Never use shell as a source/config/text editor. For any direct text-file change, call edit_file first; use apply_patch for reviewed whole-file or multi-file replacements and write_file for file creation/replacement. Inline Node/Python/PowerShell/sed commands that rewrite text files are rejected before native approval so the client can route to the guarded file tools instead. MCP run calls are ALWAYS forced to execution=background, even if a client requests foreground or auto, so the call returns a task_id immediately instead of waiting for command completion. Follow with status/logs/result; wait uses the user-configurable MCP poll window (5-60 seconds, default 5). When the user requires babysitting until completion, keep using bounded waits and do not report completion until the terminal result is inspected. Otherwise, if the host turn must yield while a durable task is still running, checkpoint it as trackedTasks {taskId, provider: shell, role: blocking_job, cancelWithGoal: true} and use the active scheduled-continuation handoff instead of abandoning the goal. Shared services must be marked supporting_service with cancelWithGoal false. With Full Bypass OFF, Full Access runs ordinary policy-allowed commands without confirmation while destructive, broad, recursive, critical, outside-project, or unparseable forms retain normal approval/command policy. Trusted Full Bypass skips lnwjud approval, command-policy, Active Project, goalLease, and allowed-root checks, including an explicitly absolute cwd outside the project; input validation, executable availability, Windows ACL/UAC, and child-process failures still apply. dry_run and task observation are non-mutating.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: shellCapabilitySchema,
-      handler: async (input, signal) => execute('shell', input, signal),
+      handler: async (input, signal, authorization) => execute('shell', input, signal, authorization),
     }),
     defineTool({
       name: 'dom_cdp',
-      description: 'Default for web-page DOM work inside managed Chrome: inspect content, query selectors, click, type, navigate, evaluate JavaScript, wait, manage tabs, and capture screenshots. Any action that can change local or remote state requires explicit chat confirmation and userConfirmed: true. Use steps to batch related DOM actions in one call.',
+      description: 'Default for web-page DOM work inside managed Chrome. Call list_tabs first, select the exact returned tab_id by URL/title, and pass that tab_id to every query, click, type, navigate, evaluate, wait, screenshot, close, or steps call. If no safe matching tab exists, call new_tab and use its returned ID. Target order and the OS-active tab are never ownership signals. Never navigate through the browser address bar with computer_use/accessibility/input_event. Protected ChatGPT tab mutations additionally require allow_protected_tab_action=true plus explicit user confirmation.',
       permission: 'READ',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: domCdpCapabilitySchema,
-      handler: async (input, signal) => execute('dom_cdp', input, signal),
+      handler: async (input, signal, authorization) => execute('dom_cdp', input, signal, authorization),
+    }),
+    defineTool({
+      name: 'computer_use',
+      description: 'Codex-style native Windows computer use for testing desktop apps. Take annotated screenshots, inspect semantic controls, and operate by semantic target, numbered visual mark, or explicit coordinates. Routes through Accessibility first and uses guarded pointer/keyboard input only when needed. Supports click, typing, keys, hotkeys, scroll, drag, pointer movement, and window activation. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id.',
+      permission: 'EXECUTE',
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: computerUseSchema,
+      handler: async (input, signal, authorization) => computerUse.execute(input, signal, authorization),
     }),
     defineTool({
       name: 'accessibility',
@@ -97,15 +117,15 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: accessibilityCapabilitySchema,
-      handler: async (input, signal) => execute('accessibility', input, signal),
+      handler: async (input, signal, authorization) => execute('accessibility', input, signal, authorization),
     }),
     defineTool({
       name: 'input_event',
-      description: 'Low-level keyboard and pointer fallback. Use only when DOM/CDP and Accessibility cannot operate the target. Supports text, keys, mouse movement, clicks, drag, scroll, held buttons, release_all, and batched sequences.',
+      description: 'Low-level keyboard and pointer fallback. Use only when DOM/CDP and Accessibility cannot operate the target. Supports text, keys, mouse movement, clicks, drag, scroll, held buttons, release_all, and batched sequences. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: inputEventCapabilitySchema,
-      handler: async (input, signal) => execute('input_event', input, signal),
+      handler: async (input, signal, authorization) => execute('input_event', input, signal, authorization),
     }),
     defineTool({
       name: 'vision',
@@ -113,7 +133,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: visionCapabilitySchema,
-      handler: async (input, signal) => execute('vision', input, signal),
+      handler: async (input, signal, authorization) => execute('vision', input, signal, authorization),
     }),
     defineTool({
       name: 'vision_annotated_capture',
@@ -121,7 +141,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: visionAnnotatedCaptureSchema,
-      handler: async (input, signal) => setOfMarks.capture(input, signal),
+      handler: async (input, signal, authorization) => setOfMarks.capture(input, signal, authorization),
     }),
     defineTool({
       name: 'ui_target_action',
@@ -129,7 +149,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: uiTargetActionSchema,
-      handler: async (input, signal) => setOfMarks.act(input, signal),
+      handler: async (input, signal, authorization) => setOfMarks.act(input, signal, authorization),
     }),
     defineTool({
       name: 'window',
@@ -137,7 +157,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: windowCapabilitySchema,
-      handler: async (input, signal) => execute('window', input, signal),
+      handler: async (input, signal, authorization) => execute('window', input, signal, authorization),
     }),
     defineTool({
       name: 'health',
@@ -145,7 +165,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: healthCapabilitySchema,
-      handler: async (input, signal) => execute('health', input, signal),
+      handler: async (input, signal, authorization) => execute('health', input, signal, authorization),
     }),
     defineTool({
       name: 'system_info',
@@ -153,7 +173,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: systemInfoCapabilitySchema,
-      handler: async (input, signal) => execute('system_info', input, signal),
+      handler: async (input, signal, authorization) => execute('system_info', input, signal, authorization),
     }),
     defineTool({
       name: 'notification',
@@ -161,7 +181,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: notificationCapabilitySchema,
-      handler: async (input, signal) => execute('notification', input, signal),
+      handler: async (input, signal, authorization) => execute('notification', input, signal, authorization),
     }),
     defineTool({
       name: 'file_dialog',
@@ -169,7 +189,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'EXECUTE',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: fileDialogCapabilitySchema,
-      handler: async (input, signal) => execute('file_dialog', input, signal),
+      handler: async (input, signal, authorization) => execute('file_dialog', input, signal, authorization),
     }),
     defineTool({
       name: 'clipboard',
@@ -177,55 +197,55 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: clipboardCapabilitySchema,
-      handler: async (input, signal) => execute('clipboard', input, signal),
+      handler: async (input, signal, authorization) => execute('clipboard', input, signal, authorization),
     }),
     defineTool({
       name: 'web_fetch',
-      description: 'Fetch an http/https URL (GET/POST/PUT/DELETE/HEAD) with bounded size and timeout. Every POST, PUT, or DELETE requires explicit chat confirmation and userConfirmed: true; dry_run remains safe. Returns status, headers, and text or base64 body.',
+      description: 'Fetch an http/https URL (GET/POST/PUT/DELETE/HEAD) with bounded size and timeout. In standard mode every POST, PUT, or DELETE requires explicit chat confirmation and host approval; trusted Full Bypass skips lnwjud approval. dry_run remains safe. Returns status, headers, and text or base64 body.',
       permission: 'READ',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: webFetchCapabilitySchema,
-      handler: async (input, signal) => execute('web_fetch', input, signal),
+      handler: async (input, signal, authorization) => execute('web_fetch', input, signal, authorization),
     }),
     defineTool({
       name: 'audio',
-      description: 'Record the microphone to a WAV file or play a local audio file through MCI. Recording requires the host-selected Active Project workspaceId, explicit confirmation, and a Recovery Trash backup before an existing output is replaced. record is synchronous and limited to 600 seconds. Use stop to abort an ongoing record/play.',
+      description: 'Record the microphone to a WAV file or play a local audio file through MCI. In standard mode recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. record is synchronous and limited to 600 seconds. Use stop to abort an ongoing record/play.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: audioCapabilitySchema,
-      handler: async (input, signal) => execute('audio', input, signal),
+      handler: async (input, signal, authorization) => execute('audio', input, signal, authorization),
     }),
     defineTool({
       name: 'screen_record',
-      description: 'Record the screen to an MP4 using ffmpeg gdigrab (requires ffmpeg on PATH). Starting a recording requires the host-selected Active Project workspaceId, explicit confirmation, and a Recovery Trash backup before an existing output is replaced. start spawns a background capture, status checks it, stop finalizes the file. Recording stops automatically after 3600 seconds.',
+      description: 'Record the screen to an MP4 using ffmpeg gdigrab (requires ffmpeg on PATH). In standard mode starting a recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. start spawns a background capture, status checks it, stop finalizes the file. Recording stops automatically after 3600 seconds.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: screenRecordCapabilitySchema,
-      handler: async (input, signal) => execute('screen_record', input, signal),
+      handler: async (input, signal, authorization) => execute('screen_record', input, signal, authorization),
     }),
     defineTool({
       name: 'office',
-      description: 'Automate Excel, Word, PowerPoint, or Outlook through COM. Every write, replace, merge, or save_as action requires an Active Project workspaceId, explicit chat confirmation, userConfirmed: true, and a Recovery Trash backup before an existing target is replaced. Requires Microsoft Office installed.',
+      description: 'Automate Excel, Word, PowerPoint, or Outlook through COM. In standard mode every write, replace, merge, or save_as action requires an Active Project workspaceId, explicit chat confirmation, and host approval. Trusted Full Bypass skips lnwjud approval/scope checks without forging userConfirmed. Existing in-workspace targets use Recovery Trash before replacement when available. Requires Microsoft Office installed.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: officeCapabilitySchema,
-      handler: async (input, signal) => execute('office', input, signal),
+      handler: async (input, signal, authorization) => execute('office', input, signal, authorization),
     }),
     defineTool({
       name: 'scheduler',
-      description: 'Manage local scheduled tasks. Windows uses schtasks.exe; macOS uses the native scheduler when available. list is read-only; create, run, and delete always require explicit chat confirmation and userConfirmed: true.',
+      description: 'Manage local scheduled tasks. Windows uses schtasks.exe; macOS uses the native launchd scheduler. list is read-only; in standard mode create, run, and delete require explicit chat confirmation and host approval. Trusted Full Bypass skips lnwjud approval without forging userConfirmed.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: schedulerCapabilitySchema,
-      handler: async (input, signal) => execute('scheduler', input, signal),
+      handler: async (input, signal, authorization) => execute('scheduler', input, signal, authorization),
     }),
     defineTool({
       name: 'wsl_exec',
-      description: 'Non-blocking WSL2 developer runner. MCP run calls are ALWAYS forced to background and return a task_id immediately; foreground/auto requests are normalized by the server. Follow with status/logs/result; wait uses the user-configurable MCP poll window (5-60 seconds, default 5). After one or two checks still show running, do not keep polling in the same chat turn: preserve task_id and return control so the durable task can continue without risking a ChatGPT turn timeout. It executes one Linux executable with argv, an explicit distribution, and a Windows workspace cwd, and never accepts shell command strings. Full Access runs ordinary WSL commands without confirmation. Destructive/data-loss forms ask unless an exact scoped WSL destructive family is enabled for auto-approval; broad, recursive, outside-project, or unparseable forms remain interactive. Active Project remains the default cwd/ownership context, while an explicitly requested external cwd may be used when the capability policy allows it; the Linux executable itself is not restricted to the Active Project.',
+      description: 'Non-blocking WSL2 developer runner for one Linux executable plus argv; shell command strings are not accepted. Do not use wsl_exec as a source/config/text editor. For any direct text-file change, call edit_file first; use apply_patch for reviewed whole-file or multi-file replacements and write_file for file creation/replacement. Inline Node/Python/PowerShell-style rewrites and sed in-place edits are rejected before native approval so the client can route to guarded file tools. MCP run calls are ALWAYS forced to execution=background, even if a client requests foreground or auto, and return a task_id immediately. Follow with status/logs/result; wait uses the user-configurable MCP poll window (5-60 seconds, default 5). When the user requires babysitting until completion, keep using bounded waits and do not report completion until the terminal result is inspected. Otherwise, if the host turn must yield while a durable task is still running, checkpoint it as trackedTasks {taskId, provider: shell, role: blocking_job, cancelWithGoal: true} and use the active scheduled-continuation handoff instead of abandoning the goal. With Full Bypass OFF, Full Access runs ordinary WSL commands without confirmation while destructive, broad, recursive, outside-project, or unparseable forms retain normal approval/command policy. Trusted Full Bypass skips lnwjud approval, command-policy, Active Project, goalLease, and allowed-root checks, including an explicitly requested external cwd; WSL availability, argv validation, Linux permissions, and process failures still apply.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: wslCapabilitySchema,
-      handler: async (input, signal) => execute('wsl_exec', input, signal),
+      handler: async (input, signal, authorization) => execute('wsl_exec', input, signal, authorization),
     }),
     defineTool({
       name: 'wsl_fs',
@@ -233,7 +253,7 @@ export function capabilityTools(context: McpToolContext): McpToolDefinition[] {
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: wslFilesystemCapabilitySchema,
-      handler: async (input, signal) => execute('wsl_fs', input, signal),
+      handler: async (input, signal, authorization) => execute('wsl_fs', input, signal, authorization),
     }),
   ];
 }
@@ -248,6 +268,7 @@ async function prepareMediaOutputMutation(
   tool: 'audio' | 'screen_record',
   input: unknown,
   signal?: AbortSignal,
+  authorization?: InvocationAuthorization,
 ): Promise<Result<PreparedOfficeMutation>> {
   if (!isRecord(input)) return err(appError('INVALID_INPUT', `${tool} input must be an object`));
   const action = typeof input.action === 'string' ? input.action : '';
@@ -271,7 +292,7 @@ async function prepareMediaOutputMutation(
     sourcePaths: [],
     targetPath: outputPath,
     userConfirmed: input.userConfirmed === true,
-  }, signal);
+  }, signal, authorization);
   if (!prepared.ok) return prepared;
   return ok({
     input: { ...input, workspaceId, output_path: prepared.value.targetPath },
@@ -283,6 +304,7 @@ async function prepareOfficeMutation(
   context: McpToolContext,
   input: unknown,
   signal?: AbortSignal,
+  authorization?: InvocationAuthorization,
 ): Promise<Result<PreparedOfficeMutation>> {
   if (!isRecord(input)) return err(appError('INVALID_INPUT', 'Office input must be an object'));
   const action = typeof input.action === 'string' ? input.action : '';
@@ -320,7 +342,7 @@ async function prepareOfficeMutation(
     sourcePaths,
     targetPath: mutationTarget,
     userConfirmed: input.userConfirmed === true,
-  }, signal);
+  }, signal, authorization);
   if (!prepared.ok) return prepared;
   const normalizedInput: Record<string, unknown> = { ...input, workspaceId };
   if (action === 'write' || action === 'replace') {
