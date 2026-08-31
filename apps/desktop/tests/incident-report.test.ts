@@ -1,10 +1,15 @@
+import { createServer, type AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { LogHub } from '../src/main/log-hub.js';
 import {
   buildIncidentReport, selectRelevantProcesses,
   classifyIncident,
+  collectRelevantListeners,
+  collectRelevantProcessTree,
   exportIncidentReport,
   pairMcpCalls,
+  parsePosixListenerRows,
+  parsePosixProcessRows,
   parseTunnelCorrelations,
   type IncidentEvidence,
 } from '../src/main/incident-report.js';
@@ -493,5 +498,59 @@ describe('incident export workflow', () => {
     });
     expect(result).toMatchObject({ exported: true, cancelled: false, classification: 'healthy_or_inconclusive', capturedAt: expect.any(String) });
     expect(JSON.parse(saved)).toMatchObject({ schemaVersion: 1, classification: 'healthy_or_inconclusive' });
+  });
+});
+
+describe.skipIf(process.platform !== 'darwin')('incident collectors on posix', () => {
+  it('parses ps process rows into the incident process shape', () => {
+    const fixture = [
+      '   PID  PPID COMM',
+      '     1     0 /sbin/launchd',
+      '   482     1 /Applications/lnwjud.app/Contents/MacOS/lnwjud',
+      '   512   482 /Applications/lnwjud.app/Contents/Frameworks/lnwjud Helper (Renderer).app/Contents/MacOS/lnwjud Helper (Renderer)',
+      '  bad-line',
+      '  7000  abc /usr/bin/no-parent',
+    ].join('\n');
+
+    expect(parsePosixProcessRows(fixture)).toEqual([
+      { pid: 1, parentPid: null, executable: '/sbin/launchd' },
+      { pid: 482, parentPid: 1, executable: '/Applications/lnwjud.app/Contents/MacOS/lnwjud' },
+      { pid: 512, parentPid: 482, executable: '/Applications/lnwjud.app/Contents/Frameworks/lnwjud Helper (Renderer).app/Contents/MacOS/lnwjud Helper (Renderer)' },
+    ]);
+  });
+
+  it('parses lsof listening rows into the incident listener shape for the trusted pids only', () => {
+    const fixture = [
+      'COMMAND   PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME',
+      'node    48200 ar677   38u  IPv4  0x1f8a5c2e1a3b      0t0  TCP *:9223 (LISTEN)',
+      'node    48200 ar677   39u  IPv6  0x1f8a5c2e1a3c      0t0  TCP [::1]:9443 (LISTEN)',
+      'ssh     51500 ar677   12u  IPv4  0x1f8a5c2e1a3d      0t0  TCP 127.0.0.1:52101 (LISTEN)',
+      'node    99999 ar677   40u  IPv4  0x1f8a5c2e1a3e      0t0  TCP *:9999 (LISTEN)',
+    ].join('\n');
+
+    expect(parsePosixListenerRows(fixture, [48200, 51500])).toEqual([
+      { pid: 48200, address: '*', port: 9223 },
+      { pid: 48200, address: '::1', port: 9443 },
+      { pid: 51500, address: '127.0.0.1', port: 52101 },
+    ]);
+  });
+
+  it('collects a live process tree containing the calling process via ps', async () => {
+    const entries = await collectRelevantProcessTree([process.pid]);
+    const own = entries.find((entry) => entry.pid === process.pid);
+    expect(own).toBeDefined();
+    expect(own?.executable).toBeTruthy();
+  });
+
+  it('collects a live tcp listener via lsof for a bound port', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const entries = await collectRelevantListeners([process.pid]);
+      expect(entries).toContainEqual(expect.objectContaining({ pid: process.pid, port }));
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

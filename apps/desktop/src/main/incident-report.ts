@@ -191,10 +191,32 @@ export async function collectRelevantProcessTree(pids: readonly number[]): Promi
   if (roots.length === 0) return [];
   // Query only non-sensitive identity/parent/name fields. Descendant expansion
   // happens locally and remains anchored to the verified root PIDs.
+  if (process.platform !== 'win32') {
+    const { stdout } = await execFileAsync('ps', ['-Ao', 'pid,ppid,comm'], { timeout: 3_000, encoding: 'utf8' });
+    return selectRelevantProcesses(parsePosixProcessRows(stdout), roots);
+  }
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress'], { windowsHide: true, timeout: 3_000, encoding: 'utf8' });
   const rows = parseRows(stdout, null).map((row) => ({ pid: number(row.ProcessId), parentPid: nullableNumber(row.ParentProcessId), executable: safe(typeof row.Name === 'string' ? row.Name : 'unknown') }))
     .filter((entry) => entry.pid > 0);
   return selectRelevantProcesses(rows, roots);
+}
+
+/**
+ * Parses `ps -Ao pid,ppid,comm` output into the incident process shape.
+ * Non-numeric rows (the header, garbled lines) are skipped rather than
+ * failing the whole collection.
+ */
+export function parsePosixProcessRows(raw: string): readonly IncidentProcess[] {
+  const rows: IncidentProcess[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^(\d+)\s+(\d+)\s+(.+)$/.exec(line.trim());
+    if (match === null) continue;
+    const pid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    rows.push({ pid, parentPid: Number.isSafeInteger(parentPid) && parentPid > 0 ? parentPid : null, executable: safe(match[3]!) });
+  }
+  return rows;
 }
 export function selectRelevantProcesses(entries: readonly IncidentProcess[], rootPids: readonly number[]): readonly IncidentProcess[] {
   const included = new Set(trustedPids(rootPids));
@@ -209,7 +231,48 @@ export function selectRelevantProcesses(entries: readonly IncidentProcess[], roo
   }
   return entries.filter((entry) => included.has(entry.pid)).slice(0, MAX_ENTRIES);
 }
-export async function collectRelevantListeners(pids: readonly number[]): Promise<readonly IncidentListener[]> { if (pids.length === 0) return []; const clause = pids.map((pid) => `$_.OwningProcess -eq ${pid}`).join(' -or '); const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { ${clause} } | Select-Object OwningProcess,LocalAddress,LocalPort | ConvertTo-Json -Compress`], { windowsHide: true, timeout: 3_000, encoding: 'utf8' }); return parseRows(stdout).map((row) => ({ pid: number(row.OwningProcess), address: safe(typeof row.LocalAddress === 'string' ? row.LocalAddress : 'unknown'), port: number(row.LocalPort) })); }
+export async function collectRelevantListeners(pids: readonly number[]): Promise<readonly IncidentListener[]> {
+  if (pids.length === 0) return [];
+  if (process.platform !== 'win32') {
+    let stdout = '';
+    try {
+      stdout = (await execFileAsync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'], { timeout: 3_000, encoding: 'utf8' })).stdout;
+    } catch (error: unknown) {
+      // lsof exits 1 when nothing matches the selection — that is "no
+      // listeners", not a collection failure (mirrors the pgrep rule).
+      const exitCode = error instanceof Error && 'code' in error ? String((error as { code?: unknown }).code) : undefined;
+      if (exitCode !== '1') throw error;
+    }
+    return parsePosixListenerRows(stdout, pids);
+  }
+  const clause = pids.map((pid) => `$_.OwningProcess -eq ${pid}`).join(' -or ');
+  const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { ${clause} } | Select-Object OwningProcess,LocalAddress,LocalPort | ConvertTo-Json -Compress`], { windowsHide: true, timeout: 3_000, encoding: 'utf8' });
+  return parseRows(stdout).map((row) => ({ pid: number(row.OwningProcess), address: safe(typeof row.LocalAddress === 'string' ? row.LocalAddress : 'unknown'), port: number(row.LocalPort) }));
+}
+
+/**
+ * Parses `lsof -nP -iTCP -sTCP:LISTEN` output into the incident listener
+ * shape, keeping only rows owned by one of the trusted pids.
+ */
+export function parsePosixListenerRows(raw: string, allowedPids: readonly number[]): readonly IncidentListener[] {
+  const allowed = new Set(allowedPids);
+  const listeners: IncidentListener[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const tokens = line.trim().split(/\s+/);
+    // Row shape: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME (STATE)
+    if (tokens.length < 9 || tokens[tokens.length - 1] !== '(LISTEN)') continue;
+    const pid = Number(tokens[1]);
+    if (!Number.isSafeInteger(pid) || !allowed.has(pid)) continue;
+    const name = tokens[tokens.length - 2] ?? '';
+    const separator = name.lastIndexOf(':');
+    const port = separator <= 0 ? Number.NaN : Number(name.slice(separator + 1));
+    if (!Number.isInteger(port) || port <= 0) continue;
+    const address = name.slice(0, separator).replace(/^\[/, '').replace(/\]$/, '');
+    listeners.push({ pid, address: safe(address), port });
+  }
+  return listeners;
+}
+
 async function collectProcesses(collector: IncidentEvidence['collectProcessTree'], pids: readonly number[], noPidReason: string): Promise<IncidentReport['processTree']> {
   if (pids.length === 0) return { available: false, entries: [], error: safe(noPidReason) };
   if (collector === undefined) return { available: false, entries: [], error: 'collector_unavailable' };
