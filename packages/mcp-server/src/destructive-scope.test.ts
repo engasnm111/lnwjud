@@ -4,6 +4,7 @@ import { isScopedAutoApprovalAllowed } from './destructive-scope.js';
 import { inspectMutationOperation } from './mutation-policy.js';
 
 const scope = { workspaceId: 'workspace-1', rootPath: 'E:\\project' };
+const posixScope = { workspaceId: 'workspace-posix', rootPath: '/Users/test/project' };
 
 function policy(enabled: readonly DestructiveApprovalKey[], protectCriticalFiles = true): DestructiveAutoApprovalPolicy {
   return {
@@ -15,6 +16,10 @@ function policy(enabled: readonly DestructiveApprovalKey[], protectCriticalFiles
 
 function allowed(toolName: string, input: Record<string, unknown>, activePolicy: DestructiveAutoApprovalPolicy): boolean {
   return isScopedAutoApprovalAllowed(toolName, input, inspectMutationOperation(toolName, input, 'DANGEROUS'), activePolicy, scope);
+}
+
+function allowedIn(activeScope: typeof scope, toolName: string, input: Record<string, unknown>, activePolicy: DestructiveAutoApprovalPolicy): boolean {
+  return isScopedAutoApprovalAllowed(toolName, input, inspectMutationOperation(toolName, input, 'DANGEROUS'), activePolicy, activeScope);
 }
 
 describe('scoped destructive auto approval', () => {
@@ -62,5 +67,31 @@ describe('scoped destructive auto approval', () => {
     const current = policy(['delete_file', 'shell_rm_unlink']);
     const decision = inspectMutationOperation('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, 'DANGEROUS');
     expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, decision, current, { workspaceId: 'drive', rootPath: 'E:\\' })).toBe(false);
+  });
+
+  it('resolves POSIX-style workspace roots with the posix path API on POSIX hosts', () => {
+    if (process.platform === 'win32') return;
+    const current = policy(['delete_file', 'shell_rm_unlink']);
+    // Relative targets prove posix containment.
+    expect(allowedIn(posixScope, 'delete_file', { workspaceId: 'workspace-posix', path: 'src/old.txt' }, current)).toBe(true);
+    // Host-native `/`-absolute targets are the native absolute form on POSIX
+    // hosts and must stay provable (pre-regression they failed closed).
+    expect(allowedIn(posixScope, 'delete_file', { workspaceId: 'workspace-posix', path: '/Users/test/project/src/old.txt' }, current)).toBe(true);
+    expect(allowedIn(posixScope, 'shell', { workspaceId: 'workspace-posix', operation: 'run', executable: 'rm', arguments: ['/Users/test/project/src/old.tmp'] }, current)).toBe(true);
+    // An absolute POSIX cwd inside the root resolves through the posix API.
+    expect(allowedIn(posixScope, 'shell', { workspaceId: 'workspace-posix', operation: 'run', executable: 'rm', arguments: ['old.tmp'], cwd: '/Users/test/project/src' }, current)).toBe(true);
+    // Containment still fails closed for escapes and foreign absolute targets.
+    expect(allowedIn(posixScope, 'delete_file', { workspaceId: 'workspace-posix', path: '/etc/passwd' }, current)).toBe(false);
+    expect(allowedIn(posixScope, 'delete_file', { workspaceId: 'workspace-posix', path: '../outside.txt' }, current)).toBe(false);
+  });
+
+  it('keeps win32 semantics for Windows-style roots and over-broad POSIX scopes', () => {
+    const current = policy(['delete_file']);
+    // A leading `/` target stays a foreign POSIX-absolute form for a
+    // Windows-style root and is rejected as over-broad scope.
+    expect(allowed('delete_file', { workspaceId: 'workspace-1', path: '/Users/test/project/src/old.txt' }, current)).toBe(false);
+    // A POSIX machine root is over-broad, matching the drive-root guard intent.
+    const decision = inspectMutationOperation('delete_file', { path: 'temp.txt' }, 'DANGEROUS');
+    expect(isScopedAutoApprovalAllowed('delete_file', { path: 'temp.txt' }, decision, current, { workspaceId: 'root', rootPath: '/' })).toBe(false);
   });
 });

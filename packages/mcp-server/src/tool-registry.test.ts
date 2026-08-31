@@ -592,6 +592,45 @@ describe('MCP tool registry', () => {
     expect(capabilityCalls[1]).toMatchObject({ tool: 'wsl_exec', input: { cwd: 'E:\\project-a', metadata: { 'lnwjud.activeWorkspaceRoot.v1': 'E:\\project-a' } } });
   });
 
+  it('routes backslash-style workspace roots through the win32 API when binding command cwd', async () => {
+    const capabilityCalls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const registry = new ToolRegistry({
+      capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> { capabilityCalls.push({ tool, input: input as Record<string, unknown> }); return ok({ accepted: true }); } },
+      process: {
+        async start(_actor: unknown, _workspaceId: string, request: { executable: string; args: readonly string[]; cwd?: string }): Promise<ReturnType<typeof ok>> {
+          capabilityCalls.push({ tool: 'process_start', input: request as unknown as Record<string, unknown> });
+          return ok({ processId: 'process-1', executable: request.executable, args: [...request.args], ...(request.cwd === undefined ? {} : { cwd: request.cwd }), state: 'running', startedAt: new Date(0).toISOString() });
+        },
+      } as unknown as McpApplicationServices['process'],
+    }, actor, {
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' }),
+      hostMutationApprovalProvider: approveMutation,
+    });
+    await registry.invoke('shell', { workspaceId: 'workspace-a', operation: 'run', executable: 'node.exe', arguments: ['script.js'], cwd: 'src', userConfirmed: true });
+    await registry.invoke('process_start', { workspaceId: 'workspace-a', executable: 'node.exe', args: ['server.js'], cwd: 'packages\\app', userConfirmed: true });
+    expect(capabilityCalls[0]).toMatchObject({ tool: 'shell', input: { cwd: 'E:\\project-a\\src', metadata: { 'lnwjud.activeWorkspaceRoot.v1': 'E:\\project-a' } } });
+    expect(capabilityCalls[1]).toMatchObject({ tool: 'process_start', input: { cwd: 'E:\\project-a\\packages\\app' } });
+  });
+
+  it('binds POSIX-style workspace roots with posix path semantics when anchoring command cwd', async () => {
+    if (process.platform === 'win32') return;
+    const capabilityCalls: Array<{ tool: string; input: Record<string, unknown> }> = [];
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> { capabilityCalls.push({ tool, input: input as Record<string, unknown> }); return ok({ accepted: true }); } } }, actor, {
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-posix', rootPath: '/Users/test/project' }),
+      hostMutationApprovalProvider: approveMutation,
+    });
+    await registry.invoke('shell', { workspaceId: 'workspace-posix', operation: 'run', executable: 'node', arguments: ['script.js'], cwd: 'src', userConfirmed: true });
+    await registry.invoke('wsl_exec', { workspaceId: 'workspace-posix', operation: 'run', executable: 'node', arguments: ['script.js'], cwd: 'packages/app', userConfirmed: true });
+    expect(capabilityCalls).toHaveLength(2);
+    // A win32 misclassification would hand backslash-joined, drive-assumed
+    // cwd/metadata values to the capability tools (pre-regression behavior).
+    expect(capabilityCalls[0]).toMatchObject({ tool: 'shell', input: { cwd: '/Users/test/project/src', metadata: { 'lnwjud.activeWorkspaceRoot.v1': '/Users/test/project' } } });
+    expect(capabilityCalls[1]).toMatchObject({ tool: 'wsl_exec', input: { cwd: '/Users/test/project/packages/app', metadata: { 'lnwjud.activeWorkspaceRoot.v1': '/Users/test/project' } } });
+    for (const call of capabilityCalls) {
+      expect(JSON.stringify(call.input)).not.toContain('\\');
+    }
+  });
+
   it('lets a host-native exact-action approval veto risky execution while scoped recoverable auto-delete stays non-interactive', async () => {
     let hostApproved = false;
     let capabilityExecutions = 0;
