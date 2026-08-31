@@ -15,6 +15,23 @@ export type ActiveProjectScope = WorkspaceScope;
  * proven to stay inside the host Active Project. Broad patterns, workspace roots,
  * recursive command forms, critical paths, and unparseable targets fail closed.
  */
+/**
+ * Windows-style vs POSIX-style path classification. `path.win32.isAbsolute`
+ * also returns true for POSIX-style `/root` paths (current-drive-relative),
+ * which mangles POSIX workspace roots on macOS. Drive letters and UNC paths
+ * are unambiguously Windows-style; a leading `/` is POSIX-style on POSIX
+ * hosts while Windows-platform behavior stays unchanged.
+ */
+function isWindowsStylePathValue(value: string): boolean {
+  if (/^[A-Za-z]:/.test(value) || value.startsWith('\\\\')) return true;
+  if (value.startsWith('/') && process.platform !== 'win32') return false;
+  return path.win32.isAbsolute(value);
+}
+
+function pathApiFor(value: string): typeof path.win32 | typeof path.posix {
+  return isWindowsStylePathValue(value) ? path.win32 : path.posix;
+}
+
 export function isScopedAutoApprovalAllowed(
   toolName: string,
   input: unknown,
@@ -29,7 +46,7 @@ export function isScopedAutoApprovalAllowed(
     || policy.protectCriticalFiles !== true
     || scope === null) return false;
 
-  const root = path.win32.resolve(scope.rootPath);
+  const root = pathApiFor(scope.rootPath).resolve(scope.rootPath);
   if (isDriveRoot(root)) return false;
   const value = asRecord(input);
   if (value === null) return false;
@@ -85,7 +102,8 @@ export function isScopedAutoApprovalAllowed(
 function scopedCwd(root: string, input: unknown): string | null {
   if (input === undefined) return root;
   if (typeof input !== 'string' || input.trim().length === 0) return null;
-  const cwd = path.win32.isAbsolute(input) ? path.win32.resolve(input) : path.win32.resolve(root, input);
+  const api = pathApiFor(root);
+  const cwd = api.isAbsolute(input) ? api.resolve(input) : api.resolve(root, input);
   return isWithin(root, cwd) ? cwd : null;
 }
 
@@ -117,7 +135,11 @@ function hasOption(args: readonly string[], options: readonly string[]): boolean
 }
 
 function safeTarget(root: string, cwd: string, target: string, policy: DestructiveAutoApprovalPolicy): boolean {
-  if (target.length === 0 || target.startsWith('/') || hasPatternMagic(target)) return false;
+  if (target.length === 0 || hasPatternMagic(target)) return false;
+  // A leading `/` is a foreign POSIX-absolute form only when the workspace
+  // root itself is Windows-style; on POSIX hosts it is the native absolute
+  // form and stays provable through containment below.
+  if (target.startsWith('/') && pathApiFor(root) === path.win32) return false;
   const relative = relativeProjectPath(root, cwd, target);
   return relative !== null
     && relative.length > 0
@@ -130,20 +152,23 @@ function hasPatternMagic(value: string): boolean {
 
 function relativeProjectPath(root: string, cwd: string, target: string): string | null {
   if (target.includes('\0')) return null;
-  const candidate = path.win32.isAbsolute(target) ? path.win32.resolve(target) : path.win32.resolve(cwd, target);
+  const api = pathApiFor(root);
+  const candidate = api.isAbsolute(target) ? api.resolve(target) : api.resolve(cwd, target);
   if (!isWithin(root, candidate)) return null;
-  return path.win32.relative(root, candidate).replaceAll('\\', '/');
+  return api.relative(root, candidate).replaceAll('\\', '/');
 }
 
 function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(path.win32.resolve(root), path.win32.resolve(candidate));
+  const api = pathApiFor(root);
+  const relative = api.relative(api.resolve(root), api.resolve(candidate));
   if (relative === '') return true;
-  if (path.win32.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.win32.sep);
+  if (api.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(api.sep);
   return firstSegment !== '..';
 }
 
 function isDriveRoot(value: string): boolean {
+  if (pathApiFor(value) === path.posix) return path.resolve(value) === '/';
   return /^[A-Za-z]:\\$/.test(path.win32.resolve(value));
 }
 
