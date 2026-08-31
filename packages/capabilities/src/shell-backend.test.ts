@@ -382,6 +382,45 @@ describe('ShellCapabilityBackend', () => {
     await expect(Promise.race([cancelling.then(() => 'settled'), delayForTest(30).then(() => 'pending')])).resolves.toBe('pending');
   });
 
+  it('bounds the abort-driven cancellation retry when an unverified child exits without settling completion', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    temporaryRoots.push(root);
+    let attempts = 0;
+    const backend = new ShellCapabilityBackend({
+      allowedRoots: [root],
+      terminator: {
+        async stop(child): Promise<void> {
+          attempts += 1;
+          if (attempts === 1) {
+            // The root dies during the first failed attempt, so the retry loop
+            // observes a dead child whose completion never settles (the close
+            // handler leaves unverified terminations unresolved by design).
+            const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+            child.kill();
+            await closed;
+            throw new Error('termination not verified');
+          }
+        },
+      },
+    });
+    const controller = new AbortController();
+    const running = backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', 'setTimeout(() => {}, 2000)'],
+      cwd: root,
+      execution: 'foreground',
+      userConfirmed: true,
+      timeout_seconds: 5,
+    }, controller.signal);
+    setTimeout(() => controller.abort(), 50);
+
+    const outcome = await Promise.race([running.then(() => 'settled'), delayForTest(8_000).then(() => 'pending')]);
+    expect(outcome).toBe('settled');
+    await expect(running).resolves.toMatchObject({ ok: true, value: { state: 'cancelled' } });
+    expect(attempts).toBe(2);
+  });
+
   it('allows a termination-unverified task to be safely re-verified', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);

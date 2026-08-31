@@ -117,6 +117,12 @@ export class BrowserCdpBackend implements CapabilityBackend {
     const selector = readString(parameters, 'selector');
     const expression = readString(parameters, 'expression');
     if (selector === undefined && expression === undefined) return err(appError('INVALID_INPUT', 'Wait requires a selector or expression'));
+    // A raw wait expression runs arbitrary JavaScript with awaitPromise in the
+    // page, exactly like the evaluate action, so it must not ride the read-only
+    // fast path; selector-based waits stay confirmation-free.
+    if (selector === undefined && request.userConfirmed !== true) {
+      return err(appError('PERMISSION_REQUIRED', 'Waiting on a JavaScript expression requires explicit user confirmation; wait on a selector instead for a read-only check'));
+    }
     const deadline = Date.now() + Math.min(request.timeoutSeconds, MAX_TIMEOUT_SECONDS) * 1000;
     while (Date.now() <= deadline) {
       const aborted = cancellationResult(signal);

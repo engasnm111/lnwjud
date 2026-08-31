@@ -13,7 +13,11 @@ import { chromium, expect, test, type Page } from '@playwright/test';
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronExecutable = process.platform === 'win32'
+  ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
+  : process.platform === 'darwin'
+    ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+    : path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron');
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('desktop serves the real MCP client development workflow', async () => {

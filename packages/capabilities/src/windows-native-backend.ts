@@ -98,17 +98,11 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
   }
 
   private async canonicalAllowedRoots(input: Record<string, unknown>): Promise<readonly string[]> {
-    const activeWorkspaceRoot = readCapabilityActiveWorkspaceRoot(input);
+    if (this.options.allowedRootsProvider === undefined) return [];
     let configured: readonly string[];
-    if (activeWorkspaceRoot !== undefined) {
-      configured = [activeWorkspaceRoot];
-    } else if (this.options.allowedRootsProvider !== undefined) {
-      try {
-        configured = await this.options.allowedRootsProvider();
-      } catch {
-        return [];
-      }
-    } else {
+    try {
+      configured = await this.options.allowedRootsProvider();
+    } catch {
       return [];
     }
 
@@ -121,7 +115,19 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
         continue;
       }
     }
-    return roots;
+    if (roots.length === 0) return [];
+    const activeWorkspaceRoot = readCapabilityActiveWorkspaceRoot(input);
+    if (activeWorkspaceRoot === undefined) return roots;
+    // The Active Project root arrives in client-suppliable metadata, so it may
+    // only narrow the configured roots, never widen them (mirrors resolveCwd in
+    // shell-backend). An untrusted root fails closed to "no roots available".
+    try {
+      const canonicalActive = await realpath(path.resolve(activeWorkspaceRoot));
+      if ((await stat(canonicalActive)).isDirectory() && roots.some((root) => isWithin(root, canonicalActive))) return [canonicalActive];
+    } catch {
+      // fall through
+    }
+    return [];
   }
 }
 

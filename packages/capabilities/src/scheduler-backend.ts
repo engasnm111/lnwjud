@@ -18,12 +18,15 @@ export interface SchedulerBackendOptions {
   readonly platform?: NodeJS.Platform;
   readonly executable?: string;
   readonly runImpl?: (executable: string, args: readonly string[], signal?: AbortSignal) => Promise<SchedulerRunResult>;
+  /** Overrides the macOS LaunchAgents directory so darwin paths stay hermetically testable. */
+  readonly launchAgentsDirectory?: () => string;
 }
 
 export class SchedulerCapabilityBackend implements CapabilityBackend {
   private readonly platform: NodeJS.Platform;
   private readonly executable: string;
   private readonly runImpl: (executable: string, args: readonly string[], signal?: AbortSignal) => Promise<SchedulerRunResult>;
+  private readonly launchAgentsDirectory: () => string;
 
   public constructor(options: SchedulerBackendOptions = {}) {
     this.platform = options.platform ?? process.platform;
@@ -32,6 +35,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
       const result = await execFileAsync(executable, [...args], { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, ...(signal === undefined ? {} : { signal }) });
       return { stdout: typeof result.stdout === 'string' ? result.stdout : '', stderr: typeof result.stderr === 'string' ? result.stderr : '' };
     });
+    this.launchAgentsDirectory = options.launchAgentsDirectory ?? ((): string => path.join(os.homedir(), 'Library', 'LaunchAgents'));
   }
 
   public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
@@ -136,7 +140,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
   }
 
   private async listMacTasks(): Promise<readonly Record<string, unknown>[]> {
-    const directory = macLaunchAgentsDirectory();
+    const directory = this.launchAgentsDirectory();
     await mkdir(directory, { recursive: true });
     const files = (await readdir(directory)).filter((name) => name.startsWith('com.lnwjud.task.') && name.endsWith('.plist'));
     const tasks: Record<string, unknown>[] = [];
@@ -159,7 +163,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
     const [hourText, minuteText] = startTime.split(':');
     const hour = Number(hourText);
     const minute = Number(minuteText);
-    const directory = macLaunchAgentsDirectory();
+    const directory = this.launchAgentsDirectory();
     await mkdir(directory, { recursive: true });
     const label = macTaskLabel(taskName);
     const plistPath = path.join(directory, `${label}.plist`);
@@ -172,7 +176,7 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
     const plist = buildLaunchAgentPlist(label, taskName, command, args, hour, minute);
     await writeFile(plistPath, plist, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     try {
-      await runLaunchctl(['bootstrap', `gui/${process.getuid?.() ?? 0}`, plistPath], signal);
+      await this.runLaunchctl(['bootstrap', `gui/${process.getuid?.() ?? 0}`, plistPath], signal);
     } catch (error) {
       await unlink(plistPath).catch(() => undefined);
       throw error;
@@ -182,17 +186,33 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
 
   private async deleteMacTask(taskName: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const label = macTaskLabel(taskName);
-    const plistPath = path.join(macLaunchAgentsDirectory(), `${label}.plist`);
-    await runLaunchctl(['bootout', `gui/${process.getuid?.() ?? 0}`, plistPath], signal).catch(() => undefined);
+    const plistPath = path.join(this.launchAgentsDirectory(), `${label}.plist`);
+    const domain = `gui/${process.getuid?.() ?? 0}`;
+    try {
+      await this.runLaunchctl(['bootout', domain, plistPath], signal);
+    } catch (error: unknown) {
+      // bootout also fails for jobs that were never loaded; only treat the
+      // failure as expected when the label is genuinely absent from the domain.
+      // Otherwise the LaunchAgent stays loaded and would keep firing after we
+      // report deletion — surface that instead of claiming success.
+      if (error instanceof Error && error.name === 'AbortError') throw error;
+      const stillLoaded = await this.runLaunchctl(['print', `${domain}/${label}`], signal).then(() => true, (probeError: unknown) => {
+        // An aborted probe proves nothing about the domain state: rethrow so the
+        // caller reports an uncertain outcome instead of "deleted".
+        if (probeError instanceof Error && probeError.name === 'AbortError') throw probeError;
+        return false;
+      });
+      if (stillLoaded) throw new Error(`Scheduled task could not be unloaded from launchd: ${label}`);
+    }
     await unlink(plistPath);
     return { deleted: true, task_name: taskName, backend: 'launchd' };
   }
 
   private async runMacTask(taskName: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const label = macTaskLabel(taskName);
-    const plistPath = path.join(macLaunchAgentsDirectory(), `${label}.plist`);
+    const plistPath = path.join(this.launchAgentsDirectory(), `${label}.plist`);
     await access(plistPath);
-    await runLaunchctl(['kickstart', '-k', `gui/${process.getuid?.() ?? 0}/${label}`], signal);
+    await this.runLaunchctl(['kickstart', '-k', `gui/${process.getuid?.() ?? 0}/${label}`], signal);
     return { started: true, task_name: taskName, backend: 'launchd' };
   }
 
@@ -201,10 +221,10 @@ export class SchedulerCapabilityBackend implements CapabilityBackend {
       ? this.runImpl(this.executable, args)
       : this.runImpl(this.executable, args, signal);
   }
-}
 
-function macLaunchAgentsDirectory(): string {
-  return path.join(os.homedir(), 'Library', 'LaunchAgents');
+  private async runLaunchctl(args: readonly string[], signal?: AbortSignal): Promise<void> {
+    await this.runImpl('/bin/launchctl', args, signal);
+  }
 }
 
 function macTaskLabel(taskName: string): string {
@@ -215,14 +235,6 @@ function macTaskLabel(taskName: string): string {
 function buildLaunchAgentPlist(label: string, taskName: string, command: string, args: readonly string[], hour: number, minute: number): string {
   const programArguments = [command, ...args].map((value) => `      <string>${escapeXml(value)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>${escapeXml(label)}</string>\n  <key>LnwjudTaskName</key>\n  <string>${escapeXml(taskName)}</string>\n  <key>ProgramArguments</key>\n  <array>\n${programArguments}\n  </array>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>${hour}</integer>\n    <key>Minute</key>\n    <integer>${minute}</integer>\n  </dict>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n`;
-}
-
-async function runLaunchctl(args: readonly string[], signal?: AbortSignal): Promise<void> {
-  await execFileAsync('/bin/launchctl', [...args], {
-    encoding: 'utf8',
-    maxBuffer: 1024 * 1024,
-    ...(signal === undefined ? {} : { signal }),
-  });
 }
 
 function escapeXml(value: string): string {

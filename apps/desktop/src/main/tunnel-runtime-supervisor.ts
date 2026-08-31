@@ -21,6 +21,7 @@ export class TunnelRuntimeSupervisor {
   private disposed = false;
   private reconcileInFlight: Promise<TunnelReconcileResult | null> | null = null;
   private nextReconnectAt: string | null = null;
+  private consecutiveThrownFailures = 0;
 
   public constructor(private readonly options: TunnelRuntimeSupervisorOptions) {}
 
@@ -28,7 +29,7 @@ export class TunnelRuntimeSupervisor {
     this.disposed = false;
     this.running = true;
     this.clearTimer();
-    return this.runOnce();
+    return this.runOnce(true);
   }
 
   /**
@@ -40,7 +41,7 @@ export class TunnelRuntimeSupervisor {
     if (this.disposed) return null;
     this.running = true;
     this.clearTimer();
-    return this.runOnce();
+    return this.runOnce(true);
   }
 
   public async stopRuntime(): Promise<TunnelReconcileResult | null> {
@@ -67,15 +68,36 @@ export class TunnelRuntimeSupervisor {
     return snapshot === null ? null : { ...snapshot, nextReconnectAt: this.nextReconnectAt };
   }
 
-  private runOnce(): Promise<TunnelReconcileResult | null> {
+  private runOnce(explicit = false): Promise<TunnelReconcileResult | null> {
     if (!this.running || this.disposed || !this.options.enabled()) return Promise.resolve(null);
     if (this.reconcileInFlight !== null) return this.reconcileInFlight;
-    const operation = this.options.reconciler.reconcile()
+    // The async wrapper contains a synchronously throwing reconcile() the same
+    // way it contains an async rejection, so the timer path can never raise an
+    // uncaught exception.
+    const operation = (async (): Promise<TunnelReconcileResult> => this.options.reconciler.reconcile())()
       .then((result) => {
+        this.consecutiveThrownFailures = 0;
         if (!this.running || this.disposed) return result;
         this.scheduleFrom(result);
         this.publish(result.snapshot);
         return result;
+      })
+      .catch((error: unknown) => {
+        // A reconcile rejection (for example a transient desired-state failure)
+        // must neither surface as an unhandled rejection from the timer path
+        // nor silently kill supervision: escalate the retry backoff across
+        // consecutive thrown failures exactly like retry-required results do.
+        // Explicit start()/kick() callers still get their first failure
+        // rethrown — swallowing it would report "no native runtime" for what
+        // is really a broken reconcile.
+        if (this.running && !this.disposed && this.options.enabled()) {
+          this.consecutiveThrownFailures += 1;
+          const base = TRANSIENT_BACKOFF_MS[Math.min(this.consecutiveThrownFailures - 1, TRANSIENT_BACKOFF_MS.length - 1)]!;
+          const jittered = this.options.jitter?.(base) ?? defaultJitter(base);
+          this.schedule(Math.max(250, Math.round(jittered)), true);
+        }
+        if (explicit) throw error;
+        return null;
       })
       .finally(() => {
         if (this.reconcileInFlight === operation) this.reconcileInFlight = null;

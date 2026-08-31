@@ -126,6 +126,9 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
 
   private findChromeExecutable(): string | undefined {
     if (this.chromeExecutable !== undefined && this.chromeExecutable.trim().length > 0) return this.chromeExecutable;
+    if (process.platform === 'darwin') {
+      return darwinChromeCandidates(os.homedir()).find((candidate) => existsSync(candidate));
+    }
     if (process.platform !== 'win32') return undefined;
     const localAppData = process.env.LOCALAPPDATA;
     const programFiles = process.env.ProgramFiles;
@@ -142,13 +145,25 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
   }
 }
 
+/** macOS browser bundle locations searched for a CDP-capable Chromium engine;
+ * system-wide installs are preferred over the user's own ~/Applications. */
+export function darwinChromeCandidates(homedir: string): readonly string[] {
+  return [
+    path.join('/Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+    path.join('/Applications', 'Microsoft Edge.app', 'Contents', 'MacOS', 'Microsoft Edge'),
+    path.join('/Applications', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+    path.join('/Applications', 'Brave Browser.app', 'Contents', 'MacOS', 'Brave Browser'),
+    path.join(homedir, 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+  ];
+}
+
 function toTab(value: unknown): BrowserCdpTab | undefined {
   if (!isRecord(value)) return undefined;
   if (typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.url !== 'string' || typeof value.webSocketDebuggerUrl !== 'string') return undefined;
   return { id: value.id, title: value.title, url: value.url, webSocketDebuggerUrl: value.webSocketDebuggerUrl };
 }
 
-function validateWebSocketUrl(value: string, port: number): string {
+export function validateWebSocketUrl(value: string, port: number): string {
   const url = new URL(value);
   if (url.protocol !== 'ws:' || (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') || (url.port !== '' && Number(url.port) !== port)) throw new Error('Chrome CDP socket is not local');
   return url.toString();

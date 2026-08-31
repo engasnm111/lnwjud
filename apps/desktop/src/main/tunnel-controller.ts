@@ -507,7 +507,10 @@ export class TunnelController {
         if (beforeEscalation.state === 'unverifiable') throw new Error(`Tunnel child liveness is unverifiable (${beforeEscalation.reason}); ownership retained`);
         if (beforeEscalation.processStartedAt !== this.ownedChildStartedAt) throw new Error('Tunnel child process identity changed; targeted escalation refused and ownership retained');
 
-        const descendants = await (this.options.inspectOwnedProcessTree?.(pid as number) ?? inspectWindowsProcessTreeIdentities(pid as number));
+        // On POSIX the escalation only signals the tunnel-client root itself (see
+        // terminatePosixProcessTree), so descendant enumeration stays Windows-only.
+        const descendants = await (this.options.inspectOwnedProcessTree?.(pid as number)
+          ?? (process.platform === 'win32' ? inspectWindowsProcessTreeIdentities(pid as number) : Promise.resolve([])));
         const expectedTree = normalizeOwnedProcessTree([
           { pid: pid as number, processStartedAt: this.ownedChildStartedAt },
           ...descendants,

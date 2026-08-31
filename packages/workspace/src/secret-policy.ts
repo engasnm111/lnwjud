@@ -1,6 +1,6 @@
 import { err, ok, type Result } from '@lnwjud/domain';
 
-const PRIVATE_KEY_PREFIXES = ['id_rsa', 'id_ed25519'];
+const PRIVATE_KEY_PREFIXES = ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk'];
 
 export class SecretPolicy {
   public assertReadable(relativePath: string): Result<void> {
@@ -13,9 +13,13 @@ export class SecretPolicy {
     const isDenied = isEnvironmentSecret
       || basename.endsWith('.pem')
       || basename.endsWith('.key')
+      || basename.endsWith('.p12')
+      || basename.endsWith('.pfx')
+      || basename.endsWith('.kdbx')
       || isPrivateKey
       || lowerPath.includes('.ssh')
       || lowerPath.includes('.aws')
+      || lowerPath.includes('.gnupg')
       || basename === 'credentials.json';
 
     if (isDenied) {

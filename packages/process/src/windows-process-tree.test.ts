@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -64,6 +64,64 @@ describe('WindowsProcessTree', () => {
     await expect(tree.stop(child, 4_242)).rejects.toThrow('root exited before tree termination could be verified');
     expect(taskkillCalls).toBe(1);
   });
+
+  it('escalates to SIGKILL only after SIGTERM fails to verify the exit', async () => {
+    const signals: string[] = [];
+    const child = fakeChild();
+    (child as unknown as { kill: (signal?: string) => boolean }).kill = (signal?: string): boolean => {
+      signals.push(signal ?? 'SIGTERM');
+      return true;
+    };
+    let waitCalls = 0;
+    const tree = new WindowsProcessTree({
+      platform: 'linux',
+      waitForExit: async (): Promise<void> => {
+        waitCalls += 1;
+        if (waitCalls === 1) throw new Error('Process tree exit could not be verified');
+      },
+    });
+
+    await expect(tree.stop(child, 4_242)).resolves.toBeUndefined();
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(waitCalls).toBe(2);
+  });
+
+  it('gives a SIGTERM-handling child enough grace to flush before any escalation', async () => {
+    if (process.platform === 'win32') return;
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-process-grace-'));
+    const marker = path.join(root, 'graceful.txt');
+    const ready = path.join(root, 'ready.txt');
+    const child = spawn(process.execPath, ['-e', [
+      `const marker = ${JSON.stringify(marker)};`,
+      `const ready = ${JSON.stringify(ready)};`,
+      'process.on("SIGTERM", () => {',
+      '  setTimeout(() => { require("node:fs").writeFileSync(marker, "graceful"); process.exit(0); }, 3000);',
+      '});',
+      'require("node:fs").writeFileSync(ready, "1");',
+      'setInterval(() => {}, 100);',
+    ].join('\n')], { windowsHide: true, stdio: 'ignore' });
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    // Wait for the handler to be installed: a SIGTERM racing script evaluation
+    // would hit the default disposition and kill the child before its grace.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (await access(ready).then(() => true, () => false)) break;
+      await new Promise((resolve) => { setTimeout(resolve, 25); });
+    }
+
+    try {
+      if (child.pid === undefined) throw new Error('fixture process has no PID');
+      await new WindowsProcessTree().stop(child, child.pid);
+      expect(child.exitCode).toBe(0);
+      expect(child.signalCode).toBeNull();
+      await expect(readFile(marker, 'utf8')).resolves.toBe('graceful');
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
 
 function fakeChild(): ChildProcess {

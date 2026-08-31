@@ -41,10 +41,12 @@ jobs:
       - name: Run authoritative verification gate
         shell: powershell
         env:
-          # electron-builder uses these only when the real production certificate secrets exist.
-          # Pull requests/forks remain buildable unsigned; public Release has a separate mandatory signature gate.
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          # Signing secrets are exposed only on main pushes. Same-repo pull_request
+          # builds execute the PR head's own code, so they must never see the
+          # certificate; they verify unsigned exactly like fork PRs, and the public
+          # Release pipeline re-runs the mandatory signature gate.
+          CSC_LINK: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.WINDOWS_CSC_LINK) || '' }}
+          CSC_KEY_PASSWORD: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.WINDOWS_CSC_KEY_PASSWORD) || '' }}
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
 
       - name: Upload verified Windows release artifact

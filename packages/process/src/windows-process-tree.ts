@@ -8,6 +8,12 @@ export interface WindowsProcessTreeOptions {
   readonly platform?: NodeJS.Platform;
   readonly taskkill?: (pid: number) => Promise<number | null>;
   readonly waitForExit?: (child: ChildProcess) => Promise<void>;
+  /**
+   * How long a terminated child gets to exit — on POSIX, how long it may take
+   * to honour SIGTERM before the SIGKILL escalation. Default 8 s so children
+   * that flush state on shutdown finish cleanly; inject smaller in tests.
+   */
+  readonly exitTimeoutMs?: number;
 }
 
 export class WindowsProcessTree implements ProcessTreeTerminator {
@@ -19,13 +25,21 @@ export class WindowsProcessTree implements ProcessTreeTerminator {
   public constructor(options: WindowsProcessTreeOptions = {}) {
     this.platform = options.platform ?? process.platform;
     this.taskkill = options.taskkill ?? runTaskkill;
-    this.waitForExit = options.waitForExit ?? waitForChildExit;
+    this.waitForExit = options.waitForExit ?? ((child: ChildProcess): Promise<void> => waitForChildExit(child, options.exitTimeoutMs ?? 8_000));
   }
 
   public async stop(child: ChildProcess, pid: number): Promise<void> {
     if (this.platform !== 'win32') {
-      if (child.exitCode === null) child.kill('SIGTERM');
-      await this.waitForExit(child);
+      if (child.exitCode !== null) return;
+      child.kill('SIGTERM');
+      try {
+        await this.waitForExit(child);
+      } catch {
+        // A child that blocks or ignores SIGTERM must not outlive the request;
+        // escalate to SIGKILL the way taskkill /F does on Windows.
+        child.kill('SIGKILL');
+        await this.waitForExit(child);
+      }
       return;
     }
     if (this.acceptedTreeStops.has(child)) {

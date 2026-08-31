@@ -56,7 +56,7 @@ import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, getRendererEntryPath, getWindowIconPath, isAllowedRendererUrl } from './window.js';
-import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, shouldHideMainWindowOnClose } from './tray.js';
+import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, prepareTrayIcon, shouldHideMainWindowOnClose } from './tray.js';
 import { UpdateInstallCoordinator, type UpdateSharedActivitySnapshot } from './update-install.js';
 import { UpdateCheckScheduler } from './update-check-scheduler.js';
 import {
@@ -1060,7 +1060,7 @@ function createDesktopTray(): void {
     return;
   }
   tray?.destroy();
-  tray = new Tray(nativeImage.createFromPath(iconPath));
+  tray = new Tray(prepareTrayIcon(nativeImage.createFromPath(iconPath), process.platform));
   tray.setToolTip(createTrayToolTip(desktopLocale));
   refreshDesktopTrayMenu();
   tray.on('click', revealMainWindow);

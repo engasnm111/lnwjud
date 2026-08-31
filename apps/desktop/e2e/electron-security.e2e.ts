@@ -8,8 +8,11 @@ import { chromium, expect, test } from '@playwright/test';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronDistPath = path.join(desktopRoot, 'node_modules', 'electron', 'dist');
-const electronExecutable = path.join(electronDistPath, 'electron.exe');
+const electronExecutable = process.platform === 'win32'
+  ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
+  : process.platform === 'darwin'
+    ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+    : path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron');
 
 test('renderer cannot access Node globals', async () => {
   const devToolsPort = await findEphemeralPort();

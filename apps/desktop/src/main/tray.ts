@@ -2,6 +2,33 @@ import type { MenuItemConstructorOptions } from 'electron';
 import type { CloseBehavior, UiLocale, UpdateStatus } from '@lnwjud/ipc-contracts';
 import { nativeMessages } from './native-i18n.js';
 
+/** Minimal surface of Electron.NativeImage used by prepareTrayIcon; keeps the helper stub-testable. */
+export interface TrayIconImage {
+  resize(options: { readonly width?: number; readonly height?: number }): TrayIconImage;
+  toPNG(): Buffer;
+  addRepresentation(options: { readonly scaleFactor: number; readonly width: number; readonly height: number; readonly buffer: Buffer }): void;
+}
+
+const TRAY_ICON_SIZE_PX = 16;
+
+/**
+ * macOS menu bar icons must be small (~16pt with a @2x representation); a
+ * full-size 512px logo would render as an oversized status item. Other
+ * platforms already expect a full-resolution icon and are returned unchanged.
+ */
+export function prepareTrayIcon<T extends TrayIconImage>(image: T, platform: NodeJS.Platform): T {
+  if (platform !== 'darwin') return image;
+  const hidpi = image.resize({ width: TRAY_ICON_SIZE_PX * 2, height: TRAY_ICON_SIZE_PX * 2 });
+  const standard = image.resize({ width: TRAY_ICON_SIZE_PX, height: TRAY_ICON_SIZE_PX });
+  standard.addRepresentation({
+    scaleFactor: 2,
+    width: TRAY_ICON_SIZE_PX * 2,
+    height: TRAY_ICON_SIZE_PX * 2,
+    buffer: hidpi.toPNG(),
+  });
+  return standard as T;
+}
+
 export interface TrayMenuActions {
   readonly locale: UiLocale;
   readonly openMainWindow: () => void;

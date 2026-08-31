@@ -308,6 +308,11 @@ export class DurableShellTaskStore {
   }
 
   private taskDirectory(taskId: string): string {
+    // task_id values arrive from client requests (status/logs/result/cancel);
+    // anything path-shaped must never be joined into the store layout.
+    if (taskId.length === 0 || taskId.length > 128 || taskId.includes('/') || taskId.includes('\\') || taskId.includes('..') || taskId.includes('\0')) {
+      throw new Error('Durable task ID is invalid');
+    }
     return path.join(this.rootDirectory, taskId);
   }
 

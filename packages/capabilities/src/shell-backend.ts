@@ -85,6 +85,7 @@ const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_TIMEOUT_SECONDS = 604_800;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const FOREGROUND_CANCELLATION_RETRY_MS = 250;
+const FOREGROUND_CANCELLATION_DEADLINE_MS = 10_000;
 
 export class ShellCapabilityBackend implements CapabilityBackend {
   private readonly tasks = new Map<string, ShellTaskRecord>();
@@ -210,6 +211,8 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       }
     });
     child.once('close', (exitCode: number | null) => {
+      // An unverified termination deliberately stays unverified (the honest
+      // state callers must see); only a naturally-exiting running task settles.
       if (record.state !== 'running') return;
       if (record.stopRequested !== undefined) return;
       this.finish(record, exitCode === 0 ? 'completed' : 'failed', exitCode ?? -1);
@@ -289,15 +292,22 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (!ownership.ok) return ownership;
     if (record.state === 'running' || record.state === 'termination_unverified') {
       const targetState = record.terminationTarget ?? 'cancelled';
+      const retryDeadline = Date.now() + FOREGROUND_CANCELLATION_DEADLINE_MS;
       let verified = await this.tryTerminate(record, targetState);
-      while (!verified && autoRetry) {
+      while (!verified && autoRetry && Date.now() < retryDeadline) {
         if (record.child.exitCode !== null || record.child.signalCode !== null) {
-          await record.completion;
+          // A record marked termination_unverified never settles `completion`
+          // (the close handler deliberately leaves it unresolved), so this
+          // wait must stay bounded or the retry loop below never re-runs.
+          await awaitBounded(record.completion, FOREGROUND_CANCELLATION_RETRY_MS);
         }
         await delay(FOREGROUND_CANCELLATION_RETRY_MS);
         verified = await this.tryTerminate(record, targetState);
       }
-      if (!verified) await record.completion;
+      // Never hang the MCP call on a child that refuses to die: report the
+      // honest termination_unverified state and let a later close/terminate
+      // attempt settle it.
+      if (!verified) await awaitBounded(record.completion, FOREGROUND_CANCELLATION_DEADLINE_MS);
     }
     return ok(this.snapshot(record));
   }
@@ -601,4 +611,14 @@ function isVerifiedTerminal(state: TaskState): boolean {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function awaitBounded(promise: Promise<void>, milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), milliseconds);
+    void promise.then(
+      () => { clearTimeout(timer); resolve(undefined); },
+      () => { clearTimeout(timer); resolve(undefined); },
+    );
+  });
 }

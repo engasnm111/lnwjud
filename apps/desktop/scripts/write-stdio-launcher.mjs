@@ -47,7 +47,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$DIR/lnwjud-mcp-stdio.cjs"
 NODE_EXE="$DIR/lnwjud-node"
 
-for candidate in "$DIR/../Resources/resources" "$DIR/resources"; do
+for candidate in "$DIR/Resources" "$DIR/../Resources/resources" "$DIR/resources"; do
   if [ ! -f "$SCRIPT" ] && [ -f "$candidate/lnwjud-mcp-stdio.cjs" ]; then
     SCRIPT="$candidate/lnwjud-mcp-stdio.cjs"
   fi
@@ -56,7 +56,9 @@ for candidate in "$DIR/../Resources/resources" "$DIR/resources"; do
   fi
 done
 
-RIPGREP_BIN="$(find "$DIR/runtime-tools" "$DIR/../Resources/resources" "$DIR/resources" -type f -name rg 2>/dev/null | head -1)"
+# macOS .app layout: $DIR is Contents, extraResources land in Contents/Resources,
+# so the bundled universal ripgrep lives at Contents/Resources/runtime-tools/ripgrep/rg.
+RIPGREP_BIN="$(find "$DIR/Resources/runtime-tools" "$DIR/runtime-tools" "$DIR/../Resources/resources" "$DIR/resources" -type f -name rg 2>/dev/null | head -1)"
 if [ -n "$RIPGREP_BIN" ]; then
   case ":$PATH:" in
     *"$(dirname "$RIPGREP_BIN")":*) ;;

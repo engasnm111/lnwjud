@@ -75,6 +75,9 @@ function copyToVendor(source, arch) {
 const arm64Binary = await stageArchive('arm64');
 const x64Binary = await stageArchive('x64');
 
+// Start clean so a prior Windows build on this checkout can never leak a
+// stale rg.exe into the macOS bundle that electron-builder copies from here.
+rmSync(bundleRoot, { recursive: true, force: true });
 mkdirSync(bundleRoot, { recursive: true });
 const universal = path.join(bundleRoot, 'rg');
 const merged = spawnSync('lipo', ['-create', arm64Binary, x64Binary, '-output', universal]);

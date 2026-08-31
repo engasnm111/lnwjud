@@ -29,20 +29,26 @@ jobs:
 
       - name: Verify release tag matches package version
         shell: pwsh
+        env:
+          # Tag names are attacker-shaped and must never be interpolated into the
+          # script body; reading them from the environment keeps them inert data.
+          REF_NAME: ${{ github.ref_name }}
         run: |
           $package = Get-Content package.json -Raw | ConvertFrom-Json
           $expectedTag = "v$($package.version)"
-          if ("${{ github.ref_name }}" -ne $expectedTag) {
-            throw "Release tag must match package.json version. Expected $expectedTag but got ${{ github.ref_name }}"
+          if ($env:REF_NAME -ne $expectedTag) {
+            throw "Release tag must match package.json version. Expected $expectedTag but got $env:REF_NAME"
           }
 
       - name: Download verified CI artifact
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          $repository = "${{ github.repository }}"
-          $sha = "${{ github.sha }}"
+          $repository = $env:REPOSITORY
+          $sha = $env:COMMIT_SHA
           $artifactName = "windows-release-$sha"
           $runsJson = gh run list --repo $repository --workflow ci.yml --commit $sha --event push --status success --limit 20 --json databaseId,headSha,conclusion
           if ($LASTEXITCODE -ne 0) {

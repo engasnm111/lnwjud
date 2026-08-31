@@ -2,7 +2,7 @@ import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ok } from '@lnwjud/domain';
-import { PathExecutableResolver, ProcessManager, type ExecutableResolver, type ProcessTreeTerminator } from './index.js';
+import { PathExecutableResolver, ProcessManager, DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES, type ExecutableResolver, type ProcessTreeTerminator } from './index.js';
 
 async function waitForState(manager: ProcessManager, processId: string, state: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -49,6 +49,39 @@ describe('ProcessManager', () => {
     await waitForState(manager, started.value.processId, 'timed_out');
     await expect(manager.stop('not-owned')).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
     await expect(manager.stop(started.value.processId)).resolves.toMatchObject({ ok: true });
+  });
+
+  it('prunes the oldest finished records beyond the finished-records budget while actives survive', async () => {
+    const manager = new ProcessManager(undefined, undefined, DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES, 2);
+    const longRunning = await manager.start({
+      executable: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      cwd: process.cwd(),
+    });
+    expect(longRunning.ok).toBe(true);
+    if (!longRunning.ok) return;
+
+    const finishedIds: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const started = await manager.start({
+        executable: process.execPath,
+        args: ['-e', `process.exit(${index})`],
+        cwd: process.cwd(),
+      });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      finishedIds.push(started.value.processId);
+      await waitForState(manager, started.value.processId, 'exited');
+    }
+
+    // Budget is 2 finished records: the two oldest were evicted, the newest
+    // retained, and the still-active record is untouched by eviction.
+    expect(manager.status(finishedIds[0]!)).toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
+    expect(manager.status(finishedIds[1]!)).toMatchObject({ ok: false, error: { code: 'PROCESS_NOT_FOUND' } });
+    expect(manager.status(finishedIds[2]!)).toMatchObject({ ok: true, value: { state: 'exited' } });
+    expect(manager.status(finishedIds[3]!)).toMatchObject({ ok: true, value: { state: 'exited' } });
+    expect(manager.status(longRunning.value.processId)).toMatchObject({ ok: true, value: { state: 'running' } });
+    await expect(manager.stop(longRunning.value.processId)).resolves.toMatchObject({ ok: true });
   });
 
   it('returns EXECUTABLE_NOT_FOUND without accepting an arbitrary shell command', async () => {

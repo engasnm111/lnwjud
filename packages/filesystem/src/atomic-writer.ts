@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { unlink, rename, writeFile } from 'node:fs/promises';
+import { open, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { ensureParentDirectory } from './ensure-parent.js';
@@ -16,7 +16,16 @@ export class AtomicFileWriter {
     if (!parentResult.ok) return parentResult;
     const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
     try {
-      await writeFile(temporaryPath, content, { encoding: 'utf8', flag: 'wx' });
+      const handle = await open(temporaryPath, 'wx');
+      try {
+        await handle.writeFile(content, 'utf8');
+        // fsync before the rename so a crash cannot persist the rename while the
+        // data blocks are still only in the page cache (the "empty file after
+        // crash" failure). This writer is the restore path for user files.
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
       await rename(temporaryPath, filePath);
       return ok(undefined);
     } catch (error: unknown) {

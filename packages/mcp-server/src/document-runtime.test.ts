@@ -55,7 +55,6 @@ describe.skipIf(process.platform !== 'win32')('DocumentRuntimeService', () => {
         pdfRunner: async (resolvedProvider, args): Promise<ReturnType<typeof ok>> => { calls.push({ provider: resolvedProvider, args }); return ok('name  qty\npencil 3\fpen 5'); },
       });
       const result = await runtime.extractTables({ workspaceId: 'ws-1', file_path: file });
-      console.log('DBGX', JSON.stringify(result));
       expect(result).toMatchObject({ ok: true, value: {
         tool: 'pdf_extract_tables', available: true, workspaceId: 'ws-1', mode: 'layout-text', truncated: false,
         text: 'name  qty\npencil 3\fpen 5',

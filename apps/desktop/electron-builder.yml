@@ -67,6 +67,9 @@ nsis:
 mac:
   icon: build/icon.png
   category: public.app-category.developer-tools
+  # The release contract is unsigned DMG/ZIP. Without this, electron-builder
+  # silently signs with whatever identity any developer keychain happens to hold.
+  identity: null
   extraFiles:
     - from: build/lnwjud-mcp-stdio
       to: lnwjud-mcp-stdio

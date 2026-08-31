@@ -13,17 +13,30 @@ export function getRendererEntryPath(): string {
   return path.resolve(mainDirectory, '..', 'renderer', 'index.html');
 }
 
-export function getWindowIconPath(): string | undefined {
-  const candidates = [
-    path.resolve(mainDirectory, '..', 'renderer', 'favicon.ico'),
-    path.resolve(mainDirectory, '..', 'renderer', 'logo.png'),
-    path.resolve(mainDirectory, '..', 'renderer', 'logo-512.png'),
-    path.resolve(mainDirectory, '..', '..', 'build', 'icon.ico'),
-    path.resolve(mainDirectory, '..', '..', 'build', 'icon.png'),
-    path.resolve(mainDirectory, '..', '..', 'assets', 'logo', 'logo.ico'),
-    path.resolve(mainDirectory, '..', '..', 'assets', 'logo', 'logo-256x256.png'),
+/**
+ * macOS nativeImage cannot decode .ico files (an empty image silently results),
+ * so darwin must consider PNG candidates first; Windows keeps the legacy
+ * .ico-first order for the taskbar/window icon.
+ */
+export function iconCandidatePaths(baseDirectory: string, platform: NodeJS.Platform): readonly string[] {
+  const icoCandidates = [
+    path.resolve(baseDirectory, '..', 'renderer', 'favicon.ico'),
+    path.resolve(baseDirectory, '..', '..', 'build', 'icon.ico'),
+    path.resolve(baseDirectory, '..', '..', 'assets', 'logo', 'logo.ico'),
   ];
-  for (const candidate of candidates) {
+  const pngCandidates = [
+    path.resolve(baseDirectory, '..', 'renderer', 'favicon-32x32.png'),
+    path.resolve(baseDirectory, '..', 'renderer', 'favicon-16x16.png'),
+    path.resolve(baseDirectory, '..', 'renderer', 'logo.png'),
+    path.resolve(baseDirectory, '..', 'renderer', 'logo-512.png'),
+    path.resolve(baseDirectory, '..', '..', 'build', 'icon.png'),
+    path.resolve(baseDirectory, '..', '..', 'assets', 'logo', 'logo-256x256.png'),
+  ];
+  return platform === 'darwin' ? [...pngCandidates, ...icoCandidates] : [...icoCandidates, ...pngCandidates];
+}
+
+export function getWindowIconPath(): string | undefined {
+  for (const candidate of iconCandidatePaths(mainDirectory, process.platform)) {
     if (fs.existsSync(candidate)) return candidate;
   }
   return undefined;

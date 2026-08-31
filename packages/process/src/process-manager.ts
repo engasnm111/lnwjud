@@ -14,6 +14,7 @@ const MAX_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const START_CANCELLATION_RETRY_MS = 250;
 
 export const DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES = 24;
+export const DEFAULT_MAX_FINISHED_MANAGED_PROCESSES = 64;
 
 interface ManagedRecord {
   readonly processId: string;
@@ -40,6 +41,7 @@ export class ProcessManager {
     private readonly terminator: ProcessTreeTerminator = new WindowsProcessTree(),
     private readonly executableResolver: ExecutableResolver = new PathExecutableResolver(),
     private readonly maxActiveProcesses: number = DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES,
+    private readonly maxFinishedProcesses: number = DEFAULT_MAX_FINISHED_MANAGED_PROCESSES,
   ) {}
 
   public async start(
@@ -168,6 +170,24 @@ export class ProcessManager {
     return ok(undefined);
   }
 
+  /**
+   * Finished records each retain up to MAX_PROCESS_LOG_BYTES of captured output;
+   * without eviction a long-lived gateway keeps one record (and its log buffer)
+   * per historical process forever. Oldest finished records are dropped first;
+   * active or unverified-termination records are never evicted and never count
+   * against the finished-records budget.
+   */
+  private pruneFinishedRecords(): void {
+    const evictable = [...this.records.values()]
+      .filter((record) => isVerifiedTerminal(record.state))
+      .sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt));
+    while (evictable.length > this.maxFinishedProcesses) {
+      const victim = evictable.shift();
+      if (victim === undefined) break;
+      this.records.delete(victim.processId);
+    }
+  }
+
   private activeProcessCount(): number {
     return [...this.records.values()].filter((record) => (
       record.state === 'starting' || record.state === 'running' || record.state === 'termination_unverified'
@@ -250,6 +270,7 @@ export class ProcessManager {
     record.resolveTerminationVerified?.();
     delete record.resolveTerminationVerified;
     delete record.terminationVerified;
+    this.pruneFinishedRecords();
   }
 
   private markTerminationUnverified(record: ManagedRecord, errorMessage: string): void {

@@ -347,7 +347,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       destructivePolicyProvider,
       activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope | null> => {
         const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
-        console.log('DBG_SCOPE_SINGLE', JSON.stringify({ id:selected?.id, root:selected?.realRootPath }));
       return selected === null ? null : { workspaceId: selected.id, rootPath: selected.realRootPath };
       },
       activeWorkspaceScopesProvider: async (): Promise<readonly WorkspaceScope[]> => (
@@ -910,12 +909,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     getDestructivePolicy: (): DestructiveAutoApprovalPolicy => destructivePolicyProvider(),
     getActiveWorkspaceScope: async (): Promise<WorkspaceScope | null> => {
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
-      console.log('DBG_SCOPE_SINGLE', JSON.stringify({ id:selected?.id, root:selected?.realRootPath }));
       return selected === null ? null : { workspaceId: selected.id, rootPath: selected.realRootPath };
     },
     getActiveWorkspaceScopes: async (): Promise<readonly WorkspaceScope[]> => {
       const rows = await resolveActiveProjectWorkspaces();
-      console.log('DBG_SCOPE_LIST', JSON.stringify(rows.map((w)=>[w.id,w.realRootPath])));
       return rows.map((workspace) => ({ workspaceId: workspace.id, rootPath: workspace.realRootPath }));
     },
 

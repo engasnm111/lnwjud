@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
@@ -88,16 +88,24 @@ export class MacosNativeCapabilityBackend implements CapabilityBackend {
   }
 
   private async canonicalAllowedRoots(input: Record<string, unknown>): Promise<readonly string[]> {
-    const active = readCapabilityActiveWorkspaceRoot(input);
+    if (this.options.allowedRootsProvider === undefined) return [];
     let configured: readonly string[];
-    if (active !== undefined) configured = [active];
-    else if (this.options.allowedRootsProvider !== undefined) { try { configured = await this.options.allowedRootsProvider(); } catch { return []; } }
-    else return [];
+    try { configured = await this.options.allowedRootsProvider(); } catch { return []; }
     const roots: string[] = [];
     for (const candidate of configured) {
       try { const canonical = await realpath(path.resolve(candidate)); if ((await stat(canonical)).isDirectory()) roots.push(canonical); } catch { continue; }
     }
-    return roots;
+    if (roots.length === 0) return [];
+    const active = readCapabilityActiveWorkspaceRoot(input);
+    if (active === undefined) return roots;
+    // The Active Project root arrives in client-suppliable metadata, so it may
+    // only narrow the configured roots, never widen them (mirrors resolveCwd in
+    // shell-backend). An untrusted root fails closed to "no roots available".
+    try {
+      const canonicalActive = await realpath(path.resolve(active));
+      if ((await stat(canonicalActive)).isDirectory() && roots.some((root) => isWithin(root, canonicalActive))) return [canonicalActive];
+    } catch { /* fall through */ }
+    return [];
   }
 }
 
@@ -164,7 +172,7 @@ async function executeAudio(input: Record<string, unknown>, signal?: AbortSignal
 async function executeScreenRecord(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   void signal;
   const action = String(input.action ?? '');
-  const statePath = path.join(os.tmpdir(), 'lnwjud-screen-record-state.json');
+  const statePath = await screenRecordStatePath();
   if (action === 'status') {
     const state = await readScreenRecordingState(statePath);
     const recording = state !== null && processAlive(state.pid);
@@ -189,12 +197,35 @@ async function executeScreenRecord(input: Record<string, unknown>, signal?: Abor
   if (action === 'stop') {
     const state = await readScreenRecordingState(statePath);
     if (state === null) return { recording: false, reason: 'No active recording' };
-    try { process.kill(state.pid, 'SIGINT'); } catch { /* already stopped */ }
+    // The state file records a bare pid; before signalling it, prove the pid
+    // still belongs to our screencapture child so a recycled pid cannot make us
+    // SIGINT an unrelated process.
+    if (await isScreencaptureProcess(state.pid)) {
+      try { process.kill(state.pid, 'SIGINT'); } catch { /* already stopped */ }
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
     await rm(statePath, { force: true }).catch(() => undefined);
     return { recording: false, output_path: state.outputPath };
   }
   throw new Error(`Unsupported screen_record action: ${action}`);
+}
+
+async function screenRecordStatePath(): Promise<string> {
+  // A fixed state file directly in the shared tmpdir is steerable by other
+  // local processes; keep it inside a user-scoped 0700 directory instead.
+  const directory = path.join(os.tmpdir(), `lnwjud-screen-record-${process.getuid?.() ?? 0}`);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700).catch(() => undefined);
+  return path.join(directory, 'state.json');
+}
+
+async function isScreencaptureProcess(pid: number): Promise<boolean> {
+  try {
+    const inspected = await execText('/bin/ps', ['-p', String(pid), '-o', 'comm=']);
+    return /screencapture/i.test(inspected.stdout.trim());
+  } catch {
+    return false;
+  }
 }
 
 async function resolveWindow(parameters: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> { return parseJsonObject(await runJxa(WINDOW_JXA, ['resolve', JSON.stringify(parameters)], signal)); }

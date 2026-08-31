@@ -117,4 +117,80 @@ describe('TunnelRuntimeSupervisor', () => {
       vi.useRealTimers();
     }
   });
+
+  it('escalates the retry backoff across consecutive thrown reconcile failures', async () => {
+    vi.useFakeTimers();
+    try {
+      const current = snapshot({ state: 'reconnecting', consecutiveFailures: 1, lastFailureClass: 'transient' });
+      const reconciler = {
+        reconcile: vi.fn(async (): Promise<TunnelReconcileResult> => { throw new Error('reconcile exploded'); }),
+        stop: vi.fn(async () => result('disabled', { state: 'stopped' })),
+        snapshot: vi.fn(() => current),
+      };
+      const supervisor = new TunnelRuntimeSupervisor({ reconciler, enabled: (): boolean => true, jitter: (base: number): number => base });
+
+      await expect(supervisor.start()).rejects.toThrow('reconcile exploded');
+      expect(reconciler.reconcile).toHaveBeenCalledTimes(1);
+      for (let index = 0; index < TRANSIENT_BACKOFF_MS.length + 3; index += 1) {
+        const expectedDelay = TRANSIENT_BACKOFF_MS[Math.min(index, TRANSIENT_BACKOFF_MS.length - 1)]!;
+        await vi.advanceTimersByTimeAsync(expectedDelay);
+      }
+
+      expect(reconciler.reconcile).toHaveBeenCalledTimes(TRANSIENT_BACKOFF_MS.length + 4);
+      supervisor.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('swallows timer-driven reconcile rejections and resets the escalation after recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      let throws = true;
+      const current = snapshot();
+      const reconciler = {
+        reconcile: vi.fn(async (): Promise<TunnelReconcileResult> => {
+          if (throws) throw new Error('transient desired-state failure');
+          return result('healthy');
+        }),
+        stop: vi.fn(async () => result('disabled', { state: 'stopped' })),
+        snapshot: vi.fn(() => current),
+      };
+      const supervisor = new TunnelRuntimeSupervisor({
+        reconciler,
+        enabled: (): boolean => true,
+        jitter: (base: number): number => base,
+        healthyIntervalMs: 1_000,
+      });
+
+      // The explicit starter sees its first failure instead of a silent null.
+      await expect(supervisor.start()).rejects.toThrow('transient desired-state failure');
+      throws = false;
+      await vi.advanceTimersByTimeAsync(TRANSIENT_BACKOFF_MS[0]!);
+
+      expect(reconciler.reconcile).toHaveBeenCalledTimes(2);
+      expect(supervisor.snapshot()).toMatchObject({ state: 'running' });
+      supervisor.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('contains a synchronously throwing reconcile without an uncaught exception', async () => {
+    vi.useFakeTimers();
+    try {
+      const current = snapshot();
+      const reconciler = {
+        reconcile: vi.fn((): Promise<TunnelReconcileResult> => { throw new Error('sync explosion'); }),
+        stop: vi.fn(async () => result('disabled', { state: 'stopped' })),
+        snapshot: vi.fn(() => current),
+      };
+      const supervisor = new TunnelRuntimeSupervisor({ reconciler, enabled: (): boolean => true, jitter: (base: number): number => base });
+
+      await expect(supervisor.start()).rejects.toThrow('sync explosion');
+      supervisor.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

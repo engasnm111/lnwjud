@@ -8,7 +8,11 @@ import { chromium, expect, test, type Browser, type Page } from '@playwright/tes
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronExecutable = process.platform === 'win32'
+  ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
+  : process.platform === 'darwin'
+    ? path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+    : path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron');
 const artifactParent = path.join(repositoryRoot, '.local-artifacts', 'e2e-guided-setup');
 
 test('fresh user sees Thai Tips, enters Secure Tunnel guide, and switches language without losing the draft', async () => {

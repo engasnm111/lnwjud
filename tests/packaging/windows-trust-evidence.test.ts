@@ -43,8 +43,11 @@ describe('Windows release trust evidence', () => {
     const ci = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     const release = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8');
 
-    expect(ci).toContain('CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}');
-    expect(ci).toContain('CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}');
+    // The signing secrets must reach the verify job on main pushes (where the
+    // artifact is produced) but never be handed to pull_request builds, whose
+    // head code is untrusted even when it comes from a same-repo branch.
+    expect(ci).toContain('CSC_LINK: ${{ (github.event_name == \'push\' && github.ref == \'refs/heads/main\' && secrets.WINDOWS_CSC_LINK) || \'\' }}');
+    expect(ci).toContain('CSC_KEY_PASSWORD: ${{ (github.event_name == \'push\' && github.ref == \'refs/heads/main\' && secrets.WINDOWS_CSC_KEY_PASSWORD) || \'\' }}');
     expect(ci).toContain('apps/desktop/dist/installers/SHA256SUMS.txt');
     expect(ci).toContain('apps/desktop/dist/installers/PROVENANCE.json');
     expect(release).toContain("'SHA256SUMS.txt'");

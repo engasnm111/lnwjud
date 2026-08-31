@@ -37,6 +37,19 @@ import { createTranslator } from './i18n/index.js';
 import { markStartupDoctorPassed, startupDoctorCorePassed, startupDoctorRequired } from './features/onboarding/startup-doctor-state.js';
 
 const MAX_CLIENT_LOG_LINES = 30_000;
+const REFRESH_TIMEOUT_MS = 8_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    // Clear the timer on settle: refresh() runs every second, and a leaked
+    // 8 s timer per call would otherwise accumulate live timers indefinitely.
+    const timer = setTimeout((): void => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    void promise.then(
+      (value: T) => { clearTimeout(timer); resolve(value); },
+      (cause: unknown) => { clearTimeout(timer); reject(cause); },
+    );
+  });
+}
 
 export function App(): ReactElement {
   const [screen, setScreen] = useState<Screen>('home');
@@ -60,6 +73,7 @@ export function App(): ReactElement {
   const [startupDoctorReady, setStartupDoctorReady] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<{ readonly section: SettingsSection; readonly requestId: number } | undefined>(undefined);
   const incidentBusyRef = useRef(false);
+  const refreshInFlight = useRef(false);
   const logIds = useRef<Set<number>>(new Set());
   const guidedTunnelLaunchSignature = useRef<string | null>(null);
   const startupDoctorVersion = useRef<string | null>(null);
@@ -180,17 +194,20 @@ export function App(): ReactElement {
   }
 
   const refresh = useCallback(async (): Promise<void> => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     try {
       const [nextDashboard, nextWorkspaces] = await Promise.all([
-        window.lnwjud.getDashboard(),
-        window.lnwjud.listWorkspaces(),
+        withTimeout(window.lnwjud.getDashboard(), REFRESH_TIMEOUT_MS, 'getDashboard'),
+        withTimeout(window.lnwjud.listWorkspaces(), REFRESH_TIMEOUT_MS, 'listWorkspaces'),
       ]);
       setDashboard(nextDashboard);
       setWorkspaces(nextWorkspaces);
       setLocale(nextDashboard.locale);
-
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : createTranslator(locale)('error.desktopService'));
+      setError(errorMessage(cause, createTranslator(locale)('error.desktopService')));
+    } finally {
+      refreshInFlight.current = false;
     }
   }, [locale]);
 
@@ -533,6 +550,16 @@ export function App(): ReactElement {
   }
 
   if (dashboard === null) {
+    if (error !== null) {
+      return (
+        <div className="boot-screen">
+          <div className="error-banner" role="alert">{error}</div>
+          <div style={{ marginTop: '1rem' }}>
+            <button type="button" onClick={() => { setError(null); void refresh(); }}>{t('action.retry')}</button>
+          </div>
+        </div>
+      );
+    }
     return <div className="boot-screen">{t('app.loading')}</div>;
   }
 

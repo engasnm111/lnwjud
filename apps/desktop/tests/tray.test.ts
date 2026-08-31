@@ -5,7 +5,9 @@ import {
   createTrayMenuTemplate,
   createTrayToolTip,
   createTrayUpdateLabel,
+  prepareTrayIcon,
   shouldHideMainWindowOnClose,
+  type TrayIconImage,
 } from '../src/main/tray.js';
 
 describe('desktop tray behavior', () => {
@@ -100,5 +102,55 @@ describe('desktop tray behavior', () => {
   it('keeps manual update feedback localized in the native catalog', () => {
     expect(nativeMessages('th').updateCurrentDialog('4.6.1')).toBe('lnwjud v4.6.1 เป็นเวอร์ชันล่าสุดแล้ว');
     expect(nativeMessages('en').updateCurrentDialog('4.6.1')).toBe('lnwjud v4.6.1 is up to date');
+  });
+});
+
+interface StubTrayImageCallLog {
+  readonly resizes: Array<{ readonly width?: number; readonly height?: number }>;
+  readonly representations: Array<{ readonly scaleFactor: number; readonly width: number; readonly height: number; readonly buffer: Buffer }>;
+  readonly pngEncodes: number;
+}
+
+function createStubTrayImage(log: StubTrayImageCallLog): TrayIconImage {
+  const image: TrayIconImage = {
+    resize(options) {
+      log.resizes.push(options);
+      return image;
+    },
+    toPNG() {
+      log.pngEncodes += 1;
+      return Buffer.from('png');
+    },
+    addRepresentation(options) {
+      log.representations.push(options);
+    },
+  };
+  return image;
+}
+
+describe('prepareTrayIcon', () => {
+  it('downsizes the icon to 16pt with a @2x representation on darwin', () => {
+    const log: StubTrayImageCallLog = { resizes: [], representations: [], pngEncodes: 0 };
+    const result = prepareTrayIcon(createStubTrayImage(log), 'darwin');
+
+    expect(log.resizes).toEqual([
+      { width: 32, height: 32 },
+      { width: 16, height: 16 },
+    ]);
+    expect(log.representations).toEqual([
+      { scaleFactor: 2, width: 32, height: 32, buffer: Buffer.from('png') },
+    ]);
+    expect(log.pngEncodes).toBe(1);
+    expect(result).toBeDefined();
+  });
+
+  it('returns the image untouched on platforms that already receive full-size icons', () => {
+    const log: StubTrayImageCallLog = { resizes: [], representations: [], pngEncodes: 0 };
+    const image = createStubTrayImage(log);
+
+    expect(prepareTrayIcon(image, 'win32')).toBe(image);
+    expect(prepareTrayIcon(image, 'linux')).toBe(image);
+    expect(log.resizes).toEqual([]);
+    expect(log.representations).toEqual([]);
   });
 });

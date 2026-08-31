@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 
 const LOCK_FILE = 'lnwjud.tunnel.lock';
 const LOCK_VERSION = 1;
 const MUTEX_WAIT_MS = 5_000;
+const POSIX_MUTEX_FILE = '.lnwjud.tunnel.lock.mutex';
+const POSIX_MUTEX_STALE_MS = 30_000;
+const POSIX_MUTEX_POLL_MS = 100;
 const ISO_UTC_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export interface TunnelLockOwner {
@@ -224,6 +227,9 @@ async function currentProcessOwner(): Promise<TunnelLockOwner> {
 }
 
 async function withTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
+  // The named-mutex helper is a Windows-only mechanism; macOS/Linux serialise the
+  // same critical section with an exclusive lock file instead.
+  if (process.platform !== 'win32') return withPosixTunnelLockCriticalSection(profileDirectory, action);
   const mutexName = tunnelLockMutexName(profileDirectory);
   const script = [
     "$ErrorActionPreference='Stop'",
@@ -288,6 +294,75 @@ function tunnelLockMutexName(profileDirectory: string): string {
   const normalized = path.resolve(profileDirectory).replace(/[\\/]+$/, '').toLowerCase();
   const identity = createHash('sha256').update(normalized, 'utf8').digest('hex').slice(0, 24);
   return `Local\\lnwjud-tunnel-lock-${identity}`;
+}
+
+async function withPosixTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
+  const mutexPath = path.join(profileDirectory, POSIX_MUTEX_FILE);
+  const deadline = Date.now() + MUTEX_WAIT_MS;
+  let handle: FileHandle | undefined;
+  while (handle === undefined) {
+    try {
+      handle = await open(mutexPath, 'wx');
+    } catch (error: unknown) {
+      if (!isAlreadyExists(error)) throw error;
+      // A holder that crashed without cleanup must not deadlock every future
+      // acquire: take over once the mutex file is old enough to be stale.
+      // The takeover claims the file with an atomic rename so exactly one
+      // waiter can win — an rm+open pair could interleave between two
+      // waiters and delete the fresh mutex the winner just created. Stale
+      // recovery is checked before the deadline so a file that just crossed
+      // the threshold is taken over rather than reported as a timeout; a
+      // crash younger than POSIX_MUTEX_STALE_MS still fails acquirers until
+      // it goes stale, mirroring the Windows WaitOne timeout for live holders.
+      if (await posixMutexIsStale(mutexPath)) {
+        const claimedPath = await claimStaleMutex(mutexPath);
+        if (claimedPath !== undefined) {
+          await rm(claimedPath, { force: true }).catch(() => undefined);
+          continue;
+        }
+      }
+      if (Date.now() > deadline) throw new Error('Timed out waiting for the lnwjud tunnel lock critical section');
+      await new Promise((resolve) => { setTimeout(resolve, POSIX_MUTEX_POLL_MS); });
+    }
+  }
+  let identity: { readonly ino: number } | undefined;
+  try {
+    identity = await handle.stat();
+    return await action();
+  } finally {
+    await handle.close().catch(() => undefined);
+    // Remove only the file this call created: if a slower-than-staleness action
+    // let another waiter take the path over, deleting whatever occupies it now
+    // would break that successor's exclusion.
+    if (identity !== undefined) await rmMutexIfSameInode(mutexPath, identity.ino);
+  }
+}
+
+async function claimStaleMutex(mutexPath: string): Promise<string | undefined> {
+  const claimedPath = `${mutexPath}.${process.pid}.${Date.now()}.claimed`;
+  try {
+    await rename(mutexPath, claimedPath);
+    return claimedPath;
+  } catch {
+    return undefined; // another waiter claimed it first, or the holder released
+  }
+}
+
+async function rmMutexIfSameInode(mutexPath: string, ino: number): Promise<void> {
+  try {
+    if ((await stat(mutexPath)).ino === ino) await rm(mutexPath, { force: true }).catch(() => undefined);
+  } catch {
+    // Already gone (released or taken over): nothing of ours to remove.
+  }
+}
+
+async function posixMutexIsStale(mutexPath: string): Promise<boolean> {
+  try {
+    const stats = await stat(mutexPath);
+    return Date.now() - stats.mtimeMs > POSIX_MUTEX_STALE_MS;
+  } catch {
+    return false;
+  }
 }
 
 function waitForMutexReady(holder: ReturnType<typeof spawn>, stderr: () => string): Promise<void> {
