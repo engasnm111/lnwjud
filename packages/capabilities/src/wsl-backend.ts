@@ -285,6 +285,12 @@ export class WslFilesystemCapabilityBackend implements CapabilityBackend {
   }
 
   public async execute(input: unknown, _signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    // Truthful unavailability for every wsl_fs operation: translate/metadata run
+    // win32 path math that would produce misleading INVALID_INPUT or silent
+    // garbage for POSIX input, so they must never execute off Windows.
+    if (this.platform !== 'win32') {
+      return ok({ available: false, ready: false, local: true, backend: 'wsl_fs', raw_access: false, reason: 'WSL is only available on Windows' });
+    }
     if (!isRecord(input)) return err(appError('INVALID_INPUT', 'WSL filesystem input must be an object'));
     if (input.operation === 'status') {
       if (this.platform === 'win32' && this.availabilityProbe !== undefined) {

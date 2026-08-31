@@ -194,4 +194,27 @@ describe('WslFilesystemCapabilityBackend', () => {
       operation: 'translate', workspaceId: 'ws-1', direction: 'windows_to_wsl', path: 'C:\\outside',
     })).resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
   });
+
+  it('reports every wsl_fs operation as truthfully unavailable on non-Windows platforms', async () => {
+    const backend = new WslFilesystemCapabilityBackend({ platform: 'darwin', allowedRoots: ['/Users/test/workspace'] });
+    const unavailable = {
+      available: false,
+      ready: false,
+      local: true,
+      backend: 'wsl_fs',
+      raw_access: false,
+      reason: 'WSL is only available on Windows',
+    };
+
+    await expect(backend.execute({ operation: 'status' })).resolves.toMatchObject({ ok: true, value: unavailable });
+    await expect(backend.execute({
+      operation: 'translate', workspaceId: 'ws-1', direction: 'windows_to_wsl', path: '/Users/test/workspace/src',
+    })).resolves.toMatchObject({ ok: true, value: unavailable });
+    await expect(backend.execute({
+      operation: 'translate', workspaceId: 'ws-1', direction: 'wsl_to_windows', distro: 'Ubuntu', path: '/home/user/project',
+    })).resolves.toMatchObject({ ok: true, value: unavailable });
+    await expect(backend.execute({
+      operation: 'metadata', workspaceId: 'ws-1', direction: 'windows_to_wsl', path: '/Users/test/workspace/src',
+    })).resolves.toMatchObject({ ok: true, value: unavailable });
+  });
 });

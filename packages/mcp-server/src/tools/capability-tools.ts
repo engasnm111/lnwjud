@@ -249,7 +249,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'wsl_fs',
-      description: 'Translate paths and inspect metadata between a registered Windows workspace and WSL without exposing raw \\\\wsl$ read/write access.',
+      description: 'Translate paths and inspect metadata between a registered Windows workspace and WSL without exposing raw \\\\wsl$ read/write access. Windows-only: on non-Windows hosts every operation reports WSL as unavailable instead of translating paths.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: wslFilesystemCapabilitySchema,
