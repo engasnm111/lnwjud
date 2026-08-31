@@ -5,6 +5,7 @@ const DIRECT_RISKY_EXECUTABLES = new Set([
   'rm', 'unlink', 'rmdir', 'del', 'erase', 'remove-item', 'shred', 'truncate',
   'dd',
 ]);
+const MACOS_RISKY_EXECUTABLES = new Set(['osascript', 'launchctl', 'diskutil', 'hdiutil', 'killall', 'defaults']);
 const HARD_BLOCK_EXECUTABLES = new Set(['format', 'diskpart', 'shutdown', 'reboot', 'poweroff', 'halt']);
 const POWERSHELL_EXECUTABLES = new Set(['powershell', 'pwsh']);
 const POSIX_SHELL_EXECUTABLES = new Set(['sh', 'dash', 'bash', 'zsh', 'fish']);
@@ -59,6 +60,7 @@ export function riskyAgentCommandReason(executable: string, args: readonly strin
   const basename = executableBasename(executable);
   const lowerArgs = args.map((arg) => arg.toLowerCase());
   if (DIRECT_RISKY_EXECUTABLES.has(basename)) return `${basename} can delete, move, or replace filesystem data`;
+  if (MACOS_RISKY_EXECUTABLES.has(basename)) return `${basename} executes opaque scripts or modifies macOS system state, processes, storage, or preferences and requires explicit confirmation`;
   if (basename === 'git') {
     const prohibited = prohibitedAgentGitInvocationReason(args);
     if (prohibited !== undefined) return prohibited;
@@ -111,7 +113,7 @@ function looksDynamicallyConstructedCommand(value: string): boolean {
 }
 
 function riskyCommandText(value: string): boolean {
-  return /(?:^|[;&|]\s*|\b)(?:rm|del|erase|rmdir|rd|remove-item|clear-content|set-content|add-content|out-file|move-item|rename-item|copy-item|truncate|shred|dd|git\s+(?:clean|rm|reset\s+--hard|restore)|reg\s+(?:add|delete)|sc\s+(?:create|delete)|schtasks\s+\/(?:create|delete)|stop-process|stop-service|restart-service)\b/i.test(value);
+  return /(?:^|[;&|]\s*|\b)(?:rm|del|erase|rmdir|rd|remove-item|clear-content|set-content|add-content|out-file|move-item|rename-item|copy-item|truncate|shred|dd|git\s+(?:clean|rm|reset\s+--hard|restore)|reg\s+(?:add|delete)|sc\s+(?:create|delete)|schtasks\s+\/(?:create|delete)|stop-process|stop-service|restart-service|osascript|launchctl|diskutil|hdiutil|killall|defaults)\b/i.test(value);
 }
 
 function interpreterCommandText(basename: string, args: readonly string[]): string | undefined {

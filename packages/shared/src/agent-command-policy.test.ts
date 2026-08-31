@@ -47,6 +47,20 @@ describe('agent command policy', () => {
   });
 
   it.each([
+    ['osascript', ['-e', 'do shell script "rm -rf ~/Documents"']],
+    ['launchctl', ['bootstrap', 'gui/501', '/Library/LaunchAgents/com.example.plist']],
+    ['diskutil', ['eraseDisk', 'APFS', 'MyDisk', 'disk2']],
+    ['hdiutil', ['attach', '/Users/test/image.dmg']],
+    ['killall', ['Dock']],
+    ['defaults', ['write', 'com.apple.dock', 'autohide', '-bool', 'true']],
+    ['bash', ['-c', 'osascript -e \'do shell script "shutdown -h now"\'']],
+    ['zsh', ['-c', 'launchctl bootout gui/501/com.example.task']],
+  ] as const)('requires confirmation for macOS system-state command %s', (executable, args) => {
+    expect(prohibitedAgentCommandReason(executable, args)).toBeUndefined();
+    expect(riskyAgentCommandReason(executable, args)).toBeDefined();
+  });
+
+  it.each([
     ['pnpm.cmd', ['test']],
     ['cp.com', ['source', 'target']],
     ['MV.EXE', ['source', 'target']],
