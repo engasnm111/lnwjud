@@ -655,14 +655,27 @@ function withActivityWorkspaceId(input: unknown, workspaceId: string | undefined
 
 function isAbsoluteActivityPath(value: string): boolean { return path.win32.isAbsolute(value) || path.posix.isAbsolute(value); }
 
+/**
+ * Windows-style vs POSIX-style path classification. `path.win32.isAbsolute`
+ * also returns true for POSIX-style `/root` paths (current-drive-relative),
+ * which misroutes POSIX workspace roots to the win32 API on macOS. Drive
+ * letters and UNC paths are unambiguously Windows-style; a leading `/` is
+ * POSIX-style on POSIX hosts while keeping upstream Windows behavior intact.
+ */
+function isWindowsStylePathValue(value: string): boolean {
+  if (/^[A-Za-z]:/.test(value) || value.startsWith('\\\\')) return true;
+  if (value.startsWith('/') && process.platform !== 'win32') return false;
+  return path.win32.isAbsolute(value);
+}
+
 function activityPathContains(root: string, candidate: string): boolean {
-  const api = path.win32.isAbsolute(root) || path.win32.isAbsolute(candidate) ? path.win32 : path.posix;
+  const api = isWindowsStylePathValue(root) || isWindowsStylePathValue(candidate) ? path.win32 : path.posix;
   const relative = api.relative(api.resolve(root), api.resolve(candidate));
   return relativePathStaysWithin(api, relative);
 }
 
 function normalizedActivityPath(value: string): string {
-  const api = path.win32.isAbsolute(value) ? path.win32 : path.posix;
+  const api = isWindowsStylePathValue(value) ? path.win32 : path.posix;
   return api.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
 }
 
@@ -877,7 +890,7 @@ function bindCommandExecutionToActiveWorkspace(toolName: string, input: unknown,
   // Repair records canonicalized with foreign separators (see ShellCapabilityBackend).
   const repaired = /^\\([^\\])/.test(rawRootPath) && !/^[A-Za-z]:/.test(rawRootPath)
     ? { text: rawRootPath.replace(/\\/g, '/'), windowsStyle: false }
-    : { text: rawRootPath, windowsStyle: path.win32.isAbsolute(rawRootPath) };
+    : { text: rawRootPath, windowsStyle: isWindowsStylePathValue(rawRootPath) };
   const rootPath = repaired.text;
   const pathApi = repaired.windowsStyle ? path.win32 : path.posix;
   if (!pathApi.isAbsolute(rootPath)) return { ok: false, message: 'Host active workspace root is invalid' };
@@ -1043,7 +1056,7 @@ function commandExecutionLeavesActiveWorkspace(toolName: string, input: unknown,
   const cwd = readTrimmedString(input.cwd);
   const root = readTrimmedString(activeWorkspaceScope.rootPath);
   if (cwd === undefined || root === undefined) return false;
-  const pathApi = path.win32.isAbsolute(root) ? path.win32 : path.posix;
+  const pathApi = isWindowsStylePathValue(root) ? path.win32 : path.posix;
   if (!pathApi.isAbsolute(cwd)) return false;
   return !scopePathContains(pathApi, pathApi.resolve(root), pathApi.resolve(cwd));
 }
