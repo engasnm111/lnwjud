@@ -1001,6 +1001,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     installPdfProvider: async (): Promise<PdfProviderInstallResult> => {
       const installed = await (options.pdfProviderInstaller ?? installPdfProvider)(dataPath);
+      // Defense in depth: never register a provider binary that cannot execute
+      // on this platform, and never touch pdfProviderPath on refusal.
+      if (process.platform !== 'win32' && installed.providerPath.toLowerCase().endsWith('.exe')) {
+        throw new Error('The resolved PDF provider is a Windows (pdftotext.exe) binary that cannot run on this platform. Install Poppler natively (`brew install poppler`) so `pdftotext` is on PATH, then re-run the doctor check.');
+      }
       const previous = readSettings();
       settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, installed.providerPath);
       const next = readSettings();

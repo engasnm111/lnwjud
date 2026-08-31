@@ -11,7 +11,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('PDF provider installer', () => {
+// The bundled Poppler package and its Library\bin\pdftotext.exe layout are
+// Windows-specific; non-Windows hosts refuse the install (see the macOS suite).
+describe.skipIf(process.platform !== 'win32')('PDF provider installer', () => {
   it('downloads a pinned archive, verifies SHA-256, installs Poppler, and reuses the verified path', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-pdf-provider-'));
     roots.push(dataPath);
@@ -84,6 +86,29 @@ describe('PDF provider installer', () => {
       fetchImpl: async () => response(Buffer.from('tampered')),
       extractImpl: async () => { throw new Error('must not extract'); },
     })).rejects.toThrow('integrity check failed');
+  });
+});
+
+describe.skipIf(process.platform !== 'darwin')('PDF provider installer on macOS', () => {
+  it('refuses to install the Windows-only Poppler build and suggests the Homebrew provider instead', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-pdf-provider-refusal-'));
+    roots.push(dataPath);
+    let downloads = 0;
+    let extracts = 0;
+
+    await expect(installPdfProvider(dataPath, {
+      package: testPackage(Buffer.from('never downloaded')),
+      fetchImpl: async (): Promise<ReturnType<typeof response>> => {
+        downloads += 1;
+        return response(Buffer.from('never'));
+      },
+      extractImpl: async (): Promise<void> => {
+        extracts += 1;
+      },
+    })).rejects.toThrow(/brew install poppler/i);
+
+    expect(downloads).toBe(0);
+    expect(extracts).toBe(0);
   });
 });
 

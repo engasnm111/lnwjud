@@ -55,6 +55,12 @@ export function installPdfProvider(dataPath: string, options: PdfProviderInstall
 }
 
 async function installPdfProviderOnce(dataPath: string, options: PdfProviderInstallerOptions): Promise<InstalledPdfProvider> {
+  // The pinned Poppler package is a Windows build (Library\bin\pdftotext.exe).
+  // Installing it on another host would place a binary that can never execute;
+  // refuse with the platform-native remediation instead.
+  if (process.platform !== 'win32') {
+    throw new Error('The bundled PDF provider installer ships a Windows (pdftotext.exe) Poppler build and is not available on this platform. Install Poppler natively instead (`brew install poppler`) so `pdftotext` is on PATH, then re-run the doctor check to detect it.');
+  }
   const packageInfo = options.package ?? DEFAULT_PDF_PROVIDER_PACKAGE;
   const fetchImpl = options.fetchImpl ?? (async (url: string): Promise<DownloadResponse> => fetch(url));
   const extractImpl = options.extractImpl ?? extractZip;
