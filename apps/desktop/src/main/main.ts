@@ -80,7 +80,7 @@ import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
-import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
+import { COPY_COMMANDS, resolveToolSetupTargetAction } from './tool-catalog/remediation-registry.js';
 
 export interface DesktopIpcServices {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
@@ -485,15 +485,14 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.openToolSetupTarget, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const request = parseOpenToolSetupTargetRequest(payload);
-    if (request.target === 'windows_optional_features') {
-      const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows';
-      const openError = await shell.openPath(path.join(windowsRoot, 'System32', 'OptionalFeatures.exe'));
+    const action = resolveToolSetupTargetAction(request.target);
+    if (action.kind === 'blocked') throw new Error(action.reason);
+    if (action.kind === 'windows_optional_features') {
+      const openError = await shell.openPath(action.executablePath);
       if (openError.length > 0) throw new Error(`Could not open Windows Optional Features: ${openError}`);
       return { opened: true as const };
     }
-    const url = OFFICIAL_URL_TARGETS[request.target as keyof typeof OFFICIAL_URL_TARGETS];
-    if (url === undefined) throw new Error('Unknown tool setup target');
-    await shell.openExternal(url);
+    await shell.openExternal(action.url);
     return { opened: true as const };
   });
   ipcMain.handle(ipcChannels.copyToolCommand, async (event, payload: unknown) => {

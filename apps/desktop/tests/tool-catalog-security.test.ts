@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { OFFICIAL_URL_TARGETS, COPY_COMMANDS, RemediationRegistry } from '../src/main/tool-catalog/remediation-registry.js';
+import path from 'node:path';
+import { COPY_COMMANDS, OFFICIAL_URL_TARGETS, RemediationRegistry, resolveToolSetupTargetAction } from '../src/main/tool-catalog/remediation-registry.js';
 import { RequirementRegistry } from '../src/main/tool-catalog/requirement-registry.js';
 
 
@@ -19,13 +20,16 @@ describe('tool catalog security boundaries', () => {
     }
   });
 
-  it('keeps system and runtime remediations explicit instead of sending users to unrelated app settings', () => {
+  it.skipIf(process.platform !== 'win32')('keeps Windows-shaped remediations explicit instead of sending users to unrelated app settings', () => {
     const registry = new RemediationRegistry();
     const sandbox = registry.resolve('th', ['configure_windows_sandbox'])[0]!;
     expect(sandbox.actions).toContainEqual({ kind: 'open_system_settings', target: 'windows_optional_features' });
     expect(sandbox.actions).not.toContainEqual({ kind: 'open_settings', target: 'tools' });
     expect(sandbox.steps.join(' ')).toContain('Windows Sandbox');
+  });
 
+  it('keeps runtime remediations explicit instead of sending users to unrelated app settings', () => {
+    const registry = new RemediationRegistry();
     const browser = registry.resolve('th', ['configure_browser_cdp'])[0]!;
     expect(browser.actions).toContainEqual({ kind: 'launch_managed_browser' });
 
@@ -50,5 +54,33 @@ describe('tool catalog security boundaries', () => {
     const result = (await registry.probe()).get('probe');
     expect(result?.status).toBe('unknown');
     expect(result?.detail?.length).toBeLessThanOrEqual(2_048);
+  });
+});
+
+describe.skipIf(process.platform !== 'darwin')('Windows-shaped remediations on macOS', () => {
+  it('suppresses Windows Sandbox and WSL remediations from the offered set', () => {
+    const registry = new RemediationRegistry();
+    expect(registry.ids()).not.toContain('configure_windows_sandbox');
+    expect(registry.ids()).not.toContain('configure_wsl');
+    expect(registry.has('configure_windows_sandbox')).toBe(false);
+    expect(registry.has('configure_wsl')).toBe(false);
+    expect(registry.resolve('en')).not.toContainEqual(expect.objectContaining({ id: 'configure_windows_sandbox' }));
+    expect(registry.resolve('en')).not.toContainEqual(expect.objectContaining({ id: 'configure_wsl' }));
+    expect(() => registry.resolve('en', ['configure_wsl'])).toThrow(/Unknown remediation id/);
+    expect(() => registry.resolve('en', ['configure_windows_sandbox'])).toThrow(/Unknown remediation id/);
+  });
+
+  it('never constructs the Windows Optional Features open target on this platform', () => {
+    const blocked = resolveToolSetupTargetAction('windows_optional_features', 'darwin');
+    expect(blocked).toMatchObject({ kind: 'blocked' });
+    if (blocked.kind === 'blocked') expect(blocked.reason).toMatch(/Windows/);
+
+    // Injected win32 platform proves the resolver still shapes the real
+    // Windows target without depending on the host platform.
+    const windows = resolveToolSetupTargetAction('windows_optional_features', 'win32', 'C:\\Windows');
+    expect(windows).toEqual({ kind: 'windows_optional_features', executablePath: path.win32.join('C:\\Windows', 'System32', 'OptionalFeatures.exe') });
+
+    expect(resolveToolSetupTargetAction('git_download', 'darwin')).toEqual({ kind: 'official_url', url: OFFICIAL_URL_TARGETS.git_download });
+    expect(resolveToolSetupTargetAction('not-a-target', 'darwin')).toEqual({ kind: 'blocked', reason: 'Unknown tool setup target' });
   });
 });

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { RemediationAction, ResolvedRemediation, UiLocale } from '@lnwjud/ipc-contracts';
 
 interface RemediationDefinition {
@@ -171,15 +172,52 @@ export const COPY_COMMANDS = Object.freeze({
   enable_windows_sandbox: 'Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All',
 } as const);
 
+/** Remediations that only make sense on Windows and must never be offered elsewhere. */
+const WINDOWS_ONLY_REMEDIATION_IDS: ReadonlySet<string> = new Set(['configure_windows_sandbox', 'configure_wsl']);
+
+function offeredOnThisPlatform(id: string): boolean {
+  return process.platform === 'win32' || !WINDOWS_ONLY_REMEDIATION_IDS.has(id);
+}
+
+export type ToolSetupTargetAction =
+  | { readonly kind: 'windows_optional_features'; readonly executablePath: string }
+  | { readonly kind: 'official_url'; readonly url: string }
+  | { readonly kind: 'blocked'; readonly reason: string };
+
+/**
+ * Resolves a tool setup target into the action the IPC handler may take.
+ * The Windows Optional Features executable path is only ever constructed on
+ * Windows; other hosts receive an explicit block instead.
+ */
+export function resolveToolSetupTargetAction(
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+  windowsRoot: string = process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows',
+): ToolSetupTargetAction {
+  if (target === 'windows_optional_features') {
+    if (platform !== 'win32') {
+      return { kind: 'blocked', reason: 'Windows Optional Features is only available on Windows; this setup step does not apply to this platform.' };
+    }
+    // The target is a Windows executable, so the join must be Windows-shaped
+    // even if this resolver runs on a posix host (tests, tooling).
+    return { kind: 'windows_optional_features', executablePath: path.win32.join(windowsRoot, 'System32', 'OptionalFeatures.exe') };
+  }
+  const url = OFFICIAL_URL_TARGETS[target as keyof typeof OFFICIAL_URL_TARGETS];
+  if (url === undefined) return { kind: 'blocked', reason: 'Unknown tool setup target' };
+  return { kind: 'official_url', url };
+}
+
 export class RemediationRegistry {
   readonly #definitions = new Map(DEFINITIONS.map((definition) => [definition.id, definition] as const));
 
-  public has(id: string): boolean { return this.#definitions.has(id); }
-  public ids(): readonly string[] { return [...this.#definitions.keys()]; }
+  public has(id: string): boolean { return this.#definitions.has(id) && offeredOnThisPlatform(id); }
+  public ids(): readonly string[] { return [...this.#definitions.keys()].filter(offeredOnThisPlatform); }
   public resolve(locale: UiLocale, ids: readonly string[] = this.ids()): readonly ResolvedRemediation[] {
     return [...new Set(ids)].map((id) => {
       const definition = this.#definitions.get(id);
-      if (definition === undefined) throw new Error(`Unknown remediation id: ${id}`);
+      // Windows-only remediations are treated as unknown off-Windows so they
+      // can neither be offered nor executed through any caller.
+      if (definition === undefined || !offeredOnThisPlatform(id)) throw new Error(`Unknown remediation id: ${id}`);
       return {
         id,
         title: definition.title[locale],
