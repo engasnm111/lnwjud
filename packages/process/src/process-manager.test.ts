@@ -94,6 +94,51 @@ describe('ProcessManager', () => {
     expect(result).toMatchObject({ ok: false, error: { code: 'EXECUTABLE_NOT_FOUND' } });
   });
 
+  it('passes the posix session environment through the safe environment allowlist', async () => {
+    if (process.platform === 'win32') return;
+    const probeKeys = ['TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK', 'TERM', 'LNWJUD_NOT_ALLOWLISTED'];
+    const probeValues: Record<string, string> = {
+      TMPDIR: '/tmp/lnwjud-process-probe',
+      SHELL: '/bin/zsh',
+      USER: 'lnwjud-probe-user',
+      LOGNAME: 'lnwjud-probe-user',
+      SSH_AUTH_SOCK: '/tmp/lnwjud-ssh-agent.sock',
+      TERM: 'xterm-256color',
+      LNWJUD_NOT_ALLOWLISTED: 'secret-probe',
+    };
+    const savedEnv: Record<string, string | undefined> = {};
+    for (const key of probeKeys) {
+      savedEnv[key] = process.env[key];
+      process.env[key] = probeValues[key];
+    }
+    const manager = new ProcessManager();
+    try {
+      const started = await manager.start({
+        executable: process.execPath,
+        args: ['-e', `process.stdout.write(${JSON.stringify(probeKeys)}.map((key) => key + '=' + (process.env[key] ?? 'missing')).join('|'))`],
+        cwd: process.cwd(),
+      });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+
+      await waitForState(manager, started.value.processId, 'exited');
+      const logs = manager.logs(started.value.processId, {});
+      expect(logs.ok).toBe(true);
+      if (!logs.ok) return;
+      const stdout = logs.value.entries.filter((entry) => entry.stream === 'stdout').map((entry) => entry.text).join('');
+      for (const key of ['TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK', 'TERM']) {
+        expect(stdout).toContain(`${key}=${probeValues[key]}`);
+      }
+      expect(stdout).toContain('LNWJUD_NOT_ALLOWLISTED=missing');
+      expect(stdout).not.toContain('secret-probe');
+    } finally {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it('runs a Windows command shim without shell true', async () => {
     if (process.platform !== 'win32') return;
     const root = await mkdtemp(path.join(process.cwd(), 'lnwjud process shim-'));

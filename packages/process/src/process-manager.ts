@@ -336,6 +336,11 @@ function createSafeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     'PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
     'HOME', 'LANG', 'LC_ALL', 'APPDATA', 'LOCALAPPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)',
   ].map((key) => process.platform === 'win32' ? key.toLowerCase() : key));
+  // Posix session variables managed runs need to behave like a real shell
+  // session (temp dir, login identity, agent forwarding, terminal type).
+  if (process.platform !== 'win32') {
+    for (const key of ['TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK', 'TERM']) allowed.add(key);
+  }
   return Object.fromEntries(Object.entries(source).filter(([key, value]) => {
     const normalizedKey = process.platform === 'win32' ? key.toLowerCase() : key;
     return allowed.has(normalizedKey) && value !== undefined;

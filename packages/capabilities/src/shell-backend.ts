@@ -647,6 +647,11 @@ function isWithin(root: string, candidate: string): boolean {
 function createSafeEnvironment(source: NodeJS.ProcessEnv, unrestricted: boolean): NodeJS.ProcessEnv {
   if (unrestricted) return { ...source };
   const allowed = new Set(['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME', 'LANG', 'LC_ALL', 'APPDATA', 'LOCALAPPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ComSpec'].map((key) => process.platform === 'win32' ? key.toLowerCase() : key));
+  // Posix session variables foreground runs need to behave like a real shell
+  // session (temp dir, login identity, agent forwarding, terminal type).
+  if (process.platform !== 'win32') {
+    for (const key of ['TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK', 'TERM']) allowed.add(key);
+  }
   return Object.fromEntries(Object.entries(source).filter(([key, entry]) => {
     const normalizedKey = process.platform === 'win32' ? key.toLowerCase() : key;
     return entry !== undefined && allowed.has(normalizedKey);

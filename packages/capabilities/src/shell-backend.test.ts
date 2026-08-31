@@ -570,6 +570,52 @@ describe('ShellCapabilityBackend', () => {
       value: { state: 'completed', exit_code: 0, stdout: expect.stringContaining('shell-shim-marker') },
     });
   });
+
+  it('passes the posix session environment through the safe allowlist for foreground runs', async () => {
+    if (process.platform === 'win32') return;
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root] });
+    const probeKeys = ['TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK', 'TERM', 'LNWJUD_NOT_ALLOWLISTED'];
+    const probeValues: Record<string, string> = {
+      TMPDIR: os.tmpdir(),
+      SHELL: '/bin/zsh',
+      USER: 'lnwjud-probe-user',
+      LOGNAME: 'lnwjud-probe-user',
+      SSH_AUTH_SOCK: '/tmp/lnwjud-ssh-agent.sock',
+      TERM: 'xterm-256color',
+      LNWJUD_NOT_ALLOWLISTED: 'secret-probe',
+    };
+    const savedEnv: Record<string, string | undefined> = {};
+    for (const key of probeKeys) {
+      savedEnv[key] = process.env[key];
+      process.env[key] = probeValues[key];
+    }
+    try {
+      const result = await backend.execute({
+        operation: 'run',
+        executable: process.execPath,
+        arguments: ['-e', `process.stdout.write(${JSON.stringify(probeKeys)}.map((key) => key + '=' + (process.env[key] ?? 'missing')).join('|'))`],
+        cwd: root,
+        execution: 'foreground',
+        userConfirmed: true,
+        timeout_seconds: 30,
+      });
+
+      expect(result).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0 } });
+      const stdout = (result as { ok: true; value: { stdout: string } }).value.stdout;
+      for (const key of ['TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK', 'TERM']) {
+        expect(stdout).toContain(`${key}=${probeValues[key]}`);
+      }
+      expect(stdout).toContain('LNWJUD_NOT_ALLOWLISTED=missing');
+      expect(stdout).not.toContain('secret-probe');
+    } finally {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
 });
 
 function delayForTest(milliseconds: number): Promise<void> {
