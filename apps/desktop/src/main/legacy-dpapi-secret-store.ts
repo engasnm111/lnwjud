@@ -21,6 +21,15 @@ export class LegacyDpapiSecretStore implements SecretStore {
       : { availability: 'unsupported', security: 'secure', providerId: this.providerId, message: 'Legacy Windows DPAPI storage is unavailable on this platform' };
   }
 
+  public async has(ref: SecretRef): Promise<boolean> {
+    try {
+      return (await readFile(this.options.pathForRef(ref), 'utf8')).trim().length > 0;
+    } catch (error) {
+      if (isMissingFile(error)) return false;
+      throw error;
+    }
+  }
+
   public async set(ref: SecretRef, value: Uint8Array): Promise<void> {
     const plain = Buffer.from(value).toString('utf8');
     if (plain.length === 0) throw new Error('Secret value must not be empty');

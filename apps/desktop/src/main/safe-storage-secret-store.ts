@@ -34,6 +34,15 @@ export class SafeStorageSecretStore implements SecretStore {
     return this.currentStatus();
   }
 
+  public async has(ref: SecretRef): Promise<boolean> {
+    try {
+      return (await readFile(this.filePath(ref), 'utf8')).trim().length > 0;
+    } catch (error) {
+      if (isMissingFile(error)) return false;
+      throw error;
+    }
+  }
+
   public async set(ref: SecretRef, value: Uint8Array): Promise<void> {
     if (value.byteLength === 0) throw new Error('Secret value must not be empty');
     const status = await requireSecureSecretStore(this);

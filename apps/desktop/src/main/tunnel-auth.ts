@@ -95,6 +95,7 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
 
   private async hasStoredSecret(): Promise<boolean> {
     try {
+      if (this.options.secretStore.has !== undefined) return await this.options.secretStore.has(this.ref);
       const stored = await this.options.secretStore.get(this.ref);
       return stored !== null && stored.byteLength > 0;
     } catch {

@@ -17,6 +17,8 @@ export interface SecretStoreStatus {
 export interface SecretStore {
   readonly providerId: string;
   status(): Promise<SecretStoreStatus>;
+  /** Presence probe that must not decrypt or expose the stored secret when supported. */
+  has?(ref: SecretRef): Promise<boolean>;
   set(ref: SecretRef, value: Uint8Array): Promise<void>;
   get(ref: SecretRef): Promise<Uint8Array | null>;
   delete(ref: SecretRef): Promise<void>;
