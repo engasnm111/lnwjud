@@ -87,6 +87,7 @@ import {
   serializeStringRecordSetting,
   loadCheckpointEncryptionKey,
   type DestructiveAutoApprovalPolicy,
+  type SecretStore,
 } from '@lnwjud/shared';
 import { AesGcmCheckpointCipher, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupSummary } from '@lnwjud/storage';
 import { SqliteGoalRepository } from '@lnwjud/storage';
@@ -162,6 +163,7 @@ import { TunnelAuthCoordinator } from './tunnel-auth-coordinator.js';
 import { OAuthTunnelAuthProvider, type TunnelOAuthProvisioningBackend } from './tunnel-oauth-provider.js';
 import { TunnelOAuthLoginManager } from './tunnel-oauth-login-manager.js';
 import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
+import { LegacyDpapiSecretStore } from './legacy-dpapi-secret-store.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
@@ -198,6 +200,8 @@ export interface DesktopRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
+  readonly checkpointEncryptionKey?: Buffer;
+  readonly secretStore?: SecretStore;
   /** Injectable only when an officially supported Tunnel OAuth provisioning contract exists. */
   readonly tunnelOAuthBackend?: TunnelOAuthProvisioningBackend;
 }
@@ -237,7 +241,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const workLogViewState = new WorkLogViewState(settingsRepository);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
-  const checkpointCipher = new AesGcmCheckpointCipher(loadCheckpointEncryptionKey(dataPath));
+  const checkpointCipher = new AesGcmCheckpointCipher(options.checkpointEncryptionKey ?? loadCheckpointEncryptionKey(dataPath));
   const checkpointRepository = new SqliteCheckpointRepository(database, checkpointCipher);
   const backupService = new SqliteBackupService(database, { backupDirectory, databaseFilename });
   void backupService.ensureRecent().catch((error: unknown) => {
@@ -417,13 +421,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       codexToolsEnabled: readSettings().codexToolsEnabled,
     }),
   });
-  const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({
-    secretPath: (): string => legacyTunnelSecretPath(),
+  const tunnelSecretStore = options.secretStore ?? new LegacyDpapiSecretStore({
+    pathForRef: (ref): string => ref.name === 'oauth-session' ? oauthTunnelSessionPath() : legacyTunnelSecretPath(),
   });
+  const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({ secretStore: tunnelSecretStore });
   const oauthTunnelBackend = options.tunnelOAuthBackend ?? unavailableTunnelOAuthBackend();
   const oauthTunnelAuthProvider = new OAuthTunnelAuthProvider({
     backend: oauthTunnelBackend,
-    sessionStore: new TunnelOAuthSessionStore({ filePath: oauthTunnelSessionPath() }),
+    sessionStore: new TunnelOAuthSessionStore({ secretStore: tunnelSecretStore }),
     expectedTunnelId: (): string | null => settingsRepository.get(tunnelIdentitySettingKey),
   });
   const tunnelAuthCoordinator = new TunnelAuthCoordinator(

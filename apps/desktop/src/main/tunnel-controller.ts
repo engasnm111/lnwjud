@@ -9,6 +9,7 @@ import { request as httpRequest } from 'node:http';
 import type { TunnelAuthStatus, TunnelPersistentStatus, TunnelRunState, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 import { defaultTunnelProfileDirectory, LegacyApiKeyCredentialProvider, type TunnelAuthProvider } from './tunnel-auth.js';
+import { LegacyDpapiSecretStore } from './legacy-dpapi-secret-store.js';
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
 import { acquireTunnelLock, readTunnelLock, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
 import { extractTunnelId, extractTunnelMcpServerUrl, normalizeLoopbackMcpUrl, rewriteTunnelYamlMcpServerUrl, rewriteTunnelYamlRuntimeApiKeyRef } from './tunnel-profile.js';
@@ -104,8 +105,10 @@ export class TunnelController {
   public constructor(options: TunnelControllerOptions) {
     this.options = options;
     this.authProvider = options.authProvider ?? new LegacyApiKeyCredentialProvider({
-      secretPath: (): string => this.secretPath(),
-      ...(options.decryptSecret === undefined ? {} : { decryptSecret: options.decryptSecret }),
+      secretStore: new LegacyDpapiSecretStore({
+        pathForRef: (): string => this.secretPath(),
+        ...(options.decryptSecret === undefined ? {} : { decryptSecret: options.decryptSecret }),
+      }),
     });
   }
 

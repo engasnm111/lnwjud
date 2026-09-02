@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OAuthTunnelAuthProvider, type TunnelOAuthProvisioningBackend } from '../src/main/tunnel-oauth-provider.js';
 import { TunnelOAuthSessionStore } from '../src/main/tunnel-oauth-store.js';
+import { LegacyDpapiSecretStore } from '../src/main/legacy-dpapi-secret-store.js';
 
 const roots: string[] = [];
 afterEach(async (): Promise<void> => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -13,9 +14,11 @@ async function fixture(overrides: Partial<TunnelOAuthProvisioningBackend['descri
   roots.push(root);
   const filePath = path.join(root, 'oauth-session.dpapi');
   const store = new TunnelOAuthSessionStore({
-    filePath,
-    encryptSecret: async (plain: string): Promise<string> => `encrypted:${Buffer.from(plain, 'utf8').toString('base64')}`,
-    decryptSecret: async (cipher: string): Promise<string> => Buffer.from(cipher.replace(/^encrypted:/, ''), 'base64').toString('utf8'),
+    secretStore: new LegacyDpapiSecretStore({
+      pathForRef: (): string => filePath,
+      encryptSecret: async (plain: string): Promise<string> => `encrypted:${Buffer.from(plain, 'utf8').toString('base64')}`,
+      decryptSecret: async (cipher: string): Promise<string> => Buffer.from(cipher.replace(/^encrypted:/, ''), 'base64').toString('utf8'),
+    }),
   });
   const descriptor = {
     id: 'fixture', authorizationEndpoint: 'https://auth.example.test/authorize', tokenEndpoint: 'https://auth.example.test/token',

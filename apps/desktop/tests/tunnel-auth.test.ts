@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LegacyApiKeyCredentialProvider } from '../src/main/tunnel-auth.js';
+import { LegacyDpapiSecretStore } from '../src/main/legacy-dpapi-secret-store.js';
 
 const roots: string[] = [];
 
@@ -15,9 +16,11 @@ async function fixture(): Promise<{ readonly root: string; readonly secretPath: 
   roots.push(root);
   const secretPath = path.join(root, 'tunnel-client', 'lnwjud.runtime.secret');
   const provider = new LegacyApiKeyCredentialProvider({
-    secretPath: (): string => secretPath,
-    encryptSecret: async (plainText: string): Promise<string> => `dpapi-fixture:${plainText}`,
-    decryptSecret: async (cipherText: string): Promise<string> => cipherText.replace(/^dpapi-fixture:/, ''),
+    secretStore: new LegacyDpapiSecretStore({
+      pathForRef: (): string => secretPath,
+      encryptSecret: async (plainText: string): Promise<string> => `dpapi-fixture:${plainText}`,
+      decryptSecret: async (cipherText: string): Promise<string> => cipherText.replace(/^dpapi-fixture:/, ''),
+    }),
   });
   return { root, secretPath, provider };
 }

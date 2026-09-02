@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, safeStorage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { access } from 'node:fs/promises';
@@ -63,6 +63,7 @@ import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalReq
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
+import { bootstrapDesktopSecrets } from './desktop-secret-store.js';
 import { installPdfProvider } from './pdf-provider-installer.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
@@ -1386,9 +1387,11 @@ function bootstrapMcpStdio(): void {
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
     prependBundledRuntimeToolsToPath();
+    const secrets = await bootstrapDesktopSecrets({ dataPath, safeStorage });
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
+      ...secrets,
     });
     desktopRuntime = runtime;
     const workspacePath = readArgValue('--workspace')
@@ -1653,12 +1656,14 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
-function createNativeDesktopRuntime(dataPath: string): DesktopRuntime {
+async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
+  const secrets = await bootstrapDesktopSecrets({ dataPath, safeStorage });
   return createDesktopRuntime(dataPath, {
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
     }),
+    ...secrets,
   });
 }
 
@@ -1672,7 +1677,7 @@ function bootstrapDesktop(): void {
     );
 
     prependBundledRuntimeToolsToPath();
-    const runtime = createNativeDesktopRuntime(dataPath);
+    const runtime = await createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -1710,7 +1715,7 @@ function bootstrapLogViewerOnly(): void {
   void app.whenReady().then(async () => {
     app.setAppUserModelId('com.lnwjud.desktop');
     prependBundledRuntimeToolsToPath();
-    const runtime = createNativeDesktopRuntime(dataPath);
+    const runtime = await createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
