@@ -78,6 +78,10 @@ docs/superpowers/*
 !docs/superpowers/plans/
 docs/superpowers/plans/*
 !docs/superpowers/plans/2026-09-02-lnwjud-v4.52.0-native-macos-linux.md
+!docs/architecture/PLATFORM_SUPPORT.md
+!docs/architecture/CROSS_PLATFORM_SECURITY.md
+!docs/architecture/NATIVE_HOSTS.md
+!docs/architecture/CROSS_PLATFORM_PACKAGING.md
 !docs/development/RELEASE_CHECKLIST.md
 !docs/development/WINDOWS_DEFENDER_FALSE_POSITIVE.md
 !docs/development/SCHEDULED_CONTINUATION_CAPABILITY_EVIDENCE.md
