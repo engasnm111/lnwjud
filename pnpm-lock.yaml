@@ -116,6 +116,9 @@ importers:
       '@lnwjud/permissions':
         specifier: workspace:*
         version: link:../../packages/permissions
+      '@lnwjud/platform':
+        specifier: workspace:*
+        version: link:../../packages/platform
       '@lnwjud/process':
         specifier: workspace:*
         version: link:../../packages/process
@@ -311,6 +314,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/platform: {}
+
   packages/process:
     dependencies:
       '@lnwjud/domain':
@@ -329,7 +334,11 @@ importers:
         specifier: workspace:*
         version: link:../domain
 
-  packages/shared: {}
+  packages/shared:
+    dependencies:
+      '@lnwjud/platform':
+        specifier: workspace:*
+        version: link:../platform
 
   packages/storage:
     dependencies:

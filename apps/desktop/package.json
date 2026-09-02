@@ -31,6 +31,7 @@
     "@lnwjud/ipc-contracts": "workspace:*",
     "@lnwjud/mcp-server": "workspace:*",
     "@lnwjud/permissions": "workspace:*",
+    "@lnwjud/platform": "workspace:*",
     "@lnwjud/process": "workspace:*",
     "@lnwjud/search": "workspace:*",
     "@lnwjud/shared": "workspace:*",

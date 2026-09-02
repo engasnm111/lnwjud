@@ -2,13 +2,21 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TunnelAuthStatus } from '@lnwjud/ipc-contracts';
+import { createPlatformContext, resolvePlatformPaths } from '@lnwjud/platform';
 import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 
 export const LEGACY_TUNNEL_SECRET_FILE = 'lnwjud.runtime.secret';
 export const OAUTH_TUNNEL_SESSION_FILE = 'lnwjud.oauth.session.secret';
 
-export function defaultTunnelProfileDirectory(environment: NodeJS.ProcessEnv = process.env): string {
-  return path.join(environment.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'tunnel-client');
+export function defaultTunnelProfileDirectory(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  homeDir: string = os.homedir(),
+): string {
+  const context = createPlatformContext({ platform, arch: process.arch });
+  const paths = resolvePlatformPaths(context, environment, homeDir);
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  return pathApi.join(pathApi.dirname(paths.configDir), 'tunnel-client');
 }
 
 export function legacyTunnelSecretPath(environment: NodeJS.ProcessEnv = process.env): string {
