@@ -61,7 +61,7 @@ import {
   SqliteSettingsRepository,
   SqliteWorkspaceRepository,
 } from '@lnwjud/storage';
-import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { isMachineWideRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
 import { StrictWorkspaceRepository } from './strict-workspace-repository.js';
 
 export interface StdioMcpRuntime {
@@ -154,7 +154,7 @@ export function createStdioMcpRuntime(
   const capabilityRuntime = createStdioCapabilityService(dataPath, workspace.realRootPath, async () => {
     const listed = await workspaceRepository.list();
     const roots = listed
-      .filter((entry) => !isDriveRoot(entry.realRootPath) && !isDriveRoot(entry.rootPath))
+      .filter((entry) => !isMachineWideRoot(entry.realRootPath) && !isMachineWideRoot(entry.rootPath))
       .map((entry) => entry.realRootPath);
     if (roots.length === 0) return [workspace.realRootPath];
     return roots;

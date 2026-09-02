@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import {
-  isDriveRoot,
+  isMachineWideRoot,
   isWithin,
+  workspaceRootComparisonKey,
   type Workspace,
   type WorkspaceRepository,
   type WorkspaceService,
@@ -48,7 +49,7 @@ export class WorkspaceInfoService {
   }
 
   private toWorkspaceInfo(workspace: Workspace): WorkspaceInfo {
-    const isRoot = isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath);
+    const isRoot = isMachineWideRoot(workspace.realRootPath) || isMachineWideRoot(workspace.rootPath);
     return {
       id: workspace.id,
       displayName: workspace.displayName,
@@ -77,7 +78,7 @@ export class WorkspaceInfoService {
       if (parent === null) {
         return err(appError('WORKSPACE_NOT_FOUND', 'Parent workspace was not found'));
       }
-      if (!isDriveRoot(parent.realRootPath) && !isDriveRoot(parent.rootPath)) {
+      if (!isMachineWideRoot(parent.realRootPath) && !isMachineWideRoot(parent.rootPath)) {
         return err(appError('INVALID_INPUT', 'parentWorkspaceId must be a drive-root machine root'));
       }
 
@@ -106,7 +107,5 @@ export class WorkspaceInfoService {
 }
 
 function normalizeCompare(rootPath: string): string {
-  const resolved = path.resolve(rootPath);
-  const withSep = resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
-  return withSep.toLowerCase();
+  return workspaceRootComparisonKey(rootPath);
 }

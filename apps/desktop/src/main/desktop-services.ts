@@ -91,7 +91,7 @@ import {
 import { AesGcmCheckpointCipher, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupSummary } from '@lnwjud/storage';
 import { SqliteGoalRepository } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
-import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
+import { isMachineWideRoot, SecretPolicy, workspaceRootComparisonKey, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
 import {
   type AddWorkspaceRequest,
   type BackupSummary as IpcBackupSummary,
@@ -300,7 +300,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const agentSwarmService = new AgentSwarmService(new SqliteAgentSwarmRepository(database), codexService);
   const capabilityRuntime = createLocalCapabilityRuntime(dataPath, async (): Promise<readonly string[]> => (
     (await workspaceRepository.list())
-      .filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath))
+      .filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath))
       .map((workspace) => workspace.realRootPath)
   ), unrestricted, () => readSettings().capabilityRoots, () => readSettings().shellSynchronousWaitSeconds);
   const taskCancellation = new GoalTaskCancellationService([
@@ -564,14 +564,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   async function resolveManageableWorkspace(workspaceId: string): Promise<Workspace> {
     const workspace = await workspaceRepository.getAny(workspaceId);
     if (workspace === null) throw new Error('Workspace was not found');
-    if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) {
+    if (isMachineWideRoot(workspace.realRootPath) || isMachineWideRoot(workspace.rootPath)) {
       throw new Error('Machine-root workspaces are managed automatically and cannot be archived or deleted');
     }
     return workspace;
   }
 
   async function resolveActiveProjectWorkspaces(): Promise<readonly Workspace[]> {
-    const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+    const workspaces = (await workspaceService.list()).filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath));
     if (workspaces.length === 0) {
       settingsRepository.delete(activeWorkspaceIdsSettingKey);
       settingsRepository.delete(selectedWorkspaceSettingKey);
@@ -709,7 +709,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'database', required: true, summaryKey: 'requirement.database', probe: async () => ({ status: 'pass', detail: 'SQLite database ready' }) },
     { id: 'mcp-port', required: true, summaryKey: 'requirement.mcp_port', probe: () => requirementProbeFromDoctor(() => checkConfiguredMcpPort(mcpLifecycle.status(), mcpPort)) },
     { id: 'platform_windows', required: false, summaryKey: 'requirement.platform_windows', probe: async () => ({ status: process.platform === 'win32' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
-    { id: 'registered_workspace', required: false, summaryKey: 'requirement.registered_workspace', remediationId: 'add_project', probe: async () => ({ status: (await workspaceService.list()).some((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath)) ? 'pass' : 'fail' }) },
+    { id: 'registered_workspace', required: false, summaryKey: 'requirement.registered_workspace', remediationId: 'add_project', probe: async () => ({ status: (await workspaceService.list()).some((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath)) ? 'pass' : 'fail' }) },
     { id: 'active_project', required: false, summaryKey: 'requirement.active_project', remediationId: 'add_project', probe: async () => ({ status: (await resolveActiveProjectWorkspaces()).length > 0 ? 'pass' : 'fail' }) },
     { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
     { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
@@ -775,7 +775,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 
   async function selectWorkspaceOnly(workspaceId: string): Promise<WorkspaceSummary> {
     const workspace = await resolveWorkspaceOrThrow(workspaceId);
-    if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
+    if (isMachineWideRoot(workspace.realRootPath) || isMachineWideRoot(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
     await activateWorkspace(workspaceId);
     settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
     await resolveActiveProjectWorkspaces();
@@ -1179,19 +1179,20 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
       const existing = await workspaceService.list();
       const resolvedRoot = path.resolve(rootPath);
-      const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedRoot.toLowerCase());
-      if (matched !== undefined && !isDriveRoot(matched.realRootPath) && !isDriveRoot(matched.rootPath)) {
+      const resolvedRootKey = workspaceRootComparisonKey(resolvedRoot);
+      const matched = existing.find((workspace) => workspaceRootComparisonKey(workspace.realRootPath) === resolvedRootKey);
+      if (matched !== undefined && !isMachineWideRoot(matched.realRootPath) && !isMachineWideRoot(matched.rootPath)) {
         settingsRepository.set(selectedWorkspaceSettingKey, matched.id);
         await activateWorkspace(matched.id);
         return matched.id;
       }
-      const projects = existing.filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+      const projects = existing.filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath));
       const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
       if (selectedId !== null) {
         const selected = projects.find((workspace) => workspace.id === selectedId);
         if (selected !== undefined) { await activateWorkspace(selected.id); return selected.id; }
       }
-      if (!isDriveRoot(resolvedRoot)) {
+      if (!isMachineWideRoot(resolvedRoot)) {
         const displayName = path.basename(resolvedRoot) || 'Workspace';
         const added = unwrap(await workspaceService.add(displayName, resolvedRoot), 'Workspace could not be added');
         settingsRepository.set(selectedWorkspaceSettingKey, added.id);
@@ -1262,7 +1263,7 @@ async function resolveSelectedWorkspace(
   workspaceService: WorkspaceService,
   settingsRepository: SqliteSettingsRepository,
 ): Promise<Workspace | null> {
-  const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+  const workspaces = (await workspaceService.list()).filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath));
   if (workspaces.length === 0) return null;
   const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
   const selected = selectedId === null ? undefined : workspaces.find((workspace) => workspace.id === selectedId);
@@ -1324,12 +1325,12 @@ function toWorkspaceSummary(workspace: Workspace): WorkspaceSummary {
     realRootPath: workspace.realRootPath,
     createdAt: workspace.createdAt,
     archivedAt: workspace.archivedAt ?? null,
-    kind: isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath) ? 'machine_root' : 'project',
+    kind: isMachineWideRoot(workspace.realRootPath) || isMachineWideRoot(workspace.rootPath) ? 'machine_root' : 'project',
   };
 }
 
 function isGeneratedAutoMachineRoot(workspace: Workspace): boolean {
-  return isDriveRoot(workspace.rootPath) && /^Local Disk [A-Z]:$/i.test(workspace.displayName.trim());
+  return isMachineWideRoot(workspace.rootPath) && /^Local Disk [A-Z]:$/i.test(workspace.displayName.trim());
 }
 
 async function buildGitSummary(
