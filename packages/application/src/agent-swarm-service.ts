@@ -288,7 +288,7 @@ export class AgentSwarmService {
 }
 
 function validateStart(request: AgentSwarmStartRequest): Result<void> {
-  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v4.52.0 supports read_only access only'));
+  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v4.52.1 supports read_only access only'));
   if (!Array.isArray(request.tasks) || request.tasks.length < 1 || request.tasks.length > MAX_TASKS) return err(appError('INVALID_INPUT', 'Agent swarm requires 1 to 4 tasks'));
   const ids = new Set<string>();
   for (const task of request.tasks) {

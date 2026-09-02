@@ -44,14 +44,24 @@ over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the Windows
 machine.
 
-## Current version: v4.52.0
+## Current version: v4.52.1
 
-The v4.52.0 release target and runtime contract contain **231 total MCP tool definitions**,
+The v4.52.1 release target and runtime contract contain **231 total MCP tool definitions**,
 with **224 advertised by default** and **all 231 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
+
+### What's new in v4.52.1
+
+#### Durable goal lease / scheduled-continuation hotfix
+
+- Fixes a rolling-goal ownership bug where **Full Bypass could skip the scheduled-goal mutation fence**, allowing an old worker to keep mutating files, Git, or processes after its lease had expired or a successor had taken over.
+- Full Bypass still skips the intended application approval, confirmation, command-policy, and Active Project scope gates, but **durable-goal ownership is now always enforced when a live rolling scheduled-goal fence exists**. Ordinary unscheduled Full Bypass remains lease-free when no rolling fence exists.
+- Missing, stale, expired, generation-mismatched, or past-handoff `goalLease` proof is rejected **before the tool handler performs a workspace mutation**, preventing stale workers from racing a newer continuation.
+- Lease-invalid failures now surface as a recoverable coordination conflict with explicit guidance to read the latest goal and reacquire or claim the scheduled continuation before retrying, instead of the ambiguous `Goal lease is invalid or expired` permission error.
+- Adds regression coverage for Full Bypass with and without a rolling fence, plus stale-lease rejection before mutation.
 
 ### What's new in v4.52.0
 
@@ -210,13 +220,13 @@ stops the current local HTTP listener.
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.52.0.exe` (recommended installer) and `lnwjud-Portable-4.52.0.exe` (no installation required).
+   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.52.1.exe` (recommended installer) and `lnwjud-Portable-4.52.1.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.52.0.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.52.1.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -371,8 +381,8 @@ Secure Tunnel จะส่งงานเข้าที่ Desktop loopback HTT
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.52.0.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.52.0.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.52.1.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.52.1.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -387,7 +397,7 @@ Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Window
 
 ### 3. tunnel-client มากับตัวติดตั้งแล้ว
 
-ถ้าใช้ `lnwjud-Setup-4.52.0.exe` หรือ `lnwjud-Portable-4.52.0.exe` บน Windows x64 **ไม่ต้องดาวน์โหลด
+ถ้าใช้ `lnwjud-Setup-4.52.1.exe` หรือ `lnwjud-Portable-4.52.1.exe` บน Windows x64 **ไม่ต้องดาวน์โหลด
 `tunnel-client.exe` เอง** ตัว release รวม official OpenAI
 `tunnel-client v0.0.13` มาให้และ lnwjud จะเลือกใช้ให้อัตโนมัติ
 
@@ -663,8 +673,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.52.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.52.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.52.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.52.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

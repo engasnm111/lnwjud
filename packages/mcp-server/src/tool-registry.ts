@@ -271,8 +271,7 @@ export class ToolRegistry {
       const mutationFenceWorkspaceId = mutationWorkspaceId ?? activeWorkspaceScope?.workspaceId ?? activityWorkspaceId;
       let mutationFenceProof: GoalLeaseProof | undefined;
       if (
-        !fullBypass
-        && mutationDecision.kind !== 'read'
+        mutationDecision.kind !== 'read'
         && mutationFenceWorkspaceId !== undefined
         && SCHEDULED_CONTINUATION_FENCED_TOOLS.has(tool.name)
         && this.services.goalMutationFence !== undefined
@@ -947,7 +946,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.52.0 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.52.1 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);
