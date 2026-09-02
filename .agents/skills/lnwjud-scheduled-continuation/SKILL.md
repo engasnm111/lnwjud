@@ -74,7 +74,7 @@ If the user asks to cancel the goal, call `cancel_goal` with the latest expected
 - Live fenced calls and managed task/process states are worker-liveness evidence. MCP session equality and elapsed time are not.
 - Active or unknown liveness fails closed into a same-native-task +2-minute reschedule; it never depends on nested Scheduled Task creation.
 - Orphan takeover requires two unchanged trustworthy no-worker probes at least 120 seconds apart, the same revision/generation/activity sequence, no live fenced calls, and all tracked tasks terminal or absent. The orphan probe state carries forward across same-task reschedules; recovery uses CAS and increments lease generation.
-- Full Bypass may skip application-level `goalLease` enforcement, but this workflow still requires claim and current proof as its cooperative ownership protocol.
+- Full Bypass skips application approval/scope gates, but it does **not** skip durable rolling-goal ownership. If a live scheduled-goal mutation fence exists for the workspace, `ToolRegistry` requires the current `goalLease` even under Full Bypass; a stale/missing proof must fail before mutation. Ordinary unscheduled Full Bypass calls remain lease-free when no rolling fence exists.
 
 ## Verified completion
 

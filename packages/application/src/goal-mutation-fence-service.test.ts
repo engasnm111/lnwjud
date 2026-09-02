@@ -46,7 +46,14 @@ describe('GoalMutationFenceService', () => {
     const service = new GoalMutationFenceService(repo);
     await expect(service.begin(actor, 'workspace-1', 'call-old', {
       goalId: 'goal-1', leaseToken: 'old-token', leaseGeneration: 1,
-    })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT', recoverable: true } });
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        recoverable: true,
+        message: expect.stringContaining('reacquire or claim the scheduled continuation'),
+      },
+    });
   });
 
   it('marks liveness untrustworthy when any managed task state is unknown', async (): Promise<void> => {

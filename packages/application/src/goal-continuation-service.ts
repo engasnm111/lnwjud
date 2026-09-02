@@ -423,7 +423,7 @@ export class GoalContinuationService {
     if (error instanceof GoalStateError) {
       switch (error.reason) {
         case 'owner_mismatch': return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
-        case 'lease_invalid': return err(appError('PERMISSION_DENIED', 'Goal lease is invalid or expired', true));
+        case 'lease_invalid': return err(appError('CONFLICT', `Goal lease is no longer valid (${error.message}); read the latest goal and reacquire or claim the scheduled continuation before retrying`, true));
         case 'conflict': return err(appError('CONFLICT', 'Goal state changed concurrently; read the latest revision and retry', true));
         case 'terminal': return err(appError('CONFLICT', 'Goal is already terminal'));
         case 'not_found': return err(appError('INVALID_INPUT', 'Goal was not found'));

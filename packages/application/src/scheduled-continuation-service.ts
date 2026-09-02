@@ -1007,7 +1007,7 @@ function mapError(error: unknown): Result<never> {
   if (error instanceof GoalStateError) {
     switch (error.reason) {
       case 'owner_mismatch': return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
-      case 'lease_invalid': return err(appError('PERMISSION_DENIED', 'Goal lease is invalid or expired', true));
+      case 'lease_invalid': return err(appError('CONFLICT', `Goal lease is no longer valid (${error.message}); read the latest goal and reacquire or claim the scheduled continuation before retrying`, true));
       case 'conflict': return err(appError('CONFLICT', error.message, true));
       case 'terminal': return err(appError('CONFLICT', 'Goal is already terminal'));
       case 'not_found': return err(appError('INVALID_INPUT', 'Goal or continuation was not found'));
