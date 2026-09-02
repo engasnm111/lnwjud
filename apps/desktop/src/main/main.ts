@@ -1671,7 +1671,7 @@ function bootstrapDesktop(): void {
   if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
-    app.setAppUserModelId('com.lnwjud.desktop');
+    if (process.platform === 'win32') app.setAppUserModelId('com.lnwjud.desktop');
     console.log(
       `[WindowsCompatibility] ${windowsCompatibility.generation} build=${windowsCompatibility.build ?? 'unknown'} arch=${process.arch} gpu=${windowsCompatibility.disableHardwareAcceleration ? 'software' : 'hardware'}; ${windowsCompatibility.reason}`,
     );
@@ -1713,7 +1713,7 @@ function bootstrapLogViewerOnly(): void {
   const dataPath = configureDataPath();
   if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   void app.whenReady().then(async () => {
-    app.setAppUserModelId('com.lnwjud.desktop');
+    if (process.platform === 'win32') app.setAppUserModelId('com.lnwjud.desktop');
     prependBundledRuntimeToolsToPath();
     const runtime = await createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;

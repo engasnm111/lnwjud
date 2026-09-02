@@ -21,7 +21,7 @@ import {
   WslCapabilityBackend,
   WslFilesystemCapabilityBackend,
 } from '@lnwjud/capabilities';
-import type { Result } from '@lnwjud/domain';
+import { appError, err, type Result } from '@lnwjud/domain';
 import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS } from '@lnwjud/shared';
 import { AsyncTtlCache } from './async-ttl-cache.js';
@@ -38,6 +38,7 @@ export function createLocalCapabilityRuntime(
   unrestricted: boolean = false,
   configuredRootsProvider: () => readonly string[] = () => [],
   synchronousWaitSecondsProvider: () => number = () => DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS,
+  platform: NodeJS.Platform = process.platform,
 ): LocalCapabilityRuntime {
   const capabilityRootsProvider = async (): Promise<readonly string[]> => {
     const workspaceRoots = await workspaceRootsProvider();
@@ -57,34 +58,29 @@ export function createLocalCapabilityRuntime(
     protocol: browserProtocol,
     launcher: (url: string | undefined, signal?: AbortSignal): Promise<Result<unknown>> => browserProtocol.launch(url, signal),
   });
-  const windowsBridgeScript = capabilityBridgeScriptPath();
-  const expectedScriptSha256 = capabilityBridgeExpectedSha256();
-  const expectedScriptSizeBytes = capabilityBridgeExpectedSizeBytes();
-  const windowsBridge = new PowerShellWindowsCapabilityBridge({
-    scriptPath: windowsBridgeScript,
-    expectedScriptSha256,
-    ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
-  });
+  const windowsBridge = platform === 'win32'
+    ? createWindowsCapabilityBridge()
+    : { execute: async (): Promise<Result<never>> => err(appError('INTERNAL_ERROR', 'Windows native capability bridge is unavailable on this platform', true)) };
   const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
-  const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge);
-  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
-  const ocrHelperPath = windowsOcrHelperPath();
-  const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath });
+  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge, platform);
+  const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge, platform);
+  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge, platform);
+  const ocrHelperPath = platform === 'win32' ? windowsOcrHelperPath() : undefined;
+  const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath, platform });
   const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-    platform: process.platform,
+    platform,
     ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
   }));
-  const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge);
-  const systemInfoBackend = new WindowsNativeCapabilityBackend('system_info', windowsBridge);
-  const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge);
-  const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
-  const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
-  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions);
-  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions);
-  const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions);
+  const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge, platform);
+  const systemInfoBackend = new WindowsNativeCapabilityBackend('system_info', windowsBridge, platform);
+  const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge, platform);
+  const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge, platform);
+  const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge, platform);
+  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, platform, nativeOptions);
+  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, platform, nativeOptions);
+  const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, platform, nativeOptions);
   const webFetchBackend = new WebFetchCapabilityBackend();
-  const schedulerBackend = new SchedulerCapabilityBackend();
+  const schedulerBackend = new SchedulerCapabilityBackend({ platform });
   const wslAvailabilityCache = new AsyncTtlCache<Result<unknown>>(15_000);
   const wslAvailabilityProbe = (): Promise<Result<unknown>> => wslAvailabilityCache.get(async () => {
     const result = await shellBackend.execute({ operation: 'run', executable: 'wsl.exe', arguments: ['--status'], cwd: dataPath, execution: 'foreground', timeout_seconds: 5, max_output_bytes: 32 * 1024, userConfirmed: false });
@@ -94,14 +90,14 @@ export function createLocalCapabilityRuntime(
     return { ok: true, value: { available: ready, ready, local: true, ...(ready ? {} : { reason: 'wsl_status_failed' }) } };
   });
   const wslBackend = new WslCapabilityBackend({
-    platform: process.platform,
+    platform,
     runner: shellBackend,
     allowedRoots: [dataPath],
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
   });
   const wslFsBackend = new WslFilesystemCapabilityBackend({
-    platform: process.platform,
+    platform,
     allowedRoots: [dataPath],
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
@@ -144,6 +140,18 @@ export async function buildCapabilitySummary(health: HealthCapabilityBackend): P
 function readCapabilityRoots(value: string | undefined): readonly string[] {
   if (value === undefined || value.trim().length === 0) return [];
   return value.split(';').map((root) => root.trim()).filter((root) => root.length > 0).map((root) => path.resolve(root));
+}
+
+function createWindowsCapabilityBridge(): PowerShellWindowsCapabilityBridge {
+  const windowsBridgeScript = capabilityBridgeScriptPath();
+  const expectedScriptSha256 = capabilityBridgeExpectedSha256();
+  const expectedScriptSizeBytes = capabilityBridgeExpectedSizeBytes();
+  return new PowerShellWindowsCapabilityBridge({
+    scriptPath: windowsBridgeScript,
+    expectedScriptSha256,
+    ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
+    platform: 'win32',
+  });
 }
 
 function capabilityBridgeScriptPath(): string {
