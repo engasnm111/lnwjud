@@ -322,15 +322,31 @@ describe('durable goal continuation persistence', () => {
     const runtime = await open(filename, workspace, () => new Date('2026-08-26T00:00:00.000Z'));
     const created = await runtime.service.runGoal(actor('session-a'), createRequest);
     if (!created.ok || created.value.leaseToken === undefined) throw new Error('goal create failed');
-    const finished = await runtime.service.finishGoal(actor('session-a'), {
+    const accepted = await runtime.service.checkpointGoal(actor('session-a'), {
       goalId: created.value.goalId,
       leaseToken: created.value.leaseToken,
       expectedRevision: created.value.revision,
+      currentPhase: 'acceptance',
+      summary: 'All durable work and verification steps passed.',
+      stepUpdates: [
+        { stepId: 'implement', status: 'completed', summary: 'Implementation accepted.' },
+        { stepId: 'verify', status: 'completed', summary: 'Verification accepted.' },
+      ],
+      nextAction: '',
+      blockers: [],
+      evidence: [{ kind: 'hash', value: 'sha256:abc123' }],
+      activeTaskIds: [],
+    });
+    if (!accepted.ok) throw new Error('acceptance checkpoint failed');
+    const finished = await runtime.service.finishGoal(actor('session-a'), {
+      goalId: created.value.goalId,
+      leaseToken: created.value.leaseToken,
+      expectedRevision: accepted.value.revision,
       status: 'completed',
       summary: 'All acceptance criteria passed.',
       evidence: [{ kind: 'hash', value: 'sha256:abc123' }],
     });
-    expect(finished).toMatchObject({ ok: true, value: { status: 'completed', revision: 1 } });
+    expect(finished).toMatchObject({ ok: true, value: { status: 'completed', revision: 2 } });
 
     const rerun = await runtime.service.runGoal(actor('session-b'), { workspaceId: workspace.id, goalKey: createRequest.goalKey });
     expect(rerun).toMatchObject({ ok: true, value: { status: 'completed', acquired: false, goalId: created.value.goalId } });

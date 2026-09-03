@@ -25,6 +25,9 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('the client MUST apply this skill automatically');
     expect(skill).toContain('never require another user prompt to resume an unfinished goal');
     expect(skill).toContain('wait for every active task ID to reach a terminal state');
+    expect(skill).toContain('every durable plan step is `completed`');
+    expect(skill).toContain('Runtime rejects premature `completed` closure');
+    expect(skill).toContain('Native Scheduled Task `create_failed`, `Resource not found`');
     expect(skill).toContain('finish_goal');
     expect(skill).toContain('reschedule_required');
     expect(skill).toContain('runsOn: cloud');
@@ -34,6 +37,9 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('exactly as it is exposed by the current ChatGPT host/tool registry');
     expect(skill).toContain('Do **not** assume, invent, or hard-code an internal host tool/resource name');
     expect(skill).toContain('immediately call `record_scheduled_continuation_receipt(outcome: create_failed)`');
+    expect(skill).toContain('Native scheduling failure is **transport degradation only**');
+    expect(skill).toContain('scheduler-degraded, goal-still-active');
+    expect(skill).toContain('scheduler transport failure alone is never a reason to call `finish_goal`');
     expect(skill).not.toMatch(/Automations(?:\.|:)/i);
     expect(skill).toContain('Explicitly confirmed `local`');
     expect(skill).toContain('`prepared` means **reservation only**');

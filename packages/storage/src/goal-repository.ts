@@ -330,6 +330,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       const current = this.requireById(request.goalId);
       this.assertOwner(current, request.ownerClientId);
       this.assertMutableLease(current, request.ownerClientId, request.ownerSessionId, request.leaseTokenHash, request.expectedRevision, request.now);
+      assertCompletionReady(current, request.status);
       const revision = current.revision + 1;
       const changed = this.database.connection.prepare(`
         UPDATE goals
@@ -374,6 +375,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       const current = this.requireById(request.goalId);
       this.assertOwner(current, request.ownerClientId);
       this.assertMutableLease(current, request.ownerClientId, request.ownerSessionId, request.leaseTokenHash, request.expectedRevision, request.now);
+      assertCompletionReady(current, request.status);
     });
   }
 
@@ -2099,6 +2101,19 @@ function isScheduledRescheduleReason(value: string): value is ScheduledContinuat
 function parseGoalStatus(value: string): GoalStatus {
   if (value === 'active' || value === 'completed' || value === 'failed' || value === 'blocked' || value === 'cancelled') return value;
   throw corrupt('Goal status is invalid');
+}
+
+function assertCompletionReady(goal: GoalRecord, status: FinishGoalRecordRequest['status']): void {
+  if (status !== 'completed') return;
+  const unfinishedSteps = goal.plan.steps.filter((step) => step.status !== 'completed');
+  if (unfinishedSteps.length > 0) {
+    throw new GoalStateError(
+      'conflict',
+      `Goal cannot be completed while plan steps remain unfinished: ${unfinishedSteps.map((step) => step.id).join(', ')}`,
+    );
+  }
+  if (goal.blockers.length > 0) throw new GoalStateError('conflict', 'Goal cannot be completed while durable blockers remain');
+  if (goal.activeTaskIds.length > 0) throw new GoalStateError('conflict', 'Goal cannot be completed while blocking tasks remain tracked');
 }
 
 function trackedTasksAtCancellation(goal: GoalRecord): readonly GoalTrackedTask[] {

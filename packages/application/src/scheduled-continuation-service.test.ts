@@ -63,12 +63,20 @@ async function fixture(
   return { database, repository, goals, scheduled, clock };
 }
 
-async function startGoal(goals: GoalContinuationService, objective = 'Finish the durable goal safely.'): Promise<RunGoalResult> {
+async function startGoal(
+  goals: GoalContinuationService,
+  objective = 'Finish the durable goal safely.',
+  withPendingImplementationStep = false,
+): Promise<RunGoalResult> {
   const result = await goals.runGoal(actor, {
     workspaceId: 'workspace-1',
     goalKey: 'scheduled-application-test',
     objective,
-    plan: { steps: [{ id: 'implement', title: 'Implement the continuation path' }] },
+    plan: {
+      steps: withPendingImplementationStep
+        ? [{ id: 'implement', title: 'Implement the continuation path' }]
+        : [],
+    },
     leaseSeconds: 600,
   });
   expect(result.ok).toBe(true);
@@ -95,6 +103,55 @@ function validPrepare(started: Awaited<ReturnType<typeof startGoal>>, overrides:
 }
 
 describe('ScheduledContinuationService', () => {
+  it('refuses completed finish while durable plan work remains unfinished', async () => {
+    const { database, goals } = await fixture();
+    try {
+      const started = await startGoal(goals, 'Finish the durable goal safely.', true);
+      const premature = await goals.finishGoal(actor, {
+        goalId: started.goalId,
+        leaseToken: started.leaseToken!,
+        expectedRevision: started.revision,
+        status: 'completed',
+        summary: 'Premature completion must be rejected.',
+        evidence: [],
+      });
+      expect(premature).toMatchObject({
+        ok: false,
+        error: { code: 'CONFLICT', recoverable: true },
+      });
+
+      const checkpoint = await goals.checkpointGoal(actor, {
+        goalId: started.goalId,
+        leaseToken: started.leaseToken!,
+        expectedRevision: started.revision,
+        currentPhase: 'acceptance',
+        summary: 'The real work and acceptance checks are complete.',
+        stepUpdates: [{ stepId: 'implement', status: 'completed', summary: 'Implementation accepted.' }],
+        nextAction: '',
+        blockers: [],
+        evidence: [{ kind: 'note', value: 'acceptance passed' }],
+        activeTaskIds: [],
+      });
+      expect(checkpoint.ok).toBe(true);
+      if (!checkpoint.ok) throw new Error('checkpoint failed');
+
+      const completed = await goals.finishGoal(actor, {
+        goalId: started.goalId,
+        leaseToken: started.leaseToken!,
+        expectedRevision: checkpoint.value.revision,
+        status: 'completed',
+        summary: 'Completion is allowed only after durable work is complete.',
+        evidence: [{ kind: 'note', value: 'acceptance passed' }],
+      });
+      expect(completed).toMatchObject({
+        ok: true,
+        value: { status: 'completed', completionState: 'completed' },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it('defaults an omitted successor delay to the current 10-minute goal lease', async () => {
     const { database, goals, scheduled } = await fixture();
     try {
@@ -351,10 +408,16 @@ describe('ScheduledContinuationService', () => {
       expect(result.value.scheduleRequest.prompt).toContain('actual native Scheduled Task operation from the current ChatGPT host/tool registry');
       expect(result.value.scheduleRequest.prompt).toContain('never assume or hard-code an internal host operation name');
       expect(result.value.scheduleRequest.prompt).toContain('immediately record create_failed');
+      expect(result.value.scheduleRequest.prompt).toContain('Native scheduling failure is transport degradation only');
+      expect(result.value.scheduleRequest.prompt).toContain('never mark the durable goal completed, failed, or blocked solely because the successor host operation is unavailable');
+      expect(result.value.scheduleRequest.prompt).toContain('checkpoint the exact work state and scheduling degradation truthfully');
       expect(result.value.scheduleRequest.prompt).toContain('record create_uncertain only when host creation may actually have succeeded');
       expect(result.value.scheduleRequest.prompt).not.toMatch(/Automations(?:\.|:)/i);
       expect(result.value.scheduleRequest.prompt).toContain('Never send a completion response while get_goal still reports active');
-      expect(result.value.scheduleRequest.prompt).toContain('finish_goal');
+      expect(result.value.scheduleRequest.prompt).toContain('all durable plan steps are completed');
+      expect(result.value.scheduleRequest.prompt).toContain('no blocking task remains tracked');
+      expect(result.value.scheduleRequest.prompt).toContain('finish_goal(status: completed)');
+      expect(result.value.scheduleRequest.prompt).toContain('Never use blocked/failed merely to terminate a scheduler-transport problem');
       expect(result.value.scheduleRequest.prompt).toContain('host-confirmed disable is acceptable non-runnable evidence');
       expect(result.value.scheduleRequest.prompt).toContain('claim returns terminal_noop');
       expect(result.value.scheduleRequest.prompt).toContain('let the already-firing one-time host task return naturally');

@@ -1,5 +1,20 @@
 # Scheduled Continuation Capability Evidence
 
+## v4.52.3 Scheduler-degraded durable-goal hardening — 2026-09-04
+
+A live end-to-end probe exposed a post-fire host-surface failure that durable state must not confuse with work completion: the first Native ChatGPT one-time watchdog fired and was correctly retired/superseded, a fresh generation-2 successor reservation was created, and the Native Scheduled Task host then returned `Resource not found` while creating the fresh successor. The successor was recorded truthfully as `create_failed`; no Windows Task Scheduler, lnwjud scheduler, cron, DOM automation, recurrence, or external scheduler fallback was used.
+
+v4.52.3 hardens the boundary between **work state** and **scheduler transport state**:
+
+- `create_failed`, unavailable, unsupported, and `Resource not found` from the Native ChatGPT Scheduled Task host are scheduler transport degradation only; they do not by themselves complete, fail, or block the durable goal;
+- the current leased worker keeps useful fenced work running when possible and an unavoidable turn boundary checkpoints the exact work state plus degraded scheduling truthfully without claiming watchdog coverage;
+- `run_goal` exposes `create_failed_no_native_task` and `continue_current_run_scheduler_degraded_goal_stays_active` so clients do not terminalize work merely to escape missing successor coverage;
+- `finish_goal(status: completed)` is runtime-guarded and rejected while any durable plan step is unfinished, durable blockers remain, or blocking tasks remain tracked;
+- `failed` and `blocked` remain real work outcomes, not scheduler escape hatches;
+- a still-pending native task may continue to be reused/retimed, while a fired one-time native task remains consumed transport identity and is never re-armed.
+
+Verification on 2026-09-04: application **163/163**, storage **61/61**, and MCP server **894/894** tests passed; focused continuation/goal-tool/skill coverage passed **40/40**; desktop acceptance passed **30/30**; root typecheck, lint, generated tool-catalog check, packaging contract gate, release-gate command, `git diff --check`, and full workspace build all passed before packaging.
+
 ## v4.52.2 Single-Live Watchdog hardening — 2026-09-04
 
 v4.52.2 keeps at most one confirmed still-pending native one-time watchdog per active goal. Repeated real checkpoints reuse that continuation/nativeTaskId and may retime the same pending task earlier or later; only a fired/consumed task or absence of pending coverage creates a fresh successor. Terminal cleanup is effect-based: the exact pending task must become non-runnable with truthful host evidence, preferring true delete and accepting host-confirmed disable when delete is not exposed. Skill/runtime prompts must never hard-code an `Automations.*` host operation name.

@@ -154,6 +154,50 @@ describe('durable goal MCP tools', () => {
     });
   });
 
+  it('keeps the durable goal active when native successor creation truthfully failed', async () => {
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async runGoal() {
+            return ok({
+              goalId: 'goal-create-failed', goalKey: 'stable-key', status: 'active', revision: 2, acquired: true,
+              leaseToken: 'lease-secret', leaseExpiresAt: '2026-08-26T00:10:00.000Z', currentPhase: 'work',
+              plan: { steps: [{ id: 'implement', title: 'Implement', status: 'in_progress' }] }, completedSteps: [],
+              pendingSteps: [{ id: 'implement', title: 'Implement', status: 'in_progress' }], nextAction: 'Keep working.', blockers: [], activeTaskIds: [], lastCheckpoint: { id: 'cp-1' },
+            });
+          },
+        },
+        scheduledContinuations: {
+          async getScheduledContinuation() {
+            return ok({
+              continuationId: 'continuation-create-failed', goalId: 'goal-create-failed', generation: 2, sourceGoalRevision: 2,
+              status: 'create_failed', occurrence: 'once', destination: 'current_chat', executionPreference: 'cloud',
+              dueAt: '2026-08-26T00:10:00.000Z', rescheduleCount: 0, orphanRecoveryCount: 0, version: 1,
+              createdAt: '2026-08-26T00:00:00.000Z', updatedAt: '2026-08-26T00:00:01.000Z',
+            });
+          },
+        },
+      },
+    } as unknown as McpToolContext;
+
+    const result = await tool(context, 'run_goal').execute({ workspaceId: 'workspace-1', goalKey: 'stable-key' }, new AbortController().signal);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: 'active',
+        continuationDirective: {
+          mode: 'auto',
+          successorHostState: 'create_failed_no_native_task',
+          successorHandoffReady: false,
+          nextRequiredAction: 'continue_current_run_scheduler_degraded_goal_stays_active',
+          stopOnlyWhen: 'goal_terminal_or_scheduling_explicitly_disabled',
+        },
+      },
+    });
+  });
+
   it('recognizes only scheduled native cloud receipts as handoff-ready', async () => {
     const context = {
       actor,
