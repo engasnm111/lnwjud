@@ -28,6 +28,7 @@ import {
   HealthCapabilityBackend,
   LocalCapabilityService,
   NodeBrowserCdpProtocol,
+  NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
   SchedulerCapabilityBackend,
   ShellCapabilityBackend,
@@ -373,7 +374,9 @@ function createStdioCapabilityService(
     vision: visionBackend,
     window: new WindowsNativeCapabilityBackend('window', windowsBridge),
     health,
-    systemInfo: new WindowsNativeCapabilityBackend('system_info', windowsBridge),
+    systemInfo: process.platform === 'win32'
+      ? new WindowsNativeCapabilityBackend('system_info', windowsBridge)
+      : new NodeSystemInfoCapabilityBackend({ platform: process.platform }),
     notification: new WindowsNativeCapabilityBackend('notification', windowsBridge),
     fileDialog: new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
     clipboard: new WindowsNativeCapabilityBackend('clipboard', windowsBridge),

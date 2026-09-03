@@ -7,6 +7,7 @@ import {
   HealthCapabilityBackend,
   LocalCapabilityService,
   NodeBrowserCdpProtocol,
+  NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
   SchedulerCapabilityBackend,
   ShellCapabilityBackend,
@@ -72,7 +73,9 @@ export function createLocalCapabilityRuntime(
     ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
   }));
   const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge, platform);
-  const systemInfoBackend = new WindowsNativeCapabilityBackend('system_info', windowsBridge, platform);
+  const systemInfoBackend = platform === 'win32'
+    ? new WindowsNativeCapabilityBackend('system_info', windowsBridge, platform)
+    : new NodeSystemInfoCapabilityBackend({ platform });
   const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge, platform);
   const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge, platform);
   const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge, platform);
