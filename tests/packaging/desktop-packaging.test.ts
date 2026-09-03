@@ -23,7 +23,14 @@ describe('Windows desktop packaging', () => {
     const packagePaths = [path.join(repositoryRoot, 'package.json')];
     for (const directory of packageDirectories) {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
-        if (entry.isDirectory()) packagePaths.push(path.join(directory, entry.name, 'package.json'));
+        if (!entry.isDirectory()) continue;
+        const packagePath = path.join(directory, entry.name, 'package.json');
+        try {
+          await access(packagePath);
+          packagePaths.push(packagePath);
+        } catch {
+          // Ignore stale build-only directories that are not pnpm workspace packages.
+        }
       }
     }
     for (const packagePath of packagePaths) {

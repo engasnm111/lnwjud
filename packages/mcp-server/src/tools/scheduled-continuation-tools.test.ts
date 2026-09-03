@@ -33,7 +33,9 @@ describe('scheduled continuation MCP tools', () => {
       goalId: 'goal-1', leaseToken: 'lease-secret', expectedRevision: 0, currentPhase: 'implement', summary: 'checkpoint',
       stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [], activeTaskIds: [],
     };
-    expect(byName.get('prepare_scheduled_continuation')?.parse(validPrepare)).toMatchObject({ ok: true, value: { successorDelayMinutes: 2, executionPreference: 'cloud' } });
+    const parsedDefaultPrepare = byName.get('prepare_scheduled_continuation')?.parse(validPrepare);
+    expect(parsedDefaultPrepare).toMatchObject({ ok: true, value: { executionPreference: 'cloud' } });
+    if (parsedDefaultPrepare?.ok) expect(parsedDefaultPrepare.value).not.toHaveProperty('successorDelayMinutes');
     expect(byName.get('prepare_scheduled_continuation')?.parse({
       ...validPrepare,
       activeTaskIds: undefined,
@@ -98,17 +100,16 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('live worker with a valid goal lease may keep doing fenced work');
     expect(byName.get('prepare_scheduled_continuation')?.description).toContain('before turn yield or handoff');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('120 seconds early');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('handoffReady=false');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('currentWakeMayReturn=false');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('never count prepared as confirmed');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('consumed transport identity');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('never relied on as future coverage');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('Never count prepared as confirmed');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('atomically reserves');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('returned scheduleRequest');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('do not call prepare_scheduled_continuation again');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('fresh lease-aligned prepared successor');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('successor_required');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('never create blindly');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('native_task_receipt_missing');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('terminal_noop');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('do not delete, disable, pause, or reschedule');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('fresh adaptive successor');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('Reconcile missing/uncertain native receipts before any blind create');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('reschedule_required is legacy compatibility only');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('terminal_noop returns naturally');
     expect(byName.get('cancel_scheduled_continuation')?.description).toContain('still-pending scheduled successor');
     expect(byName.get('cancel_scheduled_continuation')?.description).toContain('pausing/disabling an already-fired current wake');
   });

@@ -238,14 +238,15 @@ export type ClaimScheduledContinuationRecordResult =
       readonly successor: ScheduledContinuationRecord;
       /** Whether this transaction inserted, refreshed, or merely recovered the reservation. */
       readonly successorDisposition: ClaimSuccessorDisposition;
-      readonly retryAfterSeconds: 120;
+      /** Adaptive delay until the reserved future wake; never assume a fixed two-minute retry. */
+      readonly retryAfterSeconds: number;
     }
   | {
       readonly outcome: 'reschedule_required';
       readonly goal: GoalRecord;
-      /** The same confirmed native one-time task must be moved to now+2 minutes before this wake returns. */
+      /** Legacy compatibility only. New firing-wake collisions reserve a fresh successor instead. */
       readonly continuation: ScheduledContinuationRecord;
-      readonly retryAfterSeconds: 120;
+      readonly retryAfterSeconds: number;
     }
   | {
       readonly outcome: 'receipt_required';
