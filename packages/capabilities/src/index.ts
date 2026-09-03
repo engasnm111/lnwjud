@@ -30,6 +30,7 @@ export interface CapabilityService {
 }
 
 export { LocalCapabilityService, type CapabilityBackend, type LocalCapabilityBackends } from './local-capability-service.js';
+export { NativeCapabilityPathPolicy, type NativePathField, type NativePathPolicyOptions } from './native-path-policy.js';
 export { ShellCapabilityBackend, type ShellCapabilityOptions } from './shell-backend.js';
 export {
   CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY,
