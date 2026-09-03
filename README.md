@@ -62,6 +62,7 @@ capabilities are additive.
 - Missing, stale, expired, generation-mismatched, or past-handoff `goalLease` proof is rejected **before the tool handler performs a workspace mutation**, preventing stale workers from racing a newer continuation.
 - Lease-invalid failures now surface as a recoverable coordination conflict with explicit guidance to read the latest goal and reacquire or claim the scheduled continuation before retrying, instead of the ambiguous `Goal lease is invalid or expired` permission error.
 - Adds regression coverage for Full Bypass with and without a rolling fence, plus stale-lease rejection before mutation.
+- Fixes scheduled-continuation host routing so the bundled skill no longer hard-codes a private/internal ChatGPT scheduling operation name. It now uses the native Scheduled Task operation actually exposed by the current ChatGPT host, records `create_failed` immediately for unavailable/rejected/not-found host creation, and never substitutes DOM automation or Windows Task Scheduler.
 
 ### What's new in v4.52.0
 

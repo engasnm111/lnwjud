@@ -31,6 +31,11 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('runsOn: unverified');
     expect(skill).toContain('browser/DOM automation');
     expect(skill).toContain('native ChatGPT Scheduled Task host tool/API surface');
+    expect(skill).toContain('exactly as it is exposed by the current ChatGPT host/tool registry');
+    expect(skill).toContain('Do **not** assume, invent, or hard-code an internal host tool/resource name');
+    expect(skill).toContain('immediately call `record_scheduled_continuation_receipt(outcome: create_failed)`');
+    expect(skill).not.toContain('Automations.create');
+    expect(skill).not.toContain('Automations.update');
     expect(skill).toContain('Explicitly confirmed `local`');
     expect(skill).toContain('`prepared` means **reservation only**');
     expect(skill).toContain('never a confirmed successor');

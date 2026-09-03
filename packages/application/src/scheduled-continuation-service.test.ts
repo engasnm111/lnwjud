@@ -283,6 +283,12 @@ describe('ScheduledContinuationService', () => {
       expect(result.value.scheduleRequest.prompt).toContain('native_task_receipt_missing');
       expect(result.value.scheduleRequest.prompt).toContain('reschedule_required is legacy compatibility only');
       expect(result.value.scheduleRequest.prompt).toContain('expedite_scheduled_continuation may update only a still-pending future native task');
+      expect(result.value.scheduleRequest.prompt).toContain('actual native Scheduled Task operation from the current ChatGPT host/tool registry');
+      expect(result.value.scheduleRequest.prompt).toContain('never assume or hard-code an internal host operation name');
+      expect(result.value.scheduleRequest.prompt).toContain('immediately record create_failed');
+      expect(result.value.scheduleRequest.prompt).toContain('record create_uncertain only when host creation may actually have succeeded');
+      expect(result.value.scheduleRequest.prompt).not.toContain('Automations.create');
+      expect(result.value.scheduleRequest.prompt).not.toContain('Automations.update');
       expect(result.value.scheduleRequest.prompt).toContain('Never send a completion response while get_goal still reports active');
       expect(result.value.scheduleRequest.prompt).toContain('finish_goal');
       expect(result.value.scheduleRequest.prompt).toContain('matching native host deletion receipt');
