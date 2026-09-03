@@ -56,6 +56,8 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('record_scheduled_continuation_receipt')?.parse({ continuationId: 'c-1', expectedVersion: 0, outcome: 'created', nativeTaskId: 'native-1' })).toMatchObject({ ok: false });
     expect(byName.get('record_scheduled_continuation_receipt')?.parse({ continuationId: 'c-1', expectedVersion: 0, outcome: 'created', nativeTaskId: 'native-1', runsOn: 'cloud' })).toMatchObject({ ok: false });
     expect(byName.get('record_scheduled_continuation_receipt')?.parse({ continuationId: 'c-1', expectedVersion: 0, outcome: 'created', nativeTaskId: 'native-1', dueAt: '2026-08-27T17:25:00+07:00', runsOn: 'cloud' })).toMatchObject({ ok: true });
+    expect(byName.get('record_scheduled_continuation_receipt')?.parse({ continuationId: 'c-1', expectedVersion: 0, outcome: 'created', nativeTaskId: 'native-1', dueAt: '2026-08-27T17:25:00+07:00', runsOn: 'unverified' })).toMatchObject({ ok: true });
+    expect(byName.get('record_scheduled_continuation_receipt')?.parse({ continuationId: 'c-1', expectedVersion: 0, outcome: 'created', nativeTaskId: 'native-1', dueAt: '2026-08-27T17:25:00+07:00', runsOn: 'local' })).toMatchObject({ ok: false });
     expect(byName.get('record_scheduled_continuation_receipt')?.parse({ continuationId: 'c-1', expectedVersion: 1, outcome: 'rescheduled', nativeTaskId: 'native-1', dueAt: '2026-08-27T10:27:00.000Z' })).toMatchObject({ ok: true });
     expect(byName.get('record_scheduled_continuation_receipt')?.parse({ continuationId: 'c-1', expectedVersion: 2, outcome: 'consumed' })).toMatchObject({ ok: false });
     expect(byName.get('record_scheduled_continuation_receipt')?.parse({

@@ -28,11 +28,15 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('finish_goal');
     expect(skill).toContain('reschedule_required');
     expect(skill).toContain('runsOn: cloud');
+    expect(skill).toContain('runsOn: unverified');
+    expect(skill).toContain('browser/DOM automation');
+    expect(skill).toContain('native ChatGPT Scheduled Task host tool/API surface');
+    expect(skill).toContain('Explicitly confirmed `local`');
     expect(skill).toContain('`prepared` means **reservation only**');
     expect(skill).toContain('never a confirmed successor');
     expect(skill).toContain('may keep doing useful fenced work while native-task creation is retried');
     expect(skill).toContain('explicit IANA `TZID`');
-    expect(skill).toContain('`status: scheduled`, a non-empty `nativeTaskId`, and `confirmedRunsOn: cloud`');
+    expect(skill).toContain('`status: scheduled`, a non-empty `nativeTaskId`, and `confirmedRunsOn: cloud|unverified`');
     expect(skill).toContain('Do **not** call `prepare_scheduled_continuation` again');
     expect(skill).toContain('returned `scheduleRequest`');
     expect(skill).toContain('`successor_required`');

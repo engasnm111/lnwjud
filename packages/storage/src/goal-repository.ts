@@ -569,8 +569,8 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       let lastRescheduledAt = currentRow.last_rescheduled_at;
 
       if (request.outcome === 'created') {
-        if (request.nativeTaskId === undefined || request.nativeTaskId.length === 0 || request.runsOn !== 'cloud') {
-          throw new GoalStateError('conflict', 'Created receipt requires a native task ID and confirmed cloud execution');
+        if (request.nativeTaskId === undefined || request.nativeTaskId.length === 0 || !isConfirmedNativeHostRunMode(request.runsOn)) {
+          throw new GoalStateError('conflict', 'Created receipt requires a native task ID and a confirmed or host-unreported execution mode');
         }
         if (request.dueAt === undefined || !sameScheduledInstant(request.dueAt, currentRow.due_at)) {
           throw new GoalStateError('conflict', 'Created receipt scheduled time does not match the reserved continuation due time');
@@ -578,7 +578,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         if (currentRow.native_task_id !== null && currentRow.native_task_id !== request.nativeTaskId) {
           throw new GoalStateError('conflict', 'Created receipt cannot replace the stored native task ID');
         }
-        if (currentRow.native_task_id === request.nativeTaskId && currentRow.status === 'scheduled' && currentRow.confirmed_runs_on === 'cloud') {
+        if (currentRow.native_task_id === request.nativeTaskId && currentRow.status === 'scheduled' && isConfirmedNativeHostRunMode(currentRow.confirmed_runs_on ?? undefined)) {
           return this.toScheduledContinuationRecord(currentRow);
         }
         if (!['prepared', 'create_failed', 'create_uncertain'].includes(currentRow.status)) {
@@ -872,7 +872,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       }
       // prepared is reservation-only regardless of timing. Do not let an early wake hide a
       // missing native host receipt behind not_due.
-      if (continuation.nativeTaskId === undefined || continuation.confirmedRunsOn !== 'cloud') {
+      if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
         return {
           outcome: 'receipt_required',
           reason: 'native_task_unconfirmed',
@@ -1022,7 +1022,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     requireLeaseCap: boolean,
     validateLeaseAlignedDue = true,
   ): { readonly successor: ScheduledContinuationRecord; readonly disposition: ClaimSuccessorDisposition } {
-    if (continuation.nativeTaskId === undefined || continuation.confirmedRunsOn !== 'cloud') {
+    if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
       throw new GoalStateError('corrupt', 'Claimed continuation is missing its confirmed native cloud task');
     }
     const identity = createHash('sha256')
@@ -1206,7 +1206,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     goal: GoalRecord,
     probeStartedAt: string | undefined,
   ): ClaimScheduledContinuationRecordResult {
-    if (continuation.nativeTaskId === undefined || continuation.confirmedRunsOn !== 'cloud') {
+    if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
       throw new GoalStateError('conflict', 'Collision recovery requires a confirmed firing cloud native task ID');
     }
 
@@ -1307,7 +1307,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       if (continuation.status !== 'scheduled') {
         throw new GoalStateError('conflict', `Scheduled continuation cannot be expedited from status ${continuation.status}`);
       }
-      if (continuation.nativeTaskId === undefined || continuation.confirmedRunsOn !== 'cloud') {
+      if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
         throw new GoalStateError('conflict', 'Expedite requires a confirmed cloud native task ID');
       }
       const candidateDueAt = request.dueAt;
@@ -1880,6 +1880,14 @@ function mutationFenceDueAt(row: ScheduledContinuationRow): string {
   // pending_due_at is only the attempted update and must not become a phantom fence.
   if (row.status === 'reschedule_failed') return row.due_at;
   return row.pending_due_at ?? row.due_at;
+}
+
+function isConfirmedNativeHostRunMode(value: string | undefined): boolean {
+  // The native ChatGPT Scheduled Task host historically confirms task identity/schedule
+  // without exposing whether execution is cloud or local. Preserve that truthful
+  // `unverified` state as valid native-host coverage while still rejecting explicitly
+  // local execution for a continuation that requested cloud preference.
+  return value === 'cloud' || value === 'unverified';
 }
 
 function adaptiveCollisionSuccessorSeconds(

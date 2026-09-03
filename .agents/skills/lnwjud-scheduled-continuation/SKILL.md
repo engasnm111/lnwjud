@@ -13,8 +13,8 @@ One user request starts one durable chain: acquire the existing goal, arm one cl
 - Never send a completion report while `get_goal` reports `active`.
 - A request to stop scheduling cancels only the successor; it does not cancel or complete the durable goal.
 - `run_goal` defaults to `scheduledContinuation: auto`; when `continuationDirective.mode: auto` is returned, the client MUST apply this skill automatically and never require another user prompt to resume an unfinished goal.
-- Use one native one-time cloud ChatGPT Scheduled Task in the current chat. Never use recurrence, Windows Task Scheduler, `schtasks.exe`, cron, shell timers, browser automation, or undocumented scheduling APIs.
-- Native task creation/update/deletion is host-owned. lnwjud stores reservations, receipts, claims, and cancellation truth.
+- Use one native one-time ChatGPT Scheduled Task in the current chat and request cloud execution. Never use recurrence, Windows Task Scheduler, `schtasks.exe`, cron, shell timers, browser/DOM automation, or undocumented scheduling APIs.
+- Native task creation/update/deletion is host-owned. Invoke the native ChatGPT Scheduled Task host tool/API surface exposed to the current chat directly from `scheduleRequest`; lnwjud stores reservations, receipts, claims, and cancellation truth. If that native host surface is absent, record a truthful create failure and never substitute DOM automation.
 - `prepared` means **reservation only**: never a confirmed successor and never handoff-ready. A valid live worker may keep doing useful fenced work while native-task creation is retried, but it must never silently return with a merely `prepared` successor.
 
 ## Timing policy: adaptive host cadence, fixed safety invariants
@@ -36,7 +36,7 @@ Do not treat protocol safety windows as scheduling cadence.
 2. Use the normal 600-second lease and keep the raw lease token private.
 3. Read the checkpoint, perform useful work, and call `checkpoint_goal` only for real milestones.
 4. After a checkpoint, call `prepare_scheduled_continuation` once when a successor is needed. Use the returned `scheduleRequest.schedule` verbatim. `dueAt` is the canonical absolute instant and the VEVENT must carry an explicit IANA `TZID`.
-5. Record `created` immediately with the real native task ID, host-reported absolute dueAt, and `runsOn: cloud`. `status: scheduled`, a non-empty `nativeTaskId`, and `confirmedRunsOn: cloud` are required before relying on the task.
+5. Record `created` immediately with the real native task ID and host-reported absolute dueAt. Record `runsOn: cloud` only when the native host explicitly proves cloud execution; when the host confirms task creation/schedule but does not expose execution mode, record `runsOn: unverified`. `status: scheduled`, a non-empty `nativeTaskId`, and `confirmedRunsOn: cloud|unverified` prove native-host task coverage; only `cloud` proves the execution mode itself. Explicitly confirmed `local` is not valid coverage for this cloud-preferred lane.
 6. Attach `goalLease` to every fenced mutation. Real fenced activity renews the lease while work is alive; inactivity does not.
 7. For builds/tests/tasks, wait for every active task ID to reach a terminal state and inspect its result instead of returning “still running”.
 
@@ -45,9 +45,9 @@ Do not treat protocol safety windows as scheduling cadence.
 If the goal is still active:
 
 1. Checkpoint the exact next action and tracked tasks.
-2. Require exactly one confirmed cloud successor. If none exists, reserve/create one using the lease-aligned adaptive policy and record its host receipt.
+2. Require exactly one confirmed native ChatGPT successor and request cloud execution. If none exists, reserve/create one using the lease-aligned adaptive policy and record its host receipt. A host-confirmed task whose execution mode is not exposed may remain `unverified`; do not invent `cloud` proof.
 3. If a confirmed **future pending** task exists but a real host deadline/budget/tool-degradation/turn-yield signal requires it sooner, call `expedite_scheduled_continuation` and apply its returned schedule verbatim. Do not invent a fixed time.
-4. Re-read the continuation and require confirmed scheduled cloud coverage. `prepared`, `create_failed`, `create_uncertain`, or missing host identity is not handoff-ready.
+4. Re-read the continuation and require `status: scheduled`, a real native task ID, and `confirmedRunsOn: cloud|unverified`. `prepared`, `create_failed`, `create_uncertain`, missing host identity, or explicitly confirmed `local` execution is not handoff-ready for this lane.
 
 ## Scheduled wake
 
