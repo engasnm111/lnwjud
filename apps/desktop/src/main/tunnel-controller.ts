@@ -9,6 +9,7 @@ import { request as httpRequest } from 'node:http';
 import type { TunnelAuthStatus, TunnelPersistentStatus, TunnelRunState, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 import { createPlatformProcessTree } from '@lnwjud/process';
+import { executableName } from '@lnwjud/platform';
 import { defaultTunnelProfileDirectory, LegacyApiKeyCredentialProvider, type TunnelAuthProvider } from './tunnel-auth.js';
 import { LegacyDpapiSecretStore } from './legacy-dpapi-secret-store.js';
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
@@ -141,6 +142,10 @@ export class TunnelController {
     return bundled;
   }
 
+  private clientExecutableName(): string {
+    return executableName('tunnel-client', { platform: this.platform });
+  }
+
   public async authStatus(): Promise<TunnelAuthStatus> {
     return this.authProvider.status();
   }
@@ -167,7 +172,7 @@ export class TunnelController {
     const normalizedTunnelId = tunnelId.trim();
     if (!/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(normalizedTunnelId)) throw new Error('Tunnel ID is invalid');
     const clientPath = this.resolveClientPath();
-    if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
+    if (clientPath === null || !existsSync(clientPath)) throw new Error(`${this.clientExecutableName()} was not found`);
     const mcpServerUrl = await this.requireMcpServerUrl();
     const auth = await this.authStatus();
     if (!auth.runtimeCredentialAvailable) throw new Error(auth.message ?? 'Save a Runtime API key first');
@@ -203,7 +208,7 @@ export class TunnelController {
       return '';
     }
     const resolved = path.resolve(trimmed);
-    if (!existsSync(resolved)) throw new Error('tunnel-client.exe was not found');
+    if (!existsSync(resolved)) throw new Error(`${this.clientExecutableName()} was not found`);
     this.options.setClientPath(resolved);
     this.runtimeConfigurationDirty = true;
     if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
@@ -218,11 +223,11 @@ export class TunnelController {
   public async replaceClientPath(clientPath: string): Promise<string> {
     const trimmed = clientPath.trim();
     const next = trimmed.length === 0 ? '' : path.resolve(trimmed);
-    if (next.length > 0 && !existsSync(next)) throw new Error('tunnel-client.exe was not found');
+    if (next.length > 0 && !existsSync(next)) throw new Error(`${this.clientExecutableName()} was not found`);
 
     const currentRaw = this.options.getClientPath()?.trim() ?? '';
     const current = currentRaw.length === 0 ? '' : path.resolve(currentRaw);
-    if (current.toLowerCase() === next.toLowerCase()) return next;
+    if (sameTunnelClientPath(current, next, this.platform)) return next;
 
     const desiredState = this.runtimeDesiredState();
     const status = await this.status();
@@ -460,12 +465,15 @@ export class TunnelController {
       if (!lockAcquired) return this.status();
 
       const clientPath = this.resolveClientPath();
-      if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
+      if (clientPath === null || !existsSync(clientPath)) throw new Error(`${this.clientExecutableName()} was not found`);
       const auth = await this.authStatus();
       throwIfStartCancelled(signal);
-      if (!auth.runtimeCredentialAvailable) throw new Error(auth.message ?? 'Save a Runtime API key first');
+      if (!auth.authReady) throw new Error(auth.message ?? 'Tunnel authentication is not ready');
       if (!existsSync(this.profilePath())) throw new Error('Missing tunnel profile lnwjud.yaml');
 
+      // OAuth sessions intentionally keep runtime credentials memory-only. After
+      // an app restart authReady may be true while runtimeCredentialAvailable is
+      // false until the provider refreshes/provisions a fresh credential here.
       const credential = await this.authProvider.getRuntimeCredential();
       throwIfStartCancelled(signal);
       const apiKey = credential?.value.trim() ?? '';
@@ -873,16 +881,32 @@ export class TunnelController {
     const delay = Math.min(RESTART_DELAY_MS * (2 ** Math.max(0, this.restartAttempts - 1)), 30_000);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      if (this.intentionalStop || this.lastApiKey === null) return;
-      void this.repairDesktopTunnelProfile()
-        .then(() => {
-          if (this.intentionalStop || this.lastApiKey === null) return;
-          this.spawnRun(clientPath, this.lastApiKey);
+      if (this.intentionalStop) return;
+      void (async (): Promise<void> => {
+        try {
+          // Never reuse a previous runtime credential for automatic reconnect.
+          // OAuth credentials are refreshable and memory-only by design, so each
+          // reconnect asks the active provider for a currently valid credential.
+          const credential = await this.authProvider.getRuntimeCredential();
+          if (this.intentionalStop) return;
+          const apiKey = credential?.value.trim() ?? '';
+          if (apiKey.length === 0) throw new Error('Tunnel authentication requires user action before reconnect can continue');
+          await this.repairDesktopTunnelProfile();
+          if (this.intentionalStop) return;
+          this.lastApiKey = apiKey;
+          this.spawnRun(clientPath, apiKey);
           this.state = 'running';
           this.message = `Tunnel reconnecting (attempt ${this.restartAttempts}; retries continue until stopped)…`;
           this.scheduleStableReset();
-        })
-        .catch(() => undefined);
+        } catch (error: unknown) {
+          // Refresh/provision failures must not spin forever with stale secrets.
+          // Leave the durable desired state intact so an explicit Start after
+          // reauthentication can resume the same tunnel identity.
+          this.lastApiKey = null;
+          this.state = 'error';
+          this.message = error instanceof Error ? error.message : 'Tunnel authentication refresh failed during reconnect';
+        }
+      })();
     }, delay);
   }
 
@@ -1020,7 +1044,9 @@ export class TunnelController {
     if (!existsSync(this.profilePath())) return null;
 
     const auth = await this.authStatus();
-    if (!auth.runtimeCredentialAvailable) return null;
+    if (!auth.authReady) return null;
+    // A persisted OAuth refresh session is sufficient to enter this path even
+    // when no memory-only runtime credential survived the previous app process.
     const credential = await this.authProvider.getRuntimeCredential();
     const apiKey = credential?.value.trim() ?? '';
     throwIfStartCancelled(signal);
@@ -1236,6 +1262,15 @@ export class TunnelController {
 }
 
 export { CLIENT_PATH_SETTING };
+
+export function sameTunnelClientPath(left: string, right: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (left.length === 0 || right.length === 0) return left === right;
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
 
 export function buildTunnelInitArgs(tunnelId: string, mcpServerUrl: string, profileDirectory: string): string[] {
   return [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePosixTunnelProcessPids, parseTunnelClientVersionOutput } from '../src/main/tunnel-controller.js';
+import { parsePosixTunnelProcessPids, parseTunnelClientVersionOutput, sameTunnelClientPath } from '../src/main/tunnel-controller.js';
 
 describe('Secure Tunnel platform portability helpers', () => {
   it('discovers only tunnel-client processes that carry an lnwjud ownership marker', () => {
@@ -22,5 +22,13 @@ describe('Secure Tunnel platform portability helpers', () => {
     expect(parseTunnelClientVersionOutput('tunnel-client v0.0.13+build.7\n')).toBe('tunnel-client v0.0.13+build.7');
     expect(parseTunnelClientVersionOutput('', 'tunnel-client 0.0.13\n')).toBe('tunnel-client 0.0.13');
     expect(parseTunnelClientVersionOutput('warning: runtime unavailable\n')).toBeNull();
+  });
+
+  it('folds tunnel-client path case only on Windows', () => {
+    expect(sameTunnelClientPath('Client/Tunnel-Client', 'client/tunnel-client', 'linux')).toBe(false);
+    expect(sameTunnelClientPath('Client/Tunnel-Client', 'client/tunnel-client', 'darwin')).toBe(false);
+    expect(sameTunnelClientPath('Client/Tunnel-Client', 'client/tunnel-client', 'win32')).toBe(true);
+    expect(sameTunnelClientPath('', '', 'linux')).toBe(true);
+    expect(sameTunnelClientPath('', process.cwd(), 'linux')).toBe(false);
   });
 });

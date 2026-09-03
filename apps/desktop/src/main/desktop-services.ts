@@ -225,8 +225,8 @@ export async function autoStartPersistentTunnel(
   const stopped = await tunnelController.reconcileStoppedRuntime();
   if (stopped !== null) return stopped;
   const status = await tunnelController.status();
-  const runtimeCredentialAvailable = status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey;
-  if (!autoReconnect || !status.profileExists || !runtimeCredentialAvailable || status.clientPath === null) return status;
+  const authCanProvisionCredential = status.authReady ?? status.runtimeCredentialAvailable ?? status.hasApiKey;
+  if (!autoReconnect || !status.profileExists || !authCanProvisionCredential || status.clientPath === null) return status;
   return tunnelController.startAutomatically();
 }
 
@@ -485,8 +485,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   async function reconcileTunnelAfterAuthModeChange(): Promise<TunnelStatus> {
     tunnelController.markAuthConfigurationChanged();
     let status = await tunnelController.status();
-    const credentialAvailable = status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey;
-    if (!credentialAvailable) {
+    const authCanProvisionCredential = status.authReady ?? status.runtimeCredentialAvailable ?? status.hasApiKey;
+    if (!authCanProvisionCredential) {
       if (status.state === 'running' || status.state === 'starting') status = await tunnelController.stop();
       return status;
     }
@@ -1072,7 +1072,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const clientPath = await tunnelController.replaceClientPath(request.clientPath);
       if (readSettings().tunnelAutoReconnect) {
         const status = await tunnelController.status();
-        if (status.profileExists && (status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey)) await tunnelController.startAutomatically();
+        if (status.profileExists && (status.authReady ?? status.runtimeCredentialAvailable ?? status.hasApiKey)) await tunnelController.startAutomatically();
       }
       return { clientPath };
     },

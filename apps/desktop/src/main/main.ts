@@ -61,6 +61,7 @@ import {
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
+import { executableName } from '@lnwjud/platform';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { bootstrapDesktopSecrets } from './desktop-secret-store.js';
@@ -543,10 +544,13 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     const window = getMainWindow();
     if (window === null) return { clientPath: null };
+    const tunnelClientName = executableName('tunnel-client', { platform: process.platform });
     const result = await dialog.showOpenDialog(window, {
-      title: 'Select tunnel-client.exe',
+      title: `Select ${tunnelClientName}`,
       properties: ['openFile'],
-      filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }],
+      ...(process.platform === 'win32'
+        ? { filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }] }
+        : {}),
     });
     return { clientPath: result.canceled ? null : (result.filePaths[0] ?? null) };
   });
