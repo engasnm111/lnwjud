@@ -47,4 +47,13 @@ describe('canonical bilingual tool catalog', () => {
     expect(catalogDefinitions.network_context?.requirementIds).toContain('browser_event_stream');
     expect(catalogDefinitions.console_context?.requirementIds).toContain('browser_event_stream');
   });
+
+  it('marks still-Windows-backed providers unsupported without platform-gating portable tools', () => {
+    for (const name of ['system_info', 'notification', 'file_dialog', 'clipboard', 'audio', 'screen_record', 'office', 'scheduler', 'wsl_exec']) {
+      expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows');
+    }
+    for (const name of ['git', 'shell', 'web_fetch', 'inspect_pdf', 'lsp_diagnostics']) {
+      expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows');
+    }
+  });
 });

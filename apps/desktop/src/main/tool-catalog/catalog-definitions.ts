@@ -48,6 +48,14 @@ const DRY_RUN_TOOLS = new Set([
   'self_heal_apply', 'skills_import',
 ]);
 
+// These tools still route to Windows-native providers in the current build. Keep
+// their catalog state explicitly unsupported on macOS/Linux until Phases 11-14
+// replace the provider behind each tool with a target-native implementation.
+const CURRENT_WINDOWS_ONLY_TOOLS = new Set([
+  'system_info', 'notification', 'file_dialog', 'clipboard', 'audio', 'screen_record', 'office', 'office_ppt', 'office_outlook',
+  'inspect_workbook', 'docx_merge', 'scheduler', 'wsl_exec', 'wsl_fs',
+]);
+
 const actor = { clientId: 'desktop-tool-catalog', clientName: 'lnwjud Desktop Tool Catalog' };
 const definitions = new ToolRegistry({}, actor, { codexToolsEnabled: true }).listAll();
 
@@ -92,6 +100,7 @@ function categoryFor(name: string): ToolCategory {
 
 function requirementsFor(name: string, category: ToolCategory): readonly string[] {
   const ids = new Set<string>();
+  if (CURRENT_WINDOWS_ONLY_TOOLS.has(name)) ids.add('platform_windows');
   if (['workspace', 'files', 'search_context', 'git', 'process'].includes(category)) ids.add('registered_workspace');
   if (['files', 'git', 'process'].includes(category) && !/^(read_|search_|git_status$|git_diff$|git_log$|process_list$|process_status$|process_logs$)/.test(name)) ids.add('active_project');
   if (/^git(?:_|$)/.test(name)) ids.add('executable_git');

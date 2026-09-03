@@ -176,4 +176,38 @@ describe('tool catalog readiness aggregation', () => {
     const optionalWarn = service({ codex_runtime: 'warn' });
     expect((await optionalWarn.catalog.runDoctor(undefined, 'en')).exitCode).toBe(0);
   });
+
+  it('treats platform-scoped requirements as non-actionable when they do not apply', async () => {
+    const probe = vi.fn(async () => ({ status: 'fail' as const, detail: 'should not run' }));
+    const registry = new RequirementRegistry([{
+      id: 'windows_only', required: false, summaryKey: 'requirement.windows_only', remediationId: 'configure_wsl', platforms: ['win32'], probe,
+    }], { platform: 'linux' });
+    const result = (await registry.probe()).get('windows_only');
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'pass', detail: 'Not applicable on linux' });
+    expect(result?.remediationId).toBeUndefined();
+  });
+
+  it('hides Windows-only remediation on macOS/Linux while keeping platform-correct PDF guidance', () => {
+    for (const platform of ['darwin', 'linux'] as const) {
+      const registry = new RemediationRegistry({ platform });
+      expect(registry.has('configure_windows_sandbox')).toBe(false);
+      expect(registry.has('configure_wsl')).toBe(false);
+      expect(registry.has('repair_windows_ui_automation')).toBe(false);
+
+      const pdf = registry.resolve('en', ['configure_pdf_provider'])[0];
+      expect(pdf).toMatchObject({ id: 'configure_pdf_provider', title: 'Configure a PDF provider' });
+      expect(pdf?.explanation).not.toContain('.exe');
+      expect(pdf?.explanation).not.toContain('Windows');
+      expect(pdf?.actions).toEqual([
+        { kind: 'open_settings', target: 'tools_local_providers' },
+        { kind: 'recheck', requirementIds: ['local_pdf_provider'] },
+      ]);
+    }
+
+    const windowsPdf = new RemediationRegistry({ platform: 'win32' }).resolve('en', ['configure_pdf_provider'])[0];
+    expect(windowsPdf?.actions).toContainEqual({ kind: 'install_pdf_provider' });
+    expect(windowsPdf?.explanation).toContain('pdftotext.exe');
+  });
 });

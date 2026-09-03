@@ -710,7 +710,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       : { status: 'warn', detail: 'Windows Sandbox feature is not installed or enabled' };
   };
   const requirementDefinitions: readonly RequirementDefinition[] = [
-    { id: 'os', required: true, summaryKey: 'requirement.os', probe: async () => ({ status: process.platform === 'win32' && process.arch === 'x64' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
+    { id: 'os', required: true, summaryKey: 'requirement.os', probe: async () => ({ status: isTierOneDesktopTarget(process.platform, process.arch) ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
     { id: 'database', required: true, summaryKey: 'requirement.database', probe: async () => ({ status: 'pass', detail: 'SQLite database ready' }) },
     { id: 'mcp-port', required: true, summaryKey: 'requirement.mcp_port', probe: () => requirementProbeFromDoctor(() => checkConfiguredMcpPort(mcpLifecycle.status(), mcpPort)) },
     { id: 'platform_windows', required: false, summaryKey: 'requirement.platform_windows', probe: async () => ({ status: process.platform === 'win32' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
@@ -719,23 +719,23 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
     { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
     { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: () => requirementProbeFromDoctor(() => checkCodex(codexDiscovery)) },
-    { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', probe: () => capabilityRequirement('wsl_exec') },
+    { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', platforms: ['win32'], probe: () => capabilityRequirement('wsl_exec') },
     { id: 'local_mcp_listener', required: true, summaryKey: 'requirement.local_mcp_listener', probe: async () => ({ status: mcpLifecycle.status().running ? 'pass' : 'fail', detail: mcpLifecycle.status().url ?? 'Desktop MCP listener is stopped' }) },
     { id: 'browser_cdp', required: false, summaryKey: 'requirement.browser_cdp', remediationId: 'configure_browser_cdp', probe: () => capabilityRequirement('dom_cdp') },
-    { id: 'windows_ui_automation', required: false, summaryKey: 'requirement.windows_ui_automation', probe: () => capabilityRequirement('accessibility') },
-    { id: 'windows_input', required: false, summaryKey: 'requirement.windows_input', probe: () => capabilityRequirement('input_event') },
-    { id: 'windows_window', required: false, summaryKey: 'requirement.windows_window', probe: () => capabilityRequirement('window') },
-    { id: 'windows_ocr', required: false, summaryKey: 'requirement.windows_ocr', probe: () => capabilityRequirement('vision') },
-    { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', probe: () => capabilityRequirement('office') },
+    { id: 'windows_ui_automation', required: false, summaryKey: 'requirement.windows_ui_automation', platforms: ['win32'], probe: () => capabilityRequirement('accessibility') },
+    { id: 'windows_input', required: false, summaryKey: 'requirement.windows_input', platforms: ['win32'], probe: () => capabilityRequirement('input_event') },
+    { id: 'windows_window', required: false, summaryKey: 'requirement.windows_window', platforms: ['win32'], probe: () => capabilityRequirement('window') },
+    { id: 'windows_ocr', required: false, summaryKey: 'requirement.windows_ocr', platforms: ['win32'], probe: () => capabilityRequirement('vision') },
+    { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', platforms: ['win32'], probe: () => capabilityRequirement('office') },
     { id: 'network_access', required: false, summaryKey: 'requirement.network_access', probe: () => capabilityRequirement('web_fetch') },
-    { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
+    { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', platforms: ['win32'], probe: () => capabilityRequirement('scheduler') },
     { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
     { id: 'remote_mcp_ngrok', required: false, summaryKey: 'requirement.remote_mcp_ngrok', probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => { const status = await remoteMcpController.status(); return status.state === 'running' && status.publicMcpUrl !== null ? { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` } : { status: 'warn', detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed') }; } },
     { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); return !listed.ok ? { status: 'unknown', detail: listed.error.message } : { status: listed.value.servers.some((server) => server.enabled && server.connected) ? 'pass' : 'warn', detail: `${listed.value.servers.length} external MCP server(s) discovered` }; } },
     { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
     { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
     { id: 'database_target', required: false, summaryKey: 'requirement.database_target', remediationId: 'configure_database_target', probe: async () => ({ status: 'pass', detail: 'Input-dependent: provide a read-only SQLite target inside a registered workspace for each call' }) },
-    { id: 'windows_sandbox', required: false, summaryKey: 'requirement.windows_sandbox', remediationId: 'configure_windows_sandbox', probe: windowsSandboxRequirement },
+    { id: 'windows_sandbox', required: false, summaryKey: 'requirement.windows_sandbox', remediationId: 'configure_windows_sandbox', platforms: ['win32'], probe: windowsSandboxRequirement },
     { id: 'browser_event_stream', required: false, summaryKey: 'requirement.browser_event_stream', remediationId: 'configure_browser_events', probe: async () => ({ status: 'pass', detail: 'Input-dependent: console/network event retention is established for the selected live CDP tab at call time' }) },
     { id: 'feature_delivery', required: false, summaryKey: 'requirement.feature_delivery', probe: async () => ({ status: 'pass', detail: 'Delivery state comes from the canonical upgrade catalog' }) },
   ];
@@ -1447,6 +1447,12 @@ function toInFlightItem(entry: { callId: string; toolName: string; startedAt: st
 function deriveAgentState(running: boolean, inFlightCount: number): AgentState {
   if (!running) return 'stopped';
   return inFlightCount > 0 ? 'busy' : 'idle';
+}
+
+export function isTierOneDesktopTarget(platform: NodeJS.Platform, arch: string): boolean {
+  return platform === 'win32'
+    ? arch === 'x64'
+    : (platform === 'darwin' || platform === 'linux') && (arch === 'x64' || arch === 'arm64');
 }
 
 function buildConnectionModes(input: {
