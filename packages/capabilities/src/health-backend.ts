@@ -7,6 +7,7 @@ interface HealthCapabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly domCdp?: CapabilityBackend;
   readonly accessibility?: CapabilityBackend;
+  readonly scheduler?: CapabilityBackend;
   readonly wslExec?: CapabilityBackend;
   readonly wslFs?: CapabilityBackend;
 }
@@ -15,6 +16,7 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   private readonly platform: NodeJS.Platform;
   private readonly domCdp: CapabilityBackend | undefined;
   private readonly accessibility: CapabilityBackend | undefined;
+  private readonly scheduler: CapabilityBackend | undefined;
   private readonly wslExec: CapabilityBackend | undefined;
   private readonly wslFs: CapabilityBackend | undefined;
 
@@ -22,6 +24,7 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     this.platform = options.platform ?? process.platform;
     this.domCdp = options.domCdp;
     this.accessibility = options.accessibility;
+    this.scheduler = options.scheduler;
     this.wslExec = options.wslExec;
     this.wslFs = options.wslFs;
   }
@@ -56,11 +59,12 @@ export class HealthCapabilityBackend implements CapabilityBackend {
       return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }
     if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard'
-      || tool === 'audio' || tool === 'screen_record' || tool === 'office' || tool === 'scheduler'
+      || tool === 'audio' || tool === 'screen_record' || tool === 'office'
       || tool === 'input_event' || tool === 'vision' || tool === 'window') {
       return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }
     if (tool === 'dom_cdp') return this.describe(tool, await this.checkDelegated(this.domCdp, { action: 'status' }));
+    if (tool === 'scheduler') return this.describe(tool, await this.checkDelegated(this.scheduler, { action: 'list' }));
     if (tool === 'wsl_exec') return this.describe(tool, await this.checkDelegated(this.wslExec, { operation: 'status' }));
     if (tool === 'wsl_fs') return this.describe(tool, await this.checkDelegated(this.wslFs, { operation: 'status' }));
     return this.describe(tool, await this.checkDelegated(this.accessibility, { action: 'status' }));

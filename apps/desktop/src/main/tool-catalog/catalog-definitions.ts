@@ -54,11 +54,11 @@ const DRY_RUN_TOOLS = new Set([
 // replace the provider behind each tool with a target-native implementation.
 const CURRENT_WINDOWS_ONLY_TOOLS = new Set([
   'audio', 'screen_record', 'office', 'office_ppt', 'office_outlook',
-  'inspect_workbook', 'docx_merge', 'scheduler', 'wsl_exec', 'wsl_fs',
+  'inspect_workbook', 'docx_merge', 'wsl_exec', 'wsl_fs',
 ]);
 
 const CURRENT_WINDOWS_OR_MACOS_TOOLS = new Set([
-  'notification', 'file_dialog', 'clipboard',
+  'notification', 'file_dialog', 'clipboard', 'scheduler',
 ]);
 
 const actor = { clientId: 'desktop-tool-catalog', clientName: 'lnwjud Desktop Tool Catalog' };
@@ -134,7 +134,7 @@ function requirementsFor(name: string, category: ToolCategory): readonly string[
   if (name === 'sandbox_exec') ids.add('windows_sandbox');
   if (name === 'network_context' || name === 'console_context') ids.add('browser_event_stream');
   if (/^(web_fetch$|network_context$|mcp_)/.test(name)) ids.add('network_access');
-  if (/^scheduler$/.test(name)) { ids.add('platform_windows'); ids.add('scheduler_runtime'); }
+  if (/^scheduler$/.test(name)) { ids.add('platform_windows_or_macos'); ids.add('scheduler_runtime'); }
   if (/^(port_context$|startup_context$)/.test(name)) ids.add('platform_windows_or_macos');
   if (/^(windows_environment$|service_context$|registry_context$|event_log_context$|installed_runtime_context$|path_context$|event_watch$|crash_trace$|sandbox_exec$)/.test(name)) ids.add('platform_windows');
   const upgrade = upgradeCatalogEntry(name);

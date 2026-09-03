@@ -49,10 +49,10 @@ describe('canonical bilingual tool catalog', () => {
   });
 
   it('platform-gates only providers that are actually host-specific', () => {
-    for (const name of ['audio', 'screen_record', 'office', 'scheduler', 'wsl_exec']) {
+    for (const name of ['audio', 'screen_record', 'office', 'wsl_exec']) {
       expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows');
     }
-    for (const name of ['notification', 'file_dialog', 'clipboard', 'port_context', 'startup_context']) {
+    for (const name of ['notification', 'file_dialog', 'clipboard', 'scheduler', 'port_context', 'startup_context']) {
       expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows_or_macos');
       expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows');
     }

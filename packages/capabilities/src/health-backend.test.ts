@@ -60,4 +60,30 @@ describe('HealthCapabilityBackend', () => {
       auditTarget: 'workspace',
     } });
   });
+
+  it('delegates scheduler health on macOS and keeps it non-applicable on Linux', async () => {
+    const calls: unknown[] = [];
+    const mac = new HealthCapabilityBackend({
+      platform: 'darwin',
+      scheduler: { execute: async (input): Promise<Result<unknown>> => { calls.push(input); return ok({ tasks: [], provider: 'launchd' }); } },
+    });
+
+    await expect(mac.execute({ operation: 'check_tool', tool: 'scheduler' })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        platformPolicy: { platforms: ['win32', 'darwin'] },
+        available: true,
+        ready: true,
+        applicable: true,
+        provider: 'launchd',
+      },
+    });
+    expect(calls).toEqual([{ action: 'list' }]);
+
+    const linux = new HealthCapabilityBackend({ platform: 'linux', scheduler: { execute: async (): Promise<Result<unknown>> => ok({ tasks: [] }) } });
+    await expect(linux.execute({ operation: 'check_tool', tool: 'scheduler' })).resolves.toMatchObject({
+      ok: true,
+      value: { available: false, ready: false, applicable: false, reason: 'Not applicable on linux' },
+    });
+  });
 });

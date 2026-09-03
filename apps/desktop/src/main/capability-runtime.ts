@@ -8,6 +8,7 @@ import {
   LocalCapabilityService,
   MacOsCommandCapabilityBridge,
   MacOsNativeCapabilityBackend,
+  MacOsSchedulerCapabilityBackend,
   NodeBrowserCdpProtocol,
   NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
@@ -92,7 +93,9 @@ export function createLocalCapabilityRuntime(
   const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, platform, nativeOptions);
   const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, platform, nativeOptions);
   const webFetchBackend = new WebFetchCapabilityBackend();
-  const schedulerBackend = new SchedulerCapabilityBackend({ platform });
+  const schedulerBackend = platform === 'darwin'
+    ? new MacOsSchedulerCapabilityBackend({ platform })
+    : new SchedulerCapabilityBackend({ platform });
   const wslAvailabilityCache = new AsyncTtlCache<Result<unknown>>(15_000);
   const wslAvailabilityProbe = (): Promise<Result<unknown>> => wslAvailabilityCache.get(async () => {
     const result = await shellBackend.execute({ operation: 'run', executable: 'wsl.exe', arguments: ['--status'], cwd: dataPath, execution: 'foreground', timeout_seconds: 5, max_output_bytes: 32 * 1024, userConfirmed: false });
@@ -114,7 +117,7 @@ export function createLocalCapabilityRuntime(
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
   });
-  const health = new HealthCapabilityBackend({ domCdp: browserBackend, accessibility: accessibilityBackend, wslExec: wslBackend, wslFs: wslFsBackend });
+  const health = new HealthCapabilityBackend({ platform, domCdp: browserBackend, accessibility: accessibilityBackend, scheduler: schedulerBackend, wslExec: wslBackend, wslFs: wslFsBackend });
   const service = new LocalCapabilityService({
     shell: shellBackend,
     domCdp: browserBackend,
@@ -215,14 +218,14 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
   window: 'Manage native desktop windows',
   health: 'Check tool readiness',
   system_info: 'Read system information',
-  notification: 'Show Windows notifications',
+  notification: 'Show local notifications',
   file_dialog: 'Native file open/save dialogs',
   clipboard: 'Read and write the clipboard',
   web_fetch: 'Fetch http/https URLs',
   audio: 'Record and play audio',
   screen_record: 'Record the screen to MP4',
   office: 'Automate Excel and Word',
-  scheduler: 'Manage Windows scheduled tasks',
+  scheduler: 'Manage local scheduled tasks',
   wsl_exec: 'Run scoped Linux developer tasks',
   wsl_fs: 'Translate scoped Windows and WSL paths',
 };
@@ -236,14 +239,14 @@ const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[numbe
   window: 'List, focus, move, resize, minimize, restore, and close windows',
   health: 'Readiness and capability diagnostics',
   system_info: 'OS, CPU, memory, disks, battery, uptime, and top processes',
-  notification: 'Toast or balloon notifications for the local user',
-  file_dialog: 'Windows open/save dialog returning chosen paths',
+  notification: 'Platform-native notifications for the local user',
+  file_dialog: 'Platform-native open/save dialog returning chosen paths',
   clipboard: 'Clipboard text and PNG image access',
   web_fetch: 'Bounded HTTP requests with text or base64 responses',
   audio: 'Microphone recording and local audio playback',
   screen_record: 'ffmpeg gdigrab screen capture with start/stop/status',
   office: 'Excel range read/write and Word text operations via COM',
-  scheduler: 'schtasks.exe list/create/run/delete operations',
+  scheduler: 'Platform-native local task list/create/run/delete operations',
   wsl_exec: 'WSL2 argv-only execution inside registered workspaces',
   wsl_fs: 'Path translation and metadata without raw WSL filesystem access',
 };

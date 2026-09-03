@@ -48,9 +48,15 @@ describe('desktop capability platform composition', () => {
       }
     }
 
-    const scheduler = await runtime.service.execute('scheduler', { action: 'list' });
-    expect(scheduler.ok).toBe(false);
-    if (!scheduler.ok) expect(scheduler.error.message).toContain('unavailable on this platform');
+    const scheduler = await runtime.service.execute('scheduler', platform === 'darwin'
+      ? { action: 'create', task_name: 'LnwjudTest', command: '/usr/bin/true', schedule: 'DAILY', start_time: '09:00', dry_run: true }
+      : { action: 'list' });
+    if (platform === 'darwin') {
+      expect(scheduler).toMatchObject({ ok: true, value: { dry_run: true, provider: 'launchd', task_name: 'LnwjudTest' } });
+    } else {
+      expect(scheduler.ok).toBe(false);
+      if (!scheduler.ok) expect(scheduler.error.message).toContain('unavailable on this platform');
+    }
 
     const wsl = await runtime.service.execute('wsl_exec', { operation: 'status' });
     expect(wsl).toEqual({

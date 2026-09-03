@@ -29,6 +29,7 @@ import {
   LocalCapabilityService,
   MacOsCommandCapabilityBridge,
   MacOsNativeCapabilityBackend,
+  MacOsSchedulerCapabilityBackend,
   NodeBrowserCdpProtocol,
   NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
@@ -362,9 +363,14 @@ function createStdioCapabilityService(
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
   });
+  const schedulerBackend = process.platform === 'darwin'
+    ? new MacOsSchedulerCapabilityBackend({ platform: process.platform })
+    : new SchedulerCapabilityBackend({ platform: process.platform });
   const health = new HealthCapabilityBackend({
+    platform: process.platform,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
+    scheduler: schedulerBackend,
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });
@@ -393,7 +399,7 @@ function createStdioCapabilityService(
     audio: new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions),
     screenRecord: new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions),
     office: new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions),
-    scheduler: new SchedulerCapabilityBackend(),
+    scheduler: schedulerBackend,
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });

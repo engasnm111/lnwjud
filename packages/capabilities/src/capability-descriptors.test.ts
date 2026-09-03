@@ -37,11 +37,15 @@ describe('capability descriptors', () => {
     expect(descriptor?.requirements).toContain('Windows package identity for WinRT OCR');
   });
 
-  it('keeps currently Windows-backed common desktop capabilities platform-gated until native providers land', () => {
-    for (const name of ['system_info', 'notification', 'file_dialog', 'clipboard', 'scheduler'] as const) {
+  it('advertises portable and macOS-backed common capabilities on their real platform sets', () => {
+    expect(capabilityDescriptors.find((item) => item.name === 'system_info')).toMatchObject({
+      availability: 'always',
+      platformPolicy: { platforms: ['win32', 'darwin', 'linux'] },
+    });
+    for (const name of ['notification', 'file_dialog', 'clipboard', 'scheduler'] as const) {
       expect(capabilityDescriptors.find((item) => item.name === name)).toMatchObject({
         availability: 'platform',
-        platformPolicy: { platforms: ['win32'] },
+        platformPolicy: { platforms: ['win32', 'darwin'] },
       });
     }
   });
