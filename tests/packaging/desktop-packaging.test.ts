@@ -144,6 +144,7 @@ describe('Windows desktop packaging', () => {
   it('pins and verifies the official Windows x64 runtime downloads used by packaging', async () => {
     const prepareRipgrep = await readFile(path.join(desktopRoot, 'scripts', 'prepare-ripgrep.ps1'), 'utf8');
     const prepareTunnel = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.ps1'), 'utf8');
+    const tunnelManifest = await readFile(path.join(desktopRoot, 'scripts', 'tunnel-client-asset-manifest.mjs'), 'utf8');
     expect(prepareRipgrep).toContain("$version = '15.2.0'");
     expect(prepareRipgrep).toContain('ripgrep-$version-x86_64-pc-windows-msvc.zip');
     expect(prepareRipgrep).toContain("$expectedSha256 = '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'");
@@ -151,20 +152,53 @@ describe('Windows desktop packaging', () => {
     expect(prepareRipgrep).toContain("'BUNDLED_RIPGREP.txt'");
     expect(prepareRipgrep).toContain("-Filter 'rg.exe'");
 
-    expect(prepareTunnel).toContain("$version = '0.0.13'");
-    expect(prepareTunnel).toContain('tunnel-client-v$version-windows-amd64.zip');
-    expect(prepareTunnel).toContain("$expectedSha256 = '17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb'");
-    for (const required of ['tunnel-client.exe', 'cloudflared.exe', 'cloudflared-manifest.json', 'LICENSE', 'NOTICE', 'windows-amd64-licenses.txt', 'windows-amd64.spdx.json', 'BUNDLED_TUNNEL_CLIENT.txt']) {
-      expect(prepareTunnel).toContain(required);
-    }
-    expect(prepareTunnel).toContain('Remove-Item -LiteralPath $zipPath -Force');
-    expect(prepareTunnel).toContain('archive_files=');
-    expect(prepareTunnel).toContain('cloudflared_manifest_sha256=');
+    expect(prepareTunnel).toContain('node scripts/prepare-tunnel-client.mjs');
+    expect(tunnelManifest).toContain("TUNNEL_CLIENT_VERSION = '0.0.13'");
+    expect(tunnelManifest).toContain('const stem = `tunnel-client-v${TUNNEL_CLIENT_VERSION}-${upstreamTarget}`');
+    expect(tunnelManifest).toContain('const assetName = `${stem}.zip`');
+    expect(tunnelManifest).toContain('17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb');
 
-    for (const script of [prepareRipgrep, prepareTunnel]) {
-      expect(script).toContain('[System.Security.Cryptography.SHA256]::Create()');
-      expect(script).not.toContain('Get-FileHash');
+    expect(prepareRipgrep).toContain('[System.Security.Cryptography.SHA256]::Create()');
+    expect(prepareRipgrep).not.toContain('Get-FileHash');
+  });
+
+  it('defines target-native tunnel-client assets for every Tier-1 desktop target and packages the prepared bundle as a shared resource', async () => {
+    const manifest = await readFile(path.join(desktopRoot, 'scripts', 'tunnel-client-asset-manifest.mjs'), 'utf8');
+    const preparer = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.mjs'), 'utf8');
+    const config = await readFile(path.join(desktopRoot, 'electron-builder.yml'), 'utf8');
+    const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
+
+    for (const target of ['win32-x64', 'darwin-x64', 'darwin-arm64', 'linux-x64', 'linux-arm64']) {
+      expect(manifest).toContain(`'${target}'`);
     }
+    for (const sha256 of [
+      '17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb',
+      'f7543cd3099c406790616f231ba5ae3e09ba45165820ded780beb68ded6c89f2',
+      'ec28a76ddca4833a5b22acac5b6d84db07fbb391fbbe2ac7a0c6677987248288',
+      '645274c9759732b3419929531416340df463ae8b2be1af4b69b06d20a000441b',
+      '36c78d83d01681fd1330a62627ec2b1b737a386148912705900f08ce8f0c12ce',
+    ]) {
+      expect(manifest).toContain(sha256);
+    }
+    expect(manifest).toContain("'darwin-x64': target('darwin-amd64'");
+    expect(manifest).toContain("'linux-x64': target('linux-amd64'");
+    expect(manifest).toContain("'tunnel-client', 'cloudflared'");
+    expect(preparer).toContain("process.platform === 'win32'");
+    expect(preparer).toContain("command: '/usr/bin/ditto'");
+    expect(preparer).toContain("command: 'unzip'");
+    expect(preparer).toContain('Unexpected archive layout');
+    expect(preparer).toContain('BUNDLED_TUNNEL_CLIENT.txt');
+    expect(preparer).toContain('cloudflared_manifest_sha256=');
+    expect(preparer).toContain("chmod(path.join(bundleRoot, asset.executableName), 0o755)");
+    expect(desktopPackage.scripts?.['prepare:tunnel-client']).toBe('node scripts/prepare-tunnel-client.mjs');
+    expect(desktopPackage.scripts?.['prepare:runtime-assets']).toContain('prepare:tunnel-client');
+    expect(desktopPackage.scripts?.['package:windows']).not.toContain('prepare-tunnel-client.ps1');
+
+    const sharedResourceIndex = config.indexOf('  - from: build/tunnel-client');
+    const windowsSectionIndex = config.indexOf('\nwin:');
+    expect(sharedResourceIndex).toBeGreaterThanOrEqual(0);
+    expect(sharedResourceIndex).toBeLessThan(windowsSectionIndex);
+    expect(config.slice(windowsSectionIndex)).not.toContain('from: build/tunnel-client');
   });
 
   it('runs the stdio launcher with the bundled Node runtime even when PATH contains no system Node', async () => {

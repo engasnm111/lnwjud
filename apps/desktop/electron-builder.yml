@@ -24,6 +24,8 @@ afterSign: scripts/capture-packaged-runtime-evidence.mjs
 extraResources:
   - from: build/runtime-tools
     to: runtime-tools
+  - from: build/tunnel-client
+    to: tunnel-client
   - from: ../../.agents/skills/lnwjud-scheduled-continuation
     to: agent-skills/lnwjud-scheduled-continuation
 # The canonical stdio boundary lives beside the packaged app content root.
@@ -59,8 +61,7 @@ win:
       to: windows-capability-bridge.integrity.json
     - from: ../../native/windows-ocr/bin
       to: windows-ocr
-    - from: build/tunnel-client
-      to: tunnel-client
+
   # Keep the branded icon embedded in lnwjud.exe for Windows shortcuts and taskbar.
   signAndEditExecutable: true
 nsis:
