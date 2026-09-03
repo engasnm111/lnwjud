@@ -86,6 +86,7 @@ docs/superpowers/plans/*
 !docs/development/WINDOWS_DEFENDER_FALSE_POSITIVE.md
 !docs/development/SCHEDULED_CONTINUATION_CAPABILITY_EVIDENCE.md
 apps/desktop/build/packaged-runtime-evidence.json
+apps/desktop/build/BUNDLED_NODE.txt
 apps/desktop/build/capability-bridge/
 !docs/benchmarks/
 docs/benchmarks/*

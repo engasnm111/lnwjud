@@ -81,8 +81,10 @@ describe('Windows desktop packaging', () => {
     expect(config).toContain('from: build/capability-bridge/windows-capability-bridge.sha256');
     expect(config).toContain('from: build/capability-bridge/windows-capability-bridge.integrity.json');
     expect(config).not.toContain('from: ../../packages/capabilities/src/windows-capability-bridge.ps1');
-    expect(config).toContain('build/lnwjud-node.exe');
-    expect(config).toContain('to: lnwjud-node.exe');
+    expect(config).toContain('extraFiles:');
+    expect(config).toContain('from: build');
+    expect(config).toContain('- lnwjud-node.exe');
+    expect(config).toContain('- BUNDLED_NODE.txt');
     expect(config).toContain('build/runtime-tools');
     expect(config).toContain('to: runtime-tools');
     expect(config).toContain('from: build/tunnel-client');
@@ -90,7 +92,9 @@ describe('Windows desktop packaging', () => {
     expect(config).toContain('from: ../../.agents/skills/lnwjud-scheduled-continuation');
     expect(config).toContain('to: agent-skills/lnwjud-scheduled-continuation');
     await access(path.join(repositoryRoot, '.agents', 'skills', 'lnwjud-scheduled-continuation', 'SKILL.md'));
-    expect(desktopPackage.scripts?.['package:windows']).toContain('prepare-ripgrep.ps1');
+    expect(desktopPackage.scripts?.['package:windows']).toContain('prepare:runtime-assets');
+    expect(desktopPackage.scripts?.['prepare:runtime-assets']).toContain('prepare-node-runtime.mjs');
+    expect(desktopPackage.scripts?.['prepare:runtime-assets']).toContain('prepare-ripgrep.mjs');
     expect(desktopPackage.scripts?.['package:windows']).toContain('../../scripts/prepare-windows-ocr.ps1');
     const prepareOcr = await readFile(path.join(repositoryRoot, 'scripts', 'prepare-windows-ocr.ps1'), 'utf8');
     expect(prepareOcr).toContain('--list-sdks');
