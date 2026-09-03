@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { open, stat } from 'node:fs/promises';
+import { open, readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -115,6 +115,13 @@ const SEARCH_CATALOG: readonly SearchCatalogEntry[] = dedupeSearchEntries([
   ...UPGRADE_TOOL_CATALOG,
 ]);
 
+export interface UpgradeRuntimePlatformOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly homeDirectory?: string;
+  readonly runProcess?: typeof runBoundedProcess;
+  readonly readDirectory?: (directory: string) => Promise<readonly string[]>;
+}
+
 export class UpgradeRuntimeService {
   private readonly contextEngine: ContextEngine;
   private readonly actor: FileActor;
@@ -132,14 +139,26 @@ export class UpgradeRuntimeService {
   private readonly lsp: LspRuntimeService;
   private readonly documents: DocumentRuntimeService;
   private readonly stateStore: UpgradeRuntimeStateStore | undefined;
+  private readonly platform: NodeJS.Platform;
+  private readonly homeDirectory: string;
+  private readonly runProcess: typeof runBoundedProcess;
+  private readonly readDirectory: (directory: string) => Promise<readonly string[]>;
   private loaded = false;
 
   public constructor(
     private readonly services: McpApplicationServices,
     actor: FileActor,
     contextEconomy: ContextEconomyRuntime = new ContextEconomyRuntime(),
+    platformOptions: UpgradeRuntimePlatformOptions = {},
   ) {
     this.actor = actor;
+    this.platform = platformOptions.platform ?? process.platform;
+    this.homeDirectory = platformOptions.homeDirectory ?? os.homedir();
+    this.runProcess = platformOptions.runProcess ?? runBoundedProcess;
+    this.readDirectory = platformOptions.readDirectory ?? (async (directory: string): Promise<readonly string[]> => {
+      const entries = await readdir(directory, { withFileTypes: true });
+      return entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+    });
     this.stateStore = services.runtimeStatePath === undefined
       ? undefined
       : new UpgradeRuntimeStateStore(path.resolve(services.runtimeStatePath), runtimeOwnerKey(actor));
@@ -394,15 +413,16 @@ export class UpgradeRuntimeService {
       case 'console_context':
       case 'browser_debug_context':
         return this.browserInsight(name, input, signal, authorization);
-      case 'windows_environment':
-      case 'service_context':
       case 'process_context':
       case 'port_context':
+      case 'startup_context':
+        return this.platformInsight(name, input, signal, authorization);
+      case 'windows_environment':
+      case 'service_context':
       case 'registry_context':
       case 'event_log_context':
       case 'installed_runtime_context':
       case 'path_context':
-      case 'startup_context':
         return this.windowsInsight(name, input, signal, authorization);
       case 'capture_screenshot':
       case 'compare_screenshot':
@@ -1525,8 +1545,63 @@ export class UpgradeRuntimeService {
     return screenshot.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, dom: dom.value, screenshot: screenshot.value }) : screenshot;
   }
 
+  private async platformInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    if (name === 'process_context') {
+      if (this.services.capabilities !== undefined) {
+        const processes = await this.services.capabilities.execute('system_info', { operation: 'processes', top_count: boundedInteger(input.top_count, 50, 1, 500) }, signal, authorization);
+        return processes.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, processes: processes.value }) : processes;
+      }
+      const fallback = this.platform === 'win32'
+        ? await this.runProcess('tasklist.exe', ['/FO', 'CSV', '/NH'], signal)
+        : this.platform === 'darwin' || this.platform === 'linux'
+          ? await this.runProcess('/bin/ps', ['-axo', 'comm=,pid=,rss=,time='], signal)
+          : null;
+      if (fallback === null) return ok(truthfulUnavailable(name, 'unsupported', ['Tier-1 desktop host']));
+      return fallback.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, processes: fallback.value.stdout }) : fallback;
+    }
+
+    if (name === 'port_context') {
+      if (this.platform === 'win32') {
+        const result = await this.runProcess('netstat.exe', ['-ano', '-p', 'tcp'], signal);
+        if (!result.ok) return result;
+        const listening = result.value.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\bLISTENING\b/i.test(line)).slice(0, 1000);
+        return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, listening });
+      }
+      if (this.platform === 'darwin') {
+        const result = await this.runProcess('/usr/sbin/lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'], signal);
+        if (!result.ok) return result;
+        const listening = result.value.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 1000);
+        return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, listening });
+      }
+      return ok(truthfulUnavailable(name, 'unsupported', ['Windows or macOS host']));
+    }
+
+    if (this.platform === 'win32') {
+      const userStartup = await this.runProcess('reg.exe', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal);
+      const machineStartup = await this.runProcess('reg.exe', ['query', 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal);
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, user: userStartup.ok ? userStartup.value.stdout : null, machine: machineStartup.ok ? machineStartup.value.stdout : null, errors: [userStartup.ok ? null : userStartup.error.message, machineStartup.ok ? null : machineStartup.error.message].filter(Boolean) });
+    }
+    if (this.platform !== 'darwin') return ok(truthfulUnavailable(name, 'unsupported', ['Windows or macOS host']));
+
+    const launchAgentDirectories = [
+      path.posix.join(this.homeDirectory, 'Library', 'LaunchAgents'),
+      '/Library/LaunchAgents',
+      '/Library/LaunchDaemons',
+    ];
+    const sources: Array<{ readonly directory: string; readonly entries: readonly string[]; readonly error?: string }> = [];
+    for (const directory of launchAgentDirectories) {
+      try {
+        const entries = (await this.readDirectory(directory)).filter((entry) => entry.toLowerCase().endsWith('.plist')).slice(0, 500);
+        sources.push({ directory, entries });
+      } catch (error) {
+        sources.push({ directory, entries: [], error: error instanceof Error ? error.message.slice(0, 500) : 'Directory unavailable' });
+      }
+    }
+    return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, provider: 'launchd', sources });
+  }
+
   private async windowsInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
-    if (process.platform !== 'win32') return ok(truthfulUnavailable(name, 'unsupported', ['Windows host']));
+    if (this.platform !== 'win32') return ok(truthfulUnavailable(name, 'unsupported', ['Windows host']));
 
     if (name === 'windows_environment') {
       let systemInfo: unknown = null;

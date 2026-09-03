@@ -5,7 +5,7 @@ import { ToolCatalogService } from '../src/main/tool-catalog/tool-catalog-servic
 
 function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'unknown'>>, options: { profileDecision?: 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN'; codexEnabled?: boolean } = {}): { registry: RequirementRegistry; catalog: ToolCatalogService; probes: Record<string, ReturnType<typeof vi.fn>> } {
   const ids = [
-    'platform_windows', 'registered_workspace', 'active_project', 'executable_git', 'executable_ripgrep', 'codex_runtime', 'wsl_runtime',
+    'platform_windows', 'platform_windows_or_macos', 'registered_workspace', 'active_project', 'executable_git', 'executable_ripgrep', 'codex_runtime', 'wsl_runtime',
     'local_mcp_listener', 'browser_cdp', 'windows_ui_automation', 'windows_input', 'windows_window', 'windows_ocr', 'office_desktop',
     'network_access', 'scheduler_runtime', 'tunnel_runtime', 'external_mcp_connection', 'local_pdf_provider', 'configured_lsp',
     'database_target', 'windows_sandbox', 'browser_event_stream', 'feature_delivery',
@@ -154,7 +154,7 @@ describe('tool catalog readiness aggregation', () => {
     const { catalog, probes } = service({ executable_git: 'pass' });
     const result = await catalog.recheck(['executable_git'], 'th');
     expect(probes.executable_git).toHaveBeenCalled();
-    expect(result.doctor.checks).toHaveLength(24);
+    expect(result.doctor.checks).toHaveLength(25);
     expect(result.catalog.locale).toBe('th');
   });
 
