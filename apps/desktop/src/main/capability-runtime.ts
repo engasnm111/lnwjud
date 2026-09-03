@@ -6,6 +6,8 @@ import {
   capabilityToolNames,
   HealthCapabilityBackend,
   LocalCapabilityService,
+  MacOsCommandCapabilityBridge,
+  MacOsNativeCapabilityBackend,
   NodeBrowserCdpProtocol,
   NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
@@ -76,9 +78,16 @@ export function createLocalCapabilityRuntime(
   const systemInfoBackend = platform === 'win32'
     ? new WindowsNativeCapabilityBackend('system_info', windowsBridge, platform)
     : new NodeSystemInfoCapabilityBackend({ platform });
-  const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge, platform);
-  const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge, platform);
-  const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge, platform);
+  const macOsBridge = platform === 'darwin' ? new MacOsCommandCapabilityBridge(platform) : undefined;
+  const notificationBackend = platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('notification', macOsBridge, platform)
+    : new WindowsNativeCapabilityBackend('notification', windowsBridge, platform);
+  const fileDialogBackend = platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('file_dialog', macOsBridge, platform)
+    : new WindowsNativeCapabilityBackend('file_dialog', windowsBridge, platform);
+  const clipboardBackend = platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, platform)
+    : new WindowsNativeCapabilityBackend('clipboard', windowsBridge, platform);
   const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, platform, nativeOptions);
   const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, platform, nativeOptions);
   const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, platform, nativeOptions);

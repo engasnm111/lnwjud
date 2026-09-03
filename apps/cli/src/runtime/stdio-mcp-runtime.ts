@@ -27,6 +27,8 @@ import {
   BrowserCdpBackend,
   HealthCapabilityBackend,
   LocalCapabilityService,
+  MacOsCommandCapabilityBridge,
+  MacOsNativeCapabilityBackend,
   NodeBrowserCdpProtocol,
   NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
@@ -366,6 +368,7 @@ function createStdioCapabilityService(
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });
+  const macOsBridge = process.platform === 'darwin' ? new MacOsCommandCapabilityBridge(process.platform) : undefined;
   const service = new LocalCapabilityService({
     shell: shellBackend,
     domCdp: browserBackend,
@@ -377,9 +380,15 @@ function createStdioCapabilityService(
     systemInfo: process.platform === 'win32'
       ? new WindowsNativeCapabilityBackend('system_info', windowsBridge)
       : new NodeSystemInfoCapabilityBackend({ platform: process.platform }),
-    notification: new WindowsNativeCapabilityBackend('notification', windowsBridge),
-    fileDialog: new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
-    clipboard: new WindowsNativeCapabilityBackend('clipboard', windowsBridge),
+    notification: process.platform === 'darwin' && macOsBridge !== undefined
+      ? new MacOsNativeCapabilityBackend('notification', macOsBridge, process.platform)
+      : new WindowsNativeCapabilityBackend('notification', windowsBridge),
+    fileDialog: process.platform === 'darwin' && macOsBridge !== undefined
+      ? new MacOsNativeCapabilityBackend('file_dialog', macOsBridge, process.platform)
+      : new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
+    clipboard: process.platform === 'darwin' && macOsBridge !== undefined
+      ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, process.platform)
+      : new WindowsNativeCapabilityBackend('clipboard', windowsBridge),
     webFetch: new WebFetchCapabilityBackend(),
     audio: new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions),
     screenRecord: new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions),

@@ -34,6 +34,20 @@ describe('desktop capability platform composition', () => {
       }),
     });
 
+    const notification = await runtime.service.execute('notification', { action: 'show', title: 'lnwjud', message: 'test', dry_run: true });
+    const fileDialog = await runtime.service.execute('file_dialog', { action: 'open', dry_run: true });
+    const clipboard = await runtime.service.execute('clipboard', { action: 'get_text', dry_run: true });
+    if (platform === 'darwin') {
+      expect(notification).toMatchObject({ ok: true, value: { dry_run: true, capability: 'notification' } });
+      expect(fileDialog).toMatchObject({ ok: true, value: { dry_run: true, capability: 'file_dialog' } });
+      expect(clipboard).toMatchObject({ ok: true, value: { dry_run: true, capability: 'clipboard' } });
+    } else {
+      for (const result of [notification, fileDialog, clipboard]) {
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.message).toContain('unavailable on this platform');
+      }
+    }
+
     const scheduler = await runtime.service.execute('scheduler', { action: 'list' });
     expect(scheduler.ok).toBe(false);
     if (!scheduler.ok) expect(scheduler.error.message).toContain('unavailable on this platform');

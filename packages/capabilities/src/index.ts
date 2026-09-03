@@ -45,6 +45,7 @@ export { NodeBrowserCdpProtocol } from './browser-cdp-protocol.js';
 export { HealthCapabilityBackend } from './health-backend.js';
 export { WebFetchCapabilityBackend } from './web-fetch-backend.js';
 export { NodeSystemInfoCapabilityBackend, type NodeSystemInfoCapabilityOptions } from './system-info-backend.js';
+export { MacOsCommandCapabilityBridge, MacOsNativeCapabilityBackend, type MacOsCapabilityBridge, type MacOsCapabilityName } from './macos-native-backend.js';
 export { SchedulerCapabilityBackend } from './scheduler-backend.js';
 export { WslCapabilityBackend, WslFilesystemCapabilityBackend, type WslCapabilityOptions, type WslFilesystemCapabilityOptions } from './wsl-backend.js';
 export {
