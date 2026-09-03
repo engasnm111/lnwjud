@@ -525,7 +525,7 @@ describe('scheduled continuation repository state machine', () => {
       expect(continuedA.leaseExpiresAt).toBe('2026-08-27T00:22:00.000Z');
       expect(continuedA.revision).toBe(2);
 
-      const runBSuccessor = claimSuccessorFields('continuation-b', '2026-08-27T00:24:00.000Z');
+      const runBSuccessor = claimSuccessorFields('continuation-b', '2026-08-27T00:47:00.000Z');
       const runB = await repository.claimScheduledContinuation({
         continuationId: 'continuation-b',
         ...runBSuccessor,
@@ -541,8 +541,8 @@ describe('scheduled continuation repository state machine', () => {
       const preparedC = runB.successor;
       expect(preparedC.generation).toBe(2);
       expect(preparedC.continuationId).toBe(runBSuccessor.claimSuccessorId);
-      expect(preparedC.dueAt).toBe('2026-08-27T00:24:00.000Z');
-      expect(runB.goal.leaseExpiresAt).toBe('2026-08-27T00:24:00.000Z');
+      expect(preparedC.dueAt).toBe('2026-08-27T00:47:00.000Z');
+      expect(runB.goal.leaseExpiresAt).toBe('2026-08-27T00:47:00.000Z');
 
       const scheduledC = await repository.recordScheduledContinuationReceipt({
         continuationId: preparedC.continuationId,
@@ -713,7 +713,7 @@ describe('scheduled continuation repository state machine', () => {
         now: '2026-08-27T00:21:50.000Z',
       });
 
-      const claimedSuccessor = claimSuccessorFields('continuation-claim', '2026-08-27T00:24:00.000Z');
+      const claimedSuccessor = claimSuccessorFields('continuation-claim', '2026-08-27T00:32:00.000Z');
       const winner = await repository.claimScheduledContinuation({
         continuationId: 'continuation-claim',
         ...claimedSuccessor,
@@ -730,7 +730,7 @@ describe('scheduled continuation repository state machine', () => {
           continuationId: claimedSuccessor.claimSuccessorId,
           generation: 2,
           status: 'prepared',
-          dueAt: '2026-08-27T00:24:00.000Z',
+          dueAt: '2026-08-27T00:32:00.000Z',
         },
       });
       await expect(repository.getLiveScheduledContinuation('goal-1')).resolves.toMatchObject({
@@ -816,7 +816,7 @@ describe('scheduled continuation repository state machine', () => {
 
       const acquired = await repository.claimScheduledContinuation({
         continuationId: prepared.continuation.continuationId,
-        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:24:00.000Z'),
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:32:00.000Z'),
         ownerClientId: 'chatgpt-web-client',
         ownerSessionId: 'session-b',
         leaseTokenHash: 'lease-hash-b',
@@ -848,7 +848,7 @@ describe('scheduled continuation repository state machine', () => {
 
       const repaired = await repository.claimScheduledContinuation({
         continuationId: prepared.continuation.continuationId,
-        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:24:30.000Z'),
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:32:30.000Z'),
         ownerClientId: 'chatgpt-web-client',
         ownerSessionId: 'session-c',
         leaseTokenHash: 'lease-hash-c',
@@ -861,7 +861,7 @@ describe('scheduled continuation repository state machine', () => {
           generation: acquired.continuation.generation + 1,
           sourceGoalRevision: released.revision,
           status: 'prepared',
-          dueAt: '2026-08-27T00:24:30.000Z',
+          dueAt: '2026-08-27T00:32:30.000Z',
         },
       });
       expect(repaired.goal.leaseExpiresAt).toBeUndefined();
@@ -917,7 +917,7 @@ describe('scheduled continuation repository state machine', () => {
 
       await expect(repository.claimScheduledContinuation({
         continuationId: prepared.continuation.continuationId,
-        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:24:00.000Z'),
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:32:00.000Z'),
         ...override,
         ownerClientId: 'chatgpt-web-client',
         ownerSessionId: 'session-b',
@@ -1043,7 +1043,7 @@ describe('scheduled continuation repository state machine', () => {
     }
   });
 
-  it('consumes the firing native task and reserves exactly one fresh +2 successor on a trusted worker collision', async () => {
+  it('retires the firing native task and reserves exactly one lease-aware fresh successor on a trusted worker collision', async () => {
     const database = await openDatabase();
     const repository = new SqliteGoalRepository(database);
     try {
@@ -1089,29 +1089,33 @@ describe('scheduled continuation repository state machine', () => {
         now: '2026-08-27T00:22:00.000Z',
       });
       expect(collision).toMatchObject({
-        outcome: 'reschedule_required',
-        retryAfterSeconds: 120,
+        outcome: 'successor_required',
+        retryAfterSeconds: 240,
         continuation: {
           continuationId: 'continuation-busy-original',
           nativeTaskId: 'native-task-busy',
-          status: 'reschedule_required',
-          pendingDueAt: '2026-08-27T00:24:00.000Z',
+          status: 'superseded',
+        },
+        successor: {
+          status: 'prepared',
+          generation: 2,
+          dueAt: '2026-08-27T00:26:00.000Z',
+          rescheduleCount: 1,
         },
       });
-      if (collision.outcome !== 'reschedule_required') throw new Error('same-task collision reschedule missing');
+      if (collision.outcome !== 'successor_required') throw new Error('fresh collision successor missing');
       await expect(repository.getLiveScheduledContinuation('goal-1')).resolves.toMatchObject({
-        continuationId: 'continuation-busy-original',
-        nativeTaskId: 'native-task-busy',
-        status: 'reschedule_required',
-        pendingDueAt: '2026-08-27T00:24:00.000Z',
+        continuationId: collision.successor.continuationId,
+        status: 'prepared',
+        dueAt: '2026-08-27T00:26:00.000Z',
       });
       await expect(repository.getWorkspaceMutationFence('workspace-1')).resolves.toMatchObject({
-        continuation: { continuationId: 'continuation-busy-original', status: 'reschedule_required' },
+        continuation: { continuationId: collision.successor.continuationId, status: 'prepared' },
       });
 
       const repeated = await repository.claimScheduledContinuation({
         continuationId: 'continuation-busy-original',
-        ...claimSuccessorFields('continuation-busy-original', '2026-08-27T00:24:30.000Z'),
+        ...claimSuccessorFields('continuation-busy-original', '2026-08-27T00:32:30.000Z'),
         ownerClientId: 'chatgpt-web-client',
         ownerSessionId: 'session-c',
         leaseTokenHash: 'lease-hash-c',
@@ -1120,21 +1124,20 @@ describe('scheduled continuation repository state machine', () => {
         now: '2026-08-27T00:22:30.000Z',
       });
       expect(repeated).toMatchObject({
-        outcome: 'reschedule_required',
-        continuation: {
-          continuationId: 'continuation-busy-original',
-          nativeTaskId: 'native-task-busy',
-          pendingDueAt: '2026-08-27T00:24:00.000Z',
+        outcome: 'successor_required',
+        successor: {
+          continuationId: collision.successor.continuationId,
+          dueAt: '2026-08-27T00:26:00.000Z',
         },
       });
       expect((await repository.getScheduledContinuation({ goalId: 'goal-1', latest: true }))?.continuationId)
-        .toBe('continuation-busy-original');
+        .toBe(collision.successor.continuationId);
     } finally {
       database.close();
     }
   });
 
-  it('fails closed into a fresh disposable +2 successor when worker evidence is uncertain', async () => {
+  it('fails closed into a lease-aligned fresh successor when worker evidence is uncertain', async () => {
     const database = await openDatabase();
     const repository = new SqliteGoalRepository(database);
     try {
@@ -1179,19 +1182,23 @@ describe('scheduled continuation repository state machine', () => {
         now: '2026-08-27T00:22:00.000Z',
       });
       expect(blocked).toMatchObject({
-        outcome: 'reschedule_required',
-        retryAfterSeconds: 120,
+        outcome: 'successor_required',
+        retryAfterSeconds: 361,
         continuation: {
           continuationId: 'continuation-busy-uncertain',
           nativeTaskId: 'native-task-uncertain',
-          status: 'reschedule_required',
-          pendingDueAt: '2026-08-27T00:24:00.000Z',
+          status: 'superseded',
+        },
+        successor: {
+          status: 'prepared',
+          dueAt: '2026-08-27T00:28:01.000Z',
+          rescheduleCount: 1,
         },
       });
-      if (blocked.outcome !== 'reschedule_required') throw new Error('same-task uncertain reschedule missing');
-      expect(blocked.continuation.orphanProbeStartedAt).toBeUndefined();
-      expect(blocked.continuation.orphanProbeLeaseGeneration).toBeUndefined();
-      expect(blocked.continuation.orphanProbeActivitySeq).toBeUndefined();
+      if (blocked.outcome !== 'successor_required') throw new Error('lease-aligned uncertain successor missing');
+      expect(blocked.successor.orphanProbeStartedAt).toBeUndefined();
+      expect(blocked.successor.orphanProbeLeaseGeneration).toBeUndefined();
+      expect(blocked.successor.orphanProbeActivitySeq).toBeUndefined();
       expect(blocked.outcome).not.toBe('acquired');
     } finally {
       database.close();
@@ -1245,12 +1252,17 @@ describe('scheduled continuation repository state machine', () => {
         now: '2026-08-27T00:22:00.000Z',
       });
       expect(result).toMatchObject({
-        outcome: 'reschedule_required',
+        outcome: 'successor_required',
+        retryAfterSeconds: 240,
         continuation: {
           continuationId: 'continuation-expired-live-job',
           nativeTaskId: 'native-task-expired-live-job',
-          status: 'reschedule_required',
-          pendingDueAt: '2026-08-27T00:24:00.000Z',
+          status: 'superseded',
+        },
+        successor: {
+          status: 'prepared',
+          dueAt: '2026-08-27T00:26:00.000Z',
+          rescheduleCount: 1,
         },
       });
     } finally {
@@ -1304,40 +1316,47 @@ describe('scheduled continuation repository state machine', () => {
         now: '2026-08-27T00:22:00.000Z',
       });
       expect(firstProbe).toMatchObject({
-        outcome: 'reschedule_required',
+        outcome: 'successor_required',
+        retryAfterSeconds: 240,
         continuation: {
           continuationId: 'continuation-orphan',
           nativeTaskId: 'native-task-orphan',
-          status: 'reschedule_required',
-          pendingDueAt: '2026-08-27T00:24:00.000Z',
+          status: 'superseded',
+          orphanProbeStartedAt: '2026-08-27T00:22:00.000Z',
+          orphanProbeLeaseGeneration: predecessor.leaseGeneration,
+          orphanProbeActivitySeq: predecessor.leaseActivitySeq,
+        },
+        successor: {
+          status: 'prepared',
+          dueAt: '2026-08-27T00:26:00.000Z',
           orphanProbeStartedAt: '2026-08-27T00:22:00.000Z',
           orphanProbeLeaseGeneration: predecessor.leaseGeneration,
           orphanProbeActivitySeq: predecessor.leaseActivitySeq,
         },
       });
-      if (firstProbe.outcome !== 'reschedule_required') throw new Error('first orphan probe did not request a same-task reschedule');
+      if (firstProbe.outcome !== 'successor_required') throw new Error('first orphan probe did not reserve a fresh successor');
 
       const scheduledSuccessor = await repository.recordScheduledContinuationReceipt({
-        continuationId: firstProbe.continuation.continuationId,
+        continuationId: firstProbe.successor.continuationId,
         ownerClientId: 'chatgpt-web-client',
-        expectedVersion: firstProbe.continuation.version,
-        outcome: 'rescheduled',
-        nativeTaskId: 'native-task-orphan',
-        dueAt: firstProbe.continuation.pendingDueAt!,
+        expectedVersion: firstProbe.successor.version,
+        outcome: 'created',
+        nativeTaskId: 'native-task-orphan-probe-2',
+        dueAt: firstProbe.successor.dueAt,
         runsOn: 'cloud',
         now: '2026-08-27T00:22:05.000Z',
       });
-      expect(scheduledSuccessor).toMatchObject({ status: 'scheduled', dueAt: '2026-08-27T00:24:00.000Z', generation: 1, nativeTaskId: 'native-task-orphan' });
+      expect(scheduledSuccessor).toMatchObject({ status: 'scheduled', dueAt: '2026-08-27T00:26:00.000Z', generation: 2, nativeTaskId: 'native-task-orphan-probe-2' });
 
       const recovered = await repository.claimScheduledContinuation({
-        continuationId: firstProbe.continuation.continuationId,
-        ...claimSuccessorFields(firstProbe.continuation.continuationId, '2026-08-27T00:26:00.000Z'),
+        continuationId: firstProbe.successor.continuationId,
+        ...claimSuccessorFields(firstProbe.successor.continuationId, '2026-08-27T00:36:00.000Z'),
         ownerClientId: 'chatgpt-web-client',
         ownerSessionId: 'session-a',
         leaseTokenHash: 'lease-hash-b',
         leaseSeconds: 600,
-        liveness: { ...inactive, observedAt: '2026-08-27T00:24:00.000Z' },
-        now: '2026-08-27T00:24:00.000Z',
+        liveness: { ...inactive, observedAt: '2026-08-27T00:26:00.000Z' },
+        now: '2026-08-27T00:26:00.000Z',
       });
       expect(recovered).toMatchObject({ outcome: 'acquired', acquisition: 'orphan_recovered' });
       if (recovered.outcome !== 'acquired') throw new Error('orphan was not recovered');
@@ -1345,7 +1364,8 @@ describe('scheduled continuation repository state machine', () => {
       expect(recovered.goal.leaseTokenHash).toBe('lease-hash-b');
 
       const successor = recovered.successor;
-      expect(successor.generation).toBe(2);
+      expect(successor.generation).toBe(3);
+      expect(successor.dueAt).toBe('2026-08-27T00:36:00.000Z');
       await repository.recordScheduledContinuationReceipt({
         continuationId: successor.continuationId,
         ownerClientId: 'chatgpt-web-client',
@@ -1354,7 +1374,7 @@ describe('scheduled continuation repository state machine', () => {
         nativeTaskId: 'native-task-after-orphan',
         dueAt: successor.dueAt,
         runsOn: 'cloud',
-        now: '2026-08-27T00:24:01.500Z',
+        now: '2026-08-27T00:26:01.500Z',
       });
 
       await expect(repository.beginGoalFencedMutation({
@@ -1364,8 +1384,8 @@ describe('scheduled continuation repository state machine', () => {
         ownerClientId: 'chatgpt-web-client',
         leaseTokenHash: 'lease-hash-a',
         leaseGeneration: predecessor.leaseGeneration,
-        startedAt: '2026-08-27T00:24:02.000Z',
-        expiresAt: '2026-08-27T00:24:32.000Z',
+        startedAt: '2026-08-27T00:26:02.000Z',
+        expiresAt: '2026-08-27T00:26:32.000Z',
       })).rejects.toMatchObject({ reason: 'lease_invalid' });
 
       const admitted = await repository.beginGoalFencedMutation({
@@ -1375,11 +1395,11 @@ describe('scheduled continuation repository state machine', () => {
         ownerClientId: 'chatgpt-web-client',
         leaseTokenHash: 'lease-hash-b',
         leaseGeneration: recovered.goal.leaseGeneration,
-        startedAt: '2026-08-27T00:24:02.000Z',
-        expiresAt: '2026-08-27T00:24:32.000Z',
+        startedAt: '2026-08-27T00:26:02.000Z',
+        expiresAt: '2026-08-27T00:26:32.000Z',
       });
       expect(admitted.leaseGeneration).toBe(recovered.goal.leaseGeneration);
-      await repository.endGoalFencedMutation('new-generation-call', '2026-08-27T00:24:03.000Z');
+      await repository.endGoalFencedMutation('new-generation-call', '2026-08-27T00:26:03.000Z');
     } finally {
       database.close();
     }
@@ -1430,25 +1450,31 @@ describe('scheduled continuation repository state machine', () => {
         now: '2026-08-27T00:22:00.000Z',
       });
       expect(firstProbe).toMatchObject({
-        outcome: 'reschedule_required',
+        outcome: 'successor_required',
+        retryAfterSeconds: 240,
         continuation: {
           continuationId: 'continuation-orphan-checkpoint',
           nativeTaskId: 'native-task-orphan-checkpoint',
-          status: 'reschedule_required',
-          pendingDueAt: '2026-08-27T00:24:00.000Z',
+          status: 'superseded',
           orphanProbeStartedAt: '2026-08-27T00:22:00.000Z',
           orphanProbeLeaseGeneration: predecessor.leaseGeneration,
           orphanProbeActivitySeq: predecessor.leaseActivitySeq,
         },
+        successor: {
+          status: 'prepared',
+          dueAt: '2026-08-27T00:26:00.000Z',
+          orphanProbeStartedAt: '2026-08-27T00:22:00.000Z',
+          orphanProbeActivitySeq: predecessor.leaseActivitySeq,
+        },
       });
-      if (firstProbe.outcome !== 'reschedule_required') throw new Error('first orphan probe did not request a same-task reschedule');
+      if (firstProbe.outcome !== 'successor_required') throw new Error('first orphan probe did not reserve a fresh successor');
       await repository.recordScheduledContinuationReceipt({
-        continuationId: firstProbe.continuation.continuationId,
+        continuationId: firstProbe.successor.continuationId,
         ownerClientId: 'chatgpt-web-client',
-        expectedVersion: firstProbe.continuation.version,
-        outcome: 'rescheduled',
-        nativeTaskId: 'native-task-orphan-checkpoint',
-        dueAt: firstProbe.continuation.pendingDueAt!,
+        expectedVersion: firstProbe.successor.version,
+        outcome: 'created',
+        nativeTaskId: 'native-task-orphan-checkpoint-probe-2',
+        dueAt: firstProbe.successor.dueAt,
         runsOn: 'cloud',
         now: '2026-08-27T00:22:05.000Z',
       });
@@ -1476,30 +1502,37 @@ describe('scheduled continuation repository state machine', () => {
         .run('2026-08-27T00:30:00.000Z', 'goal-1');
 
       const secondProbe = await repository.claimScheduledContinuation({
-        continuationId: firstProbe.continuation.continuationId,
-        ...claimSuccessorFields(firstProbe.continuation.continuationId, '2026-08-27T00:26:00.000Z'),
+        continuationId: firstProbe.successor.continuationId,
+        ...claimSuccessorFields(firstProbe.successor.continuationId, '2026-08-27T00:36:00.000Z'),
         ownerClientId: 'chatgpt-web-client',
         ownerSessionId: 'session-b',
         leaseTokenHash: 'lease-hash-b',
         leaseSeconds: 600,
         liveness: {
           trustworthy: true,
-          observedAt: '2026-08-27T00:24:00.000Z',
+          observedAt: '2026-08-27T00:26:00.000Z',
           leaseGeneration: checkpointed.leaseGeneration,
           leaseActivitySeq: checkpointed.leaseActivitySeq,
           liveFencedCallCount: 0,
           activeTaskStates: [],
         },
-        now: '2026-08-27T00:24:00.000Z',
+        now: '2026-08-27T00:26:00.000Z',
       });
       expect(secondProbe).toMatchObject({
-        outcome: 'reschedule_required',
+        outcome: 'successor_required',
+        retryAfterSeconds: 480,
         continuation: {
-          continuationId: 'continuation-orphan-checkpoint',
-          nativeTaskId: 'native-task-orphan-checkpoint',
-          status: 'reschedule_required',
-          pendingDueAt: '2026-08-27T00:26:00.000Z',
-          orphanProbeStartedAt: '2026-08-27T00:24:00.000Z',
+          continuationId: firstProbe.successor.continuationId,
+          nativeTaskId: 'native-task-orphan-checkpoint-probe-2',
+          status: 'superseded',
+          orphanProbeStartedAt: '2026-08-27T00:26:00.000Z',
+          orphanProbeActivitySeq: checkpointed.leaseActivitySeq,
+        },
+        successor: {
+          status: 'prepared',
+          dueAt: '2026-08-27T00:34:00.000Z',
+          rescheduleCount: 2,
+          orphanProbeStartedAt: '2026-08-27T00:26:00.000Z',
           orphanProbeActivitySeq: checkpointed.leaseActivitySeq,
         },
       });

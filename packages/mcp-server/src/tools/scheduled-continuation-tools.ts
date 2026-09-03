@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import {
-  DEFAULT_SUCCESSOR_DELAY_MINUTES,
   MAX_SUCCESSOR_DELAY_MINUTES,
   MIN_SUCCESSOR_DELAY_MINUTES,
 } from '@lnwjud/application';
@@ -58,7 +57,7 @@ const prepareSchema = z.object({
   successorDelayMinutes: z.number().int()
     .min(MIN_SUCCESSOR_DELAY_MINUTES)
     .max(MAX_SUCCESSOR_DELAY_MINUTES)
-    .default(DEFAULT_SUCCESSOR_DELAY_MINUTES),
+    .optional(),
   executionPreference: z.literal('cloud').default('cloud'),
 }).strict().refine((value) => value.activeTaskIds !== undefined || value.trackedTasks !== undefined, {
   message: 'activeTaskIds or trackedTasks is required',
@@ -122,7 +121,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
   return [
     defineTool({
       name: 'prepare_scheduled_continuation',
-      description: 'Checkpoint and reserve exactly one current-chat cloud successor with an adaptive delay between 2 and 25 minutes. A prepared reservation is NOT a confirmed successor and is not handoff-ready, but a live worker with a valid goal lease may keep doing fenced work while native-task creation is retried. Record native create failure or uncertainty truthfully; before turn yield or handoff, require a created receipt with the real native task ID plus runsOn=cloud unless the goal is terminal or scheduling was explicitly disabled. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block scheduled-claim liveness and are cancelled only when cancelWithGoal=true. Omitted delay defaults to the fail-safe +2-minute handoff; a healthy current run may explicitly choose a longer 5/10/25-minute watchdog. This workflow never creates or deletes the native task itself.',
+      description: 'Checkpoint and reserve exactly one current-chat cloud successor. If successorDelayMinutes is omitted, the adaptive due time is calculated from the current durable-goal lease and clamped to the supported host window between 2 and 25 minutes instead of using a fixed cadence. Explicit delays between 2 and 25 minutes remain available for bounded caller intent. A prepared reservation is NOT a confirmed successor and is not handoff-ready, but a live worker with a valid goal lease may keep doing fenced work while native-task creation is retried. Record native create failure or uncertainty truthfully; before turn yield or handoff, require a created receipt with the real native task ID plus runsOn=cloud unless the goal is terminal or scheduling was explicitly disabled. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block scheduled-claim liveness and are cancelled only when cancelWithGoal=true. This workflow never creates or deletes the native task itself.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: prepareSchema,
@@ -142,7 +141,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
         evidence: input.evidence,
         ...(input.activeTaskIds === undefined ? {} : { activeTaskIds: input.activeTaskIds }),
         ...(input.trackedTasks === undefined ? {} : { trackedTasks: input.trackedTasks }),
-        successorDelayMinutes: input.successorDelayMinutes,
+        ...(input.successorDelayMinutes === undefined ? {} : { successorDelayMinutes: input.successorDelayMinutes }),
         executionPreference: input.executionPreference,
       }) ?? missingService(),
     }),
@@ -166,7 +165,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'claim_scheduled_continuation',
-      description: 'Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted so native host jitter does not consume the one-time task without handoff. On acquired, the claim transaction atomically reserves a fresh prepared successor, caps the acquired lease at that handoff, and returns the successor plus its scheduleRequest with handoffReady=false/currentWakeMayReturn=false. Create the native task from the returned scheduleRequest, record its real host receipt, and do not call prepare_scheduled_continuation again. An interrupted repeat returns successor_required with that same deterministic successor instead of creating a duplicate. If successor_required includes a scheduleRequest, reuse that exact reservation for a fresh or truthfully failed-without-ID create; if its reason is native_task_receipt_missing, native_task_creation_uncertain, or native_task_id_already_recorded, reconcile exact host metadata first and never create blindly. A stale create_failed reservation may be refreshed to a new +2 due only after truthful absence is known. If native task creation was never confirmed, returns receipt_required with handoffReady=false and the wake must reconcile the exact host receipt before mutating or returning. On an active or uncertain worker collision, claim returns reschedule_required with taskUpdateRequest for the exact same confirmed native one-time cloud task, handoffReady=false, and currentWakeMayReturn=false. Update that same native task to +2 minutes, keep it enabled, record the rescheduled host receipt, and repeat collisions without a retry limit; do not create a replacement task and never count prepared as confirmed. If the outcome is terminal_noop, let the already-firing host task return naturally; do not delete, disable, pause, or reschedule it. Do not mutate the workspace or mark the goal terminal on collision.',
+      description: 'Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted as bounded host jitter. A one-time task that has already fired is treated as consumed transport identity and is never relied on as future coverage. On acquired, claim atomically reserves a fresh lease-aligned prepared successor and returns its scheduleRequest. On a live/uncertain worker collision, an expired lease with a running blocking job, or a wake outside the accepted early window, the firing task is retired and successor_required returns one fresh adaptive successor instead of trying to update the consumed native task. Interrupted claims reuse the same deterministic successor. Reconcile missing/uncertain native receipts before any blind create. Truthfully failed creates refresh to the current lease-aligned adaptive due time. reschedule_required is legacy compatibility only. terminal_noop returns naturally. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: claimSchema,
@@ -174,7 +173,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'get_scheduled_continuation',
-      description: 'Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. A healthy current run keeps its adaptive watchdog unless a real turn-yield signal requires same-task +2 handoff.',
+      description: 'Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. Healthy work keeps its calculated successor deadline; a real handoff-risk signal may adaptively expedite only a still-pending future native task.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: getSchema,
@@ -182,7 +181,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'expedite_scheduled_continuation',
-      description: 'For an enumerated handoff-risk signal, including a turn that is about to end while the goal is unfinished, move the exact existing cloud one-time native task to now+2 minutes. No replacement task is created.',
+      description: 'For an enumerated handoff-risk signal, adaptively move the exact still-pending cloud one-time native task closer using the current lease, host-jitter safety margin, and deterministic staggering. This is the only same-task update path; a task that has already fired must be retired and replaced by the fresh successor returned from claim.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: expediteSchema,

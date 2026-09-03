@@ -1,6 +1,22 @@
 # Scheduled Continuation Capability Evidence
 
-## v4.45 claimed-successor hardening — 2026-09-01
+## v4.52.1 adaptive host-scheduling hotfix — 2026-09-03
+
+Wayfinder review of the live failure mode found that fixed native-task timing and same-task updates after a one-time wake fired could drive the host into repeated/invalid update attempts, including `Resource not found` once the host had already consumed the one-time task. v4.52.1 separates safety timing from host cadence: the 120-second early-wake tolerance, receipt tolerance, and two-probe orphan interval remain fixed correctness bounds, while all normal native create/recovery timing is lease-aligned/adaptive.
+
+Current v4.52.1 contract:
+
+- omitted `successorDelayMinutes` derives from the current durable-goal lease and clamps to 2–25 minutes; a normal 600-second lease produces roughly a 10-minute successor;
+- an acquired wake reserves one deterministic lease-aligned successor in the same transaction;
+- a firing one-time task is consumed transport identity and is never treated as future coverage;
+- live/uncertain collisions, blocking work after lease expiry, and wakes outside the accepted early window retire the firing ticket and return one fresh adaptive successor rather than updating a consumed host task;
+- adaptive collision recovery uses bounded backoff/floors rather than fixed +2 polling;
+- `expedite_scheduled_continuation` is the only same-task update path and applies only to a still-pending future task, with a target calculated from remaining lease, host-jitter margin, and deterministic staggering;
+- `reschedule_required` remains only for legacy compatibility.
+
+Focused evidence on 2026-09-03: application package **160/160** passed, storage package **59/59** passed, and scheduler-focused MCP skill/runtime/tool contracts **6/6** passed. Native host creation/update/deletion remains host-owned and still requires exact receipts for release-level proof.
+
+## Historical: v4.45 claimed-successor hardening — 2026-09-01
 
 The v4.45 incident exposed a liveness gap between durable state and the native host: a scheduled wake successfully claimed an active goal, but the worker did not make the separate `prepare_scheduled_continuation` call requested only by prompt text. The firing continuation became historical, the goal stayed active, and no next reservation existed until the user prompted the agent again.
 
