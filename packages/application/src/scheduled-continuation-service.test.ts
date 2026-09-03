@@ -185,6 +185,71 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
+  it('reuses one confirmed pending watchdog and retimes the same native task later then earlier across checkpoints', async () => {
+    const { database, goals, scheduled, clock } = await fixture();
+    try {
+      const started = await startGoal(goals);
+      const first = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(first.ok).toBe(true);
+      if (!first.ok || first.value.scheduleRequest === undefined) throw new Error('initial prepare failed');
+      const continuationId = first.value.continuation.continuationId;
+      const generation = first.value.continuation.generation;
+      const created = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId,
+        expectedVersion: first.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-single-live-watchdog',
+        dueAt: first.value.scheduleRequest.dueAt,
+        runsOn: 'cloud',
+      });
+      expect(created).toMatchObject({ ok: true, value: { status: 'scheduled', nativeTaskId: 'native-single-live-watchdog' } });
+
+      clock.set('2026-08-27T10:01:00.000Z');
+      const later = await scheduled.prepareScheduledContinuation(actor, validPrepare(started, {
+        expectedRevision: first.value.goal.revision,
+        successorDelayMinutes: 25,
+        summary: 'Keep the same watchdog while healthy work continues.',
+      }));
+      expect(later).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'already_prepared',
+          watchdogAction: 'retime',
+          continuation: { continuationId, generation, nativeTaskId: 'native-single-live-watchdog', status: 'reschedule_required' },
+          taskUpdateRequest: { nativeTaskId: 'native-single-live-watchdog', dueAt: '2026-08-27T10:26:00.000Z' },
+        },
+      });
+      if (!later.ok || later.value.taskUpdateRequest === undefined) throw new Error('later retime failed');
+      const laterReceipt = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId,
+        expectedVersion: later.value.continuation.version,
+        outcome: 'rescheduled',
+        nativeTaskId: 'native-single-live-watchdog',
+        dueAt: later.value.taskUpdateRequest.dueAt,
+        runsOn: 'cloud',
+      });
+      expect(laterReceipt).toMatchObject({ ok: true, value: { status: 'scheduled', dueAt: '2026-08-27T10:26:00.000Z' } });
+
+      clock.set('2026-08-27T10:02:00.000Z');
+      const earlier = await scheduled.prepareScheduledContinuation(actor, validPrepare(started, {
+        expectedRevision: later.value.goal.revision,
+        successorDelayMinutes: 5,
+        summary: 'Move the same watchdog closer for bounded handoff risk.',
+      }));
+      expect(earlier).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'already_prepared',
+          watchdogAction: 'retime',
+          continuation: { continuationId, generation, nativeTaskId: 'native-single-live-watchdog', status: 'reschedule_required' },
+          taskUpdateRequest: { nativeTaskId: 'native-single-live-watchdog', dueAt: '2026-08-27T10:07:00.000Z' },
+        },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it('uses an adaptive five-minute successor for bounded near-term work', async () => {
     const { database, goals, scheduled } = await fixture();
     try {
@@ -281,17 +346,16 @@ describe('ScheduledContinuationService', () => {
       expect(result.value.scheduleRequest.prompt).toContain('deterministic adaptive successor');
       expect(result.value.scheduleRequest.prompt).toContain('never create blindly');
       expect(result.value.scheduleRequest.prompt).toContain('native_task_receipt_missing');
-      expect(result.value.scheduleRequest.prompt).toContain('reschedule_required is legacy compatibility only');
+      expect(result.value.scheduleRequest.prompt).toContain('reschedule_required means the exact confirmed native watchdog is still pending');
       expect(result.value.scheduleRequest.prompt).toContain('expedite_scheduled_continuation may update only a still-pending future native task');
       expect(result.value.scheduleRequest.prompt).toContain('actual native Scheduled Task operation from the current ChatGPT host/tool registry');
       expect(result.value.scheduleRequest.prompt).toContain('never assume or hard-code an internal host operation name');
       expect(result.value.scheduleRequest.prompt).toContain('immediately record create_failed');
       expect(result.value.scheduleRequest.prompt).toContain('record create_uncertain only when host creation may actually have succeeded');
-      expect(result.value.scheduleRequest.prompt).not.toContain('Automations.create');
-      expect(result.value.scheduleRequest.prompt).not.toContain('Automations.update');
+      expect(result.value.scheduleRequest.prompt).not.toMatch(/Automations(?:\.|:)/i);
       expect(result.value.scheduleRequest.prompt).toContain('Never send a completion response while get_goal still reports active');
       expect(result.value.scheduleRequest.prompt).toContain('finish_goal');
-      expect(result.value.scheduleRequest.prompt).toContain('matching native host deletion receipt');
+      expect(result.value.scheduleRequest.prompt).toContain('host-confirmed disable is acceptable non-runnable evidence');
       expect(result.value.scheduleRequest.prompt).toContain('claim returns terminal_noop');
       expect(result.value.scheduleRequest.prompt).toContain('let the already-firing one-time host task return naturally');
       expect(result.value.scheduleRequest.prompt).toContain('Windows Task Scheduler');
@@ -421,7 +485,7 @@ describe('ScheduledContinuationService', () => {
           nextRequiredAction: 'create_native_task_and_record_receipt_before_current_wake_returns',
         },
       });
-      expect(JSON.stringify(earlyWake)).not.toContain('taskUpdateRequest');
+      expect(earlyWake.ok && 'taskUpdateRequest' in earlyWake.value).toBe(false);
       expect(JSON.stringify(earlyWake)).not.toContain('nativeTaskId":"native-task-too-early","dueAt":"2026-08-27T10:25');
     } finally {
       database.close();
@@ -983,7 +1047,7 @@ describe('ScheduledContinuationService', () => {
           status: 'active',
           completionState: 'pending_native_cleanup',
           scheduledTaskCancellation: {
-            action: 'delete_native_task',
+            action: 'make_native_task_non_runnable',
             nativeTaskId: 'native-task-finish-consumed',
           },
         },
@@ -1065,7 +1129,7 @@ describe('ScheduledContinuationService', () => {
           status: 'active',
           completionState: 'pending_native_cleanup',
           scheduledTaskCancellation: {
-            action: 'delete_native_task',
+            action: 'make_native_task_non_runnable',
             nativeTaskId: 'native-task-completion-barrier',
             receiptRequired: true,
           },
@@ -1148,7 +1212,7 @@ describe('ScheduledContinuationService', () => {
           status: 'active',
           completionState: 'pending_native_cleanup',
           scheduledTaskCancellation: {
-            action: 'delete_native_task',
+            action: 'make_native_task_non_runnable',
             continuationId: prepared.value.continuation.continuationId,
             nativeTaskId: 'native-task-c',
             provider: 'chatgpt_scheduled_task',
@@ -1355,10 +1419,10 @@ describe('ScheduledContinuationService', () => {
       expect(requested).toMatchObject({
         ok: true,
         value: {
-          outcome: 'delete_required',
+          outcome: 'cleanup_required',
           continuation: { status: 'cancel_required', nativeTaskId: 'native-independent-cancel', version: 2 },
           cancellation: {
-            action: 'delete_native_task',
+            action: 'make_native_task_non_runnable',
             nativeTaskId: 'native-independent-cancel',
             expectedContinuationVersion: 2,
             receiptRequired: true,

@@ -59,19 +59,27 @@ export type ScheduledContinuationReceiptOutcome =
   | 'cancel_uncertain';
 
 export type ScheduledContinuationCancellationOutcome =
-  | 'delete_required'
+  | 'cleanup_required'
   | 'cancelled'
   | 'already_cancelled'
   | 'already_fired'
   | 'native_task_unverified';
 
-export interface ScheduledContinuationNativeCancellationReceipt {
-  readonly provider: 'chatgpt_scheduled_task';
-  readonly operation: 'delete';
-  readonly nativeTaskId: string;
-  readonly state: 'deleted' | 'not_found';
-  readonly observedAt: string;
-}
+export type ScheduledContinuationNativeCancellationReceipt =
+  | {
+      readonly provider: 'chatgpt_scheduled_task';
+      readonly operation: 'delete';
+      readonly nativeTaskId: string;
+      readonly state: 'deleted' | 'not_found';
+      readonly observedAt: string;
+    }
+  | {
+      readonly provider: 'chatgpt_scheduled_task';
+      readonly operation: 'disable';
+      readonly nativeTaskId: string;
+      readonly state: 'disabled';
+      readonly observedAt: string;
+    };
 
 export interface ScheduledContinuationNativeRunReceipt {
   readonly provider: 'chatgpt_scheduled_task';

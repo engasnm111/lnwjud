@@ -24,7 +24,12 @@ describe('MCP stdio transport', () => {
     );
 
     try {
-      await client.connect(transport);
+      try {
+        await client.connect(transport);
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${detail}; child diagnostics: ${diagnostics.trim() || '[none]'}`, { cause: error });
+      }
       const first = await client.listTools();
       const second = await client.listTools();
 

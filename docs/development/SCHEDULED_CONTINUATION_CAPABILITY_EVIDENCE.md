@@ -1,6 +1,10 @@
 # Scheduled Continuation Capability Evidence
 
-## v4.52.1 adaptive host-scheduling hotfix — 2026-09-03
+## v4.52.2 Single-Live Watchdog hardening — 2026-09-04
+
+v4.52.2 keeps at most one confirmed still-pending native one-time watchdog per active goal. Repeated real checkpoints reuse that continuation/nativeTaskId and may retime the same pending task earlier or later; only a fired/consumed task or absence of pending coverage creates a fresh successor. Terminal cleanup is effect-based: the exact pending task must become non-runnable with truthful host evidence, preferring true delete and accepting host-confirmed disable when delete is not exposed. Skill/runtime prompts must never hard-code an `Automations.*` host operation name.
+
+## Historical: v4.52.1 adaptive host-scheduling hotfix — 2026-09-03
 
 Wayfinder review of the live failure mode found that fixed native-task timing and same-task updates after a one-time wake fired could drive the host into repeated/invalid update attempts, including `Resource not found` once the host had already consumed the one-time task. v4.52.1 separates safety timing from host cadence: the 120-second early-wake tolerance, receipt tolerance, and two-probe orphan interval remain fixed correctness bounds, while all normal native create/recovery timing is lease-aligned/adaptive.
 

@@ -34,13 +34,22 @@ const nativeRunReceipt = z.object({
   state: z.literal('consumed'),
   observedAt: z.string().datetime({ offset: true }),
 }).strict();
-const nativeCancellationReceipt = z.object({
-  provider: z.literal('chatgpt_scheduled_task'),
-  operation: z.literal('delete'),
-  nativeTaskId,
-  state: z.enum(['deleted', 'not_found']),
-  observedAt: z.string().datetime({ offset: true }),
-}).strict();
+const nativeCancellationReceipt = z.discriminatedUnion('operation', [
+  z.object({
+    provider: z.literal('chatgpt_scheduled_task'),
+    operation: z.literal('delete'),
+    nativeTaskId,
+    state: z.enum(['deleted', 'not_found']),
+    observedAt: z.string().datetime({ offset: true }),
+  }).strict(),
+  z.object({
+    provider: z.literal('chatgpt_scheduled_task'),
+    operation: z.literal('disable'),
+    nativeTaskId,
+    state: z.literal('disabled'),
+    observedAt: z.string().datetime({ offset: true }),
+  }).strict(),
+]);
 
 const prepareSchema = z.object({
   goalId,
@@ -121,7 +130,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
   return [
     defineTool({
       name: 'prepare_scheduled_continuation',
-      description: 'Checkpoint and reserve exactly one current-chat native ChatGPT successor with cloud execution requested. If successorDelayMinutes is omitted, the adaptive due time is calculated from the current durable-goal lease and clamped to the supported host window between 2 and 25 minutes instead of using a fixed cadence. Explicit delays between 2 and 25 minutes remain available for bounded caller intent. A prepared reservation is NOT a confirmed successor and is not handoff-ready, but a live worker with a valid goal lease may keep doing fenced work while native-task creation is retried. Record native create failure or uncertainty truthfully; before turn yield or handoff, require a created receipt with the real native task ID, matching host dueAt, and runsOn=cloud when the host proves cloud execution or runsOn=unverified when the native host does not expose execution mode. Explicitly confirmed local execution is not valid coverage for this cloud-preferred lane. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block scheduled-claim liveness and are cancelled only when cancelWithGoal=true. This workflow never creates or deletes the native task itself; native host creation must use the ChatGPT Scheduled Task tool/API surface exposed to the chat, never browser/DOM automation.',
+      description: 'Checkpoint durable progress and ensure one live current-chat native ChatGPT watchdog with cloud execution requested. If a confirmed future native watchdog already exists, reuse it when its schedule is still suitable or return a same-nativeTaskId retime request when the latest checkpoint materially changes the desired due time; never create a second live task merely because another checkpoint was written. Create a fresh generation only when no live pending watchdog exists, including after a prior one-time task has fired and become consumed transport identity. If successorDelayMinutes is omitted, the adaptive desired due time is derived from the current durable-goal lease and clamped to 2–25 minutes (between 2 and 25 minutes). A prepared reservation is NOT a confirmed successor and is NOT confirmed coverage. A live worker with a valid goal lease may keep doing fenced work while native confirmation is pending, but confirmation is required before turn yield or handoff. Record native create/update failure or uncertainty truthfully and reconcile uncertain host state before any blind create. Host create/update/cleanup remain native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation or an lnwjud-local scheduler as a substitute.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: prepareSchema,
@@ -147,7 +156,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'record_scheduled_continuation_receipt',
-      description: 'Record host-owned cloud one-time task create, same-task reschedule, consumed-run reconciliation, or cancellation receipts. Created/rescheduled receipts must include the host-reported absolute dueAt; equivalent timezone offsets are compared as the same instant, while real schedule drift is rejected. A consumed receipt requires exact native host run evidence and means only that the one-time task is no longer pending; it does not mean the goal work completed. Cancelled is accepted only with a matching native ChatGPT host deletion receipt; a model assertion is not cancellation proof. The stored native task ID is immutable across reschedules.',
+      description: 'Record host-owned cloud one-time task create, same-task retime, consumed-run reconciliation, or terminal non-runnable receipts. Created/rescheduled receipts must include the host-reported absolute dueAt; equivalent timezone offsets are compared as the same instant, while real schedule drift is rejected. A consumed receipt requires exact native host run evidence and means only that the one-time task is no longer pending; it does not mean the goal work completed. Cancelled is accepted only with matching native ChatGPT host evidence that the exact task is non-runnable: delete may report deleted/not_found and hosts without delete may report an exact disable receipt. A model assertion is never cleanup proof. The stored native task ID is immutable across retimes.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: receiptSchema,
@@ -165,7 +174,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'claim_scheduled_continuation',
-      description: 'Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted as bounded host jitter. A one-time task that has already fired is treated as consumed transport identity and is never relied on as future coverage. On acquired, claim atomically reserves a fresh lease-aligned prepared successor and returns its scheduleRequest. On a live/uncertain worker collision, an expired lease with a running blocking job, or a wake outside the accepted early window, the firing task is retired and successor_required returns one fresh adaptive successor instead of trying to update the consumed native task. Interrupted claims reuse the same deterministic successor. Reconcile missing/uncertain native receipts before any blind create. Truthfully failed creates refresh to the current lease-aligned adaptive due time. reschedule_required is legacy compatibility only. terminal_noop returns naturally. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease.',
+      description: 'Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted as bounded host jitter. A one-time task that has already fired is treated as consumed transport identity and is never relied on as future coverage. On acquired, claim atomically reserves a fresh lease-aligned prepared successor and returns its scheduleRequest. On a live/uncertain worker collision, an expired lease with a running blocking job, or a wake outside the accepted early window, the firing task is retired and successor_required returns one fresh adaptive successor instead of trying to update the consumed native task. Interrupted claims reuse the same deterministic successor. Reconcile missing/uncertain native receipts before any blind create. Truthfully failed creates refresh to the current lease-aligned adaptive due time. reschedule_required is the same-ID retime path only for an exact confirmed watchdog that is still pending; a fired one-time task is consumed and must never use that path. terminal_noop returns naturally. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: claimSchema,
@@ -181,7 +190,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'expedite_scheduled_continuation',
-      description: 'For an enumerated handoff-risk signal, adaptively move the exact still-pending cloud one-time native task closer using the current lease, host-jitter safety margin, and deterministic staggering. This is the only same-task update path; a task that has already fired must be retired and replaced by the fresh successor returned from claim.',
+      description: 'For an enumerated handoff-risk signal, adaptively move the exact still-pending cloud one-time native task closer using the current lease, host-jitter safety margin, and deterministic staggering. Normal checkpoint refresh may also reuse or retime that same pending watchdog when its lease-aligned deadline changes; expedite is the explicit risk-driven move-earlier path. A task that has already fired must be retired and replaced by the fresh successor returned from claim.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: expediteSchema,
@@ -189,7 +198,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'cancel_scheduled_continuation',
-      description: 'Cancel one still-pending scheduled successor independently of its goal. Identify it by continuationId or the latest record for a goal, then use the returned cancellation instruction to delete the exact pending native ChatGPT Scheduled Task and record its host receipt. Never treat pausing/disabling an already-fired current wake as deletion or completion proof. This does not cancel the durable goal or stop its running tasks.',
+      description: 'Cancel one still-pending scheduled successor watchdog independently of its goal. Identify it by continuationId or the latest record for a goal, then follow the returned make_native_task_non_runnable instruction using the strongest native ChatGPT operation the current host actually exposes. Prefer exact deletion when available; if the host has no delete operation, disabling the exact pending task is valid only when the host receipt proves it is non-runnable. Never treat a model assertion, an unverified state, or pausing/disabling an already-fired current wake (which is consumed transport identity) as cleanup proof. This does not cancel the durable goal or stop its running tasks.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: cancelSchema,

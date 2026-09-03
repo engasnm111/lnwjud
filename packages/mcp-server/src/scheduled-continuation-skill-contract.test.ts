@@ -34,8 +34,7 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('exactly as it is exposed by the current ChatGPT host/tool registry');
     expect(skill).toContain('Do **not** assume, invent, or hard-code an internal host tool/resource name');
     expect(skill).toContain('immediately call `record_scheduled_continuation_receipt(outcome: create_failed)`');
-    expect(skill).not.toContain('Automations.create');
-    expect(skill).not.toContain('Automations.update');
+    expect(skill).not.toMatch(/Automations(?:\.|:)/i);
     expect(skill).toContain('Explicitly confirmed `local`');
     expect(skill).toContain('`prepared` means **reservation only**');
     expect(skill).toContain('never a confirmed successor');
@@ -47,8 +46,14 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('`successor_required`');
     expect(skill).toContain('expedite_scheduled_continuation');
     expect(skill).toContain('goalLease');
+    expect(skill).toContain('releaseLease: true');
+    expect(skill).toContain('liveness-aware stale-worker takeover');
+    expect(skill).toContain('Session equality alone is never recovery proof');
     expect(skill).toContain('orphan_recovered');
-    expect(skill).toContain('native host deletion receipt');
+    expect(skill).toContain('non-runnable');
+    expect(skill).toContain('Single-Live Watchdog');
+    expect(skill).toContain('reuse');
+    expect(skill).toContain('retime');
     expect(skill).toContain('record_scheduled_continuation_receipt(outcome: consumed)');
     expect(skill).toContain('does **not** mean the goal work completed');
     expect(skill).toContain('Never report cancellation as successful');

@@ -279,7 +279,7 @@ describe('durable goal MCP tools', () => {
               status: 'active',
               completionState: 'pending_native_cleanup',
               scheduledTaskCancellation: {
-                action: 'delete_native_task',
+                action: 'make_native_task_non_runnable',
                 continuationId: 'continuation-c',
                 nativeTaskId: 'native-task-c',
                 provider: 'chatgpt_scheduled_task',
@@ -307,7 +307,7 @@ describe('durable goal MCP tools', () => {
         status: 'active',
         completionState: 'pending_native_cleanup',
         scheduledTaskCancellation: {
-          action: 'delete_native_task',
+          action: 'make_native_task_non_runnable',
           continuationId: 'continuation-c',
           nativeTaskId: 'native-task-c',
           provider: 'chatgpt_scheduled_task',

@@ -85,6 +85,18 @@ describe('scheduled continuation MCP tools', () => {
         observedAt: '2026-08-27T10:12:00.000Z',
       },
     })).toMatchObject({ ok: true });
+    expect(byName.get('record_scheduled_continuation_receipt')?.parse({
+      continuationId: 'c-1',
+      expectedVersion: 2,
+      outcome: 'cancelled',
+      nativeCancellationReceipt: {
+        provider: 'chatgpt_scheduled_task',
+        operation: 'disable',
+        nativeTaskId: 'native-1',
+        state: 'disabled',
+        observedAt: '2026-08-27T10:12:00.000Z',
+      },
+    })).toMatchObject({ ok: true });
     expect(byName.get('expedite_scheduled_continuation')?.parse({ goalId: 'g-1', continuationId: 'c-1', leaseToken: 'lease', expectedLeaseGeneration: 2, expectedGoalRevision: 3, expectedContinuationVersion: 4, reason: 'host_budget_warning' })).toMatchObject({ ok: true });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1' })).toMatchObject({ ok: true, value: { leaseSeconds: 600 } });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1', leaseSeconds: 600 })).toMatchObject({ ok: true });
@@ -110,7 +122,7 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('successor_required');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('fresh adaptive successor');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('Reconcile missing/uncertain native receipts before any blind create');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('reschedule_required is legacy compatibility only');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('reschedule_required is the same-ID retime path');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('terminal_noop returns naturally');
     expect(byName.get('cancel_scheduled_continuation')?.description).toContain('still-pending scheduled successor');
     expect(byName.get('cancel_scheduled_continuation')?.description).toContain('pausing/disabling an already-fired current wake');

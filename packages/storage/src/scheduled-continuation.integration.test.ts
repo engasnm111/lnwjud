@@ -624,7 +624,7 @@ describe('scheduled continuation repository state machine', () => {
         nativeTaskId: 'native-task-c',
         runsOn: 'cloud',
         now: '2026-08-27T00:23:04.000Z',
-      })).rejects.toThrow('Cancelled receipt requires matching native host deletion evidence');
+      })).rejects.toThrow('Cancelled receipt requires matching native host evidence that the task is non-runnable');
 
       const cancelledC = await repository.recordScheduledContinuationReceipt({
         continuationId: cancellation.continuation.continuationId,
@@ -660,7 +660,7 @@ describe('scheduled continuation repository state machine', () => {
     }
   });
 
-  it('is idempotent for the same prepare fingerprint and rejects a distinct live prepare', async () => {
+  it('reuses the same live watchdog across repeated checkpoints instead of creating a duplicate continuation', async () => {
     const database = await openDatabase();
     const repository = new SqliteGoalRepository(database);
     try {
@@ -679,13 +679,17 @@ describe('scheduled continuation repository state machine', () => {
       expect(retry.continuation.continuationId).toBe(first.continuation.continuationId);
       expect(retry.goal.revision).toBe(1);
 
-      await expect(repository.prepareScheduledContinuation(prepareRequest(
+      const refreshed = await repository.prepareScheduledContinuation(prepareRequest(
         '2026-08-27T00:20:30.000Z',
         '2026-08-27T00:22:30.000Z',
         1,
         'different-fingerprint',
         'continuation-2',
-      ))).rejects.toMatchObject({ reason: 'conflict' });
+      ));
+      expect(refreshed.alreadyPrepared).toBe(true);
+      expect(refreshed.continuation.continuationId).toBe(first.continuation.continuationId);
+      expect(refreshed.continuation.status).toBe('prepared');
+      expect(refreshed.goal.revision).toBe(2);
     } finally {
       database.close();
     }

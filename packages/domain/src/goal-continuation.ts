@@ -122,6 +122,19 @@ export class GoalStateError extends Error {
   }
 }
 
+export interface GoalLeaseRecoveryEvidence {
+  readonly trustworthy: boolean;
+  readonly observedAt: string;
+  readonly leaseGeneration: number;
+  readonly leaseActivitySeq: number;
+  readonly liveFencedCallCount: number;
+  readonly blockingTaskStates: readonly {
+    readonly taskId: string;
+    readonly provider: GoalTaskProvider;
+    readonly state: 'running' | 'terminal' | 'absent' | 'unknown';
+  }[];
+}
+
 export interface AcquireGoalRecordRequest {
   readonly goalId: string;
   readonly workspaceId: string;
@@ -132,6 +145,7 @@ export interface AcquireGoalRecordRequest {
   readonly plan?: GoalPlan;
   readonly leaseTokenHash: string;
   readonly leaseSeconds: number;
+  readonly recoveryEvidence?: GoalLeaseRecoveryEvidence;
   readonly now: string;
 }
 
@@ -139,6 +153,7 @@ export interface AcquireGoalRecordResult {
   readonly goal: GoalRecord;
   readonly acquired: boolean;
   readonly retryAfterSeconds?: number;
+  readonly leaseRecovery?: 'stale_worker_recovered';
 }
 
 export interface CheckpointGoalRecordRequest {
@@ -198,12 +213,14 @@ export interface ListGoalRecordsRequest {
 }
 
 export interface ScheduledTaskCancellationInstruction {
-  readonly action: 'delete_native_task' | 'none';
+  /** Host-owned cleanup intent. The caller must resolve the strongest currently exposed native operation. */
+  readonly action: 'make_native_task_non_runnable' | 'none';
   readonly continuationId?: string;
   readonly nativeTaskId?: string;
   readonly provider?: 'chatgpt_scheduled_task';
   readonly expectedContinuationVersion?: number;
   readonly receiptRequired?: true;
+  readonly requiredEffect?: 'non_runnable';
   readonly reason: 'live_task_confirmed' | 'no_live_task' | 'already_fired' | 'already_cancelled' | 'native_task_unverified';
 }
 

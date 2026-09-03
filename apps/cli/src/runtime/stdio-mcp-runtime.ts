@@ -166,17 +166,18 @@ export function createStdioMcpRuntime(
     { provider: 'shell', cancelForGoal: capabilityRuntime.shell.cancelForGoal.bind(capabilityRuntime.shell) },
   ]);
   const requestCancellation = new GoalRequestCancellationService();
-  const goalService = new GoalContinuationService(workspaceRepository, goalRepository, {
-    scheduledContinuations: goalRepository,
-    taskCancellation,
-    requestCancellation,
-  });
   const goalMutationFence = new GoalMutationFenceService(goalRepository, {
     taskStateReader: new RuntimeGoalManagedTaskStateReader({
       process: processService,
       codex: codexService,
       shell: capabilityRuntime.shell,
     }),
+  });
+  const goalService = new GoalContinuationService(workspaceRepository, goalRepository, {
+    scheduledContinuations: goalRepository,
+    workerLiveness: goalMutationFence,
+    taskCancellation,
+    requestCancellation,
   });
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };

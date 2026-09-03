@@ -89,14 +89,21 @@ export interface ScheduledContinuationTaskUpdateRequest {
 
 export interface PrepareScheduledContinuationResult {
   readonly outcome: 'prepared' | 'already_prepared';
+  readonly watchdogAction: 'create' | 'retime' | 'reuse' | 'reconcile';
   readonly goal: GoalSnapshot;
   readonly continuation: ScheduledContinuationSnapshot;
-  readonly scheduleRequest: ScheduledContinuationRequest;
-  /** A reservation is not recovery coverage until the host task create receipt is recorded. */
+  /** Present only when no live native watchdog exists and a fresh host task may be created. */
+  readonly scheduleRequest?: ScheduledContinuationRequest;
+  /** Present only for a confirmed still-pending native watchdog that needs a same-ID schedule update. */
+  readonly taskUpdateRequest?: ScheduledContinuationTaskUpdateRequest;
   readonly currentRunMayContinue: true;
-  readonly handoffReady: false;
-  readonly nativeTaskConfirmationRequired: true;
-  readonly nextRequiredAction: 'create_native_task_and_record_receipt_before_yield';
+  readonly handoffReady: boolean;
+  readonly nativeTaskConfirmationRequired: boolean;
+  readonly nextRequiredAction:
+    | 'create_native_task_and_record_receipt_before_yield'
+    | 'update_same_pending_native_task_and_record_receipt_before_yield'
+    | 'continue_with_existing_pending_watchdog'
+    | 'reconcile_existing_native_watchdog_before_create_update_or_yield';
   readonly handoffDeadlineAt: string;
 }
 
@@ -324,17 +331,59 @@ export class ScheduledContinuationService {
         now: nowIso,
       });
       const continuation = toPublicContinuation(prepared.continuation);
-      const scheduleRequest = buildScheduleRequest(continuation, prepared.goal.workspaceId, this.hostTimeZone);
+      const goal = toGoalSnapshot(prepared.goal);
+      const outcome = prepared.alreadyPrepared ? 'already_prepared' : 'prepared';
+      if (!prepared.alreadyPrepared) {
+        return ok({
+          outcome,
+          watchdogAction: 'create',
+          goal,
+          continuation,
+          scheduleRequest: buildScheduleRequest(continuation, prepared.goal.workspaceId, this.hostTimeZone),
+          currentRunMayContinue: true,
+          handoffReady: false,
+          nativeTaskConfirmationRequired: true,
+          nextRequiredAction: 'create_native_task_and_record_receipt_before_yield',
+          handoffDeadlineAt: continuation.dueAt,
+        });
+      }
+      if (continuation.status === 'scheduled') {
+        return ok({
+          outcome,
+          watchdogAction: 'reuse',
+          goal,
+          continuation,
+          currentRunMayContinue: true,
+          handoffReady: true,
+          nativeTaskConfirmationRequired: false,
+          nextRequiredAction: 'continue_with_existing_pending_watchdog',
+          handoffDeadlineAt: continuation.dueAt,
+        });
+      }
+      if (continuation.status === 'reschedule_required' || continuation.status === 'reschedule_failed') {
+        return ok({
+          outcome,
+          watchdogAction: 'retime',
+          goal,
+          continuation,
+          taskUpdateRequest: buildTaskUpdateRequest(continuation, prepared.goal.workspaceId, this.hostTimeZone),
+          currentRunMayContinue: true,
+          handoffReady: false,
+          nativeTaskConfirmationRequired: false,
+          nextRequiredAction: 'update_same_pending_native_task_and_record_receipt_before_yield',
+          handoffDeadlineAt: continuation.pendingDueAt ?? continuation.dueAt,
+        });
+      }
       return ok({
-        outcome: prepared.alreadyPrepared ? 'already_prepared' : 'prepared',
-        goal: toGoalSnapshot(prepared.goal),
+        outcome,
+        watchdogAction: 'reconcile',
+        goal,
         continuation,
-        scheduleRequest,
         currentRunMayContinue: true,
         handoffReady: false,
-        nativeTaskConfirmationRequired: true,
-        nextRequiredAction: 'create_native_task_and_record_receipt_before_yield',
-        handoffDeadlineAt: continuation.dueAt,
+        nativeTaskConfirmationRequired: continuation.nativeTaskId === undefined,
+        nextRequiredAction: 'reconcile_existing_native_watchdog_before_create_update_or_yield',
+        handoffDeadlineAt: continuation.pendingDueAt ?? continuation.dueAt,
       });
     } catch (error: unknown) {
       return mapError(error);
@@ -366,7 +415,7 @@ export class ScheduledContinuationService {
         throw new Error('nativeRunReceipt is only valid for consumed');
       }
       if (request.outcome === 'cancelled' && nativeCancellationReceipt === undefined) {
-        throw new Error('cancelled requires a native host deletion receipt');
+        throw new Error('cancelled requires native host evidence that the task is non-runnable');
       }
       if (request.outcome !== 'cancelled' && nativeCancellationReceipt !== undefined) {
         throw new Error('nativeCancellationReceipt is only valid for cancelled');
@@ -681,7 +730,7 @@ function buildScheduleRequest(
   workspaceId: string,
   hostTimeZone: string,
 ): ScheduledContinuationRequest {
-  const prompt = `Call claim_scheduled_continuation first for continuation ${continuation.continuationId}, goal ${continuation.goalId}, workspace ${workspaceId}. Use every returned scheduleRequest.schedule verbatim with its explicit IANA TZID; dueAt remains the canonical absolute instant and host receipts must report the real absolute dueAt. Native wake jitter up to 120 seconds early is a safety tolerance, not a scheduling cadence. A one-time task that has fired is consumed transport identity: never try to re-arm or repeatedly update that firing nativeTaskId. If claim returns acquired, lnwjud already reserved a fresh lease-aligned successor; create that exact cloud one-time task, record its real host receipt, and do not call prepare_scheduled_continuation again. If claim returns successor_required with a scheduleRequest, create that exact deterministic adaptive successor and record its receipt. This outcome is also used when a firing wake collides with a live or uncertain worker, an expired lease still has blocking work, or the host fired outside the accepted early window. If successor_required reports native_task_receipt_missing, native_task_creation_uncertain, or native_task_id_already_recorded, reconcile exact host metadata before any create and never create blindly. A truthfully failed create with no native ID may be refreshed to the current adaptive lease-aligned deadline. reschedule_required is legacy compatibility only and must not be used to blindly update an already-fired one-time task. expedite_scheduled_continuation may update only a still-pending future native task before it fires; its returned due time is adaptive and must be used verbatim. A prepared reservation is not handoff-ready. Resolve the actual native Scheduled Task operation from the current ChatGPT host/tool registry and never assume or hard-code an internal host operation name. If native creation is unavailable, rejected, not-found, or unsupported, immediately record create_failed for the current continuation version before checkpointing, yielding, or relying on that reservation; record create_uncertain only when host creation may actually have succeeded but exact identity is unknown. Keep useful fenced work running only while the current goal lease remains valid. Before any worker returns or yields with an active goal, require one confirmed cloud successor or a terminal goal. Keep waiting on blocking task IDs until terminal results are inspected. Never send a completion response while get_goal still reports active. When acceptance evidence is complete, call finish_goal. If it returns pending_native_cleanup, perform the exact host cleanup or reconciliation and record the native receipt, then call finish_goal again. Report completion only after finish_goal completionState=completed and get_goal is terminal. If claim returns terminal_noop, let the already-firing one-time host task return naturally. Never use pause or disable as deletion proof, never report cancellation without a matching native host deletion receipt, and never use Windows Task Scheduler.`;
+  const prompt = `Call claim_scheduled_continuation first for continuation ${continuation.continuationId}, goal ${continuation.goalId}, workspace ${workspaceId}. Use every returned scheduleRequest.schedule verbatim with its explicit IANA TZID; dueAt remains the canonical absolute instant and host receipts must report the real absolute dueAt. Native wake jitter up to 120 seconds early is a safety tolerance, not a scheduling cadence. A one-time task that has fired is consumed transport identity: never try to re-arm or repeatedly update that firing nativeTaskId. If claim returns acquired, lnwjud already reserved a fresh lease-aligned successor; create that exact cloud one-time task, record its real host receipt, and do not call prepare_scheduled_continuation again. If claim returns successor_required with a scheduleRequest, create that exact deterministic adaptive successor and record its receipt. This outcome is also used when a firing wake collides with a live or uncertain worker, an expired lease still has blocking work, or the host fired outside the accepted early window. If successor_required reports native_task_receipt_missing, native_task_creation_uncertain, or native_task_id_already_recorded, reconcile exact host metadata before any create and never create blindly. A truthfully failed create with no native ID may be refreshed to the current adaptive lease-aligned deadline. reschedule_required means the exact confirmed native watchdog is still pending and must be retimed using the same nativeTaskId; apply only the returned taskUpdateRequest and never use this path for a one-time task that has already fired. expedite_scheduled_continuation may update only a still-pending future native task before it fires; its returned due time is adaptive and must be used verbatim. A prepared reservation is not handoff-ready. Resolve the actual native Scheduled Task operation from the current ChatGPT host/tool registry and never assume or hard-code an internal host operation name. If native creation is unavailable, rejected, not-found, or unsupported, immediately record create_failed for the current continuation version before checkpointing, yielding, or relying on that reservation; record create_uncertain only when host creation may actually have succeeded but exact identity is unknown. Keep useful fenced work running only while the current goal lease remains valid. Before any worker returns or yields with an active goal, require one confirmed cloud successor or a terminal goal. Keep waiting on blocking task IDs until terminal results are inspected. Never send a completion response while get_goal still reports active. When acceptance evidence is complete, call finish_goal. If it returns pending_native_cleanup, make the exact pending native task non-runnable using the strongest operation actually exposed by the host: prefer true delete, otherwise a host-confirmed disable is acceptable non-runnable evidence. Record the exact native receipt without relabeling disable as delete, then call finish_goal again. Report completion only after finish_goal completionState=completed and get_goal is terminal. If claim returns terminal_noop, let the already-firing one-time host task return naturally. Never report cleanup without exact host evidence and never use Windows Task Scheduler.`;
   return {
     provider: 'chatgpt_scheduled_task',
     occurrence: 'once',
@@ -760,12 +809,13 @@ function scheduledTaskCancellationInstruction(record: ScheduledContinuationSnaps
     && record.nativeTaskId !== undefined
   ) {
     return {
-      action: 'delete_native_task',
+      action: 'make_native_task_non_runnable',
       continuationId: record.continuationId,
       nativeTaskId: record.nativeTaskId,
       provider: 'chatgpt_scheduled_task',
       expectedContinuationVersion: record.version,
       receiptRequired: true,
+      requiredEffect: 'non_runnable',
       reason: 'live_task_confirmed',
     };
   }
@@ -1012,19 +1062,22 @@ function normalizeNativeRunReceipt(
 function normalizeNativeCancellationReceipt(
   receipt: ScheduledContinuationNativeCancellationReceipt,
 ): ScheduledContinuationNativeCancellationReceipt {
-  if (receipt.provider !== 'chatgpt_scheduled_task' || receipt.operation !== 'delete') {
-    throw new Error('native cancellation receipt provider or operation is invalid');
+  if (receipt.provider !== 'chatgpt_scheduled_task') {
+    throw new Error('native cancellation receipt provider is invalid');
   }
-  if (receipt.state !== 'deleted' && receipt.state !== 'not_found') {
-    throw new Error('native cancellation receipt state is invalid');
+  const nativeTaskId = required(receipt.nativeTaskId, 'native cancellation receipt task ID', MAX_NATIVE_TASK_ID);
+  const observedAt = requiredIso(receipt.observedAt, 'native cancellation receipt observedAt');
+  if (receipt.operation === 'delete') {
+    if (receipt.state !== 'deleted' && receipt.state !== 'not_found') {
+      throw new Error('native deletion receipt state is invalid');
+    }
+    return { provider: 'chatgpt_scheduled_task', operation: 'delete', nativeTaskId, state: receipt.state, observedAt };
   }
-  return {
-    provider: 'chatgpt_scheduled_task',
-    operation: 'delete',
-    nativeTaskId: required(receipt.nativeTaskId, 'native cancellation receipt task ID', MAX_NATIVE_TASK_ID),
-    state: receipt.state,
-    observedAt: requiredIso(receipt.observedAt, 'native cancellation receipt observedAt'),
-  };
+  if (receipt.operation === 'disable') {
+    if (receipt.state !== 'disabled') throw new Error('native disable receipt state is invalid');
+    return { provider: 'chatgpt_scheduled_task', operation: 'disable', nativeTaskId, state: 'disabled', observedAt };
+  }
+  throw new Error('native cancellation receipt operation is invalid');
 }
 function hashLeaseToken(token: string): string { return createHash('sha256').update(token).digest('hex'); }
 
