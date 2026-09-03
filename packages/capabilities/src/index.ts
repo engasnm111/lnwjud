@@ -60,9 +60,13 @@ export { EventLogCapabilityBackend, type EventLogBackendOptions, type EventLogRu
 export { PowerShellWindowsCapabilityBridge, type PowerShellWindowsBridgeOptions } from './windows-bridge.js';
 export {
   capabilityDescriptors,
+  capabilitySupportsPlatform,
   type CapabilityAvailability,
   type CapabilityDescriptor,
   type CapabilityPermission,
+  type CapabilityPlatform,
+  type CapabilityPlatformPolicy,
+  type CapabilitySession,
 } from './capability-descriptors.js';
 
 export { WINDOWS_CAPABILITY_BRIDGE_SHA256, WINDOWS_CAPABILITY_BRIDGE_SIZE_BYTES } from './windows-capability-integrity.generated.js';

@@ -15,7 +15,8 @@ describe('capability descriptors', () => {
     const descriptor = capabilityDescriptors.find((item) => item.name === 'wsl_exec');
 
     expect(descriptor).toMatchObject({
-      availability: 'windows',
+      availability: 'platform',
+      platformPolicy: { platforms: ['win32'], sessions: ['any'] },
       permission: 'EXECUTE',
       supportsCancel: true,
       supportsDryRun: true,
@@ -28,9 +29,20 @@ describe('capability descriptors', () => {
     const descriptor = capabilityDescriptors.find((item) => item.name === 'vision');
 
     expect(descriptor).toMatchObject({
+      availability: 'platform',
+      platformPolicy: { platforms: ['win32'], sessions: ['interactive-desktop'] },
       supportsDryRun: true,
       auditTarget: 'display',
     });
     expect(descriptor?.requirements).toContain('Windows package identity for WinRT OCR');
+  });
+
+  it('keeps currently Windows-backed common desktop capabilities platform-gated until native providers land', () => {
+    for (const name of ['system_info', 'notification', 'file_dialog', 'clipboard', 'scheduler'] as const) {
+      expect(capabilityDescriptors.find((item) => item.name === name)).toMatchObject({
+        availability: 'platform',
+        platformPolicy: { platforms: ['win32'] },
+      });
+    }
   });
 });

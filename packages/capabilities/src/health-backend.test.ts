@@ -23,10 +23,21 @@ describe('HealthCapabilityBackend', () => {
     } } });
   });
 
-  it('checks one named capability when requested', async () => {
+  it('reports platform-gated capabilities as not applicable instead of generic missing backends', async () => {
     const backend = new HealthCapabilityBackend({ platform: 'linux' });
 
-    await expect(backend.execute({ operation: 'check_tool', tool: 'input_event' })).resolves.toMatchObject({ ok: true, value: { tool: 'input_event', available: false } });
+    await expect(backend.execute({ operation: 'check_tool', tool: 'input_event' })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        tool: 'input_event',
+        availability: 'platform',
+        platformPolicy: { platforms: ['win32'], sessions: ['interactive-desktop'] },
+        available: false,
+        ready: false,
+        applicable: false,
+        reason: 'Not applicable on linux',
+      },
+    });
   });
 
   it('delegates WSL readiness independently from accessibility', async () => {
