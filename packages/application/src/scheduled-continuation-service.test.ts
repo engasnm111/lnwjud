@@ -422,6 +422,62 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
+  it('accepts host-confirmed task coverage when execution mode is unreported, rejects explicit local, and claims the wake normally', async () => {
+    const { database, goals, scheduled, clock } = await fixture('2026-08-27T10:00:46.000Z');
+    const successorActor: FileActor = { ...actor, sessionId: 'scheduled-continuation-unverified-wake' };
+    try {
+      const started = await startGoal(goals);
+      const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error('prepare failed');
+
+      await expect(scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-task-explicit-local',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'local',
+      })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+      const receipt = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-task-host-mode-unreported',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'unverified',
+      });
+      expect(receipt).toMatchObject({
+        ok: true,
+        value: {
+          status: 'scheduled',
+          nativeTaskId: 'native-task-host-mode-unreported',
+          confirmedRunsOn: 'unverified',
+        },
+      });
+
+      database.connection.prepare('UPDATE goals SET lease_expires_at = ? WHERE id = ?')
+        .run('2026-08-27T10:24:00.000Z', started.goalId);
+      clock.set('2026-08-27T10:24:32.000Z');
+      const acquired = await scheduled.claimScheduledContinuation(successorActor, {
+        continuationId: prepared.value.continuation.continuationId,
+      });
+      expect(acquired).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'acquired',
+          acquisition: 'expired_lease',
+          continuation: { status: 'claimed', confirmedRunsOn: 'unverified' },
+          successor: { generation: 2, status: 'prepared' },
+          scheduleRequest: { provider: 'chatgpt_scheduled_task', occurrence: 'once', destination: 'current_chat' },
+        },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it('accepts an observed 74-second early cloud wake within the 120-second jitter tolerance', async () => {
     const { database, goals, scheduled, clock } = await fixture('2026-08-27T10:00:46.000Z');
     const successorActor: FileActor = { ...actor, sessionId: 'scheduled-continuation-early-wake' };

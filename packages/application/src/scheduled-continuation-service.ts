@@ -17,6 +17,7 @@ import {
   type ScheduledContinuationNativeRunReceipt,
   type ScheduledContinuationReceiptOutcome,
   type ScheduledContinuationRepository,
+  type ScheduledContinuationRunsOn,
   type ScheduledContinuationSnapshot,
   type ScheduledContinuationWorkerLivenessPort,
   type ScheduledTaskCancellationInstruction,
@@ -105,7 +106,7 @@ export interface RecordScheduledContinuationReceiptRequest {
   readonly outcome: ScheduledContinuationReceiptOutcome;
   readonly nativeTaskId?: string;
   readonly dueAt?: string;
-  readonly runsOn?: 'cloud';
+  readonly runsOn?: ScheduledContinuationRunsOn;
   readonly nativeRunReceipt?: ScheduledContinuationNativeRunReceipt;
   readonly nativeCancellationReceipt?: ScheduledContinuationNativeCancellationReceipt;
   readonly detail?: string;
@@ -701,8 +702,8 @@ function buildTaskUpdateRequest(
   hostTimeZone: string,
   targetDueAt = continuation.pendingDueAt,
 ): ScheduledContinuationTaskUpdateRequest {
-  if (continuation.nativeTaskId === undefined || targetDueAt === undefined || continuation.confirmedRunsOn !== 'cloud') {
-    throw new GoalStateError('conflict', 'Same-task update requires a confirmed cloud native task ID and target due time');
+  if (continuation.nativeTaskId === undefined || targetDueAt === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
+    throw new GoalStateError('conflict', 'Same-task update requires a confirmed native host task ID, compatible execution mode, and target due time');
   }
   return {
     provider: 'chatgpt_scheduled_task',
@@ -982,6 +983,10 @@ function redact(value: string): string {
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
     .replace(/\b(token|secret|password|api[_-]?key|private[_-]?key|credential)\s*[:=]\s*[^\s]+/gi, '$1=[REDACTED]');
 }
+function isConfirmedNativeHostRunMode(value: ScheduledContinuationRunsOn | undefined): boolean {
+  return value === 'cloud' || value === 'unverified';
+}
+
 function requiredIso(value: string, label: string): string {
   const bounded = required(value, label, 64);
   if (Number.isNaN(Date.parse(bounded))) throw new Error(`${label} is invalid`);

@@ -413,6 +413,50 @@ describe('scheduled continuation repository state machine', () => {
     }
   });
 
+  it('preserves native host coverage when execution mode is unreported while rejecting explicitly local execution', async () => {
+    const database = await openDatabase();
+    const repository = new SqliteGoalRepository(database);
+    try {
+      await acquireGoalLease(repository, '2026-08-27T00:00:00.000Z');
+      const prepared = await repository.prepareScheduledContinuation(prepareRequest(
+        '2026-08-27T00:20:00.000Z',
+        '2026-08-27T00:25:00.000Z',
+        0,
+        'native-host-mode-fp',
+        'continuation-native-host-mode',
+      ));
+
+      await expect(repository.recordScheduledContinuationReceipt({
+        continuationId: prepared.continuation.continuationId,
+        ownerClientId: 'chatgpt-web-client',
+        expectedVersion: prepared.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-task-explicit-local',
+        dueAt: prepared.continuation.dueAt,
+        runsOn: 'local',
+        now: '2026-08-27T00:20:04.000Z',
+      })).rejects.toMatchObject({ reason: 'conflict' });
+
+      const scheduled = await repository.recordScheduledContinuationReceipt({
+        continuationId: prepared.continuation.continuationId,
+        ownerClientId: 'chatgpt-web-client',
+        expectedVersion: prepared.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-task-mode-unreported',
+        dueAt: prepared.continuation.dueAt,
+        runsOn: 'unverified',
+        now: '2026-08-27T00:20:05.000Z',
+      });
+      expect(scheduled).toMatchObject({
+        status: 'scheduled',
+        nativeTaskId: 'native-task-mode-unreported',
+        confirmedRunsOn: 'unverified',
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it('does not let historical continuation rows keep fencing a workspace or block a different active scheduled goal', async () => {
     const database = await openDatabase();
     const repository = new SqliteGoalRepository(database);

@@ -94,7 +94,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
   return [
     defineTool({
       name: 'run_goal',
-      description: 'Immediate-return durable goal create/resume and lease acquisition. The client should invoke run_goal before the first mutation of any multi-step change that includes verification, build, package, push, release preparation, or is likely to outlive the current turn; if such work is already in progress without an active durable goal, enroll it before the next mutation. Unfinished goals default to scheduledContinuation=auto: the client must automatically load/follow the bundled lnwjud-scheduled-continuation skill, keep exactly one native one-time cloud successor after a real checkpoint, continue useful work without waiting for the user to type continue/ทำต่อ, and stop scheduling only when the goal is terminal or scheduling is explicitly disabled. Native ChatGPT task creation remains host-owned; this tool never claims that a task was created.',
+      description: 'Immediate-return durable goal create/resume and lease acquisition. The client should invoke run_goal before the first mutation of any multi-step change that includes verification, build, package, push, release preparation, or is likely to outlive the current turn; if such work is already in progress without an active durable goal, enroll it before the next mutation. Unfinished goals default to scheduledContinuation=auto: the client must automatically load/follow the bundled lnwjud-scheduled-continuation skill, keep exactly one native one-time ChatGPT successor with cloud execution requested after a real checkpoint, continue useful work without waiting for the user to type continue/ทำต่อ, and stop scheduling only when the goal is terminal or scheduling is explicitly disabled. Native ChatGPT task creation remains host-owned through the Scheduled Task tool/API surface exposed to the chat; this tool never claims that a task was created and never substitutes browser/DOM automation.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: runGoalSchema,
@@ -118,9 +118,9 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
         const successor = latestContinuation?.ok ? latestContinuation.value : undefined;
         const successorConfirmed = successor?.status === 'scheduled'
           && successor.nativeTaskId !== undefined
-          && successor.confirmedRunsOn === 'cloud';
+          && (successor.confirmedRunsOn === 'cloud' || successor.confirmedRunsOn === 'unverified');
         const successorHostState = successorConfirmed
-          ? 'confirmed_cloud'
+          ? successor?.confirmedRunsOn === 'cloud' ? 'confirmed_cloud' : 'confirmed_execution_unverified'
           : successor?.status === 'prepared'
             ? 'prepared_unconfirmed'
             : successor?.status === 'create_uncertain'
@@ -146,7 +146,9 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
                   : result.value.lastCheckpoint === null
                     ? 'checkpoint_then_ensure_one_cloud_successor'
                     : successorConfirmed
-                      ? 'continue_with_confirmed_cloud_successor'
+                      ? successor?.confirmedRunsOn === 'cloud'
+                        ? 'continue_with_confirmed_cloud_successor'
+                        : 'continue_with_confirmed_native_successor_execution_unverified'
                       : successor?.status === 'prepared'
                         ? 'continue_current_run_and_create_native_receipt_before_yield'
                         : successor?.status === 'create_uncertain'
@@ -167,7 +169,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'checkpoint_goal',
-      description: 'Atomically checkpoint durable goal progress using the current lease and expected revision. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block continuation liveness and are cancelled only when cancelWithGoal=true. For an active goal using the default automatic continuation contract, a successful real checkpoint is the handoff point where the client must ensure exactly one native one-time cloud successor through lnwjud-scheduled-continuation before yielding; never wait for the user to type continue/ทำต่อ.',
+      description: 'Atomically checkpoint durable goal progress using the current lease and expected revision. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block continuation liveness and are cancelled only when cancelWithGoal=true. For an active goal using the default automatic continuation contract, a successful real checkpoint is the handoff point where the client must ensure exactly one native one-time ChatGPT successor with cloud execution requested through lnwjud-scheduled-continuation before yielding; a real native task ID is required, while execution mode may remain unverified when the host does not expose it. Never wait for the user to type continue/ทำต่อ.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: checkpointGoalSchema,
