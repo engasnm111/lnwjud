@@ -15,6 +15,8 @@ One user request starts one durable chain: acquire the existing goal, arm one cl
 - `run_goal` defaults to `scheduledContinuation: auto`; when `continuationDirective.mode: auto` is returned, the client MUST apply this skill automatically and never require another user prompt to resume an unfinished goal.
 - Use one native one-time ChatGPT Scheduled Task in the current chat and request cloud execution. Never use recurrence, Windows Task Scheduler, `schtasks.exe`, cron, shell timers, browser/DOM automation, or undocumented scheduling APIs.
 - Native task creation/update/deletion is host-owned. Invoke the native ChatGPT Scheduled Task host tool/API surface exposed to the current chat directly from `scheduleRequest`; lnwjud stores reservations, receipts, claims, and cancellation truth. If that native host surface is absent, record a truthful create failure and never substitute DOM automation.
+- When the current ChatGPT host exposes native scheduling as `Automations.create` / `Automations.update`, call those host tools directly. `scheduleRequest` is the source data for the host call; it is not the name of another lnwjud MCP operation.
+- Never search for, invent, or route through an lnwjud MCP scheduler/automation tool to create the native task. lnwjud owns durable-goal reservation/receipt/claim state only; the ChatGPT host owns the actual Scheduled Task.
 - `prepared` means **reservation only**: never a confirmed successor and never handoff-ready. A valid live worker may keep doing useful fenced work while native-task creation is retried, but it must never silently return with a merely `prepared` successor.
 
 ## Timing policy: adaptive host cadence, fixed safety invariants
