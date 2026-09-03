@@ -64,7 +64,9 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
   }
 
   public async status(): Promise<TunnelAuthStatus> {
-    const hasLegacyApiKey = await this.hasStoredSecret();
+    const storeStatus = await this.options.secretStore.status();
+    const storeReady = storeStatus.availability === 'available' && storeStatus.security === 'secure';
+    const hasLegacyApiKey = storeReady && await this.hasStoredSecret();
     return {
       mode: 'legacy_api_key',
       authReady: hasLegacyApiKey,
@@ -75,11 +77,13 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
       workspaceId: null,
       expiresAt: null,
       requiresUserAction: !hasLegacyApiKey,
-      message: hasLegacyApiKey ? null : 'Save a Runtime API key first',
+      message: hasLegacyApiKey ? null : storeReady ? 'Save a Runtime API key first' : (storeStatus.message ?? 'Secure Runtime API key storage is unavailable'),
     };
   }
 
   public async getRuntimeCredential(): Promise<TunnelRuntimeCredential | null> {
+    const storeStatus = await this.options.secretStore.status();
+    if (storeStatus.availability !== 'available' || storeStatus.security !== 'secure') return null;
     const stored = await this.options.secretStore.get(this.ref);
     if (stored === null || stored.byteLength === 0) return null;
     const value = Buffer.from(stored).toString('utf8').trim();
@@ -90,6 +94,10 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
   public async saveLegacyApiKey(apiKey: string): Promise<void> {
     const trimmed = apiKey.trim();
     if (trimmed.length === 0) throw new Error('Runtime API key is required');
+    const storeStatus = await this.options.secretStore.status();
+    if (storeStatus.availability !== 'available' || storeStatus.security !== 'secure') {
+      throw new Error(storeStatus.message ?? 'Secure Runtime API key storage is unavailable');
+    }
     await this.options.secretStore.set(this.ref, Buffer.from(trimmed, 'utf8'));
   }
 

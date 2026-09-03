@@ -5,6 +5,7 @@ import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpap
 
 export interface LegacyDpapiSecretStoreOptions {
   readonly pathForRef: (ref: SecretRef) => string;
+  readonly platform?: NodeJS.Platform;
   readonly encryptSecret?: (plainText: string) => Promise<string>;
   readonly decryptSecret?: (cipherText: string) => Promise<string>;
 }
@@ -12,11 +13,14 @@ export interface LegacyDpapiSecretStoreOptions {
 /** Windows-only compatibility store used while legacy ciphertext is being migrated to v3 safeStorage envelopes. */
 export class LegacyDpapiSecretStore implements SecretStore {
   public readonly providerId = 'windows-dpapi';
+  private readonly platform: NodeJS.Platform;
 
-  public constructor(private readonly options: LegacyDpapiSecretStoreOptions) {}
+  public constructor(private readonly options: LegacyDpapiSecretStoreOptions) {
+    this.platform = options.platform ?? process.platform;
+  }
 
   public async status(): Promise<SecretStoreStatus> {
-    return process.platform === 'win32' || this.options.encryptSecret !== undefined || this.options.decryptSecret !== undefined
+    return this.platform === 'win32' || this.options.encryptSecret !== undefined || this.options.decryptSecret !== undefined
       ? { availability: 'available', security: 'secure', providerId: this.providerId, message: null }
       : { availability: 'unsupported', security: 'secure', providerId: this.providerId, message: 'Legacy Windows DPAPI storage is unavailable on this platform' };
   }
@@ -31,6 +35,7 @@ export class LegacyDpapiSecretStore implements SecretStore {
   }
 
   public async set(ref: SecretRef, value: Uint8Array): Promise<void> {
+    await this.requireAvailable();
     const plain = Buffer.from(value).toString('utf8');
     if (plain.length === 0) throw new Error('Secret value must not be empty');
     const filePath = this.options.pathForRef(ref);
@@ -40,6 +45,7 @@ export class LegacyDpapiSecretStore implements SecretStore {
   }
 
   public async get(ref: SecretRef): Promise<Uint8Array | null> {
+    await this.requireAvailable();
     let encrypted: string;
     try {
       encrypted = await readFile(this.options.pathForRef(ref), 'utf8');
@@ -54,6 +60,13 @@ export class LegacyDpapiSecretStore implements SecretStore {
 
   public async delete(ref: SecretRef): Promise<void> {
     await rm(this.options.pathForRef(ref), { force: true });
+  }
+
+  private async requireAvailable(): Promise<void> {
+    const status = await this.status();
+    if (status.availability !== 'available' || status.security !== 'secure') {
+      throw new Error(status.message ?? 'Legacy Windows DPAPI storage is unavailable');
+    }
   }
 }
 
