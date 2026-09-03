@@ -7,6 +7,10 @@ interface HealthCapabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly domCdp?: CapabilityBackend;
   readonly accessibility?: CapabilityBackend;
+  readonly systemInfo?: CapabilityBackend;
+  readonly notification?: CapabilityBackend;
+  readonly fileDialog?: CapabilityBackend;
+  readonly clipboard?: CapabilityBackend;
   readonly scheduler?: CapabilityBackend;
   readonly wslExec?: CapabilityBackend;
   readonly wslFs?: CapabilityBackend;
@@ -16,6 +20,10 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   private readonly platform: NodeJS.Platform;
   private readonly domCdp: CapabilityBackend | undefined;
   private readonly accessibility: CapabilityBackend | undefined;
+  private readonly systemInfo: CapabilityBackend | undefined;
+  private readonly notification: CapabilityBackend | undefined;
+  private readonly fileDialog: CapabilityBackend | undefined;
+  private readonly clipboard: CapabilityBackend | undefined;
   private readonly scheduler: CapabilityBackend | undefined;
   private readonly wslExec: CapabilityBackend | undefined;
   private readonly wslFs: CapabilityBackend | undefined;
@@ -24,6 +32,10 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     this.platform = options.platform ?? process.platform;
     this.domCdp = options.domCdp;
     this.accessibility = options.accessibility;
+    this.systemInfo = options.systemInfo;
+    this.notification = options.notification;
+    this.fileDialog = options.fileDialog;
+    this.clipboard = options.clipboard;
     this.scheduler = options.scheduler;
     this.wslExec = options.wslExec;
     this.wslFs = options.wslFs;
@@ -58,8 +70,13 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     if (tool === 'shell' || tool === 'health' || tool === 'web_fetch') {
       return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }
-    if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard'
-      || tool === 'audio' || tool === 'screen_record' || tool === 'office'
+    if (tool === 'system_info') return this.describe(tool, await this.checkDelegated(this.systemInfo, { operation: 'os' }));
+    if (tool === 'notification') return this.describe(tool, await this.checkDelegated(this.notification, {
+      action: 'show', title: 'lnwjud', message: 'health-check', dry_run: true,
+    }));
+    if (tool === 'file_dialog') return this.describe(tool, await this.checkDelegated(this.fileDialog, { action: 'open', dry_run: true }));
+    if (tool === 'clipboard') return this.describe(tool, await this.checkDelegated(this.clipboard, { action: 'get_text', dry_run: true }));
+    if (tool === 'audio' || tool === 'screen_record' || tool === 'office'
       || tool === 'input_event' || tool === 'vision' || tool === 'window') {
       return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }

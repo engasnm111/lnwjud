@@ -366,15 +366,31 @@ function createStdioCapabilityService(
   const schedulerBackend = process.platform === 'darwin'
     ? new MacOsSchedulerCapabilityBackend({ platform: process.platform })
     : new SchedulerCapabilityBackend({ platform: process.platform });
+  const systemInfoBackend = process.platform === 'win32'
+    ? new WindowsNativeCapabilityBackend('system_info', windowsBridge)
+    : new NodeSystemInfoCapabilityBackend({ platform: process.platform });
+  const macOsBridge = process.platform === 'darwin' ? new MacOsCommandCapabilityBridge(process.platform) : undefined;
+  const notificationBackend = process.platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('notification', macOsBridge, process.platform)
+    : new WindowsNativeCapabilityBackend('notification', windowsBridge);
+  const fileDialogBackend = process.platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('file_dialog', macOsBridge, process.platform)
+    : new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
+  const clipboardBackend = process.platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, process.platform)
+    : new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
   const health = new HealthCapabilityBackend({
     platform: process.platform,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
+    systemInfo: systemInfoBackend,
+    notification: notificationBackend,
+    fileDialog: fileDialogBackend,
+    clipboard: clipboardBackend,
     scheduler: schedulerBackend,
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });
-  const macOsBridge = process.platform === 'darwin' ? new MacOsCommandCapabilityBridge(process.platform) : undefined;
   const service = new LocalCapabilityService({
     shell: shellBackend,
     domCdp: browserBackend,
@@ -383,18 +399,10 @@ function createStdioCapabilityService(
     vision: visionBackend,
     window: new WindowsNativeCapabilityBackend('window', windowsBridge),
     health,
-    systemInfo: process.platform === 'win32'
-      ? new WindowsNativeCapabilityBackend('system_info', windowsBridge)
-      : new NodeSystemInfoCapabilityBackend({ platform: process.platform }),
-    notification: process.platform === 'darwin' && macOsBridge !== undefined
-      ? new MacOsNativeCapabilityBackend('notification', macOsBridge, process.platform)
-      : new WindowsNativeCapabilityBackend('notification', windowsBridge),
-    fileDialog: process.platform === 'darwin' && macOsBridge !== undefined
-      ? new MacOsNativeCapabilityBackend('file_dialog', macOsBridge, process.platform)
-      : new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
-    clipboard: process.platform === 'darwin' && macOsBridge !== undefined
-      ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, process.platform)
-      : new WindowsNativeCapabilityBackend('clipboard', windowsBridge),
+    systemInfo: systemInfoBackend,
+    notification: notificationBackend,
+    fileDialog: fileDialogBackend,
+    clipboard: clipboardBackend,
     webFetch: new WebFetchCapabilityBackend(),
     audio: new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions),
     screenRecord: new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions),

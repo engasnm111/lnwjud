@@ -117,7 +117,18 @@ export function createLocalCapabilityRuntime(
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
   });
-  const health = new HealthCapabilityBackend({ platform, domCdp: browserBackend, accessibility: accessibilityBackend, scheduler: schedulerBackend, wslExec: wslBackend, wslFs: wslFsBackend });
+  const health = new HealthCapabilityBackend({
+    platform,
+    domCdp: browserBackend,
+    accessibility: accessibilityBackend,
+    systemInfo: systemInfoBackend,
+    notification: notificationBackend,
+    fileDialog: fileDialogBackend,
+    clipboard: clipboardBackend,
+    scheduler: schedulerBackend,
+    wslExec: wslBackend,
+    wslFs: wslFsBackend,
+  });
   const service = new LocalCapabilityService({
     shell: shellBackend,
     domCdp: browserBackend,
