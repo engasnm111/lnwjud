@@ -25,16 +25,19 @@ describe('capability descriptors', () => {
     expect(descriptor?.requirements).toContain('wsl.exe');
   });
 
-  it('keeps native OCR truthful when package identity is a prerequisite', () => {
-    const descriptor = capabilityDescriptors.find((item) => item.name === 'vision');
-
-    expect(descriptor).toMatchObject({
-      availability: 'platform',
-      platformPolicy: { platforms: ['win32'], sessions: ['interactive-desktop'] },
+  it('advertises desktop automation only where a truthful platform provider boundary exists', () => {
+    for (const name of ['accessibility', 'input_event', 'vision', 'window'] as const) {
+      const descriptor = capabilityDescriptors.find((item) => item.name === name);
+      expect(descriptor).toMatchObject({
+        availability: 'platform',
+        platformPolicy: { platforms: ['win32', 'linux'], sessions: ['interactive-desktop'] },
+      });
+    }
+    expect(capabilityDescriptors.find((item) => item.name === 'vision')).toMatchObject({
       supportsDryRun: true,
       auditTarget: 'display',
+      requirements: ['platform capture/OCR provider'],
     });
-    expect(descriptor?.requirements).toContain('Windows package identity for WinRT OCR');
   });
 
   it('advertises portable and macOS-backed common capabilities on their real platform sets', () => {

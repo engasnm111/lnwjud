@@ -7,6 +7,9 @@ interface HealthCapabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly domCdp?: CapabilityBackend;
   readonly accessibility?: CapabilityBackend;
+  readonly inputEvent?: CapabilityBackend;
+  readonly vision?: CapabilityBackend;
+  readonly window?: CapabilityBackend;
   readonly systemInfo?: CapabilityBackend;
   readonly notification?: CapabilityBackend;
   readonly fileDialog?: CapabilityBackend;
@@ -20,6 +23,9 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   private readonly platform: NodeJS.Platform;
   private readonly domCdp: CapabilityBackend | undefined;
   private readonly accessibility: CapabilityBackend | undefined;
+  private readonly inputEvent: CapabilityBackend | undefined;
+  private readonly vision: CapabilityBackend | undefined;
+  private readonly window: CapabilityBackend | undefined;
   private readonly systemInfo: CapabilityBackend | undefined;
   private readonly notification: CapabilityBackend | undefined;
   private readonly fileDialog: CapabilityBackend | undefined;
@@ -32,6 +38,9 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     this.platform = options.platform ?? process.platform;
     this.domCdp = options.domCdp;
     this.accessibility = options.accessibility;
+    this.inputEvent = options.inputEvent;
+    this.vision = options.vision;
+    this.window = options.window;
     this.systemInfo = options.systemInfo;
     this.notification = options.notification;
     this.fileDialog = options.fileDialog;
@@ -76,8 +85,22 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     }));
     if (tool === 'file_dialog') return this.describe(tool, await this.checkDelegated(this.fileDialog, { action: 'open', dry_run: true }));
     if (tool === 'clipboard') return this.describe(tool, await this.checkDelegated(this.clipboard, { action: 'get_text', dry_run: true }));
-    if (tool === 'audio' || tool === 'screen_record' || tool === 'office'
-      || tool === 'input_event' || tool === 'vision' || tool === 'window') {
+    if (tool === 'input_event') {
+      return this.platform === 'linux'
+        ? this.describe(tool, await this.checkDelegated(this.inputEvent, { action: 'status' }))
+        : this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
+    if (tool === 'vision') {
+      return this.platform === 'linux'
+        ? this.describe(tool, await this.checkDelegated(this.vision, { action: 'status' }))
+        : this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
+    if (tool === 'window') {
+      return this.platform === 'linux'
+        ? this.describe(tool, await this.checkDelegated(this.window, { action: 'status' }))
+        : this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
+    if (tool === 'audio' || tool === 'screen_record' || tool === 'office') {
       return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }
     if (tool === 'dom_cdp') return this.describe(tool, await this.checkDelegated(this.domCdp, { action: 'status' }));

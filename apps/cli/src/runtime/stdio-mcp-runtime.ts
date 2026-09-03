@@ -26,6 +26,8 @@ import { AuditService, decodeActivityTargetReference } from '@lnwjud/audit';
 import {
   BrowserCdpBackend,
   HealthCapabilityBackend,
+  LinuxNativeCapabilityBackend,
+  detectLinuxSessionProfile,
   LocalCapabilityService,
   MacOsCommandCapabilityBridge,
   MacOsNativeCapabilityBackend,
@@ -334,14 +336,27 @@ function createStdioCapabilityService(
     ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
   });
   const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
-  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
-  const ocrHelperPath = windowsOcrHelperPath();
+  const linuxSessionProfile = process.platform === 'linux' ? detectLinuxSessionProfile({ platform: process.platform }) : undefined;
+  const accessibilityBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('accessibility', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
+  const inputEventBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('input_event', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('input_event', windowsBridge);
+  const nativeVisionBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('vision', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('vision', windowsBridge);
+  const ocrHelperPath = process.platform === 'win32' ? windowsOcrHelperPath() : undefined;
   const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath });
-  const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-    platform: process.platform,
-    ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
-  }));
+  const visionBackend = process.platform === 'linux'
+    ? nativeVisionBackend
+    : new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
+      platform: process.platform,
+      ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
+    }));
+  const windowBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('window', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('window', windowsBridge);
   const wslAvailabilityProbe = async (): Promise<Result<unknown>> => {
     const probeRoots = await capabilityRootsProvider();
     const result = await shellBackend.execute({ operation: 'run', executable: 'wsl.exe', arguments: ['--status'], cwd: probeRoots[0] ?? dataPath, execution: 'foreground', timeout_seconds: 5, max_output_bytes: 32 * 1024, userConfirmed: false });
@@ -383,6 +398,9 @@ function createStdioCapabilityService(
     platform: process.platform,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
+    inputEvent: inputEventBackend,
+    vision: visionBackend,
+    window: windowBackend,
     systemInfo: systemInfoBackend,
     notification: notificationBackend,
     fileDialog: fileDialogBackend,
@@ -395,9 +413,9 @@ function createStdioCapabilityService(
     shell: shellBackend,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
-    inputEvent: new WindowsNativeCapabilityBackend('input_event', windowsBridge),
+    inputEvent: inputEventBackend,
     vision: visionBackend,
-    window: new WindowsNativeCapabilityBackend('window', windowsBridge),
+    window: windowBackend,
     health,
     systemInfo: systemInfoBackend,
     notification: notificationBackend,

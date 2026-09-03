@@ -23,13 +23,13 @@ describe('HealthCapabilityBackend', () => {
     } } });
   });
 
-  it('reports platform-gated capabilities as not applicable instead of generic missing backends', async () => {
+  it('reports truly platform-gated capabilities as not applicable instead of generic missing backends', async () => {
     const backend = new HealthCapabilityBackend({ platform: 'linux' });
 
-    await expect(backend.execute({ operation: 'check_tool', tool: 'input_event' })).resolves.toMatchObject({
+    await expect(backend.execute({ operation: 'check_tool', tool: 'office' })).resolves.toMatchObject({
       ok: true,
       value: {
-        tool: 'input_event',
+        tool: 'office',
         availability: 'platform',
         platformPolicy: { platforms: ['win32'], sessions: ['interactive-desktop'] },
         available: false,
@@ -38,6 +38,37 @@ describe('HealthCapabilityBackend', () => {
         reason: 'Not applicable on linux',
       },
     });
+  });
+
+  it('delegates Linux desktop automation readiness instead of advertising false readiness', async () => {
+    const provider = { execute: async (): Promise<Result<unknown>> => ok({
+      available: false,
+      ready: false,
+      backend: 'linux-native',
+      session: 'wayland',
+      reason: 'wayland_portal_session_required',
+    }) };
+    const backend = new HealthCapabilityBackend({
+      platform: 'linux',
+      accessibility: provider,
+      inputEvent: provider,
+      vision: provider,
+      window: provider,
+    });
+
+    for (const tool of ['accessibility', 'input_event', 'vision', 'window'] as const) {
+      await expect(backend.execute({ operation: 'check_tool', tool })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          tool,
+          available: false,
+          ready: false,
+          applicable: true,
+          backend: 'linux-native',
+          session: 'wayland',
+        },
+      });
+    }
   });
 
   it('delegates WSL readiness independently from accessibility', async () => {

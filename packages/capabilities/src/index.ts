@@ -46,6 +46,8 @@ export { NodeBrowserCdpProtocol } from './browser-cdp-protocol.js';
 export { HealthCapabilityBackend } from './health-backend.js';
 export { WebFetchCapabilityBackend } from './web-fetch-backend.js';
 export { NodeSystemInfoCapabilityBackend, type NodeSystemInfoCapabilityOptions } from './system-info-backend.js';
+export { detectLinuxSessionProfile, type LinuxDesktopSession, type LinuxSessionDetectionOptions, type LinuxSessionProfile } from './linux-session-profile.js';
+export { LinuxNativeCapabilityBackend, type LinuxCapabilityName, type LinuxNativeCapabilityBridge, type LinuxNativeCapabilityOptions } from './linux-native-backend.js';
 export { MacOsCommandCapabilityBridge, MacOsNativeCapabilityBackend, type MacOsCapabilityBridge, type MacOsCapabilityName } from './macos-native-backend.js';
 export { MacOsSchedulerCapabilityBackend, type MacOsSchedulerBackendOptions, type MacOsSchedulerFileSystem, type MacOsSchedulerRunResult } from './macos-scheduler-backend.js';
 export { SchedulerCapabilityBackend } from './scheduler-backend.js';

@@ -27,6 +27,7 @@ const ANY_SESSION = Object.freeze(['any'] as const);
 const INTERACTIVE_DESKTOP = Object.freeze(['interactive-desktop'] as const);
 const WINDOWS_ONLY = Object.freeze(['win32'] as const);
 const WINDOWS_AND_MACOS = Object.freeze(['win32', 'darwin'] as const);
+const WINDOWS_AND_LINUX = Object.freeze(['win32', 'linux'] as const);
 
 const descriptor = (
   name: CapabilityToolName,
@@ -72,10 +73,10 @@ const windowsDescriptor = (
 export const capabilityDescriptors: readonly CapabilityDescriptor[] = Object.freeze([
   descriptor('shell', 'always', 'EXECUTE', 'process', ['workspace registration'], true, true),
   descriptor('dom_cdp', 'optional', 'READ', 'browser', ['CDP-compatible browser']),
-  windowsDescriptor('accessibility', 'READ', 'window', ['UI Automation'], false, false, INTERACTIVE_DESKTOP),
-  windowsDescriptor('input_event', 'EXECUTE', 'window', ['input permission'], false, true, INTERACTIVE_DESKTOP),
-  windowsDescriptor('vision', 'READ', 'display', ['Windows package identity for WinRT OCR'], false, true, INTERACTIVE_DESKTOP),
-  windowsDescriptor('window', 'WRITE', 'window', ['Win32 window access'], false, true, INTERACTIVE_DESKTOP),
+  descriptor('accessibility', 'platform', 'READ', 'window', ['platform accessibility provider'], false, false, WINDOWS_AND_LINUX, INTERACTIVE_DESKTOP),
+  descriptor('input_event', 'platform', 'EXECUTE', 'window', ['platform input provider'], false, true, WINDOWS_AND_LINUX, INTERACTIVE_DESKTOP),
+  descriptor('vision', 'platform', 'READ', 'display', ['platform capture/OCR provider'], false, true, WINDOWS_AND_LINUX, INTERACTIVE_DESKTOP),
+  descriptor('window', 'platform', 'WRITE', 'window', ['platform window provider'], false, true, WINDOWS_AND_LINUX, INTERACTIVE_DESKTOP),
   descriptor('health', 'always', 'READ', 'diagnostics'),
   descriptor('system_info', 'always', 'READ', 'system'),
   descriptor('notification', 'platform', 'WRITE', 'notification', [], false, false, WINDOWS_AND_MACOS, INTERACTIVE_DESKTOP),

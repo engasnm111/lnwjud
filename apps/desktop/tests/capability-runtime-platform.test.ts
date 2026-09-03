@@ -21,8 +21,20 @@ describe('desktop capability platform composition', () => {
     const runtime = await createRuntime(platform);
 
     const accessibility = await runtime.service.execute('accessibility', { action: 'status' });
-    expect(accessibility.ok).toBe(false);
-    if (!accessibility.ok) expect(accessibility.error.message).toContain('unavailable on this platform');
+    if (platform === 'linux') {
+      expect(accessibility).toMatchObject({
+        ok: true,
+        value: {
+          available: false,
+          ready: false,
+          backend: 'linux-native',
+          reason: expect.stringMatching(/desktop_session_unavailable|provider_not_delivered/),
+        },
+      });
+    } else {
+      expect(accessibility.ok).toBe(false);
+      if (!accessibility.ok) expect(accessibility.error.message).toContain('unavailable on this platform');
+    }
 
     const systemInfo = await runtime.service.execute('system_info', { operation: 'os' });
     expect(systemInfo).toEqual({

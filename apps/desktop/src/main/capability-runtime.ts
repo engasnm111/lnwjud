@@ -5,6 +5,8 @@ import {
   BrowserCdpBackend,
   capabilityToolNames,
   HealthCapabilityBackend,
+  LinuxNativeCapabilityBackend,
+  detectLinuxSessionProfile,
   LocalCapabilityService,
   MacOsCommandCapabilityBridge,
   MacOsNativeCapabilityBackend,
@@ -66,16 +68,27 @@ export function createLocalCapabilityRuntime(
     ? createWindowsCapabilityBridge()
     : { execute: async (): Promise<Result<never>> => err(appError('INTERNAL_ERROR', 'Windows native capability bridge is unavailable on this platform', true)) };
   const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge, platform);
-  const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge, platform);
-  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge, platform);
+  const linuxSessionProfile = platform === 'linux' ? detectLinuxSessionProfile({ platform }) : undefined;
+  const accessibilityBackend = platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('accessibility', { platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('accessibility', windowsBridge, platform);
+  const inputEventBackend = platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('input_event', { platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('input_event', windowsBridge, platform);
+  const nativeVisionBackend = platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('vision', { platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('vision', windowsBridge, platform);
   const ocrHelperPath = platform === 'win32' ? windowsOcrHelperPath() : undefined;
   const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath, platform });
-  const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-    platform,
-    ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
-  }));
-  const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge, platform);
+  const visionBackend = platform === 'linux'
+    ? nativeVisionBackend
+    : new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
+      platform,
+      ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
+    }));
+  const windowBackend = platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('window', { platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('window', windowsBridge, platform);
   const systemInfoBackend = platform === 'win32'
     ? new WindowsNativeCapabilityBackend('system_info', windowsBridge, platform)
     : new NodeSystemInfoCapabilityBackend({ platform });
@@ -121,6 +134,9 @@ export function createLocalCapabilityRuntime(
     platform,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
+    inputEvent: inputEventBackend,
+    vision: visionBackend,
+    window: windowBackend,
     systemInfo: systemInfoBackend,
     notification: notificationBackend,
     fileDialog: fileDialogBackend,
