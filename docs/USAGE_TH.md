@@ -1,8 +1,8 @@
-# คู่มือใช้งาน lnwjud v4.52.3 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v4.52.4 (ภาษาไทย)
 
 lnwjud คือ Windows-first local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่อง Windows ของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส, Windows UI automation, WSL, Office และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ
 
-> สำหรับผู้ใช้ Windows x64 ที่ใช้ `lnwjud-Setup-4.52.3.exe` หรือ `lnwjud-Portable-4.52.3.exe` **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client.exe` เอง** ตัว release รวม private Node.js runtime และ official OpenAI `tunnel-client v0.0.13` มาให้แล้ว
+> สำหรับผู้ใช้ Windows x64 ที่ใช้ `lnwjud-Setup-4.52.4.exe` หรือ `lnwjud-Portable-4.52.4.exe` **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client.exe` เอง** ตัว release รวม private Node.js runtime และ official OpenAI `tunnel-client v0.0.13` มาให้แล้ว
 
 ---
 
@@ -15,7 +15,7 @@ lnwjud คือ Windows-first local AI-agent runtime / MCP gateway สำหร
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- `lnwjud-Setup-4.52.3.exe` หรือ `lnwjud-Portable-4.52.3.exe`
+- `lnwjud-Setup-4.52.4.exe` หรือ `lnwjud-Portable-4.52.4.exe`
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -35,7 +35,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด `lnwjud-Setup-4.52.3.exe` จาก GitHub Releases
+1. ดาวน์โหลด `lnwjud-Setup-4.52.4.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -43,7 +43,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด `lnwjud-Portable-4.52.3.exe`
+1. ดาวน์โหลด `lnwjud-Portable-4.52.4.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
@@ -187,7 +187,7 @@ v4.11.0 เพิ่มเครื่องมือ `run_goal`, `get_goal`, `c
 
 ### ทำ successor แบบ one-time โดยไม่ให้งานชนกัน
 
-ถ้างานยาวและผู้ใช้เปิดใช้ rolling Scheduled Continuation, `prepare_scheduled_continuation` จะ checkpoint และ **ensure Single-Live Watchdog** แบบ native ChatGPT one-time/cloud: ถ้ายังไม่มี pending native task จึงคืน create request หนึ่งตัว; ถ้ามี confirmed pending task อยู่แล้วให้ reuse continuation/task ID เดิมและคืน same-ID retime request เฉพาะเมื่อ deadline adaptive เปลี่ยนอย่างมีนัยสำคัญ. ถ้าไม่ระบุ `successorDelayMinutes` ระบบจะคำนวณจาก durable-goal lease ปัจจุบันและ clamp ให้อยู่ในช่วง 2–25 นาที; lease ปกติ 600 วินาทีจึงได้ successor ประมาณ **10 นาที** ไม่ใช่ fixed +2. ค่า explicit 2–25 นาทีใช้ได้เมื่อ caller มี bounded intent จริง แต่ Scheduled Task เป็น recovery insurance ไม่ใช่ cadence ให้ worker หยุดทำงาน. หลัง `prepare` worker ที่ยังถือ lease ถูกต้องสามารถทำ fenced work ต่อได้แม้ native create ยังล้มเหลว/ไม่แน่นอน โดยต้อง record ความล้มเหลวตามจริงและ lease ยังถูก cap ด้วย handoff deadline. ตั้งแต่ v4.52.3 ถ้า Native Scheduled Task host ใช้งานไม่ได้, unsupported หรือคืน `Resource not found` ให้ถือเป็น **scheduler transport degradation เท่านั้น**: record `create_failed`, คง durable goal เป็น `active` และทำงานจริงต่อใน worker ปัจจุบันตราบใดที่ lease/host turn ยังใช้ได้ ห้ามเปลี่ยน goal เป็น `completed`, `failed` หรือ `blocked` เพียงเพราะสร้าง watchdog ไม่สำเร็จ และห้าม fallback ไป scheduler อื่น. Normal autonomous handoff ยังต้องมี confirmed native successor; ถ้า host บังคับจบ turn ทั้งที่ไม่มี coverage ให้ checkpoint งานจริงและสถานะ scheduler degraded ตามจริง แล้ว release lease ที่ boundary โดยห้ามอ้างว่ามี automatic recovery coverage. Native VEVENT ใช้ explicit IANA `TZID` ขณะที่ `dueAt` เป็น canonical absolute instant เพื่อไม่ให้ host ตีความ UTC `Z` เป็น local wall-clock ผิดเวลา. หลังสร้างต้อง record native task ID พร้อม `runsOn: cloud` ทันที.
+ถ้างานยาวและผู้ใช้เปิดใช้ rolling Scheduled Continuation, `prepare_scheduled_continuation` จะ checkpoint และ **ensure Single-Live Watchdog** แบบ native ChatGPT one-time/cloud: ถ้ายังไม่มี pending native task จึงคืน create request หนึ่งตัว; ถ้ามี confirmed pending task อยู่แล้วให้ reuse continuation/task ID เดิมและคืน same-ID retime request เฉพาะเมื่อ deadline adaptive เปลี่ยนอย่างมีนัยสำคัญ. ถ้าไม่ระบุ `successorDelayMinutes` ระบบจะคำนวณจาก durable-goal lease ปัจจุบันและ clamp ให้อยู่ในช่วง 2–25 นาที; lease ปกติ 600 วินาทีจึงได้ successor ประมาณ **10 นาที** ไม่ใช่ fixed +2. ค่า explicit 2–25 นาทีใช้ได้เมื่อ caller มี bounded intent จริง แต่ Scheduled Task เป็น recovery insurance ไม่ใช่ cadence ให้ worker หยุดทำงาน. หลัง `prepare` worker ที่ยังถือ lease ถูกต้องสามารถทำ fenced work ต่อได้แม้ native create ยังล้มเหลว/ไม่แน่นอน โดยต้อง record ความล้มเหลวตามจริงและ lease ยังถูก cap ด้วย handoff deadline. ตั้งแต่ v4.52.4 ถ้า Native Scheduled Task host คืน explicit lookup/dispatch failure เช่น `Resource not found` ที่ยืนยันว่า operation ยังไม่ได้ถูก dispatch ให้ resolve Native Scheduled Task operation จาก host surface ปัจจุบันใหม่ **เพียง 1 ครั้ง** แล้ว retry exact native operation เดิม **เพียง 1 ครั้ง** โดยห้ามเปลี่ยน provider/เดาชื่อ operation; ambiguous possible-success ห้าม retry และต้องใช้ `create_uncertain` + reconcile exact host metadata. ถ้า bounded retry ยัง unavailable/unsupported/not-found ให้ถือเป็น **scheduler transport degradation เท่านั้น**: record `create_failed`, คง durable goal เป็น `active` และทำงานจริงต่อใน worker ปัจจุบันตราบใดที่ lease/host turn ยังใช้ได้ ห้ามเปลี่ยน goal เป็น `completed`, `failed` หรือ `blocked` เพียงเพราะสร้าง watchdog ไม่สำเร็จ และห้าม fallback ไป scheduler อื่น. Normal autonomous handoff ยังต้องมี confirmed native successor; ถ้า host บังคับจบ turn ทั้งที่ไม่มี coverage ให้ checkpoint งานจริงและสถานะ scheduler degraded ตามจริง แล้ว release lease ที่ boundary โดยห้ามอ้างว่ามี automatic recovery coverage. Native VEVENT ใช้ explicit IANA `TZID` ขณะที่ `dueAt` เป็น canonical absolute instant เพื่อไม่ให้ host ตีความ UTC `Z` เป็น local wall-clock ผิดเวลา. หลังสร้างต้อง record native task ID พร้อม `runsOn: cloud` ทันที.
 
 เมื่อ Scheduled turn ใหม่ตื่นขึ้น ต้อง `claim_scheduled_continuation` ก่อน mutation; ระบบยอมรับ native wake jitter ที่มาก่อน due ไม่เกิน 120 วินาทีเพื่อรองรับ host jitter โดย **120 วินาทีนี้เป็น safety tolerance ไม่ใช่ scheduling cadence**. เมื่อ one-time task ถูก host ปลุกแล้ว ให้ถือ native task ID นั้นเป็น consumed transport identity และห้ามพยายาม re-arm/update ซ้ำเพื่อใช้เป็น future coverage. ถ้า claim สำเร็จแบบ `acquired` ธุรกรรมเดียวกันจะจอง successor รุ่นถัดไปเป็น `prepared` ที่ **lease-aligned adaptive deadline** และคืน `scheduleRequest`; ให้สร้าง native one-time task จาก request ที่คืนมาและ record host receipt ของ task นั้น โดย **ไม่เรียก `prepare_scheduled_continuation` ซ้ำ**. ถ้า response ขาดกลางทาง การ claim ซ้ำจะคืน `successor_required` พร้อม deterministic successor เดิมแทนการสร้างซ้ำ; reservation ที่ยังขาด/ไม่แน่ใจเรื่อง host receipt ต้อง reconcile exact host metadata ก่อนและห้าม create แบบเดาสุ่ม. `create_failed` ที่ยืนยันแล้วว่าไม่มี native task สามารถ refresh ไปยัง deadline adaptive ปัจจุบันได้. ถ้า wake ชน worker ที่ยัง live/unknown, lease หมดแต่ยังมี `blocking_job`, หรือ host ปลุกนอก early-jitter window ระบบจะ retire firing ticket แล้วคืน `successor_required` พร้อม **fresh adaptive successor** แทนการ update task ที่ถูก consume แล้ว; `reschedule_required` ใช้กับ exact native watchdog ที่ยัง pending เพื่อ retime task ID เดิมเท่านั้น; ห้ามใช้กับ one-time task ที่ fire/consumed แล้ว. ทุก rolling-mode mutation ต้องแนบ `goalLease` token/generation ของ run ปัจจุบันเมื่อ workspace มี live scheduled-goal mutation fence. ตั้งแต่ v4.52.1 เป็นต้นไปกฎ ownership นี้มีผลแม้เปิด Full Bypass: Full Bypass ยังข้าม approval/confirmation/Active Project scope ตามเดิม แต่ไม่ข้าม durable-goal ownership ดังนั้น token รุ่นเก่า, generation เก่า, lease หมดอายุ หรือ proof ที่หายจะถูกปฏิเสธก่อน handler ทำ mutation และ caller ต้องอ่าน goal ล่าสุดแล้ว reacquire/claim continuation ก่อน retry. ถ้า lease ค้างแต่ไม่มี worker จริง จะ takeover ได้หลัง trustworthy no-worker probe สองรอบห่างอย่างน้อย 120 วินาทีและ CAS evidence ไม่เปลี่ยน; unknown evidence ห้าม force-unlock.
 
@@ -316,8 +316,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.52.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.52.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.52.4.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.52.4.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

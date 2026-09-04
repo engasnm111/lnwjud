@@ -36,6 +36,10 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('native ChatGPT Scheduled Task host tool/API surface');
     expect(skill).toContain('exactly as it is exposed by the current ChatGPT host/tool registry');
     expect(skill).toContain('Do **not** assume, invent, or hard-code an internal host tool/resource name');
+    expect(skill).toContain('host-surface lookup/dispatch failure such as `Resource not found`');
+    expect(skill).toContain('re-resolve the Native Scheduled Task operation **once**');
+    expect(skill).toContain('retry the exact same native operation **once**');
+    expect(skill).toContain('Never retry an ambiguous result that may already have created a task');
     expect(skill).toContain('immediately call `record_scheduled_continuation_receipt(outcome: create_failed)`');
     expect(skill).toContain('Native scheduling failure is **transport degradation only**');
     expect(skill).toContain('scheduler-degraded, goal-still-active');

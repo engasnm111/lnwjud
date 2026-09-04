@@ -29,7 +29,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v4.52.3 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v4.52.4 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
@@ -72,12 +72,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v4.52.3:
+For v4.52.4:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.52.3.exe
-apps/desktop/dist/installers/lnwjud-Setup-4.52.3.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-4.52.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.52.4.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.52.4.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-4.52.4.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt

@@ -277,6 +277,11 @@ describe('ScheduledContinuationService', () => {
         },
       });
       if (!later.ok || later.value.taskUpdateRequest === undefined) throw new Error('later retime failed');
+      expect(later.value.taskUpdateRequest.prompt).toContain('host-surface lookup/dispatch failure such as Resource not found');
+      expect(later.value.taskUpdateRequest.prompt).toContain('re-resolve the Native Scheduled Task operation once');
+      expect(later.value.taskUpdateRequest.prompt).toContain('retry that exact same fresh-successor create once');
+      expect(later.value.taskUpdateRequest.prompt).toContain('Do not retry an ambiguous create that may have succeeded');
+      expect(later.value.taskUpdateRequest.prompt).not.toMatch(/Automations(?:\.|:)/i);
       const laterReceipt = await scheduled.recordScheduledContinuationReceipt(actor, {
         continuationId,
         expectedVersion: later.value.continuation.version,
@@ -407,6 +412,10 @@ describe('ScheduledContinuationService', () => {
       expect(result.value.scheduleRequest.prompt).toContain('expedite_scheduled_continuation may update only a still-pending future native task');
       expect(result.value.scheduleRequest.prompt).toContain('actual native Scheduled Task operation from the current ChatGPT host/tool registry');
       expect(result.value.scheduleRequest.prompt).toContain('never assume or hard-code an internal host operation name');
+      expect(result.value.scheduleRequest.prompt).toContain('host-surface lookup/dispatch failure such as Resource not found');
+      expect(result.value.scheduleRequest.prompt).toContain('re-resolve the Native Scheduled Task operation once');
+      expect(result.value.scheduleRequest.prompt).toContain('retry the exact same native create once');
+      expect(result.value.scheduleRequest.prompt).toContain('Never retry an ambiguous create result');
       expect(result.value.scheduleRequest.prompt).toContain('immediately record create_failed');
       expect(result.value.scheduleRequest.prompt).toContain('Native scheduling failure is transport degradation only');
       expect(result.value.scheduleRequest.prompt).toContain('never mark the durable goal completed, failed, or blocked solely because the successor host operation is unavailable');

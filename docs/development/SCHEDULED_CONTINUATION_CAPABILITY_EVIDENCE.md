@@ -1,5 +1,13 @@
 # Scheduled Continuation Capability Evidence
 
+## v4.52.4 Native host-surface recovery hardening — 2026-09-04
+
+The v4.52.3 live E2E proved that the first Native ChatGPT one-time watchdog can fire, be claimed, and be retired correctly while creation of the fresh successor independently fails with host `Resource not found`. A follow-up probe reproduced the same `Resource not found` from a normal chat turn immediately after the Native Scheduled Task surface was rediscovered. That evidence localizes the failure to current ChatGPT host-surface availability rather than the durable lnwjud claim state machine.
+
+v4.52.4 adds a bounded recovery rule without introducing any scheduler fallback: when the Native Scheduled Task host explicitly reports a lookup/dispatch failure such as `Resource not found` that proves the operation was not dispatched, resolve the currently exposed Native Scheduled Task operation again exactly once and retry the exact same native operation exactly once. The provider, schedule/request identity, and continuation intent remain unchanged. Ambiguous possible-success is never retried and remains `create_uncertain` until exact host reconciliation. If the bounded retry still fails, record `create_failed` truthfully and keep unfinished durable work active.
+
+This hardening cannot make an unavailable ChatGPT host resource exist; it prevents a stale host-surface handle from ending the durable chain prematurely while preserving duplicate-task safety and the no-fallback contract.
+
 ## v4.52.3 Scheduler-degraded durable-goal hardening — 2026-09-04
 
 A live end-to-end probe exposed a post-fire host-surface failure that durable state must not confuse with work completion: the first Native ChatGPT one-time watchdog fired and was correctly retired/superseded, a fresh generation-2 successor reservation was created, and the Native Scheduled Task host then returned `Resource not found` while creating the fresh successor. The successor was recorded truthfully as `create_failed`; no Windows Task Scheduler, lnwjud scheduler, cron, DOM automation, recurrence, or external scheduler fallback was used.

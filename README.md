@@ -44,14 +44,23 @@ over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the Windows
 machine.
 
-## Current version: v4.52.3
+## Current version: v4.52.4
 
-The v4.52.3 release target and runtime contract contain **231 total MCP tool definitions**,
+The v4.52.4 release target and runtime contract contain **231 total MCP tool definitions**,
 with **224 advertised by default** and **all 231 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
+
+### What's new in v4.52.4
+
+#### Native Scheduled Task host-surface recovery
+
+- A live v4.52.3 end-to-end probe proved that the durable continuation state machine can claim a fired watchdog correctly while the ChatGPT Native Scheduled Task host can independently return `Resource not found` when the next task is created. The same host error was reproduced from a normal chat turn after host-surface discovery, so it is not treated as a scheduled-wake-only lnwjud failure.
+- When the native host explicitly reports a lookup/dispatch failure such as `Resource not found` that proves the operation was not dispatched, the client now **re-resolves the current Native Scheduled Task host surface once and retries the exact same native operation once**. The retry keeps the same provider, request identity, schedule, and continuation intent; it never invents or hard-codes an internal host operation name.
+- Ambiguous create results that may already have succeeded are **not retried**. They remain `create_uncertain` and require exact host reconciliation, preventing duplicate one-time tasks.
+- If the bounded re-resolved retry still fails, the reservation is recorded truthfully as `create_failed`. The durable goal remains active while real work is unfinished, and no Windows Task Scheduler, lnwjud scheduler, cron, shell timer, DOM/browser automation, external scheduler, or undocumented API is used as a fallback.
 
 ### What's new in v4.52.1
 
@@ -221,13 +230,13 @@ stops the current local HTTP listener.
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.52.3.exe` (recommended installer) and `lnwjud-Portable-4.52.3.exe` (no installation required).
+   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.52.4.exe` (recommended installer) and `lnwjud-Portable-4.52.4.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.52.3.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.52.4.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -337,8 +346,8 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.52.3.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.52.3.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.52.4.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.52.4.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -620,8 +629,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.52.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.52.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.52.4.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.52.4.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1059,7 +1068,7 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 85 | `finish_goal` | WRITE | default | operational | service_dispatch | Finish the local durable goal using lease/revision compare-and-swap. It must be called before any completion report, even when scheduling was disabled or the user requested no more successors. status=completed is rejected while any durable plan step is unfinished, durable blockers remain, or blocking tasks remain tracked; scheduler create_failed/Resource not found is not completion evidence and must not be used by itself to terminalize the goal. If it returns status=active with completionState=pending_native_cleanup, follow the exact scheduledTaskCancellation instruction through the native ChatGPT Scheduled Task host and make the exact pending task non-runnable using the strongest operation the host actually exposes: delete when available, otherwise a host-confirmed disable. Record the matching native cancellation or consumed-run receipt, then call finish_goal again. Report completion only after completionState=completed and get_goal is terminal; never treat a model assertion or an unverified host task as completion proof. |
 | 86 | `cancel_goal` | WRITE | default | operational | service_dispatch | Cancel a durable goal independently of any scheduled watchdog. It records the goal as cancelled, aborts in-flight fenced MCP requests for that goal, and attempts to stop only tracked tasks whose cancelWithGoal policy is true; shared supporting services remain running by default and are reported as taskCancellations status=skipped. An explicitly bound provider that is unavailable or cannot verify termination is reported as failed, so allTasksStopped remains false until the unresolved task is inspected. Inspect requestCancellation, taskCancellations, and allRequestsStopped/allTasksStopped for unresolved work. If scheduledTaskCancellation requests make_native_task_non_runnable, use cancel_scheduled_continuation separately, resolve the actual native ChatGPT cleanup operation exposed by the host, and record exact proof that the pending task is non-runnable. |
 | 87 | `list_goals` | READ | default | operational | service_dispatch | List a bounded set of durable goals owned by the current stable MCP client, optionally filtered by workspace/status. |
-| 88 | `prepare_scheduled_continuation` | WRITE | default | operational | service_dispatch | Checkpoint durable progress and ensure one live current-chat native ChatGPT watchdog with cloud execution requested. If a confirmed future native watchdog already exists, reuse it when its schedule is still suitable or return a same-nativeTaskId retime request when the latest checkpoint materially changes the desired due time; never create a second live task merely because another checkpoint was written. Create a fresh generation only when no live pending watchdog exists, including after a prior one-time task has fired and become consumed transport identity. If successorDelayMinutes is omitted, the adaptive desired due time is derived from the current durable-goal lease and clamped to 2–25 minutes (between 2 and 25 minutes). A prepared reservation is NOT a confirmed successor and is NOT confirmed coverage. A live worker with a valid goal lease may keep doing fenced work while native confirmation is pending, but confirmation is required before turn yield or handoff. Record native create/update failure or uncertainty truthfully and reconcile uncertain host state before any blind create. Host create/update/cleanup remain native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation or an lnwjud-local scheduler as a substitute. |
+| 88 | `prepare_scheduled_continuation` | WRITE | default | operational | service_dispatch | Checkpoint durable progress and ensure one live current-chat native ChatGPT watchdog with cloud execution requested. If a confirmed future native watchdog already exists, reuse it when its schedule is still suitable or return a same-nativeTaskId retime request when the latest checkpoint materially changes the desired due time; never create a second live task merely because another checkpoint was written. Create a fresh generation only when no live pending watchdog exists, including after a prior one-time task has fired and become consumed transport identity. If successorDelayMinutes is omitted, the adaptive desired due time is derived from the current durable-goal lease and clamped to 2–25 minutes (between 2 and 25 minutes). A prepared reservation is NOT a confirmed successor and is NOT confirmed coverage. A live worker with a valid goal lease may keep doing fenced work while native confirmation is pending, but confirmation is required before turn yield or handoff. Record native create/update failure or uncertainty truthfully and reconcile uncertain host state before any blind create. On an explicit host-surface lookup/dispatch failure such as Resource not found that proves the operation was not dispatched, re-resolve the current Native Scheduled Task host operation once and retry that exact native operation once; never retry ambiguous possible-success and never switch scheduler providers. Host create/update/cleanup remain native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation or an lnwjud-local scheduler as a substitute. |
 | 89 | `record_scheduled_continuation_receipt` | WRITE | default | operational | service_dispatch | Record host-owned cloud one-time task create, same-task retime, consumed-run reconciliation, or terminal non-runnable receipts. Created/rescheduled receipts must include the host-reported absolute dueAt; equivalent timezone offsets are compared as the same instant, while real schedule drift is rejected. A consumed receipt requires exact native host run evidence and means only that the one-time task is no longer pending; it does not mean the goal work completed. Cancelled is accepted only with matching native ChatGPT host evidence that the exact task is non-runnable: delete may report deleted/not_found and hosts without delete may report an exact disable receipt. A model assertion is never cleanup proof. The stored native task ID is immutable across retimes. |
 | 90 | `claim_scheduled_continuation` | WRITE | default | operational | service_dispatch | Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted as bounded host jitter. A one-time task that has already fired is treated as consumed transport identity and is never relied on as future coverage. On acquired, claim atomically reserves a fresh lease-aligned prepared successor and returns its scheduleRequest. On a live/uncertain worker collision, an expired lease with a running blocking job, or a wake outside the accepted early window, the firing task is retired and successor_required returns one fresh adaptive successor instead of trying to update the consumed native task. Interrupted claims reuse the same deterministic successor. Reconcile missing/uncertain native receipts before any blind create. Truthfully failed creates refresh to the current lease-aligned adaptive due time. reschedule_required is the same-ID retime path only for an exact confirmed watchdog that is still pending; a fired one-time task is consumed and must never use that path. terminal_noop returns naturally. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease. |
 | 91 | `get_scheduled_continuation` | READ | default | operational | service_dispatch | Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. Healthy work keeps its calculated successor deadline; a real handoff-risk signal may adaptively expedite only a still-pending future native task. |

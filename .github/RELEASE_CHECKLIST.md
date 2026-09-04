@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v4.52.3` - Windows installer `lnwjud-Setup-4.52.3.exe` and portable executable `lnwjud-Portable-4.52.3.exe`; MCP registry **231 total definitions / 224 advertised by default / all 231 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v4.52.4` - Windows installer `lnwjud-Setup-4.52.4.exe` and portable executable `lnwjud-Portable-4.52.4.exe`; MCP registry **231 total definitions / 224 advertised by default / all 231 with Codex delegation plus Agent Swarm enabled**.
 
 Run the release verification from PowerShell at the repository root. The automated gate must fail fast on any non-zero stage and `git diff --check` must pass before packaging or publishing. Pull-request/non-main CI may pass `-SkipWindowsPackaging`; the exact `main` commit that will be tagged must run the full gate and produce the SHA-scoped release artifact.
 

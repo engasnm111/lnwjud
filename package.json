@@ -1,6 +1,6 @@
 {
   "name": "lnwjud",
-  "version": "4.52.3",
+  "version": "4.52.4",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "engines": {
