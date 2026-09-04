@@ -49,6 +49,13 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('runsOn: unverified');
     expect(skill).toContain('explicit IANA `TZID`');
     expect(skill).toContain('releaseLease:true');
+    expect(skill).toContain('A checkpoint is not a turn boundary');
+    expect(skill).toContain('Work-conserving worker behavior');
+    expect(skill).toContain('One failed poll never justifies abandoning the task');
+    expect(skill).toContain('inspect its terminal result in the same turn');
+    expect(skill).toContain('Never deliberately wait for lease expiry as a continuation strategy');
+    expect(skill).toContain('Yield only when the goal is terminal');
+    expect(skill).toContain('Do not promise or target a fixed 22/25-minute runtime');
     expect(skill).toContain('two-probe');
     expect(skill).toContain('Full Bypass never bypasses durable-goal ownership fences');
 

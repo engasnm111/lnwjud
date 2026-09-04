@@ -42,6 +42,17 @@ One user request owns one durable goal and at most one live Native ChatGPT watch
 9. If a definitive host lookup/dispatch failure such as `Resource not found` proves create was not dispatched, re-resolve the Native Scheduled Task operation once and retry that exact create once. Do not retry an ambiguous possible-success. Record `create_failed` or `create_uncertain` truthfully.
 10. Continue the current leased worker while useful work is possible; scheduler degradation is not a work failure.
 
+## Work-conserving worker behavior
+
+- **A checkpoint is not a turn boundary.** Ordinary milestone checkpoints persist progress and the worker must continue useful work in the same host turn; they are not permission to yield.
+- Keep ordinary checkpoints on the current lease (`releaseLease:false` or omitted). Use `releaseLease:true` only for the final checkpoint when an actual turn boundary is unavoidable.
+- A transient tool, status, log, result, or safety/polling error is not a handoff signal. Re-read authoritative durable state and retry or re-resolve the bounded observation in the same turn before considering a handoff.
+- When a tracked `blocking_job` is running, do useful non-conflicting work first. If no useful parallel work exists, use bounded waits/observations in the same turn. One failed poll never justifies abandoning the task to the next hourly tick.
+- As soon as a tracked task is terminal, inspect its terminal result in the same turn and handle success or failure before yielding.
+- If the current worker loses or expires its lease during useful work, read the latest goal and safely reacquire the same `goalKey` with `run_goal` when no newer live owner blocks takeover, then continue in the same turn. Never deliberately wait for lease expiry as a continuation strategy.
+- Yield only when the goal is terminal, a real external blocker/user decision leaves no safe useful work, the host forces the turn boundary, or a genuinely long blocking job has no useful parallel work left and durable continuation coverage is confirmed.
+- Do not promise or target a fixed 22/25-minute runtime. Consume as much useful host turn as is available while respecting the stop conditions above.
+
 ## Recurring scheduled wake
 
 `claim_scheduled_continuation` must be the **first connected lnwjud action before any workspace mutation**.

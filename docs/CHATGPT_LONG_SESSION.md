@@ -81,9 +81,9 @@ Flow ที่ควรใช้:
 2. ถ้า `acquired: false` แปลว่ามี turn อื่นถือ lease อยู่ ให้รายงานสถานะแล้ว **ห้ามเริ่ม mutation/process ซ้ำ**
 3. ถ้า `acquired: true` ให้ใช้ `currentPhase`, `pendingSteps`, `nextAction`, `trackedTasks`, `activeTaskIds` และ `lastCheckpoint` เป็น continuation state
 4. ถ้า `trackedTasks` มี `blocking_job` เดิม ให้ตรวจ task เดิมก่อนเริ่ม command ใหม่; `supporting_service` เป็น service กลางที่ไม่ควร block liveness หรือถูกยกเลิกโดยอัตโนมัติ
-5. หลังผลลัพธ์สำคัญเรียก `checkpoint_goal` พร้อม `expectedRevision` ล่าสุด
-6. checkpoint ให้เก็บเฉพาะ bounded/redacted summary, path/hash/task ID/evidence ที่จำเป็น ห้ามเก็บ credential, source contents หรือ log ยาว
-7. ถ้า turn ตายก่อน release lease รอบถัดไป takeover ได้เมื่อ lease หมดอายุ
+5. หลังผลลัพธ์สำคัญเรียก `checkpoint_goal` พร้อม `expectedRevision` ล่าสุด แต่ **checkpoint เป็นการบันทึกสถานะ ไม่ใช่ turn boundary**; หลัง checkpoint ปกติต้องทำ useful work ต่อใน run เดิมและยังไม่ `releaseLease`
+6. checkpoint ให้เก็บเฉพาะ bounded/redacted summary, path/hash/task ID/evidence ที่จำเป็น ห้ามเก็บ credential, source contents หรือ log ยาว. ถ้า status/log/result/poll เจอ transient error ให้ retry/re-resolve ใน run เดิมก่อน; ถ้า task เป็น terminal แล้วต้องอ่าน terminal result และจัดการผลทันที
+7. ถ้า lease หาย/หมดระหว่าง worker ที่ยังทำ useful work ให้ re-read goal แล้ว reacquire `goalKey` เดิมอย่างปลอดภัยเมื่อไม่มี owner ใหม่ที่ live จากนั้นทำต่อใน run เดิม; อย่าใช้การรอ lease หมดเป็น continuation strategy. สำหรับ recurring wake ที่เจอ stale-valid lease ให้ใช้ same-tick recovery contract ของ v4.53 ตามหัวข้อด้านล่าง
 8. เมื่อ acceptance ครบจริงจึง `finish_goal`
 9. Scheduled Task เห็น terminal state แล้วต้องหยุดตัวเอง ไม่เรียก tools ต่อ
 
@@ -183,7 +183,7 @@ ChatGPT Chat สามารถอ่าน เขียน รันคำส�
 | ChatGPT หยุดแถว 22–25 นาที | ตรวจว่าใช้ build v4.11.0 ที่มี outcome-driven fix และ tool result ไม่มีข้อความ `ใกล้หมด budget` |
 | Scheduled turn เริ่มงานเดิมซ้ำ | ต้องเรียก `run_goal` ก่อน mutation และตรวจ `acquired` + `trackedTasks`/legacy `activeTaskIds` |
 | `checkpoint_goal` ได้ revision conflict | อ่าน `get_goal` ใหม่ ห้ามเขียนทับ snapshot เก่า แล้วตัดสินใจจาก revision ล่าสุด |
-| Turn ตายทั้งที่ถือ lease | รอ lease expiry; Scheduled turn ถัดไปใช้ `run_goal` takeover โดย goalKey เดิม |
+| Turn ตายทั้งที่ถือ lease | Scheduled turn ถัดไปใช้ goalKey เดิมและตรวจ liveness; recurring v4.53 recover stale-valid lease ใน tick เดิมได้หลัง bounded 60-second grace เมื่อยืนยันว่าไม่มี worker/blocking job จริง จึงไม่ต้องตั้งใจรอ lease expiry |
 | Tunnel หลุด | ตรวจ persistent runtime doctor/reconnect ของ Tunnel ID เดิม |
 | Background task ยังรัน | ใช้ `status` / `logs` / `result`; ห้ามเริ่ม task เดิมซ้ำ |
 | Tool schema เก่า | Restart runtime ถ้าจำเป็น แล้ว Refresh connector; chat ใหม่เป็นทางเลือกสุดท้าย |

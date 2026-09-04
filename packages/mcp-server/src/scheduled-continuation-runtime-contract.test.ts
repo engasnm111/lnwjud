@@ -20,6 +20,9 @@ describe('scheduled continuation runtime contract', () => {
     expect(tools.has('checkpoint_goal')).toBe(true);
 
     const serialized = required.map((name) => `${name}:${tools.get(name)?.description ?? ''}`).join('\n');
+    const goalLifecycleSerialized = ['run_goal', 'checkpoint_goal']
+      .map((name) => `${name}:${tools.get(name)?.description ?? ''}`)
+      .join('\n');
     expect(serialized).toContain('hourly recurring watchdog');
     expect(serialized).toContain('intervalMinutes=60');
     expect(serialized).toContain('worker_busy_noop');
@@ -28,5 +31,10 @@ describe('scheduled continuation runtime contract', () => {
     expect(serialized).toContain('cloud');
     expect(serialized).toContain('never create a per-wake successor');
     expect(serialized).toContain('never use browser/DOM automation, Windows Task Scheduler, cron, shell timers, or an lnwjud-local scheduler as a substitute');
+    expect(goalLifecycleSerialized).toContain('work-conserving');
+    expect(goalLifecycleSerialized).toContain('checkpoint is not a turn boundary');
+    expect(goalLifecycleSerialized).toContain('transient tool/task-observation failure is not a handoff signal');
+    expect(goalLifecycleSerialized).toContain('not a turn boundary or permission to yield');
+    expect(goalLifecycleSerialized).toContain('terminal result inspected before handoff');
   });
 });
