@@ -43,7 +43,11 @@ export class DesktopMcpLifecycle {
   }
 
   public start(): Promise<DesktopMcpStatus> {
-    if (this.stopOperation !== null) return this.stopOperation.then(() => this.start());
+    // An explicit Stop owns the lifecycle boundary. A concurrent/stale ensure-start
+    // must not queue a surprise restart behind that Stop; callers that truly need
+    // the listener again can retry after the Stop has completed. restart() already
+    // does exactly that by awaiting stop() before calling start().
+    if (this.stopOperation !== null) return this.stopOperation;
     if (this.handle !== null) return Promise.resolve(this.status());
     if (this.startOperation !== null) return this.startOperation;
 

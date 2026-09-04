@@ -465,7 +465,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const remoteMcpController = new RemoteMcpController({
     dataPath,
-    getLocalMcpUrl: async (): Promise<string | null> => (await mcpLifecycle.start()).url,
+    getLocalMcpUrl: async (): Promise<string | null> => mcpLifecycle.status().url,
+    ensureLocalMcpUrl: async (): Promise<string | null> => (await mcpLifecycle.start()).url,
   });
   const oauthLoginManager = new TunnelOAuthLoginManager({
     backend: oauthTunnelBackend,

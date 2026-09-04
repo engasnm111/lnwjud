@@ -71,6 +71,28 @@ describe('Remote MCP ngrok runtime', () => {
 });
 
 describe('Remote MCP OAuth gateway', () => {
+  it('keeps status reads side-effect-free and does not ensure-start Local MCP', async () => {
+    let statusReads = 0;
+    let ensureStarts = 0;
+    const controller = new RemoteMcpController({
+      dataPath: 'C:\\tmp\\lnwjud-remote-mcp-status-test',
+      getLocalMcpUrl: async (): Promise<null> => {
+        statusReads += 1;
+        return null;
+      },
+      ensureLocalMcpUrl: async (): Promise<string> => {
+        ensureStarts += 1;
+        return 'http://127.0.0.1:32123/mcp';
+      },
+    });
+
+    const status = await controller.status();
+
+    expect(status.localMcpUrl).toBeNull();
+    expect(statusReads).toBe(1);
+    expect(ensureStarts).toBe(0);
+  });
+
   it('requires OAuth, supports DCR + PKCE, and proxies authorized /mcp requests', async () => {
     let upstreamAuthorization: string | undefined;
     const upstreamOrigin = await listen(createServer((request, response) => {
