@@ -46,6 +46,13 @@ export interface McpServerOptions {
   readonly setOfMarksStore?: SetOfMarksObservationStore;
   /** Compatibility result guard; it must not apply elapsed-time behavior. */
   readonly runBudgetGuard?: RunBudgetGuard;
+  /**
+   * Opt in only for MCP 2025-11-25 legacy clients. The core `tasks`
+   * capability was removed from the modern protocol in favor of the
+   * io.modelcontextprotocol/tasks extension, so modern clients must never
+   * see this legacy surface advertised.
+   */
+  readonly legacyTasksProtocol?: boolean;
 }
 
 export function createMcpServer(options: McpServerOptions): McpServer {
@@ -69,18 +76,19 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.setOfMarksStore === undefined ? {} : { setOfMarksStore: options.setOfMarksStore }),
   });
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
-  // tasks capability (MCP spec 2025-11-25) exposes existing durable shell
-  // background tasks via tasks/get/result/list/cancel. requests.tools.call is
-  // intentionally not declared, so clients will not send task-augmented
-  // tool calls.
+  // The core `tasks` capability belongs only to MCP 2025-11-25 legacy
+  // negotiation. Modern MCP moved Tasks to the io.modelcontextprotocol/tasks
+  // extension, so advertising the old core capability to a modern host is a
+  // protocol mismatch. Keep the legacy bridge available only when the
+  // transport has already identified a legacy client.
+  const legacyTasksProtocol = options.legacyTasksProtocol === true;
   const server = new McpServer({ name: APP_NAME, version: APP_VERSION }, {
-    capabilities: {
-      tools: {},
-      tasks: { list: {}, cancel: {} },
-    },
+    capabilities: legacyTasksProtocol
+      ? { tools: {}, tasks: { list: {}, cancel: {} } }
+      : { tools: {} },
     instructions: MCP_OUTCOME_DRIVEN_INSTRUCTIONS,
   });
-  registerTasksProtocol(server, options.services, { actor });
+  if (legacyTasksProtocol) registerTasksProtocol(server, options.services, { actor });
   for (const tool of registry.list()) {
     server.registerTool(tool.name, {
       description: tool.description,

@@ -61,6 +61,7 @@ interface NgrokTunnelSnapshot {
 export interface RemoteMcpControllerOptions {
   readonly dataPath: string;
   readonly getLocalMcpUrl: () => Promise<string | null>;
+  readonly ensureLocalMcpUrl?: () => Promise<string | null>;
   readonly now?: () => number;
   readonly persistence?: RemoteMcpStatePersistence;
 }
@@ -74,6 +75,7 @@ const REFRESH_TTL_MS = 30 * 24 * 60 * 60_000;
 export class RemoteMcpController {
   private readonly dataPath: string;
   private readonly getLocalMcpUrl: () => Promise<string | null>;
+  private readonly ensureLocalMcpUrl: () => Promise<string | null>;
   private readonly now: () => number;
   private readonly persistence: RemoteMcpStatePersistence;
   private persistenceLoaded = false;
@@ -97,6 +99,7 @@ export class RemoteMcpController {
   public constructor(options: RemoteMcpControllerOptions) {
     this.dataPath = options.dataPath;
     this.getLocalMcpUrl = options.getLocalMcpUrl;
+    this.ensureLocalMcpUrl = options.ensureLocalMcpUrl ?? options.getLocalMcpUrl;
     this.now = options.now ?? Date.now;
     this.persistence = options.persistence ?? createRemoteMcpStatePersistence(options.dataPath);
   }
@@ -193,7 +196,7 @@ export class RemoteMcpController {
     this.runState = 'starting';
     this.message = 'Starting protected Remote MCP…';
     try {
-      const localMcpUrl = await this.getLocalMcpUrl();
+      const localMcpUrl = await this.ensureLocalMcpUrl();
       if (localMcpUrl === null) throw new Error('Local MCP is unavailable. Start the lnwjud MCP listener first.');
       let executable = this.ngrokPath ?? await resolveNgrokExecutable();
       if (executable === null) {

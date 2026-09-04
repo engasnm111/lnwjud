@@ -59,19 +59,27 @@ export type ScheduledContinuationReceiptOutcome =
   | 'cancel_uncertain';
 
 export type ScheduledContinuationCancellationOutcome =
-  | 'delete_required'
+  | 'cleanup_required'
   | 'cancelled'
   | 'already_cancelled'
   | 'already_fired'
   | 'native_task_unverified';
 
-export interface ScheduledContinuationNativeCancellationReceipt {
-  readonly provider: 'chatgpt_scheduled_task';
-  readonly operation: 'delete';
-  readonly nativeTaskId: string;
-  readonly state: 'deleted' | 'not_found';
-  readonly observedAt: string;
-}
+export type ScheduledContinuationNativeCancellationReceipt =
+  | {
+      readonly provider: 'chatgpt_scheduled_task';
+      readonly operation: 'delete';
+      readonly nativeTaskId: string;
+      readonly state: 'deleted' | 'not_found';
+      readonly observedAt: string;
+    }
+  | {
+      readonly provider: 'chatgpt_scheduled_task';
+      readonly operation: 'disable';
+      readonly nativeTaskId: string;
+      readonly state: 'disabled';
+      readonly observedAt: string;
+    };
 
 export interface ScheduledContinuationNativeRunReceipt {
   readonly provider: 'chatgpt_scheduled_task';
@@ -238,14 +246,15 @@ export type ClaimScheduledContinuationRecordResult =
       readonly successor: ScheduledContinuationRecord;
       /** Whether this transaction inserted, refreshed, or merely recovered the reservation. */
       readonly successorDisposition: ClaimSuccessorDisposition;
-      readonly retryAfterSeconds: 120;
+      /** Adaptive delay until the reserved future wake; never assume a fixed two-minute retry. */
+      readonly retryAfterSeconds: number;
     }
   | {
       readonly outcome: 'reschedule_required';
       readonly goal: GoalRecord;
-      /** The same confirmed native one-time task must be moved to now+2 minutes before this wake returns. */
+      /** Legacy compatibility only. New firing-wake collisions reserve a fresh successor instead. */
       readonly continuation: ScheduledContinuationRecord;
-      readonly retryAfterSeconds: 120;
+      readonly retryAfterSeconds: number;
     }
   | {
       readonly outcome: 'receipt_required';

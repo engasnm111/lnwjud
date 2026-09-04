@@ -92,8 +92,8 @@ if (readmeStart >= 0 && readmeEnd >= readmeStart) {
   expectedReadme = currentReadme.slice(0, catalogStart) + readmeBlock + readmeNewline + readmeNewline + currentReadme.slice(catalogEnd);
 }
 
-const quickStartCountPattern = /5\. Confirm that the default runtime exposes \*\*\d+ tools\*\* \(or \*\*\d+\*\* when Codex delegation plus Agent Swarm is explicitly enabled\) and run a read-only\s+smoke test before trying writes\./;
-const quickStartCountText = `5. Confirm that the default runtime exposes **${defaultAdvertisedCount} tools** (or **${codexEnabledAdvertisedCount}** when Codex delegation plus Agent Swarm is explicitly enabled) and run a read-only${readmeNewline}   smoke test before trying writes.`;
+const quickStartCountPattern = /7\. Confirm the connection discovers \*\*\d+ tools by default\*\* \(or \*\*\d+\*\* when Codex delegation plus Agent Swarm is explicitly enabled\), then run a read-only smoke test before writes\./;
+const quickStartCountText = `7. Confirm the connection discovers **${defaultAdvertisedCount} tools by default** (or **${codexEnabledAdvertisedCount}** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.`;
 if (!quickStartCountPattern.test(expectedReadme)) throw new Error('README quick-start advertised-tool count sentence was not found');
 expectedReadme = expectedReadme.replace(quickStartCountPattern, quickStartCountText);
 

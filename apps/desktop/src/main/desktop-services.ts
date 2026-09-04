@@ -309,17 +309,18 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { provider: 'shell', cancelForGoal: capabilityRuntime.shell.cancelForGoal.bind(capabilityRuntime.shell) },
   ]);
   const requestCancellation = new GoalRequestCancellationService();
-  const goalService = new GoalContinuationService(workspaceRepository, goalRepository, {
-    scheduledContinuations: goalRepository,
-    taskCancellation,
-    requestCancellation,
-  });
   const goalMutationFence = new GoalMutationFenceService(goalRepository, {
     taskStateReader: new RuntimeGoalManagedTaskStateReader({
       process: processService,
       codex: codexService,
       shell: capabilityRuntime.shell,
     }),
+  });
+  const goalService = new GoalContinuationService(workspaceRepository, goalRepository, {
+    scheduledContinuations: goalRepository,
+    workerLiveness: goalMutationFence,
+    taskCancellation,
+    requestCancellation,
   });
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const extensionsService: ExtensionsService = createLocalExtensionsService({
@@ -464,7 +465,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const remoteMcpController = new RemoteMcpController({
     dataPath,
-    getLocalMcpUrl: async (): Promise<string | null> => (await mcpLifecycle.start()).url,
+    getLocalMcpUrl: async (): Promise<string | null> => mcpLifecycle.status().url,
+    ensureLocalMcpUrl: async (): Promise<string | null> => (await mcpLifecycle.start()).url,
   });
   const oauthLoginManager = new TunnelOAuthLoginManager({
     backend: oauthTunnelBackend,

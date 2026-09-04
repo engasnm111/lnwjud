@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ok } from '@lnwjud/domain';
+import { appError, err, ok } from '@lnwjud/domain';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
 
@@ -160,7 +160,7 @@ describe('scheduled continuation mutation fence', () => {
     expect(inspectWorkspaceFence).not.toHaveBeenCalled();
   });
 
-  it('does not require or inspect a goal lease when Full Bypass is active', async (): Promise<void> => {
+  it('still requires the current goal lease when Full Bypass is active and a rolling fence exists', async (): Promise<void> => {
     const inspectWorkspaceFence = vi.fn().mockResolvedValue(activeFence());
     const writeFile = vi.fn().mockResolvedValue(ok({ path: 'src/file.ts', bytesWritten: 1 }));
     const services = {
@@ -177,8 +177,57 @@ describe('scheduled continuation mutation fence', () => {
       content: 'x',
     });
 
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({ error: { code: 'CONFLICT' } });
+    expect(inspectWorkspaceFence).toHaveBeenCalledWith(actor, 'workspace-1');
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('preserves ordinary Full Bypass mutation when no rolling goal fence exists', async (): Promise<void> => {
+    const inspectWorkspaceFence = vi.fn().mockResolvedValue(ok(null));
+    const writeFile = vi.fn().mockResolvedValue(ok({ path: 'src/file.ts', bytesWritten: 1 }));
+    const services = {
+      goalMutationFence: { inspectWorkspaceFence },
+      file: { writeFile },
+    } as unknown as McpApplicationServices;
+
+    const response = await new ToolRegistry(services, actor, {
+      profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+    }).invoke('write_file', {
+      workspaceId: 'workspace-1',
+      path: 'src/file.ts',
+      content: 'x',
+    });
+
     expect(response.isError).not.toBe(true);
-    expect(inspectWorkspaceFence).not.toHaveBeenCalled();
+    expect(inspectWorkspaceFence).toHaveBeenCalledWith(actor, 'workspace-1');
     expect(writeFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a stale Full Bypass goal lease before the file handler executes', async (): Promise<void> => {
+    const inspectWorkspaceFence = vi.fn().mockResolvedValue(activeFence());
+    const begin = vi.fn().mockResolvedValue(err(appError('CONFLICT', 'Goal lease is no longer valid (stale generation); read the latest goal and reacquire or claim the scheduled continuation before retrying', true)));
+    const writeFile = vi.fn().mockResolvedValue(ok({ path: 'src/file.ts', bytesWritten: 1 }));
+    const services = {
+      goalMutationFence: { inspectWorkspaceFence, begin },
+      file: { writeFile },
+    } as unknown as McpApplicationServices;
+
+    const response = await new ToolRegistry(services, actor, {
+      profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+    }).invoke('write_file', {
+      workspaceId: 'workspace-1',
+      path: 'src/file.ts',
+      content: 'x',
+      goalLease: { goalId: 'goal-1', leaseToken: 'stale-token', leaseGeneration: 1 },
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({ error: { code: 'CONFLICT', recoverable: true } });
+    expect(inspectWorkspaceFence).toHaveBeenCalledWith(actor, 'workspace-1');
+    expect(begin).toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
   });
 });

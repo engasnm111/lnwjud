@@ -84,6 +84,42 @@ describe('DesktopMcpLifecycle', () => {
     expect(lifecycle.status()).toEqual({ running: false, url: null, lastStartError: null, workspaceId: null });
   });
 
+  it('lets an in-progress explicit stop win over a concurrent start request', async () => {
+    let starts = 0;
+    let closes = 0;
+    let releaseClose: (() => void) | undefined;
+    const closeGate = new Promise<void>((resolve) => { releaseClose = resolve; });
+    const lifecycle = new DesktopMcpLifecycle({
+      starter: {
+        start: async (): Promise<McpHttpServerHandle> => {
+          starts += 1;
+          return {
+            ...createHandle('http://127.0.0.1:43127/mcp', () => { closes += 1; }),
+            close: async (): Promise<void> => {
+              await closeGate;
+              closes += 1;
+            },
+          };
+        },
+      },
+      createServerOptions: createOptions,
+    });
+
+    await lifecycle.start();
+    const stopping = lifecycle.stop();
+    const concurrentStart = lifecycle.start();
+    releaseClose?.();
+
+    await expect(stopping).resolves.toMatchObject({ running: false, url: null });
+    await expect(concurrentStart).resolves.toMatchObject({ running: false, url: null });
+    expect(starts).toBe(1);
+    expect(closes).toBe(1);
+    expect(lifecycle.status()).toMatchObject({ running: false, url: null });
+
+    await expect(lifecycle.start()).resolves.toMatchObject({ running: true });
+    expect(starts).toBe(2);
+  });
+
   it('leaves state stopped when server startup fails and can retry', async () => {
     let starts = 0;
     const lifecycle = new DesktopMcpLifecycle({

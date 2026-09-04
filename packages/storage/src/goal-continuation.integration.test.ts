@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { GoalContinuationService } from '@lnwjud/application';
 import { ScheduledContinuationService } from '@lnwjud/application';
 import type { FileActor, GoalRequestCancellationPort, GoalTaskCancellationPort } from '@lnwjud/application';
+import type { ScheduledContinuationWorkerLiveness } from '@lnwjud/domain';
 import type { Workspace } from '@lnwjud/workspace';
 import { SqliteDatabase } from './database.js';
 import { SqliteGoalRepository } from './goal-repository.js';
@@ -173,6 +174,93 @@ describe('durable goal continuation persistence', () => {
     second.database.close();
   });
 
+  it('recovers a stale rolling-worker lease after one minute of trustworthy inactivity and invalidates the old worker generation', async () => {
+    const { filename, workspace } = await fixture();
+    let now = new Date('2026-08-26T00:00:00.000Z');
+    const runtime = await open(filename, workspace, () => now);
+    try {
+      const created = await runtime.service.runGoal(actor('session-a'), { ...createRequest, leaseSeconds: 600 });
+      if (!created.ok || created.value.leaseToken === undefined) throw new Error('goal create failed');
+      const prepared = await runtime.scheduledService.prepareScheduledContinuation(actor('session-a'), {
+        goalId: created.value.goalId,
+        leaseToken: created.value.leaseToken,
+        expectedRevision: created.value.revision,
+        currentPhase: 'rolling-work',
+        summary: 'Rolling work has one native watchdog.',
+        stepUpdates: [],
+        nextAction: 'Resume safely if this worker disappears.',
+        blockers: [],
+        evidence: [],
+        activeTaskIds: [],
+        successorDelayMinutes: 25,
+        executionPreference: 'cloud',
+      });
+      if (!prepared.ok) throw new Error('successor prepare failed');
+      const scheduled = await runtime.scheduledService.recordScheduledContinuationReceipt(actor('session-a'), {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-stale-lease-recovery',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'cloud',
+      });
+      expect(scheduled).toMatchObject({ ok: true, value: { status: 'scheduled' } });
+
+      const recoveryService = new GoalContinuationService(runtime.workspaces, runtime.repository, {
+        now: (): Date => now,
+        scheduledContinuations: runtime.repository,
+        workerLiveness: {
+          observe: async (goalId, trackedTasks): Promise<ScheduledContinuationWorkerLiveness> => {
+            const goal = await runtime.repository.getById(goalId);
+            if (goal === null) throw new Error('goal missing during liveness probe');
+            return {
+              trustworthy: true,
+              observedAt: now.toISOString(),
+              leaseGeneration: goal.leaseGeneration,
+              leaseActivitySeq: goal.leaseActivitySeq,
+              liveFencedCallCount: 0,
+              blockingTaskStates: trackedTasks
+                .filter((task) => task.role === 'blocking_job')
+                .map((task) => ({ taskId: task.taskId, provider: task.provider, state: 'terminal' as const })),
+            };
+          },
+        },
+      });
+
+      now = new Date('2026-08-26T00:00:30.000Z');
+      const tooSoon = await recoveryService.runGoal(actor('session-b'), { workspaceId: workspace.id, goalKey: createRequest.goalKey, leaseSeconds: 600 });
+      expect(tooSoon).toMatchObject({ ok: true, value: { acquired: false, retryAfterSeconds: 30 } });
+
+      now = new Date('2026-08-26T00:01:01.000Z');
+      const recovered = await recoveryService.runGoal(actor('session-c'), { workspaceId: workspace.id, goalKey: createRequest.goalKey, leaseSeconds: 600 });
+      expect(recovered).toMatchObject({
+        ok: true,
+        value: {
+          acquired: true,
+          leaseRecovery: 'stale_worker_recovered',
+          goalId: created.value.goalId,
+          leaseGeneration: prepared.value.goal.leaseGeneration + 1,
+        },
+      });
+
+      const staleWorker = await runtime.service.checkpointGoal(actor('session-a'), {
+        goalId: created.value.goalId,
+        leaseToken: created.value.leaseToken,
+        expectedRevision: prepared.value.goal.revision,
+        currentPhase: 'stale-worker',
+        summary: 'This worker must no longer own the goal.',
+        stepUpdates: [],
+        nextAction: 'Must fail.',
+        blockers: [],
+        evidence: [],
+        activeTaskIds: [],
+      });
+      expect(staleWorker).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    } finally {
+      runtime.database.close();
+    }
+  });
+
   it('enforces CAS revisions, renews the lease, and persists append-only checkpoint history plus active task IDs across restart', async () => {
     const { filename, workspace } = await fixture();
     let now = new Date('2026-08-26T00:00:00.000Z');
@@ -234,15 +322,31 @@ describe('durable goal continuation persistence', () => {
     const runtime = await open(filename, workspace, () => new Date('2026-08-26T00:00:00.000Z'));
     const created = await runtime.service.runGoal(actor('session-a'), createRequest);
     if (!created.ok || created.value.leaseToken === undefined) throw new Error('goal create failed');
-    const finished = await runtime.service.finishGoal(actor('session-a'), {
+    const accepted = await runtime.service.checkpointGoal(actor('session-a'), {
       goalId: created.value.goalId,
       leaseToken: created.value.leaseToken,
       expectedRevision: created.value.revision,
+      currentPhase: 'acceptance',
+      summary: 'All durable work and verification steps passed.',
+      stepUpdates: [
+        { stepId: 'implement', status: 'completed', summary: 'Implementation accepted.' },
+        { stepId: 'verify', status: 'completed', summary: 'Verification accepted.' },
+      ],
+      nextAction: '',
+      blockers: [],
+      evidence: [{ kind: 'hash', value: 'sha256:abc123' }],
+      activeTaskIds: [],
+    });
+    if (!accepted.ok) throw new Error('acceptance checkpoint failed');
+    const finished = await runtime.service.finishGoal(actor('session-a'), {
+      goalId: created.value.goalId,
+      leaseToken: created.value.leaseToken,
+      expectedRevision: accepted.value.revision,
       status: 'completed',
       summary: 'All acceptance criteria passed.',
       evidence: [{ kind: 'hash', value: 'sha256:abc123' }],
     });
-    expect(finished).toMatchObject({ ok: true, value: { status: 'completed', revision: 1 } });
+    expect(finished).toMatchObject({ ok: true, value: { status: 'completed', revision: 2 } });
 
     const rerun = await runtime.service.runGoal(actor('session-b'), { workspaceId: workspace.id, goalKey: createRequest.goalKey });
     expect(rerun).toMatchObject({ ok: true, value: { status: 'completed', acquired: false, goalId: created.value.goalId } });
@@ -574,9 +678,10 @@ describe('durable goal continuation persistence', () => {
         value: {
           status: 'cancelled',
           scheduledTaskCancellation: {
-            action: 'delete_native_task',
+            action: 'make_native_task_non_runnable',
             nativeTaskId: 'native-cancel-me',
             receiptRequired: true,
+            requiredEffect: 'non_runnable',
           },
         },
       });

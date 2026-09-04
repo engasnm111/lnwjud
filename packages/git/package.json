@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/git",
-  "version": "4.52.0",
+  "version": "4.52.4",
   "private": true,
   "type": "module",
   "exports": {

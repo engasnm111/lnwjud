@@ -27,7 +27,7 @@ export function startMcpStdio(options: McpStdioOptions): StdioServerHandle {
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const requestScope = options.requestScope ?? createStdioRequestScope();
   return serveStdio(
-    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, requestScope }),
+    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, legacyTasksProtocol: false, requestScope }),
     { legacy: 'reject', onerror: options.onError ?? writeStdioDiagnostic },
   );
 }

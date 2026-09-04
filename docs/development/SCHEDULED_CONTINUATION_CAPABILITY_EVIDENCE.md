@@ -1,6 +1,49 @@
 # Scheduled Continuation Capability Evidence
 
-## v4.45 claimed-successor hardening — 2026-09-01
+## v4.52.4 Native host-surface recovery hardening — 2026-09-04
+
+The v4.52.3 live E2E proved that the first Native ChatGPT one-time watchdog can fire, be claimed, and be retired correctly while creation of the fresh successor independently fails with host `Resource not found`. A follow-up probe reproduced the same `Resource not found` from a normal chat turn immediately after the Native Scheduled Task surface was rediscovered. That evidence localizes the failure to current ChatGPT host-surface availability rather than the durable lnwjud claim state machine.
+
+v4.52.4 adds a bounded recovery rule without introducing any scheduler fallback: when the Native Scheduled Task host explicitly reports a lookup/dispatch failure such as `Resource not found` that proves the operation was not dispatched, resolve the currently exposed Native Scheduled Task operation again exactly once and retry the exact same native operation exactly once. The provider, schedule/request identity, and continuation intent remain unchanged. Ambiguous possible-success is never retried and remains `create_uncertain` until exact host reconciliation. If the bounded retry still fails, record `create_failed` truthfully and keep unfinished durable work active.
+
+This hardening cannot make an unavailable ChatGPT host resource exist; it prevents a stale host-surface handle from ending the durable chain prematurely while preserving duplicate-task safety and the no-fallback contract.
+
+## v4.52.3 Scheduler-degraded durable-goal hardening — 2026-09-04
+
+A live end-to-end probe exposed a post-fire host-surface failure that durable state must not confuse with work completion: the first Native ChatGPT one-time watchdog fired and was correctly retired/superseded, a fresh generation-2 successor reservation was created, and the Native Scheduled Task host then returned `Resource not found` while creating the fresh successor. The successor was recorded truthfully as `create_failed`; no Windows Task Scheduler, lnwjud scheduler, cron, DOM automation, recurrence, or external scheduler fallback was used.
+
+v4.52.3 hardens the boundary between **work state** and **scheduler transport state**:
+
+- `create_failed`, unavailable, unsupported, and `Resource not found` from the Native ChatGPT Scheduled Task host are scheduler transport degradation only; they do not by themselves complete, fail, or block the durable goal;
+- the current leased worker keeps useful fenced work running when possible and an unavoidable turn boundary checkpoints the exact work state plus degraded scheduling truthfully without claiming watchdog coverage;
+- `run_goal` exposes `create_failed_no_native_task` and `continue_current_run_scheduler_degraded_goal_stays_active` so clients do not terminalize work merely to escape missing successor coverage;
+- `finish_goal(status: completed)` is runtime-guarded and rejected while any durable plan step is unfinished, durable blockers remain, or blocking tasks remain tracked;
+- `failed` and `blocked` remain real work outcomes, not scheduler escape hatches;
+- a still-pending native task may continue to be reused/retimed, while a fired one-time native task remains consumed transport identity and is never re-armed.
+
+Verification on 2026-09-04: application **163/163**, storage **61/61**, and MCP server **894/894** tests passed; focused continuation/goal-tool/skill coverage passed **40/40**; desktop acceptance passed **30/30**; root typecheck, lint, generated tool-catalog check, packaging contract gate, release-gate command, `git diff --check`, and full workspace build all passed before packaging.
+
+## v4.52.2 Single-Live Watchdog hardening — 2026-09-04
+
+v4.52.2 keeps at most one confirmed still-pending native one-time watchdog per active goal. Repeated real checkpoints reuse that continuation/nativeTaskId and may retime the same pending task earlier or later; only a fired/consumed task or absence of pending coverage creates a fresh successor. Terminal cleanup is effect-based: the exact pending task must become non-runnable with truthful host evidence, preferring true delete and accepting host-confirmed disable when delete is not exposed. Skill/runtime prompts must never hard-code an `Automations.*` host operation name.
+
+## Historical: v4.52.1 adaptive host-scheduling hotfix — 2026-09-03
+
+Wayfinder review of the live failure mode found that fixed native-task timing and same-task updates after a one-time wake fired could drive the host into repeated/invalid update attempts, including `Resource not found` once the host had already consumed the one-time task. v4.52.1 separates safety timing from host cadence: the 120-second early-wake tolerance, receipt tolerance, and two-probe orphan interval remain fixed correctness bounds, while all normal native create/recovery timing is lease-aligned/adaptive.
+
+Current v4.52.1 contract:
+
+- omitted `successorDelayMinutes` derives from the current durable-goal lease and clamps to 2–25 minutes; a normal 600-second lease produces roughly a 10-minute successor;
+- an acquired wake reserves one deterministic lease-aligned successor in the same transaction;
+- a firing one-time task is consumed transport identity and is never treated as future coverage;
+- live/uncertain collisions, blocking work after lease expiry, and wakes outside the accepted early window retire the firing ticket and return one fresh adaptive successor rather than updating a consumed host task;
+- adaptive collision recovery uses bounded backoff/floors rather than fixed +2 polling;
+- `expedite_scheduled_continuation` is the only same-task update path and applies only to a still-pending future task, with a target calculated from remaining lease, host-jitter margin, and deterministic staggering;
+- `reschedule_required` remains only for legacy compatibility.
+
+Focused evidence on 2026-09-03: application package **160/160** passed, storage package **59/59** passed, and scheduler-focused MCP skill/runtime/tool contracts **6/6** passed. Native host creation/update/deletion remains host-owned and still requires exact receipts for release-level proof.
+
+## Historical: v4.45 claimed-successor hardening — 2026-09-01
 
 The v4.45 incident exposed a liveness gap between durable state and the native host: a scheduled wake successfully claimed an active goal, but the worker did not make the separate `prepare_scheduled_continuation` call requested only by prompt text. The firing continuation became historical, the goal stayed active, and no next reservation existed until the user prompted the agent again.
 

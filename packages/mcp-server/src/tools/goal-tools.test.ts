@@ -36,7 +36,9 @@ describe('durable goal MCP tools', () => {
     expect(byName.get('run_goal')?.description).toContain('enroll it before the next mutation');
     expect(byName.get('run_goal')?.description).toContain('scheduledContinuation=auto');
     expect(byName.get('run_goal')?.description).toContain('without waiting for the user to type continue/ทำต่อ');
-    expect(byName.get('checkpoint_goal')?.description).toContain('exactly one native one-time cloud successor');
+    expect(byName.get('checkpoint_goal')?.description).toContain('exactly one native one-time ChatGPT successor with cloud execution requested');
+    expect(byName.get('checkpoint_goal')?.description).toContain('execution mode may remain unverified');
+    expect(byName.get('run_goal')?.description).toContain('never substitutes browser/DOM automation');
 
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key' })).toMatchObject({ ok: true, value: { scheduledContinuation: 'auto' } });
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key', scheduledContinuation: 'off' })).toMatchObject({ ok: true, value: { scheduledContinuation: 'off' } });
@@ -152,6 +154,50 @@ describe('durable goal MCP tools', () => {
     });
   });
 
+  it('keeps the durable goal active when native successor creation truthfully failed', async () => {
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async runGoal() {
+            return ok({
+              goalId: 'goal-create-failed', goalKey: 'stable-key', status: 'active', revision: 2, acquired: true,
+              leaseToken: 'lease-secret', leaseExpiresAt: '2026-08-26T00:10:00.000Z', currentPhase: 'work',
+              plan: { steps: [{ id: 'implement', title: 'Implement', status: 'in_progress' }] }, completedSteps: [],
+              pendingSteps: [{ id: 'implement', title: 'Implement', status: 'in_progress' }], nextAction: 'Keep working.', blockers: [], activeTaskIds: [], lastCheckpoint: { id: 'cp-1' },
+            });
+          },
+        },
+        scheduledContinuations: {
+          async getScheduledContinuation() {
+            return ok({
+              continuationId: 'continuation-create-failed', goalId: 'goal-create-failed', generation: 2, sourceGoalRevision: 2,
+              status: 'create_failed', occurrence: 'once', destination: 'current_chat', executionPreference: 'cloud',
+              dueAt: '2026-08-26T00:10:00.000Z', rescheduleCount: 0, orphanRecoveryCount: 0, version: 1,
+              createdAt: '2026-08-26T00:00:00.000Z', updatedAt: '2026-08-26T00:00:01.000Z',
+            });
+          },
+        },
+      },
+    } as unknown as McpToolContext;
+
+    const result = await tool(context, 'run_goal').execute({ workspaceId: 'workspace-1', goalKey: 'stable-key' }, new AbortController().signal);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: 'active',
+        continuationDirective: {
+          mode: 'auto',
+          successorHostState: 'create_failed_no_native_task',
+          successorHandoffReady: false,
+          nextRequiredAction: 'continue_current_run_scheduler_degraded_goal_stays_active',
+          stopOnlyWhen: 'goal_terminal_or_scheduling_explicitly_disabled',
+        },
+      },
+    });
+  });
+
   it('recognizes only scheduled native cloud receipts as handoff-ready', async () => {
     const context = {
       actor,
@@ -187,6 +233,46 @@ describe('durable goal MCP tools', () => {
           successorHostState: 'confirmed_cloud',
           successorHandoffReady: true,
           nextRequiredAction: 'continue_with_confirmed_cloud_successor',
+        },
+      },
+    });
+  });
+
+  it('treats a native host task with an unreported execution mode as confirmed coverage without claiming cloud proof', async () => {
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async runGoal() {
+            return ok({
+              goalId: 'goal-unverified', goalKey: 'stable-key', status: 'active', revision: 2, acquired: true,
+              leaseToken: 'lease-secret', leaseExpiresAt: '2026-08-26T00:10:00.000Z', currentPhase: 'work',
+              plan: { steps: [] }, completedSteps: [], pendingSteps: [], nextAction: 'Keep working.', blockers: [], activeTaskIds: [], lastCheckpoint: { id: 'cp-1' },
+            });
+          },
+        },
+        scheduledContinuations: {
+          async getScheduledContinuation() {
+            return ok({
+              continuationId: 'continuation-unverified', goalId: 'goal-unverified', generation: 1, sourceGoalRevision: 2,
+              status: 'scheduled', occurrence: 'once', destination: 'current_chat', executionPreference: 'cloud', confirmedRunsOn: 'unverified',
+              dueAt: '2026-08-26T00:25:00.000Z', nativeTaskId: 'native-task-unverified', rescheduleCount: 0, orphanRecoveryCount: 0, version: 1,
+              createdAt: '2026-08-26T00:00:00.000Z', updatedAt: '2026-08-26T00:00:01.000Z',
+            });
+          },
+        },
+      },
+    } as unknown as McpToolContext;
+
+    const result = await tool(context, 'run_goal').execute({ workspaceId: 'workspace-1', goalKey: 'stable-key' }, new AbortController().signal);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        continuationDirective: {
+          successorHostState: 'confirmed_execution_unverified',
+          successorHandoffReady: true,
+          nextRequiredAction: 'continue_with_confirmed_native_successor_execution_unverified',
         },
       },
     });
@@ -237,7 +323,7 @@ describe('durable goal MCP tools', () => {
               status: 'active',
               completionState: 'pending_native_cleanup',
               scheduledTaskCancellation: {
-                action: 'delete_native_task',
+                action: 'make_native_task_non_runnable',
                 continuationId: 'continuation-c',
                 nativeTaskId: 'native-task-c',
                 provider: 'chatgpt_scheduled_task',
@@ -265,7 +351,7 @@ describe('durable goal MCP tools', () => {
         status: 'active',
         completionState: 'pending_native_cleanup',
         scheduledTaskCancellation: {
-          action: 'delete_native_task',
+          action: 'make_native_task_non_runnable',
           continuationId: 'continuation-c',
           nativeTaskId: 'native-task-c',
           provider: 'chatgpt_scheduled_task',

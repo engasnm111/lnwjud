@@ -169,6 +169,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
     runBudgetGuard,
     incrementalVerifier,
     setOfMarksStore,
+    legacyTasksProtocol: false,
     requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
   });
   const modernHandler = createMcpHandler((context) => factory(context.requestInfo), { legacy: 'reject', onerror: writeDiagnostic });
@@ -189,6 +190,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       runBudgetGuard,
       incrementalVerifier,
       setOfMarksStore,
+      legacyTasksProtocol: true,
       requestScope: createProtocolHttpRequestScope(protocolSessionId),
     });
     let registeredSessionId: string | undefined;

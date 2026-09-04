@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/mcp-server",
-  "version": "4.52.0",
+  "version": "4.52.4",
   "private": true,
   "type": "module",
   "exports": {
@@ -28,7 +28,7 @@
     "@modelcontextprotocol/client": "2.0.0"
   },
   "scripts": {
-    "test": "corepack pnpm@10.15.0 --filter @lnwjud/domain build && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && corepack pnpm@10.15.0 --filter @lnwjud/extensions build && corepack pnpm@10.15.0 build && vitest run",
+    "test": "corepack pnpm@10.15.0 --filter @lnwjud/domain build && corepack pnpm@10.15.0 --filter @lnwjud/shared build && corepack pnpm@10.15.0 --filter @lnwjud/process build && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && corepack pnpm@10.15.0 --filter @lnwjud/extensions build && corepack pnpm@10.15.0 build && vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc --outDir dist"
   },

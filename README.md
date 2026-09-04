@@ -44,14 +44,34 @@ over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the Windows
 machine.
 
-## Current version: v4.52.0
+## Current version: v4.52.4
 
-The v4.52.0 release target and runtime contract contain **231 total MCP tool definitions**,
+The v4.52.4 release target and runtime contract contain **231 total MCP tool definitions**,
 with **224 advertised by default** and **all 231 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
+
+### What's new in v4.52.4
+
+#### Native Scheduled Task host-surface recovery
+
+- A live v4.52.3 end-to-end probe proved that the durable continuation state machine can claim a fired watchdog correctly while the ChatGPT Native Scheduled Task host can independently return `Resource not found` when the next task is created. The same host error was reproduced from a normal chat turn after host-surface discovery, so it is not treated as a scheduled-wake-only lnwjud failure.
+- When the native host explicitly reports a lookup/dispatch failure such as `Resource not found` that proves the operation was not dispatched, the client now **re-resolves the current Native Scheduled Task host surface once and retries the exact same native operation once**. The retry keeps the same provider, request identity, schedule, and continuation intent; it never invents or hard-codes an internal host operation name.
+- Ambiguous create results that may already have succeeded are **not retried**. They remain `create_uncertain` and require exact host reconciliation, preventing duplicate one-time tasks.
+- If the bounded re-resolved retry still fails, the reservation is recorded truthfully as `create_failed`. The durable goal remains active while real work is unfinished, and no Windows Task Scheduler, lnwjud scheduler, cron, shell timer, DOM/browser automation, external scheduler, or undocumented API is used as a fallback.
+
+### What's new in v4.52.1
+
+#### Durable goal lease / scheduled-continuation hotfix
+
+- Fixes a rolling-goal ownership bug where **Full Bypass could skip the scheduled-goal mutation fence**, allowing an old worker to keep mutating files, Git, or processes after its lease had expired or a successor had taken over.
+- Full Bypass still skips the intended application approval, confirmation, command-policy, and Active Project scope gates, but **durable-goal ownership is now always enforced when a live rolling scheduled-goal fence exists**. Ordinary unscheduled Full Bypass remains lease-free when no rolling fence exists.
+- Missing, stale, expired, generation-mismatched, or past-handoff `goalLease` proof is rejected **before the tool handler performs a workspace mutation**, preventing stale workers from racing a newer continuation.
+- Lease-invalid failures now surface as a recoverable coordination conflict with explicit guidance to read the latest goal and reacquire or claim the scheduled continuation before retrying, instead of the ambiguous `Goal lease is invalid or expired` permission error.
+- Adds regression coverage for Full Bypass with and without a rolling fence, plus stale-lease rejection before mutation.
+- Fixes scheduled-continuation host routing so the bundled skill no longer hard-codes a private/internal ChatGPT scheduling operation name. It now uses the native Scheduled Task operation actually exposed by the current ChatGPT host, records `create_failed` immediately for unavailable/rejected/not-found host creation, and never substitutes DOM automation or Windows Task Scheduler.
 
 ### What's new in v4.52.0
 
@@ -100,7 +120,7 @@ capabilities are additive.
 - Separates **Persistent Tunnel Identity** from runtime Run/Stop intent: an explicit **Stop Tunnel** is now durable across lnwjud restarts and automatic reconnect remains paused until the user explicitly starts the tunnel again.
 - Makes a saved custom `tunnel-client.exe` override authoritative instead of silently falling back to the bundled binary when that path is missing, and records the executable that actually owns the active persistent runtime so Stop/recovery uses the correct client.
 - Makes client switching transactional: lnwjud stops and verifies the old persistent runtime through its recorded owner before committing a new custom/bundled selection, preventing duplicate or orphan runtimes during client changes.
-- Closes the rolling-continuation chain gap: every successful scheduled wake claim now atomically reserves exactly one fresh +2-minute successor, returns its native host `scheduleRequest`, and recovers that same deterministic reservation after an interrupted response instead of depending on the model to remember a separate prepare call.
+- Closes the rolling-continuation chain gap without fixed host polling: omitted preparation and successful wake claims derive a fresh successor from the current lease (normally 600 seconds -> about 10 minutes), while firing collisions retire the consumed one-time task and reserve a deterministic adaptive successor with roughly 4/8/16/25-minute backoff plus lease/liveness floors. Same-task expedite is reserved only for a future task that is still pending before it fires.
 - Makes goal completion two-phase when a successor is still live or host state is uncertain: `finish_goal` first returns `status=active` with `completionState=pending_native_cleanup`, and only a matching native deletion/run receipt followed by a second `finish_goal` can produce terminal `completionState=completed`.
 - Extends packaged-runtime trust evidence so `PROVENANCE.json` and `SHA256SUMS.txt` cover the tunnel client, Cloudflared companion, manifest and accompanying release metadata rather than only the outer lnwjud executables.
 - Repairs the version synchronization helper so current package, runtime, UI, architecture and release-document references move together to **v4.45.0** without rewriting historical release evidence.
@@ -210,13 +230,13 @@ stops the current local HTTP listener.
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.52.0.exe` (recommended installer) and `lnwjud-Portable-4.52.0.exe` (no installation required).
+   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.52.4.exe` (recommended installer) and `lnwjud-Portable-4.52.4.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.52.0.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.52.4.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -261,38 +281,36 @@ A few operating-system boundaries still apply:
   Restore the target window and keep the desktop session active when validating a
   visual workflow.
 
-### 2. Prepare OpenAI Secure MCP Tunnel for ChatGPT web
+### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-lnwjud v4.52.0 separates the **Secure MCP Tunnel transport** from the **authentication method** used to obtain its runtime credential. Existing installations can continue using a Platform Tunnel ID + Runtime API key. OAuth-capable providers can use the OAuth controls shown by lnwjud when supported; if OAuth runtime provisioning is unavailable, lnwjud fails closed and keeps the Runtime API key workflow available instead of substituting an unrelated account token.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is the primary setup path in v4.52.1. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
-The legacy/compatibility Secure MCP Tunnel flow requires a Platform tunnel ID and a runtime
-API key. The published Windows x64 installer and portable executable already contain the official
-OpenAI `tunnel-client v0.0.13`, so release users do **not** download or
-extract a separate tunnel-client package. The official Windows x64 bundle is kept intact beside the client, including pinned `cloudflared.exe` v2026.8.2, its manifest, license/notice files, license inventory, and SPDX SBOM. lnwjud does **not** enable Cloudflared mode merely because that companion is packaged; the normal Secure MCP Tunnel path remains unchanged unless that upstream mode is explicitly configured. Creating or editing a tunnel requires
-**Tunnels Read + Manage**; the runtime key needs **Tunnels Read + Use**.
+1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
+2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, use **Install ngrok automatically**; lnwjud uses the official Microsoft Store/WinGet path rather than bundling an unofficial binary.
+3. Save your ngrok authtoken once, then click **Start Remote MCP**. lnwjud starts the OAuth gateway and ngrok, detects the public HTTPS MCP URL, and shows a **Copy MCP URL** action.
+4. In ChatGPT, enable Developer mode when your plan/workspace allows it, add a custom MCP connection, paste the copied public `https://.../mcp` URL, and choose **OAuth** authentication.
+5. On the **first authorization only**, the browser opens the lnwjud approval page. Enter the short-lived **6-digit OAuth Pairing Code** shown in lnwjud and authorize ChatGPT. The browser then redirects back to ChatGPT.
+6. After that first approval, lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in Windows DPAPI-protected state. Ordinary app restarts or **Start Remote MCP** do not require pairing again. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to re-authorize or replace that relationship.
+7. Confirm the connection discovers **224 tools by default** (or **231** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
+
+The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
+
+### 3. Alternative: OpenAI Secure MCP Tunnel (Tunnel ID + Runtime API key)
+
+Use this path only when you specifically prefer the official outbound-only Secure MCP Tunnel transport or your organization requires it. **Tunnel ID + Runtime API key is an alternative/advanced setup, not the default Quick Start path.**
+
+The Secure MCP Tunnel flow requires a Platform tunnel ID and a runtime API key. The published Windows x64 installer and portable executable already contain the official OpenAI `tunnel-client v0.0.13`, so release users do **not** download or extract a separate tunnel-client package. The official Windows x64 bundle is kept intact beside the client, including pinned `cloudflared.exe` v2026.8.2, its manifest, license/notice files, license inventory, and SPDX SBOM. lnwjud does **not** enable Cloudflared mode merely because that companion is packaged. Creating or editing a tunnel requires **Tunnels Read + Manage**; the runtime key needs **Tunnels Read + Use**.
 
 1. Open [OpenAI Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels).
-2. Create a tunnel named `lnwjud` and associate it with the Platform organization
-   that owns it and the ChatGPT workspace that should use it.
+2. Create a tunnel named `lnwjud` and associate it with the Platform organization and ChatGPT workspace that should use it.
 3. Create a restricted runtime API key with **Tunnels Read + Use**.
-4. Open **lnwjud → Settings → OpenAI Secure MCP Tunnel**. Save the runtime API
-   key, leave the **tunnel-client (bundled)** override field empty, paste the
-   tunnel ID, and click **Configure Tunnel**.
-5. The Setup Wizard selects the bundled client automatically, starts or reuses
-   lnwjud's **Desktop loopback HTTP MCP**, creates or repairs
-   `%APPDATA%/tunnel-client/lnwjud.yaml`, and runs the required tunnel diagnostics.
-   Secure Tunnel does not spawn a separate headless lnwjud MCP runtime, so the
-   Desktop-selected Active Projects and native exact-action approval remain
-   authoritative for remote ChatGPT calls.
+4. Open **lnwjud → Settings → Remote MCP & Tunnel → OpenAI Secure MCP Tunnel**. Save the runtime API key, leave the bundled-client override empty, paste the tunnel ID, and click **Configure Tunnel**.
+5. The wizard selects the bundled client, starts or reuses lnwjud's Desktop loopback HTTP MCP, creates or repairs `%APPDATA%/tunnel-client/lnwjud.yaml`, and runs the required diagnostics.
+6. In ChatGPT, add a **Tunnel** connection and select the associated `lnwjud` tunnel or enter its `tunnel_id`.
 
-The tunnel-client path field is an **override/troubleshooting** control only.
-Clear it and choose **Use bundled** to return to the package-supplied client.
-Source builds may prepare the pinned client during `package:windows`; that build
-step is not an end-user installation step.
+The tunnel-client path field is an **override/troubleshooting** control only. Clear it and choose **Use bundled** to return to the package-supplied client. Secure Tunnel forwards to the running Desktop MCP and does not spawn a separate headless lnwjud MCP runtime, so Desktop-selected Active Projects and native exact-action approval remain authoritative.
 
-If you intentionally need to initialize the profile by hand, keep lnwjud running
-and copy the **Local MCP endpoint** shown by lnwjud (it is loopback-only and ends
-in `/mcp`):
+If you intentionally need to initialize the Secure Tunnel profile by hand, keep lnwjud running and copy the **Local MCP endpoint** shown by lnwjud (it is loopback-only and ends in `/mcp`):
 
 ```powershell
 $env:CONTROL_PLANE_API_KEY = '<runtime-key-for-this-session>'
@@ -314,47 +332,7 @@ $mcpEndpoint = 'http://127.0.0.1:<port>/mcp' # copy the actual endpoint shown by
 Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
 ```
 
-### 3. Save tunnel settings in the desktop UI
-
-In **Settings → OpenAI Secure MCP Tunnel**:
-
-1. Save the runtime API key. lnwjud encrypts it locally with Windows DPAPI. The
-   generated tunnel profile stores only the reference `env:CONTROL_PLANE_API_KEY`,
-   never the literal runtime key.
-2. Leave the tunnel-client override field empty to use the official
-   `tunnel-client v0.0.13` bundled with the Windows x64 installer. Browse/save a
-   custom executable only when intentionally overriding it for troubleshooting.
-3. Paste the OpenAI tunnel ID and click **Configure Tunnel**. The wizard replaces
-   or repairs the lnwjud-owned profile so `mcp.server_urls` points to the Desktop
-   loopback MCP endpoint and `control_plane.api_key` is the environment reference.
-4. After Configure Tunnel succeeds, confirm
-   `%APPDATA%/tunnel-client/lnwjud.yaml` exists and click **Start Tunnel**.
-5. Open **Live Logs** or run **Doctor** if the tunnel fails to start.
-
-The desktop tunnel controller repairs stale stdio profiles into Desktop HTTP
-profiles before Doctor/Start, runs `tunnel-client doctor` before launch, starts
-the client with a seven-day MCP connection ceiling, detects externally started
-lnwjud tunnel processes, and performs bounded reconnect attempts after unexpected
-exits. If an older profile contains `commands:`, a build-machine path such as
-`D:/lnwjud/lnwjud-mcp-stdio.cmd`, or a literal `control_plane.api_key`,
-Configure Tunnel/Start Tunnel repairs it to the current Desktop loopback `/mcp`
-endpoint and the `env:CONTROL_PLANE_API_KEY` secret reference before Doctor/Run.
-
-### 4. Add lnwjud to ChatGPT
-
-For current ChatGPT developer-mode MCP testing, use the official
-[Connect and test your plugin](https://developers.openai.com/plugins/deploy/connect-chatgpt)
-guide as the UI source of truth because workspace policy and labels can change.
-The stable flow is:
-
-1. Enable Developer mode for the target ChatGPT account/workspace if your plan
-   and workspace policy allow it.
-2. Open [ChatGPT Plugins](https://chatgpt.com/plugins) and select the plus button.
-3. Enter a name/description, choose **Tunnel** under Connection, and select the
-   associated `lnwjud` tunnel or enter its `tunnel_id`.
-4. Create the connection and review the discovered tools and metadata.
-5. Confirm that the default runtime exposes **224 tools** (or **231** when Codex delegation plus Agent Swarm is explicitly enabled) and run a read-only
-   smoke test before trying writes.
+For Secure Tunnel troubleshooting, open **Live Logs** or run **Doctor**. The desktop tunnel controller repairs stale stdio profiles into Desktop HTTP profiles before Doctor/Start and keeps literal runtime keys out of the generated YAML by using `env:CONTROL_PLANE_API_KEY`.
 
 Example smoke test:
 
@@ -364,92 +342,59 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ## Quick start: install the Windows release (ภาษาไทย)
 
-ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT ผ่าน
-OpenAI Secure MCP Tunnel แบบง่ายที่สุด โดย **ไม่ต้องติดตั้ง Node.js เพิ่ม**
-Secure Tunnel จะส่งงานเข้าที่ Desktop loopback HTTP MCP ของ lnwjud โดยตรง
-ส่วน private Node runtime ที่มากับตัวติดตั้งยังคงใช้สำหรับ local stdio เช่น Codex CLI
+ส่วนนี้สำหรับผู้ใช้ Windows ที่ต้องการติดตั้ง lnwjud แล้วเชื่อมกับ ChatGPT แบบง่ายที่สุด โดย **วิธีหลักที่แนะนำใน v4.52.1 คือ Remote MCP ผ่าน ngrok + OAuth** ไม่ต้องมี OpenAI Tunnel ID และไม่ต้องสร้าง Runtime API key สำหรับขั้นตอนหลักนี้ ส่วน **Tunnel ID + Runtime API key** ยังคงรองรับ แต่เป็นทางเลือก/โหมดขั้นสูงสำหรับผู้ที่ต้องการ OpenAI Secure MCP Tunnel โดยเฉพาะ
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.52.0.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.52.0.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.52.4.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.52.4.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
-Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Windows ชุดเดียวกับตัวติดตั้ง ไม่ได้เก็บ database/settings ทุกอย่างไว้ข้าง EXE
+Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Windows ชุดเดียวกับตัวติดตั้ง ไม่ได้เก็บ database/settings ทุกอย่างไว้ข้าง EXE และตัว release มี private Node runtime สำหรับ local stdio มาให้แล้ว
 
-### 2. สร้าง OpenAI Tunnel และ Runtime API key
+### 2. เชื่อม ChatGPT ด้วย Remote MCP + OAuth (แนะนำ)
+
+สำหรับผู้ใช้ ChatGPT เว็บทั่วไป **ให้เริ่มจากวิธีนี้ก่อน**:
+
+1. เปิด **Settings → Remote MCP & Tunnel**
+2. ดูสถานะ ngrok ก่อน ถ้าขึ้น **READY** ให้ใช้ตัวที่ตรวจพบได้เลย; ถ้ายังไม่พร้อมให้กด **ติดตั้ง ngrok อัตโนมัติ** ซึ่ง lnwjud ใช้ช่องทาง Microsoft Store/WinGet ทางการ
+3. ใส่ ngrok authtoken หนึ่งครั้ง แล้วกด **Start Remote MCP**
+4. รอให้ lnwjud เปิด OAuth-protected gateway, รัน ngrok และแสดง public HTTPS MCP URL ที่ลงท้าย `/mcp` จากนั้นกด **Copy MCP URL**
+5. ใน ChatGPT เปิด Developer mode หากบัญชี/Workspace รองรับ แล้วเพิ่ม custom MCP connection โดยวาง URL ที่คัดลอกมาและเลือก **OAuth**
+6. **เฉพาะการอนุมัติครั้งแรก** browser จะเปิดหน้า lnwjud ให้กรอก **OAuth Pairing Code 6 หลัก** ที่แสดงในแอป แล้วกดอนุมัติ เมื่อสำเร็จจะ redirect กลับ ChatGPT
+7. หลังอนุมัติครั้งแรก lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย Windows DPAPI การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้อง pairing ซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้าง/อนุมัติความสัมพันธ์ใหม่จริง ๆ
+8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **224 tools**, หรือ **231** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
+
+public ngrok URL นี้ชี้เข้า OAuth gateway แยกต่างหาก ไม่ใช่การเปิด `http://127.0.0.1:<port>/mcp` ตรง ๆ ออกอินเทอร์เน็ต และ request ต้องผ่าน OAuth/bearer-token validation ก่อนถึง Local MCP
+
+### 3. ทางเลือก: OpenAI Secure MCP Tunnel (Tunnel ID + Runtime API key)
+
+ใช้วิธีนี้เมื่อคุณต้องการ transport แบบ outbound-only ของ OpenAI Secure MCP Tunnel โดยเฉพาะ หรือองค์กรกำหนดให้ใช้วิธีนี้. **Tunnel ID + Runtime API key เป็นทางเลือก/Advanced ไม่ใช่ Quick Start หลัก**
 
 1. เข้า [OpenAI Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels)
-2. สร้าง Tunnel ใหม่และจดค่า `tunnel_id` ไว้
-3. สร้าง Runtime API key ที่มีสิทธิ์ **Tunnels Read + Use**
-4. เก็บ key ไว้เป็นความลับ ห้ามใส่ใน Git, README, issue หรือไฟล์ที่จะแชร์
+2. สร้าง Tunnel ใหม่และจดค่า `tunnel_id`
+3. สร้าง Runtime API key ที่มีสิทธิ์ **Tunnels Read + Use** และเก็บเป็นความลับ
+4. เปิด **Settings → Remote MCP & Tunnel → OpenAI Secure MCP Tunnel**
+5. ใส่ Runtime API key, ปล่อย tunnel-client override ว่างไว้, ใส่ Tunnel ID แล้วกด **Configure Tunnel**
+6. รอ Configure/Doctor ผ่าน แล้วกด **Start Tunnel**
+7. ใน ChatGPT เพิ่ม Connection แบบ **Tunnel** แล้วเลือก tunnel ที่สร้างไว้หรือใส่ `tunnel_id`
 
-### 3. tunnel-client มากับตัวติดตั้งแล้ว
+`lnwjud-Setup-4.52.1.exe` และ `lnwjud-Portable-4.52.1.exe` รวม official OpenAI `tunnel-client v0.0.13` มาให้แล้ว จึง **ไม่ต้องดาวน์โหลด `tunnel-client.exe` เอง** ช่อง path เป็น override สำหรับ troubleshooting เท่านั้น; หากต้องการกลับไปใช้ตัว bundled ให้ล้าง override แล้วเลือก **Use bundled** อย่างชัดเจน
 
-ถ้าใช้ `lnwjud-Setup-4.52.0.exe` หรือ `lnwjud-Portable-4.52.0.exe` บน Windows x64 **ไม่ต้องดาวน์โหลด
-`tunnel-client.exe` เอง** ตัว release รวม official OpenAI
-`tunnel-client v0.0.13` มาให้และ lnwjud จะเลือกใช้ให้อัตโนมัติ
+`Persistent Tunnel Identity` จำ Tunnel ID แยกจาก Run/Stop intent. เมื่อผู้ใช้กด **Stop Tunnel** lnwjud จะคงสถานะ stopped ข้ามการ restart และจะไม่ auto-reconnect จนกด Start อีกครั้ง. หากเปลี่ยน custom/bundled client ขณะ runtime ทำงาน ระบบจะหยุดและยืนยัน owner เดิมก่อน commit path ใหม่เพื่อไม่ให้มี runtime ซ้อน
 
-ช่อง path ของ tunnel-client ใน Settings เป็น **override สำหรับ troubleshoot**
-เท่านั้น ปล่อยว่างไว้สำหรับการใช้งานปกติ หากบันทึก custom override แล้ว path นั้น
-จะเป็นตัวเลือกหลัก: ถ้าไฟล์หาย lnwjud จะแจ้ง error และ **จะไม่ fallback ไป bundled
-แบบเงียบ ๆ** หากต้องการกลับมาใช้ตัวที่มากับโปรแกรม ต้องล้างช่องแล้วกด
-**ใช้ตัวที่มากับโปรแกรม / Use bundled** โดยชัดเจน
+ตรงนี้ **ไม่ต้องพิมพ์ path ของ `lnwjud-mcp-stdio.cmd` เอง** Secure Tunnel ใช้ Desktop loopback HTTP MCP และ lnwjud จะสร้าง/ซ่อม `%APPDATA%\tunnel-client\lnwjud.yaml` ให้ `mcp.server_urls` ชี้ไป `http://127.0.0.1:<port>/mcp` พร้อมเก็บ `control_plane.api_key` เป็น `env:CONTROL_PLANE_API_KEY` แทน key จริง
 
-`Persistent Tunnel Identity` มีหน้าที่จำ Tunnel ID เดิม แยกจากสถานะ Run/Stop ของ
-runtime. เมื่อผู้ใช้กด **Stop Tunnel** lnwjud จะบันทึก desired state เป็น stopped,
-หยุดและตรวจยืนยัน runtime ผ่าน executable ที่เป็น owner จริง และจะยังคงหยุดแม้
-ปิด/เปิด lnwjud ใหม่จนกว่าผู้ใช้จะกด **Start Tunnel** อีกครั้ง. Automatic reconnect
-ทำงานเฉพาะช่วงที่ desired state เป็น running เท่านั้น. ถ้าเปลี่ยน custom/bundled
-client ขณะ runtime ทำงาน lnwjud จะหยุดและยืนยัน owner เดิมก่อน commit path ใหม่
-เพื่อไม่ให้เกิด tunnel-client ซ้อนหรือ orphan runtime.
+### 4. ทดสอบแบบ Read-only ก่อน
 
-### 4. ตั้งค่า Tunnel ใน lnwjud
-
-เปิด **Settings → OpenAI Secure MCP Tunnel** แล้วทำตามลำดับนี้:
-
-1. ใส่ Runtime API key แล้วกด **Save key**
-2. ปล่อยช่อง tunnel-client override ว่างไว้
-   โปรแกรมจะใช้ `tunnel-client v0.0.13` ที่มากับ installer อัตโนมัติ
-3. ใส่ OpenAI Tunnel ID
-4. กด **Configure Tunnel**
-5. รอให้ Configure/Doctor ผ่าน
-6. กด **Start Tunnel** หรือ **Reconnect Tunnel เดิม** ตามสถานะที่แสดง
-   ใช้ **Browse...** เฉพาะกรณีต้องการ override executable เพื่อ troubleshooting
-
-ตรงนี้ **ไม่ต้องพิมพ์ path ของ `lnwjud-mcp-stdio.cmd` เอง** โปรแกรมจะ
-เปิด/ใช้ Local MCP ของ Desktop แล้วสร้างหรือซ่อม
-`%APPDATA%\tunnel-client\lnwjud.yaml` ให้ `mcp.server_urls` ชี้ไปที่
-`http://127.0.0.1:<port>/mcp` อัตโนมัติ และบังคับให้
-`control_plane.api_key` เป็น `env:CONTROL_PLANE_API_KEY` แทนการเก็บ key จริงใน YAML
-
-ถ้าเคยใช้รุ่นเก่าแล้ว YAML ค้าง `commands:`, path เช่น
-`D:/lnwjud/lnwjud-mcp-stdio.cmd` / `E:/lnwjud/lnwjud-mcp-stdio.cmd` หรือมี
-Runtime API key จริงอยู่ใน `control_plane.api_key` ให้กด **Configure Tunnel**
-ใหม่ โปรแกรมจะเปลี่ยน profile เป็น Desktop HTTP และ secret reference ให้เอง
-
-### 5. เชื่อม Tunnel เข้ากับ ChatGPT
-
-1. เปิด Developer mode ของ ChatGPT ถ้าบัญชี/Workspace รองรับ
-2. เปิดหน้า Plugins/Connections ของ ChatGPT แล้วกดเพิ่ม connection
-3. เลือก Connection แบบ **Tunnel**
-4. เลือก tunnel ที่สร้างไว้ หรือใส่ `tunnel_id`
-5. สร้าง connection แล้วตรวจว่าเห็น tools ของ lnwjud
-6. ถ้าเพิ่งแก้ Tunnel หรืออัปเดต lnwjud ให้กด Refresh connector ก่อน ถ้ายัง stale
-   ค่อยเปิดแชทใหม่
-
-### 6. ทดสอบแบบ Read-only ก่อน
-
-ลองสั่ง ChatGPT ก่อนด้วยงานที่ไม่แก้ไฟล์ เช่น:
+ไม่ว่าจะเชื่อมด้วย OAuth หรือ Secure Tunnel ให้ลองงานที่ไม่แก้ไฟล์ก่อน เช่น:
 
 ```text
 Use lnwjud to list registered workspaces, show Git status for the selected project, and summarize the top-level project tree. Do not modify anything.
 ```
 
-ถ้าคำสั่งนี้ทำงานได้ แปลว่า ChatGPT → OpenAI Tunnel → tunnel-client →
-lnwjud Desktop HTTP MCP เชื่อมต่อครบแล้ว จากนั้นจึงค่อยลองงานเขียนไฟล์หรือ
-คำสั่งที่ต้องมี native approval ใน Desktop
+ถ้าคำสั่งนี้ทำงานได้ แปลว่า ChatGPT เชื่อมถึง lnwjud Desktop MCP ผ่านวิธีที่เลือกครบแล้ว จากนั้นจึงค่อยลองงานเขียนไฟล์หรือคำสั่งที่ต้องมี native approval ใน Desktop
 
 ## Quick start: build from source
 
@@ -524,7 +469,7 @@ When the client exposes skill names directly, a user on either distribution can
 start the full autonomous chain with a prompt such as:
 
 ```text
-Use $lnwjud-scheduled-continuation in workspace D:\projects\my-app. Create or resume goalKey release-audit, do the requested work autonomously until get_goal is terminal, then cancel the exact remaining successor and report once.
+Use $lnwjud-scheduled-continuation in workspace D:\projects\my-app. Create or resume goalKey release-audit and keep that durable goal active until the real objective and acceptance checks are complete. Maintain at most one pending Native ChatGPT one-time watchdog: reuse/retime the same native task while it is still pending, but treat a fired task ID as consumed and never re-arm it. If the Native Scheduled Task host is unavailable or returns Resource not found, record create_failed truthfully and continue the current leased worker; scheduler transport failure alone must never complete, fail, or block the durable goal, and never fall back to another scheduler. Call finish_goal(status: completed) only after every durable plan step is completed, blockers are empty, and no blocking task remains tracked; then make any exact pending native watchdog non-runnable using the strongest host operation actually exposed and verify get_goal is terminal before reporting once.
 ```
 
 For clients that do not expose `$skill-name` syntax, ask the agent to call
@@ -551,10 +496,31 @@ without a native task ID), reuse that exact request; when it includes
 `native_task_receipt_missing`, `native_task_creation_uncertain`, or
 `native_task_id_already_recorded`, reconcile the exact host metadata first and
 never create blindly. A stale `create_failed` reservation may be refreshed to a
-new +2-minute due time only after the failure is truthful. A collision uses
-`reschedule_required` to move the exact same confirmed native task by +2
-minutes. Durable reservation is machine-enforced, while actual cloud task
-creation remains host-owned and is trusted only after its receipt is recorded.
+new lease-aligned adaptive due time only after the failure is truthful. A
+one-time task that has already fired is consumed transport identity: collision,
+early-fire recovery, and blocking-worker recovery retire/supersede that firing
+ticket and reserve one fresh deterministic adaptive successor instead of trying
+to update a host task that may already be gone. Same-task updates are reserved
+for a still-pending future task through `expedite_scheduled_continuation`.
+Durable reservation is machine-enforced, while actual cloud task creation
+remains host-owned and is trusted only after its receipt is recorded.
+
+Starting in v4.52.3, a native Scheduled Task host failure such as unavailable,
+unsupported, or `Resource not found` is explicitly a **scheduler transport
+degradation**, not a durable-work outcome. The caller records `create_failed`,
+keeps the goal `active`, and continues the current leased worker when possible;
+it must not use `completed`, `failed`, or `blocked` merely to escape missing
+watchdog coverage. `finish_goal(status: completed)` is also runtime-guarded:
+all durable plan steps must already be `completed`, durable blockers must be
+empty, and no blocking task may remain tracked. If an unavoidable host turn
+boundary arrives without native coverage, checkpoint that degraded scheduler
+state truthfully and never claim autonomous handoff or fall back to another
+scheduler.
+
+In v4.52.1, Full Bypass cannot bypass this rolling-goal ownership fence: a stale
+or missing `goalLease` is rejected before file, Git, process, delegated, or UI
+mutation dispatch, so an older worker cannot keep writing after a successor has
+taken ownership.
 
 ### STDIO permission profiles and strict roots
 
@@ -570,7 +536,7 @@ Supported direct-stdio profiles are `safe`, `balanced`, `full`, and `custom`. Eq
 
 Selecting **Full** does not by itself enable unrestricted authorization. The separate **Desktop Full Bypass** and **STDIO Full Bypass** controls live under **Full Access (Unrestricted)**, default to OFF, and require an explicit acknowledgement when enabled. Desktop Full Bypass applies to Desktop HTTP and Secure Tunnel; direct STDIO uses its own independent flag.
 
-While enabled, every call is marked `FULL BYPASS ON` and audited as `authorizationMode: full_bypass`. lnwjud skips every application-level prompt and denial: always-confirm tools (Codex, child MCP, HTTP mutation, scheduler, Office/document mutation, DOM/native input, UI/media actions), chat confirmation, native host approval, profile and command policy, Active Project and allowed/Strict Roots, protected paths, and scheduled-continuation `goalLease` enforcement. Explicit absolute paths/cwds outside a registered or active project can dispatch without asking; relative traversal remains invalid. The trusted authorization travels out-of-band and lnwjud does not forge `userConfirmed: true`.
+While enabled, every call is marked `FULL BYPASS ON` and audited as `authorizationMode: full_bypass`. lnwjud skips the intended application authorization gates: always-confirm prompts for supported tools, chat confirmation, native host approval, profile and command policy, Active Project and allowed/Strict Roots, and protected-path policy. **It does not bypass durable rolling-goal ownership.** When a live scheduled-continuation fence exists for the workspace, mutating calls still require the current `goalLease`; missing, stale, expired, generation-mismatched, or past-handoff proof fails before the mutation handler runs. Explicit absolute paths/cwds outside a registered or active project can dispatch without asking only when no live rolling-goal fence requires ownership proof; relative traversal remains invalid. The trusted authorization travels out-of-band and lnwjud does not forge `userConfirmed: true`.
 
 Full Bypass cannot override input/schema validation, file/process existence, task ownership, Windows ACL/UAC, antivirus/EDR, locks, missing runtimes, API credentials, remote-service or child-MCP policy, network errors, or operating-system limitations. Outside-project changes may be permanent because Recovery Trash/checkpoint pre-images are unavailable there.
 
@@ -663,8 +629,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.52.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.52.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.52.4.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.52.4.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -1096,18 +1062,18 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 79 | `workspace_index_stop` | READ | default | operational | service_dispatch | Stop a workspace watcher after draining all queued path updates. |
 | 80 | `session_handoff` | READ | default | operational | service_dispatch | Create a concise same-chat recovery message from the real phase tracker, current git status/diff, and durable background task IDs. Use only when the user requests a handoff or an unavoidable client/platform interruption requires recovery; never trigger it merely because elapsed time passed. If a tool schema looks stale, Refresh connector first; open a new chat only if refresh does not fix it. |
 | 81 | `verify_incremental` | EXECUTE | default | operational | service_dispatch | Run the detected project typecheck only when the current git status/diff fingerprint changed. Starting a new verification process requires explicit user confirmation in standard mode; trusted Full Bypass skips that lnwjud gate. Returns cache=hit when unchanged and cache=miss after a new verification. Prefer this during iterative edits; use project_test/project_lint/project_build only when that specific verification is needed. For full suites or packaging expected to exceed ~5 minutes, launch a durable shell background task and record its task_id in the tracker. |
-| 82 | `run_goal` | WRITE | default | operational | service_dispatch | Immediate-return durable goal create/resume and lease acquisition. The client should invoke run_goal before the first mutation of any multi-step change that includes verification, build, package, push, release preparation, or is likely to outlive the current turn; if such work is already in progress without an active durable goal, enroll it before the next mutation. Unfinished goals default to scheduledContinuation=auto: the client must automatically load/follow the bundled lnwjud-scheduled-continuation skill, keep exactly one native one-time cloud successor after a real checkpoint, continue useful work without waiting for the user to type continue/ทำต่อ, and stop scheduling only when the goal is terminal or scheduling is explicitly disabled. Native ChatGPT task creation remains host-owned; this tool never claims that a task was created. |
+| 82 | `run_goal` | WRITE | default | operational | service_dispatch | Immediate-return durable goal create/resume and lease acquisition. The client should invoke run_goal before the first mutation of any multi-step change that includes verification, build, package, push, release preparation, or is likely to outlive the current turn; if such work is already in progress without an active durable goal, enroll it before the next mutation. For an active rolling goal whose prior worker died before releasing its lease, run_goal may recover the stale lease early only from trustworthy runtime liveness: no live fenced calls, no running/unknown blocking tasks, unchanged generation/activity, and a sufficiently stale heartbeat; takeover rotates the generation so the old worker cannot mutate later. Unfinished goals default to scheduledContinuation=auto: the client must automatically load/follow the bundled lnwjud-scheduled-continuation skill and maintain exactly one live pending native one-time ChatGPT watchdog with cloud execution requested. Writing another checkpoint never implies creating another native task: reuse the confirmed pending task, retime that same nativeTaskId only when needed, and create a fresh generation only when no live pending watchdog exists, such as after a prior one-time wake has fired and been consumed. Continue useful work without waiting for the user to type continue/ทำต่อ. A truthful native successor create_failed/Resource not found is scheduler transport degradation only: keep the durable goal active and continue the current leased worker rather than terminalizing the work, and never substitute another scheduler. Stop scheduling only when the goal is terminal or scheduling is explicitly disabled. Native ChatGPT task operations remain host-owned through the Scheduled Task surface exposed to the chat; this tool never claims that a task was created and never substitutes browser/DOM automation. |
 | 83 | `get_goal` | READ | default | operational | service_dispatch | Read the latest durable goal snapshot without changing state or returning a lease token. |
-| 84 | `checkpoint_goal` | WRITE | default | operational | service_dispatch | Atomically checkpoint durable goal progress using the current lease and expected revision. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block continuation liveness and are cancelled only when cancelWithGoal=true. For an active goal using the default automatic continuation contract, a successful real checkpoint is the handoff point where the client must ensure exactly one native one-time cloud successor through lnwjud-scheduled-continuation before yielding; never wait for the user to type continue/ทำต่อ. |
-| 85 | `finish_goal` | WRITE | default | operational | service_dispatch | Finish the local durable goal using lease/revision compare-and-swap. It must be called before any completion report, even when scheduling was disabled or the user requested no more successors. If it returns status=active with completionState=pending_native_cleanup, follow the exact scheduledTaskCancellation instruction through the native ChatGPT Scheduled Task host, record the matching native deletion or run receipt, then call finish_goal again. Report completion only after completionState=completed and get_goal is terminal; never treat a model assertion or an unverified host task as completion proof. |
-| 86 | `cancel_goal` | WRITE | default | operational | service_dispatch | Cancel a durable goal independently of any scheduled successor. It records the goal as cancelled, aborts in-flight fenced MCP requests for that goal, and attempts to stop only tracked tasks whose cancelWithGoal policy is true; shared supporting services remain running by default and are reported as taskCancellations status=skipped. An explicitly bound provider that is unavailable or cannot verify termination is reported as failed, so allTasksStopped remains false until the unresolved task is inspected. Inspect requestCancellation, taskCancellations, and allRequestsStopped/allTasksStopped for unresolved work. If scheduledTaskCancellation requests delete_native_task, use cancel_scheduled_continuation separately and complete the exact native ChatGPT host deletion receipt. |
+| 84 | `checkpoint_goal` | WRITE | default | operational | service_dispatch | Atomically checkpoint durable goal progress using the current lease and expected revision. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block continuation liveness and are cancelled only when cancelWithGoal=true. A checkpoint records durable progress only; it does not require a new native Scheduled Task. Before yielding an active automatic-continuation goal, ensure exactly one live pending native ChatGPT watchdog exists—exactly one native one-time ChatGPT successor with cloud execution requested: reuse the confirmed pending task, retime that same nativeTaskId only if the desired due time materially changes, or create one fresh task only when no live pending watchdog exists. A real native task ID is required for confirmed coverage, while execution mode may remain unverified when the host does not expose it. At the actual turn boundary, after confirmed watchdog coverage and the final durable state are recorded, use one final checkpoint with releaseLease=true and then perform no further mutation; this prevents the next worker from being needlessly blocked by the previous 10-minute lease. Never wait for the user to type continue/ทำต่อ. |
+| 85 | `finish_goal` | WRITE | default | operational | service_dispatch | Finish the local durable goal using lease/revision compare-and-swap. It must be called before any completion report, even when scheduling was disabled or the user requested no more successors. status=completed is rejected while any durable plan step is unfinished, durable blockers remain, or blocking tasks remain tracked; scheduler create_failed/Resource not found is not completion evidence and must not be used by itself to terminalize the goal. If it returns status=active with completionState=pending_native_cleanup, follow the exact scheduledTaskCancellation instruction through the native ChatGPT Scheduled Task host and make the exact pending task non-runnable using the strongest operation the host actually exposes: delete when available, otherwise a host-confirmed disable. Record the matching native cancellation or consumed-run receipt, then call finish_goal again. Report completion only after completionState=completed and get_goal is terminal; never treat a model assertion or an unverified host task as completion proof. |
+| 86 | `cancel_goal` | WRITE | default | operational | service_dispatch | Cancel a durable goal independently of any scheduled watchdog. It records the goal as cancelled, aborts in-flight fenced MCP requests for that goal, and attempts to stop only tracked tasks whose cancelWithGoal policy is true; shared supporting services remain running by default and are reported as taskCancellations status=skipped. An explicitly bound provider that is unavailable or cannot verify termination is reported as failed, so allTasksStopped remains false until the unresolved task is inspected. Inspect requestCancellation, taskCancellations, and allRequestsStopped/allTasksStopped for unresolved work. If scheduledTaskCancellation requests make_native_task_non_runnable, use cancel_scheduled_continuation separately, resolve the actual native ChatGPT cleanup operation exposed by the host, and record exact proof that the pending task is non-runnable. |
 | 87 | `list_goals` | READ | default | operational | service_dispatch | List a bounded set of durable goals owned by the current stable MCP client, optionally filtered by workspace/status. |
-| 88 | `prepare_scheduled_continuation` | WRITE | default | operational | service_dispatch | Checkpoint and reserve exactly one current-chat cloud successor with an adaptive delay between 2 and 25 minutes. A prepared reservation is NOT a confirmed successor and is not handoff-ready, but a live worker with a valid goal lease may keep doing fenced work while native-task creation is retried. Record native create failure or uncertainty truthfully; before turn yield or handoff, require a created receipt with the real native task ID plus runsOn=cloud unless the goal is terminal or scheduling was explicitly disabled. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block scheduled-claim liveness and are cancelled only when cancelWithGoal=true. Omitted delay defaults to the fail-safe +2-minute handoff; a healthy current run may explicitly choose a longer 5/10/25-minute watchdog. This workflow never creates or deletes the native task itself. |
-| 89 | `record_scheduled_continuation_receipt` | WRITE | default | operational | service_dispatch | Record host-owned cloud one-time task create, same-task reschedule, consumed-run reconciliation, or cancellation receipts. Created/rescheduled receipts must include the host-reported absolute dueAt; equivalent timezone offsets are compared as the same instant, while real schedule drift is rejected. A consumed receipt requires exact native host run evidence and means only that the one-time task is no longer pending; it does not mean the goal work completed. Cancelled is accepted only with a matching native ChatGPT host deletion receipt; a model assertion is not cancellation proof. The stored native task ID is immutable across reschedules. |
-| 90 | `claim_scheduled_continuation` | WRITE | default | operational | service_dispatch | Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted so native host jitter does not consume the one-time task without handoff. On acquired, the claim transaction atomically reserves a fresh prepared successor, caps the acquired lease at that handoff, and returns the successor plus its scheduleRequest with handoffReady=false/currentWakeMayReturn=false. Create the native task from the returned scheduleRequest, record its real host receipt, and do not call prepare_scheduled_continuation again. An interrupted repeat returns successor_required with that same deterministic successor instead of creating a duplicate. If successor_required includes a scheduleRequest, reuse that exact reservation for a fresh or truthfully failed-without-ID create; if its reason is native_task_receipt_missing, native_task_creation_uncertain, or native_task_id_already_recorded, reconcile exact host metadata first and never create blindly. A stale create_failed reservation may be refreshed to a new +2 due only after truthful absence is known. If native task creation was never confirmed, returns receipt_required with handoffReady=false and the wake must reconcile the exact host receipt before mutating or returning. On an active or uncertain worker collision, claim returns reschedule_required with taskUpdateRequest for the exact same confirmed native one-time cloud task, handoffReady=false, and currentWakeMayReturn=false. Update that same native task to +2 minutes, keep it enabled, record the rescheduled host receipt, and repeat collisions without a retry limit; do not create a replacement task and never count prepared as confirmed. If the outcome is terminal_noop, let the already-firing host task return naturally; do not delete, disable, pause, or reschedule it. Do not mutate the workspace or mark the goal terminal on collision. |
-| 91 | `get_scheduled_continuation` | READ | default | operational | service_dispatch | Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. A healthy current run keeps its adaptive watchdog unless a real turn-yield signal requires same-task +2 handoff. |
-| 92 | `expedite_scheduled_continuation` | WRITE | default | operational | service_dispatch | For an enumerated handoff-risk signal, including a turn that is about to end while the goal is unfinished, move the exact existing cloud one-time native task to now+2 minutes. No replacement task is created. |
-| 93 | `cancel_scheduled_continuation` | WRITE | default | operational | service_dispatch | Cancel one still-pending scheduled successor independently of its goal. Identify it by continuationId or the latest record for a goal, then use the returned cancellation instruction to delete the exact pending native ChatGPT Scheduled Task and record its host receipt. Never treat pausing/disabling an already-fired current wake as deletion or completion proof. This does not cancel the durable goal or stop its running tasks. |
+| 88 | `prepare_scheduled_continuation` | WRITE | default | operational | service_dispatch | Checkpoint durable progress and ensure one live current-chat native ChatGPT watchdog with cloud execution requested. If a confirmed future native watchdog already exists, reuse it when its schedule is still suitable or return a same-nativeTaskId retime request when the latest checkpoint materially changes the desired due time; never create a second live task merely because another checkpoint was written. Create a fresh generation only when no live pending watchdog exists, including after a prior one-time task has fired and become consumed transport identity. If successorDelayMinutes is omitted, the adaptive desired due time is derived from the current durable-goal lease and clamped to 2–25 minutes (between 2 and 25 minutes). A prepared reservation is NOT a confirmed successor and is NOT confirmed coverage. A live worker with a valid goal lease may keep doing fenced work while native confirmation is pending, but confirmation is required before turn yield or handoff. Record native create/update failure or uncertainty truthfully and reconcile uncertain host state before any blind create. On an explicit host-surface lookup/dispatch failure such as Resource not found that proves the operation was not dispatched, re-resolve the current Native Scheduled Task host operation once and retry that exact native operation once; never retry ambiguous possible-success and never switch scheduler providers. Host create/update/cleanup remain native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation or an lnwjud-local scheduler as a substitute. |
+| 89 | `record_scheduled_continuation_receipt` | WRITE | default | operational | service_dispatch | Record host-owned cloud one-time task create, same-task retime, consumed-run reconciliation, or terminal non-runnable receipts. Created/rescheduled receipts must include the host-reported absolute dueAt; equivalent timezone offsets are compared as the same instant, while real schedule drift is rejected. A consumed receipt requires exact native host run evidence and means only that the one-time task is no longer pending; it does not mean the goal work completed. Cancelled is accepted only with matching native ChatGPT host evidence that the exact task is non-runnable: delete may report deleted/not_found and hosts without delete may report an exact disable receipt. A model assertion is never cleanup proof. The stored native task ID is immutable across retimes. |
+| 90 | `claim_scheduled_continuation` | WRITE | default | operational | service_dispatch | Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted as bounded host jitter. A one-time task that has already fired is treated as consumed transport identity and is never relied on as future coverage. On acquired, claim atomically reserves a fresh lease-aligned prepared successor and returns its scheduleRequest. On a live/uncertain worker collision, an expired lease with a running blocking job, or a wake outside the accepted early window, the firing task is retired and successor_required returns one fresh adaptive successor instead of trying to update the consumed native task. Interrupted claims reuse the same deterministic successor. Reconcile missing/uncertain native receipts before any blind create. Truthfully failed creates refresh to the current lease-aligned adaptive due time. reschedule_required is the same-ID retime path only for an exact confirmed watchdog that is still pending; a fired one-time task is consumed and must never use that path. terminal_noop returns naturally. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease. |
+| 91 | `get_scheduled_continuation` | READ | default | operational | service_dispatch | Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. Healthy work keeps its calculated successor deadline; a real handoff-risk signal may adaptively expedite only a still-pending future native task. |
+| 92 | `expedite_scheduled_continuation` | WRITE | default | operational | service_dispatch | For an enumerated handoff-risk signal, adaptively move the exact still-pending cloud one-time native task closer using the current lease, host-jitter safety margin, and deterministic staggering. Normal checkpoint refresh may also reuse or retime that same pending watchdog when its lease-aligned deadline changes; expedite is the explicit risk-driven move-earlier path. A task that has already fired must be retired and replaced by the fresh successor returned from claim. |
+| 93 | `cancel_scheduled_continuation` | WRITE | default | operational | service_dispatch | Cancel one still-pending scheduled successor watchdog independently of its goal. Identify it by continuationId or the latest record for a goal, then follow the returned make_native_task_non_runnable instruction using the strongest native ChatGPT operation the current host actually exposes. Prefer exact deletion when available; if the host has no delete operation, disabling the exact pending task is valid only when the host receipt proves it is non-runnable. Never treat a model assertion, an unverified state, or pausing/disabling an already-fired current wake (which is consumed transport identity) as cleanup proof. This does not cancel the durable goal or stop its running tasks. |
 | 94 | `symbol_search` | READ | default | operational | service_dispatch | Search indexed symbols across the workspace. |
 | 95 | `find_definition` | READ | default | operational | service_dispatch | Find deterministic symbol definitions. |
 | 96 | `find_references` | READ | default | operational | service_dispatch | Find textual and indexed references to a symbol. |

@@ -1,6 +1,6 @@
 # lnwjud tool contract
 
-Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.52.0`.
+Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.52.4`.
 
 This is the compatibility contract for the current MCP surface. The runtime
 advertises the JSON Schema for every input through `tools/list`; the TypeScript

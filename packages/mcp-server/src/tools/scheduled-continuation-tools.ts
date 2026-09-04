@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import {
-  DEFAULT_SUCCESSOR_DELAY_MINUTES,
   MAX_SUCCESSOR_DELAY_MINUTES,
   MIN_SUCCESSOR_DELAY_MINUTES,
 } from '@lnwjud/application';
@@ -35,13 +34,22 @@ const nativeRunReceipt = z.object({
   state: z.literal('consumed'),
   observedAt: z.string().datetime({ offset: true }),
 }).strict();
-const nativeCancellationReceipt = z.object({
-  provider: z.literal('chatgpt_scheduled_task'),
-  operation: z.literal('delete'),
-  nativeTaskId,
-  state: z.enum(['deleted', 'not_found']),
-  observedAt: z.string().datetime({ offset: true }),
-}).strict();
+const nativeCancellationReceipt = z.discriminatedUnion('operation', [
+  z.object({
+    provider: z.literal('chatgpt_scheduled_task'),
+    operation: z.literal('delete'),
+    nativeTaskId,
+    state: z.enum(['deleted', 'not_found']),
+    observedAt: z.string().datetime({ offset: true }),
+  }).strict(),
+  z.object({
+    provider: z.literal('chatgpt_scheduled_task'),
+    operation: z.literal('disable'),
+    nativeTaskId,
+    state: z.literal('disabled'),
+    observedAt: z.string().datetime({ offset: true }),
+  }).strict(),
+]);
 
 const prepareSchema = z.object({
   goalId,
@@ -58,7 +66,7 @@ const prepareSchema = z.object({
   successorDelayMinutes: z.number().int()
     .min(MIN_SUCCESSOR_DELAY_MINUTES)
     .max(MAX_SUCCESSOR_DELAY_MINUTES)
-    .default(DEFAULT_SUCCESSOR_DELAY_MINUTES),
+    .optional(),
   executionPreference: z.literal('cloud').default('cloud'),
 }).strict().refine((value) => value.activeTaskIds !== undefined || value.trackedTasks !== undefined, {
   message: 'activeTaskIds or trackedTasks is required',
@@ -67,7 +75,7 @@ const prepareSchema = z.object({
 });
 
 const receiptSchema = z.discriminatedUnion('outcome', [
-  z.object({ continuationId, expectedVersion: version, outcome: z.literal('created'), nativeTaskId, dueAt, runsOn: z.literal('cloud'), detail }).strict(),
+  z.object({ continuationId, expectedVersion: version, outcome: z.literal('created'), nativeTaskId, dueAt, runsOn: z.enum(['cloud', 'unverified']), detail }).strict(),
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('create_failed'), nativeTaskId: nativeTaskId.optional(), runsOn: z.literal('cloud').optional(), detail }).strict(),
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('create_uncertain'), nativeTaskId: nativeTaskId.optional(), runsOn: z.literal('cloud').optional(), detail }).strict(),
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('rescheduled'), nativeTaskId, dueAt, runsOn: z.literal('cloud').optional(), detail }).strict(),
@@ -122,7 +130,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
   return [
     defineTool({
       name: 'prepare_scheduled_continuation',
-      description: 'Checkpoint and reserve exactly one current-chat cloud successor with an adaptive delay between 2 and 25 minutes. A prepared reservation is NOT a confirmed successor and is not handoff-ready, but a live worker with a valid goal lease may keep doing fenced work while native-task creation is retried. Record native create failure or uncertainty truthfully; before turn yield or handoff, require a created receipt with the real native task ID plus runsOn=cloud unless the goal is terminal or scheduling was explicitly disabled. Use trackedTasks for goal-relative blocking_job/supporting_service roles and explicit provider routing; activeTaskIds remains a legacy compatibility form. Supporting services do not block scheduled-claim liveness and are cancelled only when cancelWithGoal=true. Omitted delay defaults to the fail-safe +2-minute handoff; a healthy current run may explicitly choose a longer 5/10/25-minute watchdog. This workflow never creates or deletes the native task itself.',
+      description: 'Checkpoint durable progress and ensure one live current-chat native ChatGPT watchdog with cloud execution requested. If a confirmed future native watchdog already exists, reuse it when its schedule is still suitable or return a same-nativeTaskId retime request when the latest checkpoint materially changes the desired due time; never create a second live task merely because another checkpoint was written. Create a fresh generation only when no live pending watchdog exists, including after a prior one-time task has fired and become consumed transport identity. If successorDelayMinutes is omitted, the adaptive desired due time is derived from the current durable-goal lease and clamped to 2–25 minutes (between 2 and 25 minutes). A prepared reservation is NOT a confirmed successor and is NOT confirmed coverage. A live worker with a valid goal lease may keep doing fenced work while native confirmation is pending, but confirmation is required before turn yield or handoff. Record native create/update failure or uncertainty truthfully and reconcile uncertain host state before any blind create. On an explicit host-surface lookup/dispatch failure such as Resource not found that proves the operation was not dispatched, re-resolve the current Native Scheduled Task host operation once and retry that exact native operation once; never retry ambiguous possible-success and never switch scheduler providers. Host create/update/cleanup remain native ChatGPT Scheduled Task operations exposed by the current chat; never use browser/DOM automation or an lnwjud-local scheduler as a substitute.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: prepareSchema,
@@ -142,13 +150,13 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
         evidence: input.evidence,
         ...(input.activeTaskIds === undefined ? {} : { activeTaskIds: input.activeTaskIds }),
         ...(input.trackedTasks === undefined ? {} : { trackedTasks: input.trackedTasks }),
-        successorDelayMinutes: input.successorDelayMinutes,
+        ...(input.successorDelayMinutes === undefined ? {} : { successorDelayMinutes: input.successorDelayMinutes }),
         executionPreference: input.executionPreference,
       }) ?? missingService(),
     }),
     defineTool({
       name: 'record_scheduled_continuation_receipt',
-      description: 'Record host-owned cloud one-time task create, same-task reschedule, consumed-run reconciliation, or cancellation receipts. Created/rescheduled receipts must include the host-reported absolute dueAt; equivalent timezone offsets are compared as the same instant, while real schedule drift is rejected. A consumed receipt requires exact native host run evidence and means only that the one-time task is no longer pending; it does not mean the goal work completed. Cancelled is accepted only with a matching native ChatGPT host deletion receipt; a model assertion is not cancellation proof. The stored native task ID is immutable across reschedules.',
+      description: 'Record host-owned cloud one-time task create, same-task retime, consumed-run reconciliation, or terminal non-runnable receipts. Created/rescheduled receipts must include the host-reported absolute dueAt; equivalent timezone offsets are compared as the same instant, while real schedule drift is rejected. A consumed receipt requires exact native host run evidence and means only that the one-time task is no longer pending; it does not mean the goal work completed. Cancelled is accepted only with matching native ChatGPT host evidence that the exact task is non-runnable: delete may report deleted/not_found and hosts without delete may report an exact disable receipt. A model assertion is never cleanup proof. The stored native task ID is immutable across retimes.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: receiptSchema,
@@ -166,7 +174,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'claim_scheduled_continuation',
-      description: 'Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted so native host jitter does not consume the one-time task without handoff. On acquired, the claim transaction atomically reserves a fresh prepared successor, caps the acquired lease at that handoff, and returns the successor plus its scheduleRequest with handoffReady=false/currentWakeMayReturn=false. Create the native task from the returned scheduleRequest, record its real host receipt, and do not call prepare_scheduled_continuation again. An interrupted repeat returns successor_required with that same deterministic successor instead of creating a duplicate. If successor_required includes a scheduleRequest, reuse that exact reservation for a fresh or truthfully failed-without-ID create; if its reason is native_task_receipt_missing, native_task_creation_uncertain, or native_task_id_already_recorded, reconcile exact host metadata first and never create blindly. A stale create_failed reservation may be refreshed to a new +2 due only after truthful absence is known. If native task creation was never confirmed, returns receipt_required with handoffReady=false and the wake must reconcile the exact host receipt before mutating or returning. On an active or uncertain worker collision, claim returns reschedule_required with taskUpdateRequest for the exact same confirmed native one-time cloud task, handoffReady=false, and currentWakeMayReturn=false. Update that same native task to +2 minutes, keep it enabled, record the rescheduled host receipt, and repeat collisions without a retry limit; do not create a replacement task and never count prepared as confirmed. If the outcome is terminal_noop, let the already-firing host task return naturally; do not delete, disable, pause, or reschedule it. Do not mutate the workspace or mark the goal terminal on collision.',
+      description: 'Scheduled-wake entrypoint. Claim before workspace mutation; a confirmed cloud wake up to 120 seconds early is accepted as bounded host jitter. A one-time task that has already fired is treated as consumed transport identity and is never relied on as future coverage. On acquired, claim atomically reserves a fresh lease-aligned prepared successor and returns its scheduleRequest. On a live/uncertain worker collision, an expired lease with a running blocking job, or a wake outside the accepted early window, the firing task is retired and successor_required returns one fresh adaptive successor instead of trying to update the consumed native task. Interrupted claims reuse the same deterministic successor. Reconcile missing/uncertain native receipts before any blind create. Truthfully failed creates refresh to the current lease-aligned adaptive due time. reschedule_required is the same-ID retime path only for an exact confirmed watchdog that is still pending; a fired one-time task is consumed and must never use that path. terminal_noop returns naturally. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: claimSchema,
@@ -174,7 +182,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'get_scheduled_continuation',
-      description: 'Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. A healthy current run keeps its adaptive watchdog unless a real turn-yield signal requires same-task +2 handoff.',
+      description: 'Read one scheduled-continuation snapshot by continuation ID or the latest record for a goal. Healthy work keeps its calculated successor deadline; a real handoff-risk signal may adaptively expedite only a still-pending future native task.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: getSchema,
@@ -182,7 +190,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'expedite_scheduled_continuation',
-      description: 'For an enumerated handoff-risk signal, including a turn that is about to end while the goal is unfinished, move the exact existing cloud one-time native task to now+2 minutes. No replacement task is created.',
+      description: 'For an enumerated handoff-risk signal, adaptively move the exact still-pending cloud one-time native task closer using the current lease, host-jitter safety margin, and deterministic staggering. Normal checkpoint refresh may also reuse or retime that same pending watchdog when its lease-aligned deadline changes; expedite is the explicit risk-driven move-earlier path. A task that has already fired must be retired and replaced by the fresh successor returned from claim.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: expediteSchema,
@@ -190,7 +198,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'cancel_scheduled_continuation',
-      description: 'Cancel one still-pending scheduled successor independently of its goal. Identify it by continuationId or the latest record for a goal, then use the returned cancellation instruction to delete the exact pending native ChatGPT Scheduled Task and record its host receipt. Never treat pausing/disabling an already-fired current wake as deletion or completion proof. This does not cancel the durable goal or stop its running tasks.',
+      description: 'Cancel one still-pending scheduled successor watchdog independently of its goal. Identify it by continuationId or the latest record for a goal, then follow the returned make_native_task_non_runnable instruction using the strongest native ChatGPT operation the current host actually exposes. Prefer exact deletion when available; if the host has no delete operation, disabling the exact pending task is valid only when the host receipt proves it is non-runnable. Never treat a model assertion, an unverified state, or pausing/disabling an already-fired current wake (which is consumed transport identity) as cleanup proof. This does not cancel the durable goal or stop its running tasks.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: cancelSchema,

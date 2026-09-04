@@ -1,0 +1,63 @@
+name: Dev Windows Installer
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: contains(github.event.head_commit.message, '[build-installer]')
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        shell: pwsh
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Verify scheduled continuation contract
+        shell: pwsh
+        run: |
+          corepack pnpm@10.15.0 --filter @lnwjud/mcp-server exec vitest run src/scheduled-continuation-skill-contract.test.ts src/tools/goal-tools.test.ts src/tools/scheduled-continuation-tools.test.ts
+          corepack pnpm@10.15.0 --filter @lnwjud/application exec vitest run src/scheduled-continuation-service.test.ts
+          corepack pnpm@10.15.0 --filter @lnwjud/storage exec vitest run src/scheduled-continuation.integration.test.ts
+
+      - name: Build Windows Setup and Portable
+        shell: pwsh
+        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+
+      - name: Upload dev installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-windows-installer-${{ github.sha }}
+          path: |
+            apps/desktop/dist/installers/*.exe
+            apps/desktop/dist/installers/*.blockmap
+            apps/desktop/dist/installers/latest.yml
+            apps/desktop/dist/installers/portable.yml
+            apps/desktop/dist/installers/SHA256SUMS.txt
+            apps/desktop/dist/installers/PROVENANCE.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

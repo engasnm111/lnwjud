@@ -6,6 +6,7 @@ import {
   ok,
   type GoalCheckpointRecord,
   type GoalEvidence,
+  type GoalLeaseRecoveryEvidence,
   type GoalPlan,
   type GoalPlanStep,
   type GoalRecord,
@@ -18,6 +19,7 @@ import {
   type Result,
   type ScheduledContinuationRecord,
   type ScheduledContinuationRepository,
+  type ScheduledContinuationWorkerLivenessPort,
   type ScheduledTaskCancellationInstruction,
 } from '@lnwjud/domain';
 import type { WorkspaceRepository } from '@lnwjud/workspace';
@@ -159,6 +161,7 @@ export interface RunGoalResult extends Omit<GoalSnapshot, 'workspaceId' | 'objec
   readonly acquired: boolean;
   readonly leaseToken?: string;
   readonly retryAfterSeconds?: number;
+  readonly leaseRecovery?: 'stale_worker_recovered';
 }
 
 export interface ListGoalsResult {
@@ -167,14 +170,16 @@ export interface ListGoalsResult {
 
 export interface GoalContinuationServiceOptions {
   readonly now?: () => Date;
-  readonly scheduledContinuations?: Pick<ScheduledContinuationRepository, 'markGoalFinishedForScheduledContinuation'>;
+  readonly scheduledContinuations?: Pick<ScheduledContinuationRepository, 'markGoalFinishedForScheduledContinuation' | 'getLiveScheduledContinuation'>;
+  readonly workerLiveness?: ScheduledContinuationWorkerLivenessPort;
   readonly taskCancellation?: Pick<GoalTaskCancellationPort, 'cancelForGoal'>;
   readonly requestCancellation?: Pick<GoalRequestCancellationPort, 'cancelForGoal'>;
 }
 
 export class GoalContinuationService {
   private readonly now: () => Date;
-  private readonly scheduledContinuations: Pick<ScheduledContinuationRepository, 'markGoalFinishedForScheduledContinuation'> | undefined;
+  private readonly scheduledContinuations: Pick<ScheduledContinuationRepository, 'markGoalFinishedForScheduledContinuation' | 'getLiveScheduledContinuation'> | undefined;
+  private readonly workerLiveness: ScheduledContinuationWorkerLivenessPort | undefined;
   private readonly taskCancellation: Pick<GoalTaskCancellationPort, 'cancelForGoal'> | undefined;
   private readonly requestCancellation: Pick<GoalRequestCancellationPort, 'cancelForGoal'> | undefined;
 
@@ -185,6 +190,7 @@ export class GoalContinuationService {
   ) {
     this.now = options.now ?? ((): Date => new Date());
     this.scheduledContinuations = options.scheduledContinuations;
+    this.workerLiveness = options.workerLiveness;
     this.taskCancellation = options.taskCancellation;
     this.requestCancellation = options.requestCancellation;
   }
@@ -204,6 +210,37 @@ export class GoalContinuationService {
         ? (existing === null ? { steps: [] } : undefined)
         : normalizePlan(request.plan);
       const leaseSeconds = normalizeLeaseSeconds(request.leaseSeconds);
+      let recoveryEvidence: GoalLeaseRecoveryEvidence | undefined;
+      if (existing?.status === 'active' && existing.leaseExpiresAt !== undefined && this.workerLiveness !== undefined && this.scheduledContinuations !== undefined) {
+        const expiresAtMs = Date.parse(existing.leaseExpiresAt);
+        if (Number.isFinite(expiresAtMs) && expiresAtMs > this.now().getTime()) {
+          try {
+            const liveContinuation = await this.scheduledContinuations.getLiveScheduledContinuation(existing.id);
+            if (liveContinuation !== null) {
+              const trackedTasks = existing.trackedTasks ?? existing.activeTaskIds.map((taskId) => ({
+                taskId,
+                provider: 'legacy_auto' as const,
+                role: 'blocking_job' as const,
+                cancelWithGoal: true as const,
+              }));
+              const observed = await this.workerLiveness.observe(existing.id, trackedTasks);
+              recoveryEvidence = {
+                trustworthy: observed.trustworthy,
+                observedAt: observed.observedAt,
+                leaseGeneration: observed.leaseGeneration,
+                leaseActivitySeq: observed.leaseActivitySeq,
+                liveFencedCallCount: observed.liveFencedCallCount,
+                blockingTaskStates: observed.blockingTaskStates
+                  ?? observed.activeTaskStates?.map((entry) => ({ ...entry, provider: 'legacy_auto' as const }))
+                  ?? [],
+              };
+            }
+          } catch {
+            recoveryEvidence = undefined;
+          }
+        }
+      }
+
       const leaseToken = createLeaseToken();
       const acquired = await this.goals.acquire({
         goalId: randomUUID(),
@@ -215,6 +252,7 @@ export class GoalContinuationService {
         ...(plan === undefined ? {} : { plan }),
         leaseTokenHash: hashLeaseToken(leaseToken),
         leaseSeconds,
+        ...(recoveryEvidence === undefined ? {} : { recoveryEvidence }),
         now: this.now().toISOString(),
       });
       const base = toRunSnapshot(acquired.goal);
@@ -223,6 +261,7 @@ export class GoalContinuationService {
         acquired: acquired.acquired,
         ...(acquired.acquired ? { leaseToken } : {}),
         ...(acquired.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: acquired.retryAfterSeconds }),
+        ...(acquired.leaseRecovery === undefined ? {} : { leaseRecovery: acquired.leaseRecovery }),
       });
     } catch (error: unknown) {
       return this.mapError(error);
@@ -423,7 +462,7 @@ export class GoalContinuationService {
     if (error instanceof GoalStateError) {
       switch (error.reason) {
         case 'owner_mismatch': return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
-        case 'lease_invalid': return err(appError('PERMISSION_DENIED', 'Goal lease is invalid or expired', true));
+        case 'lease_invalid': return err(appError('CONFLICT', `Goal lease is no longer valid (${error.message}); read the latest goal and reacquire or claim the scheduled continuation before retrying`, true));
         case 'conflict': return err(appError('CONFLICT', 'Goal state changed concurrently; read the latest revision and retry', true));
         case 'terminal': return err(appError('CONFLICT', 'Goal is already terminal'));
         case 'not_found': return err(appError('INVALID_INPUT', 'Goal was not found'));
@@ -485,12 +524,13 @@ function cancellationInstruction(continuation: ScheduledContinuationRecord | nul
     && continuation.nativeTaskId !== undefined
   ) {
     return {
-      action: 'delete_native_task',
+      action: 'make_native_task_non_runnable',
       continuationId: continuation.continuationId,
       nativeTaskId: continuation.nativeTaskId,
       provider: 'chatgpt_scheduled_task',
       expectedContinuationVersion: continuation.version,
       receiptRequired: true,
+      requiredEffect: 'non_runnable',
       reason: 'live_task_confirmed',
     };
   }
@@ -624,7 +664,7 @@ function normalizeTaskIds(values: readonly string[] | undefined): readonly strin
 }
 
 function requiresNativeCleanup(instruction: ScheduledTaskCancellationInstruction): boolean {
-  return instruction.action === 'delete_native_task' || instruction.reason === 'native_task_unverified';
+  return instruction.action === 'make_native_task_non_runnable' || instruction.reason === 'native_task_unverified';
 }
 
 function normalizeTrackedTasks(
