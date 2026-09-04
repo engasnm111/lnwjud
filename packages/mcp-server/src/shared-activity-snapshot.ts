@@ -57,6 +57,7 @@ export type ProcessProbeResult =
 
 export interface ProcessProbeOptions {
   readonly runProbe?: (pid: number, timeoutMs: number) => Promise<string>;
+  readonly platform?: NodeJS.Platform;
   readonly timeoutMs?: number;
   readonly attempts?: number;
 }
@@ -272,7 +273,7 @@ export async function currentSharedActivityOwner(): Promise<SharedActivityOwner>
 
 export async function probeProcessStart(pid: number, options: ProcessProbeOptions = {}): Promise<ProcessProbeResult> {
   if (!Number.isInteger(pid) || pid <= 0 || pid > 2_147_483_647) return { state: 'unverifiable', reason: 'invalid_pid' };
-  const runProbe = options.runProbe ?? runWindowsProcessProbe;
+  const runProbe = options.runProbe ?? ((probePid, timeout) => runDefaultProcessProbe(probePid, timeout, options.platform ?? process.platform));
   const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_PROCESS_PROBE_TIMEOUT_MS);
   const attempts = Math.min(3, positiveInteger(options.attempts, DEFAULT_PROCESS_PROBE_ATTEMPTS));
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -481,6 +482,16 @@ function isAlreadyExists(error: unknown): boolean {
   return typeof error === 'object' && error !== null && ['EEXIST', 'EPERM'].includes(String((error as NodeJS.ErrnoException).code ?? ''));
 }
 
+export function processProbeStrategy(platform: NodeJS.Platform): 'windows' | 'posix' {
+  return platform === 'win32' ? 'windows' : 'posix';
+}
+
+async function runDefaultProcessProbe(pid: number, timeoutMs: number, platform: NodeJS.Platform): Promise<string> {
+  return processProbeStrategy(platform) === 'windows'
+    ? runWindowsProcessProbe(pid, timeoutMs)
+    : runPosixProcessProbe(pid, timeoutMs);
+}
+
 async function runWindowsProcessProbe(pid: number, timeoutMs: number): Promise<string> {
   const { stdout } = await execFileAsync('powershell.exe', [
     '-NoProfile',
@@ -489,6 +500,28 @@ async function runWindowsProcessProbe(pid: number, timeoutMs: number): Promise<s
     `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
   ], { windowsHide: true, encoding: 'utf8', timeout: timeoutMs });
   return stdout;
+}
+
+async function runPosixProcessProbe(pid: number, timeoutMs: number): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      timeout: timeoutMs,
+    });
+    const rawStartedAt = stdout.trim();
+    if (rawStartedAt.length === 0) return 'GONE';
+    const startedAt = new Date(rawStartedAt);
+    if (!Number.isFinite(startedAt.getTime())) throw new Error('invalid_posix_process_start');
+    return `LIVE|${startedAt.toISOString()}`;
+  } catch (error: unknown) {
+    if (isPosixProcessGone(error)) return 'GONE';
+    throw error;
+  }
+}
+
+function isPosixProcessGone(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  return error.code === 1 || error.code === '1';
 }
 
 function isProcessProbeTimeout(error: unknown): boolean {

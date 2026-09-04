@@ -10,6 +10,7 @@ export interface McpConfigLoaderOptions {
   readonly workspaceRoot?: string;
   readonly settings: ExtensionsSettings;
   readonly env?: NodeJS.ProcessEnv;
+  readonly platform?: NodeJS.Platform;
 }
 
 export class McpConfigLoader {
@@ -17,7 +18,9 @@ export class McpConfigLoader {
 
   public async discover(): Promise<readonly DiscoveredMcpServer[]> {
     const home = this.options.homeDir ?? os.homedir();
-    const appData = this.options.appDataDir ?? process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+    const environment = this.options.env ?? process.env;
+    const platform = this.options.platform ?? process.platform;
+    const claudeConfigPath = resolveClaudeDesktopConfigPath(platform, home, this.options.appDataDir, environment);
     const discovered: DiscoveredMcpServer[] = [];
 
     await this.loadFile(
@@ -27,7 +30,7 @@ export class McpConfigLoader {
     );
     await this.loadFile(
       discovered,
-      path.join(appData, 'Claude', 'claude_desktop_config.json'),
+      claudeConfigPath,
       'claude-desktop',
     );
 
@@ -68,6 +71,30 @@ export class McpConfigLoader {
       config,
     };
   }
+}
+
+export function resolveClaudeDesktopConfigPath(
+  platform: NodeJS.Platform,
+  homeDir: string,
+  appDataDir: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): string {
+  if (appDataDir !== undefined && appDataDir.trim().length > 0) {
+    const pathApi = platform === 'win32' ? path.win32 : path.posix;
+    return pathApi.join(appDataDir, 'Claude', 'claude_desktop_config.json');
+  }
+  if (platform === 'win32') {
+    const appData = environment.APPDATA ?? path.win32.join(homeDir, 'AppData', 'Roaming');
+    return path.win32.join(appData, 'Claude', 'claude_desktop_config.json');
+  }
+  if (platform === 'darwin') {
+    return path.posix.join(homeDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+  }
+  if (platform === 'linux') {
+    const configHome = environment.XDG_CONFIG_HOME ?? path.posix.join(homeDir, '.config');
+    return path.posix.join(configHome, 'Claude', 'claude_desktop_config.json');
+  }
+  return path.join(homeDir, '.config', 'Claude', 'claude_desktop_config.json');
 }
 
 export function normalizeLaunchConfig(

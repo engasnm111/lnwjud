@@ -949,6 +949,113 @@ describe('TunnelController lifecycle', () => {
     expect(await readTunnelLock(fixture.profileDir)).toBeNull();
   });
 
+  it('terminates only the recorded POSIX process group after verifying the owned child identity', async () => {
+    const child = new EventEmitter() as FakeChild;
+    child.exitCode = null;
+    child.pid = 7659;
+    child.kill = vi.fn(() => true);
+    const startedAt = '2026-08-20T00:00:00.000Z';
+    const terminated: number[] = [];
+    const controller = new TunnelController({
+      platform: 'linux',
+      getClientPath: (): null => null,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => os.tmpdir(),
+      terminateOwnedProcessTree: async (pid) => {
+        terminated.push(pid);
+        child.exitCode = 1;
+        child.emit('exit', 1);
+      },
+      inspectOwnedProcess: async () => terminated.length === 0
+        ? { state: 'live', processStartedAt: startedAt }
+        : { state: 'gone' },
+      isOwnedProcessGroupRunning: () => false,
+    });
+    const internals = controller as unknown as {
+      child: ChildProcess | null;
+      ownedChildStartedAt: string | null;
+      ownedChildProcessGroupId: number | null;
+      killOwnedPosixChild(child: ChildProcess): Promise<void>;
+    };
+    internals.child = child as unknown as ChildProcess;
+    internals.ownedChildStartedAt = startedAt;
+    internals.ownedChildProcessGroupId = child.pid;
+
+    await expect(internals.killOwnedPosixChild(child as unknown as ChildProcess)).resolves.toBeUndefined();
+    expect(terminated).toEqual([7659]);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(internals.child).toBeNull();
+    expect(internals.ownedChildProcessGroupId).toBeNull();
+  });
+
+  it('cleans a surviving POSIX process group after the leader exits before considering reconnect', async () => {
+    const child = new EventEmitter() as FakeChild;
+    child.exitCode = 1;
+    child.pid = 7661;
+    child.kill = vi.fn(() => true);
+    let groupLive = true;
+    const terminated: number[] = [];
+    const controller = new TunnelController({
+      platform: 'linux',
+      getClientPath: (): null => null,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => os.tmpdir(),
+      autoReconnect: () => false,
+      terminateOwnedProcessTree: async (pid) => {
+        terminated.push(pid);
+        groupLive = false;
+      },
+      inspectOwnedProcess: async () => ({ state: 'gone' }),
+      isOwnedProcessGroupRunning: () => groupLive,
+    });
+    const internals = controller as unknown as {
+      child: ChildProcess | null;
+      ownedChildStartedAt: string | null;
+      ownedChildProcessGroupId: number | null;
+      applyUnexpectedExit(code: number | null, clientPath: string, exitedChild?: ChildProcess): Promise<void>;
+      message: string | null;
+    };
+    internals.child = child as unknown as ChildProcess;
+    internals.ownedChildStartedAt = '2026-08-20T00:00:00.000Z';
+    internals.ownedChildProcessGroupId = child.pid;
+
+    await expect(internals.applyUnexpectedExit(1, '/tmp/tunnel-client', child as unknown as ChildProcess)).resolves.toBeUndefined();
+    expect(terminated).toEqual([7661]);
+    expect(groupLive).toBe(false);
+    expect(internals.child).toBeNull();
+    expect(internals.ownedChildProcessGroupId).toBeNull();
+    expect(internals.message).not.toContain('residual POSIX process-group cleanup failed');
+  });
+
+  it('refuses POSIX group termination when process-group ownership was never recorded', async () => {
+    const child = new EventEmitter() as FakeChild;
+    child.exitCode = null;
+    child.pid = 7660;
+    child.kill = vi.fn(() => true);
+    const terminateOwnedProcessTree = vi.fn(async () => undefined);
+    const controller = new TunnelController({
+      platform: 'darwin',
+      getClientPath: (): null => null,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => os.tmpdir(),
+      terminateOwnedProcessTree,
+      inspectOwnedProcess: async () => ({ state: 'live', processStartedAt: '2026-08-20T00:00:00.000Z' }),
+    });
+    const internals = controller as unknown as {
+      child: ChildProcess | null;
+      ownedChildStartedAt: string | null;
+      ownedChildProcessGroupId: number | null;
+      killOwnedPosixChild(child: ChildProcess): Promise<void>;
+    };
+    internals.child = child as unknown as ChildProcess;
+    internals.ownedChildStartedAt = '2026-08-20T00:00:00.000Z';
+    internals.ownedChildProcessGroupId = null;
+
+    await expect(internals.killOwnedPosixChild(child as unknown as ChildProcess)).rejects.toThrow('process-group ownership was not recorded');
+    expect(terminateOwnedProcessTree).not.toHaveBeenCalled();
+    expect(internals.child).toBe(child);
+  });
+
   it('retains ownership when the parent exits but a previously verified descendant is still live', async () => {
     const parentStartedAt = '2026-08-20T00:00:00.000Z';
     const descendantStartedAt = '2026-08-20T00:00:01.000Z';

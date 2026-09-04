@@ -19,29 +19,28 @@ publish:
   releaseType: release
 afterPack: scripts/capture-packaged-runtime-evidence.mjs
 afterSign: scripts/capture-packaged-runtime-evidence.mjs
+# Shared resources are target-native: prepare:runtime-assets replaces runtime-tools
+# with the current platform/architecture bundle before electron-builder runs.
 extraResources:
-  - from: build/capability-bridge/windows-capability-bridge.ps1
-    to: windows-capability-bridge.ps1
-  - from: build/capability-bridge/windows-capability-bridge.sha256
-    to: windows-capability-bridge.sha256
-  - from: build/capability-bridge/windows-capability-bridge.integrity.json
-    to: windows-capability-bridge.integrity.json
-  - from: ../../native/windows-ocr/bin
-    to: windows-ocr
-  - from: build/tunnel-client
-    to: tunnel-client
   - from: build/runtime-tools
     to: runtime-tools
+  - from: build/tunnel-client
+    to: tunnel-client
   - from: ../../.agents/skills/lnwjud-scheduled-continuation
     to: agent-skills/lnwjud-scheduled-continuation
-# Tunnel profile expects these next to lnwjud.exe (not only under resources/).
+# The canonical stdio boundary lives beside the packaged app content root.
+# write-stdio-launcher.mjs emits only the launcher/node filenames for the
+# current OS, so stale opposite-platform files cannot leak into an artifact.
 extraFiles:
-  - from: build/lnwjud-mcp-stdio.cjs
-    to: lnwjud-mcp-stdio.cjs
-  - from: build/lnwjud-mcp-stdio.cmd
-    to: lnwjud-mcp-stdio.cmd
-  - from: build/lnwjud-node.exe
-    to: lnwjud-node.exe
+  - from: build
+    to: .
+    filter:
+      - lnwjud-mcp-stdio.cjs
+      - lnwjud-mcp-stdio.cmd
+      - lnwjud-mcp-stdio
+      - lnwjud-node.exe
+      - lnwjud-node
+      - BUNDLED_NODE.txt
 win:
   icon: build/icon.ico
   target:
@@ -52,6 +51,17 @@ win:
       arch:
         - x64
   artifactName: lnwjud-Setup-${version}.${ext}
+  # Keep Windows-only native helpers out of macOS/Linux packages.
+  extraResources:
+    - from: build/capability-bridge/windows-capability-bridge.ps1
+      to: windows-capability-bridge.ps1
+    - from: build/capability-bridge/windows-capability-bridge.sha256
+      to: windows-capability-bridge.sha256
+    - from: build/capability-bridge/windows-capability-bridge.integrity.json
+      to: windows-capability-bridge.integrity.json
+    - from: ../../native/windows-ocr/bin
+      to: windows-ocr
+
   # Keep the branded icon embedded in lnwjud.exe for Windows shortcuts and taskbar.
   signAndEditExecutable: true
 nsis:

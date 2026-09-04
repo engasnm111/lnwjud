@@ -87,11 +87,12 @@ import {
   serializeStringRecordSetting,
   loadCheckpointEncryptionKey,
   type DestructiveAutoApprovalPolicy,
+  type SecretStore,
 } from '@lnwjud/shared';
 import { AesGcmCheckpointCipher, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupSummary } from '@lnwjud/storage';
 import { SqliteGoalRepository } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
-import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
+import { isMachineWideRoot, SecretPolicy, workspaceRootComparisonKey, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
 import {
   type AddWorkspaceRequest,
   type BackupSummary as IpcBackupSummary,
@@ -162,6 +163,7 @@ import { TunnelAuthCoordinator } from './tunnel-auth-coordinator.js';
 import { OAuthTunnelAuthProvider, type TunnelOAuthProvisioningBackend } from './tunnel-oauth-provider.js';
 import { TunnelOAuthLoginManager } from './tunnel-oauth-login-manager.js';
 import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
+import { LegacyDpapiSecretStore } from './legacy-dpapi-secret-store.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
@@ -198,6 +200,8 @@ export interface DesktopRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
+  readonly checkpointEncryptionKey?: Buffer;
+  readonly secretStore?: SecretStore;
   /** Injectable only when an officially supported Tunnel OAuth provisioning contract exists. */
   readonly tunnelOAuthBackend?: TunnelOAuthProvisioningBackend;
 }
@@ -221,8 +225,8 @@ export async function autoStartPersistentTunnel(
   const stopped = await tunnelController.reconcileStoppedRuntime();
   if (stopped !== null) return stopped;
   const status = await tunnelController.status();
-  const runtimeCredentialAvailable = status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey;
-  if (!autoReconnect || !status.profileExists || !runtimeCredentialAvailable || status.clientPath === null) return status;
+  const authCanProvisionCredential = status.authReady ?? status.runtimeCredentialAvailable ?? status.hasApiKey;
+  if (!autoReconnect || !status.profileExists || !authCanProvisionCredential || status.clientPath === null) return status;
   return tunnelController.startAutomatically();
 }
 
@@ -237,7 +241,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const workLogViewState = new WorkLogViewState(settingsRepository);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
-  const checkpointCipher = new AesGcmCheckpointCipher(loadCheckpointEncryptionKey(dataPath));
+  const checkpointCipher = new AesGcmCheckpointCipher(options.checkpointEncryptionKey ?? loadCheckpointEncryptionKey(dataPath));
   const checkpointRepository = new SqliteCheckpointRepository(database, checkpointCipher);
   const backupService = new SqliteBackupService(database, { backupDirectory, databaseFilename });
   void backupService.ensureRecent().catch((error: unknown) => {
@@ -300,7 +304,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const agentSwarmService = new AgentSwarmService(new SqliteAgentSwarmRepository(database), codexService);
   const capabilityRuntime = createLocalCapabilityRuntime(dataPath, async (): Promise<readonly string[]> => (
     (await workspaceRepository.list())
-      .filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath))
+      .filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath))
       .map((workspace) => workspace.realRootPath)
   ), unrestricted, () => readSettings().capabilityRoots, () => readSettings().shellSynchronousWaitSeconds);
   const taskCancellation = new GoalTaskCancellationService([
@@ -418,13 +422,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       codexToolsEnabled: readSettings().codexToolsEnabled,
     }),
   });
-  const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({
-    secretPath: (): string => legacyTunnelSecretPath(),
+  const tunnelSecretStore = options.secretStore ?? new LegacyDpapiSecretStore({
+    pathForRef: (ref): string => ref.name === 'oauth-session' ? oauthTunnelSessionPath() : legacyTunnelSecretPath(),
   });
+  const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({ secretStore: tunnelSecretStore });
   const oauthTunnelBackend = options.tunnelOAuthBackend ?? unavailableTunnelOAuthBackend();
   const oauthTunnelAuthProvider = new OAuthTunnelAuthProvider({
     backend: oauthTunnelBackend,
-    sessionStore: new TunnelOAuthSessionStore({ filePath: oauthTunnelSessionPath() }),
+    sessionStore: new TunnelOAuthSessionStore({ secretStore: tunnelSecretStore }),
     expectedTunnelId: (): string | null => settingsRepository.get(tunnelIdentitySettingKey),
   });
   const tunnelAuthCoordinator = new TunnelAuthCoordinator(
@@ -482,8 +487,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   async function reconcileTunnelAfterAuthModeChange(): Promise<TunnelStatus> {
     tunnelController.markAuthConfigurationChanged();
     let status = await tunnelController.status();
-    const credentialAvailable = status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey;
-    if (!credentialAvailable) {
+    const authCanProvisionCredential = status.authReady ?? status.runtimeCredentialAvailable ?? status.hasApiKey;
+    if (!authCanProvisionCredential) {
       if (status.state === 'running' || status.state === 'starting') status = await tunnelController.stop();
       return status;
     }
@@ -566,14 +571,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   async function resolveManageableWorkspace(workspaceId: string): Promise<Workspace> {
     const workspace = await workspaceRepository.getAny(workspaceId);
     if (workspace === null) throw new Error('Workspace was not found');
-    if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) {
+    if (isMachineWideRoot(workspace.realRootPath) || isMachineWideRoot(workspace.rootPath)) {
       throw new Error('Machine-root workspaces are managed automatically and cannot be archived or deleted');
     }
     return workspace;
   }
 
   async function resolveActiveProjectWorkspaces(): Promise<readonly Workspace[]> {
-    const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+    const workspaces = (await workspaceService.list()).filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath));
     if (workspaces.length === 0) {
       settingsRepository.delete(activeWorkspaceIdsSettingKey);
       settingsRepository.delete(selectedWorkspaceSettingKey);
@@ -707,32 +712,33 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       : { status: 'warn', detail: 'Windows Sandbox feature is not installed or enabled' };
   };
   const requirementDefinitions: readonly RequirementDefinition[] = [
-    { id: 'os', required: true, summaryKey: 'requirement.os', probe: async () => ({ status: process.platform === 'win32' && process.arch === 'x64' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
+    { id: 'os', required: true, summaryKey: 'requirement.os', probe: async () => ({ status: isTierOneDesktopTarget(process.platform, process.arch) ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
     { id: 'database', required: true, summaryKey: 'requirement.database', probe: async () => ({ status: 'pass', detail: 'SQLite database ready' }) },
     { id: 'mcp-port', required: true, summaryKey: 'requirement.mcp_port', probe: () => requirementProbeFromDoctor(() => checkConfiguredMcpPort(mcpLifecycle.status(), mcpPort)) },
     { id: 'platform_windows', required: false, summaryKey: 'requirement.platform_windows', probe: async () => ({ status: process.platform === 'win32' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
-    { id: 'registered_workspace', required: false, summaryKey: 'requirement.registered_workspace', remediationId: 'add_project', probe: async () => ({ status: (await workspaceService.list()).some((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath)) ? 'pass' : 'fail' }) },
+    { id: 'platform_windows_or_macos', required: false, summaryKey: 'requirement.platform_windows_or_macos', probe: async () => ({ status: process.platform === 'win32' || process.platform === 'darwin' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
+    { id: 'registered_workspace', required: false, summaryKey: 'requirement.registered_workspace', remediationId: 'add_project', probe: async () => ({ status: (await workspaceService.list()).some((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath)) ? 'pass' : 'fail' }) },
     { id: 'active_project', required: false, summaryKey: 'requirement.active_project', remediationId: 'add_project', probe: async () => ({ status: (await resolveActiveProjectWorkspaces()).length > 0 ? 'pass' : 'fail' }) },
     { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
     { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
     { id: 'codex_runtime', required: false, summaryKey: 'requirement.codex_runtime', remediationId: 'configure_codex', probe: () => requirementProbeFromDoctor(() => checkCodex(codexDiscovery)) },
-    { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', probe: () => capabilityRequirement('wsl_exec') },
+    { id: 'wsl_runtime', required: false, summaryKey: 'requirement.wsl_runtime', remediationId: 'configure_wsl', platforms: ['win32'], probe: () => capabilityRequirement('wsl_exec') },
     { id: 'local_mcp_listener', required: true, summaryKey: 'requirement.local_mcp_listener', probe: async () => ({ status: mcpLifecycle.status().running ? 'pass' : 'fail', detail: mcpLifecycle.status().url ?? 'Desktop MCP listener is stopped' }) },
     { id: 'browser_cdp', required: false, summaryKey: 'requirement.browser_cdp', remediationId: 'configure_browser_cdp', probe: () => capabilityRequirement('dom_cdp') },
-    { id: 'windows_ui_automation', required: false, summaryKey: 'requirement.windows_ui_automation', probe: () => capabilityRequirement('accessibility') },
-    { id: 'windows_input', required: false, summaryKey: 'requirement.windows_input', probe: () => capabilityRequirement('input_event') },
-    { id: 'windows_window', required: false, summaryKey: 'requirement.windows_window', probe: () => capabilityRequirement('window') },
-    { id: 'windows_ocr', required: false, summaryKey: 'requirement.windows_ocr', probe: () => capabilityRequirement('vision') },
-    { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', probe: () => capabilityRequirement('office') },
+    { id: 'windows_ui_automation', required: false, summaryKey: 'requirement.windows_ui_automation', platforms: ['win32'], probe: () => capabilityRequirement('accessibility') },
+    { id: 'windows_input', required: false, summaryKey: 'requirement.windows_input', platforms: ['win32'], probe: () => capabilityRequirement('input_event') },
+    { id: 'windows_window', required: false, summaryKey: 'requirement.windows_window', platforms: ['win32'], probe: () => capabilityRequirement('window') },
+    { id: 'windows_ocr', required: false, summaryKey: 'requirement.windows_ocr', platforms: ['win32'], probe: () => capabilityRequirement('vision') },
+    { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', platforms: ['win32'], probe: () => capabilityRequirement('office') },
     { id: 'network_access', required: false, summaryKey: 'requirement.network_access', probe: () => capabilityRequirement('web_fetch') },
-    { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
+    { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', platforms: ['win32', 'darwin'], probe: () => capabilityRequirement('scheduler') },
     { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
     { id: 'remote_mcp_ngrok', required: false, summaryKey: 'requirement.remote_mcp_ngrok', probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => { const status = await remoteMcpController.status(); return status.state === 'running' && status.publicMcpUrl !== null ? { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` } : { status: 'warn', detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed') }; } },
     { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); return !listed.ok ? { status: 'unknown', detail: listed.error.message } : { status: listed.value.servers.some((server) => server.enabled && server.connected) ? 'pass' : 'warn', detail: `${listed.value.servers.length} external MCP server(s) discovered` }; } },
     { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
     { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
     { id: 'database_target', required: false, summaryKey: 'requirement.database_target', remediationId: 'configure_database_target', probe: async () => ({ status: 'pass', detail: 'Input-dependent: provide a read-only SQLite target inside a registered workspace for each call' }) },
-    { id: 'windows_sandbox', required: false, summaryKey: 'requirement.windows_sandbox', remediationId: 'configure_windows_sandbox', probe: windowsSandboxRequirement },
+    { id: 'windows_sandbox', required: false, summaryKey: 'requirement.windows_sandbox', remediationId: 'configure_windows_sandbox', platforms: ['win32'], probe: windowsSandboxRequirement },
     { id: 'browser_event_stream', required: false, summaryKey: 'requirement.browser_event_stream', remediationId: 'configure_browser_events', probe: async () => ({ status: 'pass', detail: 'Input-dependent: console/network event retention is established for the selected live CDP tab at call time' }) },
     { id: 'feature_delivery', required: false, summaryKey: 'requirement.feature_delivery', probe: async () => ({ status: 'pass', detail: 'Delivery state comes from the canonical upgrade catalog' }) },
   ];
@@ -777,7 +783,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 
   async function selectWorkspaceOnly(workspaceId: string): Promise<WorkspaceSummary> {
     const workspace = await resolveWorkspaceOrThrow(workspaceId);
-    if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
+    if (isMachineWideRoot(workspace.realRootPath) || isMachineWideRoot(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
     await activateWorkspace(workspaceId);
     settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
     await resolveActiveProjectWorkspaces();
@@ -1069,7 +1075,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const clientPath = await tunnelController.replaceClientPath(request.clientPath);
       if (readSettings().tunnelAutoReconnect) {
         const status = await tunnelController.status();
-        if (status.profileExists && (status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey)) await tunnelController.startAutomatically();
+        if (status.profileExists && (status.authReady ?? status.runtimeCredentialAvailable ?? status.hasApiKey)) await tunnelController.startAutomatically();
       }
       return { clientPath };
     },
@@ -1181,19 +1187,20 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
       const existing = await workspaceService.list();
       const resolvedRoot = path.resolve(rootPath);
-      const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedRoot.toLowerCase());
-      if (matched !== undefined && !isDriveRoot(matched.realRootPath) && !isDriveRoot(matched.rootPath)) {
+      const resolvedRootKey = workspaceRootComparisonKey(resolvedRoot);
+      const matched = existing.find((workspace) => workspaceRootComparisonKey(workspace.realRootPath) === resolvedRootKey);
+      if (matched !== undefined && !isMachineWideRoot(matched.realRootPath) && !isMachineWideRoot(matched.rootPath)) {
         settingsRepository.set(selectedWorkspaceSettingKey, matched.id);
         await activateWorkspace(matched.id);
         return matched.id;
       }
-      const projects = existing.filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+      const projects = existing.filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath));
       const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
       if (selectedId !== null) {
         const selected = projects.find((workspace) => workspace.id === selectedId);
         if (selected !== undefined) { await activateWorkspace(selected.id); return selected.id; }
       }
-      if (!isDriveRoot(resolvedRoot)) {
+      if (!isMachineWideRoot(resolvedRoot)) {
         const displayName = path.basename(resolvedRoot) || 'Workspace';
         const added = unwrap(await workspaceService.add(displayName, resolvedRoot), 'Workspace could not be added');
         settingsRepository.set(selectedWorkspaceSettingKey, added.id);
@@ -1264,7 +1271,7 @@ async function resolveSelectedWorkspace(
   workspaceService: WorkspaceService,
   settingsRepository: SqliteSettingsRepository,
 ): Promise<Workspace | null> {
-  const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+  const workspaces = (await workspaceService.list()).filter((workspace) => !isMachineWideRoot(workspace.realRootPath) && !isMachineWideRoot(workspace.rootPath));
   if (workspaces.length === 0) return null;
   const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
   const selected = selectedId === null ? undefined : workspaces.find((workspace) => workspace.id === selectedId);
@@ -1326,12 +1333,12 @@ function toWorkspaceSummary(workspace: Workspace): WorkspaceSummary {
     realRootPath: workspace.realRootPath,
     createdAt: workspace.createdAt,
     archivedAt: workspace.archivedAt ?? null,
-    kind: isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath) ? 'machine_root' : 'project',
+    kind: isMachineWideRoot(workspace.realRootPath) || isMachineWideRoot(workspace.rootPath) ? 'machine_root' : 'project',
   };
 }
 
 function isGeneratedAutoMachineRoot(workspace: Workspace): boolean {
-  return isDriveRoot(workspace.rootPath) && /^Local Disk [A-Z]:$/i.test(workspace.displayName.trim());
+  return isMachineWideRoot(workspace.rootPath) && /^Local Disk [A-Z]:$/i.test(workspace.displayName.trim());
 }
 
 async function buildGitSummary(
@@ -1443,6 +1450,12 @@ function toInFlightItem(entry: { callId: string; toolName: string; startedAt: st
 function deriveAgentState(running: boolean, inFlightCount: number): AgentState {
   if (!running) return 'stopped';
   return inFlightCount > 0 ? 'busy' : 'idle';
+}
+
+export function isTierOneDesktopTarget(platform: NodeJS.Platform, arch: string): boolean {
+  return platform === 'win32'
+    ? arch === 'x64'
+    : (platform === 'darwin' || platform === 'linux') && (arch === 'x64' || arch === 'arm64');
 }
 
 function buildConnectionModes(input: {

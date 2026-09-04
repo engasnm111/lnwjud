@@ -1,12 +1,20 @@
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { capabilityToolNames, type CapabilityToolName } from './index.js';
-import { capabilityDescriptors } from './capability-descriptors.js';
+import { capabilityDescriptors, capabilitySupportsPlatform, type CapabilityDescriptor } from './capability-descriptors.js';
 import type { CapabilityBackend } from './local-capability-service.js';
 
 interface HealthCapabilityOptions {
   readonly platform?: NodeJS.Platform;
   readonly domCdp?: CapabilityBackend;
   readonly accessibility?: CapabilityBackend;
+  readonly inputEvent?: CapabilityBackend;
+  readonly vision?: CapabilityBackend;
+  readonly window?: CapabilityBackend;
+  readonly systemInfo?: CapabilityBackend;
+  readonly notification?: CapabilityBackend;
+  readonly fileDialog?: CapabilityBackend;
+  readonly clipboard?: CapabilityBackend;
+  readonly scheduler?: CapabilityBackend;
   readonly wslExec?: CapabilityBackend;
   readonly wslFs?: CapabilityBackend;
 }
@@ -15,6 +23,14 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   private readonly platform: NodeJS.Platform;
   private readonly domCdp: CapabilityBackend | undefined;
   private readonly accessibility: CapabilityBackend | undefined;
+  private readonly inputEvent: CapabilityBackend | undefined;
+  private readonly vision: CapabilityBackend | undefined;
+  private readonly window: CapabilityBackend | undefined;
+  private readonly systemInfo: CapabilityBackend | undefined;
+  private readonly notification: CapabilityBackend | undefined;
+  private readonly fileDialog: CapabilityBackend | undefined;
+  private readonly clipboard: CapabilityBackend | undefined;
+  private readonly scheduler: CapabilityBackend | undefined;
   private readonly wslExec: CapabilityBackend | undefined;
   private readonly wslFs: CapabilityBackend | undefined;
 
@@ -22,6 +38,14 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     this.platform = options.platform ?? process.platform;
     this.domCdp = options.domCdp;
     this.accessibility = options.accessibility;
+    this.inputEvent = options.inputEvent;
+    this.vision = options.vision;
+    this.window = options.window;
+    this.systemInfo = options.systemInfo;
+    this.notification = options.notification;
+    this.fileDialog = options.fileDialog;
+    this.clipboard = options.clipboard;
+    this.scheduler = options.scheduler;
     this.wslExec = options.wslExec;
     this.wslFs = options.wslFs;
   }
@@ -41,24 +65,62 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   }
 
   private async check(tool: CapabilityToolName): Promise<Record<string, unknown>> {
-    if (tool === 'shell' || tool === 'health' || tool === 'web_fetch' || tool === 'scheduler') return this.describe(tool, { available: true, ready: true, local: true });
-    if (tool === 'system_info' || tool === 'notification' || tool === 'file_dialog' || tool === 'clipboard'
-      || tool === 'audio' || tool === 'screen_record' || tool === 'office') {
-      return this.describe(tool, { available: this.platform === 'win32', ready: this.platform === 'win32', local: true });
+    const descriptor = this.descriptor(tool);
+    if (descriptor !== undefined && !capabilitySupportsPlatform(descriptor, this.platform)) {
+      return this.describe(tool, {
+        available: false,
+        ready: false,
+        applicable: false,
+        local: true,
+        reason: `Not applicable on ${this.platform}`,
+      });
     }
-    if (tool === 'input_event' || tool === 'vision' || tool === 'window') return this.describe(tool, { available: this.platform === 'win32', ready: this.platform === 'win32', local: true });
+
+    if (tool === 'shell' || tool === 'health' || tool === 'web_fetch') {
+      return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
+    if (tool === 'system_info') return this.describe(tool, await this.checkDelegated(this.systemInfo, { operation: 'os' }));
+    if (tool === 'notification') return this.describe(tool, await this.checkDelegated(this.notification, {
+      action: 'show', title: 'lnwjud', message: 'health-check', dry_run: true,
+    }));
+    if (tool === 'file_dialog') return this.describe(tool, await this.checkDelegated(this.fileDialog, { action: 'open', dry_run: true }));
+    if (tool === 'clipboard') return this.describe(tool, await this.checkDelegated(this.clipboard, { action: 'get_text', dry_run: true }));
+    if (tool === 'input_event') {
+      return this.platform === 'linux'
+        ? this.describe(tool, await this.checkDelegated(this.inputEvent, { action: 'status' }))
+        : this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
+    if (tool === 'vision') {
+      return this.platform === 'linux'
+        ? this.describe(tool, await this.checkDelegated(this.vision, { action: 'status' }))
+        : this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
+    if (tool === 'window') {
+      return this.platform === 'linux'
+        ? this.describe(tool, await this.checkDelegated(this.window, { action: 'status' }))
+        : this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
+    if (tool === 'audio' || tool === 'screen_record' || tool === 'office') {
+      return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
+    }
     if (tool === 'dom_cdp') return this.describe(tool, await this.checkDelegated(this.domCdp, { action: 'status' }));
+    if (tool === 'scheduler') return this.describe(tool, await this.checkDelegated(this.scheduler, { action: 'list' }));
     if (tool === 'wsl_exec') return this.describe(tool, await this.checkDelegated(this.wslExec, { operation: 'status' }));
     if (tool === 'wsl_fs') return this.describe(tool, await this.checkDelegated(this.wslFs, { operation: 'status' }));
     return this.describe(tool, await this.checkDelegated(this.accessibility, { action: 'status' }));
   }
 
+  private descriptor(tool: CapabilityToolName): CapabilityDescriptor | undefined {
+    return capabilityDescriptors.find((candidate) => candidate.name === tool);
+  }
+
   private describe(tool: CapabilityToolName, value: Record<string, unknown>): Record<string, unknown> {
-    const descriptor = capabilityDescriptors.find((candidate) => candidate.name === tool);
+    const descriptor = this.descriptor(tool);
     return descriptor === undefined
       ? value
       : {
         availability: descriptor.availability,
+        platformPolicy: descriptor.platformPolicy,
         requirements: descriptor.requirements,
         permission: descriptor.permission,
         supportsCancel: descriptor.supportsCancel,
@@ -69,11 +131,11 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   }
 
   private async checkDelegated(backend: CapabilityBackend | undefined, input: unknown): Promise<Record<string, unknown>> {
-    if (backend === undefined) return { available: false, ready: false, local: true, reason: 'Backend is not configured' };
+    if (backend === undefined) return { available: false, ready: false, applicable: true, local: true, reason: 'Backend is not configured' };
     const result = await backend.execute(input);
-    if (!result.ok) return { available: false, ready: false, local: true, reason: result.error.message };
+    if (!result.ok) return { available: false, ready: false, applicable: true, local: true, reason: result.error.message };
     const value = isRecord(result.value) ? result.value : {};
-    return { available: value.available !== false, ready: value.ready !== false, local: true, ...value };
+    return { available: value.available !== false, ready: value.ready !== false, applicable: true, local: true, ...value };
   }
 }
 

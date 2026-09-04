@@ -1,8 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-
-export interface ProcessTreeTerminator {
-  stop(child: ChildProcess, pid: number): Promise<void>;
-}
+import type { ProcessTreeTerminator } from './process-tree.js';
 
 export interface WindowsProcessTreeOptions {
   readonly platform?: NodeJS.Platform;

@@ -26,8 +26,14 @@ import { AuditService, decodeActivityTargetReference } from '@lnwjud/audit';
 import {
   BrowserCdpBackend,
   HealthCapabilityBackend,
+  LinuxNativeCapabilityBackend,
+  detectLinuxSessionProfile,
   LocalCapabilityService,
+  MacOsCommandCapabilityBridge,
+  MacOsNativeCapabilityBackend,
+  MacOsSchedulerCapabilityBackend,
   NodeBrowserCdpProtocol,
+  NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
   SchedulerCapabilityBackend,
   ShellCapabilityBackend,
@@ -61,7 +67,7 @@ import {
   SqliteSettingsRepository,
   SqliteWorkspaceRepository,
 } from '@lnwjud/storage';
-import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { isMachineWideRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
 import { StrictWorkspaceRepository } from './strict-workspace-repository.js';
 
 export interface StdioMcpRuntime {
@@ -154,7 +160,7 @@ export function createStdioMcpRuntime(
   const capabilityRuntime = createStdioCapabilityService(dataPath, workspace.realRootPath, async () => {
     const listed = await workspaceRepository.list();
     const roots = listed
-      .filter((entry) => !isDriveRoot(entry.realRootPath) && !isDriveRoot(entry.rootPath))
+      .filter((entry) => !isMachineWideRoot(entry.realRootPath) && !isMachineWideRoot(entry.rootPath))
       .map((entry) => entry.realRootPath);
     if (roots.length === 0) return [workspace.realRootPath];
     return roots;
@@ -331,14 +337,27 @@ function createStdioCapabilityService(
     ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
   });
   const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
-  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
-  const ocrHelperPath = windowsOcrHelperPath();
+  const linuxSessionProfile = process.platform === 'linux' ? detectLinuxSessionProfile({ platform: process.platform }) : undefined;
+  const accessibilityBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('accessibility', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
+  const inputEventBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('input_event', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('input_event', windowsBridge);
+  const nativeVisionBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('vision', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('vision', windowsBridge);
+  const ocrHelperPath = process.platform === 'win32' ? windowsOcrHelperPath() : undefined;
   const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath });
-  const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-    platform: process.platform,
-    ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
-  }));
+  const visionBackend = process.platform === 'linux'
+    ? nativeVisionBackend
+    : new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
+      platform: process.platform,
+      ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
+    }));
+  const windowBackend = process.platform === 'linux' && linuxSessionProfile !== undefined
+    ? new LinuxNativeCapabilityBackend('window', { platform: process.platform, sessionProfile: linuxSessionProfile })
+    : new WindowsNativeCapabilityBackend('window', windowsBridge);
   const wslAvailabilityProbe = async (): Promise<Result<unknown>> => {
     const probeRoots = await capabilityRootsProvider();
     const result = await shellBackend.execute({ operation: 'run', executable: 'wsl.exe', arguments: ['--status'], cwd: probeRoots[0] ?? dataPath, execution: 'foreground', timeout_seconds: 5, max_output_bytes: 32 * 1024, userConfirmed: false });
@@ -360,9 +379,34 @@ function createStdioCapabilityService(
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
   });
+  const schedulerBackend = process.platform === 'darwin'
+    ? new MacOsSchedulerCapabilityBackend({ platform: process.platform })
+    : new SchedulerCapabilityBackend({ platform: process.platform });
+  const systemInfoBackend = process.platform === 'win32'
+    ? new WindowsNativeCapabilityBackend('system_info', windowsBridge)
+    : new NodeSystemInfoCapabilityBackend({ platform: process.platform });
+  const macOsBridge = process.platform === 'darwin' ? new MacOsCommandCapabilityBridge(process.platform) : undefined;
+  const notificationBackend = process.platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('notification', macOsBridge, process.platform)
+    : new WindowsNativeCapabilityBackend('notification', windowsBridge);
+  const fileDialogBackend = process.platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('file_dialog', macOsBridge, process.platform)
+    : new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
+  const clipboardBackend = process.platform === 'darwin' && macOsBridge !== undefined
+    ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, process.platform)
+    : new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
   const health = new HealthCapabilityBackend({
+    platform: process.platform,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
+    inputEvent: inputEventBackend,
+    vision: visionBackend,
+    window: windowBackend,
+    systemInfo: systemInfoBackend,
+    notification: notificationBackend,
+    fileDialog: fileDialogBackend,
+    clipboard: clipboardBackend,
+    scheduler: schedulerBackend,
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });
@@ -370,19 +414,19 @@ function createStdioCapabilityService(
     shell: shellBackend,
     domCdp: browserBackend,
     accessibility: accessibilityBackend,
-    inputEvent: new WindowsNativeCapabilityBackend('input_event', windowsBridge),
+    inputEvent: inputEventBackend,
     vision: visionBackend,
-    window: new WindowsNativeCapabilityBackend('window', windowsBridge),
+    window: windowBackend,
     health,
-    systemInfo: new WindowsNativeCapabilityBackend('system_info', windowsBridge),
-    notification: new WindowsNativeCapabilityBackend('notification', windowsBridge),
-    fileDialog: new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
-    clipboard: new WindowsNativeCapabilityBackend('clipboard', windowsBridge),
+    systemInfo: systemInfoBackend,
+    notification: notificationBackend,
+    fileDialog: fileDialogBackend,
+    clipboard: clipboardBackend,
     webFetch: new WebFetchCapabilityBackend(),
     audio: new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions),
     screenRecord: new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions),
     office: new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions),
-    scheduler: new SchedulerCapabilityBackend(),
+    scheduler: schedulerBackend,
     wslExec: wslBackend,
     wslFs: wslFsBackend,
   });

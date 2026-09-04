@@ -4,10 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { PathExecutableResolver, type ExecutableResolver } from './executable-resolver.js';
 import { LogRingBuffer } from './ring-buffer.js';
-import type { ProcessTreeTerminator } from './windows-process-tree.js';
-import { WindowsProcessTree } from './windows-process-tree.js';
+import { createPlatformProcessTree, type ProcessTreeTerminator } from './process-tree.js';
+import { toPlatformSpawnInvocation } from './spawn-invocation.js';
 import type { LogQuery, ManagedProcess, ManagedProcessStart, ManagedProcessState, ProcessLogResult } from './process-types.js';
-import { toWindowsSpawnInvocation } from './windows-spawn.js';
+
 
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_TIMEOUT_MS = 4 * 60 * 60 * 1000;
@@ -21,6 +21,7 @@ interface ManagedRecord {
   readonly spec: ManagedProcessStart;
   readonly startedAt: string;
   readonly logs: LogRingBuffer;
+  readonly processGroupId?: number;
   state: ManagedProcessState;
   finishedAt?: string;
   exitCode?: number;
@@ -37,7 +38,7 @@ export class ProcessManager {
   private readonly records = new Map<string, ManagedRecord>();
 
   public constructor(
-    private readonly terminator: ProcessTreeTerminator = new WindowsProcessTree(),
+    private readonly terminator: ProcessTreeTerminator = createPlatformProcessTree(),
     private readonly executableResolver: ExecutableResolver = new PathExecutableResolver(),
     private readonly maxActiveProcesses: number = DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES,
   ) {}
@@ -57,7 +58,7 @@ export class ProcessManager {
     const resolvedExecutable = await this.executableResolver.resolve(spec.executable);
     if (isAborted(signal)) return cancelledStart();
     if (!resolvedExecutable.ok) return resolvedExecutable;
-    const invocation = toWindowsSpawnInvocation(resolvedExecutable.value, spec.args);
+    const invocation = toPlatformSpawnInvocation(resolvedExecutable.value, spec.args);
     if (!invocation.ok) return invocation;
     if (isAborted(signal)) return cancelledStart();
     const processId = randomUUID();
@@ -66,6 +67,7 @@ export class ProcessManager {
       env: createSafeEnvironment(process.env),
       shell: false,
       windowsHide: true,
+      detached: invocation.value.ownsProcessGroup,
       ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
     });
     const record: ManagedRecord = {
@@ -74,6 +76,7 @@ export class ProcessManager {
       spec,
       startedAt: new Date().toISOString(),
       logs: new LogRingBuffer(),
+      ...(invocation.value.ownsProcessGroup && child.pid !== undefined ? { processGroupId: child.pid } : {}),
       state: 'starting',
     };
     this.records.set(processId, record);
@@ -228,7 +231,7 @@ export class ProcessManager {
       return false;
     }
     try {
-      await this.terminator.stop(record.child, pid);
+      await this.terminator.stop(record.child, pid, record.processGroupId === undefined ? undefined : { processGroupId: record.processGroupId });
       this.finish(record, targetState);
       return true;
     } catch {

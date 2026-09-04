@@ -3,6 +3,7 @@ import { ToolRegistry, upgradeCatalogEntry, type McpToolDefinition } from '@lnwj
 
 export const KNOWN_TOOL_REQUIREMENT_IDS = Object.freeze([
   'platform_windows',
+  'platform_windows_or_macos',
   'registered_workspace',
   'active_project',
   'executable_git',
@@ -46,6 +47,18 @@ const DRY_RUN_TOOLS = new Set([
   'git', 'shell', 'wsl_exec', 'scheduler', 'accessibility', 'input_event', 'window', 'office', 'file_dialog',
   'clipboard', 'dry_run', 'git_worktree_spawn', 'git_worktree_remove', 'project_profile_set', 'docx_merge',
   'self_heal_apply', 'skills_import',
+]);
+
+// These tools still route to Windows-native providers in the current build. Keep
+// their catalog state explicitly unsupported on macOS/Linux until Phases 11-14
+// replace the provider behind each tool with a target-native implementation.
+const CURRENT_WINDOWS_ONLY_TOOLS = new Set([
+  'audio', 'screen_record', 'office', 'office_ppt', 'office_outlook',
+  'inspect_workbook', 'docx_merge', 'wsl_exec', 'wsl_fs',
+]);
+
+const CURRENT_WINDOWS_OR_MACOS_TOOLS = new Set([
+  'notification', 'file_dialog', 'clipboard', 'scheduler',
 ]);
 
 const actor = { clientId: 'desktop-tool-catalog', clientName: 'lnwjud Desktop Tool Catalog' };
@@ -92,6 +105,8 @@ function categoryFor(name: string): ToolCategory {
 
 function requirementsFor(name: string, category: ToolCategory): readonly string[] {
   const ids = new Set<string>();
+  if (CURRENT_WINDOWS_ONLY_TOOLS.has(name)) ids.add('platform_windows');
+  if (CURRENT_WINDOWS_OR_MACOS_TOOLS.has(name)) ids.add('platform_windows_or_macos');
   if (['workspace', 'files', 'search_context', 'git', 'process'].includes(category)) ids.add('registered_workspace');
   if (['files', 'git', 'process'].includes(category) && !/^(read_|search_|git_status$|git_diff$|git_log$|process_list$|process_status$|process_logs$)/.test(name)) ids.add('active_project');
   if (/^git(?:_|$)/.test(name)) ids.add('executable_git');
@@ -119,8 +134,9 @@ function requirementsFor(name: string, category: ToolCategory): readonly string[
   if (name === 'sandbox_exec') ids.add('windows_sandbox');
   if (name === 'network_context' || name === 'console_context') ids.add('browser_event_stream');
   if (/^(web_fetch$|network_context$|mcp_)/.test(name)) ids.add('network_access');
-  if (/^scheduler$/.test(name)) { ids.add('platform_windows'); ids.add('scheduler_runtime'); }
-  if (/^(windows_environment$|service_context$|process_context$|port_context$|registry_context$|event_log_context$|installed_runtime_context$|path_context$|startup_context$|event_watch$|crash_trace$|sandbox_exec$)/.test(name)) ids.add('platform_windows');
+  if (/^scheduler$/.test(name)) { ids.add('platform_windows_or_macos'); ids.add('scheduler_runtime'); }
+  if (/^(port_context$|startup_context$)/.test(name)) ids.add('platform_windows_or_macos');
+  if (/^(windows_environment$|service_context$|registry_context$|event_log_context$|installed_runtime_context$|path_context$|event_watch$|crash_trace$|sandbox_exec$)/.test(name)) ids.add('platform_windows');
   const upgrade = upgradeCatalogEntry(name);
   if (upgrade !== undefined && (upgrade.deliveryState === 'feature_disabled' || upgrade.deliveryState === 'planned')) ids.add('feature_delivery');
   return Object.freeze([...ids]);

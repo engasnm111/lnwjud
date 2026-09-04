@@ -47,4 +47,18 @@ describe('canonical bilingual tool catalog', () => {
     expect(catalogDefinitions.network_context?.requirementIds).toContain('browser_event_stream');
     expect(catalogDefinitions.console_context?.requirementIds).toContain('browser_event_stream');
   });
+
+  it('platform-gates only providers that are actually host-specific', () => {
+    for (const name of ['audio', 'screen_record', 'office', 'wsl_exec']) {
+      expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows');
+    }
+    for (const name of ['notification', 'file_dialog', 'clipboard', 'scheduler', 'port_context', 'startup_context']) {
+      expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows_or_macos');
+      expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows');
+    }
+    for (const name of ['system_info', 'process_context', 'git', 'shell', 'web_fetch', 'inspect_pdf', 'lsp_diagnostics']) {
+      expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows');
+      expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows_or_macos');
+    }
+  });
 });

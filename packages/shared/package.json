@@ -3,6 +3,9 @@
   "version": "4.53.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@lnwjud/platform": "workspace:*"
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",

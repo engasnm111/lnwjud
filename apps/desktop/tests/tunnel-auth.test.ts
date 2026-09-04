@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LegacyApiKeyCredentialProvider } from '../src/main/tunnel-auth.js';
+import { LegacyDpapiSecretStore } from '../src/main/legacy-dpapi-secret-store.js';
 
 const roots: string[] = [];
 
@@ -15,9 +16,11 @@ async function fixture(): Promise<{ readonly root: string; readonly secretPath: 
   roots.push(root);
   const secretPath = path.join(root, 'tunnel-client', 'lnwjud.runtime.secret');
   const provider = new LegacyApiKeyCredentialProvider({
-    secretPath: (): string => secretPath,
-    encryptSecret: async (plainText: string): Promise<string> => `dpapi-fixture:${plainText}`,
-    decryptSecret: async (cipherText: string): Promise<string> => cipherText.replace(/^dpapi-fixture:/, ''),
+    secretStore: new LegacyDpapiSecretStore({
+      pathForRef: (): string => secretPath,
+      encryptSecret: async (plainText: string): Promise<string> => `dpapi-fixture:${plainText}`,
+      decryptSecret: async (cipherText: string): Promise<string> => cipherText.replace(/^dpapi-fixture:/, ''),
+    }),
   });
   return { root, secretPath, provider };
 }
@@ -58,6 +61,31 @@ describe('LegacyApiKeyCredentialProvider', () => {
       authMode: 'legacy_api_key',
       expiresAt: null,
     });
+  });
+
+  it('fails closed on non-Windows when a legacy DPAPI file exists but the provider is unavailable', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-auth-linux-'));
+    roots.push(root);
+    const secretPath = path.join(root, 'tunnel-client', 'lnwjud.runtime.secret');
+    await mkdir(path.dirname(secretPath), { recursive: true });
+    await writeFile(secretPath, 'opaque-windows-dpapi-ciphertext', 'utf8');
+    const store = new LegacyDpapiSecretStore({
+      platform: 'linux',
+      pathForRef: (): string => secretPath,
+    });
+    const provider = new LegacyApiKeyCredentialProvider({ secretStore: store });
+
+    await expect(provider.status()).resolves.toMatchObject({
+      authReady: false,
+      runtimeCredentialAvailable: false,
+      hasLegacyApiKey: false,
+      requiresUserAction: true,
+      message: 'Legacy Windows DPAPI storage is unavailable on this platform',
+    });
+    await expect(provider.getRuntimeCredential()).resolves.toBeNull();
+    await expect(provider.saveLegacyApiKey('sk-will-not-write')).rejects.toThrow('Legacy Windows DPAPI storage is unavailable on this platform');
+    await expect(store.get({ namespace: 'tunnel', name: 'legacy-api-key', version: 1 })).rejects.toThrow('Legacy Windows DPAPI storage is unavailable on this platform');
+    await expect(readFile(secretPath, 'utf8')).resolves.toBe('opaque-windows-dpapi-ciphertext');
   });
 
   it('treats an empty stored secret as unavailable and rejects blank writes', async () => {

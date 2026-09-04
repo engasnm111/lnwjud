@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_EXTENSIONS_SETTINGS } from './types.js';
-import { exclusionReason, McpConfigLoader } from './mcp-config-loader.js';
+import { exclusionReason, McpConfigLoader, resolveClaudeDesktopConfigPath } from './mcp-config-loader.js';
 import { parseExtensionsSettings } from './allowlist.js';
 
 const temporaryRoots: string[] = [];
@@ -61,5 +61,14 @@ describe('McpConfigLoader', () => {
     }));
     expect(settings.disabledServers).toEqual(['playwright']);
     expect(exclusionReason('helper', { command: 'node' })).toBeUndefined();
+  });
+
+  it('resolves platform-native Claude Desktop config locations', () => {
+    expect(resolveClaudeDesktopConfigPath('win32', 'C:\\Users\\ohm', undefined, { APPDATA: 'C:\\Users\\ohm\\AppData\\Roaming' }))
+      .toBe('C:\\Users\\ohm\\AppData\\Roaming\\Claude\\claude_desktop_config.json');
+    expect(resolveClaudeDesktopConfigPath('darwin', '/Users/ohm', undefined, {}))
+      .toBe('/Users/ohm/Library/Application Support/Claude/claude_desktop_config.json');
+    expect(resolveClaudeDesktopConfigPath('linux', '/home/ohm', undefined, { XDG_CONFIG_HOME: '/srv/config' }))
+      .toBe('/srv/config/Claude/claude_desktop_config.json');
   });
 });

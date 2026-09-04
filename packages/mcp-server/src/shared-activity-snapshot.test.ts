@@ -7,6 +7,7 @@ import {
   SharedActivitySnapshotLease,
   parseProcessProbeOutput,
   probeProcessStart,
+  processProbeStrategy,
   readSharedActivitySnapshot,
   sharedActivityLeaseDirectoryPath,
   sharedActivityLeasePath,
@@ -23,6 +24,12 @@ afterEach(async () => {
 });
 
 describe('process start probe output', () => {
+  it('selects the Windows probe only on win32 and POSIX probes on macOS/Linux', () => {
+    expect(processProbeStrategy('win32')).toBe('windows');
+    expect(processProbeStrategy('darwin')).toBe('posix');
+    expect(processProbeStrategy('linux')).toBe('posix');
+  });
+
   it('treats empty stdout as unverifiable instead of proving the process is gone', () => {
     expect(parseProcessProbeOutput('')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
     expect(parseProcessProbeOutput('GONE')).toEqual({ state: 'gone' });

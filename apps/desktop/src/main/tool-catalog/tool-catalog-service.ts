@@ -185,7 +185,7 @@ function computeReadiness(requirements: readonly RequirementResult[], profileDec
       ...(available === undefined ? {} : { available }),
     };
   }
-  if (requirements.some((result) => result.id === 'platform_windows' && result.status === 'fail')) {
+  if (requirements.some((result) => result.id.startsWith('platform_') && result.status === 'fail')) {
     return { readiness: 'unsupported', readinessReason: 'unsupported_platform', deliveryState: 'unsupported', available: false };
   }
   if (requirements.some((result) => result.status === 'unknown')) {
@@ -202,7 +202,7 @@ function computeReadiness(requirements: readonly RequirementResult[], profileDec
 
 function inferRuntimeAvailability(requirements: readonly RequirementResult[]): boolean | undefined {
   if (requirements.some((result) => result.status === 'unknown')) return undefined;
-  if (requirements.some((result) => result.id === 'platform_windows' && result.status === 'fail')) return false;
+  if (requirements.some((result) => result.id.startsWith('platform_') && result.status === 'fail')) return false;
   if (requirements.some((result) => result.id !== 'browser_cdp' && (result.status === 'fail' || result.status === 'warn'))) return false;
   return true;
 }

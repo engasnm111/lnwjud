@@ -10,6 +10,8 @@ export interface RequirementDefinition {
   readonly required: boolean;
   readonly summaryKey: string;
   readonly remediationId?: string;
+  /** Omit for cross-platform requirements. Non-matching platforms are reported as a passing, non-actionable applicability result. */
+  readonly platforms?: readonly NodeJS.Platform[];
   readonly probe: () => Promise<RequirementProbeResult>;
 }
 
@@ -22,16 +24,18 @@ export class RequirementRegistry {
   readonly #timeoutMs: number;
   readonly #ttlMs: number;
   readonly #now: () => Date;
+  readonly #platform: NodeJS.Platform;
   readonly #cache = new Map<string, { readonly result: RequirementSnapshot; readonly expiresAt: number }>();
   readonly #inFlight = new Map<string, Promise<RequirementSnapshot>>();
 
-  public constructor(definitions: readonly RequirementDefinition[], options: { readonly timeoutMs?: number; readonly ttlMs?: number; readonly now?: () => Date } = {}) {
+  public constructor(definitions: readonly RequirementDefinition[], options: { readonly timeoutMs?: number; readonly ttlMs?: number; readonly now?: () => Date; readonly platform?: NodeJS.Platform } = {}) {
     const entries = definitions.map((definition) => [definition.id, definition] as const);
     if (new Set(entries.map(([id]) => id)).size !== entries.length) throw new Error('Duplicate requirement id');
     this.#definitions = new Map(entries);
     this.#timeoutMs = options.timeoutMs ?? 2_000;
     this.#ttlMs = options.ttlMs ?? 30_000;
     this.#now = options.now ?? ((): Date => new Date());
+    this.#platform = options.platform ?? process.platform;
   }
 
   public ids(): readonly string[] { return [...this.#definitions.keys()]; }
@@ -63,6 +67,20 @@ export class RequirementRegistry {
 
   async #run(definition: RequirementDefinition): Promise<RequirementSnapshot> {
     const started = this.#now().getTime();
+    if (definition.platforms !== undefined && !definition.platforms.includes(this.#platform)) {
+      const checkedAt = this.#now().toISOString();
+      const result: RequirementSnapshot = {
+        id: definition.id,
+        status: 'pass',
+        required: definition.required,
+        checkedAt,
+        summaryKey: definition.summaryKey,
+        detail: `Not applicable on ${this.#platform}`,
+        durationMs: Math.max(0, this.#now().getTime() - started),
+      };
+      this.#cache.set(definition.id, { result, expiresAt: Date.parse(checkedAt) + this.#ttlMs });
+      return result;
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeout = new Promise<RequirementProbeResult>((resolve) => {

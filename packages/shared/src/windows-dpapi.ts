@@ -39,7 +39,7 @@ export function loadOrCreateWindowsProtectedKey(filePath: string, byteLength = 3
   mkdirSync(path.dirname(absolutePath), { recursive: true });
   try {
     const stored = readFileSync(absolutePath, 'utf8');
-    const decoded = decodeProtectedKey(stored, byteLength);
+    const decoded = decodeLegacyWindowsProtectedKey(stored, byteLength);
     if (stored.trim().startsWith(KEY_PREFIX_V1)) writeProtectedKeyV2(absolutePath, decoded);
     return decoded;
   } catch (error) {
@@ -53,18 +53,8 @@ export function loadOrCreateWindowsProtectedKey(filePath: string, byteLength = 3
     return generated;
   } catch (error) {
     if (!isAlreadyExists(error)) throw error;
-    return decodeProtectedKey(readFileSync(absolutePath, 'utf8'), byteLength);
+    return decodeLegacyWindowsProtectedKey(readFileSync(absolutePath, 'utf8'), byteLength);
   }
-}
-
-export function loadCheckpointEncryptionKey(dataPath: string): Buffer {
-  const configured = process.env.LNWJUD_CHECKPOINT_KEY_BASE64;
-  if (configured !== undefined && configured.trim().length > 0) {
-    const key = Buffer.from(configured.trim(), 'base64');
-    if (key.byteLength !== 32) throw new Error('LNWJUD_CHECKPOINT_KEY_BASE64 must decode to 32 bytes');
-    return key;
-  }
-  return loadOrCreateWindowsProtectedKey(path.join(dataPath, 'checkpoint-master.key'), 32);
 }
 
 function encodeProtectedKeyV2(key: Buffer): string {
@@ -75,7 +65,7 @@ function writeProtectedKeyV2(filePath: string, key: Buffer): void {
   writeFileSync(filePath, encodeProtectedKeyV2(key), { encoding: 'utf8' });
 }
 
-function decodeProtectedKey(value: string, expectedLength: number): Buffer {
+export function decodeLegacyWindowsProtectedKey(value: string, expectedLength: number): Buffer {
   const trimmed = value.trim();
   let plain: string;
   if (trimmed.startsWith(KEY_PREFIX_V2)) {

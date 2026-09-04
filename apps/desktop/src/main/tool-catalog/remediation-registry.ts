@@ -9,6 +9,15 @@ interface RemediationDefinition {
   readonly actions: readonly RemediationAction[];
 }
 
+const WINDOWS_ONLY_REMEDIATION_IDS = new Set([
+  'configure_windows_sandbox',
+  'configure_wsl',
+  'repair_windows_ui_automation',
+  'repair_windows_input',
+  'repair_windows_window',
+  'repair_windows_ocr',
+]);
+
 const DEFINITIONS: readonly RemediationDefinition[] = [
   remediation(
     'add_project', 'Add a project', 'เพิ่มโปรเจกต์',
@@ -23,8 +32,8 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
     'Git is not available to the lnwjud runtime.',
     'runtime ของ lnwjud ยังหา Git ไม่พบ',
     [{ kind: 'open_official_url', target: 'git_download' }, { kind: 'recheck', requirementIds: ['executable_git'] }],
-    ['Install Git for Windows from the official installer.', 'Make sure git.exe is available to newly started applications.', 'Recheck this item.'],
-    ['ติดตั้ง Git for Windows จากเว็บทางการ', 'ให้ git.exe ใช้งานได้กับโปรแกรมที่เปิดใหม่', 'กลับมากดตรวจใหม่'],
+    ['Install Git from the official download for your operating system.', 'Make sure the git executable is available to newly started applications.', 'Recheck this item.'],
+    ['ติดตั้ง Git จากเว็บทางการสำหรับระบบปฏิบัติการของคุณ', 'ให้คำสั่ง git ใช้งานได้กับโปรแกรมที่เปิดใหม่', 'กลับมากดตรวจใหม่'],
   ),
   remediation(
     'install_ripgrep', 'Install ripgrep', 'ติดตั้ง ripgrep',
@@ -193,7 +202,7 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
 ];
 
 export const OFFICIAL_URL_TARGETS = Object.freeze({
-  git_download: 'https://git-scm.com/download/win',
+  git_download: 'https://git-scm.com/downloads',
   ripgrep_releases: 'https://github.com/BurntSushi/ripgrep/releases',
 } as const);
 
@@ -206,21 +215,44 @@ export const COPY_COMMANDS = Object.freeze({
 
 export class RemediationRegistry {
   readonly #definitions = new Map(DEFINITIONS.map((definition) => [definition.id, definition] as const));
+  readonly #platform: NodeJS.Platform;
 
-  public has(id: string): boolean { return this.#definitions.has(id); }
-  public ids(): readonly string[] { return [...this.#definitions.keys()]; }
+  public constructor(options: { readonly platform?: NodeJS.Platform } = {}) {
+    this.#platform = options.platform ?? process.platform;
+  }
+
+  public has(id: string): boolean { return this.#definitions.has(id) && this.#applicable(id); }
+  public ids(): readonly string[] { return [...this.#definitions.keys()].filter((id) => this.#applicable(id)); }
   public resolve(locale: UiLocale, ids: readonly string[] = this.ids()): readonly ResolvedRemediation[] {
-    return [...new Set(ids)].map((id) => {
+    return [...new Set(ids)].flatMap((id): ResolvedRemediation[] => {
       const definition = this.#definitions.get(id);
       if (definition === undefined) throw new Error(`Unknown remediation id: ${id}`);
-      return {
+      if (!this.#applicable(id)) return [];
+      if (id === 'configure_pdf_provider' && this.#platform !== 'win32') {
+        return [{
+          id,
+          title: locale === 'th' ? 'ตั้งค่า PDF Provider' : 'Configure a PDF provider',
+          explanation: locale === 'th'
+            ? 'เครื่องมือ PDF ต้องมีคำสั่ง pdftotext ที่ติดตั้งในระบบ หรือกำหนดพาธของ provider ที่ใช้งานได้สำหรับระบบปฏิบัติการนี้'
+            : 'PDF tools need a working pdftotext command installed for this operating system, or a configured provider path.',
+          steps: locale === 'th'
+            ? ['ติดตั้ง Poppler/pdftotext ด้วย package manager ที่เหมาะกับระบบของคุณ', 'เปิด Tools → Local Providers แล้วกำหนดพาธ pdftotext หากคำสั่งไม่ได้อยู่ใน PATH', 'กดตรวจใหม่']
+            : ['Install Poppler/pdftotext with the package manager appropriate for your operating system.', 'Open Tools → Local Providers and set the pdftotext path if it is not already on PATH.', 'Recheck the requirement.'],
+          actions: [{ kind: 'open_settings', target: 'tools_local_providers' }, { kind: 'recheck', requirementIds: ['local_pdf_provider'] }],
+        }];
+      }
+      return [{
         id,
         title: definition.title[locale],
         explanation: definition.explanation[locale],
         steps: definition.steps[locale],
         actions: definition.actions,
-      };
+      }];
     });
+  }
+
+  #applicable(id: string): boolean {
+    return this.#platform === 'win32' || !WINDOWS_ONLY_REMEDIATION_IDS.has(id);
   }
 }
 

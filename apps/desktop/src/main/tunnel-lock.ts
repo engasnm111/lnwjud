@@ -5,8 +5,10 @@ import path from 'node:path';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 
 const LOCK_FILE = 'lnwjud.tunnel.lock';
+const MUTEX_FILE = 'lnwjud.tunnel.lock.mutex';
 const LOCK_VERSION = 1;
 const MUTEX_WAIT_MS = 5_000;
+const POSIX_MUTEX_POLL_MS = 25;
 const ISO_UTC_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export interface TunnelLockOwner {
@@ -32,6 +34,7 @@ export interface TunnelLockAlreadyOwned {
 export interface TunnelLockOptions {
   readonly profileDirectory: string;
   readonly owner?: TunnelLockOwner;
+  readonly platform?: NodeJS.Platform;
   readonly inspectProcess?: (pid: number) => Promise<ProcessProbeResult>;
   readonly hooks?: {
     readonly beforePublish?: (temporaryPath: string) => Promise<void>;
@@ -48,12 +51,12 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
   if (!isValidOwner(owner)) throw new Error('Tunnel lock owner metadata is invalid');
   await mkdir(options.profileDirectory, { recursive: true });
 
-  return withTunnelLockCriticalSection(options.profileDirectory, async () => {
+  return withTunnelLockCriticalSection(options.profileDirectory, owner, inspectProcess, options.platform ?? process.platform, async () => {
     const existing = await readLockState(lockPath);
     if (existing.state === 'invalid') throw new Error(`Tunnel lock has invalid owner metadata: ${lockPath}`);
     if (existing.state === 'missing') {
       await publishOwner(lockPath, owner, options.hooks);
-      return acquiredClaim(lockPath, owner, options.hooks);
+      return acquiredClaim(lockPath, owner, inspectProcess, options.platform ?? process.platform, options.hooks);
     }
 
     const probe = await inspectProcess(existing.owner.pid);
@@ -63,7 +66,7 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
     }
 
     await replaceVerifiedStaleOwner(lockPath, existing.owner, owner, options.hooks);
-    return acquiredClaim(lockPath, owner, options.hooks);
+    return acquiredClaim(lockPath, owner, inspectProcess, options.platform ?? process.platform, options.hooks);
   });
 }
 
@@ -123,11 +126,17 @@ async function prepareOwnerRecord(lockPath: string, owner: TunnelLockOwner): Pro
   return temporaryPath;
 }
 
-function acquiredClaim(lockPath: string, owner: TunnelLockOwner, hooks: TunnelLockOptions['hooks']): TunnelLockAcquisition {
+function acquiredClaim(
+  lockPath: string,
+  owner: TunnelLockOwner,
+  inspectProcess: (pid: number) => Promise<ProcessProbeResult>,
+  platform: NodeJS.Platform,
+  hooks: TunnelLockOptions['hooks'],
+): TunnelLockAcquisition {
   return {
     acquired: true,
     owner,
-    release: async (): Promise<boolean> => withTunnelLockCriticalSection(path.dirname(lockPath), () => releaseTunnelLock(lockPath, owner, hooks)),
+    release: async (): Promise<boolean> => withTunnelLockCriticalSection(path.dirname(lockPath), owner, inspectProcess, platform, () => releaseTunnelLock(lockPath, owner, hooks)),
   };
 }
 
@@ -223,7 +232,69 @@ async function currentProcessOwner(): Promise<TunnelLockOwner> {
   return { pid: process.pid, processStartedAt: probe.processStartedAt, acquiredAt: new Date().toISOString() };
 }
 
-async function withTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
+async function withTunnelLockCriticalSection<T>(
+  profileDirectory: string,
+  owner: TunnelLockOwner,
+  inspectProcess: (pid: number) => Promise<ProcessProbeResult>,
+  platform: NodeJS.Platform,
+  action: () => Promise<T>,
+): Promise<T> {
+  if (platform === 'win32') return withWindowsTunnelLockCriticalSection(profileDirectory, action);
+  return withPosixTunnelLockCriticalSection(profileDirectory, owner, inspectProcess, action);
+}
+
+async function withPosixTunnelLockCriticalSection<T>(
+  profileDirectory: string,
+  owner: TunnelLockOwner,
+  inspectProcess: (pid: number) => Promise<ProcessProbeResult>,
+  action: () => Promise<T>,
+): Promise<T> {
+  const mutexPath = path.join(profileDirectory, MUTEX_FILE);
+  const deadline = Date.now() + MUTEX_WAIT_MS;
+  while (true) {
+    try {
+      await publishOwner(mutexPath, owner, undefined);
+      break;
+    } catch (error: unknown) {
+      if (!isAlreadyExists(error)) throw error;
+    }
+
+    const existing = await readLockState(mutexPath);
+    if (existing.state === 'missing') continue;
+    if (existing.state === 'invalid') throw new Error(`Tunnel lock critical section has invalid owner metadata: ${mutexPath}`);
+    const probe = await inspectProcess(existing.owner.pid);
+    if (probe.state === 'unverifiable') throw new Error(`Tunnel lock critical section owner liveness is unverifiable: ${probe.reason}`);
+    if (probe.state === 'live' && probe.processStartedAt === existing.owner.processStartedAt) {
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for the lnwjud tunnel lock critical section');
+      await new Promise((resolve) => setTimeout(resolve, Math.min(POSIX_MUTEX_POLL_MS, Math.max(1, deadline - Date.now()))));
+      continue;
+    }
+
+    try {
+      await replaceVerifiedStaleOwner(mutexPath, existing.owner, owner, undefined);
+      break;
+    } catch (error: unknown) {
+      if (isAlreadyExists(error) || isNotFound(error)) continue;
+      throw error;
+    }
+  }
+
+  let actionFailed = false;
+  let actionError: unknown;
+  let actionResult!: T;
+  try {
+    actionResult = await action();
+  } catch (error: unknown) {
+    actionFailed = true;
+    actionError = error;
+  }
+  const released = await releaseTunnelLock(mutexPath, owner, undefined).catch(() => false);
+  if (actionFailed) throw actionError;
+  if (!released) console.warn('Tunnel lock POSIX critical section cleanup failed after the authoritative action completed');
+  return actionResult;
+}
+
+async function withWindowsTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
   const mutexName = tunnelLockMutexName(profileDirectory);
   const script = [
     "$ErrorActionPreference='Stop'",
