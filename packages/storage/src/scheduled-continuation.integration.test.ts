@@ -1232,6 +1232,155 @@ describe('scheduled continuation repository state machine', () => {
     }
   });
 
+  it('recovers a stale still-valid recurring lease in the current hourly tick without waiting for expiry or another tick', async () => {
+    const database = await openDatabase();
+    const repository = new SqliteGoalRepository(database);
+    try {
+      await acquireGoalLease(repository, '2026-08-27T00:20:00.000Z');
+      const prepared = await repository.prepareScheduledContinuation(prepareRequest(
+        '2026-08-27T00:20:00.000Z',
+        '2026-08-27T00:22:00.000Z',
+        0,
+        'recurring-stale-valid-fp',
+        'continuation-recurring-stale-valid',
+      ));
+      await repository.recordScheduledContinuationReceipt({
+        continuationId: prepared.continuation.continuationId,
+        ownerClientId: 'chatgpt-web-client',
+        expectedVersion: prepared.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-recurring-stale-valid',
+        dueAt: prepared.continuation.dueAt,
+        runsOn: 'cloud',
+        now: '2026-08-27T00:20:05.000Z',
+      });
+      database.connection.prepare(`
+        UPDATE goal_scheduled_continuations
+        SET occurrence = 'interval', interval_minutes = 60
+        WHERE id = ?
+      `).run(prepared.continuation.continuationId);
+      database.connection.prepare('UPDATE goals SET lease_expires_at = ? WHERE id = ?')
+        .run('2026-08-27T01:20:00.000Z', 'goal-1');
+
+      const beforeTick = await repository.getById('goal-1');
+      if (beforeTick === null) throw new Error('goal missing');
+      const claimed = await repository.claimScheduledContinuation({
+        continuationId: prepared.continuation.continuationId,
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:32:00.000Z'),
+        ownerClientId: 'chatgpt-web-client',
+        ownerSessionId: 'session-b',
+        leaseTokenHash: 'lease-hash-b',
+        leaseSeconds: 600,
+        earlyToleranceSeconds: 120,
+        liveness: {
+          trustworthy: true,
+          observedAt: '2026-08-27T00:22:00.000Z',
+          leaseGeneration: beforeTick.leaseGeneration,
+          leaseActivitySeq: beforeTick.leaseActivitySeq,
+          liveFencedCallCount: 0,
+          blockingTaskStates: [],
+        },
+        now: '2026-08-27T00:22:00.000Z',
+      });
+
+      expect(claimed).toMatchObject({
+        outcome: 'recurring_acquired',
+        acquisition: 'orphan_recovered',
+        runKey: 'interval-0',
+        continuation: {
+          continuationId: prepared.continuation.continuationId,
+          occurrence: 'interval',
+          intervalMinutes: 60,
+          status: 'scheduled',
+          nativeTaskId: 'native-recurring-stale-valid',
+        },
+        goal: {
+          leaseGeneration: beforeTick.leaseGeneration + 1,
+          leaseOwnerSessionId: 'session-b',
+        },
+      });
+      expect(claimed.continuation.orphanProbeStartedAt).toBeUndefined();
+      const continuationCount = database.connection.prepare('SELECT COUNT(*) AS count FROM goal_scheduled_continuations WHERE goal_id = ?')
+        .get('goal-1') as { count: number };
+      const runCount = database.connection.prepare('SELECT COUNT(*) AS count FROM goal_scheduled_continuation_runs WHERE continuation_id = ?')
+        .get(prepared.continuation.continuationId) as { count: number };
+      expect(continuationCount.count).toBe(1);
+      expect(runCount.count).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not steal a still-valid lease whose heartbeat is within the bounded stale-recovery grace', async () => {
+    const database = await openDatabase();
+    const repository = new SqliteGoalRepository(database);
+    try {
+      await acquireGoalLease(repository, '2026-08-27T00:20:00.000Z');
+      const prepared = await repository.prepareScheduledContinuation(prepareRequest(
+        '2026-08-27T00:20:00.000Z',
+        '2026-08-27T00:22:00.000Z',
+        0,
+        'recurring-recent-heartbeat-fp',
+        'continuation-recurring-recent-heartbeat',
+      ));
+      await repository.recordScheduledContinuationReceipt({
+        continuationId: prepared.continuation.continuationId,
+        ownerClientId: 'chatgpt-web-client',
+        expectedVersion: prepared.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-recurring-recent-heartbeat',
+        dueAt: prepared.continuation.dueAt,
+        runsOn: 'cloud',
+        now: '2026-08-27T00:20:05.000Z',
+      });
+      database.connection.prepare(`
+        UPDATE goal_scheduled_continuations
+        SET occurrence = 'interval', interval_minutes = 60
+        WHERE id = ?
+      `).run(prepared.continuation.continuationId);
+      database.connection.prepare('UPDATE goals SET lease_heartbeat_at = ?, lease_expires_at = ? WHERE id = ?')
+        .run('2026-08-27T00:21:30.000Z', '2026-08-27T00:31:30.000Z', 'goal-1');
+
+      const beforeTick = await repository.getById('goal-1');
+      if (beforeTick === null) throw new Error('goal missing');
+      const claimed = await repository.claimScheduledContinuation({
+        continuationId: prepared.continuation.continuationId,
+        ...claimSuccessorFields(prepared.continuation.continuationId, '2026-08-27T00:32:00.000Z'),
+        ownerClientId: 'chatgpt-web-client',
+        ownerSessionId: 'session-b',
+        leaseTokenHash: 'lease-hash-b',
+        leaseSeconds: 600,
+        earlyToleranceSeconds: 120,
+        liveness: {
+          trustworthy: true,
+          observedAt: '2026-08-27T00:22:00.000Z',
+          leaseGeneration: beforeTick.leaseGeneration,
+          leaseActivitySeq: beforeTick.leaseActivitySeq,
+          liveFencedCallCount: 0,
+          blockingTaskStates: [],
+        },
+        now: '2026-08-27T00:22:00.000Z',
+      });
+
+      expect(claimed).toMatchObject({
+        outcome: 'worker_busy_noop',
+        runKey: 'interval-0',
+        continuation: {
+          continuationId: prepared.continuation.continuationId,
+          status: 'scheduled',
+          nativeTaskId: 'native-recurring-recent-heartbeat',
+        },
+        goal: {
+          leaseGeneration: beforeTick.leaseGeneration,
+          leaseOwnerSessionId: 'session-a',
+        },
+      });
+      expect(claimed.continuation.orphanProbeStartedAt).toBeUndefined();
+    } finally {
+      database.close();
+    }
+  });
+
   it('returns receipt_required instead of throwing when a prepared continuation has no confirmed native task', async () => {
     const database = await openDatabase();
     const repository = new SqliteGoalRepository(database);

@@ -1127,14 +1127,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       return { outcome: 'already_claimed', continuation, goal };
     }
 
-    const liveness = request.liveness ?? {
-      trustworthy: true,
-      observedAt: request.now,
-      leaseGeneration: goal.leaseGeneration,
-      leaseActivitySeq: goal.leaseActivitySeq,
-      liveFencedCallCount: 0,
-      blockingTaskStates: [],
-    };
+    const liveness = request.liveness;
     if (liveness.leaseGeneration !== goal.leaseGeneration || liveness.leaseActivitySeq !== goal.leaseActivitySeq) {
       throw new GoalStateError('conflict', 'Worker-liveness observation is stale relative to the goal lease');
     }
@@ -1152,17 +1145,6 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     const hasUnknown = !liveness.trustworthy || expectedTaskStates.some((state) => state === 'unknown');
     const hasLiveWorker = liveness.liveFencedCallCount > 0 || expectedTaskStates.some((state) => state === 'running');
     const confirmedInactive = !hasUnknown && !hasLiveWorker && liveness.liveFencedCallCount === 0 && allExpectedInactive;
-
-    const matchingProbe = confirmedInactive
-      && continuation.orphanProbeStartedAt !== undefined
-      && continuation.orphanProbeLeaseGeneration === goal.leaseGeneration
-      && continuation.orphanProbeActivitySeq === goal.leaseActivitySeq;
-    if (matchingProbe) {
-      const probeAgeSeconds = Math.floor((nowMs - parseIso(continuation.orphanProbeStartedAt!, 'orphan probe start')) / 1000);
-      if (probeAgeSeconds >= ORPHAN_PROBE_MIN_SECONDS) {
-        return this.claimRecurringContinuationLease(request, continuation, goal, 'orphan_recovered', runKey);
-      }
-    }
 
     const leaseExpiresMs = goal.leaseExpiresAt === undefined ? undefined : parseIso(goal.leaseExpiresAt, 'lease expiry');
     if (leaseExpiresMs === undefined || leaseExpiresMs <= nowMs) {
@@ -1196,31 +1178,37 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       };
     }
 
-    const nextProbeStartedAt = matchingProbe ? continuation.orphanProbeStartedAt! : request.now;
-    if (!matchingProbe) {
-      const changed = this.database.connection.prepare(`
-        UPDATE goal_scheduled_continuations
-        SET orphan_probe_started_at = ?, orphan_probe_lease_generation = ?, orphan_probe_activity_seq = ?,
-            version = version + 1, updated_at = ?
-        WHERE id = ? AND version = ? AND status = 'scheduled' AND occurrence = 'interval'
-      `).run(
-        nextProbeStartedAt,
-        goal.leaseGeneration,
-        goal.leaseActivitySeq,
-        request.now,
-        continuation.continuationId,
-        continuation.version,
-      );
-      if (Number(changed.changes) !== 1) throw new GoalStateError('conflict', 'Recurring orphan probe lost the continuation compare-and-swap race');
+    const staleRecovery = assessStaleGoalLeaseRecovery(
+      goal,
+      {
+        trustworthy: liveness.trustworthy,
+        observedAt: liveness.observedAt,
+        leaseGeneration: liveness.leaseGeneration,
+        leaseActivitySeq: liveness.leaseActivitySeq,
+        liveFencedCallCount: liveness.liveFencedCallCount,
+        blockingTaskStates: observedBlockingStates,
+      },
+      request.now,
+      true,
+    );
+    if (staleRecovery.recover) {
+      return this.claimRecurringContinuationLease(request, continuation, goal, 'orphan_recovered', runKey);
     }
-    const observedContinuation = this.requireScheduledContinuationById(continuation.continuationId);
-    this.recordRecurringRun(observedContinuation, runKey, 'orphan_probe_noop', request.now, null, 'Healthy lease remained active while no worker was observed; waiting for the second orphan proof');
-    return {
-      outcome: 'orphan_probe_noop',
-      continuation: observedContinuation,
-      goal: this.requireById(goal.id),
+
+    this.recordRecurringRun(
+      continuation,
       runKey,
-      retryAfterSeconds: secondsUntilNextRecurringTick(observedContinuation, request.now),
+      'worker_busy_noop',
+      request.now,
+      null,
+      'No live worker was observed, but the lease heartbeat is still within the bounded stale-recovery grace',
+    );
+    return {
+      outcome: 'worker_busy_noop',
+      continuation,
+      goal,
+      runKey,
+      retryAfterSeconds: secondsUntilNextRecurringTick(continuation, request.now),
     };
   }
 

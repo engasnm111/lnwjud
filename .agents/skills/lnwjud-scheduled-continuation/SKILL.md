@@ -50,7 +50,7 @@ Handle the result exactly:
 
 - `recurring_acquired`: continue work with the returned `leaseToken`/`leaseGeneration`. Keep the same recurring native task. Do **not** create, update, consume, or replace it.
 - `worker_busy_noop`: another worker is live or blocking work is still running. Do not mutate the workspace, do not steal the lease, do not touch the native task, and return naturally. A later hourly firing will try again.
-- `orphan_probe_noop`: orphan evidence is not yet strong enough. Do not mutate or touch the native task. A later hourly firing may complete the two-probe recovery.
+- `orphan_probe_noop`: legacy pre-hardening compatibility only. Current v4.53 recurring mainline must not enter a two-probe wait; if this historical outcome is encountered, do not mutate or touch the native task.
 - `already_claimed`: this run/tick was already handled. Do nothing.
 - `receipt_required`: reconcile exact native host metadata before any mutation or blind create.
 - `not_due`: do not mutate; let the recurring task remain unchanged.
@@ -72,7 +72,7 @@ Only for historical `occurrence=once` rows:
 - A recurring collision is a no-op, not a scheduling event.
 - Never create a new recurring task because a worker is busy.
 - Live fenced calls and tracked blocking-task states are worker-liveness evidence; MCP session equality and elapsed time alone are not.
-- Orphan takeover requires the repository's unchanged trustworthy two-probe evidence, including no live fenced calls and no running/unknown blocking tasks.
+- For recurring v4.53 rows, a still-valid lease with trustworthy proof of no live fenced calls and no running/unknown blocking tasks uses the same bounded 60-second stale-heartbeat grace as `run_goal`; once that grace is exceeded, takeover happens in the **same hourly tick** as `orphan_recovered` instead of waiting for lease expiry or a second hourly firing. Historical one-time rows keep their two-probe compatibility fence.
 - Full Bypass never bypasses durable-goal ownership fences.
 
 ## Before a turn boundary
