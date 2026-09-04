@@ -3,70 +3,66 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('scheduled continuation skill contract', () => {
-  it('documents adaptive autonomous continuation through verified terminal goal closure', async () => {
+  it('documents one hourly recurring native watchdog through verified terminal cleanup', async () => {
     const skill = await readFile(
       path.resolve(import.meta.dirname, '../../../.agents/skills/lnwjud-scheduled-continuation/SKILL.md'),
       'utf8',
     );
+
     expect(skill).toMatch(/description: Use when/);
-    expect(skill).toContain('2–25 minutes');
-    expect(skill).toContain('600 seconds (10 minutes)');
-    expect(skill).toContain('derives the successor from the current durable-goal lease');
-    expect(skill).toContain('4 → 8 → 16 → 25 minutes');
-    expect(skill).toContain('do not hard-code +2');
-    expect(skill).toContain('120 seconds early');
-    expect(skill).toContain('safety invariants');
-    expect(skill).toContain('still-pending future');
-    expect(skill).toContain('fired is consumed transport identity');
-    expect(skill).toContain('fresh adaptive successor');
-    expect(skill).toContain('A request to stop scheduling cancels only the successor');
-    expect(skill).toContain('Never send a completion report while `get_goal` reports `active`');
-    expect(skill).toContain('`run_goal` defaults to `scheduledContinuation: auto`');
-    expect(skill).toContain('the client MUST apply this skill automatically');
-    expect(skill).toContain('never require another user prompt to resume an unfinished goal');
-    expect(skill).toContain('wait for every active task ID to reach a terminal state');
-    expect(skill).toContain('every durable plan step is `completed`');
-    expect(skill).toContain('Runtime rejects premature `completed` closure');
-    expect(skill).toContain('Native Scheduled Task `create_failed`, `Resource not found`');
-    expect(skill).toContain('finish_goal');
-    expect(skill).toContain('reschedule_required');
+    expect(skill).toContain('hourly recurring');
+    expect(skill).toContain('intervalMinutes=60');
+    expect(skill).toContain('600 seconds');
+    expect(skill).toContain('Recurring cadence: **60 minutes**');
+    expect(skill).toContain('independent of the worker lease');
+    expect(skill).toContain('first fires in 60 minutes');
+    expect(skill).toContain('2–25 minute range');
+    expect(skill).toContain('changes only the **first firing**');
+    expect(skill).toContain('never create a successor');
+    expect(skill).toContain('never retime the recurring cadence');
+    expect(skill).toContain('One recurring firing never consumes the native task');
+    expect(skill).toContain('historical `occurrence=once` compatibility paths only');
+    expect(skill).toContain('Never create a recurring watchdog while a confirmed live one-time watchdog');
+
+    expect(skill).toContain('`claim_scheduled_continuation` must be the **first connected lnwjud action');
+    expect(skill).toContain('`recurring_acquired`');
+    expect(skill).toContain('`worker_busy_noop`');
+    expect(skill).toContain('`orphan_probe_noop`');
+    expect(skill).toContain('`already_claimed`');
+    expect(skill).toContain('`receipt_required`');
+    expect(skill).toContain('`terminal_cleanup_required`');
+    expect(skill).toContain('**cleanup only**');
+    expect(skill).toContain('Do not resume goal work');
+    expect(skill).toContain('`terminal_noop`');
+    expect(skill).toContain('`expedite_scheduled_continuation` is **one-time compatibility only**');
+
+    expect(skill).toContain('scheduledContinuation:auto');
+    expect(skill).toContain('Never require the user to type');
+    expect(skill).toContain('Never report completion while `get_goal` is `active`');
+    expect(skill).toContain('Native task create/update/delete/disable is host-owned');
+    expect(skill).toContain('never invent or hard-code an internal operation name');
+    expect(skill).toContain('Resource not found');
+    expect(skill).toContain('re-resolve the Native Scheduled Task operation once');
+    expect(skill).toContain('Do not retry an ambiguous possible-success');
+    expect(skill).toContain('scheduler degradation only');
     expect(skill).toContain('runsOn: cloud');
     expect(skill).toContain('runsOn: unverified');
-    expect(skill).toContain('browser/DOM automation');
-    expect(skill).toContain('native ChatGPT Scheduled Task host tool/API surface');
-    expect(skill).toContain('exactly as it is exposed by the current ChatGPT host/tool registry');
-    expect(skill).toContain('Do **not** assume, invent, or hard-code an internal host tool/resource name');
-    expect(skill).toContain('host-surface lookup/dispatch failure such as `Resource not found`');
-    expect(skill).toContain('re-resolve the Native Scheduled Task operation **once**');
-    expect(skill).toContain('retry the exact same native operation **once**');
-    expect(skill).toContain('Never retry an ambiguous result that may already have created a task');
-    expect(skill).toContain('immediately call `record_scheduled_continuation_receipt(outcome: create_failed)`');
-    expect(skill).toContain('Native scheduling failure is **transport degradation only**');
-    expect(skill).toContain('scheduler-degraded, goal-still-active');
-    expect(skill).toContain('scheduler transport failure alone is never a reason to call `finish_goal`');
-    expect(skill).not.toMatch(/Automations(?:\.|:)/i);
-    expect(skill).toContain('Explicitly confirmed `local`');
-    expect(skill).toContain('`prepared` means **reservation only**');
-    expect(skill).toContain('never a confirmed successor');
-    expect(skill).toContain('may keep doing useful fenced work while native-task creation is retried');
     expect(skill).toContain('explicit IANA `TZID`');
-    expect(skill).toContain('`status: scheduled`, a non-empty `nativeTaskId`, and `confirmedRunsOn: cloud|unverified`');
-    expect(skill).toContain('Do **not** call `prepare_scheduled_continuation` again');
-    expect(skill).toContain('returned `scheduleRequest`');
-    expect(skill).toContain('`successor_required`');
-    expect(skill).toContain('expedite_scheduled_continuation');
-    expect(skill).toContain('goalLease');
-    expect(skill).toContain('releaseLease: true');
-    expect(skill).toContain('liveness-aware stale-worker takeover');
-    expect(skill).toContain('Session equality alone is never recovery proof');
-    expect(skill).toContain('orphan_recovered');
-    expect(skill).toContain('non-runnable');
-    expect(skill).toContain('Single-Live Watchdog');
-    expect(skill).toContain('reuse');
-    expect(skill).toContain('retime');
-    expect(skill).toContain('record_scheduled_continuation_receipt(outcome: consumed)');
-    expect(skill).toContain('does **not** mean the goal work completed');
-    expect(skill).toContain('Never report cancellation as successful');
-    expect(skill).not.toMatch(/Windows Task Scheduler as fallback/i);
+    expect(skill).toContain('releaseLease:true');
+    expect(skill).toContain('two-probe');
+    expect(skill).toContain('Full Bypass never bypasses durable-goal ownership fences');
+
+    expect(skill).toContain('Make the exact recurring native task non-runnable');
+    expect(skill).toContain('host-confirmed delete or disable evidence');
+    expect(skill).toContain('A recurring run receipt is **not** cleanup proof');
+    expect(skill).toContain('finish_goal(status:completed)');
+    expect(skill).toContain('completionState=completed');
+    expect(skill).toContain('get_goal` confirms a terminal status');
+
+    expect(skill).toContain('lnwjud `scheduler`');
+    expect(skill).toContain('Windows Task Scheduler');
+    expect(skill).toContain('cron');
+    expect(skill).toContain('browser/DOM automation');
+    expect(skill).not.toMatch(/Automations(?:\.|:)/i);
   });
 });

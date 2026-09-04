@@ -12,7 +12,7 @@ const required = [
 ] as const;
 
 describe('scheduled continuation runtime contract', () => {
-  it('publishes all five scheduling tools with adaptive one-time cloud handoff semantics', () => {
+  it('publishes recurring-hourly scheduling semantics while retaining explicit one-time compatibility paths', () => {
     const registry = new ToolRegistry({}, actor);
     const tools = new Map(registry.list().map((tool) => [tool.name, tool]));
     for (const name of required) expect(tools.has(name), name).toBe(true);
@@ -20,11 +20,13 @@ describe('scheduled continuation runtime contract', () => {
     expect(tools.has('checkpoint_goal')).toBe(true);
 
     const serialized = required.map((name) => `${name}:${tools.get(name)?.description ?? ''}`).join('\n');
-    expect(serialized).toContain('adaptive');
-    expect(serialized).toContain('2 and 25 minutes');
-    expect(serialized).toContain('120 seconds early');
+    expect(serialized).toContain('hourly recurring watchdog');
+    expect(serialized).toContain('intervalMinutes=60');
+    expect(serialized).toContain('worker_busy_noop');
+    expect(serialized).toContain('recurring_acquired');
+    expect(serialized).toContain('one-time compatibility');
     expect(serialized).toContain('cloud');
-    expect(serialized).toContain('same');
-    expect(serialized).not.toMatch(/RRULE|recurr|schtasks|executable|shell command/i);
+    expect(serialized).toContain('never create a per-wake successor');
+    expect(serialized).toContain('never use browser/DOM automation, Windows Task Scheduler, cron, shell timers, or an lnwjud-local scheduler as a substitute');
   });
 });

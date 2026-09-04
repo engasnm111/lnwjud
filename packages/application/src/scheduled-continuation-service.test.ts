@@ -84,6 +84,21 @@ async function startGoal(
   return result.value;
 }
 
+function convertToLegacyOneTime(database: SqliteDatabase, continuationId: string, goalId: string): void {
+  const row = database.connection.prepare('SELECT due_at FROM goal_scheduled_continuations WHERE id = ?').get(continuationId) as { due_at: string } | undefined;
+  if (row === undefined) throw new Error('continuation missing');
+  database.connection.prepare(`
+    UPDATE goal_scheduled_continuations
+    SET occurrence = 'once', interval_minutes = NULL
+    WHERE id = ?
+  `).run(continuationId);
+  database.connection.prepare(`
+    UPDATE goals
+    SET lease_expires_at = CASE WHEN lease_expires_at > ? THEN ? ELSE lease_expires_at END
+    WHERE id = ?
+  `).run(row.due_at, row.due_at, goalId);
+}
+
 function validPrepare(started: Awaited<ReturnType<typeof startGoal>>, overrides: Record<string, unknown> = {}): PrepareScheduledContinuationRequest {
   return {
     goalId: started.goalId,
@@ -152,7 +167,7 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
-  it('defaults an omitted successor delay to the current 10-minute goal lease', async () => {
+  it('defaults to one hourly recurring watchdog while keeping the normal 10-minute worker lease', async () => {
     const { database, goals, scheduled } = await fixture();
     try {
       const started = await startGoal(goals);
@@ -164,9 +179,14 @@ describe('ScheduledContinuationService', () => {
           currentRunMayContinue: true,
           handoffReady: false,
           nativeTaskConfirmationRequired: true,
-          nextRequiredAction: 'create_native_task_and_record_receipt_before_yield',
-          handoffDeadlineAt: '2026-08-27T10:10:00.000Z',
-          scheduleRequest: { dueAt: '2026-08-27T10:10:00.000Z' },
+          nextRequiredAction: 'create_native_recurring_task_and_record_receipt_before_yield',
+          handoffDeadlineAt: null,
+          continuation: { occurrence: 'interval', intervalMinutes: 60 },
+          scheduleRequest: {
+            occurrence: 'interval',
+            intervalMinutes: 60,
+            dueAt: '2026-08-27T11:00:00.000Z',
+          },
           goal: { revision: 1, leaseExpiresAt: '2026-08-27T10:10:00.000Z' },
         },
       });
@@ -183,9 +203,11 @@ describe('ScheduledContinuationService', () => {
       expect(prepared.ok).toBe(true);
       if (!prepared.ok) throw new Error('prepare failed');
       expect(prepared.value.scheduleRequest).toMatchObject({
+        occurrence: 'interval',
+        intervalMinutes: 60,
         dueAt: '2026-08-27T10:25:00.750Z',
         scheduleTimeZone: 'Asia/Bangkok',
-        schedule: 'BEGIN:VEVENT\nDTSTART;TZID=Asia/Bangkok:20260827T172500\nEND:VEVENT',
+        schedule: 'BEGIN:VEVENT\nDTSTART;TZID=Asia/Bangkok:20260827T172500\nRRULE:FREQ=HOURLY;INTERVAL=1\nEND:VEVENT',
       });
 
       await expect(scheduled.recordScheduledContinuationReceipt(actor, {
@@ -213,7 +235,7 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
-  it('allows an explicit 25-minute watchdog while the current run remains healthy', async () => {
+  it('allows an explicit first-firing lead while preserving the hourly recurring cadence', async () => {
     const { database, goals, scheduled } = await fixture();
     try {
       const started = await startGoal(goals);
@@ -225,11 +247,12 @@ describe('ScheduledContinuationService', () => {
           currentRunMayContinue: true,
           handoffReady: false,
           nativeTaskConfirmationRequired: true,
-          nextRequiredAction: 'create_native_task_and_record_receipt_before_yield',
-          handoffDeadlineAt: '2026-08-27T10:25:00.000Z',
+          nextRequiredAction: 'create_native_recurring_task_and_record_receipt_before_yield',
+          handoffDeadlineAt: null,
           scheduleRequest: {
             provider: 'chatgpt_scheduled_task',
-            occurrence: 'once',
+            occurrence: 'interval',
+            intervalMinutes: 60,
             destination: 'current_chat',
             dueAt: '2026-08-27T10:25:00.000Z',
             executionPreference: 'cloud',
@@ -242,7 +265,7 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
-  it('reuses one confirmed pending watchdog and retimes the same native task later then earlier across checkpoints', async () => {
+  it('reuses the same hourly recurring native task across checkpoints without retiming or successor churn', async () => {
     const { database, goals, scheduled, clock } = await fixture();
     try {
       const started = await startGoal(goals);
@@ -259,60 +282,62 @@ describe('ScheduledContinuationService', () => {
         dueAt: first.value.scheduleRequest.dueAt,
         runsOn: 'cloud',
       });
-      expect(created).toMatchObject({ ok: true, value: { status: 'scheduled', nativeTaskId: 'native-single-live-watchdog' } });
+      expect(created).toMatchObject({ ok: true, value: { status: 'scheduled', occurrence: 'interval', intervalMinutes: 60, nativeTaskId: 'native-single-live-watchdog' } });
 
       clock.set('2026-08-27T10:01:00.000Z');
       const later = await scheduled.prepareScheduledContinuation(actor, validPrepare(started, {
         expectedRevision: first.value.goal.revision,
         successorDelayMinutes: 25,
-        summary: 'Keep the same watchdog while healthy work continues.',
+        summary: 'Keep the same recurring watchdog while healthy work continues.',
       }));
       expect(later).toMatchObject({
         ok: true,
         value: {
           outcome: 'already_prepared',
-          watchdogAction: 'retime',
-          continuation: { continuationId, generation, nativeTaskId: 'native-single-live-watchdog', status: 'reschedule_required' },
-          taskUpdateRequest: { nativeTaskId: 'native-single-live-watchdog', dueAt: '2026-08-27T10:26:00.000Z' },
+          watchdogAction: 'reuse',
+          continuation: {
+            continuationId,
+            generation,
+            nativeTaskId: 'native-single-live-watchdog',
+            status: 'scheduled',
+            occurrence: 'interval',
+            intervalMinutes: 60,
+            dueAt: first.value.continuation.dueAt,
+          },
+          nextRequiredAction: 'continue_with_existing_recurring_watchdog',
+          handoffDeadlineAt: null,
         },
       });
-      if (!later.ok || later.value.taskUpdateRequest === undefined) throw new Error('later retime failed');
-      expect(later.value.taskUpdateRequest.prompt).toContain('host-surface lookup/dispatch failure such as Resource not found');
-      expect(later.value.taskUpdateRequest.prompt).toContain('re-resolve the Native Scheduled Task operation once');
-      expect(later.value.taskUpdateRequest.prompt).toContain('retry that exact same fresh-successor create once');
-      expect(later.value.taskUpdateRequest.prompt).toContain('Do not retry an ambiguous create that may have succeeded');
-      expect(later.value.taskUpdateRequest.prompt).not.toMatch(/Automations(?:\.|:)/i);
-      const laterReceipt = await scheduled.recordScheduledContinuationReceipt(actor, {
-        continuationId,
-        expectedVersion: later.value.continuation.version,
-        outcome: 'rescheduled',
-        nativeTaskId: 'native-single-live-watchdog',
-        dueAt: later.value.taskUpdateRequest.dueAt,
-        runsOn: 'cloud',
-      });
-      expect(laterReceipt).toMatchObject({ ok: true, value: { status: 'scheduled', dueAt: '2026-08-27T10:26:00.000Z' } });
+      expect(later.ok && later.value.taskUpdateRequest).toBeUndefined();
+      if (!later.ok) throw new Error('recurring reuse failed');
 
       clock.set('2026-08-27T10:02:00.000Z');
       const earlier = await scheduled.prepareScheduledContinuation(actor, validPrepare(started, {
         expectedRevision: later.value.goal.revision,
         successorDelayMinutes: 5,
-        summary: 'Move the same watchdog closer for bounded handoff risk.',
+        summary: 'Checkpoint again without changing the recurring cadence.',
       }));
       expect(earlier).toMatchObject({
         ok: true,
         value: {
-          outcome: 'already_prepared',
-          watchdogAction: 'retime',
-          continuation: { continuationId, generation, nativeTaskId: 'native-single-live-watchdog', status: 'reschedule_required' },
-          taskUpdateRequest: { nativeTaskId: 'native-single-live-watchdog', dueAt: '2026-08-27T10:07:00.000Z' },
+          watchdogAction: 'reuse',
+          continuation: {
+            continuationId,
+            generation,
+            nativeTaskId: 'native-single-live-watchdog',
+            status: 'scheduled',
+            dueAt: first.value.continuation.dueAt,
+          },
+          handoffDeadlineAt: null,
         },
       });
+      expect(earlier.ok && earlier.value.taskUpdateRequest).toBeUndefined();
     } finally {
       database.close();
     }
   });
 
-  it('uses an adaptive five-minute successor for bounded near-term work', async () => {
+  it('allows a five-minute first firing without changing the hourly recurring cadence or lease boundary', async () => {
     const { database, goals, scheduled } = await fixture();
     try {
       const started = await startGoal(goals);
@@ -324,9 +349,13 @@ describe('ScheduledContinuationService', () => {
       expect(result).toMatchObject({
         ok: true,
         value: {
-          handoffDeadlineAt: '2026-08-27T10:05:00.000Z',
-          scheduleRequest: { dueAt: '2026-08-27T10:05:00.000Z' },
-          goal: { leaseExpiresAt: '2026-08-27T10:05:00.000Z' },
+          handoffDeadlineAt: null,
+          scheduleRequest: {
+            occurrence: 'interval',
+            intervalMinutes: 60,
+            dueAt: '2026-08-27T10:05:00.000Z',
+          },
+          goal: { leaseExpiresAt: '2026-08-27T10:10:00.000Z' },
         },
       });
     } finally {
@@ -399,37 +428,21 @@ describe('ScheduledContinuationService', () => {
       const serialized = JSON.stringify(result.value.scheduleRequest);
       for (const marker of Object.values(markers)) expect(serialized).not.toContain(marker);
       expect(serialized).not.toContain(started.leaseToken!);
+      expect(result.value.scheduleRequest).toMatchObject({ occurrence: 'interval', intervalMinutes: 60 });
+      expect(result.value.scheduleRequest.schedule).toContain('RRULE:FREQ=HOURLY;INTERVAL=1');
       expect(result.value.scheduleRequest.prompt).toContain('claim_scheduled_continuation');
-      expect(result.value.scheduleRequest.prompt).toContain('120 seconds early is a safety tolerance, not a scheduling cadence');
-      expect(result.value.scheduleRequest.prompt).toContain('one-time task that has fired is consumed transport identity');
-      expect(result.value.scheduleRequest.prompt).toContain('fresh lease-aligned successor');
-      expect(result.value.scheduleRequest.prompt).toContain('do not call prepare_scheduled_continuation again');
-      expect(result.value.scheduleRequest.prompt).toContain('successor_required');
-      expect(result.value.scheduleRequest.prompt).toContain('deterministic adaptive successor');
-      expect(result.value.scheduleRequest.prompt).toContain('never create blindly');
-      expect(result.value.scheduleRequest.prompt).toContain('native_task_receipt_missing');
-      expect(result.value.scheduleRequest.prompt).toContain('reschedule_required means the exact confirmed native watchdog is still pending');
-      expect(result.value.scheduleRequest.prompt).toContain('expedite_scheduled_continuation may update only a still-pending future native task');
-      expect(result.value.scheduleRequest.prompt).toContain('actual native Scheduled Task operation from the current ChatGPT host/tool registry');
-      expect(result.value.scheduleRequest.prompt).toContain('never assume or hard-code an internal host operation name');
-      expect(result.value.scheduleRequest.prompt).toContain('host-surface lookup/dispatch failure such as Resource not found');
-      expect(result.value.scheduleRequest.prompt).toContain('re-resolve the Native Scheduled Task operation once');
-      expect(result.value.scheduleRequest.prompt).toContain('retry the exact same native create once');
-      expect(result.value.scheduleRequest.prompt).toContain('Never retry an ambiguous create result');
-      expect(result.value.scheduleRequest.prompt).toContain('immediately record create_failed');
-      expect(result.value.scheduleRequest.prompt).toContain('Native scheduling failure is transport degradation only');
-      expect(result.value.scheduleRequest.prompt).toContain('never mark the durable goal completed, failed, or blocked solely because the successor host operation is unavailable');
-      expect(result.value.scheduleRequest.prompt).toContain('checkpoint the exact work state and scheduling degradation truthfully');
-      expect(result.value.scheduleRequest.prompt).toContain('record create_uncertain only when host creation may actually have succeeded');
+      expect(result.value.scheduleRequest.prompt).toContain('one hourly Native ChatGPT recurring watchdog');
+      expect(result.value.scheduleRequest.prompt).toContain('same native task remains runnable across normal firings');
+      expect(result.value.scheduleRequest.prompt).toContain('must never create, retime, replace, or consume a successor task');
+      expect(result.value.scheduleRequest.prompt).toContain('recurring_acquired');
+      expect(result.value.scheduleRequest.prompt).toContain('worker_busy_noop');
+      expect(result.value.scheduleRequest.prompt).toContain('orphan_probe_noop');
+      expect(result.value.scheduleRequest.prompt).toContain('terminal_noop');
+      expect(result.value.scheduleRequest.prompt).toContain('make this exact recurring native task non-runnable');
+      expect(result.value.scheduleRequest.prompt).toContain('never hard-code an internal operation name');
       expect(result.value.scheduleRequest.prompt).not.toMatch(/Automations(?:\.|:)/i);
-      expect(result.value.scheduleRequest.prompt).toContain('Never send a completion response while get_goal still reports active');
-      expect(result.value.scheduleRequest.prompt).toContain('all durable plan steps are completed');
-      expect(result.value.scheduleRequest.prompt).toContain('no blocking task remains tracked');
-      expect(result.value.scheduleRequest.prompt).toContain('finish_goal(status: completed)');
-      expect(result.value.scheduleRequest.prompt).toContain('Never use blocked/failed merely to terminate a scheduler-transport problem');
-      expect(result.value.scheduleRequest.prompt).toContain('host-confirmed disable is acceptable non-runnable evidence');
-      expect(result.value.scheduleRequest.prompt).toContain('claim returns terminal_noop');
-      expect(result.value.scheduleRequest.prompt).toContain('let the already-firing one-time host task return naturally');
+      expect(result.value.scheduleRequest.prompt).toContain('Scheduler transport failure alone never completes, fails, or blocks the durable goal');
+      expect(result.value.scheduleRequest.prompt).toContain('Never report completion until finish_goal completes and get_goal is terminal');
       expect(result.value.scheduleRequest.prompt).toContain('Windows Task Scheduler');
       expect(result.value.scheduleRequest.prompt).toContain(started.goalId);
       expect(result.value.scheduleRequest.prompt).toContain('workspace-1');
@@ -455,6 +468,7 @@ describe('ScheduledContinuationService', () => {
         runsOn: 'cloud',
       });
       expect(receipt.ok).toBe(true);
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
       database.connection.prepare('UPDATE goals SET lease_expires_at = ? WHERE id = ?')
         .run('2026-08-27T10:30:00.000Z', started.goalId);
 
@@ -528,6 +542,7 @@ describe('ScheduledContinuationService', () => {
         runsOn: 'cloud',
       });
       expect(created.ok).toBe(true);
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
 
       clock.set('2026-08-27T10:02:00.000Z');
       const earlyWake = await scheduled.claimScheduledContinuation(actor, {
@@ -608,13 +623,21 @@ describe('ScheduledContinuationService', () => {
       expect(acquired).toMatchObject({
         ok: true,
         value: {
-          outcome: 'acquired',
+          outcome: 'recurring_acquired',
           acquisition: 'expired_lease',
-          continuation: { status: 'claimed', confirmedRunsOn: 'unverified' },
-          successor: { generation: 2, status: 'prepared' },
-          scheduleRequest: { provider: 'chatgpt_scheduled_task', occurrence: 'once', destination: 'current_chat' },
+          continuation: {
+            status: 'scheduled',
+            occurrence: 'interval',
+            intervalMinutes: 60,
+            confirmedRunsOn: 'unverified',
+            nativeTaskId: 'native-task-host-mode-unreported',
+          },
+          currentWakeMayReturn: true,
+          nextRequiredAction: 'continue_work_with_existing_recurring_watchdog',
         },
       });
+      expect('scheduleRequest' in acquired.value).toBe(false);
+      expect('successor' in acquired.value).toBe(false);
     } finally {
       database.close();
     }
@@ -647,30 +670,21 @@ describe('ScheduledContinuationService', () => {
       expect(acquired).toMatchObject({
         ok: true,
         value: {
-          outcome: 'acquired',
+          outcome: 'recurring_acquired',
           acquisition: 'expired_lease',
           goal: { status: 'active' },
-          continuation: { status: 'claimed' },
-          successor: {
-            generation: 2,
-            status: 'prepared',
-            dueAt: '2026-08-27T10:34:32.000Z',
+          continuation: {
+            status: 'scheduled',
+            occurrence: 'interval',
+            intervalMinutes: 60,
+            nativeTaskId: 'native-task-early-wake',
           },
-          scheduleRequest: {
-            provider: 'chatgpt_scheduled_task',
-            occurrence: 'once',
-            destination: 'current_chat',
-            dueAt: '2026-08-27T10:34:32.000Z',
-          },
-          handoffReady: false,
-          currentWakeMayReturn: false,
-          nextRequiredAction: 'create_native_task_and_record_receipt_before_current_wake_returns',
+          currentWakeMayReturn: true,
+          nextRequiredAction: 'continue_work_with_existing_recurring_watchdog',
         },
       });
-      expect(acquired.ok).toBe(true);
-      if (!acquired.ok || acquired.value.outcome !== 'acquired') throw new Error('claim did not acquire');
-      expect(acquired.value.scheduleRequest.prompt).toContain('fresh lease-aligned successor');
-      expect(acquired.value.scheduleRequest.prompt).toContain('do not call prepare_scheduled_continuation again');
+      expect('scheduleRequest' in acquired.value).toBe(false);
+      expect('successor' in acquired.value).toBe(false);
     } finally {
       database.close();
     }
@@ -687,6 +701,7 @@ describe('ScheduledContinuationService', () => {
       const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
       expect(prepared.ok).toBe(true);
       if (!prepared.ok) throw new Error('prepare failed');
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
       const created = await scheduled.recordScheduledContinuationReceipt(actor, {
         continuationId: prepared.value.continuation.continuationId,
         expectedVersion: prepared.value.continuation.version,
@@ -745,6 +760,7 @@ describe('ScheduledContinuationService', () => {
       const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
       expect(prepared.ok).toBe(true);
       if (!prepared.ok) throw new Error('prepare failed');
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
       const created = await scheduled.recordScheduledContinuationReceipt(actor, {
         continuationId: prepared.value.continuation.continuationId,
         expectedVersion: prepared.value.continuation.version,
@@ -794,6 +810,7 @@ describe('ScheduledContinuationService', () => {
       const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
       expect(prepared.ok).toBe(true);
       if (!prepared.ok) throw new Error('prepare failed');
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
       const created = await scheduled.recordScheduledContinuationReceipt(actor, {
         continuationId: prepared.value.continuation.continuationId,
         expectedVersion: prepared.value.continuation.version,
@@ -874,6 +891,7 @@ describe('ScheduledContinuationService', () => {
         runsOn: 'cloud',
       });
       expect(created.ok).toBe(true);
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
 
       clock.set('2026-08-27T10:23:45.000Z');
       await expect(scheduled.claimScheduledContinuation(actor, {
@@ -947,14 +965,19 @@ describe('ScheduledContinuationService', () => {
         continuationId: prepared.value.continuation.continuationId,
       })).resolves.toMatchObject({
         ok: true,
-        value: { outcome: 'acquired', acquisition: 'expired_lease' },
+        value: {
+          outcome: 'recurring_acquired',
+          acquisition: 'expired_lease',
+          continuation: { occurrence: 'interval', intervalMinutes: 60, nativeTaskId: 'native-liveness-order' },
+          currentWakeMayReturn: true,
+        },
       });
     } finally {
       database.close();
     }
   });
 
-  it('marks only the transaction winner create-safe when concurrent claims replay one successor', async () => {
+  it('deduplicates concurrent recurring claims so exactly one tick acquires and no successor is created', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let observations = 0;
@@ -1006,11 +1029,11 @@ describe('ScheduledContinuationService', () => {
         if (!result.ok) throw new Error('concurrent claim failed');
         return result.value;
       });
-      expect(values.filter((value) => 'scheduleRequest' in value)).toHaveLength(1);
-      expect(values.filter((value) => value.outcome === 'successor_required' && 'reason' in value && value.reason === 'native_task_receipt_missing')).toHaveLength(1);
-      expect(values.every((value) => 'successor' in value)).toBe(true);
-      const successorIds = values.map((value) => 'successor' in value ? value.successor.continuationId : 'missing');
-      expect(new Set(successorIds).size).toBe(1);
+      expect(values.filter((value) => value.outcome === 'recurring_acquired')).toHaveLength(1);
+      expect(values.filter((value) => value.outcome === 'already_claimed')).toHaveLength(1);
+      expect(values.every((value) => !('scheduleRequest' in value))).toBe(true);
+      expect(values.every((value) => !('successor' in value))).toBe(true);
+      expect(values.every((value) => value.continuation.nativeTaskId === 'native-task-concurrent-firing')).toBe(true);
     } finally {
       database.close();
     }
@@ -1023,6 +1046,7 @@ describe('ScheduledContinuationService', () => {
       const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
       expect(prepared.ok).toBe(true);
       if (!prepared.ok) throw new Error('prepare failed');
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
       const created = await scheduled.recordScheduledContinuationReceipt(actor, {
         continuationId: prepared.value.continuation.continuationId,
         expectedVersion: prepared.value.continuation.version,
@@ -1092,6 +1116,7 @@ describe('ScheduledContinuationService', () => {
       const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
       expect(prepared.ok).toBe(true);
       if (!prepared.ok) throw new Error('prepare failed');
+      convertToLegacyOneTime(database, prepared.value.continuation.continuationId, started.goalId);
 
       const created = await scheduled.recordScheduledContinuationReceipt(actor, {
         continuationId: prepared.value.continuation.continuationId,
@@ -1162,6 +1187,125 @@ describe('ScheduledContinuationService', () => {
       });
       await expect(goals.getGoal(actor, { goalId: started.goalId }))
         .resolves.toMatchObject({ ok: true, value: { status: 'completed' } });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('turns a recurring wake into cleanup-only recovery while durable completion is pending', async () => {
+    const { database, goals, scheduled, clock } = await fixture();
+    const cleanupActor: FileActor = { ...actor, sessionId: 'scheduled-continuation-cleanup-only' };
+    try {
+      const started = await startGoal(goals);
+      const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error('prepare failed');
+      const created = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-recurring-cleanup-only',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'cloud',
+      });
+      expect(created.ok).toBe(true);
+
+      clock.set('2026-08-27T10:00:10.000Z');
+      const pending = await goals.finishGoal(actor, {
+        goalId: started.goalId,
+        leaseToken: started.leaseToken!,
+        expectedRevision: prepared.value.goal.revision,
+        status: 'completed',
+        summary: 'Work accepted; recurring host cleanup still pending.',
+        evidence: [],
+      });
+      expect(pending).toMatchObject({
+        ok: true,
+        value: { status: 'active', completionState: 'pending_native_cleanup' },
+      });
+
+      clock.set('2026-08-27T10:25:00.000Z');
+      const wake = await scheduled.claimScheduledContinuation(cleanupActor, {
+        continuationId: prepared.value.continuation.continuationId,
+      });
+      expect(wake).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'terminal_cleanup_required',
+          continuation: {
+            occurrence: 'interval',
+            status: 'cancel_required',
+            nativeTaskId: 'native-recurring-cleanup-only',
+          },
+          currentWakeMayReturn: true,
+          nextRequiredAction: 'make_same_recurring_native_task_non_runnable_and_record_receipt',
+        },
+      });
+      if (!wake.ok) throw new Error('cleanup wake failed');
+      expect('leaseToken' in wake.value).toBe(false);
+      expect('scheduleRequest' in wake.value).toBe(false);
+      expect('successor' in wake.value).toBe(false);
+
+      const latest = await scheduled.getScheduledContinuation(actor, { goalId: started.goalId, latest: true });
+      expect(latest.ok).toBe(true);
+      if (!latest.ok) throw new Error('latest continuation missing');
+      const cancelled = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: latest.value.continuationId,
+        expectedVersion: latest.value.version,
+        outcome: 'cancelled',
+        nativeTaskId: 'native-recurring-cleanup-only',
+        nativeCancellationReceipt: {
+          provider: 'chatgpt_scheduled_task',
+          operation: 'disable',
+          nativeTaskId: 'native-recurring-cleanup-only',
+          state: 'disabled',
+          observedAt: '2026-08-27T10:25:01.000Z',
+        },
+      });
+      expect(cancelled).toMatchObject({ ok: true, value: { status: 'cancelled' } });
+
+      const finalizeLease = await goals.runGoal(cleanupActor, {
+        workspaceId: 'workspace-1',
+        goalKey: 'scheduled-application-test',
+        leaseSeconds: 600,
+      });
+      expect(finalizeLease).toMatchObject({ ok: true, value: { acquired: true, status: 'active' } });
+      if (!finalizeLease.ok || finalizeLease.value.leaseToken === undefined) throw new Error('administrative finalization lease missing');
+
+      const completed = await goals.finishGoal(cleanupActor, {
+        goalId: started.goalId,
+        leaseToken: finalizeLease.value.leaseToken,
+        expectedRevision: finalizeLease.value.revision,
+        status: 'completed',
+        summary: 'Work and recurring host cleanup accepted; administrative finalization only.',
+        evidence: [],
+      });
+      expect(completed).toMatchObject({
+        ok: true,
+        value: { status: 'completed', completionState: 'completed' },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rejects expedite for an hourly recurring watchdog', async () => {
+    const { database, goals, scheduled } = await fixture();
+    try {
+      const started = await startGoal(goals);
+      const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error('prepare failed');
+
+      await expect(scheduled.expediteScheduledContinuation(actor, {
+        goalId: started.goalId,
+        continuationId: prepared.value.continuation.continuationId,
+        leaseToken: started.leaseToken!,
+        expectedLeaseGeneration: prepared.value.goal.leaseGeneration,
+        expectedGoalRevision: prepared.value.goal.revision,
+        expectedContinuationVersion: prepared.value.continuation.version,
+        reason: 'turn_yield_signal',
+      })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
     } finally {
       database.close();
     }
@@ -1340,7 +1484,7 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
-  it('requires host reconciliation instead of deleting an overdue native task whose run state is unknown', async () => {
+  it('keeps an hourly recurring task cleanup-required after its first due time until the exact host task is non-runnable', async () => {
     const { database, goals, scheduled, clock } = await fixture();
     try {
       const started = await startGoal(goals);
@@ -1351,61 +1495,78 @@ describe('ScheduledContinuationService', () => {
         continuationId: prepared.value.continuation.continuationId,
         expectedVersion: prepared.value.continuation.version,
         outcome: 'created',
-        nativeTaskId: 'native-overdue-host-unknown',
+        nativeTaskId: 'native-recurring-overdue',
         dueAt: prepared.value.continuation.dueAt,
         runsOn: 'cloud',
       });
-      expect(created.ok).toBe(true);
-      if (!created.ok) throw new Error('create receipt failed');
+      expect(created).toMatchObject({
+        ok: true,
+        value: { status: 'scheduled', occurrence: 'interval', intervalMinutes: 60 },
+      });
 
       clock.set('2026-08-27T10:03:00.000Z');
-      const resumed = await startGoal(goals);
-      const finished = await goals.finishGoal(actor, {
-        goalId: resumed.goalId,
-        leaseToken: resumed.leaseToken!,
-        expectedRevision: resumed.revision,
+      const pending = await goals.finishGoal(actor, {
+        goalId: started.goalId,
+        leaseToken: started.leaseToken!,
+        expectedRevision: prepared.value.goal.revision,
         status: 'completed',
-        summary: 'Finished after the scheduled due time without native host run evidence.',
+        summary: 'Work is complete after the first recurring due time, but future hourly runs still exist.',
         evidence: [],
       });
-      expect(finished).toMatchObject({
+      expect(pending).toMatchObject({
         ok: true,
         value: {
           status: 'active',
           completionState: 'pending_native_cleanup',
           scheduledTaskCancellation: {
-            action: 'none',
-            nativeTaskId: 'native-overdue-host-unknown',
-            reason: 'native_task_unverified',
+            action: 'make_native_task_non_runnable',
+            nativeTaskId: 'native-recurring-overdue',
+            reason: 'live_task_confirmed',
           },
         },
       });
-      await expect(scheduled.getScheduledContinuation(actor, { goalId: started.goalId, latest: true }))
-        .resolves.toMatchObject({ ok: true, value: { status: 'cancel_uncertain', nativeTaskId: 'native-overdue-host-unknown' } });
 
       const continuation = await scheduled.getScheduledContinuation(actor, { goalId: started.goalId, latest: true });
-      expect(continuation).toMatchObject({ ok: true });
-      if (!continuation.ok) throw new Error('uncertain continuation missing');
-      const consumed = await scheduled.recordScheduledContinuationReceipt(actor, {
+      expect(continuation).toMatchObject({
+        ok: true,
+        value: { status: 'cancel_required', occurrence: 'interval', nativeTaskId: 'native-recurring-overdue' },
+      });
+      if (!continuation.ok) throw new Error('cancel-required recurring continuation missing');
+
+      await expect(scheduled.recordScheduledContinuationReceipt(actor, {
         continuationId: continuation.value.continuationId,
         expectedVersion: continuation.value.version,
         outcome: 'consumed',
         nativeRunReceipt: {
           provider: 'chatgpt_scheduled_task',
           operation: 'run',
-          nativeTaskId: 'native-overdue-host-unknown',
+          nativeTaskId: 'native-recurring-overdue',
           state: 'consumed',
           observedAt: '2026-08-27T10:03:01.000Z',
         },
+      })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+
+      const cancelled = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: continuation.value.continuationId,
+        expectedVersion: continuation.value.version,
+        outcome: 'cancelled',
+        nativeTaskId: 'native-recurring-overdue',
+        nativeCancellationReceipt: {
+          provider: 'chatgpt_scheduled_task',
+          operation: 'delete',
+          nativeTaskId: 'native-recurring-overdue',
+          state: 'deleted',
+          observedAt: '2026-08-27T10:03:02.000Z',
+        },
       });
-      expect(consumed).toMatchObject({ ok: true, value: { status: 'superseded' } });
+      expect(cancelled).toMatchObject({ ok: true, value: { status: 'cancelled' } });
 
       const completed = await goals.finishGoal(actor, {
         goalId: started.goalId,
-        leaseToken: resumed.leaseToken!,
-        expectedRevision: resumed.revision,
+        leaseToken: started.leaseToken!,
+        expectedRevision: prepared.value.goal.revision,
         status: 'completed',
-        summary: 'Completed after exact host run reconciliation.',
+        summary: 'Completed after exact recurring native task cleanup.',
         evidence: [],
       });
       expect(completed).toMatchObject({

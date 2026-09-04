@@ -99,13 +99,13 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 4.52.4 application version', () => {
-    expect(APP_VERSION).toBe('4.52.4');
+  it('renders the actual 4.53.0 application version', () => {
+    expect(APP_VERSION).toBe('4.53.0');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v4.52.4');
+    expect(markup).toContain('v4.53.0');
   });
 
   it('keeps Desktop and STDIO Full Bypass independently visible in the application header', () => {

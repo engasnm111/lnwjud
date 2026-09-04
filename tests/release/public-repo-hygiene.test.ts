@@ -135,10 +135,11 @@ describe('public repository hygiene', () => {
     expect(releaseProcess).toContain('canonical release sequence');
   });
 
-  it('keeps terminal one-time scheduled wakes eligible for natural host completion', async () => {
+  it('keeps recurring scheduled cleanup explicit and host-proven before terminal completion', async () => {
     const skill = await readFile(path.join(repositoryRoot, '.agents', 'skills', 'lnwjud-scheduled-continuation', 'SKILL.md'), 'utf8');
-    expect(skill).toContain('let this already-firing one-time host task return naturally');
-    expect(skill).toContain('do not delete, disable, pause, or reschedule that current host task');
-    expect(skill).toContain('Never use pause/disable as fake deletion or completion proof');
+    expect(skill).toContain('`terminal_cleanup_required`');
+    expect(skill).toContain('Make the exact recurring native task non-runnable');
+    expect(skill).toContain('host-confirmed delete or disable evidence');
+    expect(skill).toContain('A recurring run receipt is **not** cleanup proof');
   });
 });
