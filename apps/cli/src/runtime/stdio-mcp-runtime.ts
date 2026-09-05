@@ -35,6 +35,7 @@ import {
   NodeBrowserCdpProtocol,
   NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
+  PosixMediaCapabilityBackend,
   SchedulerCapabilityBackend,
   ShellCapabilityBackend,
   VisionCapabilityBackend,
@@ -395,6 +396,12 @@ function createStdioCapabilityService(
   const clipboardBackend = process.platform === 'darwin' && macOsBridge !== undefined
     ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, process.platform)
     : new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
+  const audioBackend = process.platform === 'win32'
+    ? new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions)
+    : new PosixMediaCapabilityBackend('audio', { platform: process.platform, allowedRootsProvider: capabilityRootsProvider });
+  const screenRecordBackend = process.platform === 'win32'
+    ? new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions)
+    : new PosixMediaCapabilityBackend('screen_record', { platform: process.platform, allowedRootsProvider: capabilityRootsProvider });
   const health = new HealthCapabilityBackend({
     platform: process.platform,
     domCdp: browserBackend,
@@ -406,6 +413,8 @@ function createStdioCapabilityService(
     notification: notificationBackend,
     fileDialog: fileDialogBackend,
     clipboard: clipboardBackend,
+    audio: audioBackend,
+    screenRecord: screenRecordBackend,
     scheduler: schedulerBackend,
     wslExec: wslBackend,
     wslFs: wslFsBackend,
@@ -423,8 +432,8 @@ function createStdioCapabilityService(
     fileDialog: fileDialogBackend,
     clipboard: clipboardBackend,
     webFetch: new WebFetchCapabilityBackend(),
-    audio: new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions),
-    screenRecord: new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions),
+    audio: audioBackend,
+    screenRecord: screenRecordBackend,
     office: new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions),
     scheduler: schedulerBackend,
     wslExec: wslBackend,

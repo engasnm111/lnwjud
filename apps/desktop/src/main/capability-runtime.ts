@@ -14,6 +14,7 @@ import {
   NodeBrowserCdpProtocol,
   NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
+  PosixMediaCapabilityBackend,
   SchedulerCapabilityBackend,
   ShellCapabilityBackend,
   WebFetchCapabilityBackend,
@@ -102,8 +103,12 @@ export function createLocalCapabilityRuntime(
   const clipboardBackend = platform === 'darwin' && macOsBridge !== undefined
     ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, platform)
     : new WindowsNativeCapabilityBackend('clipboard', windowsBridge, platform);
-  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, platform, nativeOptions);
-  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, platform, nativeOptions);
+  const audioBackend = platform === 'win32'
+    ? new WindowsNativeCapabilityBackend('audio', windowsBridge, platform, nativeOptions)
+    : new PosixMediaCapabilityBackend('audio', { platform, allowedRootsProvider: capabilityRootsProvider });
+  const screenRecordBackend = platform === 'win32'
+    ? new WindowsNativeCapabilityBackend('screen_record', windowsBridge, platform, nativeOptions)
+    : new PosixMediaCapabilityBackend('screen_record', { platform, allowedRootsProvider: capabilityRootsProvider });
   const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, platform, nativeOptions);
   const webFetchBackend = new WebFetchCapabilityBackend();
   const schedulerBackend = platform === 'darwin'
@@ -141,6 +146,8 @@ export function createLocalCapabilityRuntime(
     notification: notificationBackend,
     fileDialog: fileDialogBackend,
     clipboard: clipboardBackend,
+    audio: audioBackend,
+    screenRecord: screenRecordBackend,
     scheduler: schedulerBackend,
     wslExec: wslBackend,
     wslFs: wslFsBackend,
@@ -260,7 +267,7 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
 const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[number], string>> = {
   shell: 'System, CLI, file, process, and developer tasks',
   dom_cdp: 'DOM work inside a local managed Chrome session',
-  accessibility: 'Windows UI Automation trees and semantic controls',
+  accessibility: 'Native semantic UI trees and controls on supported Windows/Linux sessions',
   input_event: 'Native keyboard, pointer, drag, and scroll events',
   vision: 'Local screen, monitor, region, and window capture',
   window: 'List, focus, move, resize, minimize, restore, and close windows',
@@ -271,7 +278,7 @@ const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[numbe
   clipboard: 'Clipboard text and PNG image access',
   web_fetch: 'Bounded HTTP requests with text or base64 responses',
   audio: 'Microphone recording and local audio playback',
-  screen_record: 'ffmpeg gdigrab screen capture with start/stop/status',
+  screen_record: 'Platform screen capture with provider-aware start/stop/status readiness',
   office: 'Excel range read/write and Word text operations via COM',
   scheduler: 'Platform-native local task list/create/run/delete operations',
   wsl_exec: 'WSL2 argv-only execution inside registered workspaces',

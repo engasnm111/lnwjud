@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
       - 'release/v*'
   pull_request:
     branches: [ main ]
@@ -75,3 +76,57 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  cross-platform-core:
+    name: Cross-platform core (${{ matrix.os }})
+    if: github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify platform/runtime packages
+        run: |
+          pnpm --filter @lnwjud/platform test
+          pnpm --filter @lnwjud/process test
+          pnpm --filter @lnwjud/shared test
+          pnpm --filter @lnwjud/workspace test
+          pnpm --filter @lnwjud/capabilities test
+          pnpm --filter @lnwjud/desktop typecheck
+
+      - name: Package native desktop artifact
+        if: github.ref == 'refs/heads/dev'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            pnpm --filter @lnwjud/desktop package:macos
+          else
+            pnpm --filter @lnwjud/desktop package:linux
+          fi
+
+      - name: Upload cross-platform dev artifacts
+        if: github.ref == 'refs/heads/dev'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-dev-${{ github.sha }}
+          path: apps/desktop/dist/installers/*
+          if-no-files-found: error
+          retention-days: 7

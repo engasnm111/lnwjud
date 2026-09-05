@@ -4,6 +4,7 @@ import { ToolRegistry, upgradeCatalogEntry, type McpToolDefinition } from '@lnwj
 export const KNOWN_TOOL_REQUIREMENT_IDS = Object.freeze([
   'platform_windows',
   'platform_windows_or_macos',
+  'platform_windows_or_linux',
   'registered_workspace',
   'active_project',
   'executable_git',
@@ -16,6 +17,12 @@ export const KNOWN_TOOL_REQUIREMENT_IDS = Object.freeze([
   'windows_input',
   'windows_window',
   'windows_ocr',
+  'native_accessibility',
+  'native_input',
+  'native_window',
+  'native_vision',
+  'audio_runtime',
+  'screen_record_runtime',
   'office_desktop',
   'network_access',
   'scheduler_runtime',
@@ -53,7 +60,7 @@ const DRY_RUN_TOOLS = new Set([
 // their catalog state explicitly unsupported on macOS/Linux until Phases 11-14
 // replace the provider behind each tool with a target-native implementation.
 const CURRENT_WINDOWS_ONLY_TOOLS = new Set([
-  'audio', 'screen_record', 'office', 'office_ppt', 'office_outlook',
+  'office', 'office_ppt', 'office_outlook',
   'inspect_workbook', 'docx_merge', 'wsl_exec', 'wsl_fs',
 ]);
 
@@ -115,18 +122,21 @@ function requirementsFor(name: string, category: ToolCategory): readonly string[
   if (/^wsl_/.test(name)) ids.add('wsl_runtime');
   if (/^(mcp_describe|mcp_call|mcp_resources)$/.test(name)) ids.add('external_mcp_connection');
   if (/^(dom_cdp$|inspect_web_app$|debug_ui$|capture_ui_state$|form_context$|network_context$|console_context$|browser_debug_context$|capture_screenshot$|dom_snapshot$|layout_metadata$|visual_context$)/.test(name)) ids.add('browser_cdp');
-  if (name === 'accessibility') { ids.add('platform_windows'); ids.add('windows_ui_automation'); }
+  if (name === 'accessibility') { ids.add('platform_windows_or_linux'); ids.add('native_accessibility'); }
   if (name === 'computer_use') {
-    ids.add('platform_windows');
-    ids.add('windows_ui_automation');
-    ids.add('windows_input');
-    ids.add('windows_window');
-    ids.add('windows_ocr');
+    ids.add('platform_windows_or_linux');
+    ids.add('native_accessibility');
+    ids.add('native_input');
+    ids.add('native_window');
+    ids.add('native_vision');
   }
+  if (name === 'input_event') { ids.add('platform_windows_or_linux'); ids.add('native_input'); }
+  if (name === 'window') { ids.add('platform_windows_or_linux'); ids.add('native_window'); }
+  if (name === 'vision') { ids.add('platform_windows_or_linux'); ids.add('native_vision'); }
+  if (name === 'vision_annotated_capture') { ids.add('platform_windows'); ids.add('windows_ocr'); }
   if (name === 'ui_target_action') { ids.add('platform_windows'); ids.add('windows_ui_automation'); ids.add('windows_ocr'); }
-  if (/^input_event$/.test(name)) { ids.add('platform_windows'); ids.add('windows_input'); }
-  if (/^window$/.test(name)) { ids.add('platform_windows'); ids.add('windows_window'); }
-  if (/^vision/.test(name)) { ids.add('platform_windows'); ids.add('windows_ocr'); }
+  if (name === 'audio') ids.add('audio_runtime');
+  if (name === 'screen_record') ids.add('screen_record_runtime');
   if (name === 'office' || /^office_(ppt|outlook)$/.test(name) || name === 'inspect_workbook' || name === 'docx_merge') ids.add('office_desktop');
   if (name === 'inspect_pdf' || name === 'pdf_extract_tables') ids.add('local_pdf_provider');
   if (name === 'lsp_diagnostics' || name === 'lsp_rename') ids.add('configured_lsp');

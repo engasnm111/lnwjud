@@ -49,9 +49,17 @@ describe('canonical bilingual tool catalog', () => {
   });
 
   it('platform-gates only providers that are actually host-specific', () => {
-    for (const name of ['audio', 'screen_record', 'office', 'wsl_exec']) {
+    for (const name of ['office', 'wsl_exec', 'vision_annotated_capture', 'ui_target_action']) {
       expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows');
     }
+    for (const name of ['accessibility', 'input_event', 'window', 'vision', 'computer_use']) {
+      expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows_or_linux');
+      expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows');
+    }
+    expect(catalogDefinitions.audio?.requirementIds).toContain('audio_runtime');
+    expect(catalogDefinitions.screen_record?.requirementIds).toContain('screen_record_runtime');
+    expect(catalogDefinitions.audio?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.screen_record?.requirementIds).not.toContain('platform_windows');
     for (const name of ['notification', 'file_dialog', 'clipboard', 'scheduler', 'port_context', 'startup_context']) {
       expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows_or_macos');
       expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows');
@@ -59,6 +67,7 @@ describe('canonical bilingual tool catalog', () => {
     for (const name of ['system_info', 'process_context', 'git', 'shell', 'web_fetch', 'inspect_pdf', 'lsp_diagnostics']) {
       expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows');
       expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows_or_macos');
+      expect(catalogDefinitions[name]?.requirementIds, name).not.toContain('platform_windows_or_linux');
     }
   });
 });

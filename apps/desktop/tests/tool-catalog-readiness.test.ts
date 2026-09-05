@@ -5,8 +5,9 @@ import { ToolCatalogService } from '../src/main/tool-catalog/tool-catalog-servic
 
 function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'unknown'>>, options: { profileDecision?: 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN'; codexEnabled?: boolean } = {}): { registry: RequirementRegistry; catalog: ToolCatalogService; probes: Record<string, ReturnType<typeof vi.fn>> } {
   const ids = [
-    'platform_windows', 'platform_windows_or_macos', 'registered_workspace', 'active_project', 'executable_git', 'executable_ripgrep', 'codex_runtime', 'wsl_runtime',
-    'local_mcp_listener', 'browser_cdp', 'windows_ui_automation', 'windows_input', 'windows_window', 'windows_ocr', 'office_desktop',
+    'platform_windows', 'platform_windows_or_macos', 'platform_windows_or_linux', 'registered_workspace', 'active_project', 'executable_git', 'executable_ripgrep', 'codex_runtime', 'wsl_runtime',
+    'local_mcp_listener', 'browser_cdp', 'windows_ui_automation', 'windows_input', 'windows_window', 'windows_ocr',
+    'native_accessibility', 'native_input', 'native_window', 'native_vision', 'audio_runtime', 'screen_record_runtime', 'office_desktop',
     'network_access', 'scheduler_runtime', 'tunnel_runtime', 'external_mcp_connection', 'local_pdf_provider', 'configured_lsp',
     'database_target', 'windows_sandbox', 'browser_event_stream', 'feature_delivery',
   ];
@@ -48,7 +49,7 @@ describe('tool catalog readiness aggregation', () => {
     });
     expect(unknownGit?.available).toBeUndefined();
 
-    const unsupported = service({ platform_windows: 'fail' });
+    const unsupported = service({ platform_windows_or_linux: 'fail' });
     expect((await unsupported.catalog.getSnapshot('en')).items.find((item) => item.name === 'accessibility')).toMatchObject({
       readiness: 'unsupported', readinessReason: 'unsupported_platform', deliveryState: 'unsupported', available: false,
     });
@@ -99,28 +100,28 @@ describe('tool catalog readiness aggregation', () => {
     });
   });
 
-  it('lists each failed backing requirement for composite desktop automation tools', async () => {
-    const composites = service({ windows_ui_automation: 'fail', windows_input: 'fail', windows_window: 'fail', windows_ocr: 'fail' }, { codexEnabled: true });
+  it('lists each failed backing requirement for cross-platform desktop automation tools without over-claiming Windows-only composites', async () => {
+    const composites = service({
+      native_accessibility: 'fail', native_input: 'fail', native_window: 'fail', native_vision: 'fail',
+      windows_ui_automation: 'fail', windows_ocr: 'fail',
+    }, { codexEnabled: true });
     const snapshot = await composites.catalog.getSnapshot('en');
     const requirements = (name: string): readonly string[] => snapshot.items.find((item) => item.name === name)?.requirements
       .filter((requirement) => requirement.status !== 'pass')
       .map((requirement) => requirement.id) ?? [];
 
-    expect(requirements('accessibility')).toEqual(['windows_ui_automation']);
-    expect(requirements('computer_use')).toEqual(['windows_ui_automation', 'windows_input', 'windows_window', 'windows_ocr']);
+    expect(requirements('accessibility')).toEqual(['native_accessibility']);
+    expect(requirements('input_event')).toEqual(['native_input']);
+    expect(requirements('window')).toEqual(['native_window']);
+    expect(requirements('vision')).toEqual(['native_vision']);
+    expect(requirements('computer_use')).toEqual(['native_accessibility', 'native_input', 'native_window', 'native_vision']);
+    expect(requirements('vision_annotated_capture')).toEqual(['windows_ocr']);
     expect(requirements('ui_target_action')).toEqual(['windows_ui_automation', 'windows_ocr']);
 
     const computerUse = snapshot.items.find((item) => item.name === 'computer_use');
-    expect(computerUse?.remediationIds).toEqual([
-      'repair_windows_ui_automation', 'repair_windows_input', 'repair_windows_window', 'repair_windows_ocr',
-    ]);
-    const remediationTitles = snapshot.remediations
-      .filter((remediation) => computerUse?.remediationIds.includes(remediation.id))
-      .map((remediation) => remediation.title);
-    expect(remediationTitles).toEqual([
-      'Repair Windows UI Automation bridge', 'Restore native input access', 'Restore native window access', 'Restore Windows vision/OCR',
-    ]);
-    expect(remediationTitles.join(' ')).not.toContain('Chrome');
+    expect(computerUse?.remediationIds).toEqual(['recheck_runtime']);
+    const uiTarget = snapshot.items.find((item) => item.name === 'ui_target_action');
+    expect(uiTarget?.remediationIds).toEqual(['repair_windows_ui_automation', 'repair_windows_ocr']);
   });
 
   it('never reports READY when an optional-for-startup dependency used by the tool is warning', async () => {
@@ -154,7 +155,7 @@ describe('tool catalog readiness aggregation', () => {
     const { catalog, probes } = service({ executable_git: 'pass' });
     const result = await catalog.recheck(['executable_git'], 'th');
     expect(probes.executable_git).toHaveBeenCalled();
-    expect(result.doctor.checks).toHaveLength(25);
+    expect(result.doctor.checks).toHaveLength(32);
     expect(result.catalog.locale).toBe('th');
   });
 

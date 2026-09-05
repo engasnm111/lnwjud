@@ -76,7 +76,9 @@ import { UpdateCheckScheduler } from './update-check-scheduler.js';
 import {
   configureUpdaterForDistribution,
   currentPortableExecutablePath,
+  detectDesktopDistribution,
   detectWindowsDistribution,
+  distributionSupportsAutoUpdate,
   launchPortableReplacement,
   preparePortableReplacement,
 } from './portable-update.js';
@@ -1115,6 +1117,7 @@ let updateInstallCoordinator: UpdateInstallCoordinator | null = null;
 let updateInstallConfirmationPending = false;
 let updateCheckScheduler: UpdateCheckScheduler | null = null;
 let pendingUpdateCheckSource: 'automatic' | 'tray' | 'renderer' | null = null;
+const desktopDistribution = detectDesktopDistribution(app.isPackaged);
 const windowsDistribution = detectWindowsDistribution(app.isPackaged);
 const windowsCompatibility = windowsCompatibilityProfile(process.platform, os.release(), process.arch);
 let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
@@ -1475,6 +1478,10 @@ function configureUpdateCheckSchedule(): void {
 function initAutoUpdater(runtime: DesktopRuntime): void {
   if (!app.isPackaged) {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePackagedOnly, canInstall: false });
+    return;
+  }
+  if (!distributionSupportsAutoUpdate(desktopDistribution)) {
+    patchUpdateStatus({ phase: 'unavailable', message: 'Automatic updates are not supported for this package format. Install updates with the platform package manager.', canInstall: false });
     return;
   }
   try {

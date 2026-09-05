@@ -134,6 +134,24 @@ describe('Windows desktop packaging', () => {
     expect(mainBundle).toMatch(/setPath\(["']userData["']/);
   });
 
+  it('declares native macOS and Linux package targets without weakening Windows packaging', async () => {
+    const config = await readFile(path.join(desktopRoot, 'electron-builder.yml'), 'utf8');
+    const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
+    expect(config).toContain('mac:');
+    expect(config).toContain('target: dmg');
+    expect(config).toContain('target: zip');
+    expect(config).toContain('artifactName: lnwjud-macOS-${arch}-${version}.${ext}');
+    expect(config).toContain('hardenedRuntime: true');
+    expect(config).toContain('linux:');
+    expect(config).toContain('target: AppImage');
+    expect(config).toContain('target: deb');
+    expect(config).toContain('artifactName: lnwjud-Linux-${arch}-${version}.${ext}');
+    expect(desktopPackage.scripts?.['package:macos']).toContain('--mac dmg zip --arm64 --x64');
+    expect(desktopPackage.scripts?.['package:linux']).toContain('--linux AppImage deb --x64');
+    expect(desktopPackage.scripts?.['package:macos']).toContain('prepare:runtime-assets');
+    expect(desktopPackage.scripts?.['package:linux']).toContain('prepare:runtime-assets');
+  });
+
   it('targets Windows 10 OCR through the .NET 8 Windows TFM without the legacy SDK contracts package', async () => {
     const ocrProject = await readFile(path.join(repositoryRoot, 'native', 'windows-ocr', 'lnwjud-windows-ocr.csproj'), 'utf8');
     expect(ocrProject).toContain('<TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>');

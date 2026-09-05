@@ -77,3 +77,30 @@ nsis:
   include: build/installer.nsh
 portable:
   artifactName: lnwjud-Portable-${version}.${ext}
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  artifactName: lnwjud-macOS-${arch}-${version}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+linux:
+  icon: build/icon.png
+  category: Development
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  artifactName: lnwjud-Linux-${arch}-${version}.${ext}
+  executableName: lnwjud
