@@ -13,7 +13,8 @@ afterEach(async () => {
 });
 
 describe('PowerShellWindowsCapabilityBridge integrity', () => {
-  it('executes a script only when its SHA-256 matches the embedded expectation', async () => {
+  it('executes a script only when its SHA-256 matches the embedded expectation', async ({ skip }) => {
+    if (process.platform !== 'win32') skip('PowerShell bridge execution requires Windows');
     const root = await temporaryRoot();
     const scriptPath = path.join(root, 'bridge.ps1');
     const script = '$input | Out-Null; Write-Output \'{"ok":true,"value":{"trusted":true}}\'';
@@ -24,7 +25,8 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
     await expect(bridge.execute({ capability: 'system_info', input: { action: 'summary' } })).resolves.toEqual({ ok: true, value: { trusted: true } });
   }, 15_000);
 
-  it('fails closed after the script changes, even if it was valid on a previous call', async () => {
+  it('fails closed after the script changes, even if it was valid on a previous call', async ({ skip }) => {
+    if (process.platform !== 'win32') skip('PowerShell bridge execution requires Windows');
     const root = await temporaryRoot();
     const scriptPath = path.join(root, 'bridge.ps1');
     const trusted = '$input | Out-Null; Write-Output \'{"ok":true,"value":{"trusted":true}}\'';
