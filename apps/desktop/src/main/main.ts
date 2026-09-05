@@ -87,6 +87,7 @@ import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
+import { loadV3CheckpointKeyIfPresent } from './checkpoint-key-compat.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
@@ -1394,11 +1395,15 @@ function bootstrapMcpStdio(): void {
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
     prependBundledRuntimeToolsToPath();
+    const legacyCheckpointEncryptionKey = process.platform === 'win32'
+      ? loadV3CheckpointKeyIfPresent(dataPath, safeStorage)
+      : undefined;
     const secrets = await bootstrapDesktopSecrets({ dataPath, safeStorage });
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
       ...secrets,
+      ...(legacyCheckpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey: legacyCheckpointEncryptionKey }),
     });
     desktopRuntime = runtime;
     const workspacePath = readArgValue('--workspace')
@@ -1439,6 +1444,9 @@ function bootstrapMcpStdio(): void {
         void desktopRuntime?.close().finally(() => process.exit(0));
       }
     });
+  }).catch((error: unknown) => {
+    process.stderr.write('lnwjud MCP stdio startup failed: ' + (error instanceof Error ? error.message : 'unknown error') + '\n');
+    app.quit();
   });
   app.on('window-all-closed', () => {
     // Keep the stdio MCP process alive without a BrowserWindow.
@@ -1668,6 +1676,9 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
 }
 
 async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
+  const legacyCheckpointEncryptionKey = process.platform === 'win32'
+    ? loadV3CheckpointKeyIfPresent(dataPath, safeStorage)
+    : undefined;
   const secrets = await bootstrapDesktopSecrets({ dataPath, safeStorage });
   return createDesktopRuntime(dataPath, {
     hostMutationApprovalProvider: requestNativeMutationApproval,
@@ -1675,6 +1686,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
     }),
     ...secrets,
+    ...(legacyCheckpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey: legacyCheckpointEncryptionKey }),
   });
 }
 
@@ -1696,13 +1708,11 @@ function bootstrapDesktop(): void {
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
     runtime.logHub.start();
     registerIpcHandlers(() => mainWindow, runtime.services, { onLocaleChanged: setDesktopLocale, onUserSettingsChanged: applyDesktopUserSettings });
-    try {
-      await runtime.autoStartMcp();
-    } catch (error: unknown) {
-      console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-    }
     createDesktopWindow();
     createDesktopTray();
+    void runtime.autoStartMcp().catch((error: unknown) => {
+      console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
     void runtime.autoStartTunnel().catch((error: unknown) => {
       console.error(`Tunnel persistent runtime auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });
@@ -1713,7 +1723,7 @@ function bootstrapDesktop(): void {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createDesktopWindow(true);
     });
-  });
+  }).catch((error: unknown) => handleDesktopStartupFailure('desktop', error));
   app.on('before-quit', handleDesktopBeforeQuit);
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
@@ -1739,11 +1749,22 @@ function bootstrapLogViewerOnly(): void {
         if (mainWindow === viewer) mainWindow = null;
       });
     }
-  });
+  }).catch((error: unknown) => handleDesktopStartupFailure('log viewer', error));
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
   app.on('before-quit', handleDesktopBeforeQuit);
+}
+
+function handleDesktopStartupFailure(scope: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : 'unknown error';
+  console.error('[Startup] ' + scope + ' failed: ' + message);
+  try {
+    dialog.showErrorBox('lnwjud failed to start', scope + ' startup failed.\n\n' + message);
+  } catch {
+    // Console/crash diagnostics remain available if native dialogs cannot be shown.
+  }
+  app.quit();
 }
 
 function configureDesktopShutdown(runtime: DesktopRuntime): void {
@@ -1862,8 +1883,7 @@ if (!gotInstanceLock) {
       } else if (argv.includes('--log-viewer')) {
         openLogViewerWindow();
       } else if (mainWindow !== null) {
-        mainWindow.show();
-        mainWindow.focus();
+        revealMainWindow();
       }
     });
   }
