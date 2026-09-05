@@ -93,6 +93,7 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
         await window.lnwjud.setUserSettings({
           settings: {
             ...dashboard.settings,
+            closeBehavior: 'quit',
             extensions: {
               mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [],
               extraMcpServers: [{ name: 'offline-fixture', command: 'Z:\\missing\\offline-mcp.exe', args: [], cwd: '', type: 'stdio', env: {} }],
@@ -100,6 +101,11 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
           },
         });
       });
+      await first.page.close();
+      await expect.poll(
+        () => first.process.exitCode !== null || first.process.signalCode !== null,
+        { timeout: 10_000, intervals: [50, 100, 250] },
+      ).toBe(true);
     } finally { await closeDesktop(first, true); }
 
     const second = await launchDesktop({ dataRoot, fixtureRoot });
