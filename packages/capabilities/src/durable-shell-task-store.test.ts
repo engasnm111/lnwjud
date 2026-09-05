@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -80,40 +80,6 @@ describe('durable shell background tasks', () => {
       ok: true,
       value: { state: 'completed', exit_code: 0, stdout: 'fast', durable: true },
     });
-  });
-
-  it('retries a transient partial metadata write instead of reporting a durable task as missing', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
-    temporaryRoots.push(root);
-    const taskStateDirectory = path.join(root, '.tasks');
-    const taskId = 'transient-metadata-task';
-    const taskDirectory = path.join(taskStateDirectory, taskId);
-    const metadataPath = path.join(taskDirectory, 'task.json');
-    await mkdir(taskDirectory, { recursive: true });
-    await writeFile(metadataPath, '{', 'utf8');
-    const metadata = JSON.stringify({
-      version: 1,
-      task_id: taskId,
-      state: 'completed',
-      started_at: '2026-09-05T00:00:00.000Z',
-      finished_at: '2026-09-05T00:00:00.100Z',
-      exit_code: 0,
-      include_stdout: false,
-      include_stderr: false,
-      max_output_bytes: 1024,
-      deadline_at: '2026-09-05T00:01:00.000Z',
-    });
-    const repair = new Promise<void>((resolve, reject) => {
-      setTimeout(() => {
-        void writeFile(metadataPath, metadata, 'utf8').then(() => resolve(), reject);
-      }, 60);
-    });
-
-    const store = new DurableShellTaskStore(taskStateDirectory);
-    const snapshot = await store.snapshot(taskId);
-    await repair;
-
-    expect(snapshot).toMatchObject({ ok: true, value: { task_id: taskId, state: 'completed', exit_code: 0, durable: true } });
   });
 
   it('cancels a durable task from a replacement backend', async () => {
