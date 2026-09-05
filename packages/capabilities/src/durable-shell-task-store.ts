@@ -64,7 +64,8 @@ const STDOUT_FILENAME = 'stdout.log';
 const STDERR_FILENAME = 'stderr.log';
 const SPEC_FILENAME = 'spec.json';
 const WORKER_PID_FILENAME = 'worker.pid';
-const METADATA_READ_RETRIES = 4;
+const METADATA_READ_RETRIES = 20;
+const METADATA_READ_RETRY_DELAY_MS = 15;
 const PROCESS_EXIT_RECONCILE_DELAY_MS = 75;
 const PROCESS_HANDLE_RELEASE_GRACE_MS = 150;
 
@@ -331,10 +332,13 @@ export class DurableShellTaskStore {
           }
           return ok(parsed);
         }
-      } catch {
+      } catch (error: unknown) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+          return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
+        }
         if (attempt === METADATA_READ_RETRIES - 1) break;
       }
-      await delay(15);
+      await delay(METADATA_READ_RETRY_DELAY_MS);
     }
     return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
   }
