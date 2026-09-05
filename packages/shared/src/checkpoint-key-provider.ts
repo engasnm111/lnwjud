@@ -13,8 +13,7 @@ export class EnvironmentCheckpointEncryptionKeyProvider implements CheckpointEnc
 
   public constructor(private readonly environment: NodeJS.ProcessEnv = process.env) {}
 
-  public load(dataPath: string): Buffer {
-    void dataPath;
+  public load(_dataPath: string): Buffer {
     const configured = this.environment.LNWJUD_CHECKPOINT_KEY_BASE64;
     if (configured === undefined || configured.trim().length === 0) {
       throw new Error('LNWJUD_CHECKPOINT_KEY_BASE64 is required for this checkpoint key provider');

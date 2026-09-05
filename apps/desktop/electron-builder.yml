@@ -95,7 +95,6 @@ mac:
 linux:
   icon: build/icon.png
   category: Development
-  maintainer: Adisorn <engasnm111@users.noreply.github.com>
   target:
     - target: AppImage
       arch:

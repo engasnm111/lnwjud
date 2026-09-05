@@ -273,7 +273,7 @@ export async function currentSharedActivityOwner(): Promise<SharedActivityOwner>
 
 export async function probeProcessStart(pid: number, options: ProcessProbeOptions = {}): Promise<ProcessProbeResult> {
   if (!Number.isInteger(pid) || pid <= 0 || pid > 2_147_483_647) return { state: 'unverifiable', reason: 'invalid_pid' };
-  const runProbe = options.runProbe ?? ((probePid, timeout): Promise<string> => runDefaultProcessProbe(probePid, timeout, options.platform ?? process.platform));
+  const runProbe = options.runProbe ?? ((probePid, timeout) => runDefaultProcessProbe(probePid, timeout, options.platform ?? process.platform));
   const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_PROCESS_PROBE_TIMEOUT_MS);
   const attempts = Math.min(3, positiveInteger(options.attempts, DEFAULT_PROCESS_PROBE_ATTEMPTS));
   for (let attempt = 1; attempt <= attempts; attempt += 1) {

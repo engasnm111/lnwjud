@@ -21,7 +21,7 @@ const waylandProfile: LinuxSessionProfile = {
   dbusSessionAvailable: true,
 };
 
-function bridgeFixture(): { bridge: LinuxNativeCapabilityBridge; execute: LinuxNativeCapabilityBridge['execute'] } {
+function bridgeFixture() {
   const execute = vi.fn(async (request: { readonly capability: string; readonly input: Record<string, unknown>; readonly session: LinuxSessionProfile }): Promise<Result<unknown>> => ok({
     capability: request.capability,
     session: request.session.session,

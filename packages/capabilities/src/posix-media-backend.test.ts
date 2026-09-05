@@ -87,7 +87,7 @@ describe('PosixMediaCapabilityBackend', () => {
     const backend = new PosixMediaCapabilityBackend('audio', {
       platform: 'darwin',
       runtime,
-      allowedRootsProvider: async (): Promise<string[]> => [root],
+      allowedRootsProvider: async () => [root],
     });
 
     await expect(backend.execute({ action: 'status' })).resolves.toMatchObject({
@@ -155,7 +155,7 @@ describe('PosixMediaCapabilityBackend', () => {
       platform: 'linux',
       linuxSessionProfile: x11Profile(':7'),
       runtime,
-      allowedRootsProvider: async (): Promise<string[]> => [root],
+      allowedRootsProvider: async () => [root],
     });
 
     await expect(backend.execute({ action: 'status' })).resolves.toMatchObject({
@@ -184,7 +184,7 @@ describe('PosixMediaCapabilityBackend', () => {
       platform: 'linux',
       linuxSessionProfile: waylandProfile(),
       runtime: fakeRuntime(['ffmpeg']),
-      allowedRootsProvider: async (): Promise<string[]> => [root],
+      allowedRootsProvider: async () => [root],
     });
 
     await expect(backend.execute({ action: 'status' })).resolves.toMatchObject({

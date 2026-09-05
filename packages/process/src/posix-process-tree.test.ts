@@ -12,7 +12,7 @@ function fakeChild(pid = 4242): ChildProcess {
   }) as unknown as ChildProcess;
 }
 
-function processSignalHarness(): { running: Set<number>; calls: Array<{ pid: number; signal: NodeJS.Signals | 0 }>; signalProcess: (pid: number, signal: NodeJS.Signals | 0) => void } {
+function processSignalHarness() {
   const running = new Set<number>();
   const calls: Array<{ pid: number; signal: NodeJS.Signals | 0 }> = [];
   const signalProcess = (pid: number, signal: NodeJS.Signals | 0): void => {
@@ -32,7 +32,7 @@ describe('PosixProcessTree', () => {
   it('signals only an explicitly owned process group', async () => {
     const harness = processSignalHarness();
     harness.running.add(4242);
-    const tree = new PosixProcessTree({ signalProcess: harness.signalProcess, wait: async (): Promise<void> => undefined });
+    const tree = new PosixProcessTree({ signalProcess: harness.signalProcess, wait: async () => undefined });
 
     await tree.stop(fakeChild(), 4242, { processGroupId: 4242 });
 
@@ -43,7 +43,7 @@ describe('PosixProcessTree', () => {
   it('never guesses a negative PID when group ownership is absent', async () => {
     const harness = processSignalHarness();
     harness.running.add(4242);
-    const tree = new PosixProcessTree({ signalProcess: harness.signalProcess, wait: async (): Promise<void> => undefined });
+    const tree = new PosixProcessTree({ signalProcess: harness.signalProcess, wait: async () => undefined });
 
     await tree.stop(fakeChild(), 4242);
 
@@ -62,7 +62,7 @@ describe('PosixProcessTree', () => {
     };
     const tree = new PosixProcessTree({
       signalProcess,
-      wait: async (): Promise<void> => undefined,
+      wait: async () => undefined,
       gracefulTimeoutMs: 0,
       forceTimeoutMs: 0,
     });

@@ -62,8 +62,8 @@ describe('SafeStorageSecretStore', () => {
       rootPath: directory,
       platform: 'win32',
       safeStorage: adapter(),
-      pathForRef: (): string => filePath,
-      legacyDecrypt: async (_ref, raw): Promise<Buffer | null> => raw === 'legacy-cipher' ? Buffer.from('legacy-secret', 'utf8') : null,
+      pathForRef: () => filePath,
+      legacyDecrypt: async (_ref, raw) => raw === 'legacy-cipher' ? Buffer.from('legacy-secret', 'utf8') : null,
     });
     await expect(store.get(ref)).resolves.toEqual(Buffer.from('legacy-secret', 'utf8'));
     await expect(readFile(`${filePath}.legacy.bak`, 'utf8')).resolves.toBe('legacy-cipher');

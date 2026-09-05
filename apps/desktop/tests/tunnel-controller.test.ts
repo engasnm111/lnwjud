@@ -935,7 +935,7 @@ describe('TunnelController lifecycle', () => {
     const escalated: number[] = [];
     const startedAt = '2026-08-20T00:00:00.000Z';
     const fixture = await ownedController(() => true, 20, {
-      terminateOwnedProcessTree: async (pid): Promise<void> => {
+      terminateOwnedProcessTree: async (pid) => {
         escalated.push(pid);
         fixture.child.exitCode = 1;
         fixture.child.emit('exit', 1);
@@ -961,15 +961,15 @@ describe('TunnelController lifecycle', () => {
       getClientPath: (): null => null,
       setClientPath: (): void => undefined,
       getDataPath: (): string => os.tmpdir(),
-      terminateOwnedProcessTree: async (pid): Promise<void> => {
+      terminateOwnedProcessTree: async (pid) => {
         terminated.push(pid);
         child.exitCode = 1;
         child.emit('exit', 1);
       },
-      inspectOwnedProcess: async (): Promise<{ state: 'live'; processStartedAt: string } | { state: 'gone' }> => terminated.length === 0
+      inspectOwnedProcess: async () => terminated.length === 0
         ? { state: 'live', processStartedAt: startedAt }
         : { state: 'gone' },
-      isOwnedProcessGroupRunning: (): boolean => false,
+      isOwnedProcessGroupRunning: () => false,
     });
     const internals = controller as unknown as {
       child: ChildProcess | null;
@@ -1000,13 +1000,13 @@ describe('TunnelController lifecycle', () => {
       getClientPath: (): null => null,
       setClientPath: (): void => undefined,
       getDataPath: (): string => os.tmpdir(),
-      autoReconnect: (): boolean => false,
-      terminateOwnedProcessTree: async (pid): Promise<void> => {
+      autoReconnect: () => false,
+      terminateOwnedProcessTree: async (pid) => {
         terminated.push(pid);
         groupLive = false;
       },
-      inspectOwnedProcess: async (): Promise<{ state: 'gone' }> => ({ state: 'gone' }),
-      isOwnedProcessGroupRunning: (): boolean => groupLive,
+      inspectOwnedProcess: async () => ({ state: 'gone' }),
+      isOwnedProcessGroupRunning: () => groupLive,
     });
     const internals = controller as unknown as {
       child: ChildProcess | null;
@@ -1039,7 +1039,7 @@ describe('TunnelController lifecycle', () => {
       setClientPath: (): void => undefined,
       getDataPath: (): string => os.tmpdir(),
       terminateOwnedProcessTree,
-      inspectOwnedProcess: async (): Promise<{ state: 'live'; processStartedAt: string }> => ({ state: 'live', processStartedAt: '2026-08-20T00:00:00.000Z' }),
+      inspectOwnedProcess: async () => ({ state: 'live', processStartedAt: '2026-08-20T00:00:00.000Z' }),
     });
     const internals = controller as unknown as {
       child: ChildProcess | null;
@@ -1113,7 +1113,7 @@ describe('TunnelController lifecycle', () => {
     const terminateOwnedProcessTree = vi.fn(async () => undefined);
     const fixture = await ownedController(() => true, 20, {
       terminateOwnedProcessTree,
-      inspectOwnedProcess: async (): Promise<{ state: 'live'; processStartedAt: string }> => ({ state: 'live', processStartedAt: '2026-08-20T00:00:00.000Z' }),
+      inspectOwnedProcess: async () => ({ state: 'live', processStartedAt: '2026-08-20T00:00:00.000Z' }),
     });
     fixture.child.pid = 7657;
     controllerInternals(fixture.controller).ownedChildStartedAt = null;

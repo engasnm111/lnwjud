@@ -1,5 +1,3 @@
-import process from 'node:process';
-
 export const NODE_RUNTIME_VERSION = '24.16.0';
 export const RIPGREP_RUNTIME_VERSION = '15.2.0';
 

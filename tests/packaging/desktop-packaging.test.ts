@@ -145,7 +145,6 @@ describe('Windows desktop packaging', () => {
     expect(config).toContain('linux:');
     expect(config).toContain('target: AppImage');
     expect(config).toContain('target: deb');
-    expect(config).toContain('maintainer: Adisorn <engasnm111@users.noreply.github.com>');
     expect(config).toContain('artifactName: lnwjud-Linux-${arch}-${version}.${ext}');
     expect(desktopPackage.scripts?.['package:macos']).toContain('--mac dmg zip --arm64 --x64');
     expect(desktopPackage.scripts?.['package:linux']).toContain('--linux AppImage deb --x64');

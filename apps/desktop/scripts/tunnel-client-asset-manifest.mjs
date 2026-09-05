@@ -1,5 +1,3 @@
-import process from 'node:process';
-
 export const TUNNEL_CLIENT_VERSION = '0.0.13';
 
 const releaseBase = `https://github.com/openai/tunnel-client/releases/download/v${TUNNEL_CLIENT_VERSION}`;
