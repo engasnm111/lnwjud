@@ -65,8 +65,9 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     if (operation === 'check_tool' && validatedTool === undefined) return err(appError('INVALID_INPUT', 'Health tool is required'));
     if (operation === 'check_tool' && validatedTool !== undefined) return ok({ tool: validatedTool, ...(await this.check(validatedTool)) });
 
-    const entries = await Promise.all(capabilityToolNames.map(async (name) => [name, await this.check(name)] as const));
-    return ok({ capabilities: Object.fromEntries(entries) });
+    const capabilities: Record<string, unknown> = {};
+    for (const name of capabilityToolNames) capabilities[name] = await this.check(name);
+    return ok({ capabilities });
   }
 
   private async check(tool: CapabilityToolName): Promise<Record<string, unknown>> {
@@ -114,7 +115,7 @@ export class HealthCapabilityBackend implements CapabilityBackend {
       return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }
     if (tool === 'dom_cdp') return this.describe(tool, await this.checkDelegated(this.domCdp, { action: 'status' }));
-    if (tool === 'scheduler') return this.describe(tool, await this.checkDelegated(this.scheduler, { action: 'list', dry_run: true }));
+    if (tool === 'scheduler') return this.describe(tool, await this.checkDelegated(this.scheduler, { action: 'list' }));
     if (tool === 'wsl_exec') return this.describe(tool, await this.checkDelegated(this.wslExec, { operation: 'status' }));
     if (tool === 'wsl_fs') return this.describe(tool, await this.checkDelegated(this.wslFs, { operation: 'status' }));
     return this.describe(tool, await this.checkDelegated(this.accessibility, { action: 'status' }));

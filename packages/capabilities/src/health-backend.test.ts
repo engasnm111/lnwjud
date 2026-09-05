@@ -71,51 +71,6 @@ describe('HealthCapabilityBackend', () => {
     }
   });
 
-  it('runs independent check_all probes concurrently', async () => {
-    let started = 0;
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const provider = {
-      execute: async (): Promise<Result<unknown>> => {
-        started += 1;
-        await gate;
-        return ok({ available: true, ready: true });
-      },
-    };
-    const backend = new HealthCapabilityBackend({
-      platform: 'win32',
-      systemInfo: provider,
-      clipboard: provider,
-    });
-
-    const pending = backend.execute({ operation: 'check_all' });
-    await Promise.resolve();
-    expect(started).toBe(2);
-    release();
-    await expect(pending).resolves.toMatchObject({ ok: true });
-  });
-
-  it('probes scheduler readiness without enumerating the host task list', async () => {
-    let probe: unknown;
-    const backend = new HealthCapabilityBackend({
-      platform: 'win32',
-      scheduler: {
-        execute: async (input): Promise<Result<unknown>> => {
-          probe = input;
-          return ok({ dry_run: true, action: 'list' });
-        },
-      },
-    });
-
-    const result = await backend.execute({ operation: 'check_tool', tool: 'scheduler' });
-
-    expect(probe).toEqual({ action: 'list', dry_run: true });
-    expect(result).toMatchObject({
-      ok: true,
-      value: { tool: 'scheduler', available: true, ready: true, dry_run: true, action: 'list' },
-    });
-  });
-
   it('delegates WSL readiness independently from accessibility', async () => {
     const backend = new HealthCapabilityBackend({
       platform: 'win32',
@@ -213,7 +168,7 @@ describe('HealthCapabilityBackend', () => {
         provider: 'launchd',
       },
     });
-    expect(calls).toEqual([{ action: 'list', dry_run: true }]);
+    expect(calls).toEqual([{ action: 'list' }]);
 
     const linux = new HealthCapabilityBackend({ platform: 'linux', scheduler: { execute: async (): Promise<Result<unknown>> => ok({ tasks: [] }) } });
     await expect(linux.execute({ operation: 'check_tool', tool: 'scheduler' })).resolves.toMatchObject({
