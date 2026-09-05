@@ -35,11 +35,17 @@ function target(upstreamTarget, sha256, executableName, cloudflaredName) {
   });
 }
 
-export function tunnelClientTargetKey(platform = process.platform, arch = process.arch) {
+export function tunnelClientTargetKey(
+  platform = process.env.LNWJUD_PACKAGE_TARGET_PLATFORM?.trim() || process.platform,
+  arch = process.env.LNWJUD_PACKAGE_TARGET_ARCH?.trim() || process.arch,
+) {
   return `${platform}-${arch}`;
 }
 
-export function resolveTunnelClientAsset(platform = process.platform, arch = process.arch) {
+export function resolveTunnelClientAsset(
+  platform = process.env.LNWJUD_PACKAGE_TARGET_PLATFORM?.trim() || process.platform,
+  arch = process.env.LNWJUD_PACKAGE_TARGET_ARCH?.trim() || process.arch,
+) {
   const key = tunnelClientTargetKey(platform, arch);
   const asset = TARGETS[key];
   if (asset === undefined) throw new Error(`No bundled tunnel-client asset policy exists for ${key}`);

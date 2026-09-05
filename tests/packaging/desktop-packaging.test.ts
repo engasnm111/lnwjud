@@ -147,10 +147,15 @@ describe('Windows desktop packaging', () => {
     expect(config).toContain('target: deb');
     expect(config).toContain('maintainer: Adisorn <engasnm111@users.noreply.github.com>');
     expect(config).toContain('artifactName: lnwjud-Linux-${arch}-${version}.${ext}');
-    expect(desktopPackage.scripts?.['package:macos']).toContain('--mac dmg zip --arm64 --x64');
-    expect(desktopPackage.scripts?.['package:linux']).toContain('--linux AppImage deb --x64');
-    expect(desktopPackage.scripts?.['package:macos']).toContain('prepare:runtime-assets');
-    expect(desktopPackage.scripts?.['package:linux']).toContain('prepare:runtime-assets');
+    expect(desktopPackage.scripts?.['package:macos']).toBe('node scripts/package-native-desktop.mjs macos');
+    expect(desktopPackage.scripts?.['package:linux']).toBe('node scripts/package-native-desktop.mjs linux');
+    const nativePackager = await readFile(path.join(desktopRoot, 'scripts', 'package-native-desktop.mjs'), 'utf8');
+    expect(nativePackager).toContain("{ platform: 'darwin', arch: 'arm64', builderArgs: ['--mac', 'dmg', 'zip', '--arm64'] }");
+    expect(nativePackager).toContain("{ platform: 'darwin', arch: 'x64', builderArgs: ['--mac', 'dmg', 'zip', '--x64'] }");
+    expect(nativePackager).toContain("{ platform: 'linux', arch: 'x64', builderArgs: ['--linux', 'AppImage', 'deb', '--x64'] }");
+    expect(nativePackager).toContain('LNWJUD_PACKAGE_TARGET_PLATFORM');
+    expect(nativePackager).toContain('LNWJUD_PACKAGE_TARGET_ARCH');
+    expect(nativePackager).toContain("runCorepack(['pnpm@10.15.0', 'prepare:runtime-assets'], targetEnvironment)");
   });
 
   it('targets Windows 10 OCR through the .NET 8 Windows TFM without the legacy SDK contracts package', async () => {
@@ -183,6 +188,7 @@ describe('Windows desktop packaging', () => {
 
   it('defines target-native tunnel-client assets for every Tier-1 desktop target and packages the prepared bundle as a shared resource', async () => {
     const manifest = await readFile(path.join(desktopRoot, 'scripts', 'tunnel-client-asset-manifest.mjs'), 'utf8');
+    const runtimeManifest = await readFile(path.join(desktopRoot, 'scripts', 'runtime-asset-manifest.mjs'), 'utf8');
     const preparer = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.mjs'), 'utf8');
     const config = await readFile(path.join(desktopRoot, 'electron-builder.yml'), 'utf8');
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
@@ -202,6 +208,10 @@ describe('Windows desktop packaging', () => {
     expect(manifest).toContain("'darwin-x64': target('darwin-amd64'");
     expect(manifest).toContain("'linux-x64': target('linux-amd64'");
     expect(manifest).toContain("'tunnel-client', 'cloudflared'");
+    expect(manifest).toContain('process.env.LNWJUD_PACKAGE_TARGET_PLATFORM');
+    expect(manifest).toContain('process.env.LNWJUD_PACKAGE_TARGET_ARCH');
+    expect(runtimeManifest).toContain('process.env.LNWJUD_PACKAGE_TARGET_PLATFORM');
+    expect(runtimeManifest).toContain('process.env.LNWJUD_PACKAGE_TARGET_ARCH');
     expect(preparer).toContain("process.platform === 'win32'");
     expect(preparer).toContain("command: '/usr/bin/ditto'");
     expect(preparer).toContain("command: 'unzip'");
@@ -275,5 +285,16 @@ describe('Windows desktop packaging', () => {
     expect(manifestScript).toContain('size: ${metadata.size}');
     expect(manifestScript).toContain("'portable.yml'");
     expect(manifestScript).not.toContain('lnwjud-Setup-${version}.exe');
+  });
+
+  it('runs authoritative native packaging CI directly on macos-linux without changing the dev artifact lane', async () => {
+    const ci = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
+    expect(ci).toContain('      - macos-linux');
+    expect(ci).toContain("github.ref == 'refs/heads/macos-linux'");
+    expect(ci).toContain("if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/macos-linux'");
+    expect(ci).toContain('name: ${{ runner.os }}-dev-${{ github.sha }}');
+    expect(ci).toContain('name: ${{ runner.os }}-macos-linux-${{ github.sha }}');
+    expect(ci).toContain('pnpm --filter @lnwjud/desktop package:macos');
+    expect(ci).toContain('pnpm --filter @lnwjud/desktop package:linux');
   });
 });

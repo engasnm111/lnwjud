@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - dev
+      - macos-linux
       - 'release/v*'
   pull_request:
     branches: [ main ]
@@ -79,7 +80,7 @@ jobs:
 
   cross-platform-core:
     name: Cross-platform core (${{ matrix.os }})
-    if: github.ref == 'refs/heads/dev' || github.event_name == 'pull_request'
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/macos-linux' || github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -112,7 +113,7 @@ jobs:
           pnpm --filter @lnwjud/desktop typecheck
 
       - name: Package native desktop artifact
-        if: github.ref == 'refs/heads/dev'
+        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/macos-linux'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
@@ -127,6 +128,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ runner.os }}-dev-${{ github.sha }}
+          path: apps/desktop/dist/installers/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload cross-platform macos-linux artifacts
+        if: github.ref == 'refs/heads/macos-linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-macos-linux-${{ github.sha }}
           path: apps/desktop/dist/installers/*
           if-no-files-found: error
           retention-days: 7

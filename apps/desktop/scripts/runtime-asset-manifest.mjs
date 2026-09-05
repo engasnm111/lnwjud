@@ -99,11 +99,17 @@ const TARGETS = Object.freeze({
   },
 });
 
-export function runtimeTargetKey(platform = process.platform, arch = process.arch) {
+export function runtimeTargetKey(
+  platform = process.env.LNWJUD_PACKAGE_TARGET_PLATFORM?.trim() || process.platform,
+  arch = process.env.LNWJUD_PACKAGE_TARGET_ARCH?.trim() || process.arch,
+) {
   return `${platform}-${arch}`;
 }
 
-export function resolveRuntimeAssets(platform = process.platform, arch = process.arch) {
+export function resolveRuntimeAssets(
+  platform = process.env.LNWJUD_PACKAGE_TARGET_PLATFORM?.trim() || process.platform,
+  arch = process.env.LNWJUD_PACKAGE_TARGET_ARCH?.trim() || process.arch,
+) {
   const key = runtimeTargetKey(platform, arch);
   const target = TARGETS[key];
   if (target === undefined) throw new Error(`No bundled runtime asset policy exists for ${key}`);
