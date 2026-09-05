@@ -41,8 +41,7 @@ describe('WorkspacePathGuard', () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard();
 
-    const inputPath = path.join('src', 'index.ts');
-    const result = await guard.resolveForRead(workspace, inputPath);
+    const result = await guard.resolveForRead(workspace, 'src\\index.ts');
 
     expect(result).toEqual({
       ok: true,
@@ -60,16 +59,16 @@ describe('WorkspacePathGuard', () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard();
 
-    expectError(await guard.resolveForRead(workspace, path.join('..', '..', 'outside')), 'PATH_OUTSIDE_WORKSPACE');
+    expectError(await guard.resolveForRead(workspace, '..\\..\\Windows\\System32'), 'PATH_OUTSIDE_WORKSPACE');
     expectError(await guard.resolveForRead(workspace, path.resolve(workspace.rootPath, '..', 'outside.txt')), 'PATH_OUTSIDE_WORKSPACE');
-    expectError(await guard.resolveForRead(workspace, path.parse(workspace.rootPath).root), 'PATH_OUTSIDE_WORKSPACE');
+    expectError(await guard.resolveForRead(workspace, '\\\\server\\share\\file'), 'PATH_OUTSIDE_WORKSPACE');
   });
 
   it('rejects NUL bytes before filesystem access', async () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard();
 
-    expectError(await guard.resolveForRead(workspace, `${path.join('src', 'index.ts')}\0.txt`), 'INVALID_INPUT');
+    expectError(await guard.resolveForRead(workspace, 'src\\index.ts\0.txt'), 'INVALID_INPUT');
   });
 
   it('allows a nonexistent child for a write without creating it', async () => {
@@ -90,8 +89,7 @@ describe('WorkspacePathGuard', () => {
     });
   });
 
-  it('normalizes a path that differs only by case on Windows', async ({ skip }) => {
-    if (process.platform !== 'win32') skip('case-insensitive workspace resolution requires Windows');
+  it('normalizes a path that differs only by case on Windows', async () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard();
 
@@ -104,7 +102,7 @@ describe('WorkspacePathGuard', () => {
     }
   });
 
-  it('allows secret files in unrestricted mode', async () => {
+  it('allows secret files outside E:\\ in unrestricted mode', async () => {
     const workspace = await createWorkspace();
     await writeFile(path.join(workspace.rootPath, '.env'), 'SECRET=1\n', 'utf8');
     const guard = new WorkspacePathGuard(undefined, { unrestricted: true });
@@ -118,7 +116,7 @@ describe('WorkspacePathGuard', () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard(undefined, { unrestricted: true });
 
-    expectError(await guard.resolveForRead(workspace, path.join('..', '..', 'outside')), 'PATH_OUTSIDE_WORKSPACE');
+    expectError(await guard.resolveForRead(workspace, '..\\..\\Windows\\System32'), 'PATH_OUTSIDE_WORKSPACE');
   });
 
   it('allows only explicit absolute outside paths under per-invocation Full Bypass', async () => {
