@@ -30,7 +30,9 @@ vi.mock('electron', () => ({
   dialog: {
     showSaveDialog: electronHarness.showSaveDialog,
     showMessageBox: vi.fn(async () => ({ response: 1 })),
+    showErrorBox: vi.fn(),
   },
+  safeStorage: { decryptString: vi.fn() },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (event: unknown, payload?: unknown) => Promise<unknown>) => {
       electronHarness.handlers.set(channel, handler);

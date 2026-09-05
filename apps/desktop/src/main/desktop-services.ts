@@ -198,6 +198,7 @@ export interface DesktopRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
+  readonly checkpointEncryptionKey?: Buffer;
   /** Injectable only when an officially supported Tunnel OAuth provisioning contract exists. */
   readonly tunnelOAuthBackend?: TunnelOAuthProvisioningBackend;
 }
@@ -237,7 +238,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const workLogViewState = new WorkLogViewState(settingsRepository);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
-  const checkpointCipher = new AesGcmCheckpointCipher(loadCheckpointEncryptionKey(dataPath));
+  const checkpointCipher = new AesGcmCheckpointCipher(options.checkpointEncryptionKey ?? loadCheckpointEncryptionKey(dataPath));
   const checkpointRepository = new SqliteCheckpointRepository(database, checkpointCipher);
   const backupService = new SqliteBackupService(database, { backupDirectory, databaseFilename });
   void backupService.ensureRecent().catch((error: unknown) => {
