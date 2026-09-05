@@ -21,6 +21,16 @@ describe('desktop packaged startup regression contract', () => {
     expect(nativeRuntime).toContain('checkpointEncryptionKey');
   });
 
+  it('routes migrated v3 tunnel secrets through safeStorage before legacy PowerShell DPAPI', () => {
+    const compat = section('async function decryptTunnelSecretCompat', 'function createNativeDesktopRuntime');
+    const nativeRuntime = section('function createNativeDesktopRuntime', 'function bootstrapDesktop');
+    const stdio = section('function bootstrapMcpStdio', 'function applyDesktopUserSettings');
+    expect(compat).toContain('decryptV3WindowsSafeStorageSecretIfPresent(cipherText, safeStorage)');
+    expect(compat).toContain('return unprotectTunnelSecret(cipherText);');
+    expect(nativeRuntime).toContain('decryptTunnelSecret: decryptTunnelSecretCompat');
+    expect(stdio).toContain('decryptTunnelSecret: decryptTunnelSecretCompat');
+  });
+
   it('creates the desktop window before background MCP auto-start', () => {
     const desktop = section('function bootstrapDesktop', 'function bootstrapLogViewerOnly');
     const windowIndex = desktop.indexOf('createDesktopWindow();');

@@ -87,7 +87,8 @@ import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
-import { loadV3CheckpointKeyIfPresent } from './checkpoint-key-compat.js';
+import { decryptV3WindowsSafeStorageSecretIfPresent, loadV3CheckpointKeyIfPresent } from './checkpoint-key-compat.js';
+import { unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
@@ -1403,6 +1404,7 @@ function bootstrapMcpStdio(): void {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
       ...secrets,
+      ...(process.platform === 'win32' ? { decryptTunnelSecret: decryptTunnelSecretCompat } : {}),
       ...(legacyCheckpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey: legacyCheckpointEncryptionKey }),
     });
     desktopRuntime = runtime;
@@ -1675,6 +1677,12 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
+async function decryptTunnelSecretCompat(cipherText: string): Promise<string> {
+  const v3Secret = decryptV3WindowsSafeStorageSecretIfPresent(cipherText, safeStorage);
+  if (v3Secret !== undefined) return v3Secret.toString('utf8');
+  return unprotectTunnelSecret(cipherText);
+}
+
 async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
   const legacyCheckpointEncryptionKey = process.platform === 'win32'
     ? loadV3CheckpointKeyIfPresent(dataPath, safeStorage)
@@ -1686,6 +1694,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
     }),
     ...secrets,
+    ...(process.platform === 'win32' ? { decryptTunnelSecret: decryptTunnelSecretCompat } : {}),
     ...(legacyCheckpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey: legacyCheckpointEncryptionKey }),
   });
 }

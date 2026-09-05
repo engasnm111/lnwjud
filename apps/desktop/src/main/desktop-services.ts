@@ -202,6 +202,7 @@ export interface DesktopRuntimeOptions {
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
   readonly checkpointEncryptionKey?: Buffer;
   readonly secretStore?: SecretStore;
+  readonly decryptTunnelSecret?: (cipherText: string) => Promise<string>;
   /** Injectable only when an officially supported Tunnel OAuth provisioning contract exists. */
   readonly tunnelOAuthBackend?: TunnelOAuthProvisioningBackend;
 }
@@ -422,8 +423,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       codexToolsEnabled: readSettings().codexToolsEnabled,
     }),
   });
+  const tunnelSecretDecryptOption = options.decryptTunnelSecret === undefined
+    ? {}
+    : { decryptSecret: options.decryptTunnelSecret };
   const tunnelSecretStore = options.secretStore ?? new LegacyDpapiSecretStore({
     pathForRef: (ref): string => ref.name === 'oauth-session' ? oauthTunnelSessionPath() : legacyTunnelSecretPath(),
+    ...tunnelSecretDecryptOption,
   });
   const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({ secretStore: tunnelSecretStore });
   const oauthTunnelBackend = options.tunnelOAuthBackend ?? unavailableTunnelOAuthBackend();

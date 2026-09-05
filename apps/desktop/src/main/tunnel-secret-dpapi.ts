@@ -38,6 +38,15 @@ export function buildWindowsPowerShellChildEnv(environment: NodeJS.ProcessEnv = 
   return childEnvironment;
 }
 
+export function sanitizeTunnelSecretPowerShellError(message: string): string {
+  const trimmed = message.trim();
+  if (trimmed.length === 0) return '';
+  if (/is not a valid encrypted string/i.test(trimmed)) {
+    return 'Stored tunnel secret is not a valid encrypted string';
+  }
+  return trimmed.replace(/lnwjud-secret:v3:[A-Za-z0-9._-]+:[A-Za-z0-9+/=\s]+/g, '[redacted protected secret]');
+}
+
 function runWindowsPowerShellWithStdin(command: string, input: string): Promise<string> {
   if (process.platform !== 'win32') return Promise.reject(new Error('Windows DPAPI is only available on Windows'));
   return new Promise((resolve, reject) => {
@@ -59,7 +68,7 @@ function runWindowsPowerShellWithStdin(command: string, input: string): Promise<
     child.on('error', reject);
     child.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(stderr.trim() || `PowerShell exited with code ${code ?? 'unknown'}`));
+        reject(new Error(sanitizeTunnelSecretPowerShellError(stderr) || `PowerShell exited with code ${code ?? 'unknown'}`));
         return;
       }
       const value = stdout.replace(/\r?\n$/, '');

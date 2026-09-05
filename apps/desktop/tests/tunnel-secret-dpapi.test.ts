@@ -6,6 +6,7 @@ import { TunnelController } from '../src/main/tunnel-controller.js';
 import {
   buildWindowsPowerShellChildEnv,
   resolveWindowsPowerShellExecutable,
+  sanitizeTunnelSecretPowerShellError,
   unprotectTunnelSecret,
 } from '../src/main/tunnel-secret-dpapi.js';
 
@@ -54,6 +55,15 @@ describe.runIf(process.platform === 'win32')('Tunnel Runtime API key DPAPI', () 
 });
 
 describe('Tunnel DPAPI PowerShell child construction', () => {
+  it('redacts protected secret material from invalid encrypted-string errors', () => {
+    const secret = 'lnwjud-secret:v3:windows-dpapi:QUJDREVGRw==';
+    const sanitized = sanitizeTunnelSecretPowerShellError(
+      `ConvertTo-SecureString : The parameter value "${secret}" is not a valid encrypted string.`,
+    );
+    expect(sanitized).toBe('Stored tunnel secret is not a valid encrypted string');
+    expect(sanitized).not.toContain(secret);
+  });
+
   it('resolves the inbox Windows PowerShell executable without PATH lookup', () => {
     expect(resolveWindowsPowerShellExecutable({ SystemRoot: 'C:\\Windows' }))
       .toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
