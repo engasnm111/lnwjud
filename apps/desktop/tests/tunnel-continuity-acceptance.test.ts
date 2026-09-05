@@ -201,27 +201,6 @@ describe('v4.11 persistent tunnel continuity acceptance', () => {
     }
   });
 
-  it('auto-starts from a persisted OAuth session even when the memory-only runtime credential must be refreshed after restart', async () => {
-    const status: TunnelStatus = {
-      state: 'stopped',
-      source: 'desktop',
-      hasApiKey: false,
-      authReady: true,
-      runtimeCredentialAvailable: false,
-      clientPath: '/Applications/lnwjud.app/Contents/Resources/tunnel-client/tunnel-client',
-      profileExists: true,
-      message: null,
-      logPath: '/Users/fixture/Library/Application Support/tunnel-client/lnwjud.log',
-      persistent: null,
-    };
-    const running = { ...status, state: 'running' as const };
-    const startAutomatically = vi.fn(async (): Promise<TunnelStatus> => running);
-    const controller = { status: vi.fn(async (): Promise<TunnelStatus> => status), startAutomatically, reconcileStoppedRuntime: vi.fn(async (): Promise<null> => null) };
-
-    await expect(autoStartPersistentTunnel(controller, true)).resolves.toBe(running);
-    expect(startAutomatically).toHaveBeenCalledOnce();
-  });
-
   it('does not stop or replace an already-observed tunnel when persistent auto reconnect is disabled at startup', async () => {
     const status: TunnelStatus = {
       state: 'running',

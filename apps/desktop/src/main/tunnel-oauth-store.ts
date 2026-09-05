@@ -1,6 +1,6 @@
-import { secretRef, type SecretRef, type SecretStore } from '@lnwjud/shared';
-
-export const TUNNEL_OAUTH_SESSION_REF = secretRef('tunnel', 'oauth-session', 1);
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 
 export interface TunnelOAuthStoredSession {
   readonly schemaVersion: 1;
@@ -15,32 +15,37 @@ export interface TunnelOAuthStoredSession {
 }
 
 export interface TunnelOAuthSessionStoreOptions {
-  readonly secretStore: SecretStore;
-  readonly secretRef?: SecretRef;
+  readonly filePath: string;
+  readonly encryptSecret?: (plainText: string) => Promise<string>;
+  readonly decryptSecret?: (cipherText: string) => Promise<string>;
 }
 
-/** Stores OAuth refresh/session secrets only inside the configured secure SecretStore. */
+/** Stores OAuth refresh/session secrets only inside a DPAPI-encrypted blob. */
 export class TunnelOAuthSessionStore {
-  private readonly ref: SecretRef;
-
-  public constructor(private readonly options: TunnelOAuthSessionStoreOptions) {
-    this.ref = options.secretRef ?? TUNNEL_OAUTH_SESSION_REF;
-  }
+  public constructor(private readonly options: TunnelOAuthSessionStoreOptions) {}
 
   public async read(): Promise<TunnelOAuthStoredSession | null> {
-    const stored = await this.options.secretStore.get(this.ref);
-    if (stored === null || stored.byteLength === 0) return null;
-    const parsed: unknown = JSON.parse(Buffer.from(stored).toString('utf8'));
+    let encrypted: string;
+    try {
+      encrypted = await readFile(this.options.filePath, 'utf8');
+    } catch {
+      return null;
+    }
+    if (encrypted.trim().length === 0) return null;
+    const plain = await (this.options.decryptSecret?.(encrypted) ?? unprotectTunnelSecret(encrypted));
+    const parsed: unknown = JSON.parse(plain);
     return validateStoredSession(parsed);
   }
 
   public async write(session: TunnelOAuthStoredSession): Promise<void> {
     const validated = validateStoredSession(session);
-    await this.options.secretStore.set(this.ref, Buffer.from(JSON.stringify(validated), 'utf8'));
+    await mkdir(path.dirname(this.options.filePath), { recursive: true });
+    const encrypted = await (this.options.encryptSecret?.(JSON.stringify(validated)) ?? protectTunnelSecret(JSON.stringify(validated)));
+    await writeFile(this.options.filePath, encrypted, 'utf8');
   }
 
   public async clear(): Promise<void> {
-    await this.options.secretStore.delete(this.ref);
+    await rm(this.options.filePath, { force: true });
   }
 }
 

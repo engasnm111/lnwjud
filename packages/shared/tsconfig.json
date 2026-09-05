@@ -6,7 +6,6 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "references": [{ "path": "../platform" }],
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

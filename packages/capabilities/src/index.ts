@@ -30,7 +30,6 @@ export interface CapabilityService {
 }
 
 export { LocalCapabilityService, type CapabilityBackend, type LocalCapabilityBackends } from './local-capability-service.js';
-export { NativeCapabilityPathPolicy, type NativePathField, type NativePathPolicyOptions } from './native-path-policy.js';
 export { ShellCapabilityBackend, type ShellCapabilityOptions } from './shell-backend.js';
 export {
   CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY,
@@ -45,11 +44,6 @@ export { BrowserCdpBackend, type BrowserCdpProtocol, type BrowserCdpTab } from '
 export { NodeBrowserCdpProtocol } from './browser-cdp-protocol.js';
 export { HealthCapabilityBackend } from './health-backend.js';
 export { WebFetchCapabilityBackend } from './web-fetch-backend.js';
-export { NodeSystemInfoCapabilityBackend, type NodeSystemInfoCapabilityOptions } from './system-info-backend.js';
-export { detectLinuxSessionProfile, type LinuxDesktopSession, type LinuxSessionDetectionOptions, type LinuxSessionProfile } from './linux-session-profile.js';
-export { LinuxNativeCapabilityBackend, type LinuxCapabilityName, type LinuxNativeCapabilityBridge, type LinuxNativeCapabilityOptions } from './linux-native-backend.js';
-export { MacOsCommandCapabilityBridge, MacOsNativeCapabilityBackend, type MacOsCapabilityBridge, type MacOsCapabilityName } from './macos-native-backend.js';
-export { MacOsSchedulerCapabilityBackend, type MacOsSchedulerBackendOptions, type MacOsSchedulerFileSystem, type MacOsSchedulerRunResult } from './macos-scheduler-backend.js';
 export { SchedulerCapabilityBackend } from './scheduler-backend.js';
 export { WslCapabilityBackend, WslFilesystemCapabilityBackend, type WslCapabilityOptions, type WslFilesystemCapabilityOptions } from './wsl-backend.js';
 export {
@@ -66,13 +60,9 @@ export { EventLogCapabilityBackend, type EventLogBackendOptions, type EventLogRu
 export { PowerShellWindowsCapabilityBridge, type PowerShellWindowsBridgeOptions } from './windows-bridge.js';
 export {
   capabilityDescriptors,
-  capabilitySupportsPlatform,
   type CapabilityAvailability,
   type CapabilityDescriptor,
   type CapabilityPermission,
-  type CapabilityPlatform,
-  type CapabilityPlatformPolicy,
-  type CapabilitySession,
 } from './capability-descriptors.js';
 
 export { WINDOWS_CAPABILITY_BRIDGE_SHA256, WINDOWS_CAPABILITY_BRIDGE_SIZE_BYTES } from './windows-capability-integrity.generated.js';

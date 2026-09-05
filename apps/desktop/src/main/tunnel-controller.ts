@@ -8,10 +8,7 @@ import { promisify } from 'node:util';
 import { request as httpRequest } from 'node:http';
 import type { TunnelAuthStatus, TunnelPersistentStatus, TunnelRunState, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
-import { createPlatformProcessTree } from '@lnwjud/process';
-import { executableName } from '@lnwjud/platform';
 import { defaultTunnelProfileDirectory, LegacyApiKeyCredentialProvider, type TunnelAuthProvider } from './tunnel-auth.js';
-import { LegacyDpapiSecretStore } from './legacy-dpapi-secret-store.js';
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
 import { acquireTunnelLock, readTunnelLock, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
 import { extractTunnelId, extractTunnelMcpServerUrl, normalizeLoopbackMcpUrl, rewriteTunnelYamlMcpServerUrl, rewriteTunnelYamlRuntimeApiKeyRef } from './tunnel-profile.js';
@@ -46,7 +43,6 @@ export interface OwnedProcessIdentity {
 }
 
 export interface TunnelControllerOptions {
-  readonly platform?: NodeJS.Platform;
   readonly getClientPath: () => string | null;
   readonly getBundledClientPath?: () => string | null;
   readonly setClientPath: (value: string) => void;
@@ -61,7 +57,6 @@ export interface TunnelControllerOptions {
   readonly terminateOwnedProcessTree?: (pid: number) => Promise<void>;
   readonly inspectOwnedProcess?: (pid: number) => Promise<ProcessProbeResult>;
   readonly inspectOwnedProcessTree?: (rootPid: number) => Promise<readonly OwnedProcessIdentity[]>;
-  readonly isOwnedProcessGroupRunning?: (processGroupId: number) => boolean;
   readonly decryptSecret?: (encrypted: string) => Promise<string>;
   /** Optional OAuth-aware/composite provider. Defaults to the legacy DPAPI Runtime API key provider. */
   readonly authProvider?: TunnelAuthProvider;
@@ -82,7 +77,6 @@ export interface TunnelControllerOptions {
 export class TunnelController {
   private child: ChildProcess | null = null;
   private ownedChildStartedAt: string | null = null;
-  private ownedChildProcessGroupId: number | null = null;
   private state: TunnelRunState = 'stopped';
   private message: string | null = null;
   private externalProbeAt = 0;
@@ -106,21 +100,17 @@ export class TunnelController {
   private runtimeConfigurationDirty = false;
   private readonly options: TunnelControllerOptions;
   private readonly authProvider: TunnelAuthProvider;
-  private readonly platform: NodeJS.Platform;
 
   public constructor(options: TunnelControllerOptions) {
     this.options = options;
-    this.platform = options.platform ?? process.platform;
     this.authProvider = options.authProvider ?? new LegacyApiKeyCredentialProvider({
-      secretStore: new LegacyDpapiSecretStore({
-        pathForRef: (): string => this.secretPath(),
-        ...(options.decryptSecret === undefined ? {} : { decryptSecret: options.decryptSecret }),
-      }),
+      secretPath: (): string => this.secretPath(),
+      ...(options.decryptSecret === undefined ? {} : { decryptSecret: options.decryptSecret }),
     });
   }
 
   public profileDirectory(): string {
-    return defaultTunnelProfileDirectory(process.env, this.platform, os.homedir());
+    return defaultTunnelProfileDirectory();
   }
 
   public secretPath(): string {
@@ -140,10 +130,6 @@ export class TunnelController {
     if (configured !== null && configured.trim().length > 0) return configured;
     const bundled = this.options.getBundledClientPath?.() ?? null;
     return bundled;
-  }
-
-  private clientExecutableName(): string {
-    return executableName('tunnel-client', { platform: this.platform });
   }
 
   public async authStatus(): Promise<TunnelAuthStatus> {
@@ -172,7 +158,7 @@ export class TunnelController {
     const normalizedTunnelId = tunnelId.trim();
     if (!/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(normalizedTunnelId)) throw new Error('Tunnel ID is invalid');
     const clientPath = this.resolveClientPath();
-    if (clientPath === null || !existsSync(clientPath)) throw new Error(`${this.clientExecutableName()} was not found`);
+    if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
     const mcpServerUrl = await this.requireMcpServerUrl();
     const auth = await this.authStatus();
     if (!auth.runtimeCredentialAvailable) throw new Error(auth.message ?? 'Save a Runtime API key first');
@@ -182,7 +168,7 @@ export class TunnelController {
     await mkdir(this.profileDirectory(), { recursive: true });
     try {
       await execFileAsync(clientPath, buildTunnelInitArgs(normalizedTunnelId, mcpServerUrl, this.profileDirectory()), {
-        env: tunnelClientEnv(apiKey, this.profileDirectory(), this.platform),
+        env: tunnelClientEnv(apiKey, this.profileDirectory()),
         windowsHide: true,
         encoding: 'utf8',
         timeout: 60_000,
@@ -192,7 +178,7 @@ export class TunnelController {
       throw new Error(detail.length > 0 ? detail : 'tunnel-client init failed');
     }
     await this.repairDesktopTunnelProfile();
-    await runTunnelDoctor(clientPath, apiKey, this.profileDirectory(), this.platform);
+    await runTunnelDoctor(clientPath, apiKey, this.profileDirectory());
     this.options.setTunnelId?.(normalizedTunnelId);
     this.runtimeConfigurationDirty = true;
     this.disposeRuntimeSupervisor();
@@ -208,7 +194,7 @@ export class TunnelController {
       return '';
     }
     const resolved = path.resolve(trimmed);
-    if (!existsSync(resolved)) throw new Error(`${this.clientExecutableName()} was not found`);
+    if (!existsSync(resolved)) throw new Error('tunnel-client.exe was not found');
     this.options.setClientPath(resolved);
     this.runtimeConfigurationDirty = true;
     if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
@@ -223,11 +209,11 @@ export class TunnelController {
   public async replaceClientPath(clientPath: string): Promise<string> {
     const trimmed = clientPath.trim();
     const next = trimmed.length === 0 ? '' : path.resolve(trimmed);
-    if (next.length > 0 && !existsSync(next)) throw new Error(`${this.clientExecutableName()} was not found`);
+    if (next.length > 0 && !existsSync(next)) throw new Error('tunnel-client.exe was not found');
 
     const currentRaw = this.options.getClientPath()?.trim() ?? '';
     const current = currentRaw.length === 0 ? '' : path.resolve(currentRaw);
-    if (sameTunnelClientPath(current, next, this.platform)) return next;
+    if (current.toLowerCase() === next.toLowerCase()) return next;
 
     const desiredState = this.runtimeDesiredState();
     const status = await this.status();
@@ -364,7 +350,7 @@ export class TunnelController {
     if (!force && now - this.externalProbeAt < EXTERNAL_PROBE_TTL_MS) return this.lastExternalProbe;
     this.externalProbeAt = now;
     try {
-      const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning(this.platform));
+      const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning());
       this.lastExternalProbe = result || await this.configuredHealthIsLive() ? 'live' : 'gone';
     } catch {
       this.lastExternalProbe = await this.configuredHealthIsLive() ? 'live' : 'unverifiable';
@@ -465,15 +451,12 @@ export class TunnelController {
       if (!lockAcquired) return this.status();
 
       const clientPath = this.resolveClientPath();
-      if (clientPath === null || !existsSync(clientPath)) throw new Error(`${this.clientExecutableName()} was not found`);
+      if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
       const auth = await this.authStatus();
       throwIfStartCancelled(signal);
-      if (!auth.authReady) throw new Error(auth.message ?? 'Tunnel authentication is not ready');
+      if (!auth.runtimeCredentialAvailable) throw new Error(auth.message ?? 'Save a Runtime API key first');
       if (!existsSync(this.profilePath())) throw new Error('Missing tunnel profile lnwjud.yaml');
 
-      // OAuth sessions intentionally keep runtime credentials memory-only. After
-      // an app restart authReady may be true while runtimeCredentialAvailable is
-      // false until the provider refreshes/provisions a fresh credential here.
       const credential = await this.authProvider.getRuntimeCredential();
       throwIfStartCancelled(signal);
       const apiKey = credential?.value.trim() ?? '';
@@ -486,7 +469,7 @@ export class TunnelController {
       throwIfStartCancelled(signal);
       await this.repairDesktopTunnelProfile();
       throwIfStartCancelled(signal);
-      await runTunnelDoctor(clientPath, apiKey, this.profileDirectory(), this.platform);
+      await runTunnelDoctor(clientPath, apiKey, this.profileDirectory());
       throwIfStartCancelled(signal);
       this.runtimeMode = 'profile-child';
       this.spawnRun(clientPath, apiKey);
@@ -590,15 +573,10 @@ export class TunnelController {
     this.clearRestartTimer();
     if (this.child !== null) {
       const child = this.child;
-      if (this.platform !== 'win32') {
-        await this.killOwnedPosixChild(child);
-        return;
-      }
       if (child.exitCode !== null) {
         if (this.child === child) {
           this.child = null;
           this.ownedChildStartedAt = null;
-          this.ownedChildProcessGroupId = null;
         }
         return;
       }
@@ -642,39 +620,6 @@ export class TunnelController {
     }
   }
 
-  private async killOwnedPosixChild(child: ChildProcess): Promise<void> {
-    const pid = child.pid;
-    if (!Number.isInteger(pid) || (pid ?? 0) <= 0) throw new Error('Tunnel child PID is invalid; ownership retained');
-    const numericPid = pid as number;
-    if (this.ownedChildProcessGroupId !== numericPid) throw new Error('Tunnel child process-group ownership was not recorded; POSIX group termination refused and ownership retained');
-
-    const inspect = this.options.inspectOwnedProcess ?? probeProcessStart;
-    const recordedStartedAt = this.ownedChildStartedAt;
-    const beforeStop = await inspect(numericPid);
-    if (beforeStop.state === 'unverifiable') throw new Error(`Tunnel child liveness is unverifiable (${beforeStop.reason}); ownership retained`);
-    if (beforeStop.state === 'live') {
-      if (recordedStartedAt === null) throw new Error('Tunnel child process identity was not recorded before POSIX shutdown; group termination refused and ownership retained');
-      if (beforeStop.processStartedAt !== recordedStartedAt) throw new Error('Tunnel child process identity changed; POSIX group termination refused and ownership retained');
-    }
-    // A detached POSIX group remains positively owned even if its leader has
-    // already exited: the group id was created from this exact spawned child.
-    // Terminate the owned group before clearing state so surviving descendants
-    // cannot be orphaned or overlap a reconnect.
-    if (this.options.terminateOwnedProcessTree !== undefined) {
-      await this.options.terminateOwnedProcessTree(numericPid);
-    } else {
-      await createPlatformProcessTree(this.platform).stop(child, numericPid, { processGroupId: numericPid });
-    }
-    await waitForTunnelChildExit(child, this.options.escalationTimeoutMs ?? 2_000).catch(() => undefined);
-    const groupRunning = this.options.isOwnedProcessGroupRunning ?? posixProcessGroupIsRunning;
-    if (groupRunning(numericPid)) throw new Error('Tunnel child process group remained live after targeted POSIX termination; ownership retained');
-    if (this.child === child) {
-      this.child = null;
-      this.ownedChildStartedAt = null;
-      this.ownedChildProcessGroupId = null;
-    }
-  }
-
   public async incidentHealth(): Promise<{ readonly state: 'live' | 'unhealthy' | 'unavailable' | 'unknown'; readonly message: string | null }> {
     const address = await this.resolveHealthAddress();
     if (address === null) return { state: 'unavailable', message: 'tunnel health endpoint is unavailable from configured profile/log metadata' };
@@ -690,7 +635,7 @@ export class TunnelController {
     const clientPath = this.resolveClientPath();
     if (clientPath === null || !existsSync(clientPath)) return { value: null, reason: 'configured_tunnel_client_not_found' };
     try {
-      const value = await (this.options.inspectFileVersion?.(clientPath) ?? inspectTunnelClientVersion(clientPath, this.platform));
+      const value = await (this.options.inspectFileVersion?.(clientPath) ?? inspectWindowsFileVersion(clientPath));
       return value === null || value.trim().length === 0 ? { value: null, reason: 'file_version_metadata_unavailable' } : { value: value.trim().slice(0, 128), reason: null };
     } catch { return { value: null, reason: 'file_version_metadata_unavailable' }; }
   }
@@ -700,7 +645,7 @@ export class TunnelController {
     if (this.child !== null && this.child.exitCode === null && Number.isInteger(this.child.pid) && (this.child.pid ?? 0) > 0) pids.add(this.child.pid as number);
     if (this.tunnelLock !== null) pids.add(this.tunnelLock.owner.pid);
     try {
-      const external = await (this.options.verifiedExternalTunnelPids?.() ?? findLnwjudTunnelProcessPids(this.platform));
+      const external = await (this.options.verifiedExternalTunnelPids?.() ?? findLnwjudTunnelProcessPids());
       for (const pid of external) if (Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647) pids.add(pid);
     } catch (error: unknown) {
       if (pids.size === 0) return { pids: [], unavailableReason: error instanceof Error ? `external_tunnel_pid_probe_failed:${error.message}` : 'external_tunnel_pid_probe_failed' };
@@ -733,7 +678,6 @@ export class TunnelController {
     try {
       const claim = await acquireTunnelLock({
         profileDirectory: this.profileDirectory(),
-        platform: this.platform,
         ...(this.options.currentLockOwner === undefined ? {} : { owner: await this.options.currentLockOwner() }),
         ...(this.options.inspectLockProcess === undefined ? {} : { inspectProcess: this.options.inspectLockProcess }),
       });
@@ -786,15 +730,14 @@ export class TunnelController {
         '--mcp.connection-max-ttl', MCP_CONNECTION_MAX_TTL,
       ],
       {
-        env: tunnelClientEnv(apiKey, this.profileDirectory(), this.platform),
+        env: tunnelClientEnv(apiKey, this.profileDirectory()),
         windowsHide: true,
-        // POSIX detached children become process-group leaders for exact owned-tree termination; Windows stays attached to avoid a console window.
-        detached: this.platform !== 'win32',
+        // detached:true on Windows gives the child its own console window.
+        detached: false,
         stdio: ['ignore', 'ignore', 'ignore'],
       },
     );
     this.child = child;
-    this.ownedChildProcessGroupId = this.platform !== 'win32' && Number.isInteger(child.pid) && (child.pid ?? 0) > 0 ? child.pid as number : null;
     this.options.setRuntimeOwnerPath?.(path.resolve(clientPath));
     this.ownedChildStartedAt = null;
     if (Number.isInteger(child.pid) && (child.pid ?? 0) > 0) {
@@ -804,18 +747,14 @@ export class TunnelController {
       }).catch(() => undefined);
     }
     child.on('error', (error) => {
-      if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; this.ownedChildProcessGroupId = null; }
+      if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
       this.options.setRuntimeOwnerPath?.('');
       this.state = 'error';
       this.message = error.message;
       this.scheduleRestart(clientPath);
     });
     child.on('exit', (code) => {
-      if (this.platform === 'win32' && this.child === child) {
-        this.child = null;
-        this.ownedChildStartedAt = null;
-        this.ownedChildProcessGroupId = null;
-      }
+      if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
       if (this.intentionalStop) {
         // Keep the durable owner until stopOnce has reconciled native state
         // and forced an external-liveness check. Clearing it here would let a
@@ -824,30 +763,14 @@ export class TunnelController {
         this.message = null;
         return;
       }
-      void this.applyUnexpectedExit(code, clientPath, child);
+      void this.applyUnexpectedExit(code, clientPath);
     });
   }
 
-  private async applyUnexpectedExit(code: number | null, clientPath: string, exitedChild?: ChildProcess): Promise<void> {
+  private async applyUnexpectedExit(code: number | null, clientPath: string): Promise<void> {
     const hint = await this.readExitHint();
     this.state = 'error';
     this.message = formatTunnelExitMessage(code, hint);
-    if (this.platform !== 'win32' && exitedChild !== undefined && this.child === exitedChild && this.ownedChildProcessGroupId !== null) {
-      const groupId = this.ownedChildProcessGroupId;
-      try {
-        const groupRunning = this.options.isOwnedProcessGroupRunning ?? posixProcessGroupIsRunning;
-        if (groupRunning(groupId)) await this.killOwnedPosixChild(exitedChild);
-        else {
-          this.child = null;
-          this.ownedChildStartedAt = null;
-          this.ownedChildProcessGroupId = null;
-        }
-      } catch (error: unknown) {
-        const detail = error instanceof Error ? error.message : 'unknown process-group cleanup failure';
-        this.message = `${this.message} — residual POSIX process-group cleanup failed: ${detail}`;
-        return;
-      }
-    }
     const now = Date.now();
     if (this.restartWindowStartedAt === 0 || now - this.restartWindowStartedAt > RESTART_WINDOW_MS) {
       this.restartWindowStartedAt = now;
@@ -881,32 +804,16 @@ export class TunnelController {
     const delay = Math.min(RESTART_DELAY_MS * (2 ** Math.max(0, this.restartAttempts - 1)), 30_000);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      if (this.intentionalStop) return;
-      void (async (): Promise<void> => {
-        try {
-          // Never reuse a previous runtime credential for automatic reconnect.
-          // OAuth credentials are refreshable and memory-only by design, so each
-          // reconnect asks the active provider for a currently valid credential.
-          const credential = await this.authProvider.getRuntimeCredential();
-          if (this.intentionalStop) return;
-          const apiKey = credential?.value.trim() ?? '';
-          if (apiKey.length === 0) throw new Error('Tunnel authentication requires user action before reconnect can continue');
-          await this.repairDesktopTunnelProfile();
-          if (this.intentionalStop) return;
-          this.lastApiKey = apiKey;
-          this.spawnRun(clientPath, apiKey);
+      if (this.intentionalStop || this.lastApiKey === null) return;
+      void this.repairDesktopTunnelProfile()
+        .then(() => {
+          if (this.intentionalStop || this.lastApiKey === null) return;
+          this.spawnRun(clientPath, this.lastApiKey);
           this.state = 'running';
           this.message = `Tunnel reconnecting (attempt ${this.restartAttempts}; retries continue until stopped)…`;
           this.scheduleStableReset();
-        } catch (error: unknown) {
-          // Refresh/provision failures must not spin forever with stale secrets.
-          // Leave the durable desired state intact so an explicit Start after
-          // reauthentication can resume the same tunnel identity.
-          this.lastApiKey = null;
-          this.state = 'error';
-          this.message = error instanceof Error ? error.message : 'Tunnel authentication refresh failed during reconnect';
-        }
-      })();
+        })
+        .catch(() => undefined);
     }, delay);
   }
 
@@ -1026,7 +933,7 @@ export class TunnelController {
     const options: TunnelRuntimeAdapterOptions = {
       clientPath,
       profileDirectory: this.profileDirectory(),
-      environment: tunnelClientEnv(apiKey, this.profileDirectory(), this.platform),
+      environment: tunnelClientEnv(apiKey, this.profileDirectory()),
     };
     return this.options.createRuntimeAdapter?.(options) ?? new TunnelRuntimeAdapter(options);
   }
@@ -1044,9 +951,7 @@ export class TunnelController {
     if (!existsSync(this.profilePath())) return null;
 
     const auth = await this.authStatus();
-    if (!auth.authReady) return null;
-    // A persisted OAuth refresh session is sufficient to enter this path even
-    // when no memory-only runtime credential survived the previous app process.
+    if (!auth.runtimeCredentialAvailable) return null;
     const credential = await this.authProvider.getRuntimeCredential();
     const apiKey = credential?.value.trim() ?? '';
     throwIfStartCancelled(signal);
@@ -1263,15 +1168,6 @@ export class TunnelController {
 
 export { CLIENT_PATH_SETTING };
 
-export function sameTunnelClientPath(left: string, right: string, platform: NodeJS.Platform = process.platform): boolean {
-  if (left.length === 0 || right.length === 0) return left === right;
-  const normalizedLeft = path.resolve(left);
-  const normalizedRight = path.resolve(right);
-  return platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
-}
-
 export function buildTunnelInitArgs(tunnelId: string, mcpServerUrl: string, profileDirectory: string): string[] {
   return [
     'init',
@@ -1286,16 +1182,10 @@ export function buildTunnelInitArgs(tunnelId: string, mcpServerUrl: string, prof
   ];
 }
 
-export function tunnelClientEnv(
-  apiKey: string,
-  profileDirectory: string,
-  platform: NodeJS.Platform = process.platform,
-  sourceEnvironment: NodeJS.ProcessEnv = process.env,
-  homeDir: string = os.homedir(),
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...sourceEnvironment };
-  const userProfile = sourceEnvironment.USERPROFILE ?? homeDir;
-  const appData = sourceEnvironment.APPDATA ?? path.win32.join(userProfile, 'AppData', 'Roaming');
+export function tunnelClientEnv(apiKey: string, profileDirectory: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  const userProfile = process.env.USERPROFILE ?? os.homedir();
+  const appData = process.env.APPDATA ?? path.join(userProfile, 'AppData', 'Roaming');
   env.CONTROL_PLANE_API_KEY = apiKey.trim();
   env.MCP_CONNECTION_MAX_TTL = MCP_CONNECTION_MAX_TTL;
   // Secure Tunnel forwards to the already-running Desktop HTTP MCP. Do not pass
@@ -1304,23 +1194,17 @@ export function tunnelClientEnv(
   delete env.LNWJUD_UNRESTRICTED;
   env.TUNNEL_CLIENT_PROFILE = PROFILE_NAME;
   env.TUNNEL_CLIENT_PROFILE_DIR = profileDirectory;
-  if (platform === 'win32') {
-    env.USERPROFILE = userProfile;
-    env.APPDATA = appData;
-    env.HOME = userProfile;
-    delete env.XDG_CONFIG_HOME;
-  } else {
-    delete env.USERPROFILE;
-    delete env.APPDATA;
-    env.HOME = sourceEnvironment.HOME ?? homeDir;
-  }
+  env.USERPROFILE = userProfile;
+  env.APPDATA = appData;
+  env.HOME = userProfile;
+  delete env.XDG_CONFIG_HOME;
   return env;
 }
 
-async function runTunnelDoctor(clientPath: string, apiKey: string, profileDirectory: string, platform: NodeJS.Platform): Promise<void> {
+async function runTunnelDoctor(clientPath: string, apiKey: string, profileDirectory: string): Promise<void> {
   try {
     await execFileAsync(clientPath, ['doctor', '--profile', PROFILE_NAME, '--profile-dir', profileDirectory, '--explain'], {
-      env: tunnelClientEnv(apiKey, profileDirectory, platform),
+      env: tunnelClientEnv(apiKey, profileDirectory),
       windowsHide: true,
       encoding: 'utf8',
       timeout: 60_000,
@@ -1341,68 +1225,23 @@ function extractExecDetail(error: unknown): string {
   return typeof record.message === 'string' ? record.message : '';
 }
 
-async function isLnwjudTunnelProcessRunning(platform: NodeJS.Platform = process.platform): Promise<boolean> {
-  return (await findLnwjudTunnelProcessPids(platform)).length > 0;
+async function isLnwjudTunnelProcessRunning(): Promise<boolean> {
+  return (await findLnwjudTunnelProcessPids()).length > 0;
 }
 
-async function findLnwjudTunnelProcessPids(platform: NodeJS.Platform = process.platform): Promise<readonly number[]> {
-  return platform === 'win32' ? findWindowsLnwjudTunnelProcessPids() : findPosixLnwjudTunnelProcessPids();
-}
-
-async function findWindowsLnwjudTunnelProcessPids(): Promise<readonly number[]> {
+async function findLnwjudTunnelProcessPids(): Promise<readonly number[]> {
   const result = await Promise.race([
     execFileAsync('powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      "@(Get-CimInstance Win32_Process -Filter \"Name = 'tunnel-client.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -match '(?i)(--profile(?:=|\\s+)lnwjud|--alias(?:=|\\s+)lnwjud|lnwjud\\.ya?ml)' } | Select-Object -ExpandProperty ProcessId) -join ','",
+      "@(Get-CimInstance Win32_Process -Filter \"Name = 'tunnel-client.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -match '(?i)(--profile\\s+lnwjud|lnwjud\\.yaml)' } | Select-Object -ExpandProperty ProcessId) -join ','",
     ], { windowsHide: true, encoding: 'utf8', timeout: 3_000 }),
     new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error('tunnel process probe timed out')), 3_500);
     }),
   ]);
-  return result.stdout.trim().split(',').map((value) => Number(value.trim())).filter(validTunnelPid);
-}
-
-async function findPosixLnwjudTunnelProcessPids(): Promise<readonly number[]> {
-  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,command='], {
-    encoding: 'utf8',
-    timeout: 3_000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
-  return parsePosixTunnelProcessPids(stdout);
-}
-
-export function parsePosixTunnelProcessPids(stdout: string): readonly number[] {
-  const pids = new Set<number>();
-  for (const line of stdout.split(/\r?\n/)) {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
-    if (match?.[1] === undefined || match[2] === undefined) continue;
-    const pid = Number(match[1]);
-    if (!validTunnelPid(pid)) continue;
-    const command = match[2];
-    const isTunnelClient = /(?:^|[\s/"'])tunnel-client(?:\.exe)?(?=["']?(?:\s|$))/i.test(command);
-    const hasLnwjudOwnershipMarker = /(?:^|\s)--profile(?:=|\s+)["']?lnwjud["']?(?=\s|$)|(?:^|\s)--alias(?:=|\s+)["']?lnwjud["']?(?=\s|$)|(?:^|[\s/"'])lnwjud\.ya?ml(?=["']?(?:\s|$))/i.test(command);
-    if (isTunnelClient && hasLnwjudOwnershipMarker) pids.add(pid);
-  }
-  return [...pids];
-}
-
-function validTunnelPid(pid: number): boolean {
-  return Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647;
-}
-
-function posixProcessGroupIsRunning(processGroupId: number): boolean {
-  if (!validTunnelPid(processGroupId)) throw new Error('Tunnel process group ID is invalid');
-  try {
-    process.kill(-processGroupId, 0);
-    return true;
-  } catch (error: unknown) {
-    const code = typeof error === 'object' && error !== null && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
-    if (code === 'ESRCH') return false;
-    if (code === 'EPERM') return true;
-    throw new Error(`Tunnel process-group liveness is unverifiable (${code ?? 'unknown'})`);
-  }
+  return result.stdout.trim().split(',').map((value) => Number(value.trim())).filter((pid) => Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647);
 }
 
 export function waitForTunnelChildExit(child: Pick<ChildProcess, 'exitCode' | 'once' | 'removeListener'>, timeoutMs = 5_000): Promise<void> {
@@ -1593,37 +1432,6 @@ function isLiveHealthBody(body: string): boolean {
   } catch {
     return false;
   }
-}
-
-async function inspectTunnelClientVersion(filePath: string, platform: NodeJS.Platform): Promise<string | null> {
-  try {
-    const { stdout, stderr } = await execFileAsync(filePath, ['--version'], {
-      windowsHide: true,
-      timeout: 3_000,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024,
-    });
-    const version = parseTunnelClientVersionOutput(stdout, stderr);
-    if (version !== null) return version;
-  } catch (error: unknown) {
-    if (typeof error === 'object' && error !== null) {
-      const record = error as { stdout?: unknown; stderr?: unknown };
-      const version = parseTunnelClientVersionOutput(
-        typeof record.stdout === 'string' ? record.stdout : '',
-        typeof record.stderr === 'string' ? record.stderr : '',
-      );
-      if (version !== null) return version;
-    }
-  }
-  return platform === 'win32' ? inspectWindowsFileVersion(filePath) : null;
-}
-
-export function parseTunnelClientVersionOutput(stdout: string, stderr = ''): string | null {
-  for (const line of `${stdout}\n${stderr}`.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed.length > 0 && /\bv?\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?\b/.test(trimmed)) return trimmed.slice(0, 128);
-  }
-  return null;
 }
 
 async function inspectWindowsFileVersion(filePath: string): Promise<string | null> {

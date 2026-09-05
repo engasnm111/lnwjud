@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, safeStorage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { access } from 'node:fs/promises';
@@ -61,10 +61,8 @@ import {
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
-import { executableName } from '@lnwjud/platform';
 import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
-import { bootstrapDesktopSecrets } from './desktop-secret-store.js';
 import { installPdfProvider } from './pdf-provider-installer.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
@@ -544,13 +542,10 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     const window = getMainWindow();
     if (window === null) return { clientPath: null };
-    const tunnelClientName = executableName('tunnel-client', { platform: process.platform });
     const result = await dialog.showOpenDialog(window, {
-      title: `Select ${tunnelClientName}`,
+      title: 'Select tunnel-client.exe',
       properties: ['openFile'],
-      ...(process.platform === 'win32'
-        ? { filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }] }
-        : {}),
+      filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }],
     });
     return { clientPath: result.canceled ? null : (result.filePaths[0] ?? null) };
   });
@@ -1391,11 +1386,9 @@ function bootstrapMcpStdio(): void {
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
     prependBundledRuntimeToolsToPath();
-    const secrets = await bootstrapDesktopSecrets({ dataPath, safeStorage });
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
-      ...secrets,
     });
     desktopRuntime = runtime;
     const workspacePath = readArgValue('--workspace')
@@ -1660,14 +1653,12 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
-async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
-  const secrets = await bootstrapDesktopSecrets({ dataPath, safeStorage });
+function createNativeDesktopRuntime(dataPath: string): DesktopRuntime {
   return createDesktopRuntime(dataPath, {
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
     }),
-    ...secrets,
   });
 }
 
@@ -1675,13 +1666,13 @@ function bootstrapDesktop(): void {
   if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
-    if (process.platform === 'win32') app.setAppUserModelId('com.lnwjud.desktop');
+    app.setAppUserModelId('com.lnwjud.desktop');
     console.log(
       `[WindowsCompatibility] ${windowsCompatibility.generation} build=${windowsCompatibility.build ?? 'unknown'} arch=${process.arch} gpu=${windowsCompatibility.disableHardwareAcceleration ? 'software' : 'hardware'}; ${windowsCompatibility.reason}`,
     );
 
     prependBundledRuntimeToolsToPath();
-    const runtime = await createNativeDesktopRuntime(dataPath);
+    const runtime = createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -1717,9 +1708,9 @@ function bootstrapLogViewerOnly(): void {
   const dataPath = configureDataPath();
   if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   void app.whenReady().then(async () => {
-    if (process.platform === 'win32') app.setAppUserModelId('com.lnwjud.desktop');
+    app.setAppUserModelId('com.lnwjud.desktop');
     prependBundledRuntimeToolsToPath();
-    const runtime = await createNativeDesktopRuntime(dataPath);
+    const runtime = createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));

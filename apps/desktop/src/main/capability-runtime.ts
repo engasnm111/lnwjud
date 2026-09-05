@@ -5,14 +5,8 @@ import {
   BrowserCdpBackend,
   capabilityToolNames,
   HealthCapabilityBackend,
-  LinuxNativeCapabilityBackend,
-  detectLinuxSessionProfile,
   LocalCapabilityService,
-  MacOsCommandCapabilityBridge,
-  MacOsNativeCapabilityBackend,
-  MacOsSchedulerCapabilityBackend,
   NodeBrowserCdpProtocol,
-  NodeSystemInfoCapabilityBackend,
   PowerShellWindowsCapabilityBridge,
   SchedulerCapabilityBackend,
   ShellCapabilityBackend,
@@ -27,7 +21,7 @@ import {
   WslCapabilityBackend,
   WslFilesystemCapabilityBackend,
 } from '@lnwjud/capabilities';
-import { appError, err, type Result } from '@lnwjud/domain';
+import type { Result } from '@lnwjud/domain';
 import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS } from '@lnwjud/shared';
 import { AsyncTtlCache } from './async-ttl-cache.js';
@@ -44,7 +38,6 @@ export function createLocalCapabilityRuntime(
   unrestricted: boolean = false,
   configuredRootsProvider: () => readonly string[] = () => [],
   synchronousWaitSecondsProvider: () => number = () => DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS,
-  platform: NodeJS.Platform = process.platform,
 ): LocalCapabilityRuntime {
   const capabilityRootsProvider = async (): Promise<readonly string[]> => {
     const workspaceRoots = await workspaceRootsProvider();
@@ -64,51 +57,34 @@ export function createLocalCapabilityRuntime(
     protocol: browserProtocol,
     launcher: (url: string | undefined, signal?: AbortSignal): Promise<Result<unknown>> => browserProtocol.launch(url, signal),
   });
-  const windowsBridge = platform === 'win32'
-    ? createWindowsCapabilityBridge()
-    : { execute: async (): Promise<Result<never>> => err(appError('INTERNAL_ERROR', 'Windows native capability bridge is unavailable on this platform', true)) };
+  const windowsBridgeScript = capabilityBridgeScriptPath();
+  const expectedScriptSha256 = capabilityBridgeExpectedSha256();
+  const expectedScriptSizeBytes = capabilityBridgeExpectedSizeBytes();
+  const windowsBridge = new PowerShellWindowsCapabilityBridge({
+    scriptPath: windowsBridgeScript,
+    expectedScriptSha256,
+    ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
+  });
   const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const linuxSessionProfile = platform === 'linux' ? detectLinuxSessionProfile({ platform }) : undefined;
-  const accessibilityBackend = platform === 'linux' && linuxSessionProfile !== undefined
-    ? new LinuxNativeCapabilityBackend('accessibility', { platform, sessionProfile: linuxSessionProfile })
-    : new WindowsNativeCapabilityBackend('accessibility', windowsBridge, platform);
-  const inputEventBackend = platform === 'linux' && linuxSessionProfile !== undefined
-    ? new LinuxNativeCapabilityBackend('input_event', { platform, sessionProfile: linuxSessionProfile })
-    : new WindowsNativeCapabilityBackend('input_event', windowsBridge, platform);
-  const nativeVisionBackend = platform === 'linux' && linuxSessionProfile !== undefined
-    ? new LinuxNativeCapabilityBackend('vision', { platform, sessionProfile: linuxSessionProfile })
-    : new WindowsNativeCapabilityBackend('vision', windowsBridge, platform);
-  const ocrHelperPath = platform === 'win32' ? windowsOcrHelperPath() : undefined;
-  const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath, platform });
-  const visionBackend = platform === 'linux'
-    ? nativeVisionBackend
-    : new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-      platform,
-      ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
-    }));
-  const windowBackend = platform === 'linux' && linuxSessionProfile !== undefined
-    ? new LinuxNativeCapabilityBackend('window', { platform, sessionProfile: linuxSessionProfile })
-    : new WindowsNativeCapabilityBackend('window', windowsBridge, platform);
-  const systemInfoBackend = platform === 'win32'
-    ? new WindowsNativeCapabilityBackend('system_info', windowsBridge, platform)
-    : new NodeSystemInfoCapabilityBackend({ platform });
-  const macOsBridge = platform === 'darwin' ? new MacOsCommandCapabilityBridge(platform) : undefined;
-  const notificationBackend = platform === 'darwin' && macOsBridge !== undefined
-    ? new MacOsNativeCapabilityBackend('notification', macOsBridge, platform)
-    : new WindowsNativeCapabilityBackend('notification', windowsBridge, platform);
-  const fileDialogBackend = platform === 'darwin' && macOsBridge !== undefined
-    ? new MacOsNativeCapabilityBackend('file_dialog', macOsBridge, platform)
-    : new WindowsNativeCapabilityBackend('file_dialog', windowsBridge, platform);
-  const clipboardBackend = platform === 'darwin' && macOsBridge !== undefined
-    ? new MacOsNativeCapabilityBackend('clipboard', macOsBridge, platform)
-    : new WindowsNativeCapabilityBackend('clipboard', windowsBridge, platform);
-  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, platform, nativeOptions);
-  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, platform, nativeOptions);
-  const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, platform, nativeOptions);
+  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
+  const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge);
+  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
+  const ocrHelperPath = windowsOcrHelperPath();
+  const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath });
+  const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
+    platform: process.platform,
+    ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
+  }));
+  const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge);
+  const systemInfoBackend = new WindowsNativeCapabilityBackend('system_info', windowsBridge);
+  const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge);
+  const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
+  const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
+  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions);
+  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions);
+  const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions);
   const webFetchBackend = new WebFetchCapabilityBackend();
-  const schedulerBackend = platform === 'darwin'
-    ? new MacOsSchedulerCapabilityBackend({ platform })
-    : new SchedulerCapabilityBackend({ platform });
+  const schedulerBackend = new SchedulerCapabilityBackend();
   const wslAvailabilityCache = new AsyncTtlCache<Result<unknown>>(15_000);
   const wslAvailabilityProbe = (): Promise<Result<unknown>> => wslAvailabilityCache.get(async () => {
     const result = await shellBackend.execute({ operation: 'run', executable: 'wsl.exe', arguments: ['--status'], cwd: dataPath, execution: 'foreground', timeout_seconds: 5, max_output_bytes: 32 * 1024, userConfirmed: false });
@@ -118,33 +94,19 @@ export function createLocalCapabilityRuntime(
     return { ok: true, value: { available: ready, ready, local: true, ...(ready ? {} : { reason: 'wsl_status_failed' }) } };
   });
   const wslBackend = new WslCapabilityBackend({
-    platform,
+    platform: process.platform,
     runner: shellBackend,
     allowedRoots: [dataPath],
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
   });
   const wslFsBackend = new WslFilesystemCapabilityBackend({
-    platform,
+    platform: process.platform,
     allowedRoots: [dataPath],
     allowedRootsProvider: capabilityRootsProvider,
     availabilityProbe: wslAvailabilityProbe,
   });
-  const health = new HealthCapabilityBackend({
-    platform,
-    domCdp: browserBackend,
-    accessibility: accessibilityBackend,
-    inputEvent: inputEventBackend,
-    vision: visionBackend,
-    window: windowBackend,
-    systemInfo: systemInfoBackend,
-    notification: notificationBackend,
-    fileDialog: fileDialogBackend,
-    clipboard: clipboardBackend,
-    scheduler: schedulerBackend,
-    wslExec: wslBackend,
-    wslFs: wslFsBackend,
-  });
+  const health = new HealthCapabilityBackend({ domCdp: browserBackend, accessibility: accessibilityBackend, wslExec: wslBackend, wslFs: wslFsBackend });
   const service = new LocalCapabilityService({
     shell: shellBackend,
     domCdp: browserBackend,
@@ -182,18 +144,6 @@ export async function buildCapabilitySummary(health: HealthCapabilityBackend): P
 function readCapabilityRoots(value: string | undefined): readonly string[] {
   if (value === undefined || value.trim().length === 0) return [];
   return value.split(';').map((root) => root.trim()).filter((root) => root.length > 0).map((root) => path.resolve(root));
-}
-
-function createWindowsCapabilityBridge(): PowerShellWindowsCapabilityBridge {
-  const windowsBridgeScript = capabilityBridgeScriptPath();
-  const expectedScriptSha256 = capabilityBridgeExpectedSha256();
-  const expectedScriptSizeBytes = capabilityBridgeExpectedSizeBytes();
-  return new PowerShellWindowsCapabilityBridge({
-    scriptPath: windowsBridgeScript,
-    expectedScriptSha256,
-    ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
-    platform: 'win32',
-  });
 }
 
 function capabilityBridgeScriptPath(): string {
@@ -245,14 +195,14 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
   window: 'Manage native desktop windows',
   health: 'Check tool readiness',
   system_info: 'Read system information',
-  notification: 'Show local notifications',
+  notification: 'Show Windows notifications',
   file_dialog: 'Native file open/save dialogs',
   clipboard: 'Read and write the clipboard',
   web_fetch: 'Fetch http/https URLs',
   audio: 'Record and play audio',
   screen_record: 'Record the screen to MP4',
   office: 'Automate Excel and Word',
-  scheduler: 'Manage local scheduled tasks',
+  scheduler: 'Manage Windows scheduled tasks',
   wsl_exec: 'Run scoped Linux developer tasks',
   wsl_fs: 'Translate scoped Windows and WSL paths',
 };
@@ -266,14 +216,14 @@ const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[numbe
   window: 'List, focus, move, resize, minimize, restore, and close windows',
   health: 'Readiness and capability diagnostics',
   system_info: 'OS, CPU, memory, disks, battery, uptime, and top processes',
-  notification: 'Platform-native notifications for the local user',
-  file_dialog: 'Platform-native open/save dialog returning chosen paths',
+  notification: 'Toast or balloon notifications for the local user',
+  file_dialog: 'Windows open/save dialog returning chosen paths',
   clipboard: 'Clipboard text and PNG image access',
   web_fetch: 'Bounded HTTP requests with text or base64 responses',
   audio: 'Microphone recording and local audio playback',
   screen_record: 'ffmpeg gdigrab screen capture with start/stop/status',
   office: 'Excel range read/write and Word text operations via COM',
-  scheduler: 'Platform-native local task list/create/run/delete operations',
+  scheduler: 'schtasks.exe list/create/run/delete operations',
   wsl_exec: 'WSL2 argv-only execution inside registered workspaces',
   wsl_fs: 'Path translation and metadata without raw WSL filesystem access',
 };

@@ -17,7 +17,6 @@
     { "path": "../../packages/domain" },
     { "path": "../../packages/extensions" },
     { "path": "../../packages/permissions" },
-    { "path": "../../packages/platform" },
     { "path": "../../packages/process" },
     { "path": "../../packages/search" },
     { "path": "../../packages/storage" },

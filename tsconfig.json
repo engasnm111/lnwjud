@@ -7,7 +7,6 @@
     { "path": "./packages/capabilities" },
     { "path": "./packages/extensions" },
     { "path": "./packages/shared" },
-    { "path": "./packages/platform" },
     { "path": "./packages/workspace" },
     { "path": "./packages/permissions" },
     { "path": "./packages/audit" },

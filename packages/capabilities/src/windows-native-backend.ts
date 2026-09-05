@@ -1,13 +1,16 @@
+import { realpath, stat } from 'node:fs/promises';
+import path from 'node:path';
 import {
   appError,
   err,
   isApplicationAuthorized,
+  isFullBypassAuthorization,
   ok,
   type InvocationAuthorization,
   type Result,
 } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
-import { NativeCapabilityPathPolicy, type NativePathField } from './native-path-policy.js';
+import { readCapabilityActiveWorkspaceRoot } from './task-ownership.js';
 
 export type WindowsCapabilityName =
   | 'accessibility'
@@ -36,6 +39,8 @@ export interface WindowsNativeBackendOptions {
   readonly unrestricted?: boolean;
 }
 
+type NativePathField = 'file_path' | 'output_path' | 'target_path' | 'merge_paths';
+
 const PATH_FIELDS: Readonly<Record<WindowsCapabilityName, readonly NativePathField[]>> = {
   accessibility: [],
   input_event: [],
@@ -51,18 +56,12 @@ const PATH_FIELDS: Readonly<Record<WindowsCapabilityName, readonly NativePathFie
 };
 
 export class WindowsNativeCapabilityBackend implements CapabilityBackend {
-  private readonly pathPolicy: NativeCapabilityPathPolicy;
-
   public constructor(
     private readonly capability: WindowsCapabilityName,
     private readonly bridge: WindowsCapabilityBridge,
     private readonly platform: NodeJS.Platform = process.platform,
-    options: WindowsNativeBackendOptions = {},
-  ) {
-    this.pathPolicy = new NativeCapabilityPathPolicy(capability, PATH_FIELDS[capability], {
-      ...(options.allowedRootsProvider === undefined ? {} : { allowedRootsProvider: options.allowedRootsProvider }),
-    });
-  }
+    private readonly options: WindowsNativeBackendOptions = {},
+  ) {}
 
   public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     if (this.platform !== 'win32') return err(appError('INTERNAL_ERROR', 'Windows capability is unavailable on this platform', true));
@@ -70,7 +69,7 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
     if (input.dry_run === true) return ok({ dry_run: true, capability: this.capability });
     if (isSignalAborted(signal)) return cancelledOperation();
 
-    const pathCheck = await this.pathPolicy.assertAllowed(input, authorization);
+    const pathCheck = await this.assertPathsAllowed(input, authorization);
     if (!pathCheck.ok) return pathCheck;
     if (isSignalAborted(signal)) return cancelledOperation();
     if (requiresExplicitConfirmation(this.capability, input) && !isApplicationAuthorized(authorization, input.userConfirmed === true)) {
@@ -78,6 +77,92 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
     }
 
     return this.bridge.execute({ capability: this.capability, input }, signal);
+  }
+
+  private async assertPathsAllowed(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<void>> {
+    const targets: { readonly field: NativePathField; readonly value: string }[] = [];
+    for (const field of PATH_FIELDS[this.capability]) {
+      const value = input[field];
+      if (typeof value === 'string' && value.trim().length > 0) targets.push({ field, value: value.trim() });
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (typeof entry === 'string' && entry.trim().length > 0) targets.push({ field, value: entry.trim() });
+        }
+      }
+    }
+    if (targets.length === 0) return ok(undefined);
+
+    if (isFullBypassAuthorization(authorization)) {
+      for (const target of targets) {
+        if (await canonicalizeNativePath(target.field, target.value) === null) {
+          return err(appError('INVALID_INPUT', `${this.capability} target path is unavailable`));
+        }
+      }
+      return ok(undefined);
+    }
+
+    const roots = await this.canonicalAllowedRoots(input);
+    if (roots.length === 0) {
+      return err(appError('PATH_OUTSIDE_WORKSPACE', `${this.capability} path operation requires an available Active Project root`));
+    }
+    for (const target of targets) {
+      const canonicalTarget = await canonicalizeNativePath(target.field, target.value);
+      if (canonicalTarget === null || !roots.some((root) => isWithin(root, canonicalTarget))) {
+        return err(appError('PATH_OUTSIDE_WORKSPACE', `${this.capability} target path is outside the Active Project`));
+      }
+    }
+    return ok(undefined);
+  }
+
+  private async canonicalAllowedRoots(input: Record<string, unknown>): Promise<readonly string[]> {
+    const activeWorkspaceRoot = readCapabilityActiveWorkspaceRoot(input);
+    let configured: readonly string[];
+    if (activeWorkspaceRoot !== undefined) {
+      configured = [activeWorkspaceRoot];
+    } else if (this.options.allowedRootsProvider !== undefined) {
+      try {
+        configured = await this.options.allowedRootsProvider();
+      } catch {
+        return [];
+      }
+    } else {
+      return [];
+    }
+
+    const roots: string[] = [];
+    for (const candidate of configured) {
+      try {
+        const canonical = await realpath(path.resolve(candidate));
+        if ((await stat(canonical)).isDirectory()) roots.push(canonical);
+      } catch {
+        continue;
+      }
+    }
+    return roots;
+  }
+}
+
+async function canonicalizeNativePath(field: NativePathField, value: string): Promise<string | null> {
+  if (value.includes('\0')) return null;
+  const absolute = path.resolve(value);
+  if (field !== 'output_path' && field !== 'target_path') {
+    try {
+      return await realpath(absolute);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return await realpath(absolute);
+  } catch {
+    try {
+      const parent = await realpath(path.dirname(absolute));
+      if (!(await stat(parent)).isDirectory()) return null;
+      return path.join(parent, path.basename(absolute));
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -113,6 +198,14 @@ function requiresExplicitConfirmation(capability: WindowsCapabilityName, input: 
     }
     default: return false;
   }
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  if (relative === '') return true;
+  if (path.isAbsolute(relative)) return false;
+  const [firstSegment] = relative.split(path.sep);
+  return firstSegment !== '..';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

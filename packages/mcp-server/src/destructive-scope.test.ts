@@ -63,20 +63,4 @@ describe('scoped destructive auto approval', () => {
     const decision = inspectMutationOperation('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, 'DANGEROUS');
     expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, decision, current, { workspaceId: 'drive', rootPath: 'E:\\' })).toBe(false);
   });
-
-  it('uses POSIX project containment without ever auto-approving filesystem root', () => {
-    const current = policy(['delete_file', 'shell_rm_unlink', 'shell_rmdir']);
-    const posixScope = { workspaceId: 'linux-project', rootPath: '/home/demo/project' };
-    const deleteDecision = inspectMutationOperation('delete_file', { workspaceId: 'linux-project', path: 'src/old.txt' }, 'DANGEROUS');
-    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'linux-project', path: 'src/old.txt' }, deleteDecision, current, posixScope)).toBe(true);
-    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'linux-project', path: '/home/demo/project/src/old.txt' }, deleteDecision, current, posixScope)).toBe(true);
-    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'linux-project', path: '/home/demo/outside.txt' }, deleteDecision, current, posixScope)).toBe(false);
-
-    const shellDecision = inspectMutationOperation('shell', { workspaceId: 'linux-project', operation: 'run', executable: 'rm', arguments: ['src/old.tmp'] }, 'DANGEROUS');
-    expect(isScopedAutoApprovalAllowed('shell', { workspaceId: 'linux-project', operation: 'run', executable: 'rm', arguments: ['src/old.tmp'] }, shellDecision, current, posixScope)).toBe(true);
-
-    const rootScope = { workspaceId: 'root', rootPath: '/' };
-    const rootDecision = inspectMutationOperation('delete_file', { workspaceId: 'root', path: 'tmp/file.txt' }, 'DANGEROUS');
-    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'root', path: 'tmp/file.txt' }, rootDecision, current, rootScope)).toBe(false);
-  });
 });

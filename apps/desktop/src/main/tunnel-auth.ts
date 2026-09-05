@@ -1,41 +1,22 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TunnelAuthStatus } from '@lnwjud/ipc-contracts';
-import { createPlatformContext, resolvePlatformPaths } from '@lnwjud/platform';
-import { secretRef, type SecretRef, type SecretStore } from '@lnwjud/shared';
+import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 
 export const LEGACY_TUNNEL_SECRET_FILE = 'lnwjud.runtime.secret';
 export const OAUTH_TUNNEL_SESSION_FILE = 'lnwjud.oauth.session.secret';
-export const LEGACY_TUNNEL_SECRET_REF = secretRef('tunnel', 'legacy-api-key', 1);
-export const OAUTH_TUNNEL_SESSION_REF = secretRef('tunnel', 'oauth-session', 1);
 
-export function defaultTunnelProfileDirectory(
-  environment: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-  homeDir: string = os.homedir(),
-): string {
-  const context = createPlatformContext({ platform, arch: process.arch });
-  const paths = resolvePlatformPaths(context, environment, homeDir);
-  const pathApi = platform === 'win32' ? path.win32 : path.posix;
-  return pathApi.join(pathApi.dirname(paths.configDir), 'tunnel-client');
+export function defaultTunnelProfileDirectory(environment: NodeJS.ProcessEnv = process.env): string {
+  return path.join(environment.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'tunnel-client');
 }
 
-export function legacyTunnelSecretPath(
-  environment: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-  homeDir: string = os.homedir(),
-): string {
-  const pathApi = platform === 'win32' ? path.win32 : path.posix;
-  return pathApi.join(defaultTunnelProfileDirectory(environment, platform, homeDir), LEGACY_TUNNEL_SECRET_FILE);
+export function legacyTunnelSecretPath(environment: NodeJS.ProcessEnv = process.env): string {
+  return path.join(defaultTunnelProfileDirectory(environment), LEGACY_TUNNEL_SECRET_FILE);
 }
 
-export function oauthTunnelSessionPath(
-  environment: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-  homeDir: string = os.homedir(),
-): string {
-  const pathApi = platform === 'win32' ? path.win32 : path.posix;
-  return pathApi.join(defaultTunnelProfileDirectory(environment, platform, homeDir), OAUTH_TUNNEL_SESSION_FILE);
+export function oauthTunnelSessionPath(environment: NodeJS.ProcessEnv = process.env): string {
+  return path.join(defaultTunnelProfileDirectory(environment), OAUTH_TUNNEL_SESSION_FILE);
 }
 
 export interface TunnelRuntimeCredential {
@@ -51,22 +32,21 @@ export interface TunnelAuthProvider {
 }
 
 export interface LegacyApiKeyCredentialProviderOptions {
-  readonly secretStore: SecretStore;
-  readonly secretRef?: SecretRef;
+  readonly secretPath: () => string;
+  readonly encryptSecret?: (plainText: string) => Promise<string>;
+  readonly decryptSecret?: (cipherText: string) => Promise<string>;
 }
 
-/** Secure-store adapter for the original lnwjud Runtime API key contract. */
+/**
+ * Backward-compatible adapter for the original lnwjud Secure Tunnel credential
+ * contract. The on-disk file name, DPAPI payload, and runtime secret injection
+ * remain unchanged so existing installations keep working byte-for-behavior.
+ */
 export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
-  private readonly ref: SecretRef;
-
-  public constructor(private readonly options: LegacyApiKeyCredentialProviderOptions) {
-    this.ref = options.secretRef ?? LEGACY_TUNNEL_SECRET_REF;
-  }
+  public constructor(private readonly options: LegacyApiKeyCredentialProviderOptions) {}
 
   public async status(): Promise<TunnelAuthStatus> {
-    const storeStatus = await this.options.secretStore.status();
-    const storeReady = storeStatus.availability === 'available' && storeStatus.security === 'secure';
-    const hasLegacyApiKey = storeReady && await this.hasStoredSecret();
+    const hasLegacyApiKey = await this.hasStoredSecret();
     return {
       mode: 'legacy_api_key',
       authReady: hasLegacyApiKey,
@@ -77,16 +57,19 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
       workspaceId: null,
       expiresAt: null,
       requiresUserAction: !hasLegacyApiKey,
-      message: hasLegacyApiKey ? null : storeReady ? 'Save a Runtime API key first' : (storeStatus.message ?? 'Secure Runtime API key storage is unavailable'),
+      message: hasLegacyApiKey ? null : 'Save a Runtime API key first',
     };
   }
 
   public async getRuntimeCredential(): Promise<TunnelRuntimeCredential | null> {
-    const storeStatus = await this.options.secretStore.status();
-    if (storeStatus.availability !== 'available' || storeStatus.security !== 'secure') return null;
-    const stored = await this.options.secretStore.get(this.ref);
-    if (stored === null || stored.byteLength === 0) return null;
-    const value = Buffer.from(stored).toString('utf8').trim();
+    let encrypted: string;
+    try {
+      encrypted = await readFile(this.options.secretPath(), 'utf8');
+    } catch {
+      return null;
+    }
+    if (encrypted.trim().length === 0) return null;
+    const value = (await (this.options.decryptSecret?.(encrypted) ?? unprotectTunnelSecret(encrypted))).trim();
     if (value.length === 0) return null;
     return { value, authMode: 'legacy_api_key', expiresAt: null };
   }
@@ -94,18 +77,16 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
   public async saveLegacyApiKey(apiKey: string): Promise<void> {
     const trimmed = apiKey.trim();
     if (trimmed.length === 0) throw new Error('Runtime API key is required');
-    const storeStatus = await this.options.secretStore.status();
-    if (storeStatus.availability !== 'available' || storeStatus.security !== 'secure') {
-      throw new Error(storeStatus.message ?? 'Secure Runtime API key storage is unavailable');
-    }
-    await this.options.secretStore.set(this.ref, Buffer.from(trimmed, 'utf8'));
+    const secretPath = this.options.secretPath();
+    await mkdir(path.dirname(secretPath), { recursive: true });
+    const encrypted = await (this.options.encryptSecret?.(trimmed) ?? protectTunnelSecret(trimmed));
+    await writeFile(secretPath, encrypted, 'utf8');
   }
 
   private async hasStoredSecret(): Promise<boolean> {
     try {
-      if (this.options.secretStore.has !== undefined) return await this.options.secretStore.has(this.ref);
-      const stored = await this.options.secretStore.get(this.ref);
-      return stored !== null && stored.byteLength > 0;
+      const raw = await readFile(this.options.secretPath(), 'utf8');
+      return raw.trim().length > 0;
     } catch {
       return false;
     }

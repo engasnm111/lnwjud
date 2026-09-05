@@ -322,55 +322,6 @@ describe('upgrade runtime', () => {
     expect(p95).toBeLessThan(50);
   });
 
-  it('uses native read-only process, port, and startup providers on macOS and fails closed for pending Linux slices', async () => {
-    const calls: Array<{ executable: string; args: readonly string[] }> = [];
-    const runtime = new UpgradeRuntimeService({}, actor, undefined, {
-      platform: 'darwin',
-      homeDirectory: '/Users/tester',
-      runProcess: async (executable, args) => {
-        calls.push({ executable, args: [...args] });
-        if (executable === '/bin/ps') return ok({ exitCode: 0, stdout: 'Finder 101 2048 00:01\n', stderr: '' });
-        return ok({ exitCode: 0, stdout: 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 202 tester 20u IPv4 0x1 0t0 TCP *:18765 (LISTEN)\n', stderr: '' });
-      },
-      readDirectory: async (directory) => {
-        if (directory === '/Library/LaunchDaemons') throw new Error('permission denied');
-        return ['com.example.agent.plist', 'README.txt'];
-      },
-    });
-
-    await expect(runtime.execute('process_context', { top_count: 5 })).resolves.toMatchObject({
-      ok: true,
-      value: { tool: 'process_context', status: 'ready', available: true, executed: true, processes: 'Finder 101 2048 00:01\n' },
-    });
-    await expect(runtime.execute('port_context', {})).resolves.toMatchObject({
-      ok: true,
-      value: { tool: 'port_context', status: 'ready', available: true, executed: true, listening: expect.arrayContaining([expect.stringContaining('*:18765')]) },
-    });
-    await expect(runtime.execute('startup_context', {})).resolves.toMatchObject({
-      ok: true,
-      value: {
-        tool: 'startup_context', status: 'ready', provider: 'launchd',
-        sources: [
-          { directory: '/Users/tester/Library/LaunchAgents', entries: ['com.example.agent.plist'] },
-          { directory: '/Library/LaunchAgents', entries: ['com.example.agent.plist'] },
-          { directory: '/Library/LaunchDaemons', entries: [], error: 'permission denied' },
-        ],
-      },
-    });
-    expect(calls).toEqual([
-      { executable: '/bin/ps', args: ['-axo', 'comm=,pid=,rss=,time='] },
-      { executable: '/usr/sbin/lsof', args: ['-nP', '-iTCP', '-sTCP:LISTEN'] },
-    ]);
-
-    const linux = new UpgradeRuntimeService({}, actor, undefined, { platform: 'linux' });
-    await expect(linux.execute('port_context', {})).resolves.toMatchObject({
-      ok: true, value: { tool: 'port_context', status: 'unsupported', available: false, requirements: ['Windows or macOS host'] },
-    });
-    await expect(linux.execute('startup_context', {})).resolves.toMatchObject({
-      ok: true, value: { tool: 'startup_context', status: 'unsupported', available: false, requirements: ['Windows or macOS host'] },
-    });
-  });
-
 describe('self-healing (Wave 8)', () => {
   it('plans safe reversible fixes from live evidence', async () => {
     const staleStart = new Date(Date.now() - 48 * 60 * 60 * 1_000).toISOString();

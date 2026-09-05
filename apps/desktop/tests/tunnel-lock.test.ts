@@ -15,63 +15,6 @@ function owner(pid: number, processStartedAt: string): TunnelLockOwner {
 }
 
 describe('lnwjud tunnel ownership lock', () => {
-  it('serializes POSIX contenders without PowerShell and removes the mutex after release', async () => {
-    const directory = await temporaryDirectory();
-    const firstOwner = owner(951, '2026-08-20T00:01:00.000Z');
-    const secondOwner = owner(952, '2026-08-20T00:02:00.000Z');
-    const publishEntered = deferred<void>();
-    const allowPublish = deferred<void>();
-    const first = acquireTunnelLock({
-      profileDirectory: directory,
-      owner: firstOwner,
-      platform: 'linux',
-      inspectProcess: async (pid) => pid === firstOwner.pid
-        ? { state: 'live', processStartedAt: firstOwner.processStartedAt }
-        : { state: 'gone' },
-      hooks: { beforePublish: async () => { publishEntered.resolve(); await allowPublish.promise; } },
-    });
-    await expect(Promise.race([publishEntered.promise, rejectAfter(2_000, 'POSIX publisher did not enter critical section')])).resolves.toBeUndefined();
-
-    let secondSettled = false;
-    const second = acquireTunnelLock({
-      profileDirectory: directory,
-      owner: secondOwner,
-      platform: 'linux',
-      inspectProcess: async (pid) => pid === firstOwner.pid
-        ? { state: 'live', processStartedAt: firstOwner.processStartedAt }
-        : { state: 'gone' },
-    }).finally(() => { secondSettled = true; });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(secondSettled).toBe(false);
-
-    allowPublish.resolve();
-    const firstClaim = await first;
-    expect(firstClaim.acquired).toBe(true);
-    await expect(second).resolves.toEqual({ acquired: false, owner: firstOwner });
-    if (firstClaim.acquired) await expect(firstClaim.release()).resolves.toBe(true);
-    await expect(access(path.join(directory, 'lnwjud.tunnel.lock.mutex'))).rejects.toThrow();
-  });
-
-  it('reclaims a stale POSIX critical-section owner only after process identity is gone', async () => {
-    const directory = await temporaryDirectory();
-    const staleOwner = owner(961, '2026-08-20T00:01:00.000Z');
-    const nextOwner = owner(962, '2026-08-20T00:02:00.000Z');
-    await writeFile(path.join(directory, 'lnwjud.tunnel.lock.mutex'), JSON.stringify({ version: 1, ...staleOwner }), 'utf8');
-
-    const claim = await acquireTunnelLock({
-      profileDirectory: directory,
-      owner: nextOwner,
-      platform: 'linux',
-      inspectProcess: async (pid) => pid === staleOwner.pid
-        ? { state: 'gone' }
-        : { state: 'live', processStartedAt: nextOwner.processStartedAt },
-    });
-
-    expect(claim.acquired).toBe(true);
-    expect(await readTunnelLock(directory)).toEqual(nextOwner);
-    if (claim.acquired) await expect(claim.release()).resolves.toBe(true);
-    await expect(access(path.join(directory, 'lnwjud.tunnel.lock.mutex'))).rejects.toThrow();
-  });
   it('reports the current owner to a simultaneous second starter', async () => {
     const directory = await temporaryDirectory();
     const firstOwner = owner(101, '2026-08-20T00:00:00.000Z');

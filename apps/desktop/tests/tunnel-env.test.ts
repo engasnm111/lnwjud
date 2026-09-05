@@ -12,56 +12,6 @@ describe('Secure Tunnel Desktop HTTP wiring', () => {
     expect(env.MCP_CONNECTION_MAX_TTL).toBe('168h0m0s');
   });
 
-  it('keeps the Windows profile environment contract isolated from XDG overrides', () => {
-    const env = tunnelClientEnv(
-      ' key ',
-      'C:\\Users\\me\\AppData\\Roaming\\tunnel-client',
-      'win32',
-      {
-        USERPROFILE: 'C:\\Users\\me',
-        APPDATA: 'C:\\Users\\me\\AppData\\Roaming',
-        HOME: 'C:\\Users\\me',
-        XDG_CONFIG_HOME: '/tmp/should-not-leak',
-        LNWJUD_DATA_PATH: 'C:\\private',
-        LNWJUD_UNRESTRICTED: '1',
-      },
-      'C:\\Users\\me',
-    );
-    expect(env.CONTROL_PLANE_API_KEY).toBe('key');
-    expect(env.USERPROFILE).toBe('C:\\Users\\me');
-    expect(env.APPDATA).toBe('C:\\Users\\me\\AppData\\Roaming');
-    expect(env.HOME).toBe('C:\\Users\\me');
-    expect(env.XDG_CONFIG_HOME).toBeUndefined();
-    expect(env.LNWJUD_DATA_PATH).toBeUndefined();
-    expect(env.LNWJUD_UNRESTRICTED).toBeUndefined();
-  });
-
-  it.each(['linux', 'darwin'] as const)('keeps %s HOME/XDG state and removes Windows-only environment aliases', (platform) => {
-    const env = tunnelClientEnv(
-      ' key ',
-      '/home/me/.config/tunnel-client',
-      platform,
-      {
-        HOME: '/home/me',
-        XDG_CONFIG_HOME: '/home/me/.config',
-        XDG_STATE_HOME: '/home/me/.local/state',
-        USERPROFILE: 'C:\\leak',
-        APPDATA: 'C:\\leak\\AppData\\Roaming',
-        LNWJUD_DATA_PATH: '/tmp/private',
-        LNWJUD_UNRESTRICTED: '1',
-      },
-      '/home/me',
-    );
-    expect(env.CONTROL_PLANE_API_KEY).toBe('key');
-    expect(env.HOME).toBe('/home/me');
-    expect(env.XDG_CONFIG_HOME).toBe('/home/me/.config');
-    expect(env.XDG_STATE_HOME).toBe('/home/me/.local/state');
-    expect(env.USERPROFILE).toBeUndefined();
-    expect(env.APPDATA).toBeUndefined();
-    expect(env.LNWJUD_DATA_PATH).toBeUndefined();
-    expect(env.LNWJUD_UNRESTRICTED).toBeUndefined();
-  });
-
   it('materializes a replaceable no-auth HTTP profile with a secret reference, never a stdio child', () => {
     const args = buildTunnelInitArgs(
       'tunnel_0123456789abcdef0123456789abcdef',
