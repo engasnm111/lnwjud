@@ -24,8 +24,8 @@ export class PosixProcessTree implements ProcessTreeTerminator {
   private readonly pollIntervalMs: number;
 
   public constructor(options: PosixProcessTreeOptions = {}) {
-    this.signalProcess = options.signalProcess ?? ((pid, signal) => process.kill(pid, signal));
-    this.wait = options.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.signalProcess = options.signalProcess ?? ((pid, signal): void => { process.kill(pid, signal); });
+    this.wait = options.wait ?? ((milliseconds): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
     this.gracefulTimeoutMs = Math.max(0, options.gracefulTimeoutMs ?? 1_000);
     this.forceTimeoutMs = Math.max(0, options.forceTimeoutMs ?? 1_000);
     this.pollIntervalMs = Math.max(1, options.pollIntervalMs ?? 25);
@@ -78,11 +78,11 @@ export class PosixProcessTree implements ProcessTreeTerminator {
 
   private async waitUntilStopped(targetPid: number, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
-    do {
+    while (Date.now() < deadline) {
       if (!this.targetRunning(targetPid)) return true;
-      if (Date.now() >= deadline) break;
+
       await this.wait(Math.min(this.pollIntervalMs, Math.max(1, deadline - Date.now())));
-    } while (true);
+    }
     return !this.targetRunning(targetPid);
   }
 }

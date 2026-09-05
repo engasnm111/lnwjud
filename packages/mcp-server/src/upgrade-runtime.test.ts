@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ok } from '@lnwjud/domain';
+import { ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { UpgradeRuntimeService } from './upgrade-runtime.js';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
@@ -327,12 +327,12 @@ describe('upgrade runtime', () => {
     const runtime = new UpgradeRuntimeService({}, actor, undefined, {
       platform: 'darwin',
       homeDirectory: '/Users/tester',
-      runProcess: async (executable, args) => {
+      runProcess: async (executable, args): Promise<Result<{ exitCode: number; stdout: string; stderr: string }>> => {
         calls.push({ executable, args: [...args] });
         if (executable === '/bin/ps') return ok({ exitCode: 0, stdout: 'Finder 101 2048 00:01\n', stderr: '' });
         return ok({ exitCode: 0, stdout: 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 202 tester 20u IPv4 0x1 0t0 TCP *:18765 (LISTEN)\n', stderr: '' });
       },
-      readDirectory: async (directory) => {
+      readDirectory: async (directory): Promise<string[]> => {
         if (directory === '/Library/LaunchDaemons') throw new Error('permission denied');
         return ['com.example.agent.plist', 'README.txt'];
       },

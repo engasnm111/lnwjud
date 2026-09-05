@@ -10,7 +10,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function createRuntime(platform: NodeJS.Platform) {
+async function createRuntime(platform: NodeJS.Platform): Promise<ReturnType<typeof createLocalCapabilityRuntime>> {
   const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-capability-platform-'));
   roots.push(dataPath);
   return createLocalCapabilityRuntime(dataPath, async () => [dataPath], false, () => [], () => 5, platform);

@@ -1,9 +1,11 @@
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import process from 'node:process';
+import { fileURLToPath, URL } from 'node:url';
 import { resolveRuntimeAssets } from './runtime-asset-manifest.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,7 +47,7 @@ try {
 }
 
 async function download(url) {
-  const response = await fetch(url, { redirect: 'follow' });
+  const response = await globalThis.fetch(url, { redirect: 'follow' });
   if (!response.ok) throw new Error(`Runtime download failed (${response.status}) for ${url}`);
   return Buffer.from(await response.arrayBuffer());
 }

@@ -1,8 +1,10 @@
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { chmod, copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { resolveTunnelClientAsset } from './tunnel-client-asset-manifest.mjs';
 
@@ -94,7 +96,7 @@ function extractArchive(archivePath, destination) {
 }
 
 async function download(url) {
-  const response = await fetch(url, { redirect: 'follow' });
+  const response = await globalThis.fetch(url, { redirect: 'follow' });
   if (!response.ok) throw new Error(`tunnel-client download failed (${response.status}) for ${url}`);
   return Buffer.from(await response.arrayBuffer());
 }

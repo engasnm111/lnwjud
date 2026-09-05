@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ok, type Result } from '@lnwjud/domain';
 import { MacOsNativeCapabilityBackend, type MacOsCapabilityBridge } from './macos-native-backend.js';
 
-function bridgeFixture() {
+function bridgeFixture(): { bridge: MacOsCapabilityBridge; execute: MacOsCapabilityBridge['execute'] } {
   const execute = vi.fn(async (request: { readonly capability: string; readonly input: Record<string, unknown> }): Promise<Result<unknown>> => ok({ capability: request.capability, input: request.input }));
   return { bridge: { execute } as MacOsCapabilityBridge, execute };
 }
