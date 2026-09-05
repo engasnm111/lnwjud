@@ -14,8 +14,6 @@ interface HealthCapabilityOptions {
   readonly notification?: CapabilityBackend;
   readonly fileDialog?: CapabilityBackend;
   readonly clipboard?: CapabilityBackend;
-  readonly audio?: CapabilityBackend;
-  readonly screenRecord?: CapabilityBackend;
   readonly scheduler?: CapabilityBackend;
   readonly wslExec?: CapabilityBackend;
   readonly wslFs?: CapabilityBackend;
@@ -32,8 +30,6 @@ export class HealthCapabilityBackend implements CapabilityBackend {
   private readonly notification: CapabilityBackend | undefined;
   private readonly fileDialog: CapabilityBackend | undefined;
   private readonly clipboard: CapabilityBackend | undefined;
-  private readonly audio: CapabilityBackend | undefined;
-  private readonly screenRecord: CapabilityBackend | undefined;
   private readonly scheduler: CapabilityBackend | undefined;
   private readonly wslExec: CapabilityBackend | undefined;
   private readonly wslFs: CapabilityBackend | undefined;
@@ -49,8 +45,6 @@ export class HealthCapabilityBackend implements CapabilityBackend {
     this.notification = options.notification;
     this.fileDialog = options.fileDialog;
     this.clipboard = options.clipboard;
-    this.audio = options.audio;
-    this.screenRecord = options.screenRecord;
     this.scheduler = options.scheduler;
     this.wslExec = options.wslExec;
     this.wslFs = options.wslFs;
@@ -106,12 +100,7 @@ export class HealthCapabilityBackend implements CapabilityBackend {
         ? this.describe(tool, await this.checkDelegated(this.window, { action: 'status' }))
         : this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }
-    if (tool === 'audio') {
-      const probe = this.platform === 'win32' ? { action: 'record', dry_run: true } : { action: 'status' };
-      return this.describe(tool, await this.checkDelegated(this.audio, probe));
-    }
-    if (tool === 'screen_record') return this.describe(tool, await this.checkDelegated(this.screenRecord, { action: 'status' }));
-    if (tool === 'office') {
+    if (tool === 'audio' || tool === 'screen_record' || tool === 'office') {
       return this.describe(tool, { available: true, ready: true, applicable: true, local: true });
     }
     if (tool === 'dom_cdp') return this.describe(tool, await this.checkDelegated(this.domCdp, { action: 'status' }));

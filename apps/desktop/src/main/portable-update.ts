@@ -6,14 +6,6 @@ import path from 'node:path';
 export const PORTABLE_UPDATE_FEED_URL = 'https://github.com/engasnm111/lnwjud/releases/latest/download/';
 export const PORTABLE_UPDATE_CHANNEL = 'portable';
 
-export type DesktopDistribution =
-  | 'windows-installer'
-  | 'windows-portable'
-  | 'macos-app'
-  | 'linux-appimage'
-  | 'linux-deb'
-  | 'unsupported';
-
 export type WindowsDistribution = 'installer' | 'portable';
 
 export interface AutoUpdaterFeedAdapter {
@@ -48,33 +40,6 @@ export function detectWindowsDistribution(
   if (!isPackaged || platform !== 'win32') return 'installer';
   const portableExecutable = environment.PORTABLE_EXECUTABLE_FILE?.trim();
   return portableExecutable === undefined || portableExecutable.length === 0 ? 'installer' : 'portable';
-}
-
-export function detectDesktopDistribution(
-  isPackaged: boolean,
-  environment: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): DesktopDistribution {
-  if (!isPackaged) return 'unsupported';
-  if (platform === 'win32') {
-    return detectWindowsDistribution(isPackaged, environment, platform) === 'portable'
-      ? 'windows-portable'
-      : 'windows-installer';
-  }
-  if (platform === 'darwin') return 'macos-app';
-  if (platform === 'linux') {
-    if ((environment.APPIMAGE ?? '').trim().length > 0) return 'linux-appimage';
-    if ((environment.DEBIAN_PACKAGE ?? '').trim().length > 0) return 'linux-deb';
-    return 'unsupported';
-  }
-  return 'unsupported';
-}
-
-export function distributionSupportsAutoUpdate(distribution: DesktopDistribution): boolean {
-  return distribution === 'windows-installer'
-    || distribution === 'windows-portable'
-    || distribution === 'macos-app'
-    || distribution === 'linux-appimage';
 }
 
 export function currentPortableExecutablePath(

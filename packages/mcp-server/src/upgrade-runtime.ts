@@ -101,7 +101,7 @@ const PRIMITIVE_SEARCH_ENTRIES: readonly SearchCatalogEntry[] = [
   primitiveEntry('apply_patch', 'Apply a guarded workspace patch.', 'WRITE', ['workspace', 'file', 'write']),
   primitiveEntry('edit_file', 'First-choice exact guarded text replacement for narrow source and config repairs; use instead of shell editing scripts.', 'WRITE', ['workspace', 'file', 'write', 'edit', 'replace', 'source', 'config', 'text']),
   primitiveEntry('shell', 'Run builds, tests, package managers, and system operations; not a text editor when edit_file, apply_patch, or write_file can perform the change.', 'EXECUTE', ['shell', 'process', 'execute', 'build', 'test']),
-  primitiveEntry('computer_use', 'Native desktop control with semantic, visual-mark, pointer, and keyboard routing on supported Windows/Linux sessions.', 'EXECUTE', ['computer', 'desktop', 'ui', 'mouse', 'keyboard', 'click', 'type', 'vision', 'execute']),
+  primitiveEntry('computer_use', 'Codex-style native Windows desktop control with semantic, visual-mark, pointer, and keyboard routing.', 'EXECUTE', ['computer', 'desktop', 'ui', 'mouse', 'keyboard', 'click', 'type', 'vision', 'execute']),
   primitiveEntry('vision', 'Capture local screen content or use the OCR boundary.', 'READ', ['vision', 'display', 'read']),
   primitiveEntry('vision_annotated_capture', 'Capture an expiring Set-of-Marks observation.', 'READ', ['vision', 'ui', 'read']),
   primitiveEntry('ui_target_action', 'Act on a revalidated visual mark.', 'EXECUTE', ['vision', 'ui', 'execute']),

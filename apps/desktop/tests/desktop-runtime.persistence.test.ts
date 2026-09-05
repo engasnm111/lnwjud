@@ -502,7 +502,7 @@ describe('DesktopRuntime persistence', () => {
           expect(windowHealth.structuredContent).toMatchObject({
             tool: 'window',
             availability: 'platform',
-            platformPolicy: { platforms: ['win32', 'linux'], sessions: ['interactive-desktop'] },
+            platformPolicy: { platforms: ['win32'], sessions: ['interactive-desktop'] },
             available: true,
             applicable: true,
           });

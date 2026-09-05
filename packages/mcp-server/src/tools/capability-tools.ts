@@ -105,7 +105,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'computer_use',
-      description: 'Codex-style native desktop computer use for testing local apps on supported Windows and Linux desktop sessions. Take annotated screenshots, inspect semantic controls, and operate by semantic target, numbered visual mark, or explicit coordinates. Routes through the platform Accessibility provider first and uses guarded pointer/keyboard input only when needed. Unsupported or unproven Linux session/provider combinations fail closed instead of falling back to Windows behavior. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id.',
+      description: 'Codex-style native Windows computer use for testing desktop apps. Take annotated screenshots, inspect semantic controls, and operate by semantic target, numbered visual mark, or explicit coordinates. Routes through Accessibility first and uses guarded pointer/keyboard input only when needed. Supports click, typing, keys, hotkeys, scroll, drag, pointer movement, and window activation. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: computerUseSchema,
@@ -113,7 +113,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'accessibility',
-      description: 'Semantic native desktop UI tool for supported Windows and Linux sessions. Inspect native UI trees and named controls, then click, focus, read or set values, select controls and menus, or manage a native element. Linux availability is session/provider-dependent and fails closed when no supported native provider is present. Prefer shell for direct system work and dom_cdp for web pages.',
+      description: 'Semantic native Windows UI tool. Inspect UI trees and named controls, then click, focus, read or set values, select controls and menus, or manage a native element. Prefer shell for direct system work and dom_cdp for web pages.',
       permission: 'READ',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: accessibilityCapabilitySchema,
@@ -153,7 +153,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'window',
-      description: 'Direct native desktop window management for supported Windows and Linux sessions. List, inspect, activate, move, resize, minimize, maximize, restore, or close windows without raw coordinates when a window operation is sufficient. Unsupported Wayland/window-provider combinations fail closed.',
+      description: 'Direct native Windows window management. List, inspect, activate, move, resize, minimize, maximize, restore, or close windows without raw coordinates when a window operation is sufficient.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: windowCapabilitySchema,
@@ -177,7 +177,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'notification',
-      description: 'Show a platform-native local notification on supported Windows or macOS hosts. Use it to tell the user when a long task finishes; availability is reported truthfully by the active platform provider.',
+      description: 'Show a Windows notification (toast when BurntToast is installed, balloon otherwise). Use to tell the user when a long task finishes.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: notificationCapabilitySchema,
@@ -185,7 +185,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'file_dialog',
-      description: 'Open a platform-native file open/save dialog on supported Windows or macOS hosts and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards.',
+      description: 'Open a native Windows file open/save dialog and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: fileDialogCapabilitySchema,
@@ -193,7 +193,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'clipboard',
-      description: 'Read or write the platform clipboard on supported Windows or macOS hosts. Text access is supported where the provider exposes it; PNG image reads are provider-dependent. Use get_text/get_image to read and set_text to write.',
+      description: 'Read or write the Windows clipboard (text, or PNG image as base64). Use get_text/get_image to read and set_text to write.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: clipboardCapabilitySchema,
@@ -209,7 +209,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'audio',
-      description: 'Record microphone audio to a WAV file or play a local audio file through the active platform media provider. Windows uses the native bridge; macOS/Linux use their reported provider when runtime readiness is proven. In standard mode recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. record is synchronous and limited to 600 seconds. Use stop to abort an ongoing record/play.',
+      description: 'Record the microphone to a WAV file or play a local audio file through MCI. In standard mode recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. record is synchronous and limited to 600 seconds. Use stop to abort an ongoing record/play.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: audioCapabilitySchema,
@@ -217,7 +217,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'screen_record',
-      description: 'Record the screen to an MP4 through the active platform screen-capture provider. Windows uses the native ffmpeg bridge; Linux currently supports verified X11 capture while Wayland requires a user-approved ScreenCast portal provider, and macOS remains unavailable until the signed ScreenCaptureKit provider is delivered. In standard mode starting a recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. start spawns a background capture, status checks it, stop finalizes the file. Recording stops automatically after 3600 seconds.',
+      description: 'Record the screen to an MP4 using ffmpeg gdigrab (requires ffmpeg on PATH). In standard mode starting a recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. start spawns a background capture, status checks it, stop finalizes the file. Recording stops automatically after 3600 seconds.',
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: screenRecordCapabilitySchema,

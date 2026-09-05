@@ -4,9 +4,7 @@ import {
   PORTABLE_UPDATE_FEED_URL,
   configureUpdaterForDistribution,
   currentPortableExecutablePath,
-  detectDesktopDistribution,
   detectWindowsDistribution,
-  distributionSupportsAutoUpdate,
   portableReplacementScript,
 } from '../src/main/portable-update.js';
 
@@ -16,21 +14,6 @@ describe('Windows distribution-aware auto updater', () => {
     expect(detectWindowsDistribution(true, {}, 'win32')).toBe('installer');
     expect(detectWindowsDistribution(false, { PORTABLE_EXECUTABLE_FILE: 'C:\\Tools\\lnwjud.exe' }, 'win32')).toBe('installer');
     expect(detectWindowsDistribution(true, { PORTABLE_EXECUTABLE_FILE: '/tmp/lnwjud' }, 'linux')).toBe('installer');
-  });
-
-  it('detects cross-platform package formats and enables auto-update only where replacement semantics are proven', () => {
-    expect(detectDesktopDistribution(true, {}, 'win32')).toBe('windows-installer');
-    expect(detectDesktopDistribution(true, { PORTABLE_EXECUTABLE_FILE: 'C:\\Tools\\lnwjud.exe' }, 'win32')).toBe('windows-portable');
-    expect(detectDesktopDistribution(true, {}, 'darwin')).toBe('macos-app');
-    expect(detectDesktopDistribution(true, { APPIMAGE: '/opt/lnwjud.AppImage' }, 'linux')).toBe('linux-appimage');
-    expect(detectDesktopDistribution(true, { DEBIAN_PACKAGE: 'lnwjud' }, 'linux')).toBe('linux-deb');
-    expect(detectDesktopDistribution(true, {}, 'linux')).toBe('unsupported');
-    expect(distributionSupportsAutoUpdate('windows-installer')).toBe(true);
-    expect(distributionSupportsAutoUpdate('windows-portable')).toBe(true);
-    expect(distributionSupportsAutoUpdate('macos-app')).toBe(true);
-    expect(distributionSupportsAutoUpdate('linux-appimage')).toBe(true);
-    expect(distributionSupportsAutoUpdate('linux-deb')).toBe(false);
-    expect(distributionSupportsAutoUpdate('unsupported')).toBe(false);
   });
 
   it('keeps the installer on the packaged GitHub feed and gives portable builds their own manifest channel', () => {

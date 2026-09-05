@@ -50,14 +50,6 @@ export { detectLinuxSessionProfile, type LinuxDesktopSession, type LinuxSessionD
 export { LinuxNativeCapabilityBackend, type LinuxCapabilityName, type LinuxNativeCapabilityBridge, type LinuxNativeCapabilityOptions } from './linux-native-backend.js';
 export { MacOsCommandCapabilityBridge, MacOsNativeCapabilityBackend, type MacOsCapabilityBridge, type MacOsCapabilityName } from './macos-native-backend.js';
 export { MacOsSchedulerCapabilityBackend, type MacOsSchedulerBackendOptions, type MacOsSchedulerFileSystem, type MacOsSchedulerRunResult } from './macos-scheduler-backend.js';
-export {
-  PosixMediaCapabilityBackend,
-  type PosixMediaBackendOptions,
-  type PosixMediaCapabilityName,
-  type PosixMediaProcessHandle,
-  type PosixMediaRunResult,
-  type PosixMediaRuntime,
-} from './posix-media-backend.js';
 export { SchedulerCapabilityBackend } from './scheduler-backend.js';
 export { WslCapabilityBackend, WslFilesystemCapabilityBackend, type WslCapabilityOptions, type WslFilesystemCapabilityOptions } from './wsl-backend.js';
 export {

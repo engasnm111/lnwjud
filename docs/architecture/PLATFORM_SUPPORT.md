@@ -47,14 +47,6 @@ A missing provider is never an internal error and never receives Windows remedia
 - Wayland automation must respect the desktop portal/session model and never advertise unattended control that the compositor does not permit.
 - Persisted credentials never fall back to plaintext merely to make a target appear supported.
 
-## Package and update contract
-
-- Windows keeps NSIS x64 and Portable x64 as the regression baseline.
-- macOS package candidates are DMG and ZIP for arm64/x64. A CI-produced unsigned package is development evidence only; GA still requires Developer ID signing, hardened-runtime entitlement review, notarization, stapling and clean-machine Gatekeeper acceptance.
-- Linux x64 package candidates are AppImage and DEB. AppImage may use application self-update only after native-runner acceptance; DEB remains package-manager-managed and must never be self-replaced by the AppImage/portable updater path.
-- `electron-updater` is enabled only for a distribution whose replacement semantics are known: Windows installer/portable, macOS app and Linux AppImage. Unknown Linux layouts and DEB fail closed with explicit package-manager guidance.
-- Native macOS/Linux package builds and platform/runtime tests run on their corresponding GitHub-hosted OS runners before their artifacts are treated as portability evidence.
-
 ## Release independence
 
 macOS and Linux may progress and be promoted independently. A missing Linux arm64 or optional Office provider must not block macOS or Linux x64 core GA. Windows remains the regression baseline throughout the program.
