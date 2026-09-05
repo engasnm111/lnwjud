@@ -83,7 +83,8 @@ import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
-import { loadV3CheckpointKeyIfPresent } from './checkpoint-key-compat.js';
+import { decryptV3WindowsSafeStorageSecretIfPresent, loadV3CheckpointKeyIfPresent } from './checkpoint-key-compat.js';
+import { unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
@@ -1391,6 +1392,7 @@ function bootstrapMcpStdio(): void {
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
+      decryptTunnelSecret: decryptTunnelSecretCompat,
       ...(checkpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey }),
     });
     desktopRuntime = runtime;
@@ -1659,6 +1661,12 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
+async function decryptTunnelSecretCompat(cipherText: string): Promise<string> {
+  const v3Secret = decryptV3WindowsSafeStorageSecretIfPresent(cipherText, safeStorage);
+  if (v3Secret !== undefined) return v3Secret.toString('utf8');
+  return unprotectTunnelSecret(cipherText);
+}
+
 function createNativeDesktopRuntime(dataPath: string): DesktopRuntime {
   const checkpointEncryptionKey = loadV3CheckpointKeyIfPresent(dataPath, safeStorage);
   return createDesktopRuntime(dataPath, {
@@ -1666,6 +1674,7 @@ function createNativeDesktopRuntime(dataPath: string): DesktopRuntime {
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
     }),
+    decryptTunnelSecret: decryptTunnelSecretCompat,
     ...(checkpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey }),
   });
 }

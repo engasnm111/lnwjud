@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadV3CheckpointKeyIfPresent } from '../src/main/checkpoint-key-compat.js';
+import { decryptV3WindowsSafeStorageSecretIfPresent, loadV3CheckpointKeyIfPresent } from '../src/main/checkpoint-key-compat.js';
 
 const roots: string[] = [];
 
@@ -15,6 +15,23 @@ async function tempRoot(): Promise<string> {
   roots.push(root);
   return root;
 }
+
+describe('generic Windows v3 safeStorage compatibility', () => {
+  it('decrypts migrated tunnel secret bytes before legacy PowerShell DPAPI sees them', () => {
+    const plain = Buffer.from('runtime-key-fixture', 'utf8');
+    const encrypted = Buffer.from('safe-storage-ciphertext');
+    const envelope = `lnwjud-secret:v3:windows-dpapi:${encrypted.toString('base64')}`;
+    const decryptString = vi.fn(() => plain.toString('base64'));
+
+    expect(decryptV3WindowsSafeStorageSecretIfPresent(envelope, { decryptString })).toEqual(plain);
+    expect(decryptString).toHaveBeenCalledExactlyOnceWith(encrypted);
+  });
+
+  it('delegates non-v3 tunnel secrets to the legacy DPAPI reader', () => {
+    expect(decryptV3WindowsSafeStorageSecretIfPresent('01000000legacy-dpapi', { decryptString: vi.fn() }))
+      .toBeUndefined();
+  });
+});
 
 describe('checkpoint key v3 compatibility', () => {
   it('decrypts the Windows safeStorage v3 envelope without rewriting it', async () => {

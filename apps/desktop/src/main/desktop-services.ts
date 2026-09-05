@@ -199,6 +199,7 @@ export interface DesktopRuntimeOptions {
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
   readonly checkpointEncryptionKey?: Buffer;
+  readonly decryptTunnelSecret?: (cipherText: string) => Promise<string>;
   /** Injectable only when an officially supported Tunnel OAuth provisioning contract exists. */
   readonly tunnelOAuthBackend?: TunnelOAuthProvisioningBackend;
 }
@@ -419,13 +420,20 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       codexToolsEnabled: readSettings().codexToolsEnabled,
     }),
   });
+  const tunnelSecretDecryptOption = options.decryptTunnelSecret === undefined
+    ? {}
+    : { decryptSecret: options.decryptTunnelSecret };
   const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({
     secretPath: (): string => legacyTunnelSecretPath(),
+    ...tunnelSecretDecryptOption,
   });
   const oauthTunnelBackend = options.tunnelOAuthBackend ?? unavailableTunnelOAuthBackend();
   const oauthTunnelAuthProvider = new OAuthTunnelAuthProvider({
     backend: oauthTunnelBackend,
-    sessionStore: new TunnelOAuthSessionStore({ filePath: oauthTunnelSessionPath() }),
+    sessionStore: new TunnelOAuthSessionStore({
+      filePath: oauthTunnelSessionPath(),
+      ...tunnelSecretDecryptOption,
+    }),
     expectedTunnelId: (): string | null => settingsRepository.get(tunnelIdentitySettingKey),
   });
   const tunnelAuthCoordinator = new TunnelAuthCoordinator(
