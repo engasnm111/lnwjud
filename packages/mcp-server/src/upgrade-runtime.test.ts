@@ -63,6 +63,31 @@ describe('upgrade runtime', () => {
     if (search.ok) expect(search.value.rankedCandidates[0]?.name).toBe('wsl_exec');
   });
 
+  it('excludes user-disabled tools from dynamic discovery, ranking, describe, and category counts', async () => {
+    const baseline = new UpgradeRuntimeService({}, actor);
+    const beforeCategories = await baseline.execute('tool_categories', {});
+    const runtime = new UpgradeRuntimeService({}, actor, undefined, (name) => name !== 'read_file');
+    const search = await runtime.execute('tool_search', { query: 'read file', limit: 100 });
+    const dynamic = await runtime.execute('tool_dynamic_filter', { query: 'read file', limit: 100 });
+    const described = await runtime.execute('tool_describe', { name: 'read_file' });
+    const afterCategories = await runtime.execute('tool_categories', {});
+
+    expect(search).toMatchObject({ ok: true, value: { matches: expect.any(Array), rankedCandidates: expect.any(Array) } });
+    expect(dynamic).toMatchObject({ ok: true, value: { matches: expect.any(Array), rankedCandidates: expect.any(Array) } });
+    if (search.ok) {
+      expect(search.value.matches.map((entry) => entry.name)).not.toContain('read_file');
+      expect(search.value.rankedCandidates.map((entry) => entry.name)).not.toContain('read_file');
+    }
+    if (dynamic.ok) {
+      expect(dynamic.value.matches.map((entry) => entry.name)).not.toContain('read_file');
+      expect(dynamic.value.rankedCandidates.map((entry) => entry.name)).not.toContain('read_file');
+    }
+    expect(described).toEqual({ ok: true, value: { found: false, name: 'read_file' } });
+    if (beforeCategories.ok && afterCategories.ok) {
+      expect(afterCategories.value.categories).toEqual(beforeCategories.value.categories);
+    }
+  });
+
   it('ranks guarded exact file editing ahead of shell for source repairs', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
     const search = await runtime.execute('tool_function_find', {

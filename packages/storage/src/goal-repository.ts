@@ -772,19 +772,32 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           throw new GoalStateError('conflict', 'Cancelled receipt must match the stored native task ID');
         }
         const nativeCancellationReceipt = request.nativeCancellationReceipt;
-        const provesNonRunnable = nativeCancellationReceipt !== undefined
+        const userCancellationReceipt = request.userCancellationReceipt;
+        if (nativeCancellationReceipt !== undefined && userCancellationReceipt !== undefined) {
+          throw new GoalStateError('conflict', 'Cancelled receipt cannot mix host-native and user-attested evidence');
+        }
+        const provesNativeNonRunnable = nativeCancellationReceipt !== undefined
           && nativeCancellationReceipt.provider === 'chatgpt_scheduled_task'
           && nativeCancellationReceipt.nativeTaskId === currentRow.native_task_id
           && (
             (nativeCancellationReceipt.operation === 'delete' && ['deleted', 'not_found'].includes(nativeCancellationReceipt.state))
             || (nativeCancellationReceipt.operation === 'disable' && nativeCancellationReceipt.state === 'disabled')
           );
-        if (!provesNonRunnable) {
-          throw new GoalStateError('conflict', 'Cancelled receipt requires matching native host evidence that the task is non-runnable');
+        const provesUserAttestedDeletion = userCancellationReceipt !== undefined
+          && userCancellationReceipt.source === 'user_confirmation'
+          && userCancellationReceipt.nativeTaskId === currentRow.native_task_id
+          && userCancellationReceipt.action === 'deleted_in_chatgpt_scheduled_tasks_ui';
+        if (!provesNativeNonRunnable && !provesUserAttestedDeletion) {
+          throw new GoalStateError('conflict', 'Cancelled receipt requires matching native host evidence or explicit user-attested manual deletion');
         }
-        validateIso(nativeCancellationReceipt.observedAt, 'native cancellation observed_at');
+        const observedAt = nativeCancellationReceipt?.observedAt ?? userCancellationReceipt!.observedAt;
+        validateIso(observedAt, 'cancellation observed_at');
+        if (Date.parse(observedAt) < Date.parse(currentRow.created_at)) {
+          throw new GoalStateError('conflict', 'Cancellation evidence predates scheduled continuation creation');
+        }
         if (
-          goal.terminalAt !== undefined
+          nativeCancellationReceipt !== undefined
+          && goal.terminalAt !== undefined
           && Date.parse(nativeCancellationReceipt.observedAt) < Date.parse(goal.terminalAt)
         ) {
           throw new GoalStateError('conflict', 'Native cancellation evidence predates durable goal termination');
@@ -1086,12 +1099,11 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     goal: GoalRecord,
   ): ClaimScheduledContinuationRecordResult {
     if (continuation.intervalMinutes !== 60) throw corrupt('Recurring continuation is missing its hourly interval');
-    if (goal.status !== 'active') return { outcome: 'terminal_noop', continuation, goal };
     if (continuation.status === 'terminal_noop') return { outcome: 'terminal_noop', continuation, goal };
-    if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
-      return { outcome: 'receipt_required', reason: 'native_task_unconfirmed', continuation, goal };
-    }
     if (['cancel_required', 'cancel_failed', 'cancel_uncertain'].includes(continuation.status)) {
+      if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
+        return { outcome: 'receipt_required', reason: 'native_task_unconfirmed', continuation, goal };
+      }
       const runKey = recurringRunKey(continuation, request.now);
       if (this.recurringRunExists(continuation.continuationId, runKey)) {
         return { outcome: 'already_claimed', continuation, goal };
@@ -1105,6 +1117,10 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         'Durable work requested completion; recurring wake is cleanup-only and must not resume workspace work',
       );
       return { outcome: 'terminal_cleanup_required', continuation, goal, runKey };
+    }
+    if (goal.status !== 'active') return { outcome: 'terminal_noop', continuation, goal };
+    if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
+      return { outcome: 'receipt_required', reason: 'native_task_unconfirmed', continuation, goal };
     }
     if (!['scheduled', 'create_uncertain'].includes(continuation.status)) {
       throw new GoalStateError('conflict', `Recurring continuation cannot be claimed from status ${continuation.status}`);

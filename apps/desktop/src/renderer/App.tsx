@@ -53,6 +53,7 @@ export function App(): ReactElement {
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const [toolCatalog, setToolCatalog] = useState<ToolCatalogSnapshot | null>(null);
   const [toolCatalogLoading, setToolCatalogLoading] = useState(false);
+  const [toolHostSyncNotice, setToolHostSyncNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
@@ -615,6 +616,40 @@ export function App(): ReactElement {
     }
   }
 
+  function mergeToolCatalogItem(item: ToolCatalogSnapshot['items'][number]): void {
+    setToolCatalog((current) => current === null ? current : {
+      ...current,
+      generatedAt: new Date().toISOString(),
+      items: current.items.map((candidate) => candidate.origin === item.origin && candidate.serverName === item.serverName && candidate.name === item.name ? item : candidate),
+    });
+  }
+
+  async function setToolAvailability(name: string, enabled: boolean): Promise<void> {
+    setError(null);
+    try {
+      const result = await window.lnwjud.setToolAvailability({ locale, name, enabled });
+      mergeToolCatalogItem(result.item);
+      setToolHostSyncNotice(result.hostSyncMessage);
+    } catch (cause: unknown) {
+      const message = errorMessage(cause, propsText(locale, 'เปลี่ยนสถานะเครื่องมือไม่สำเร็จ', 'Could not change tool availability'));
+      setError(message);
+      throw cause instanceof Error ? cause : new Error(message);
+    }
+  }
+
+  async function resetToolAvailability(name: string): Promise<void> {
+    setError(null);
+    try {
+      const result = await window.lnwjud.resetToolAvailability({ locale, name });
+      mergeToolCatalogItem(result.item);
+      setToolHostSyncNotice(result.hostSyncMessage);
+    } catch (cause: unknown) {
+      const message = errorMessage(cause, propsText(locale, 'คืนค่าสถานะเครื่องมือเป็นค่าเริ่มต้นไม่สำเร็จ', 'Could not restore default tool availability'));
+      setError(message);
+      throw cause instanceof Error ? cause : new Error(message);
+    }
+  }
+
   async function handleToolRemediation(action: ResolvedRemediation['actions'][number]): Promise<void> {
     if (action.kind === 'recheck') { await loadToolCatalog(action.requirementIds); return; }
     if (action.kind === 'open_official_url' || action.kind === 'open_system_settings') { await window.lnwjud.openToolSetupTarget({ target: action.target }); return; }
@@ -763,8 +798,11 @@ export function App(): ReactElement {
           locale={locale}
           snapshot={toolCatalog}
           loading={toolCatalogLoading}
+          hostSyncNotice={toolHostSyncNotice}
           onRefresh={() => loadToolCatalog()}
           onRemediation={handleToolRemediation}
+          onSetAvailability={setToolAvailability}
+          onResetAvailability={resetToolAvailability}
         />
       ) : null}
       {screen === 'git' ? (

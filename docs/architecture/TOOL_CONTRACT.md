@@ -1,6 +1,6 @@
 # lnwjud tool contract
 
-Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.53.0`.
+Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.54.0`.
 
 This is the compatibility contract for the current MCP surface. The runtime
 advertises the JSON Schema for every input through `tools/list`; the TypeScript
@@ -13,6 +13,10 @@ in `packages/mcp-server/src/upgrade-catalog.ts` and the exact runtime order is
 verified by `packages/mcp-server/src/tool-registry.test.ts`.
 
 Desktop readiness is a separate presentation contract built from the same live definitions. Main-process requirement probes are read-only, timeout-bounded, cached, and shared by the Tools catalog and structured Doctor report. Readiness never grants permission or bypasses workspace/command policy. External MCP descriptors remain a separate origin and use `UNKNOWN` for child-server permission/readiness semantics lnwjud cannot verify.
+
+**Effective exposure boundary (v4.54.0):** First-party tool exposure is resolved independently from readiness and permission using the persisted per-tool preference plus the canonical system-eligibility/default state. `ToolRegistry.listAll()` always remains the recovery-safe canonical inventory; `ToolRegistry.list()`, new `invoke()` calls, `tool_batch` children, and tool discovery/ranking/describe surfaces apply `effectiveExposed`. Disabling a tool blocks new execution but does not cancel a call that already crossed the registry boundary. Long-lived MCP servers keep canonical SDK registrations and toggle `RegisteredTool.enable()/disable()` handles so `notifications/tools/list_changed` is emitted for meaningful list transitions. Desktop and direct stdio share persisted availability state, while external MCP child tools retain their own control plane.
+
+**ChatGPT host-sync boundary:** MCP list-change notification proves only that the MCP server offered a different list. It is not proof that an approved ChatGPT app/action snapshot was refreshed. ChatGPT-specific guidance is conditional and must never promise that browser F5 alone updates a frozen/approved host snapshot.
 
 **Active Workspace Set boundary:** Primary/Selected Project is only the default. Every tool may target any registered workspace currently in the host Active Projects set. When an input contains an absolute path/cwd/database target/native path that belongs to another active root, the registry routes the effective `workspaceId` to the most-specific matching active workspace before policy and handler dispatch. Targets outside the active set remain guarded; one call is not allowed to silently span multiple active roots.
 

@@ -94,6 +94,8 @@ export interface McpToolContext {
   readonly actor: FileActor;
   readonly services: McpApplicationServices;
   readonly contextEconomy: ContextEconomyRuntime;
+  /** Dynamic registry exposure predicate used by discovery/ranking helpers. */
+  readonly isToolExposed?: (name: string) => boolean;
 }
 
 export interface ToolConfig<T extends z.ZodType> {

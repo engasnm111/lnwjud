@@ -16,6 +16,7 @@ import {
   type ScheduledContinuationExpediteReason,
   type ScheduledContinuationNativeCancellationReceipt,
   type ScheduledContinuationNativeRunReceipt,
+  type ScheduledContinuationUserCancellationReceipt,
   type ScheduledContinuationReceiptOutcome,
   type ScheduledContinuationRepository,
   type ScheduledContinuationRunsOn,
@@ -122,6 +123,8 @@ export interface RecordScheduledContinuationReceiptRequest {
   readonly runsOn?: ScheduledContinuationRunsOn;
   readonly nativeRunReceipt?: ScheduledContinuationNativeRunReceipt;
   readonly nativeCancellationReceipt?: ScheduledContinuationNativeCancellationReceipt;
+  readonly userCancellationReceipt?: ScheduledContinuationUserCancellationReceipt;
+  readonly userConfirmed?: boolean;
   readonly detail?: string;
 }
 
@@ -456,17 +459,26 @@ export class ScheduledContinuationService {
       const nativeCancellationReceipt = request.nativeCancellationReceipt === undefined
         ? undefined
         : normalizeNativeCancellationReceipt(request.nativeCancellationReceipt);
+      const userCancellationReceipt = request.userCancellationReceipt === undefined
+        ? undefined
+        : normalizeUserCancellationReceipt(request.userCancellationReceipt);
       if (request.outcome === 'consumed' && nativeRunReceipt === undefined) {
         throw new Error('consumed requires a native host run receipt');
       }
       if (request.outcome !== 'consumed' && nativeRunReceipt !== undefined) {
         throw new Error('nativeRunReceipt is only valid for consumed');
       }
-      if (request.outcome === 'cancelled' && nativeCancellationReceipt === undefined) {
-        throw new Error('cancelled requires native host evidence that the task is non-runnable');
+      if (request.outcome === 'cancelled' && nativeCancellationReceipt === undefined && userCancellationReceipt === undefined) {
+        throw new Error('cancelled requires native host evidence or explicit user-attested manual deletion');
       }
-      if (request.outcome !== 'cancelled' && nativeCancellationReceipt !== undefined) {
-        throw new Error('nativeCancellationReceipt is only valid for cancelled');
+      if (request.outcome === 'cancelled' && nativeCancellationReceipt !== undefined && userCancellationReceipt !== undefined) {
+        throw new Error('cancelled accepts exactly one cancellation evidence source');
+      }
+      if (request.outcome !== 'cancelled' && (nativeCancellationReceipt !== undefined || userCancellationReceipt !== undefined)) {
+        throw new Error('cancellation receipts are only valid for cancelled');
+      }
+      if (userCancellationReceipt !== undefined && request.userConfirmed !== true) {
+        throw new Error('manual Scheduled Task deletion requires explicit user confirmation');
       }
       if (
         suppliedNativeTaskId !== undefined
@@ -482,7 +494,17 @@ export class ScheduledContinuationService {
       ) {
         throw new Error('native cancellation receipt task ID does not match nativeTaskId');
       }
-      const nativeTaskId = nativeRunReceipt?.nativeTaskId ?? nativeCancellationReceipt?.nativeTaskId ?? suppliedNativeTaskId;
+      if (
+        suppliedNativeTaskId !== undefined
+        && userCancellationReceipt !== undefined
+        && suppliedNativeTaskId !== userCancellationReceipt.nativeTaskId
+      ) {
+        throw new Error('user cancellation receipt task ID does not match nativeTaskId');
+      }
+      const nativeTaskId = nativeRunReceipt?.nativeTaskId
+        ?? nativeCancellationReceipt?.nativeTaskId
+        ?? userCancellationReceipt?.nativeTaskId
+        ?? suppliedNativeTaskId;
       const detail = request.detail === undefined ? undefined : safeText(request.detail, MAX_RECEIPT_DETAIL, 'detail', true);
       const record = await this.goals.recordScheduledContinuationReceipt({
         continuationId,
@@ -494,7 +516,10 @@ export class ScheduledContinuationService {
         ...(request.runsOn === undefined ? {} : { runsOn: request.runsOn }),
         ...(nativeRunReceipt === undefined ? {} : { nativeRunReceipt }),
         ...(nativeCancellationReceipt === undefined ? {} : { nativeCancellationReceipt }),
-        ...(detail === undefined ? {} : { detail }),
+        ...(userCancellationReceipt === undefined ? {} : { userCancellationReceipt }),
+        ...(detail === undefined
+          ? (userCancellationReceipt === undefined ? {} : { detail: `user_attested_manual_delete:${userCancellationReceipt.observedAt}` })
+          : { detail }),
         now: this.now().toISOString(),
       });
       return ok(toPublicContinuation(record));
@@ -1170,6 +1195,19 @@ function normalizeNativeRunReceipt(
     nativeTaskId: required(receipt.nativeTaskId, 'native run receipt task ID', MAX_NATIVE_TASK_ID),
     state: 'consumed',
     observedAt: requiredIso(receipt.observedAt, 'native run receipt observedAt'),
+  };
+}
+
+function normalizeUserCancellationReceipt(
+  receipt: ScheduledContinuationUserCancellationReceipt,
+): ScheduledContinuationUserCancellationReceipt {
+  if (receipt.source !== 'user_confirmation') throw new Error('user cancellation receipt source is invalid');
+  if (receipt.action !== 'deleted_in_chatgpt_scheduled_tasks_ui') throw new Error('user cancellation receipt action is invalid');
+  return {
+    source: 'user_confirmation',
+    nativeTaskId: required(receipt.nativeTaskId, 'user cancellation receipt task ID', MAX_NATIVE_TASK_ID),
+    action: 'deleted_in_chatgpt_scheduled_tasks_ui',
+    observedAt: requiredIso(receipt.observedAt, 'user cancellation receipt observedAt'),
   };
 }
 

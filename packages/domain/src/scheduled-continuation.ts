@@ -82,6 +82,13 @@ export type ScheduledContinuationNativeCancellationReceipt =
       readonly observedAt: string;
     };
 
+export interface ScheduledContinuationUserCancellationReceipt {
+  readonly source: 'user_confirmation';
+  readonly nativeTaskId: string;
+  readonly action: 'deleted_in_chatgpt_scheduled_tasks_ui';
+  readonly observedAt: string;
+}
+
 export interface ScheduledContinuationNativeRunReceipt {
   readonly provider: 'chatgpt_scheduled_task';
   readonly operation: 'run';
@@ -169,6 +176,7 @@ export interface RecordScheduledContinuationReceiptRecordRequest {
   readonly runsOn?: ScheduledContinuationRunsOn;
   readonly nativeRunReceipt?: ScheduledContinuationNativeRunReceipt;
   readonly nativeCancellationReceipt?: ScheduledContinuationNativeCancellationReceipt;
+  readonly userCancellationReceipt?: ScheduledContinuationUserCancellationReceipt;
   readonly detail?: string;
   readonly now: string;
 }

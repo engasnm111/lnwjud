@@ -1223,6 +1223,20 @@ describe('ScheduledContinuationService', () => {
         ok: true,
         value: { status: 'active', completionState: 'pending_native_cleanup' },
       });
+      await expect(goals.getGoal(actor, { goalId: started.goalId })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: 'active',
+          pendingScheduledTaskCleanup: {
+            continuationId: prepared.value.continuation.continuationId,
+            nativeTaskId: 'native-recurring-cleanup-only',
+            expectedContinuationVersion: 2,
+            provider: 'chatgpt_scheduled_task',
+            requiredEffect: 'non_runnable',
+            state: 'required',
+          },
+        },
+      });
 
       clock.set('2026-08-27T10:25:00.000Z');
       const wake = await scheduled.claimScheduledContinuation(cleanupActor, {
@@ -1622,6 +1636,63 @@ describe('ScheduledContinuationService', () => {
 
       await expect(scheduled.getScheduledContinuation(actor, { goalId: started.goalId, latest: true }))
         .resolves.toMatchObject({ ok: true, value: { status: 'cancel_required', nativeTaskId: 'native-task-unverified-cancel' } });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('accepts explicit user-attested manual deletion without fabricating a native host receipt', async () => {
+    const { database, goals, scheduled, clock } = await fixture();
+    try {
+      const started = await startGoal(goals);
+      const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error('prepare failed');
+      const created = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-manual-delete',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'cloud',
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error('create receipt failed');
+
+      const requested = await scheduled.cancelScheduledContinuation(actor, {
+        continuationId: created.value.continuationId,
+        expectedVersion: created.value.version,
+      });
+      expect(requested).toMatchObject({ ok: true, value: { outcome: 'cleanup_required' } });
+      if (!requested.ok) throw new Error('cleanup request failed');
+
+      clock.set('2026-08-27T10:00:05.000Z');
+      const withoutConfirmation = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: requested.value.continuation.continuationId,
+        expectedVersion: requested.value.continuation.version,
+        outcome: 'cancelled',
+        userCancellationReceipt: {
+          source: 'user_confirmation',
+          nativeTaskId: 'native-manual-delete',
+          action: 'deleted_in_chatgpt_scheduled_tasks_ui',
+          observedAt: '2026-08-27T10:00:05.000Z',
+        },
+      });
+      expect(withoutConfirmation).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+      const cancelled = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: requested.value.continuation.continuationId,
+        expectedVersion: requested.value.continuation.version,
+        outcome: 'cancelled',
+        userConfirmed: true,
+        userCancellationReceipt: {
+          source: 'user_confirmation',
+          nativeTaskId: 'native-manual-delete',
+          action: 'deleted_in_chatgpt_scheduled_tasks_ui',
+          observedAt: '2026-08-27T10:00:05.000Z',
+        },
+      });
+      expect(cancelled).toMatchObject({ ok: true, value: { status: 'cancelled' } });
     } finally {
       database.close();
     }

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import type { ResolvedRemediation, ToolCatalogItem, UiLocale } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
 import { toolReadinessLabel } from './tool-readiness-copy.js';
+import { effectiveExposureLabel, toolAvailabilityLabel } from './tool-availability-copy.js';
+import { toolControlEnabled } from './tool-catalog-view.js';
 
 interface ToolDetailModalProps {
   readonly locale: UiLocale;
@@ -10,9 +12,12 @@ interface ToolDetailModalProps {
   readonly remediations: readonly ResolvedRemediation[];
   readonly onClose: () => void;
   readonly onRemediation: (action: ResolvedRemediation['actions'][number]) => Promise<void>;
+  readonly availabilityBusy?: boolean;
+  readonly onSetAvailability?: (enabled: boolean) => Promise<void>;
+  readonly onResetAvailability?: () => Promise<void>;
 }
 
-export function ToolDetailModal({ locale, item, remediations, onClose, onRemediation }: ToolDetailModalProps): ReactElement {
+export function ToolDetailModal({ locale, item, remediations, onClose, onRemediation, availabilityBusy = false, onSetAvailability, onResetAvailability }: ToolDetailModalProps): ReactElement {
   const dialogRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +78,8 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
             <div><dt>{locale === 'th' ? 'สถานะ' : 'Status'}</dt><dd><span className={`tool-readiness-badge tool-readiness-${item.readiness}`}>{toolReadinessLabel(locale, item)}</span></dd></div>
             {item.deliveryState === undefined ? null : <div><dt>{locale === 'th' ? 'สถานะการส่งมอบ' : 'Delivery state'}</dt><dd>{item.deliveryState}</dd></div>}
             {item.available === undefined ? null : <div><dt>{locale === 'th' ? 'มี runtime แล้ว' : 'Runtime available'}</dt><dd>{booleanLabel(locale, item.available)}</dd></div>}
+            {item.origin === 'lnwjud' ? <div><dt>{locale === 'th' ? 'สถานะเปิด/ปิดของผู้ใช้' : 'User availability'}</dt><dd>{toolAvailabilityLabel(locale, item)}</dd></div> : null}
+            {item.origin === 'lnwjud' ? <div><dt>{locale === 'th' ? 'การแสดงผล MCP' : 'MCP exposure'}</dt><dd>{effectiveExposureLabel(locale, item)}</dd></div> : null}
             <div><dt>{locale === 'th' ? 'สิทธิ์ที่ประกาศ' : 'Declared permission'}</dt><dd>{item.declaredPermission}</dd></div>
             <div><dt>{locale === 'th' ? 'ผลจากโปรไฟล์' : 'Profile decision'}</dt><dd>{item.profileDecision}</dd></div>
             <div><dt>{locale === 'th' ? 'ความเสี่ยง' : 'Risk mode'}</dt><dd>{item.riskMode}</dd></div>
@@ -81,6 +88,7 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
             <div><dt>{locale === 'th' ? 'ยกเลิกได้' : 'Cancelable'}</dt><dd>{nullableBooleanLabel(locale, item.supportsCancel)}</dd></div>
             <div><dt>Dry run</dt><dd>{nullableBooleanLabel(locale, item.supportsDryRun)}</dd></div>
           </dl>
+          {item.origin === 'lnwjud' ? <section className="tool-availability-panel"><div><strong>{toolAvailabilityLabel(locale, item)}</strong><small>{effectiveExposureLabel(locale, item)}</small></div><label><input type="checkbox" role="switch" checked={toolControlEnabled(item)} disabled={availabilityBusy || onSetAvailability === undefined} onChange={(event) => { void onSetAvailability?.(event.currentTarget.checked); }} /><span>{toolControlEnabled(item) ? (locale === 'th' ? 'เปิด' : 'Enabled') : (locale === 'th' ? 'ปิด' : 'Disabled')}</span></label>{item.userPreference === 'default' ? null : <button type="button" disabled={availabilityBusy || onResetAvailability === undefined} onClick={() => { void onResetAvailability?.(); }}>{locale === 'th' ? 'ใช้ค่าเริ่มต้น' : 'Use default'}</button>}</section> : null}
           {item.riskMode === 'input_dependent' ? <p role="note" className="tool-risk-caveat">{locale === 'th' ? 'ระดับความเสี่ยงและการขออนุมัติอาจเปลี่ยนตาม operation และ arguments ที่ระบุ ไม่ได้หมายความว่าทุก operation มีระดับเดียวกัน' : 'Risk and approval requirements can change with the selected operation and arguments; not every operation has the same risk level.'}</p> : null}
           {item.stale ? <p role="status" className="tool-stale-caveat">{locale === 'th' ? 'ผล readiness นี้เกินอายุ cache แล้ว ควรตรวจใหม่ก่อนพึ่งพาสถานะ' : 'This readiness result is stale; recheck before relying on it.'}</p> : null}
           {item.requirements.length > 0 ? <section className="tool-modal-section"><h3>{locale === 'th' ? 'ข้อกำหนด' : 'Requirements'}</h3><ul className="tool-requirement-list">{item.requirements.map((requirement) => <li key={requirement.id}><div><strong>{requirement.id}</strong><span className={`doctor-status-badge doctor-status-${requirement.status}`}>{requirement.status}</span></div>{requirement.detail ? <p>{requirement.detail}</p> : null}</li>)}</ul></section> : null}

@@ -100,10 +100,12 @@ If the goal remains active:
 
 - Wait for every blocking task to become terminal and inspect its result.
 - Clear durable blockers and mark every durable plan step `completed` only after real acceptance evidence exists.
-- Call `finish_goal(status:completed)` before reporting completion.
-- If it returns `pending_native_cleanup`, the goal is still active. Make the exact recurring task non-runnable using host-confirmed delete or disable evidence. A recurring run receipt is **not** cleanup proof.
-- Record the matching native cancellation receipt. If the prior completion lease expired, reacquire the same durable goal with `run_goal` for administrative finalization only; do not resume workspace work. Then call `finish_goal` again immediately.
-- Report completion only after `finish_goal` returns `completionState=completed` and `get_goal` confirms a terminal status.
+- When a live scheduled watchdog exists, call `cancel_scheduled_continuation` **before** `finish_goal`. Keep the durable goal active while cleanup is being proven.
+- Make the exact recurring native task non-runnable with the strongest operation actually exposed by the ChatGPT host: prefer delete, otherwise use a host-confirmed disable. Record host-confirmed delete or disable evidence when the host supplies it. A recurring run receipt is **not** cleanup proof.
+- Record the matching native cancellation receipt before terminalizing the goal. If the host management surface is unavailable but the user explicitly deletes the exact task in ChatGPT Scheduled Tasks, record that as **user-attested manual deletion** with explicit user confirmation; never relabel user testimony as host-native evidence.
+- After verified cleanup, call `finish_goal(status:completed)` once and then read `get_goal`. The normal happy path should not need a second finish call.
+- Defensive fallback remains required for older callers: if `finish_goal` returns `pending_native_cleanup`, the goal is still active. Recover the exact cleanup locator from `get_goal`/`get_scheduled_continuation`, perform cleanup only, record truthful evidence, reacquire an administrative finalization lease if needed, and call `finish_goal` again without resuming workspace work.
+- Report completion only after `finish_goal` returns `completionState=completed` and `get_goal` confirms a terminal status with no pending scheduled-task cleanup.
 - `failed` or `blocked` are real work outcomes, not scheduler escape hatches.
 
 ## Invocation on another machine

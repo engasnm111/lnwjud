@@ -97,6 +97,17 @@ describe('scheduled continuation MCP tools', () => {
         observedAt: '2026-08-27T10:12:00.000Z',
       },
     })).toMatchObject({ ok: true });
+    expect(byName.get('record_scheduled_continuation_receipt')?.parse({
+      continuationId: 'c-1',
+      expectedVersion: 2,
+      outcome: 'cancelled',
+      userCancellationReceipt: {
+        source: 'user_confirmation',
+        nativeTaskId: 'native-1',
+        action: 'deleted_in_chatgpt_scheduled_tasks_ui',
+        observedAt: '2026-08-27T10:12:00.000Z',
+      },
+    })).toMatchObject({ ok: true });
     expect(byName.get('expedite_scheduled_continuation')?.parse({ goalId: 'g-1', continuationId: 'c-1', leaseToken: 'lease', expectedLeaseGeneration: 2, expectedGoalRevision: 3, expectedContinuationVersion: 4, reason: 'host_budget_warning' })).toMatchObject({ ok: true });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1' })).toMatchObject({ ok: true, value: { leaseSeconds: 600 } });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1', leaseSeconds: 600 })).toMatchObject({ ok: true });
@@ -125,6 +136,39 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('expedite_scheduled_continuation')?.description).toContain('recurring watchdogs must not use');
     expect(byName.get('cancel_scheduled_continuation')?.description).toContain('exact recurring Native ChatGPT task non-runnable');
     expect(byName.get('cancel_scheduled_continuation')?.description).toContain('past first due time is not cleanup proof');
+  });
+
+  it('passes explicit user confirmation through for user-attested manual Scheduled Task deletion', async () => {
+    const received: unknown[] = [];
+    const services = {
+      scheduledContinuations: {
+        async recordScheduledContinuationReceipt(_actor: unknown, request: unknown) {
+          received.push(request);
+          return ok({ continuationId: 'c-1', status: 'cancelled' });
+        },
+      },
+    } as unknown as McpApplicationServices;
+    const registry = new ToolRegistry(services, actor);
+    const response = await registry.invoke('record_scheduled_continuation_receipt', {
+      continuationId: 'c-1',
+      expectedVersion: 2,
+      outcome: 'cancelled',
+      userConfirmed: true,
+      userCancellationReceipt: {
+        source: 'user_confirmation',
+        nativeTaskId: 'native-1',
+        action: 'deleted_in_chatgpt_scheduled_tasks_ui',
+        observedAt: '2026-08-27T10:12:00.000Z',
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(received).toEqual([expect.objectContaining({
+      userConfirmed: true,
+      userCancellationReceipt: expect.objectContaining({
+        source: 'user_confirmation',
+        nativeTaskId: 'native-1',
+      }),
+    })]);
   });
 
   it('records continuation state without invoking process, capability, shell, or Windows scheduler backends', async () => {

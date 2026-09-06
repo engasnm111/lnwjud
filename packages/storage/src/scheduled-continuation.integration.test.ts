@@ -645,7 +645,7 @@ describe('scheduled continuation repository state machine', () => {
         nativeTaskId: 'native-task-c',
         runsOn: 'cloud',
         now: '2026-08-27T00:23:04.000Z',
-      })).rejects.toThrow('Cancelled receipt requires matching native host evidence that the task is non-runnable');
+      })).rejects.toThrow('Cancelled receipt requires matching native host evidence or explicit user-attested manual deletion');
 
       const cancelledC = await repository.recordScheduledContinuationReceipt({
         continuationId: cancellation.continuation.continuationId,

@@ -192,6 +192,8 @@ async function main(): Promise<void> {
     allowAiDeleteProvider: runtime.allowAiDeleteProvider,
     destructivePolicyProvider: runtime.destructivePolicyProvider,
     activeWorkspaceScopeProvider: runtime.activeWorkspaceScopeProvider,
+    toolAvailabilitySnapshotProvider: () => runtime.toolAvailabilityService.snapshot(),
+    toolAvailabilitySubscribe: (listener) => runtime.toolAvailabilityService.subscribe(listener),
     onError: (error): void => {
       if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
         process.stderr.write(`lnwjud MCP stdio: peer closed (${error.message})\n`);

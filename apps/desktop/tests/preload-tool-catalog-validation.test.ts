@@ -20,7 +20,8 @@ vi.mock('electron', () => ({
 const checkedAt = '2026-08-30T00:00:00.000Z';
 const item: ToolCatalogItem = {
   name: 'git', origin: 'lnwjud', category: 'git', title: 'Git', shortDescription: 'Git', longDescription: 'Git',
-  declaredPermission: 'EXECUTE', profileDecision: 'ALLOW', riskMode: 'fixed', readiness: 'ready', stale: false,
+  declaredPermission: 'EXECUTE', profileDecision: 'ALLOW', riskMode: 'fixed', readiness: 'ready',
+  userPreference: 'default', systemEligible: true, effectiveExposed: true, stale: false,
   checkedAt, supportsCancel: false, supportsDryRun: false, requirements: [], remediationIds: [], inputSchema: null, searchText: ['git'],
 };
 

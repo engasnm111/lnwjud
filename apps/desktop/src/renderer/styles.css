@@ -1604,8 +1604,16 @@ button.titlebar-version:hover {
 .tool-filters input { flex: 1 1 260px; min-width: 180px; }
 .tool-filters select { min-width: 150px; }
 .tool-card-list { display: grid; gap: 8px; }
-.tool-card { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; text-align: left; border: 1px solid var(--border-subtle); border-radius: 10px; background: rgba(14, 19, 28, 0.7); }
-.tool-card:hover, .tool-card:focus-visible { border-color: var(--gold-primary); }
+.tool-card { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 10px; border: 1px solid var(--border-subtle); border-radius: 10px; background: rgba(14, 19, 28, 0.7); overflow: hidden; }
+.tool-card:hover, .tool-card:focus-within { border-color: var(--gold-primary); }
+.tool-card-open { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; text-align: left; border: 0; border-radius: 0; background: transparent; }
+.tool-card-open:hover, .tool-card-open:focus-visible { background: rgba(255,255,255,.018); }
+.tool-card-availability { min-width: 170px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-left: 1px solid var(--border-subtle); }
+.tool-card-availability label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.tool-card-availability button { padding: 6px 8px; font-size: 11px; }
+.tool-card-availability-readonly { color: var(--muted); font-size: 11px; }
+.tool-availability-on { color: #7ee5a1; }
+.tool-availability-off { color: #b7c0ce; }
 .tool-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #678bc4; }
 .tool-ready .tool-status-dot { background: #4ade80; }
 .tool-needs_setup .tool-status-dot { background: var(--gold-primary); }
@@ -1631,6 +1639,10 @@ button.titlebar-version:hover {
 .tool-facts > div { min-width: 0; padding: 12px 13px; border: 1px solid var(--border-subtle); border-radius: 10px; background: rgba(255,255,255,.018); }
 .tool-facts dt { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
 .tool-facts dd { margin: 5px 0 0; min-width: 0; overflow-wrap: anywhere; }
+.tool-availability-panel { margin-top: 14px; padding: 12px 13px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--border-subtle); border-radius: 10px; background: rgba(255,255,255,.018); }
+.tool-availability-panel > div { flex: 1 1 280px; display: grid; gap: 3px; }
+.tool-availability-panel small { color: var(--muted); }
+.tool-availability-panel label { display: inline-flex; align-items: center; gap: 7px; }
 .tool-readiness-badge, .doctor-status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border: 1px solid var(--border-subtle); border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1.2; text-transform: uppercase; }
 .tool-readiness-ready, .doctor-status-pass { color: #7ee5a1; border-color: rgba(74,222,128,.32); background: rgba(74,222,128,.08); }
 .tool-readiness-needs_setup, .doctor-status-warn { color: #f6d878; border-color: rgba(245,197,66,.34); background: rgba(245,197,66,.08); }
@@ -1647,6 +1659,7 @@ button.titlebar-version:hover {
 .tool-remediation { margin-top: 16px; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; background: rgba(255,255,255,.015); }
 .tool-remediation p { color: var(--muted); }
 .tool-action-error { margin: 16px 0 0; padding: 9px 11px; border: 1px solid rgba(248,113,113,.34); border-radius: 8px; background: rgba(248,113,113,.08); color: #ff9b9b; }
+.tool-host-sync-notice { margin: 12px 0 0; padding: 10px 12px; border: 1px solid rgba(96,165,250,.34); border-radius: 8px; background: rgba(96,165,250,.08); color: var(--text-secondary); line-height: 1.5; }
 
 /* Doctor Diagnostics */
 .doctor-panel {

@@ -1,7 +1,7 @@
-import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
+import { McpServer, type CallToolResult, type RegisteredTool } from '@modelcontextprotocol/server';
 import type { DiagnosticLogger, FileActor } from '@lnwjud/application';
 import type { PermissionProfile } from '@lnwjud/permissions';
-import { APP_NAME, APP_VERSION, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
+import { APP_NAME, APP_VERSION, type DestructiveAutoApprovalPolicy, type ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { readTraceContext, type ActivitySink, type ActivityTracker } from './activity-tracker.js';
 import { withProgressHeartbeat, type ProgressNotifyContext } from './progress-heartbeat.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
@@ -40,6 +40,10 @@ export interface McpServerOptions {
   readonly activeProjectProvider?: () => ActiveProjectScope | null;
   /** Exposes quota-consuming Codex delegation tools. Disabled unless explicitly enabled. */
   readonly codexToolsEnabled?: boolean;
+  /** Current persisted per-tool availability snapshot. */
+  readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
+  /** Subscribes to persisted per-tool availability changes for live SDK handle toggling. */
+  readonly toolAvailabilitySubscribe?: (listener: (snapshot: ToolAvailabilitySnapshot) => void) => () => void;
   /** Shared across per-request server factories so repeated diff fingerprints can hit cache. */
   readonly incrementalVerifier?: IncrementalVerifier;
   /** Shared by transport-scoped server factories so visual observations survive the next MCP request. */
@@ -72,6 +76,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.workspaceScopeResolver === undefined ? {} : { workspaceScopeResolver: options.workspaceScopeResolver }),
     ...(options.activeProjectProvider === undefined ? {} : { activeProjectProvider: options.activeProjectProvider }),
     ...(options.codexToolsEnabled === undefined ? {} : { codexToolsEnabled: options.codexToolsEnabled }),
+    ...(options.toolAvailabilitySnapshotProvider === undefined ? {} : { toolAvailabilitySnapshotProvider: options.toolAvailabilitySnapshotProvider }),
     ...(options.incrementalVerifier === undefined ? {} : { incrementalVerifier: options.incrementalVerifier }),
     ...(options.setOfMarksStore === undefined ? {} : { setOfMarksStore: options.setOfMarksStore }),
   });
@@ -87,10 +92,14 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       ? { tools: {}, tasks: { list: {}, cancel: {} } }
       : { tools: {} },
     instructions: MCP_OUTCOME_DRIVEN_INSTRUCTIONS,
+    debouncedNotificationMethods: ['notifications/tools/list_changed'],
   });
   if (legacyTasksProtocol) registerTasksProtocol(server, options.services, { actor });
-  for (const tool of registry.list()) {
-    server.registerTool(tool.name, {
+
+  const registeredTools = new Map<string, RegisteredTool>();
+  const initiallyExposed = new Set(registry.list().map((tool) => tool.name));
+  for (const tool of registry.listAll()) {
+    const registeredTool = server.registerTool(tool.name, {
       description: tool.description,
       inputSchema: tool.inputSchema,
       annotations: tool.annotations,
@@ -102,6 +111,34 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       ));
       return runBudgetGuard.finish(dispatchContext, result);
     });
+    if (!initiallyExposed.has(tool.name)) registeredTool.disable();
+    registeredTools.set(tool.name, registeredTool);
   }
+
+  const syncRegisteredToolAvailability = (): void => {
+    const exposed = new Set(registry.list().map((tool) => tool.name));
+    for (const [name, registeredTool] of registeredTools) {
+      const shouldEnable = exposed.has(name);
+      if (registeredTool.enabled === shouldEnable) continue;
+      if (shouldEnable) registeredTool.enable();
+      else registeredTool.disable();
+    }
+  };
+
+  const unsubscribeToolAvailability = options.toolAvailabilitySubscribe?.(() => {
+    syncRegisteredToolAvailability();
+  });
+  if (unsubscribeToolAvailability !== undefined) {
+    const closeServer = server.close.bind(server);
+    let availabilitySubscriptionClosed = false;
+    server.close = async (): Promise<void> => {
+      if (!availabilitySubscriptionClosed) {
+        availabilitySubscriptionClosed = true;
+        unsubscribeToolAvailability();
+      }
+      await closeServer();
+    };
+  }
+
   return server;
 }

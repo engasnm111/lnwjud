@@ -22,6 +22,9 @@ import {
   type ResolvedRemediation,
   type GetToolCatalogRequest,
   type RecheckToolCatalogRequest,
+  type SetToolAvailabilityRequest,
+  type ResetToolAvailabilityRequest,
+  type SetToolAvailabilityResult,
   type OpenToolSetupTargetRequest,
   type CopyToolCommandRequest,
   type ExportLogsRequest,
@@ -641,6 +644,9 @@ function toolCatalogItem(value: unknown): ToolCatalogItem {
   const readinessReason = value.readinessReason;
   const deliveryState = value.deliveryState;
   const available = value.available;
+  const userPreference = value.userPreference;
+  const systemEligible = value.systemEligible;
+  const effectiveExposed = value.effectiveExposed;
   if (origin !== 'lnwjud' && origin !== 'external_mcp') throw new Error('Invalid IPC response');
   if (!['workspace','files','search_context','git','process','browser_desktop','system','office_media','automation','agent_goals','extensions'].includes(String(category))) throw new Error('Invalid IPC response');
   if (!['READ','WRITE','EXECUTE','DANGEROUS','UNKNOWN'].includes(String(declaredPermission))) throw new Error('Invalid IPC response');
@@ -650,6 +656,8 @@ function toolCatalogItem(value: unknown): ToolCatalogItem {
   if (readinessReason !== undefined && !['setup_required','runtime_not_ready','probe_failed','permission_denied','unsupported_platform','feature_disabled','planned','external_unknown'].includes(String(readinessReason))) throw new Error('Invalid IPC response');
   if (deliveryState !== undefined && !['operational','dependency_gated','feature_disabled','blocked_by_safety_policy','planned','unsupported','external_unknown'].includes(String(deliveryState))) throw new Error('Invalid IPC response');
   if (available !== undefined && typeof available !== 'boolean') throw new Error('Invalid IPC response');
+  if (userPreference !== 'default' && userPreference !== 'enabled' && userPreference !== 'disabled') throw new Error('Invalid IPC response');
+  if (typeof systemEligible !== 'boolean' || typeof effectiveExposed !== 'boolean') throw new Error('Invalid IPC response');
   const supportsCancel = value.supportsCancel;
   const supportsDryRun = value.supportsDryRun;
   if (supportsCancel !== null && typeof supportsCancel !== 'boolean') throw new Error('Invalid IPC response');
@@ -671,6 +679,9 @@ function toolCatalogItem(value: unknown): ToolCatalogItem {
     ...(readinessReason === undefined ? {} : { readinessReason: readinessReason as NonNullable<ToolCatalogItem['readinessReason']> }),
     ...(deliveryState === undefined ? {} : { deliveryState: deliveryState as NonNullable<ToolCatalogItem['deliveryState']> }),
     ...(available === undefined ? {} : { available }),
+    userPreference,
+    systemEligible,
+    effectiveExposed,
     stale: booleanField(value, 'stale'),
     checkedAt: nullableString(value.checkedAt),
     supportsCancel,
@@ -721,6 +732,25 @@ function recheckToolCatalog(request: RecheckToolCatalogRequest): Promise<{ reado
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { catalog: toolCatalogSnapshot(value.catalog), doctor: doctorReport(value.doctor) };
   });
+}
+function toolAvailabilityResult(value: unknown): SetToolAvailabilityResult {
+  if (!isRecord(value) || typeof value.localRuntimeApplied !== 'boolean' || (value.mcpListChangedEmitted !== null && typeof value.mcpListChangedEmitted !== 'boolean') || typeof value.clientReconnectRequired !== 'boolean' || typeof value.chatgptActionRefreshMayBeRequired !== 'boolean' || (value.hostSyncMessage !== null && typeof value.hostSyncMessage !== 'string')) throw new Error('Invalid IPC response');
+  return {
+    item: toolCatalogItem(value.item),
+    localRuntimeApplied: value.localRuntimeApplied,
+    mcpListChangedEmitted: value.mcpListChangedEmitted,
+    clientReconnectRequired: value.clientReconnectRequired,
+    chatgptActionRefreshMayBeRequired: value.chatgptActionRefreshMayBeRequired,
+    hostSyncMessage: value.hostSyncMessage,
+  };
+}
+function setToolAvailability(request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult> {
+  if (!isRecord(request) || (request.locale !== 'th' && request.locale !== 'en') || typeof request.name !== 'string' || request.name.trim().length === 0 || typeof request.enabled !== 'boolean') return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.setToolAvailability, { locale: request.locale, name: request.name.trim(), enabled: request.enabled }).then(toolAvailabilityResult);
+}
+function resetToolAvailability(request: ResetToolAvailabilityRequest): Promise<SetToolAvailabilityResult> {
+  if (!isRecord(request) || (request.locale !== 'th' && request.locale !== 'en') || typeof request.name !== 'string' || request.name.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.resetToolAvailability, { locale: request.locale, name: request.name.trim() }).then(toolAvailabilityResult);
 }
 function openToolSetupTarget(request: OpenToolSetupTargetRequest): Promise<{ readonly opened: true }> {
   if (!isRecord(request) || typeof request.target !== 'string' || request.target.length === 0 || request.target.length > 128) return Promise.reject(new Error('Invalid IPC request'));
@@ -1201,6 +1231,8 @@ const api: LnwjudApi = {
   runDoctor: () => invoke(ipcChannels.runDoctor).then(doctorReport),
   getToolCatalog,
   recheckToolCatalog,
+  setToolAvailability,
+  resetToolAvailability,
   openToolSetupTarget,
   copyToolCommand,
   getLogSnapshot: () => invoke(ipcChannels.getLogSnapshot).then(logSnapshot),

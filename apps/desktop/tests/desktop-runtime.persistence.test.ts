@@ -71,6 +71,60 @@ describe('DesktopRuntime persistence', () => {
       await runtime.close();
     }
   });
+  it('updates one connected Desktop MCP client immediately when in-process tool availability changes', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-data-'));
+    const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-workspace-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const workspaceRoot = await realpath(rawWorkspaceRoot);
+    const runtime = createDesktopRuntime(dataRoot);
+    try {
+      const workspace = await runtime.services.addWorkspace({ rootPath: workspaceRoot });
+      const status = await runtime.services.startMcp({ workspaceId: workspace.id });
+      expect(status.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+      if (status.url === null) return;
+
+      const client = new Client({ name: 'desktop-tool-availability-test', version: '1.0.0' });
+      const transport = new StreamableHTTPClientTransport(new URL(status.url));
+      try {
+        await client.connect(transport);
+        expect((await client.listTools()).tools.map((tool) => tool.name)).toContain('read_file');
+
+        runtime.toolAvailabilityService.setToolEnabled('read_file', false);
+
+        await vi.waitFor(async () => {
+          expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain('read_file');
+        });
+      } finally {
+        await client.close().catch(() => undefined);
+      }
+    } finally {
+      await runtime.close();
+    }
+  }, 30_000);
+
+  it('persists user tool availability across a Desktop runtime restart', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-restart-'));
+    temporaryRoots.push(rawDataRoot);
+    const dataRoot = await realpath(rawDataRoot);
+
+    const firstRuntime = createDesktopRuntime(dataRoot);
+    await firstRuntime.services.setToolAvailability({ locale: 'en', name: 'read_file', enabled: false });
+    await firstRuntime.close();
+
+    const secondRuntime = createDesktopRuntime(dataRoot);
+    try {
+      const catalog = await secondRuntime.services.getToolCatalog({ locale: 'en' });
+      expect(catalog.items.find((item) => item.name === 'read_file')).toMatchObject({
+        userPreference: 'disabled',
+        effectiveExposed: false,
+      });
+      expect(secondRuntime.toolAvailabilityService.snapshot().overrides.read_file).toBe('disabled');
+    } finally {
+      await secondRuntime.close();
+    }
+  }, 30_000);
+
   it('applies and restores permission settings without restoring an MCP listener', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-workspace-'));

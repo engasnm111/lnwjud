@@ -29,6 +29,9 @@ const tool: ToolCatalogItem = {
   profileDecision: 'ALLOW',
   riskMode: 'fixed',
   readiness: 'needs_setup',
+  userPreference: 'default',
+  systemEligible: true,
+  effectiveExposed: true,
   stale: false,
   checkedAt,
   supportsCancel: false,
@@ -196,6 +199,18 @@ describe('Tools and Doctor UX', () => {
     expect(desktopServicesSource).toContain("{ action: 'launch', userConfirmed: true }");
     expect(remediationSource).not.toContain('implementation/build');
     expect(remediationSource).toContain('เวอร์ชันนี้ยังไม่มีส่วนทำงานของเครื่องมือนี้');
+  });
+
+  it('renders ChatGPT host-sync guidance as a non-blocking status notice when supplied', () => {
+    const snapshot = { generatedAt: checkedAt, locale: 'en' as const, items: [tool], remediations: [] };
+    const notice = 'Browser F5 is not guaranteed to refresh the approved action snapshot. Use Action Refresh / Scan Tools.';
+    const markup = renderToStaticMarkup(createElement(ToolsPage, {
+      locale: 'en', snapshot, loading: false, hostSyncNotice: notice, onRefresh: async () => undefined, onRemediation: async () => undefined,
+    }));
+    expect(markup).toContain('tool-host-sync-notice');
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('F5');
+    expect(markup).toContain('Action Refresh / Scan Tools');
   });
 
   it('anchors the tool modal to document.body and constrains scrolling to the viewport-safe modal body', () => {

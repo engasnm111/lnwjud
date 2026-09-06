@@ -22,6 +22,9 @@ import {
   type ToolCatalogSnapshot,
   type GetToolCatalogRequest,
   type RecheckToolCatalogRequest,
+  type SetToolAvailabilityRequest,
+  type ResetToolAvailabilityRequest,
+  type SetToolAvailabilityResult,
   type OpenToolSetupTargetRequest,
   type CopyToolCommandRequest,
   type ExportLogsRequest,
@@ -136,6 +139,8 @@ export interface DesktopIpcServices {
   runDoctor(): Promise<DoctorReport>;
   getToolCatalog(request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot>;
   recheckToolCatalog(request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }>;
+  setToolAvailability(request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult>;
+  resetToolAvailability(request: ResetToolAvailabilityRequest): Promise<SetToolAvailabilityResult>;
   getLogSnapshot(): Promise<LogSnapshot>;
   clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }>;
   resolveActivityTargetDetail(detailRef: string): Promise<{ readonly status: 'complete' | 'unavailable'; readonly detail: ActivityTargetDetail | null }>;
@@ -305,6 +310,8 @@ const defaultDesktopServices: DesktopIpcServices = {
     catalog: { generatedAt: new Date(0).toISOString(), locale: request.locale, items: [], remediations: [] },
     doctor: { checks: [], exitCode: 1 },
   }),
+  setToolAvailability: async (): Promise<SetToolAvailabilityResult> => { throw new Error('Tool availability service is not configured'); },
+  resetToolAvailability: async (): Promise<SetToolAvailabilityResult> => { throw new Error('Tool availability service is not configured'); },
   getLogSnapshot: async (): Promise<LogSnapshot> => ({
     lines: [],
     tunnelLogPath: null,
@@ -583,6 +590,14 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.recheckToolCatalog, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.recheckToolCatalog(parseRecheckToolCatalogRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.setToolAvailability, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setToolAvailability(parseSetToolAvailabilityRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.resetToolAvailability, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.resetToolAvailability(parseResetToolAvailabilityRequest(payload));
   });
   ipcMain.handle(ipcChannels.openToolSetupTarget, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -964,6 +979,14 @@ async function* emptySerializedRows(): AsyncIterable<string> {
 function parseRecheckToolCatalogRequest(payload: unknown): RecheckToolCatalogRequest {
   if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale' && key !== 'requirementIds') || (payload.locale !== 'th' && payload.locale !== 'en') || !Array.isArray(payload.requirementIds) || payload.requirementIds.length > 128 || payload.requirementIds.some((id: unknown) => typeof id !== 'string' || id.length === 0 || id.length > 128)) throw new Error('Invalid tool catalog recheck request');
   return { locale: payload.locale, requirementIds: payload.requirementIds as string[] };
+}
+function parseSetToolAvailabilityRequest(payload: unknown): SetToolAvailabilityRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale' && key !== 'name' && key !== 'enabled') || (payload.locale !== 'th' && payload.locale !== 'en') || typeof payload.name !== 'string' || payload.name.trim().length === 0 || payload.name.length > 256 || typeof payload.enabled !== 'boolean') throw new Error('Invalid tool availability request');
+  return { locale: payload.locale, name: payload.name.trim(), enabled: payload.enabled };
+}
+function parseResetToolAvailabilityRequest(payload: unknown): ResetToolAvailabilityRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale' && key !== 'name') || (payload.locale !== 'th' && payload.locale !== 'en') || typeof payload.name !== 'string' || payload.name.trim().length === 0 || payload.name.length > 256) throw new Error('Invalid tool availability reset request');
+  return { locale: payload.locale, name: payload.name.trim() };
 }
 function parseOpenToolSetupTargetRequest(payload: unknown): OpenToolSetupTargetRequest {
   if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'target') || typeof payload.target !== 'string' || payload.target.length === 0 || payload.target.length > 128) throw new Error('Invalid tool setup target request');
@@ -1393,6 +1416,7 @@ function bootstrapMcpStdio(): void {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
       decryptTunnelSecret: decryptTunnelSecretCompat,
+      watchToolAvailability: true,
       ...(checkpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey }),
     });
     desktopRuntime = runtime;
@@ -1414,6 +1438,8 @@ function bootstrapMcpStdio(): void {
       activeWorkspaceScopesProvider: () => runtime.getActiveWorkspaceScopes(),
       hostMutationApprovalProvider: requestNativeMutationApproval,
       codexToolsEnabled: runtime.getUserSettings().codexToolsEnabled,
+      toolAvailabilitySnapshotProvider: () => runtime.toolAvailabilityService.snapshot(),
+      toolAvailabilitySubscribe: (listener) => runtime.toolAvailabilityService.subscribe(listener),
       onError: (error): void => {
         if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
           process.stderr.write(`lnwjud MCP stdio: peer closed (${error.message})\n`);

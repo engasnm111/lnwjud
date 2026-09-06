@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.53.0';
+export const APP_VERSION = '4.54.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -50,6 +50,8 @@ export const ipcChannels = {
   runDoctor: 'lnwjud:run-doctor',
   getToolCatalog: 'lnwjud:get-tool-catalog',
   recheckToolCatalog: 'lnwjud:recheck-tool-catalog',
+  setToolAvailability: 'lnwjud:set-tool-availability',
+  resetToolAvailability: 'lnwjud:reset-tool-availability',
   openToolSetupTarget: 'lnwjud:open-tool-setup-target',
   copyToolCommand: 'lnwjud:copy-tool-command',
   getLogSnapshot: 'lnwjud:get-log-snapshot',
@@ -175,6 +177,12 @@ export interface ToolCatalogItem {
   readonly deliveryState?: ToolDeliveryState;
   /** Runtime presence, separate from readiness. Omitted when a probe cannot establish presence. */
   readonly available?: boolean;
+  /** Explicit user preference for first-party MCP exposure. External MCP items remain read-only/default. */
+  readonly userPreference: 'default' | 'enabled' | 'disabled';
+  /** Whether platform/delivery/runtime policy permits this first-party tool to be exposed. */
+  readonly systemEligible: boolean;
+  /** Effective MCP exposure after system eligibility, product defaults, and user preference are combined. */
+  readonly effectiveExposed: boolean;
   readonly stale: boolean;
   readonly checkedAt: string | null;
   readonly supportsCancel: boolean | null;
@@ -702,6 +710,23 @@ export interface RecheckToolCatalogRequest {
   readonly locale: UiLocale;
   readonly requirementIds: readonly string[];
 }
+export interface SetToolAvailabilityRequest {
+  readonly locale: UiLocale;
+  readonly name: string;
+  readonly enabled: boolean;
+}
+export interface ResetToolAvailabilityRequest {
+  readonly locale: UiLocale;
+  readonly name: string;
+}
+export interface SetToolAvailabilityResult {
+  readonly item: ToolCatalogItem;
+  readonly localRuntimeApplied: boolean;
+  readonly mcpListChangedEmitted: boolean | null;
+  readonly clientReconnectRequired: boolean;
+  readonly chatgptActionRefreshMayBeRequired: boolean;
+  readonly hostSyncMessage: string | null;
+}
 export interface OpenToolSetupTargetRequest {
   readonly target: string;
 }
@@ -882,6 +907,10 @@ export interface IpcRequestMap {
   readonly [ipcChannels.launchManagedBrowser]: undefined;
   readonly [ipcChannels.installPdfProvider]: undefined;
   readonly [ipcChannels.runDoctor]: undefined;
+  readonly [ipcChannels.getToolCatalog]: GetToolCatalogRequest;
+  readonly [ipcChannels.recheckToolCatalog]: RecheckToolCatalogRequest;
+  readonly [ipcChannels.setToolAvailability]: SetToolAvailabilityRequest;
+  readonly [ipcChannels.resetToolAvailability]: ResetToolAvailabilityRequest;
   readonly [ipcChannels.getLogSnapshot]: undefined;
   readonly [ipcChannels.clearLogBuffer]: ClearLogBufferRequest;
   readonly [ipcChannels.resolveActivityTargetDetail]: ResolveActivityTargetDetailRequest;
@@ -944,6 +973,8 @@ export interface IpcResponseMap {
   readonly [ipcChannels.runDoctor]: DoctorReport;
   readonly [ipcChannels.getToolCatalog]: ToolCatalogSnapshot;
   readonly [ipcChannels.recheckToolCatalog]: { readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport };
+  readonly [ipcChannels.setToolAvailability]: SetToolAvailabilityResult;
+  readonly [ipcChannels.resetToolAvailability]: SetToolAvailabilityResult;
   readonly [ipcChannels.openToolSetupTarget]: { readonly opened: true };
   readonly [ipcChannels.copyToolCommand]: { readonly copied: true };
   readonly [ipcChannels.getLogSnapshot]: LogSnapshot;
@@ -1008,6 +1039,8 @@ export interface LnwjudApi {
   runDoctor(): Promise<IpcResponseMap[typeof ipcChannels.runDoctor]>;
   getToolCatalog(request: GetToolCatalogRequest): Promise<IpcResponseMap[typeof ipcChannels.getToolCatalog]>;
   recheckToolCatalog(request: RecheckToolCatalogRequest): Promise<IpcResponseMap[typeof ipcChannels.recheckToolCatalog]>;
+  setToolAvailability(request: SetToolAvailabilityRequest): Promise<IpcResponseMap[typeof ipcChannels.setToolAvailability]>;
+  resetToolAvailability(request: ResetToolAvailabilityRequest): Promise<IpcResponseMap[typeof ipcChannels.resetToolAvailability]>;
   openToolSetupTarget(request: OpenToolSetupTargetRequest): Promise<IpcResponseMap[typeof ipcChannels.openToolSetupTarget]>;
   copyToolCommand(request: CopyToolCommandRequest): Promise<IpcResponseMap[typeof ipcChannels.copyToolCommand]>;
   getLogSnapshot(): Promise<IpcResponseMap[typeof ipcChannels.getLogSnapshot]>;

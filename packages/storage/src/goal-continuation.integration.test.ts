@@ -622,7 +622,7 @@ describe('durable goal continuation persistence', () => {
     }
   });
 
-  it('marks a pending successor for host cancellation and makes an obsolete wake terminal_noop after goal cancellation', async () => {
+  it('keeps a cancelled goal wake cleanup-only until the exact recurring native task is non-runnable', async () => {
     const { filename, workspace } = await fixture();
     let now = new Date('2026-08-26T00:00:00.000Z');
     const runtime = await open(filename, workspace, () => now);
@@ -690,7 +690,16 @@ describe('durable goal continuation persistence', () => {
       const lateWake = await runtime.scheduledService.claimScheduledContinuation(actor('session-c'), {
         continuationId: prepared.value.continuation.continuationId,
       });
-      expect(lateWake).toMatchObject({ ok: true, value: { outcome: 'terminal_noop', goal: { status: 'cancelled' } } });
+      expect(lateWake).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'terminal_cleanup_required',
+          goal: { status: 'cancelled' },
+          continuation: { status: 'cancel_required', nativeTaskId: 'native-cancel-me' },
+        },
+      });
+      if (!lateWake.ok) throw new Error('late cleanup wake failed');
+      expect('leaseToken' in lateWake.value).toBe(false);
       expect((await runtime.repository.getById(created.value.goalId))?.status).toBe('cancelled');
     } finally {
       runtime.database.close();

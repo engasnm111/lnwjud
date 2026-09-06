@@ -62,6 +62,8 @@ describe('scheduled continuation skill contract', () => {
     expect(skill).toContain('Make the exact recurring native task non-runnable');
     expect(skill).toContain('host-confirmed delete or disable evidence');
     expect(skill).toContain('A recurring run receipt is **not** cleanup proof');
+    expect(skill).toContain('cancel_scheduled_continuation` **before** `finish_goal');
+    expect(skill).toContain('user-attested manual deletion');
     expect(skill).toContain('finish_goal(status:completed)');
     expect(skill).toContain('completionState=completed');
     expect(skill).toContain('get_goal` confirms a terminal status');

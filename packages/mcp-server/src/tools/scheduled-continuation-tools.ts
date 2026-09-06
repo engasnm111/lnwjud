@@ -50,6 +50,12 @@ const nativeCancellationReceipt = z.discriminatedUnion('operation', [
     observedAt: z.string().datetime({ offset: true }),
   }).strict(),
 ]);
+const userCancellationReceipt = z.object({
+  source: z.literal('user_confirmation'),
+  nativeTaskId,
+  action: z.literal('deleted_in_chatgpt_scheduled_tasks_ui'),
+  observedAt: z.string().datetime({ offset: true }),
+}).strict();
 
 const prepareSchema = z.object({
   goalId,
@@ -82,7 +88,16 @@ const receiptSchema = z.discriminatedUnion('outcome', [
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('reschedule_failed'), nativeTaskId, dueAt, runsOn: z.literal('cloud').optional(), detail }).strict(),
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('reschedule_uncertain'), nativeTaskId, dueAt, runsOn: z.literal('cloud').optional(), detail }).strict(),
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('consumed'), nativeRunReceipt, detail }).strict(),
-  z.object({ continuationId, expectedVersion: version, outcome: z.literal('cancelled'), nativeCancellationReceipt, detail }).strict(),
+  z.object({
+    continuationId,
+    expectedVersion: version,
+    outcome: z.literal('cancelled'),
+    nativeCancellationReceipt: nativeCancellationReceipt.optional(),
+    userCancellationReceipt: userCancellationReceipt.optional(),
+    detail,
+  }).strict().refine((value) => (value.nativeCancellationReceipt === undefined) !== (value.userCancellationReceipt === undefined), {
+    message: 'cancelled requires exactly one cancellation evidence source',
+  }),
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('cancel_failed'), nativeTaskId: nativeTaskId.optional(), runsOn: z.literal('cloud').optional(), detail }).strict(),
   z.object({ continuationId, expectedVersion: version, outcome: z.literal('cancel_uncertain'), nativeTaskId: nativeTaskId.optional(), runsOn: z.literal('cloud').optional(), detail }).strict(),
 ]);
@@ -156,7 +171,7 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'record_scheduled_continuation_receipt',
-      description: 'Record Native ChatGPT host receipts for recurring v4.53 watchdogs and legacy v4.52 one-time watchdogs. created receipts require the real native task ID and host-reported absolute dueAt. A recurring interval firing never consumes or replaces the native task, so outcome=consumed is legacy one-time compatibility only. rescheduled/reschedule_* are likewise one-time compatibility paths; ordinary recurring wakes must not retime the task. cancelled is accepted only with matching native host evidence that the exact task is non-runnable: delete may report deleted/not_found and hosts without delete may report an exact disable receipt. A model assertion is never cleanup proof, and the stored native task ID is immutable for the lifetime of the watchdog.',
+      description: 'Record truthful cleanup/run receipts for recurring Native ChatGPT watchdogs and legacy one-time watchdogs. created requires the real native task ID and host-reported absolute dueAt. A recurring interval firing never consumes or replaces the native task, so outcome=consumed and reschedule_* remain legacy one-time compatibility only. For outcome=cancelled prefer matching native host evidence that the exact task is non-runnable: delete may report deleted/not_found and hosts without delete may report an exact disable receipt. If the host management surface is unavailable and the user explicitly deleted the exact task in ChatGPT Scheduled Tasks, userCancellationReceipt may record that separately as user-attested manual deletion only with userConfirmed=true; never label user testimony as host-native proof. The stored native task ID is immutable for the lifetime of the watchdog.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: receiptSchema,
@@ -168,7 +183,9 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
         ...('dueAt' in input && input.dueAt !== undefined ? { dueAt: input.dueAt } : {}),
         ...('runsOn' in input && input.runsOn !== undefined ? { runsOn: input.runsOn } : {}),
         ...('nativeRunReceipt' in input ? { nativeRunReceipt: input.nativeRunReceipt } : {}),
-        ...('nativeCancellationReceipt' in input ? { nativeCancellationReceipt: input.nativeCancellationReceipt } : {}),
+        ...('nativeCancellationReceipt' in input && input.nativeCancellationReceipt !== undefined ? { nativeCancellationReceipt: input.nativeCancellationReceipt } : {}),
+        ...('userCancellationReceipt' in input && input.userCancellationReceipt !== undefined ? { userCancellationReceipt: input.userCancellationReceipt } : {}),
+        ...((input as { userConfirmed?: boolean }).userConfirmed === undefined ? {} : { userConfirmed: (input as { userConfirmed?: boolean }).userConfirmed }),
         ...(input.detail === undefined ? {} : { detail: input.detail }),
       }) ?? missingService(),
     }),
