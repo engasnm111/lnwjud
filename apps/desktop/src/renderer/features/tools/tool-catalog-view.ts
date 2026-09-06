@@ -34,9 +34,11 @@ export function filterAndSortTools(items: readonly ToolCatalogItem[], filters: T
 }
 
 export function toolControlEnabled(item: ToolCatalogItem): boolean {
-  if (item.userPreference === 'enabled') return true;
-  if (item.userPreference === 'disabled') return false;
   return item.effectiveExposed;
+}
+
+export function toolControlCanEnable(item: ToolCatalogItem): boolean {
+  return item.systemEligible && item.readiness === 'ready';
 }
 
 export function catalogStatusCounts(items: readonly ToolCatalogItem[]): Readonly<Record<ToolReadinessStatus, number>> {

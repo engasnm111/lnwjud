@@ -54,7 +54,7 @@ describe('MCP server live tool availability', () => {
       snapshot = {
         version: 1,
         generation: 2,
-        overrides: { read_file: 'disabled', codex_run: 'enabled' },
+        overrides: { read_file: 'enabled' },
       };
       for (const listener of [...listeners]) listener(snapshot);
 
@@ -65,8 +65,8 @@ describe('MCP server live tool availability', () => {
       expect(toolListChangedNotifications).toBe(1);
 
       const updated = await client.listTools();
-      expect(updated.tools.map((tool) => tool.name)).not.toContain('read_file');
-      expect(updated.tools.map((tool) => tool.name)).toContain('codex_run');
+      expect(updated.tools.map((tool) => tool.name)).toContain('read_file');
+      expect(updated.tools.map((tool) => tool.name)).not.toContain('codex_run');
     } finally {
       await client.close().catch(() => undefined);
       await server.close().catch(() => undefined);

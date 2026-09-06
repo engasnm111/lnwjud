@@ -224,19 +224,19 @@ Readiness stays independent. A tool can be:
 
 Do not reuse current `feature_disabled` readiness reason to mean user choice.
 
-## Decision C — Codex compatibility becomes a group default, not the only gate
+## Decision C — Codex compatibility remains a hard family gate
 
-`codexToolsEnabled` remains for backward compatibility in 4.54.0, but is treated as the **default preference for Codex-family tools when no per-tool override exists**.
+`codexToolsEnabled` remains authoritative in 4.54.0 for the Codex-family surface. A per-tool override may customize an individual Codex tool **only after** the Codex Delegation setting has made that family eligible; it must never bypass the Settings gate.
 
-Effective preference precedence:
+Effective exposure precedence:
 
 ```text
-explicit per-tool override
-  > legacy/group default (Codex family)
-  > normal default enabled
+hard Settings/runtime eligibility
+  > explicit per-tool override
+  > family/default exposure
 ```
 
-Hard runtime eligibility still wins. Example: enabling Agent Swarm cannot fabricate a missing Agent Swarm provider.
+This keeps `userPreference` truthful as persisted intent while `effectiveExposed` remains the actual MCP state. For example, a stale `codex_run = enabled` override is preserved but cannot expose `codex_run` while Codex Delegation is OFF, and enabling Agent Swarm cannot fabricate a missing Agent Swarm provider.
 
 A later release may retire `codexToolsEnabled` after migration telemetry, but not in 4.54.0.
 

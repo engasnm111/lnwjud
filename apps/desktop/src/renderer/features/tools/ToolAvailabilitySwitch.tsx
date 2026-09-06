@@ -6,12 +6,15 @@ interface ToolAvailabilitySwitchProps {
   readonly checked: boolean;
   readonly disabled?: boolean;
   readonly busy?: boolean;
+  readonly blockedLabel?: string | undefined;
   readonly label: string;
   readonly onChange: (checked: boolean) => void;
 }
 
-export function ToolAvailabilitySwitch({ locale, checked, disabled = false, busy = false, label, onChange }: ToolAvailabilitySwitchProps): ReactElement {
-  const stateLabel = checked ? (locale === 'th' ? 'เปิด' : 'Enabled') : (locale === 'th' ? 'ปิด' : 'Disabled');
+export function ToolAvailabilitySwitch({ locale, checked, disabled = false, busy = false, blockedLabel, label, onChange }: ToolAvailabilitySwitchProps): ReactElement {
+  const stateLabel = checked
+    ? (locale === 'th' ? 'เปิด' : 'Enabled')
+    : blockedLabel ?? (locale === 'th' ? 'ปิด' : 'Disabled');
   const accessibleLabel = locale === 'th' ? `${label}: ${stateLabel}` : `${label}: ${stateLabel}`;
 
   return (

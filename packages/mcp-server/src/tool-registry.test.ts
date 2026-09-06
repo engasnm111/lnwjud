@@ -109,8 +109,9 @@ describe('MCP tool registry', () => {
 
     snapshot = { version: 1, generation: 1, overrides: { read_file: 'disabled', codex_run: 'enabled' } };
     expect(registry.list().map((tool) => tool.name)).not.toContain('read_file');
-    expect(registry.list().map((tool) => tool.name)).toContain('codex_run');
+    expect(registry.list().map((tool) => tool.name)).not.toContain('codex_run');
     expect((await registry.invoke('read_file', { workspaceId: 'workspace-1', path: 'file.txt' })).isError).toBe(true);
+    expect((await registry.invoke('codex_run', {})).isError).toBe(true);
     expect(reads).toBe(1);
     expect(registry.listAll().map((tool) => tool.name)).toContain('read_file');
   });

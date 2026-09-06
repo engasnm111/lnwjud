@@ -6,7 +6,10 @@ export function toolAvailabilityLabel(locale: UiLocale, item: ToolCatalogItem): 
     return locale === 'th' ? 'ผู้ใช้ปิดไว้' : 'Disabled by user';
   }
   if (item.userPreference === 'enabled' && !item.systemEligible) {
-    return locale === 'th' ? 'ผู้ใช้เปิดไว้ แต่ระบบยังไม่สามารถแสดงเครื่องมือนี้ได้' : 'Enabled by user, but currently system-ineligible';
+    if (item.readinessReason === 'feature_disabled') {
+      return locale === 'th' ? 'เปิดรายตัวไว้ แต่ต้องเปิดการตั้งค่าหลักก่อน' : 'Enabled per-tool, but the required Settings gate is off';
+    }
+    return locale === 'th' ? 'เปิดรายตัวไว้ แต่ระบบยังไม่พร้อมให้เปิดใช้งาน' : 'Enabled per-tool, but the system is not ready to expose it';
   }
   if (item.userPreference === 'enabled') return locale === 'th' ? 'ผู้ใช้เปิดไว้' : 'Enabled by user';
   return item.effectiveExposed

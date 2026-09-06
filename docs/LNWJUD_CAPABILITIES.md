@@ -25,7 +25,7 @@ lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggr
 - มี Permission v2, lifecycle hooks, audit, Live Logs v2, telemetry, Context Ledger/diff/dedupe, recovery และ capability discovery
 - รองรับ visual adapter สำหรับ screenshot, DOM/layout, Excel และ PDF
 - ปิด Native ChatGPT recurring watchdog ก่อน terminal completion เป็นเส้นทางหลัก และกู้ exact pending cleanup locator จาก durable state ได้หาก host surface/turn หลุดระหว่างปิดงาน; terminal cleanup-only wake ไม่มีสิทธิ์กลับไปแก้ workspace
-- เปิด/ปิด first-party tool รายตัวได้แบบ persisted โดยแยก `userPreference`, `systemEligible`, `effectiveExposed` ออกจาก readiness/permission; state เดียวกันบังคับทั้ง `tools/list`, `tools/call`, batch และ discovery/ranking
+- เปิด/ปิด first-party tool รายตัวได้แบบ persisted โดยแยก `userPreference`, `systemEligible`, `effectiveExposed` ออกจาก readiness/permission; state เดียวกันบังคับทั้ง `tools/list`, `tools/call`, batch และ discovery/ranking โดย per-tool override ไม่สามารถข้าม Settings/runtime prerequisite ได้ เช่น `codex_*` และ `agent_swarm_run` จะยังไม่ถูก expose จนกว่า Codex Delegation จะเปิดและ runtime ที่จำเป็นพร้อม
 - MCP connection ที่ค้างอยู่รับการเปลี่ยน tool list ผ่าน SDK `notifications/tools/list_changed`; stdio process เห็น state จาก SQLite ร่วมด้วย bounded watcher โดยไม่ต้อง restart
 
 ทุกการทำงานวิ่งบน Windows เครื่องเดียวกับ lnwjud ยกเว้นชั้นเชื่อมต่อที่ส่ง MCP ผ่าน tunnel หรือ transport ที่ client ใช้

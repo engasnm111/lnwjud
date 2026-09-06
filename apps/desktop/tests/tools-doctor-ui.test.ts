@@ -199,6 +199,27 @@ describe('Tools and Doctor UX', () => {
     expect(styles).not.toContain('.tool-card-availability label {');
   });
 
+  it('renders a gated per-tool override as actually off and non-enableable until Settings is ready', () => {
+    const gatedTool: ToolCatalogItem = {
+      ...tool,
+      name: 'codex_run',
+      readiness: 'disabled',
+      readinessReason: 'feature_disabled',
+      userPreference: 'enabled',
+      systemEligible: false,
+      effectiveExposed: false,
+    };
+    const snapshot = { generatedAt: checkedAt, locale: 'th' as const, items: [gatedTool], remediations: [] };
+    const markup = renderToStaticMarkup(createElement(ToolsPage, {
+      locale: 'th', snapshot, loading: false, onRefresh: async () => undefined, onRemediation: async () => undefined,
+      onSetAvailability: async () => undefined,
+    }));
+    expect(markup).toContain('aria-checked="false"');
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('ตั้งค่าก่อน');
+    expect(markup).toContain('เปิดรายตัวไว้ แต่ต้องเปิดการตั้งค่าหลักก่อน');
+  });
+
   it('exposes status filters as pressed-state toggles and keeps selected labels/focus legible', () => {
     const snapshot = { generatedAt: checkedAt, locale: 'en' as const, items: [tool], remediations: [] };
     const markup = renderToStaticMarkup(createElement(ToolsPage, {

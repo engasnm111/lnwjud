@@ -107,13 +107,14 @@ export class ToolCatalogService {
         return [stripDuration(result)];
       });
       const codexFamily = definition.name.startsWith('codex_') || definition.name === 'agent_swarm_run';
-      const codexDisabled = codexFamily && this.#options.codexEnabled?.() === false;
-      const systemEligible = delivery === undefined || isAdvertisedDeliveryState(delivery);
+      const codexEnabled = !codexFamily || this.#options.codexEnabled?.() === true;
+      const codexDisabled = codexFamily && !codexEnabled;
+      const systemEligible = (delivery === undefined || isAdvertisedDeliveryState(delivery)) && codexEnabled;
       const effectiveAvailability = resolveEffectiveToolAvailability({
         name: definition.name,
         snapshot: availabilitySnapshot,
         systemEligible,
-        defaultEnabled: systemEligible && (!codexFamily || this.#options.codexEnabled?.() === true),
+        defaultEnabled: systemEligible,
       });
       const readinessState = computeReadiness(requirementResults, profileDecision, delivery, codexDisabled);
       const { readiness, readinessReason, deliveryState, available } = readinessState;

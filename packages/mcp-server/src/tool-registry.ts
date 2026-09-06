@@ -185,6 +185,7 @@ export class ToolRegistry {
     ];
     const exposedAllBaseTools = allBaseTools.map((tool) => withToolEnvelopes(tool));
     const systemEligibleBaseTools = exposedAllBaseTools.filter((tool) => {
+      if ((tool.name.startsWith('codex_') || tool.name === 'agent_swarm_run') && options.codexToolsEnabled !== true) return false;
       if (tool.name === 'agent_swarm_run' && services.agentSwarm === undefined) return false;
       const catalogEntry = upgradeCatalogEntry(tool.name);
       return catalogEntry === undefined || isAdvertisedDeliveryState(catalogEntry.deliveryState);

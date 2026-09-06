@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ToolCatalogItem } from '@lnwjud/ipc-contracts';
-import { catalogStatusCounts, filterAndSortTools } from '../src/renderer/features/tools/tool-catalog-view.js';
+import { catalogStatusCounts, filterAndSortTools, toolControlCanEnable, toolControlEnabled } from '../src/renderer/features/tools/tool-catalog-view.js';
 
 function item(name: string, readiness: ToolCatalogItem['readiness'], origin: ToolCatalogItem['origin'] = 'lnwjud'): ToolCatalogItem {
   return {
@@ -33,5 +33,15 @@ describe('tool catalog renderer model', () => {
     expect(filterAndSortTools(items, { ...baseFilters, availability: 'enabled' }).map((entry) => entry.name)).toEqual(['enabled-setup']);
     expect(filterAndSortTools(items, { ...baseFilters, availability: 'disabled' }).map((entry) => entry.name)).toEqual(['disabled-ready']);
     expect(filterAndSortTools(items, { ...baseFilters, availability: 'enabled', readiness: 'needs_setup' }).map((entry) => entry.name)).toEqual(['enabled-setup']);
+  });
+
+  it('shows effective exposure as the switch state and only allows enabling a ready eligible tool', () => {
+    const gatedOverride = { ...item('codex_run', 'disabled'), userPreference: 'enabled' as const, systemEligible: false, effectiveExposed: false };
+    const setupRequired = { ...item('db_inspect', 'needs_setup'), userPreference: 'disabled' as const, effectiveExposed: false };
+    const readyDisabled = { ...item('read_file', 'ready'), userPreference: 'disabled' as const, effectiveExposed: false };
+    expect(toolControlEnabled(gatedOverride)).toBe(false);
+    expect(toolControlCanEnable(gatedOverride)).toBe(false);
+    expect(toolControlCanEnable(setupRequired)).toBe(false);
+    expect(toolControlCanEnable(readyDisabled)).toBe(true);
   });
 });
