@@ -39,7 +39,7 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       await openTools(app.page);
       const card = toolCard(app.page, 'lsp_diagnostics');
       await expect(card).toHaveClass(/tool-needs_setup/);
-      await card.click();
+      await card.locator('button.tool-card-open').click();
       await expect(app.page.getByRole('dialog')).toContainText('configured_lsp');
       await expect(app.page.getByRole('dialog')).toContainText(/No local language-server command|Language Server/);
     } finally { await closeDesktop(app); }
@@ -76,7 +76,7 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       await openTools(app.page);
       const card = toolCard(app.page, 'delete_file');
       await expect(card).toHaveClass(/tool-blocked/);
-      await card.click();
+      await card.locator('button.tool-card-open').click();
       await expect(app.page.getByRole('dialog')).toContainText('DENY');
       await app.page.getByRole('button', { name: /ปิดรายละเอียดเครื่องมือ|Close tool details/ }).click();
       const after = await app.page.evaluate(async () => (await window.lnwjud.getDashboard()).auditEventCount);
@@ -251,7 +251,7 @@ async function dismissFirstRunTip(page: Page, bypassStartupDoctor = false): Prom
 
 function toolCard(page: Page, name: string): Locator {
   const exactName = new RegExp(`^${escapeRegExp(name)}$`);
-  return page.locator('button.tool-card').filter({ has: page.locator('code').filter({ hasText: exactName }) }).first();
+  return page.locator('.tool-card').filter({ has: page.locator('code').filter({ hasText: exactName }) }).first();
 }
 
 function escapeRegExp(value: string): string {
