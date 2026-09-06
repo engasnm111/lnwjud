@@ -9,6 +9,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { build } from 'esbuild';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { ToolRegistry, readSharedActivitySnapshot, sharedActivityLeaseDirectoryPath, type McpApplicationServices } from '@lnwjud/mcp-server';
+import { USER_SETTING_KEYS, serializeToolAvailabilitySnapshot } from '@lnwjud/shared';
+import { SqliteDatabase, SqliteSettingsRepository } from '@lnwjud/storage';
 import { UpdateInstallCoordinator, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
 import { atomicWrite, buildIncidentReport, exportIncidentReport } from '../src/main/incident-report.js';
 import { IncidentSaveCoordinator } from '../src/main/incident-save.js';
@@ -74,6 +76,23 @@ describe('session resilience acceptance', () => {
       const tools = await client.listTools();
       expect(tools.tools.length).toBeGreaterThan(0);
       expect(tools.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
+      expect(tools.tools.map((tool) => tool.name)).toContain('read_file');
+
+      const externalDatabase = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+      const externalSettings = new SqliteSettingsRepository(externalDatabase);
+      try {
+        externalSettings.set(USER_SETTING_KEYS.toolAvailability, serializeToolAvailabilitySnapshot({
+          version: 1,
+          generation: 1,
+          overrides: { read_file: 'disabled' },
+        }));
+        await vi.waitFor(async () => {
+          expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain('read_file');
+        }, { timeout: 5_000 });
+      } finally {
+        externalDatabase.close();
+      }
+
       for (let index = 0; index < 3; index += 1) {
         const result = await client.callTool({ name: 'workspace_list', arguments: {} });
         expect(result.isError).not.toBe(true);

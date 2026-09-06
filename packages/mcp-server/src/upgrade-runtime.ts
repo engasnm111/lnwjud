@@ -138,6 +138,7 @@ export class UpgradeRuntimeService {
     private readonly services: McpApplicationServices,
     actor: FileActor,
     contextEconomy: ContextEconomyRuntime = new ContextEconomyRuntime(),
+    private readonly isToolExposed: (name: string) => boolean = () => true,
   ) {
     this.actor = actor;
     this.stateStore = services.runtimeStatePath === undefined
@@ -426,6 +427,7 @@ export class UpgradeRuntimeService {
     const category = readString(input, 'category')?.toLowerCase();
     const route = routeIntent(query);
     const scored = SEARCH_CATALOG
+      .filter((entry) => this.isToolExposed(entry.name))
       .filter((entry) => category === undefined || entry.tags.some((tag) => tag.toLowerCase() === category))
       .map((entry) => scoreToolEntry(entry, normalized, route))
       .filter((entry) => normalized.length === 0 || entry.score > 0)
@@ -460,13 +462,16 @@ export class UpgradeRuntimeService {
   }
 
   private describeTool(name: string | undefined): unknown {
-    const entry = SEARCH_CATALOG.find((candidate) => candidate.name === name);
+    const entry = SEARCH_CATALOG.find((candidate) => candidate.name === name && this.isToolExposed(candidate.name));
     return entry === undefined ? { found: false, name: name ?? null } : { found: true, ...entry, schema: { type: 'object', additionalProperties: true }, authorizationUnchanged: true };
   }
 
   private categories(): { readonly categories: readonly { readonly category: string; readonly tools: number }[] } {
     const counts = new Map<string, number>();
-    for (const entry of UPGRADE_TOOL_CATALOG) for (const tag of entry.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    for (const entry of UPGRADE_TOOL_CATALOG) {
+      if (!this.isToolExposed(entry.name)) continue;
+      for (const tag of entry.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
     return { categories: [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([category, tools]) => ({ category, tools })) };
   }
 

@@ -11,7 +11,8 @@ import type {
   ToolReadinessStatus,
   UiLocale,
 } from '@lnwjud/ipc-contracts';
-import { ToolRegistry, upgradeCatalogEntry } from '@lnwjud/mcp-server';
+import { ToolRegistry, isAdvertisedDeliveryState, upgradeCatalogEntry } from '@lnwjud/mcp-server';
+import { DEFAULT_TOOL_AVAILABILITY_SNAPSHOT, resolveEffectiveToolAvailability, type ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { catalogDefinitions } from './catalog-definitions.js';
 import { resolveCatalogCopy } from './catalog-copy.js';
 import { RequirementRegistry, type RequirementSnapshot } from './requirement-registry.js';
@@ -20,6 +21,7 @@ import { RemediationRegistry } from './remediation-registry.js';
 export interface ToolCatalogServiceOptions {
   readonly profileDecision?: (permission: ToolDeclaredPermission, toolName: string) => ToolProfileDecision;
   readonly codexEnabled?: () => boolean;
+  readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
   readonly externalItems?: (locale: UiLocale) => Promise<readonly ToolCatalogItem[]>;
   readonly now?: () => Date;
 }
@@ -89,6 +91,7 @@ export class ToolCatalogService {
   async #snapshot(locale: UiLocale, force: boolean): Promise<ToolCatalogSnapshot> {
     const requirementIds = [...new Set(Object.values(catalogDefinitions).flatMap((definition) => definition.requirementIds))];
     const requirements = await this.#requirements.probe(requirementIds, force);
+    const availabilitySnapshot = this.#options.toolAvailabilitySnapshotProvider?.() ?? DEFAULT_TOOL_AVAILABILITY_SNAPSHOT;
     const firstParty = Object.values(catalogDefinitions).map((definition): ToolCatalogItem => {
       const runtime = definitionByName.get(definition.name);
       const upgrade = upgradeCatalogEntry(definition.name);
@@ -103,7 +106,16 @@ export class ToolCatalogService {
         }
         return [stripDuration(result)];
       });
-      const codexDisabled = (definition.name.startsWith('codex_') || definition.name === 'agent_swarm_run') && this.#options.codexEnabled?.() === false;
+      const codexFamily = definition.name.startsWith('codex_') || definition.name === 'agent_swarm_run';
+      const codexEnabled = !codexFamily || this.#options.codexEnabled?.() === true;
+      const codexDisabled = codexFamily && !codexEnabled;
+      const systemEligible = (delivery === undefined || isAdvertisedDeliveryState(delivery)) && codexEnabled;
+      const effectiveAvailability = resolveEffectiveToolAvailability({
+        name: definition.name,
+        snapshot: availabilitySnapshot,
+        systemEligible,
+        defaultEnabled: systemEligible,
+      });
       const readinessState = computeReadiness(requirementResults, profileDecision, delivery, codexDisabled);
       const { readiness, readinessReason, deliveryState, available } = readinessState;
       const failedRequirementRemediationIds = requirementResults.flatMap((result) => {
@@ -140,6 +152,9 @@ export class ToolCatalogService {
         ...(readinessReason === undefined ? {} : { readinessReason }),
         deliveryState,
         ...(available === undefined ? {} : { available }),
+        userPreference: effectiveAvailability.userPreference,
+        systemEligible: effectiveAvailability.systemEligible,
+        effectiveExposed: effectiveAvailability.effectiveExposed,
         stale,
         checkedAt: latestCheckedAt(requirementResults),
         supportsCancel: definition.supportsCancel,

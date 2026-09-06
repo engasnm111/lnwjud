@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RequirementRegistry } from '../src/main/tool-catalog/requirement-registry.js';
 import { RemediationRegistry } from '../src/main/tool-catalog/remediation-registry.js';
+import type { ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { ToolCatalogService } from '../src/main/tool-catalog/tool-catalog-service.js';
 
-function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'unknown'>>, options: { profileDecision?: 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN'; codexEnabled?: boolean } = {}): { registry: RequirementRegistry; catalog: ToolCatalogService; probes: Record<string, ReturnType<typeof vi.fn>> } {
+function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'unknown'>>, options: { profileDecision?: 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN'; codexEnabled?: boolean; availabilityOverrides?: Record<string, 'enabled' | 'disabled'> } = {}): { registry: RequirementRegistry; catalog: ToolCatalogService; probes: Record<string, ReturnType<typeof vi.fn>> } {
   const ids = [
     'platform_windows', 'registered_workspace', 'active_project', 'executable_git', 'executable_ripgrep', 'codex_runtime', 'wsl_runtime',
     'local_mcp_listener', 'browser_cdp', 'windows_ui_automation', 'windows_input', 'windows_window', 'windows_ocr', 'office_desktop',
@@ -29,6 +30,7 @@ function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'u
   const catalog = new ToolCatalogService(registry, new RemediationRegistry(), {
     profileDecision: (): 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN' => options.profileDecision ?? 'ALLOW',
     codexEnabled: (): boolean => options.codexEnabled ?? false,
+    toolAvailabilitySnapshotProvider: (): ToolAvailabilitySnapshot => ({ version: 1, generation: 1, overrides: options.availabilityOverrides ?? {} }),
   });
   return { registry, catalog, probes };
 }
@@ -71,6 +73,13 @@ describe('tool catalog readiness aggregation', () => {
       readiness: 'disabled', readinessReason: 'feature_disabled', deliveryState: 'feature_disabled', available: false,
     });
     expect(disabledCodex?.remediationIds).toContain('configure_codex');
+
+    const disabledWithOverride = service({}, { codexEnabled: false, availabilityOverrides: { codex_run: 'enabled' } });
+    const gatedCodex = (await disabledWithOverride.catalog.getSnapshot('en')).items.find((item) => item.name === 'codex_run');
+    expect(gatedCodex).toMatchObject({
+      userPreference: 'enabled', systemEligible: false, effectiveExposed: false,
+      readiness: 'disabled', readinessReason: 'feature_disabled',
+    });
 
     const enabledRuntime = service({}, { codexEnabled: true });
     const delegateStatus = (await enabledRuntime.catalog.getSnapshot('en')).items.find((item) => item.name === 'delegate_status');

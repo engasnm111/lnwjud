@@ -43,6 +43,10 @@ jobs:
           corepack pnpm@10.15.0 --filter @lnwjud/application exec vitest run src/scheduled-continuation-service.test.ts
           corepack pnpm@10.15.0 --filter @lnwjud/storage exec vitest run src/scheduled-continuation.integration.test.ts
 
+      - name: Build workspace dependencies
+        shell: pwsh
+        run: corepack pnpm@10.15.0 build
+
       - name: Build Windows Setup and Portable
         shell: pwsh
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1

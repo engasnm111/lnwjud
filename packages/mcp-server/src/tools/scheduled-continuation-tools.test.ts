@@ -97,6 +97,17 @@ describe('scheduled continuation MCP tools', () => {
         observedAt: '2026-08-27T10:12:00.000Z',
       },
     })).toMatchObject({ ok: true });
+    expect(byName.get('record_scheduled_continuation_receipt')?.parse({
+      continuationId: 'c-1',
+      expectedVersion: 2,
+      outcome: 'cancelled',
+      userCancellationReceipt: {
+        source: 'user_confirmation',
+        nativeTaskId: 'native-1',
+        action: 'deleted_in_chatgpt_scheduled_tasks_ui',
+        observedAt: '2026-08-27T10:12:00.000Z',
+      },
+    })).toMatchObject({ ok: true });
     expect(byName.get('expedite_scheduled_continuation')?.parse({ goalId: 'g-1', continuationId: 'c-1', leaseToken: 'lease', expectedLeaseGeneration: 2, expectedGoalRevision: 3, expectedContinuationVersion: 4, reason: 'host_budget_warning' })).toMatchObject({ ok: true });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1' })).toMatchObject({ ok: true, value: { leaseSeconds: 600 } });
     expect(byName.get('claim_scheduled_continuation')?.parse({ continuationId: 'c-1', leaseSeconds: 600 })).toMatchObject({ ok: true });
@@ -108,24 +119,56 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('cancel_scheduled_continuation')?.parse({ continuationId: 'c-1', expectedVersion: 2 })).toMatchObject({ ok: true });
     expect(byName.get('cancel_scheduled_continuation')?.parse({ goalId: 'g-1', latest: true, expectedVersion: 2 })).toMatchObject({ ok: true });
     expect(byName.get('cancel_scheduled_continuation')?.parse({ continuationId: 'c-1', goalId: 'g-1', latest: true, expectedVersion: 2 })).toMatchObject({ ok: false });
-    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('adaptive');
-    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('2 and 25 minutes');
-    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('prepared reservation is NOT a confirmed successor');
-    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('live worker with a valid goal lease may keep doing fenced work');
-    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('before turn yield or handoff');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('120 seconds early');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('consumed transport identity');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('never relied on as future coverage');
+    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('hourly recurring watchdog');
+    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('intervalMinutes=60');
+    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('legacy explicit 2–25 minute value changes only the first firing');
+    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('never create a per-wake successor');
+    expect(byName.get('prepare_scheduled_continuation')?.description).toContain('one-time and recurring native tasks never overlap');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('worker_busy_noop');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('already_claimed');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('recurring_acquired');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('never create a successor');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('never consume the native task');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('terminal cleanup is pending');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('Historical occurrence=once');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('Never count prepared as confirmed');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('atomically reserves');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('fresh lease-aligned prepared successor');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('successor_required');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('fresh adaptive successor');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('Reconcile missing/uncertain native receipts before any blind create');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('reschedule_required is the same-ID retime path');
-    expect(byName.get('claim_scheduled_continuation')?.description).toContain('terminal_noop returns naturally');
-    expect(byName.get('cancel_scheduled_continuation')?.description).toContain('still-pending scheduled successor');
-    expect(byName.get('cancel_scheduled_continuation')?.description).toContain('pausing/disabling an already-fired current wake');
+    expect(byName.get('expedite_scheduled_continuation')?.description).toContain('Legacy one-time compatibility only');
+    expect(byName.get('expedite_scheduled_continuation')?.description).toContain('recurring watchdogs must not use');
+    expect(byName.get('cancel_scheduled_continuation')?.description).toContain('exact recurring Native ChatGPT task non-runnable');
+    expect(byName.get('cancel_scheduled_continuation')?.description).toContain('past first due time is not cleanup proof');
+  });
+
+  it('passes explicit user confirmation through for user-attested manual Scheduled Task deletion', async () => {
+    const received: unknown[] = [];
+    const services = {
+      scheduledContinuations: {
+        async recordScheduledContinuationReceipt(_actor: unknown, request: unknown) {
+          received.push(request);
+          return ok({ continuationId: 'c-1', status: 'cancelled' });
+        },
+      },
+    } as unknown as McpApplicationServices;
+    const registry = new ToolRegistry(services, actor);
+    const response = await registry.invoke('record_scheduled_continuation_receipt', {
+      continuationId: 'c-1',
+      expectedVersion: 2,
+      outcome: 'cancelled',
+      userConfirmed: true,
+      userCancellationReceipt: {
+        source: 'user_confirmation',
+        nativeTaskId: 'native-1',
+        action: 'deleted_in_chatgpt_scheduled_tasks_ui',
+        observedAt: '2026-08-27T10:12:00.000Z',
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(received).toEqual([expect.objectContaining({
+      userConfirmed: true,
+      userCancellationReceipt: expect.objectContaining({
+        source: 'user_confirmation',
+        nativeTaskId: 'native-1',
+      }),
+    })]);
   });
 
   it('records continuation state without invoking process, capability, shell, or Windows scheduler backends', async () => {

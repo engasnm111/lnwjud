@@ -87,6 +87,66 @@ describe('MCP tool registry', () => {
     expect(enabled.list()).toHaveLength(hidden.list().length + CODEX_TOOL_NAMES.length + 1);
   });
 
+  it('applies live per-tool availability overrides to list and invoke without rebuilding the registry', async () => {
+    let snapshot = { version: 1 as const, generation: 0, overrides: {} as Record<string, 'enabled' | 'disabled'> };
+    let reads = 0;
+    const registry = new ToolRegistry({
+      file: {
+        async readFile() {
+          reads += 1;
+          return ok({ path: 'file.txt', content: 'ok', truncated: false });
+        },
+      },
+    } as unknown as McpApplicationServices, actor, {
+      codexToolsEnabled: false,
+      toolAvailabilitySnapshotProvider: () => snapshot,
+    } as ToolRegistryOptions);
+
+    expect(registry.list().map((tool) => tool.name)).toContain('read_file');
+    expect(registry.list().map((tool) => tool.name)).not.toContain('codex_run');
+    expect((await registry.invoke('read_file', { workspaceId: 'workspace-1', path: 'file.txt' })).isError).not.toBe(true);
+    expect(reads).toBe(1);
+
+    snapshot = { version: 1, generation: 1, overrides: { read_file: 'disabled', codex_run: 'enabled' } };
+    expect(registry.list().map((tool) => tool.name)).not.toContain('read_file');
+    expect(registry.list().map((tool) => tool.name)).not.toContain('codex_run');
+    expect((await registry.invoke('read_file', { workspaceId: 'workspace-1', path: 'file.txt' })).isError).toBe(true);
+    expect((await registry.invoke('codex_run', {})).isError).toBe(true);
+    expect(reads).toBe(1);
+    expect(registry.listAll().map((tool) => tool.name)).toContain('read_file');
+  });
+
+  it('lets an already-started call settle after disable while blocking future calls', async () => {
+    let snapshot = { version: 1 as const, generation: 0, overrides: {} as Record<string, 'enabled' | 'disabled'> };
+    let releaseRead!: () => void;
+    let startedRead!: () => void;
+    const started = new Promise<void>((resolve) => { startedRead = resolve; });
+    const released = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let reads = 0;
+    const registry = new ToolRegistry({
+      file: {
+        async readFile() {
+          reads += 1;
+          startedRead();
+          await released;
+          return ok({ path: 'file.txt', content: 'ok', truncated: false });
+        },
+      },
+    } as unknown as McpApplicationServices, actor, {
+      toolAvailabilitySnapshotProvider: (): ReturnType<NonNullable<ToolRegistryOptions['toolAvailabilitySnapshotProvider']>> => snapshot,
+    });
+
+    const inFlight = registry.invoke('read_file', { workspaceId: 'workspace-1', path: 'file.txt' });
+    await started;
+    snapshot = { version: 1, generation: 1, overrides: { read_file: 'disabled' } };
+    releaseRead();
+    expect((await inFlight).isError).not.toBe(true);
+    expect(reads).toBe(1);
+
+    expect((await registry.invoke('read_file', { workspaceId: 'workspace-1', path: 'file.txt' })).isError).toBe(true);
+    expect(reads).toBe(1);
+  });
+
   it('does not advertise a fixed drive letter in workspace registration metadata', () => {
     const registry = new ToolRegistry({}, actor);
     const registration = registry.list().find((tool) => tool.name === 'workspace_register');
@@ -410,6 +470,24 @@ describe('MCP tool registry', () => {
     expect(response.structuredContent).toMatchObject({ summary: { total: 2, succeeded: 2, failed: 0 } });
     expect(events.filter((event) => event.phase === 'started').map((event) => event.toolName)).toEqual(['tool_batch', 'read_file', 'read_file']);
     expect(events.filter((event) => event.phase === 'completed').map((event) => event.toolName).sort()).toEqual(['read_file', 'read_file', 'tool_batch']);
+  });
+
+  it('blocks a user-disabled tool_batch child before the child backend executes', async () => {
+    let reads = 0;
+    const snapshot = { version: 1 as const, generation: 1, overrides: { read_file: 'disabled' as const } };
+    const registry = new ToolRegistry({
+      file: { async readFile(): Promise<ReturnType<typeof ok>> { reads += 1; return ok({ path: 'file.txt', content: 'unexpected', truncated: false }); } },
+    } as unknown as McpApplicationServices, actor, {
+      toolAvailabilitySnapshotProvider: (): ReturnType<NonNullable<ToolRegistryOptions['toolAvailabilitySnapshotProvider']>> => snapshot,
+    });
+    const response = await registry.invoke('tool_batch', { calls: [
+      { id: 'disabled-read', tool: 'read_file', arguments: { workspaceId: 'workspace-1', path: 'file.txt' } },
+    ] });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({ summary: { total: 1, succeeded: 0, failed: 1 }, results: [
+      { id: 'disabled-read', status: 'failed' },
+    ] });
+    expect(reads).toBe(0);
   });
 
   it('keeps successful batch siblings when one child returns an MCP error', async () => {

@@ -114,6 +114,15 @@ export interface ListGoalsRequest {
   readonly limit?: number;
 }
 
+export interface PendingScheduledTaskCleanup {
+  readonly continuationId: string;
+  readonly nativeTaskId: string;
+  readonly expectedContinuationVersion: number;
+  readonly provider: 'chatgpt_scheduled_task';
+  readonly requiredEffect: 'non_runnable';
+  readonly state: 'required' | 'failed' | 'uncertain';
+}
+
 export interface GoalSnapshot {
   readonly goalId: string;
   readonly goalKey: string;
@@ -138,6 +147,7 @@ export interface GoalSnapshot {
   readonly terminalSummary?: string;
   readonly terminalEvidence?: readonly GoalEvidence[];
   readonly terminalAt?: string;
+  readonly pendingScheduledTaskCleanup?: PendingScheduledTaskCleanup;
 }
 
 export type FinishGoalCompletionState = 'completed' | 'pending_native_cleanup';
@@ -286,7 +296,13 @@ export class GoalContinuationService {
         );
       if (goal === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
       if (goal.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
-      return ok(toSnapshot(goal));
+      const snapshot = toSnapshot(goal);
+      if (this.scheduledContinuations === undefined) return ok(snapshot);
+      const liveContinuation = await this.scheduledContinuations.getLiveScheduledContinuation(goal.id);
+      const pendingScheduledTaskCleanup = pendingScheduledTaskCleanupFrom(liveContinuation);
+      return ok(pendingScheduledTaskCleanup === undefined
+        ? snapshot
+        : { ...snapshot, pendingScheduledTaskCleanup });
     } catch (error: unknown) {
       return this.mapError(error);
     }
@@ -513,6 +529,26 @@ export class GoalContinuationService {
       return { goalId, requested: 0, stopped: 0, remaining: 0, timedOut: true, requestIds: [] };
     }
   }
+}
+
+function pendingScheduledTaskCleanupFrom(continuation: ScheduledContinuationRecord | null): PendingScheduledTaskCleanup | undefined {
+  if (continuation?.nativeTaskId === undefined) return undefined;
+  const state = continuation.status === 'cancel_required'
+    ? 'required'
+    : continuation.status === 'cancel_failed'
+      ? 'failed'
+      : continuation.status === 'cancel_uncertain'
+        ? 'uncertain'
+        : undefined;
+  if (state === undefined) return undefined;
+  return {
+    continuationId: continuation.continuationId,
+    nativeTaskId: continuation.nativeTaskId,
+    expectedContinuationVersion: continuation.version,
+    provider: 'chatgpt_scheduled_task',
+    requiredEffect: 'non_runnable',
+    state,
+  };
 }
 
 function cancellationInstruction(continuation: ScheduledContinuationRecord | null): ScheduledTaskCancellationInstruction {

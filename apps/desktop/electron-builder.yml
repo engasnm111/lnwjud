@@ -57,6 +57,9 @@ win:
 nsis:
   oneClick: false
   perMachine: false
+  # Preserve the historical per-user default (%LOCALAPPDATA%\Programs\lnwjud).
+  # All-users remains an explicit installer-page choice instead of the default.
+  selectPerMachineByDefault: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
   # Create the Start Menu link in installer.nsh from $INSTDIR so no build-user path can be baked in.

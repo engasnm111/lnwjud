@@ -13,7 +13,15 @@ import { z } from 'zod';
 import { sanitizeException, type DiagnosticLogger, type FileActor } from '@lnwjud/application';
 import { CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY } from '@lnwjud/capabilities';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
-import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, prohibitedAgentCommandReason, prohibitedAgentGitInvocationReason, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
+import {
+  DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY,
+  DEFAULT_TOOL_AVAILABILITY_SNAPSHOT,
+  prohibitedAgentCommandReason,
+  prohibitedAgentGitInvocationReason,
+  resolveEffectiveToolAvailability,
+  type DestructiveAutoApprovalPolicy,
+  type ToolAvailabilitySnapshot,
+} from '@lnwjud/shared';
 import { ActivityTracker, describeStructuredResultDetail, summarizeStructuredResultTarget, summarizeToolTarget, type ActivitySink, type TraceContext } from './activity-tracker.js';
 import { ContextEngine } from './context-engine.js';
 import { ContextEconomyRuntime } from './context-economy.js';
@@ -75,6 +83,8 @@ export interface ToolRegistryOptions {
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   /** Exposes quota-consuming Codex delegation tools. Disabled unless explicitly enabled. */
   readonly codexToolsEnabled?: boolean;
+  /** Current persisted per-tool user availability snapshot. Read dynamically so one registry instance observes live changes. */
+  readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
   readonly incrementalVerifier?: IncrementalVerifier;
   readonly setOfMarksStore?: SetOfMarksObservationStore;
   readonly maxToolDurationMs?: number;
@@ -107,7 +117,9 @@ type ApprovalPreparation =
 
 export class ToolRegistry {
   private readonly allTools: readonly McpToolDefinition[];
-  private readonly tools: readonly McpToolDefinition[];
+  private readonly systemEligibleToolNames: ReadonlySet<string>;
+  private readonly defaultExposedToolNames: ReadonlySet<string>;
+  private readonly toolAvailabilitySnapshotProvider: () => ToolAvailabilitySnapshot;
   private readonly services: McpApplicationServices;
   private readonly actor: FileActor;
   private readonly diagnostic: DiagnosticLogger | undefined;
@@ -145,7 +157,7 @@ export class ToolRegistry {
     this.activityWorkspaceResolver = normalizeActivityWorkspaceResolver(services, actor);
     this.maxToolDurationMs = normalizeToolResponseBudget(options.maxToolDurationMs);
     const contextEconomy = new ContextEconomyRuntime();
-    const context: McpToolContext = { services, actor, contextEconomy };
+    const context: McpToolContext = { services, actor, contextEconomy, isToolExposed: (name) => this.isEffectivelyExposed(name) };
     const contextEngine = new ContextEngine(services, actor, contextEconomy);
     const filePageEngine = new FilePageEngine(services, actor);
     const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
@@ -172,23 +184,32 @@ export class ToolRegistry {
       ...upgradeTools(context),
     ];
     const exposedAllBaseTools = allBaseTools.map((tool) => withToolEnvelopes(tool));
-    const exposedBaseTools = exposedAllBaseTools.filter((tool) => {
-      if (tool.name.startsWith('codex_') && options.codexToolsEnabled !== true) return false;
-      if (tool.name === 'agent_swarm_run') return options.codexToolsEnabled === true && services.agentSwarm !== undefined;
+    const systemEligibleBaseTools = exposedAllBaseTools.filter((tool) => {
+      if ((tool.name.startsWith('codex_') || tool.name === 'agent_swarm_run') && options.codexToolsEnabled !== true) return false;
+      if (tool.name === 'agent_swarm_run' && services.agentSwarm === undefined) return false;
       const catalogEntry = upgradeCatalogEntry(tool.name);
       return catalogEntry === undefined || isAdvertisedDeliveryState(catalogEntry.deliveryState);
     });
+    const defaultExposedBaseTools = systemEligibleBaseTools.filter((tool) => {
+      if (tool.name.startsWith('codex_')) return options.codexToolsEnabled === true;
+      if (tool.name === 'agent_swarm_run') return options.codexToolsEnabled === true;
+      return true;
+    });
     const exposedBatchTools = batchTools({
       invoke: (name, input, signal) => this.invoke(name, input, undefined, signal),
-      describe: (name) => exposedBaseTools.find((tool) => tool.name === name),
+      describe: (name) => exposedAllBaseTools.find((tool) => tool.name === name),
     }).map((tool) => withToolEnvelopes(tool));
     this.allTools = [...exposedAllBaseTools, ...exposedBatchTools];
-    this.tools = [...exposedBaseTools, ...exposedBatchTools];
+    this.systemEligibleToolNames = new Set([...systemEligibleBaseTools, ...exposedBatchTools].map((tool) => tool.name));
+    this.defaultExposedToolNames = new Set([...defaultExposedBaseTools, ...exposedBatchTools].map((tool) => tool.name));
+    this.toolAvailabilitySnapshotProvider = options.toolAvailabilitySnapshotProvider ?? ((): ToolAvailabilitySnapshot => DEFAULT_TOOL_AVAILABILITY_SNAPSHOT);
     this.schemaRegistry = new ToolSchemaRegistry();
-    for (const tool of this.tools) this.schemaRegistry.register(tool);
+    for (const tool of this.allTools) this.schemaRegistry.register(tool);
   }
 
-  public list(): readonly McpToolDefinition[] { return this.tools; }
+  public list(): readonly McpToolDefinition[] {
+    return this.allTools.filter((tool) => this.isEffectivelyExposed(tool.name));
+  }
   public listAll(): readonly McpToolDefinition[] { return this.allTools; }
   public listInFlight(): ReturnType<ActivityTracker['listInFlight']> { return this.activity.listInFlight(); }
   public listSchemas(): ReturnType<ToolSchemaRegistry['list']> { return this.schemaRegistry.list(); }
@@ -204,6 +225,23 @@ export class ToolRegistry {
     } catch {
       return undefined;
     }
+  }
+
+  private currentToolAvailabilitySnapshot(): ToolAvailabilitySnapshot {
+    try {
+      return this.toolAvailabilitySnapshotProvider();
+    } catch {
+      return DEFAULT_TOOL_AVAILABILITY_SNAPSHOT;
+    }
+  }
+
+  private isEffectivelyExposed(name: string): boolean {
+    return resolveEffectiveToolAvailability({
+      name,
+      snapshot: this.currentToolAvailabilitySnapshot(),
+      systemEligible: this.systemEligibleToolNames.has(name),
+      defaultEnabled: this.defaultExposedToolNames.has(name),
+    }).effectiveExposed;
   }
 
   public async invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
@@ -222,8 +260,8 @@ export class ToolRegistry {
     const started = Date.now();
     let fencedMutationEnd: (() => Promise<void>) | undefined;
     try {
-      const tool = this.tools.find((candidate) => candidate.name === name);
-      if (tool === undefined) {
+      const tool = this.allTools.find((candidate) => candidate.name === name);
+      if (tool === undefined || !this.isEffectivelyExposed(name)) {
         const response = mapError(appError('INVALID_INPUT', 'Unknown MCP tool'));
         await this.activity.end(callId, 'INVALID_INPUT', Date.now() - started, 'Unknown MCP tool');
         return response;
@@ -946,7 +984,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.52.4 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.54.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

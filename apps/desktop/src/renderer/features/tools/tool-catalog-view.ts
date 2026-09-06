@@ -4,6 +4,7 @@ export interface ToolCatalogFilters {
   readonly origin: ToolOrigin;
   readonly query: string;
   readonly readiness: ToolReadinessStatus | 'all';
+  readonly availability: 'all' | 'enabled' | 'disabled';
   readonly category: ToolCategory | 'all';
   readonly permission: ToolDeclaredPermission | 'all';
   readonly profileDecision: ToolProfileDecision | 'all';
@@ -23,12 +24,21 @@ export function filterAndSortTools(items: readonly ToolCatalogItem[], filters: T
   return items
     .filter((item) => item.origin === filters.origin)
     .filter((item) => filters.readiness === 'all' || item.readiness === filters.readiness)
+    .filter((item) => item.origin !== 'lnwjud' || filters.availability === 'all' || toolControlEnabled(item) === (filters.availability === 'enabled'))
     .filter((item) => filters.category === 'all' || item.category === filters.category)
     .filter((item) => filters.permission === 'all' || item.declaredPermission === filters.permission)
     .filter((item) => filters.profileDecision === 'all' || item.profileDecision === filters.profileDecision)
     .filter((item) => query.length === 0 || [item.name, item.title, item.shortDescription, item.longDescription, ...item.searchText]
       .some((value) => value.toLocaleLowerCase().includes(query)))
     .sort((left, right) => STATUS_RANK[left.readiness] - STATUS_RANK[right.readiness] || left.title.localeCompare(right.title));
+}
+
+export function toolControlEnabled(item: ToolCatalogItem): boolean {
+  return item.effectiveExposed;
+}
+
+export function toolControlCanEnable(item: ToolCatalogItem): boolean {
+  return item.systemEligible && item.readiness === 'ready';
 }
 
 export function catalogStatusCounts(items: readonly ToolCatalogItem[]): Readonly<Record<ToolReadinessStatus, number>> {

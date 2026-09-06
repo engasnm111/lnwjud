@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, safeStorage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { access } from 'node:fs/promises';
@@ -22,6 +22,9 @@ import {
   type ToolCatalogSnapshot,
   type GetToolCatalogRequest,
   type RecheckToolCatalogRequest,
+  type SetToolAvailabilityRequest,
+  type ResetToolAvailabilityRequest,
+  type SetToolAvailabilityResult,
   type OpenToolSetupTargetRequest,
   type CopyToolCommandRequest,
   type ExportLogsRequest,
@@ -83,6 +86,8 @@ import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
+import { decryptV3WindowsSafeStorageSecretIfPresent, loadV3CheckpointKeyIfPresent } from './checkpoint-key-compat.js';
+import { unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
@@ -134,6 +139,8 @@ export interface DesktopIpcServices {
   runDoctor(): Promise<DoctorReport>;
   getToolCatalog(request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot>;
   recheckToolCatalog(request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }>;
+  setToolAvailability(request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult>;
+  resetToolAvailability(request: ResetToolAvailabilityRequest): Promise<SetToolAvailabilityResult>;
   getLogSnapshot(): Promise<LogSnapshot>;
   clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }>;
   resolveActivityTargetDetail(detailRef: string): Promise<{ readonly status: 'complete' | 'unavailable'; readonly detail: ActivityTargetDetail | null }>;
@@ -303,6 +310,8 @@ const defaultDesktopServices: DesktopIpcServices = {
     catalog: { generatedAt: new Date(0).toISOString(), locale: request.locale, items: [], remediations: [] },
     doctor: { checks: [], exitCode: 1 },
   }),
+  setToolAvailability: async (): Promise<SetToolAvailabilityResult> => { throw new Error('Tool availability service is not configured'); },
+  resetToolAvailability: async (): Promise<SetToolAvailabilityResult> => { throw new Error('Tool availability service is not configured'); },
   getLogSnapshot: async (): Promise<LogSnapshot> => ({
     lines: [],
     tunnelLogPath: null,
@@ -581,6 +590,14 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.recheckToolCatalog, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.recheckToolCatalog(parseRecheckToolCatalogRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.setToolAvailability, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setToolAvailability(parseSetToolAvailabilityRequest(payload));
+  });
+  ipcMain.handle(ipcChannels.resetToolAvailability, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.resetToolAvailability(parseResetToolAvailabilityRequest(payload));
   });
   ipcMain.handle(ipcChannels.openToolSetupTarget, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
@@ -962,6 +979,14 @@ async function* emptySerializedRows(): AsyncIterable<string> {
 function parseRecheckToolCatalogRequest(payload: unknown): RecheckToolCatalogRequest {
   if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale' && key !== 'requirementIds') || (payload.locale !== 'th' && payload.locale !== 'en') || !Array.isArray(payload.requirementIds) || payload.requirementIds.length > 128 || payload.requirementIds.some((id: unknown) => typeof id !== 'string' || id.length === 0 || id.length > 128)) throw new Error('Invalid tool catalog recheck request');
   return { locale: payload.locale, requirementIds: payload.requirementIds as string[] };
+}
+function parseSetToolAvailabilityRequest(payload: unknown): SetToolAvailabilityRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale' && key !== 'name' && key !== 'enabled') || (payload.locale !== 'th' && payload.locale !== 'en') || typeof payload.name !== 'string' || payload.name.trim().length === 0 || payload.name.length > 256 || typeof payload.enabled !== 'boolean') throw new Error('Invalid tool availability request');
+  return { locale: payload.locale, name: payload.name.trim(), enabled: payload.enabled };
+}
+function parseResetToolAvailabilityRequest(payload: unknown): ResetToolAvailabilityRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'locale' && key !== 'name') || (payload.locale !== 'th' && payload.locale !== 'en') || typeof payload.name !== 'string' || payload.name.trim().length === 0 || payload.name.length > 256) throw new Error('Invalid tool availability reset request');
+  return { locale: payload.locale, name: payload.name.trim() };
 }
 function parseOpenToolSetupTargetRequest(payload: unknown): OpenToolSetupTargetRequest {
   if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'target') || typeof payload.target !== 'string' || payload.target.length === 0 || payload.target.length > 128) throw new Error('Invalid tool setup target request');
@@ -1386,9 +1411,13 @@ function bootstrapMcpStdio(): void {
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
     prependBundledRuntimeToolsToPath();
+    const checkpointEncryptionKey = loadV3CheckpointKeyIfPresent(dataPath, safeStorage);
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
+      decryptTunnelSecret: decryptTunnelSecretCompat,
+      watchToolAvailability: true,
+      ...(checkpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey }),
     });
     desktopRuntime = runtime;
     const workspacePath = readArgValue('--workspace')
@@ -1409,6 +1438,8 @@ function bootstrapMcpStdio(): void {
       activeWorkspaceScopesProvider: () => runtime.getActiveWorkspaceScopes(),
       hostMutationApprovalProvider: requestNativeMutationApproval,
       codexToolsEnabled: runtime.getUserSettings().codexToolsEnabled,
+      toolAvailabilitySnapshotProvider: () => runtime.toolAvailabilityService.snapshot(),
+      toolAvailabilitySubscribe: (listener) => runtime.toolAvailabilityService.subscribe(listener),
       onError: (error): void => {
         if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
           process.stderr.write(`lnwjud MCP stdio: peer closed (${error.message})\n`);
@@ -1429,6 +1460,9 @@ function bootstrapMcpStdio(): void {
         void desktopRuntime?.close().finally(() => process.exit(0));
       }
     });
+  }).catch((error: unknown) => {
+    process.stderr.write('lnwjud MCP stdio startup failed: ' + (error instanceof Error ? error.message : 'unknown error') + '\n');
+    app.quit();
   });
   app.on('window-all-closed', () => {
     // Keep the stdio MCP process alive without a BrowserWindow.
@@ -1653,12 +1687,21 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
+async function decryptTunnelSecretCompat(cipherText: string): Promise<string> {
+  const v3Secret = decryptV3WindowsSafeStorageSecretIfPresent(cipherText, safeStorage);
+  if (v3Secret !== undefined) return v3Secret.toString('utf8');
+  return unprotectTunnelSecret(cipherText);
+}
+
 function createNativeDesktopRuntime(dataPath: string): DesktopRuntime {
+  const checkpointEncryptionKey = loadV3CheckpointKeyIfPresent(dataPath, safeStorage);
   return createDesktopRuntime(dataPath, {
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
     }),
+    decryptTunnelSecret: decryptTunnelSecretCompat,
+    ...(checkpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey }),
   });
 }
 
@@ -1680,13 +1723,11 @@ function bootstrapDesktop(): void {
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
     runtime.logHub.start();
     registerIpcHandlers(() => mainWindow, runtime.services, { onLocaleChanged: setDesktopLocale, onUserSettingsChanged: applyDesktopUserSettings });
-    try {
-      await runtime.autoStartMcp();
-    } catch (error: unknown) {
-      console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-    }
     createDesktopWindow();
     createDesktopTray();
+    void runtime.autoStartMcp().catch((error: unknown) => {
+      console.error(`MCP auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
     void runtime.autoStartTunnel().catch((error: unknown) => {
       console.error(`Tunnel persistent runtime auto-start failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });
@@ -1697,7 +1738,7 @@ function bootstrapDesktop(): void {
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createDesktopWindow(true);
     });
-  });
+  }).catch((error: unknown) => handleDesktopStartupFailure('desktop', error));
   app.on('before-quit', handleDesktopBeforeQuit);
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
@@ -1723,11 +1764,22 @@ function bootstrapLogViewerOnly(): void {
         if (mainWindow === viewer) mainWindow = null;
       });
     }
-  });
+  }).catch((error: unknown) => handleDesktopStartupFailure('log viewer', error));
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
   app.on('before-quit', handleDesktopBeforeQuit);
+}
+
+function handleDesktopStartupFailure(scope: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : 'unknown error';
+  console.error('[Startup] ' + scope + ' failed: ' + message);
+  try {
+    dialog.showErrorBox('lnwjud failed to start', scope + ' startup failed.\n\n' + message);
+  } catch {
+    // Console/crash diagnostics remain available if native dialogs cannot be shown.
+  }
+  app.quit();
 }
 
 function configureDesktopShutdown(runtime: DesktopRuntime): void {
@@ -1846,8 +1898,7 @@ if (!gotInstanceLock) {
       } else if (argv.includes('--log-viewer')) {
         openLogViewerWindow();
       } else if (mainWindow !== null) {
-        mainWindow.show();
-        mainWindow.focus();
+        revealMainWindow();
       }
     });
   }

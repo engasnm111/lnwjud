@@ -20,6 +20,7 @@ import {
   JsonWorkspaceIndexStore,
   WorkspaceIndexService,
   WorkspaceQueryService,
+  ToolAvailabilityService,
   type FileActor,
 } from '@lnwjud/application';
 import { AuditService, decodeActivityTargetReference } from '@lnwjud/audit';
@@ -75,6 +76,7 @@ export interface StdioMcpRuntime {
   readonly destructivePolicyProvider: () => DestructiveAutoApprovalPolicy;
   readonly activeWorkspaceScopeProvider: () => Promise<WorkspaceScope>;
   readonly codexToolsEnabled: boolean;
+  readonly toolAvailabilityService: ToolAvailabilityService;
   close(): Promise<void>;
 }
 
@@ -100,6 +102,8 @@ export function createStdioMcpRuntime(
   const goalRepository = new SqliteGoalRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
+  const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
+  const stopToolAvailabilityWatch = toolAvailabilityService.watch(250);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
   const checkpointRepository = new SqliteCheckpointRepository(database, new AesGcmCheckpointCipher(loadCheckpointEncryptionKey(dataPath)));
@@ -265,7 +269,9 @@ export function createStdioMcpRuntime(
     destructivePolicyProvider,
     activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: workspace.id, rootPath: workspace.realRootPath }),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
+    toolAvailabilityService,
     close: async (): Promise<void> => {
+      stopToolAvailabilityWatch();
       await (await sharedActivityLease)?.close();
       await extensions.close().catch(() => undefined);
       await workspaceIndex.close().catch(() => undefined);

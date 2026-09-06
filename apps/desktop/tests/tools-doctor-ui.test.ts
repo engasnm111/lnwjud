@@ -29,6 +29,9 @@ const tool: ToolCatalogItem = {
   profileDecision: 'ALLOW',
   riskMode: 'fixed',
   readiness: 'needs_setup',
+  userPreference: 'default',
+  systemEligible: true,
+  effectiveExposed: true,
   stale: false,
   checkedAt,
   supportsCancel: false,
@@ -173,6 +176,50 @@ describe('Tools and Doctor UX', () => {
     expect(markup).toContain('จะไม่พาไปหน้า Settings ที่ไม่เกี่ยวข้อง');
   });
 
+  it('renders a polished accessible availability switch in both the catalog and detail modal', () => {
+    const enabledTool: ToolCatalogItem = { ...tool, userPreference: 'enabled', effectiveExposed: true };
+    const snapshot = { generatedAt: checkedAt, locale: 'en' as const, items: [enabledTool], remediations: [] };
+    const toolsMarkup = renderToStaticMarkup(createElement(ToolsPage, {
+      locale: 'en', snapshot, loading: false, onRefresh: async () => undefined, onRemediation: async () => undefined,
+      onSetAvailability: async () => undefined,
+    }));
+    const modalMarkup = renderToStaticMarkup(createElement(ToolDetailModal, {
+      locale: 'en', item: enabledTool, remediations: [], onClose: () => undefined, onRemediation: () => undefined,
+      onSetAvailability: async () => undefined,
+    }));
+    const styles = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+    expect(toolsMarkup).toContain('role="switch"');
+    expect(toolsMarkup).toContain('aria-checked="true"');
+    expect(toolsMarkup).toContain('tool-availability-switch is-on');
+    expect(toolsMarkup).toContain('tool-availability-switch-track');
+    expect(modalMarkup).toContain('tool-availability-switch is-on');
+    expect(styles).toContain('.tool-availability-switch.is-on .tool-availability-switch-track');
+    expect(styles).toContain('.tool-availability-switch:focus-visible');
+    expect(styles).not.toContain('.tool-card-availability label {');
+  });
+
+  it('renders a gated per-tool override as actually off and non-enableable until Settings is ready', () => {
+    const gatedTool: ToolCatalogItem = {
+      ...tool,
+      name: 'codex_run',
+      readiness: 'disabled',
+      readinessReason: 'feature_disabled',
+      userPreference: 'enabled',
+      systemEligible: false,
+      effectiveExposed: false,
+    };
+    const snapshot = { generatedAt: checkedAt, locale: 'th' as const, items: [gatedTool], remediations: [] };
+    const markup = renderToStaticMarkup(createElement(ToolsPage, {
+      locale: 'th', snapshot, loading: false, onRefresh: async () => undefined, onRemediation: async () => undefined,
+      onSetAvailability: async () => undefined,
+    }));
+    expect(markup).toContain('aria-checked="false"');
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('ตั้งค่าก่อน');
+    expect(markup).toContain('เปิดรายตัวไว้ แต่ต้องเปิดการตั้งค่าหลักก่อน');
+  });
+
   it('exposes status filters as pressed-state toggles and keeps selected labels/focus legible', () => {
     const snapshot = { generatedAt: checkedAt, locale: 'en' as const, items: [tool], remediations: [] };
     const markup = renderToStaticMarkup(createElement(ToolsPage, {
@@ -196,6 +243,18 @@ describe('Tools and Doctor UX', () => {
     expect(desktopServicesSource).toContain("{ action: 'launch', userConfirmed: true }");
     expect(remediationSource).not.toContain('implementation/build');
     expect(remediationSource).toContain('เวอร์ชันนี้ยังไม่มีส่วนทำงานของเครื่องมือนี้');
+  });
+
+  it('renders ChatGPT host-sync guidance as a non-blocking status notice when supplied', () => {
+    const snapshot = { generatedAt: checkedAt, locale: 'en' as const, items: [tool], remediations: [] };
+    const notice = 'Browser F5 is not guaranteed to refresh the approved action snapshot. Use Action Refresh / Scan Tools.';
+    const markup = renderToStaticMarkup(createElement(ToolsPage, {
+      locale: 'en', snapshot, loading: false, hostSyncNotice: notice, onRefresh: async () => undefined, onRemediation: async () => undefined,
+    }));
+    expect(markup).toContain('tool-host-sync-notice');
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('F5');
+    expect(markup).toContain('Action Refresh / Scan Tools');
   });
 
   it('anchors the tool modal to document.body and constrains scrolling to the viewport-safe modal body', () => {

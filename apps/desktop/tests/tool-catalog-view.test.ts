@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { ToolCatalogItem } from '@lnwjud/ipc-contracts';
-import { catalogStatusCounts, filterAndSortTools } from '../src/renderer/features/tools/tool-catalog-view.js';
+import { catalogStatusCounts, filterAndSortTools, toolControlCanEnable, toolControlEnabled } from '../src/renderer/features/tools/tool-catalog-view.js';
 
 function item(name: string, readiness: ToolCatalogItem['readiness'], origin: ToolCatalogItem['origin'] = 'lnwjud'): ToolCatalogItem {
   return {
     name, origin, category: 'files', title: name, shortDescription: `${name} short`, longDescription: `${name} long`,
     declaredPermission: origin === 'external_mcp' ? 'UNKNOWN' : 'READ', profileDecision: origin === 'external_mcp' ? 'UNKNOWN' : 'ALLOW',
-    riskMode: origin === 'external_mcp' ? 'external_unknown' : 'fixed', readiness, stale: false, checkedAt: null,
+    riskMode: origin === 'external_mcp' ? 'external_unknown' : 'fixed', readiness,
+    userPreference: 'default', systemEligible: true, effectiveExposed: true, stale: false, checkedAt: null,
     supportsCancel: origin === 'external_mcp' ? null : true, supportsDryRun: origin === 'external_mcp' ? null : false,
     requirements: [], remediationIds: [], inputSchema: null, searchText: [name], ...(origin === 'external_mcp' ? { serverName: 'demo' } : {}),
   };
 }
 
-const baseFilters = { origin: 'lnwjud' as const, query: '', readiness: 'all' as const, category: 'all' as const, permission: 'all' as const, profileDecision: 'all' as const };
+const baseFilters = { origin: 'lnwjud' as const, query: '', readiness: 'all' as const, availability: 'all' as const, category: 'all' as const, permission: 'all' as const, profileDecision: 'all' as const };
 
 describe('tool catalog renderer model', () => {
   it('sorts issues before ready tools and filters without hard-coded inventory counts', () => {
@@ -24,5 +25,23 @@ describe('tool catalog renderer model', () => {
     const items = [item('read_file', 'ready'), item('remote_search', 'unknown', 'external_mcp')];
     expect(filterAndSortTools(items, { ...baseFilters, origin: 'external_mcp', query: 'remote' }).map((entry) => entry.name)).toEqual(['remote_search']);
     expect(filterAndSortTools(items, { ...baseFilters, origin: 'lnwjud' }).map((entry) => entry.name)).toEqual(['read_file']);
+  });
+  it('filters user availability independently from runtime readiness', () => {
+    const enabledNeedsSetup = { ...item('enabled-setup', 'needs_setup'), userPreference: 'enabled' as const, effectiveExposed: true };
+    const disabledReady = { ...item('disabled-ready', 'ready'), userPreference: 'disabled' as const, effectiveExposed: false };
+    const items = [enabledNeedsSetup, disabledReady];
+    expect(filterAndSortTools(items, { ...baseFilters, availability: 'enabled' }).map((entry) => entry.name)).toEqual(['enabled-setup']);
+    expect(filterAndSortTools(items, { ...baseFilters, availability: 'disabled' }).map((entry) => entry.name)).toEqual(['disabled-ready']);
+    expect(filterAndSortTools(items, { ...baseFilters, availability: 'enabled', readiness: 'needs_setup' }).map((entry) => entry.name)).toEqual(['enabled-setup']);
+  });
+
+  it('shows effective exposure as the switch state and only allows enabling a ready eligible tool', () => {
+    const gatedOverride = { ...item('codex_run', 'disabled'), userPreference: 'enabled' as const, systemEligible: false, effectiveExposed: false };
+    const setupRequired = { ...item('db_inspect', 'needs_setup'), userPreference: 'disabled' as const, effectiveExposed: false };
+    const readyDisabled = { ...item('read_file', 'ready'), userPreference: 'disabled' as const, effectiveExposed: false };
+    expect(toolControlEnabled(gatedOverride)).toBe(false);
+    expect(toolControlCanEnable(gatedOverride)).toBe(false);
+    expect(toolControlCanEnable(setupRequired)).toBe(false);
+    expect(toolControlCanEnable(readyDisabled)).toBe(true);
   });
 });

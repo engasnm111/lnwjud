@@ -21,6 +21,7 @@ import {
   WorkspaceIndexService,
   WorkspaceInfoService,
   WorkspaceQueryService,
+  ToolAvailabilityService,
   type FileActor,
   type DoctorProbeResult,
 } from '@lnwjud/application';
@@ -109,6 +110,9 @@ import {
   type ToolCatalogSnapshot,
   type GetToolCatalogRequest,
   type RecheckToolCatalogRequest,
+  type SetToolAvailabilityRequest,
+  type ResetToolAvailabilityRequest,
+  type SetToolAvailabilityResult,
   type ToolCatalogItem,
   type ToolProfileDecision,
   type InFlightWorkItem,
@@ -181,6 +185,7 @@ export interface DesktopRuntime {
   readonly mcpActor: FileActor;
   readonly activityTracker: ActivityTracker;
   readonly logHub: LogHub;
+  readonly toolAvailabilityService: ToolAvailabilityService;
   getLocale(): UiLocale;
   getUserSettings(): UserSettings;
   getDestructivePolicy(): DestructiveAutoApprovalPolicy;
@@ -198,8 +203,31 @@ export interface DesktopRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
+  readonly checkpointEncryptionKey?: Buffer;
+  readonly decryptTunnelSecret?: (cipherText: string) => Promise<string>;
+  /** Enables bounded SQLite polling for long-lived stdio processes that receive writes from another process. */
+  readonly watchToolAvailability?: boolean;
   /** Injectable only when an officially supported Tunnel OAuth provisioning contract exists. */
   readonly tunnelOAuthBackend?: TunnelOAuthProvisioningBackend;
+}
+
+export function toolAvailabilityHostSyncDisposition(
+  locale: UiLocale,
+  exposureChanged: boolean,
+  remoteMcp: Pick<RemoteMcpStatus, 'state' | 'publicMcpUrl' | 'oauthConnected'> | null,
+): Pick<SetToolAvailabilityResult, 'chatgptActionRefreshMayBeRequired' | 'hostSyncMessage'> {
+  const trustedRemoteActive = remoteMcp?.state === 'running'
+    && remoteMcp.publicMcpUrl !== null
+    && remoteMcp.oauthConnected;
+  if (!exposureChanged || !trustedRemoteActive) {
+    return { chatgptActionRefreshMayBeRequired: false, hostSyncMessage: null };
+  }
+  return {
+    chatgptActionRefreshMayBeRequired: true,
+    hostSyncMessage: locale === 'th'
+      ? 'lnwjud อัปเดตรายการ MCP แบบ live แล้ว แต่ ChatGPT App ที่อนุมัติ action snapshot ไว้อาจยังใช้รายการเดิม การกด F5 ในเบราว์เซอร์ไม่รับประกันว่าจะรีเฟรช snapshot นี้ ให้ใช้ Action Refresh / Scan Tools ใน ChatGPT; ถ้า deployment ไม่มีคำสั่งดังกล่าว ให้ recreate + republish app ตาม workflow ของผู้ดูแล'
+      : 'lnwjud updated the live MCP tool list, but an approved ChatGPT App action snapshot may still use the previous list. Browser F5 is not guaranteed to refresh that snapshot. Use ChatGPT Action Refresh / Scan Tools; if that workflow is unavailable for this deployment, recreate + republish the app through the administrator workflow.',
+  };
 }
 
 interface StartupTunnelController {
@@ -234,10 +262,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const goalRepository = new SqliteGoalRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
+  const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
+  const stopToolAvailabilityWatch = options.watchToolAvailability === true
+    ? toolAvailabilityService.watch(250)
+    : (): void => {};
   const workLogViewState = new WorkLogViewState(settingsRepository);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
-  const checkpointCipher = new AesGcmCheckpointCipher(loadCheckpointEncryptionKey(dataPath));
+  const checkpointCipher = new AesGcmCheckpointCipher(options.checkpointEncryptionKey ?? loadCheckpointEncryptionKey(dataPath));
   const checkpointRepository = new SqliteCheckpointRepository(database, checkpointCipher);
   const backupService = new SqliteBackupService(database, { backupDirectory, databaseFilename });
   void backupService.ensureRecent().catch((error: unknown) => {
@@ -416,15 +448,24 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       ),
       ...(options.hostMutationApprovalProvider === undefined ? {} : { hostMutationApprovalProvider: options.hostMutationApprovalProvider }),
       codexToolsEnabled: readSettings().codexToolsEnabled,
+      toolAvailabilitySnapshotProvider: () => toolAvailabilityService.snapshot(),
+      toolAvailabilitySubscribe: (listener) => toolAvailabilityService.subscribe(listener),
     }),
   });
+  const tunnelSecretDecryptOption = options.decryptTunnelSecret === undefined
+    ? {}
+    : { decryptSecret: options.decryptTunnelSecret };
   const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({
     secretPath: (): string => legacyTunnelSecretPath(),
+    ...tunnelSecretDecryptOption,
   });
   const oauthTunnelBackend = options.tunnelOAuthBackend ?? unavailableTunnelOAuthBackend();
   const oauthTunnelAuthProvider = new OAuthTunnelAuthProvider({
     backend: oauthTunnelBackend,
-    sessionStore: new TunnelOAuthSessionStore({ filePath: oauthTunnelSessionPath() }),
+    sessionStore: new TunnelOAuthSessionStore({
+      filePath: oauthTunnelSessionPath(),
+      ...tunnelSecretDecryptOption,
+    }),
     expectedTunnelId: (): string | null => settingsRepository.get(tunnelIdentitySettingKey),
   });
   const tunnelAuthCoordinator = new TunnelAuthCoordinator(
@@ -741,6 +782,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const toolCatalogOptions: ToolCatalogServiceOptions = {
     profileDecision: (permission): ToolProfileDecision => permission === 'UNKNOWN' ? 'UNKNOWN' : activePermissionProfile().defaults[permission],
     codexEnabled: (): boolean => readSettings().codexToolsEnabled,
+    toolAvailabilitySnapshotProvider: () => toolAvailabilityService.snapshot(),
     externalItems: (locale): Promise<readonly ToolCatalogItem[]> => projectExternalMcpTools(extensionsService, locale),
   };
   const toolCatalogService = new ToolCatalogService(requirementRegistry, remediationRegistry, toolCatalogOptions);
@@ -767,6 +809,29 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       ? (await toolCatalogService.recheck(canonicalIds, request.locale)).catalog
       : await toolCatalogService.getSnapshot(request.locale);
     return { catalog, doctor: await buildFullDoctorReport(request.locale) };
+  };
+  const mutateToolAvailability = async (
+    request: SetToolAvailabilityRequest | ResetToolAvailabilityRequest,
+    enabled: boolean | null,
+  ): Promise<SetToolAvailabilityResult> => {
+    const beforeCatalog = await toolCatalogService.getSnapshot(request.locale);
+    const beforeItem = beforeCatalog.items.find((item) => item.origin === 'lnwjud' && item.name === request.name);
+    if (beforeItem === undefined) throw new Error(`Unknown first-party tool: ${request.name}`);
+    if (enabled === null) toolAvailabilityService.resetTool(request.name);
+    else toolAvailabilityService.setToolEnabled(request.name, enabled);
+    const catalog = await toolCatalogService.getSnapshot(request.locale);
+    const item = catalog.items.find((candidate) => candidate.origin === 'lnwjud' && candidate.name === request.name);
+    if (item === undefined) throw new Error(`Tool Catalog item disappeared after availability update: ${request.name}`);
+    const exposureChanged = beforeItem.effectiveExposed !== item.effectiveExposed;
+    const remoteMcp = exposureChanged ? await remoteMcpController.status() : null;
+    const hostSync = toolAvailabilityHostSyncDisposition(request.locale, exposureChanged, remoteMcp);
+    return {
+      item,
+      localRuntimeApplied: true,
+      mcpListChangedEmitted: exposureChanged && mcpLifecycle.status().running ? null : false,
+      clientReconnectRequired: false,
+      ...hostSync,
+    };
   };
 
   async function resolveWorkspaceOrThrow(workspaceId: string): Promise<Workspace> {
@@ -1111,6 +1176,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     runDoctor: async (): Promise<DoctorReport> => buildFullDoctorReport(readLocale(settingsRepository)),
     getToolCatalog: async (request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot> => toolCatalogService.getSnapshot(request.locale),
     recheckToolCatalog: recheckCatalogAndDoctor,
+    setToolAvailability: async (request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult> => mutateToolAvailability(request, request.enabled),
+    resetToolAvailability: async (request: ResetToolAvailabilityRequest): Promise<SetToolAvailabilityResult> => mutateToolAvailability(request, null),
     getLogSnapshot: async (): Promise<LogSnapshot> => {
       const workLog = await buildWorkLog(auditRepository, workLogViewState);
       const inFlight = activityTracker.listInFlight().map(toInFlightItem);
@@ -1167,6 +1234,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     mcpActor,
     activityTracker,
     logHub,
+    toolAvailabilityService,
     getLocale: (): UiLocale => readLocale(settingsRepository),
     getUserSettings: (): UserSettings => readSettings(),
     getDestructivePolicy: (): DestructiveAutoApprovalPolicy => destructivePolicyProvider(),
@@ -1235,6 +1303,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     ),
     autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => remoteMcpController.autoStartIfDesired(),
     close: async (): Promise<void> => {
+      stopToolAvailabilityWatch();
       await remoteMcpController.close();
       await tunnelController.shutdownForDesktopExit();
       logHub.stop();

@@ -35,6 +35,7 @@ export type LiveScheduledContinuationStatus =
   | 'cancel_uncertain';
 
 /** Historical rows may contain auto/local from pre-v4.27 databases. New preparation is cloud-only. */
+export type ScheduledContinuationOccurrence = 'once' | 'interval';
 export type ScheduledContinuationExecutionPreference = 'auto' | 'cloud' | 'local';
 export type ScheduledContinuationRunsOn = 'cloud' | 'local' | 'unverified';
 export type ScheduledContinuationExpediteReason =
@@ -81,6 +82,13 @@ export type ScheduledContinuationNativeCancellationReceipt =
       readonly observedAt: string;
     };
 
+export interface ScheduledContinuationUserCancellationReceipt {
+  readonly source: 'user_confirmation';
+  readonly nativeTaskId: string;
+  readonly action: 'deleted_in_chatgpt_scheduled_tasks_ui';
+  readonly observedAt: string;
+}
+
 export interface ScheduledContinuationNativeRunReceipt {
   readonly provider: 'chatgpt_scheduled_task';
   readonly operation: 'run';
@@ -95,7 +103,8 @@ export interface ScheduledContinuationSnapshot {
   readonly generation: number;
   readonly sourceGoalRevision: number;
   readonly status: ScheduledContinuationStatus;
-  readonly occurrence: 'once';
+  readonly occurrence: ScheduledContinuationOccurrence;
+  readonly intervalMinutes?: 60;
   readonly destination: 'current_chat';
   readonly executionPreference: ScheduledContinuationExecutionPreference;
   readonly confirmedRunsOn?: ScheduledContinuationRunsOn;
@@ -143,6 +152,9 @@ export interface PrepareScheduledContinuationRecordRequest {
   /** Structured goal-relative task bindings. Omitted only by legacy callers. */
   readonly trackedTasks?: readonly GoalTrackedTask[];
   readonly dueAt: string;
+  /** Omitted by legacy callers; new v4.53 preparation uses an hourly interval watchdog. */
+  readonly occurrence?: ScheduledContinuationOccurrence;
+  readonly intervalMinutes?: 60;
   readonly executionPreference: 'cloud';
   readonly requestFingerprint: string;
   readonly now: string;
@@ -164,6 +176,7 @@ export interface RecordScheduledContinuationReceiptRecordRequest {
   readonly runsOn?: ScheduledContinuationRunsOn;
   readonly nativeRunReceipt?: ScheduledContinuationNativeRunReceipt;
   readonly nativeCancellationReceipt?: ScheduledContinuationNativeCancellationReceipt;
+  readonly userCancellationReceipt?: ScheduledContinuationUserCancellationReceipt;
   readonly detail?: string;
   readonly now: string;
 }
@@ -238,6 +251,27 @@ export type ClaimScheduledContinuationRecordResult =
       /** Fresh future ticket reserved atomically while the firing continuation becomes historical. */
       readonly successor: ScheduledContinuationRecord;
       readonly successorDisposition: 'freshly_reserved';
+    }
+  | {
+      readonly outcome: 'recurring_acquired';
+      readonly acquisition: ScheduledContinuationAcquisition;
+      readonly goal: GoalRecord;
+      readonly continuation: ScheduledContinuationRecord;
+      /** Stable idempotency key for this firing of the recurring native task. */
+      readonly runKey: string;
+    }
+  | {
+      readonly outcome: 'worker_busy_noop' | 'orphan_probe_noop';
+      readonly goal: GoalRecord;
+      readonly continuation: ScheduledContinuationRecord;
+      readonly runKey: string;
+      readonly retryAfterSeconds: number;
+    }
+  | {
+      readonly outcome: 'terminal_cleanup_required';
+      readonly goal: GoalRecord;
+      readonly continuation: ScheduledContinuationRecord;
+      readonly runKey: string;
     }
   | {
       readonly outcome: 'successor_required';

@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.52.4 (มีทั้งหมด 231 definitions; advertise 224 tools โดยปริยาย และครบ 231 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.54.0 (มีทั้งหมด 231 definitions; advertise 224 tools โดยปริยายก่อนใช้ per-tool override และครบ 231 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
@@ -8,7 +8,7 @@
 
 lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggregator แต่เป็น Windows-first local development gateway ที่เปิดความสามารถของเครื่องและ workspace ให้ AI host ที่พูดภาษา Model Context Protocol (MCP) ได้
 
-ความสามารถหลักใน v4.52.4 คือ:
+ความสามารถหลักใน v4.54.0 คือ:
 
 - เปิด workspace และ machine roots ให้ AI อ่าน ค้นหา วิเคราะห์ และแก้ไขไฟล์ได้
 - ใช้ Context Economy Engine ลด I/O/token จากการค้นหาอัตโนมัติ โดยยังอ่าน .env, .git, dist และ node_modules ได้เมื่อร้องขอแบบ explicit และอยู่ในขอบเขตที่ workspace/path policy อนุญาต
@@ -24,6 +24,9 @@ lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggr
 - มี task/delegation/session/checkpoint/handoff สำหรับงานต่อเนื่องและหลาย agent
 - มี Permission v2, lifecycle hooks, audit, Live Logs v2, telemetry, Context Ledger/diff/dedupe, recovery และ capability discovery
 - รองรับ visual adapter สำหรับ screenshot, DOM/layout, Excel และ PDF
+- ปิด Native ChatGPT recurring watchdog ก่อน terminal completion เป็นเส้นทางหลัก และกู้ exact pending cleanup locator จาก durable state ได้หาก host surface/turn หลุดระหว่างปิดงาน; terminal cleanup-only wake ไม่มีสิทธิ์กลับไปแก้ workspace
+- เปิด/ปิด first-party tool รายตัวได้แบบ persisted โดยแยก `userPreference`, `systemEligible`, `effectiveExposed` ออกจาก readiness/permission; state เดียวกันบังคับทั้ง `tools/list`, `tools/call`, batch และ discovery/ranking โดย per-tool override ไม่สามารถข้าม Settings/runtime prerequisite ได้ เช่น `codex_*` และ `agent_swarm_run` จะยังไม่ถูก expose จนกว่า Codex Delegation จะเปิดและ runtime ที่จำเป็นพร้อม
+- MCP connection ที่ค้างอยู่รับการเปลี่ยน tool list ผ่าน SDK `notifications/tools/list_changed`; stdio process เห็น state จาก SQLite ร่วมด้วย bounded watcher โดยไม่ต้อง restart
 
 ทุกการทำงานวิ่งบน Windows เครื่องเดียวกับ lnwjud ยกเว้นชั้นเชื่อมต่อที่ส่ง MCP ผ่าน tunnel หรือ transport ที่ client ใช้
 
@@ -56,6 +59,8 @@ flowchart LR
 5. ChatGPT เห็น tools/list และเรียก tool ผ่าน tunnel โดยใช้ Active Project, permission profile และ native approval ของ Desktop runtime ชุดเดียวกัน
 
 เครื่องไม่ต้องเปิด inbound firewall หรือ public port ต้องมี Tunnel ID, runtime key ที่มีสิทธิ์ Tunnels Read + Use และการผูก tunnel เข้ากับ ChatGPT workspace ตามข้อกำหนดของ OpenAI
+
+เมื่อผู้ใช้เปลี่ยน per-tool availability ฝั่ง MCP จะเปลี่ยน live และส่ง `notifications/tools/list_changed` ตาม protocol แต่ ChatGPT app/action catalog ที่ผ่านการ approve แล้วอาจเป็น host-managed frozen snapshot. ถ้า ChatGPT ยังเห็นรายการเก่า ให้ใช้ Action Refresh / Scan Tools หรือ app update flow ที่ workspace นั้นเปิดให้จริง; **ห้ามถือว่า browser F5 อย่างเดียวรับประกันการ sync** และ lnwjud จะไม่รายงานว่า host refresh สำเร็จหากไม่มีหลักฐานจาก host.
 
 `lnwjud-mcp-stdio.cmd` ใช้สำหรับ **direct local STDIO client** เช่น Codex CLI/IDE เท่านั้น ไม่ใช่ transport ของ Secure Tunnel ปัจจุบัน ส่วน `lnwjud.exe --mcp-stdio` เป็น compatibility path และไม่ใช่คำสั่งที่ UI แนะนำให้ copy
 

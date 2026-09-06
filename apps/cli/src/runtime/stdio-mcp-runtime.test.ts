@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { CAPABILITY_TASK_OWNER_METADATA_KEY } from '@lnwjud/capabilities';
+import { USER_SETTING_KEYS, serializeToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { createStdioMcpRuntime } from './stdio-mcp-runtime.js';
 import { sharedActivityLeaseDirectoryPath } from '@lnwjud/mcp-server';
 
@@ -18,6 +19,14 @@ const workspace = {
   realRootPath: 'E:\fixture',
   createdAt: '2026-08-10T00:00:00.000Z',
 };
+
+async function waitUntil(predicate: () => boolean, timeoutMs: number = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for cross-process tool availability refresh');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 beforeEach(() => {
   process.env.LNWJUD_CHECKPOINT_KEY_BASE64 = TEST_CHECKPOINT_KEY;
@@ -43,6 +52,33 @@ describe('stdio MCP runtime', () => {
       expect(runtime.services.goals).toBeDefined();
       expect(runtime.services.scheduledContinuations).toBeDefined();
     } finally {
+      await runtime.close();
+    }
+  });
+
+  it('observes persisted tool availability writes from another SQLite connection without restart or duplicate unrelated notifications', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-tool-availability-'));
+    temporaryRoots.push(dataPath);
+    const runtime = createStdioMcpRuntime(dataPath, workspace);
+    const externalDatabase = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    const externalSettings = new SqliteSettingsRepository(externalDatabase);
+    let notifications = 0;
+    const unsubscribe = runtime.toolAvailabilityService.subscribe(() => { notifications += 1; });
+    try {
+      externalSettings.set(USER_SETTING_KEYS.toolAvailability, serializeToolAvailabilitySnapshot({
+        version: 1,
+        generation: 1,
+        overrides: { scheduler: 'disabled' },
+      }));
+      await waitUntil(() => runtime.toolAvailabilityService.snapshot().overrides.scheduler === 'disabled');
+      expect(notifications).toBe(1);
+
+      externalSettings.set(USER_SETTING_KEYS.updateAutoCheck, 'false');
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(notifications).toBe(1);
+    } finally {
+      unsubscribe();
+      externalDatabase.close();
       await runtime.close();
     }
   });
