@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RequirementRegistry } from '../src/main/tool-catalog/requirement-registry.js';
 import { RemediationRegistry } from '../src/main/tool-catalog/remediation-registry.js';
+import type { ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { ToolCatalogService } from '../src/main/tool-catalog/tool-catalog-service.js';
 
 function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'unknown'>>, options: { profileDecision?: 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN'; codexEnabled?: boolean; availabilityOverrides?: Record<string, 'enabled' | 'disabled'> } = {}): { registry: RequirementRegistry; catalog: ToolCatalogService; probes: Record<string, ReturnType<typeof vi.fn>> } {
@@ -29,7 +30,7 @@ function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'u
   const catalog = new ToolCatalogService(registry, new RemediationRegistry(), {
     profileDecision: (): 'ALLOW' | 'ASK' | 'DENY' | 'UNKNOWN' => options.profileDecision ?? 'ALLOW',
     codexEnabled: (): boolean => options.codexEnabled ?? false,
-    toolAvailabilitySnapshotProvider: () => ({ version: 1, generation: 1, overrides: options.availabilityOverrides ?? {} }),
+    toolAvailabilitySnapshotProvider: (): ToolAvailabilitySnapshot => ({ version: 1, generation: 1, overrides: options.availabilityOverrides ?? {} }),
   });
   return { registry, catalog, probes };
 }

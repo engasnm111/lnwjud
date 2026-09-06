@@ -215,12 +215,12 @@ Every first-party tool should expose:
 3. **userPreference** — `default | enabled | disabled`;
 4. **effectiveExposed** — final result used by MCP.
 
-Readiness stays independent. A tool can be:
+Readiness stays independent from user intent, while hard Settings/runtime eligibility remains authoritative. A tool can be:
 
 - runtime-ready but user-disabled;
-- user-enabled but dependency-gated/not ready;
+- persisted as user-enabled while a hard Settings/runtime prerequisite keeps `effectiveExposed=false`;
 - user-default and effective-enabled;
-- user-enabled but hard-unavailable on this platform.
+- user-enabled in persisted intent but hard-unavailable on this platform/provider, with the UI blocking a misleading enable action until prerequisites are satisfied.
 
 Do not reuse current `feature_disabled` readiness reason to mean user choice.
 
