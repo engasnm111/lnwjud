@@ -1608,10 +1608,21 @@ button.titlebar-version:hover {
 .tool-card:hover, .tool-card:focus-within { border-color: var(--gold-primary); }
 .tool-card-open { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; text-align: left; border: 0; border-radius: 0; background: transparent; }
 .tool-card-open:hover, .tool-card-open:focus-visible { background: rgba(255,255,255,.018); }
-.tool-card-availability { min-width: 170px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-left: 1px solid var(--border-subtle); }
-.tool-card-availability label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
-.tool-card-availability button { padding: 6px 8px; font-size: 11px; }
+.tool-card-availability { min-width: 176px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 9px 12px; border-left: 1px solid var(--border-subtle); }
+.tool-card-availability > button:not(.tool-availability-switch) { padding: 6px 8px; font-size: 11px; }
 .tool-card-availability-readonly { color: var(--muted); font-size: 11px; }
+.tool-availability-switch { min-width: 104px; min-height: 36px; display: inline-flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 5px 7px 5px 11px; border: 1px solid rgba(255,255,255,.08); border-radius: 999px; background: rgba(255,255,255,.025); color: var(--muted); box-shadow: inset 0 1px 0 rgba(255,255,255,.025); cursor: pointer; white-space: nowrap; transition: border-color .16s ease, background .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.tool-availability-switch:hover:not(:disabled) { border-color: rgba(230,184,74,.34); background: rgba(230,184,74,.07); transform: translateY(-1px); }
+.tool-availability-switch:focus-visible { outline: 2px solid rgba(230,184,74,.58); outline-offset: 2px; }
+.tool-availability-switch.is-on { border-color: rgba(230,184,74,.28); background: linear-gradient(135deg, rgba(230,184,74,.10), rgba(255,255,255,.025)); color: #f2d47d; box-shadow: inset 0 0 0 1px rgba(230,184,74,.025), 0 5px 18px rgba(0,0,0,.12); }
+.tool-availability-switch:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.tool-availability-switch-state { min-width: 34px; font-size: 11px; font-weight: 800; line-height: 1; text-align: right; }
+.tool-availability-switch-track { position: relative; width: 42px; height: 24px; flex: 0 0 42px; border: 1px solid rgba(255,255,255,.13); border-radius: 999px; background: rgba(255,255,255,.08); box-shadow: inset 0 2px 6px rgba(0,0,0,.26); transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+.tool-availability-switch-thumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #aeb7c5; box-shadow: 0 2px 7px rgba(0,0,0,.36); transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
+.tool-availability-switch.is-on .tool-availability-switch-track { border-color: rgba(230,184,74,.64); background: linear-gradient(135deg, #b9851f, #e7b94e); box-shadow: inset 0 1px 2px rgba(255,255,255,.16), 0 0 0 1px rgba(230,184,74,.05); }
+.tool-availability-switch.is-on .tool-availability-switch-thumb { background: #fff9e8; transform: translateX(18px); box-shadow: 0 2px 8px rgba(0,0,0,.42); }
+.tool-availability-switch.is-busy .tool-availability-switch-thumb { animation: tool-switch-pulse 1s ease-in-out infinite; }
+@keyframes tool-switch-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .58; } }
 .tool-availability-on { color: #7ee5a1; }
 .tool-availability-off { color: #b7c0ce; }
 .tool-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #678bc4; }
@@ -1642,7 +1653,7 @@ button.titlebar-version:hover {
 .tool-availability-panel { margin-top: 14px; padding: 12px 13px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--border-subtle); border-radius: 10px; background: rgba(255,255,255,.018); }
 .tool-availability-panel > div { flex: 1 1 280px; display: grid; gap: 3px; }
 .tool-availability-panel small { color: var(--muted); }
-.tool-availability-panel label { display: inline-flex; align-items: center; gap: 7px; }
+.tool-availability-panel > button:not(.tool-availability-switch) { padding: 7px 9px; font-size: 11px; }
 .tool-readiness-badge, .doctor-status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border: 1px solid var(--border-subtle); border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1.2; text-transform: uppercase; }
 .tool-readiness-ready, .doctor-status-pass { color: #7ee5a1; border-color: rgba(74,222,128,.32); background: rgba(74,222,128,.08); }
 .tool-readiness-needs_setup, .doctor-status-warn { color: #f6d878; border-color: rgba(245,197,66,.34); background: rgba(245,197,66,.08); }

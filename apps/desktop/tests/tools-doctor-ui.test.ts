@@ -176,6 +176,29 @@ describe('Tools and Doctor UX', () => {
     expect(markup).toContain('จะไม่พาไปหน้า Settings ที่ไม่เกี่ยวข้อง');
   });
 
+  it('renders a polished accessible availability switch in both the catalog and detail modal', () => {
+    const enabledTool: ToolCatalogItem = { ...tool, userPreference: 'enabled', effectiveExposed: true };
+    const snapshot = { generatedAt: checkedAt, locale: 'en' as const, items: [enabledTool], remediations: [] };
+    const toolsMarkup = renderToStaticMarkup(createElement(ToolsPage, {
+      locale: 'en', snapshot, loading: false, onRefresh: async () => undefined, onRemediation: async () => undefined,
+      onSetAvailability: async () => undefined,
+    }));
+    const modalMarkup = renderToStaticMarkup(createElement(ToolDetailModal, {
+      locale: 'en', item: enabledTool, remediations: [], onClose: () => undefined, onRemediation: () => undefined,
+      onSetAvailability: async () => undefined,
+    }));
+    const styles = readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+
+    expect(toolsMarkup).toContain('role="switch"');
+    expect(toolsMarkup).toContain('aria-checked="true"');
+    expect(toolsMarkup).toContain('tool-availability-switch is-on');
+    expect(toolsMarkup).toContain('tool-availability-switch-track');
+    expect(modalMarkup).toContain('tool-availability-switch is-on');
+    expect(styles).toContain('.tool-availability-switch.is-on .tool-availability-switch-track');
+    expect(styles).toContain('.tool-availability-switch:focus-visible');
+    expect(styles).not.toContain('.tool-card-availability label {');
+  });
+
   it('exposes status filters as pressed-state toggles and keeps selected labels/focus legible', () => {
     const snapshot = { generatedAt: checkedAt, locale: 'en' as const, items: [tool], remediations: [] };
     const markup = renderToStaticMarkup(createElement(ToolsPage, {
