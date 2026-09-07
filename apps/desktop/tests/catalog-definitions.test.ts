@@ -37,6 +37,38 @@ describe('canonical bilingual tool catalog', () => {
     }
   });
 
+  it('distinguishes the local Windows scheduler from Native ChatGPT Scheduled Tasks', () => {
+    const scheduler = catalogDefinitions.scheduler;
+    expect(scheduler).toBeDefined();
+    if (scheduler === undefined) return;
+
+    const en = {
+      title: resolveCatalogCopy('en', scheduler.titleKey),
+      short: resolveCatalogCopy('en', scheduler.shortDescriptionKey),
+      long: resolveCatalogCopy('en', scheduler.longDescriptionKey),
+    };
+    const th = {
+      title: resolveCatalogCopy('th', scheduler.titleKey),
+      short: resolveCatalogCopy('th', scheduler.shortDescriptionKey),
+      long: resolveCatalogCopy('th', scheduler.longDescriptionKey),
+    };
+
+    expect(en.title).toContain('Windows Task Scheduler');
+    expect(en.short).toContain('not Native ChatGPT Scheduled Tasks');
+    expect(en.long).toContain('host-owned');
+    expect(th.title).toContain('ภายในเครื่อง');
+    expect(th.short).toContain('ไม่ใช่ Native ChatGPT Scheduled Tasks');
+    expect(th.long).toContain('ChatGPT host');
+  });
+
+  it('keeps Windows-native capability tools on an explicit Windows platform boundary', () => {
+    for (const name of ['system_info', 'notification', 'file_dialog', 'clipboard', 'audio', 'screen_record', 'office', 'scheduler'] as const) {
+      expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows');
+    }
+    expect(catalogDefinitions.shell?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.web_fetch?.requirementIds).not.toContain('platform_windows');
+  });
+
   it('keeps provider-specific tools on their real prerequisites', () => {
     expect(catalogDefinitions.inspect_pdf?.requirementIds).toContain('local_pdf_provider');
     expect(catalogDefinitions.pdf_extract_tables?.requirementIds).toContain('local_pdf_provider');

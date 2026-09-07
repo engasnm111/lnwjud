@@ -82,13 +82,24 @@ const cancelGoalSchema = z.object({
   evidence: z.array(evidence).max(20),
 }).strict();
 
+const reconcileGoalsSchema = z.object({
+  workspaceId: z.string().min(1).max(128),
+  goalIds: z.array(goalId).min(1).max(20),
+  reason: z.enum(['abandoned', 'superseded']),
+  summary: z.string().min(1).max(2048),
+  apply: z.boolean().default(false),
+  supersededByGoalId: goalId.optional(),
+}).strict().refine((value) => value.reason !== 'superseded' || value.supersededByGoalId !== undefined, {
+  message: 'supersededByGoalId is required when reason=superseded',
+});
+
 const listGoalsSchema = z.object({
   workspaceId: z.string().min(1).max(128).optional(),
   status: z.enum(['active', 'completed', 'failed', 'blocked', 'cancelled']).optional(),
   limit: z.number().int().min(1).max(100).default(50),
 }).strict();
 
-export const GOAL_TOOL_NAMES = ['run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'cancel_goal', 'list_goals'] as const;
+export const GOAL_TOOL_NAMES = ['run_goal', 'get_goal', 'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals'] as const;
 
 export function goalTools(context: McpToolContext): McpToolDefinition[] {
   return [
@@ -211,6 +222,21 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: cancelGoalSchema,
       handler: async (input) => context.services.goals?.cancelGoal(context.actor, input) ?? missingService(),
+    }),
+    defineTool({
+      name: 'reconcile_goals',
+      description: 'Preview or apply exact durable-goal reconciliation after runtime liveness checks.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: reconcileGoalsSchema,
+      handler: async (input) => context.services.goals?.reconcileGoals(context.actor, {
+        workspaceId: input.workspaceId,
+        goalIds: input.goalIds,
+        reason: input.reason,
+        summary: input.summary,
+        apply: input.apply,
+        ...(input.supersededByGoalId === undefined ? {} : { supersededByGoalId: input.supersededByGoalId }),
+      }) ?? missingService(),
     }),
     defineTool({
       name: 'list_goals',

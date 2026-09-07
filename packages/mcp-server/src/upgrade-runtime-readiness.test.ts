@@ -175,11 +175,13 @@ describe('upgrade runtime readiness facades', () => {
     }
   });
 
-  it('performs deterministic screenshot artifact comparison instead of returning metadata-only success', async () => {
+  it('performs deterministic decoded screenshot artifact comparison instead of returning metadata-only success', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
-    await expect(runtime.execute('compare_screenshot', { baseline_base64: 'same', actual_base64: 'same' }))
-      .resolves.toMatchObject({ ok: true, value: { executed: true, equal: true, baseline: { sha256: expect.any(String) } } });
-    await expect(runtime.execute('compare_screenshot', { baseline_base64: 'left', actual_base64: 'right' }))
+    await expect(runtime.execute('compare_screenshot', { baseline_base64: 'c2FtZQ==', actual_base64: 'c2FtZQ==' }))
+      .resolves.toMatchObject({ ok: true, value: { executed: true, equal: true, baseline: { sha256: expect.any(String), bytes: 4 } } });
+    await expect(runtime.execute('compare_screenshot', { baseline_base64: 'bGVmdA==', actual_base64: 'cmlnaHQ=' }))
       .resolves.toMatchObject({ ok: true, value: { executed: true, equal: false } });
+    await expect(runtime.execute('compare_screenshot', { baseline_base64: 'not-base64', actual_base64: 'c2FtZQ==' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('canonical base64') } });
   });
 });

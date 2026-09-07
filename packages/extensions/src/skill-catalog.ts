@@ -3,12 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { isSkillRootEnabled } from './allowlist.js';
-import type { ExtensionsSettings, SkillContent, SkillSummary } from './types.js';
+import type { ExtensionTrustTier, ExtensionsSettings, SkillContent, SkillSummary } from './types.js';
 
 export interface SkillCatalogOptions {
   readonly homeDir?: string;
   readonly workspaceRoot?: string;
   readonly settings: ExtensionsSettings;
+  readonly bundledRoots?: readonly string[];
   readonly extraRoots?: readonly string[];
 }
 
@@ -55,7 +56,12 @@ export class SkillCatalog {
     }
 
     try {
-      const content = await readFile(resolved, 'utf8');
+      const canonicalSkillDir = await realpath(skillDir);
+      const canonicalResolved = await realpath(resolved);
+      if (!isPathInside(canonicalSkillDir, canonicalResolved)) {
+        return err(appError('PATH_OUTSIDE_WORKSPACE', 'Skill relative path resolves outside the canonical skill folder'));
+      }
+      const content = await readFile(canonicalResolved, 'utf8');
       if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) {
         return err(appError('FILE_TOO_LARGE', 'Skill file exceeds 2 MiB'));
       }
@@ -65,7 +71,9 @@ export class SkillCatalog {
         name: meta.name,
         description: meta.description,
         source: skill.source,
+        trustTier: skill.trustTier,
         path: resolved,
+        canonicalPath: canonicalResolved,
         content,
       });
     } catch {
@@ -84,13 +92,17 @@ export class SkillCatalog {
           const content = await readFile(skillPath, 'utf8');
           const fallbackName = path.basename(path.dirname(skillPath));
           const meta = parseSkillMarkdown(content, fallbackName);
+          const canonicalSkillPath = await safeRealpath(skillPath);
+          if (canonicalSkillPath === undefined) continue;
           skills.push({
             id: `${root.source}/${meta.name}`,
             name: meta.name,
             description: meta.description,
             source: root.source,
+            trustTier: trustTierForSource(root.source),
             rootPath: root.path,
             skillPath,
+            canonicalSkillPath,
           });
         } catch {
           continue;
@@ -124,6 +136,9 @@ export class SkillCatalog {
         { source: 'workspace-codex-skills', path: path.join(workspaceRoot, '.codex', 'skills') },
         { source: 'workspace-github-skills', path: path.join(workspaceRoot, '.github', 'skills') },
       );
+    }
+    for (const bundled of this.options.bundledRoots ?? []) {
+      defaults.push({ source: `bundled:${path.basename(bundled)}`, path: path.resolve(bundled) });
     }
     for (const extra of [...this.options.settings.extraSkillRoots, ...(this.options.extraRoots ?? [])]) {
       defaults.push({ source: `extra:${path.basename(extra)}`, path: path.resolve(extra) });
@@ -298,6 +313,13 @@ function dedupeByPathAndDisambiguateIds(skills: readonly SkillSummary[]): readon
 function normalizePathKey(value: string): string {
   const resolved = path.resolve(value).replaceAll('\\', '/');
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function trustTierForSource(source: string): ExtensionTrustTier {
+  if (source.startsWith('bundled:')) return 'bundled';
+  if (source.startsWith('workspace-')) return 'workspace';
+  if (source.startsWith('extra:')) return 'external';
+  return 'user';
 }
 
 function normalizeSearchText(value: string): string {

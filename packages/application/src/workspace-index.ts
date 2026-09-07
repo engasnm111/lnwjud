@@ -76,12 +76,16 @@ export type WorkspaceIndexWatchOptions = WorkspaceIndexQueueOptions;
 
 export interface WorkspaceIndexOptions {
   readonly discovery?: ContextDiscoveryMode;
+  readonly rebuild?: boolean;
 }
 
 export interface WorkspaceIndexStatus {
   readonly indexed: boolean;
   readonly snapshot: WorkspaceIndexSnapshot | null;
   readonly watcher: WorkspaceIndexQueueStatus | null;
+  readonly generation: string | null;
+  readonly freshness: 'missing' | 'unverified' | 'watching_clean' | 'watching_pending' | 'watching_degraded';
+  readonly stale: boolean | null;
 }
 
 export class WorkspaceIndexService {
@@ -95,6 +99,13 @@ export class WorkspaceIndexService {
   public async indexWorkspace(workspaceId: string, options: WorkspaceIndexOptions = {}): Promise<Result<WorkspaceIndexSnapshot>> {
     const workspace = await this.resolve(workspaceId);
     if (!workspace.ok) return workspace;
+    const watcher = this.watchers.get(workspaceId);
+    const current = await this.store.load(workspaceId);
+    if (options.rebuild !== true && current !== null && watcher !== undefined) {
+      await watcher.queue.drain();
+      const refreshed = await this.store.load(workspaceId);
+      if (refreshed !== null) return ok(refreshed);
+    }
     const entries: WorkspaceIndexEntry[] = [];
     await this.scanDirectory(workspace.value.realRootPath, workspace.value.realRootPath, entries, options.discovery ?? 'automatic');
     const snapshot = this.snapshotValue(workspace.value, entries);
@@ -149,10 +160,15 @@ export class WorkspaceIndexService {
   public async status(workspaceId: string): Promise<Result<WorkspaceIndexStatus>> {
     const snapshot = await this.snapshot(workspaceId);
     if (!snapshot.ok) return snapshot;
+    const watcher = this.watchers.get(workspaceId)?.queue.status() ?? null;
+    const freshness = indexFreshness(snapshot.value, watcher);
     return ok({
       indexed: snapshot.value !== null,
       snapshot: snapshot.value,
-      watcher: this.watchers.get(workspaceId)?.queue.status() ?? null,
+      watcher,
+      generation: snapshot.value === null ? null : snapshotGeneration(snapshot.value),
+      freshness: freshness.state,
+      stale: freshness.stale,
     });
   }
 
@@ -257,6 +273,22 @@ export class WorkspaceIndexService {
   private snapshotValue(workspace: Workspace, entries: readonly WorkspaceIndexEntry[]): WorkspaceIndexSnapshot {
     return { version: 1, workspaceId: workspace.id, rootPath: workspace.realRootPath, indexedAt: new Date().toISOString(), entries: [...entries].sort((left, right) => left.relativePath.localeCompare(right.relativePath)) };
   }
+}
+
+function snapshotGeneration(snapshot: WorkspaceIndexSnapshot): string {
+  const identity = snapshot.entries.map((entry) => [entry.relativePath, entry.kind, entry.mtimeMs, entry.size, entry.contentHash]);
+  return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+}
+
+function indexFreshness(
+  snapshot: WorkspaceIndexSnapshot | null,
+  watcher: WorkspaceIndexQueueStatus | null,
+): { readonly state: WorkspaceIndexStatus['freshness']; readonly stale: boolean | null } {
+  if (snapshot === null) return { state: 'missing', stale: null };
+  if (watcher === null) return { state: 'unverified', stale: null };
+  if (watcher.failedEvents > 0) return { state: 'watching_degraded', stale: true };
+  if (watcher.pendingEvents > 0 || watcher.activeWorkers > 0) return { state: 'watching_pending', stale: true };
+  return { state: 'watching_clean', stale: false };
 }
 
 function normalizeRelativePath(value: string): string {

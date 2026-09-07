@@ -57,6 +57,22 @@ describe('SandboxRuntimeService', () => {
     });
   });
 
+  it('fails closed when the workspace registry is unavailable', async () => {
+    await withTempRoot(async (root) => {
+      const runtime = new SandboxRuntimeService({} as McpApplicationServices, actor, {
+        platform: 'win32',
+        sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
+      });
+      await expect(runtime.execute({ workspaceId: 'ws-1', executable: 'node', arguments: ['--version'] })).resolves.toMatchObject({
+        ok: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: expect.stringContaining('verified registered workspace'),
+        },
+      });
+    });
+  });
+
   it('returns the artifact-only plan as a dry-run by default', async () => {
     await withTempRoot(async (root) => {
       const runtime = service({ root });

@@ -10,6 +10,7 @@ import {
   type CheckpointGoalRecordRequest,
   type CancelGoalRecordRequest,
   type CancelGoalRecordResult,
+  type ReconcileGoalRecordRequest,
   type FinishGoalRecordRequest,
   type GoalCheckpointRecord,
   type GoalEvidence,
@@ -279,7 +280,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       const normalLeaseExpiresAt = addSeconds(request.now, leaseDurationSeconds);
       const leaseExpiresAt = request.releaseLease
         ? null
-        : liveContinuation === undefined
+        : liveContinuation === undefined || liveContinuation.occurrence === 'interval'
           ? normalLeaseExpiresAt
           : minIso(normalLeaseExpiresAt, liveContinuation.pending_due_at ?? liveContinuation.due_at);
       const changed = this.database.connection.prepare(`
@@ -442,6 +443,71 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         createdAt: request.now,
       });
       return { goal: this.requireById(request.goalId), trackedTaskIds, trackedTasks };
+    });
+  }
+
+  public async reconcile(request: ReconcileGoalRecordRequest): Promise<GoalRecord> {
+    return this.transaction(() => {
+      const current = this.requireById(request.goalId);
+      this.assertOwner(current, request.ownerClientId);
+      if (current.status !== 'active') return current;
+      if (current.revision !== request.expectedRevision
+        || current.leaseGeneration !== request.expectedLeaseGeneration
+        || current.leaseActivitySeq !== request.expectedLeaseActivitySeq) {
+        throw new GoalStateError('conflict', 'Goal changed after reconciliation liveness evidence was collected');
+      }
+      if (current.leaseExpiresAt !== undefined && parseIso(current.leaseExpiresAt, 'lease expiry') > parseIso(request.now, 'request time')) {
+        throw new GoalStateError('conflict', 'A still-valid goal lease cannot be reconciled as abandoned');
+      }
+      const liveContinuation = this.selectLiveScheduledContinuation(request.goalId);
+      if (liveContinuation !== undefined) {
+        throw new GoalStateError('conflict', 'Live scheduled continuation must be made non-runnable or historical before goal reconciliation');
+      }
+
+      const revision = current.revision + 1;
+      const evidence = [
+        ...request.evidence,
+        { kind: 'note' as const, value: `lnwjud:reconciliation:${request.reason}` },
+      ];
+      const changed = this.database.connection.prepare(`
+        UPDATE goals
+        SET status = 'cancelled', revision = ?, current_phase = 'reconciled', next_action = '', blockers_json = '[]', active_task_ids_json = '[]', tracked_tasks_json = '[]',
+            lease_owner_client_id = NULL, lease_owner_session_id = NULL, lease_token_hash = NULL, lease_duration_seconds = NULL,
+            lease_heartbeat_at = NULL, lease_expires_at = NULL, updated_at = ?,
+            terminal_summary = ?, terminal_evidence_json = ?, terminal_at = ?
+        WHERE id = ? AND revision = ? AND lease_generation = ? AND lease_activity_seq = ? AND status = 'active'
+      `).run(
+        revision,
+        request.now,
+        request.summary,
+        JSON.stringify(evidence),
+        request.now,
+        request.goalId,
+        request.expectedRevision,
+        request.expectedLeaseGeneration,
+        request.expectedLeaseActivitySeq,
+      );
+      if (Number(changed.changes) !== 1) throw new GoalStateError('conflict', 'Goal reconciliation lost the compare-and-swap race');
+      this.database.connection.prepare(`
+        UPDATE goal_fenced_mutation_calls
+        SET completed_at = COALESCE(completed_at, ?)
+        WHERE goal_id = ? AND completed_at IS NULL
+      `).run(request.now, request.goalId);
+      this.insertCheckpoint({
+        id: request.checkpointId,
+        goalId: request.goalId,
+        revision,
+        currentPhase: 'reconciled',
+        summary: request.summary,
+        stepUpdates: [],
+        nextAction: '',
+        blockers: [],
+        evidence,
+        activeTaskIds: [],
+        trackedTasks: [],
+        createdAt: request.now,
+      });
+      return this.requireById(request.goalId);
     });
   }
 

@@ -119,6 +119,7 @@ const batchGroupSchema = z.object({
 
 export const toolBatchSchema = z.object({
   parallel: z.boolean().default(true),
+  maxConcurrency: z.number().int().min(1).max(16).default(8),
   calls: z.array(batchCallSchema).max(50).optional(),
   groups: z.array(batchGroupSchema).max(20).optional(),
 }).strict()

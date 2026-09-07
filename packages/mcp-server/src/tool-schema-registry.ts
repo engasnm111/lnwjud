@@ -1,12 +1,14 @@
-import type { McpPermissionLevel, McpToolDefinition } from './tools/tool-types.js';
+import type { McpPermissionLevel, McpToolAnnotations, McpToolDefinition, McpToolExecution } from './tools/tool-types.js';
 
 export interface ToolSchemaMetadata {
   readonly id: string;
   readonly version: string;
   readonly inputSchema: unknown;
-  readonly outputSchema: 'structured-result';
+  readonly outputSchema: unknown;
   readonly permissions: readonly McpPermissionLevel[];
   readonly riskClass: McpPermissionLevel;
+  readonly annotations: McpToolAnnotations;
+  readonly execution: McpToolExecution;
   readonly streamingSupport: boolean;
   readonly parallelSafe: boolean;
   readonly pluginOwner: string;
@@ -20,9 +22,11 @@ export class ToolSchemaRegistry {
       id: tool.name,
       version: options.version ?? '1.0.0',
       inputSchema: tool.inputSchema,
-      outputSchema: 'structured-result',
+      outputSchema: tool.outputSchema,
       permissions: [tool.permission],
       riskClass: tool.permission,
+      annotations: tool.annotations,
+      execution: tool.execution,
       streamingSupport: /(?:page|context|map|stream|logs)/i.test(tool.name),
       parallelSafe: tool.permission === 'READ' && tool.annotations.readOnlyHint && !tool.annotations.destructiveHint,
       pluginOwner: options.pluginOwner ?? 'core',

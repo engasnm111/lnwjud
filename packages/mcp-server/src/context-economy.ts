@@ -222,6 +222,26 @@ export class ContextEconomyRuntime {
     for (const key of Object.keys(this.stats) as Array<keyof MutableStats>) this.stats[key] = 0;
   }
 
+  public invalidate(workspaceId?: string, filePath?: string): number {
+    const normalizedPath = filePath?.replaceAll('\\', '/').toLowerCase();
+    let removed = 0;
+    for (const [key, entry] of [...this.byPath.entries()]) {
+      if (workspaceId !== undefined && entry.workspaceId !== workspaceId) continue;
+      if (normalizedPath !== undefined) {
+        const entryPath = entry.path.replaceAll('\\', '/').toLowerCase();
+        if (entryPath !== normalizedPath && !entryPath.startsWith(`${normalizedPath}/`)) continue;
+      }
+      this.byPath.delete(key);
+      this.storedBytes -= entry.content === undefined ? 0 : entry.byteLength;
+      removed += 1;
+    }
+    this.byFingerprint.clear();
+    for (const entry of this.byPath.values()) {
+      if (entry.content !== undefined && !this.byFingerprint.has(entry.fingerprint)) this.byFingerprint.set(entry.fingerprint, entry);
+    }
+    return removed;
+  }
+
   private recordSkippedClassification(classification: ContextPathClassification, byteLength: number): void {
     if (classification.kind === 'ignored') this.stats.defaultIgnoredPaths += 1;
     if (classification.kind === 'generated') {

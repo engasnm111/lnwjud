@@ -16,7 +16,9 @@ import type { FileActor } from '@lnwjud/application';
 import { capabilityDescriptors, EventLogCapabilityBackend, type CapabilityDescriptor } from '@lnwjud/capabilities';
 import type { McpApplicationServices } from './tools/tool-types.js';
 import { ContextEngine } from './context-engine.js';
+import type { ActivityTelemetrySnapshot, ActivityTracker, ToolTelemetrySnapshot } from './activity-tracker.js';
 import { ContextEconomyRuntime } from './context-economy.js';
+import { IncrementalVerifier } from './incremental-verifier.js';
 import { DatabaseRuntimeService } from './database-runtime.js';
 import { DocumentRuntimeService } from './document-runtime.js';
 import { LspRuntimeService } from './lsp-runtime.js';
@@ -25,6 +27,12 @@ import { withCapabilityOwnerMetadata } from './request-scope.js';
 import { SandboxRuntimeService } from './sandbox-runtime.js';
 import { truthfulUnavailable } from './tool-delivery-contract.js';
 import { UPGRADE_TOOL_CATALOG, type UpgradeToolCatalogEntry } from './upgrade-catalog.js';
+import {
+  upgradeToolAnnotations,
+  upgradeToolExecution,
+  upgradeToolInputJsonSchema,
+  upgradeToolOutputJsonSchema,
+} from './upgrade-tool-contracts.js';
 import { UpgradeRuntimeStateStore, type UpgradeRuntimeSessionState, type UpgradeRuntimeSharedState } from './upgrade-runtime-state-store.js';
 
 interface RuntimeTask {
@@ -65,9 +73,25 @@ interface RankedToolCandidate {
     readonly authorization: 'not_granted_by_ranking';
     readonly destructiveHint: boolean;
   };
+  readonly rankingSignals: {
+    readonly readiness: UpgradeToolCatalogEntry['deliveryState'];
+    readonly schemaMatchedFields: readonly string[];
+    readonly telemetrySamples: number;
+    readonly successRate: number | null;
+    readonly p95LatencyMs: number | null;
+  };
   readonly source: 'primitive' | 'upgrade';
   readonly tags: readonly string[];
   readonly phase: number;
+}
+
+interface RuntimePluginDescriptor {
+  readonly name: string;
+  enabled: boolean;
+  readonly source: string;
+  readonly version: string;
+  readonly trustTier: 'external';
+  readonly namespace: string;
 }
 
 interface WorktreeLedgerEntry {
@@ -122,8 +146,9 @@ export class UpgradeRuntimeService {
   private readonly tasks = new Map<string, RuntimeTask>();
   private readonly checkpoints: SessionCheckpoint[] = [];
   private readonly hooks = new Map<string, { readonly name: string; readonly event: string }>();
-  private readonly plugins = new Map<string, { readonly name: string; enabled: boolean }>();
+  private readonly plugins = new Map<string, RuntimePluginDescriptor>();
   private readonly cache: CacheCounters = { hits: 0, misses: 0, bytesSaved: 0, generation: 0 };
+  private readonly incrementalVerifier: IncrementalVerifier;
   private readonly session = new Map<string, unknown>();
   private readonly worktrees: WorktreeLedgerEntry[] = [];
   private readonly eventLog: EventLogCapabilityBackend;
@@ -139,8 +164,11 @@ export class UpgradeRuntimeService {
     actor: FileActor,
     contextEconomy: ContextEconomyRuntime = new ContextEconomyRuntime(),
     private readonly isToolExposed: (name: string) => boolean = () => true,
+    incrementalVerifier: IncrementalVerifier = new IncrementalVerifier(),
+    private readonly activityTracker?: ActivityTracker,
   ) {
     this.actor = actor;
+    this.incrementalVerifier = incrementalVerifier;
     this.stateStore = services.runtimeStatePath === undefined
       ? undefined
       : new UpgradeRuntimeStateStore(path.resolve(services.runtimeStatePath), runtimeOwnerKey(actor));
@@ -191,20 +219,63 @@ export class UpgradeRuntimeService {
         return ok(isFullBypassAuthorization(authorization)
           ? { profile: 'full', authorizationMode: 'full_bypass', contextReads: 'application-scope-bypassed', dangerousActions: 'application-approval-bypassed', hardBlocksRemain: false, operatingSystemAndRemotePolicyRemain: true }
           : { profile: 'full', authorizationMode: 'standard', contextReads: 'unrestricted-for-allowed-workspaces', dangerousActions: 'policy-gated', hardBlocksRemain: true });
-      case 'cache_stats':
-        return ok({ ...this.cache, hitRate: hitRate(this.cache), entries: 0, invalidation: 'mtime/content-hash/filesystem-event', contextEconomy: this.contextEconomy.snapshot() });
+      case 'cache_stats': {
+        const verification = this.incrementalVerifier.stats();
+        const contextEconomy = this.contextEconomy.snapshot();
+        const hits = verification.hits + contextEconomy.ledgerHits;
+        const misses = verification.misses + Math.max(0, contextEconomy.filesDelivered - contextEconomy.ledgerHits);
+        const bytesSaved = verification.bytesSaved + contextEconomy.previouslySeenBytesAvoided;
+        const entries = verification.entries + contextEconomy.ledgerEntries;
+        const exposedToolNames = SEARCH_CATALOG.filter((entry) => this.isToolExposed(entry.name)).map((entry) => entry.name).sort();
+        const toolCatalogKey = createHash('sha256').update(JSON.stringify(exposedToolNames)).digest('hex');
+        const workspaceId = readString(input, 'workspaceId');
+        let workspaceIndexKey: string | null = null;
+        let workspaceIndexFreshness: Record<string, unknown> | null = null;
+        if (workspaceId !== undefined && this.services.workspaceIndex !== undefined) {
+          const status = await this.services.workspaceIndex.status(workspaceId);
+          if (status.ok && status.value.snapshot !== null) {
+            const freshness = status.value.snapshot.entries.map((entry) => [entry.relativePath, entry.mtimeMs, entry.size, entry.contentHash]);
+            workspaceIndexKey = createHash('sha256').update(JSON.stringify(freshness)).digest('hex');
+            workspaceIndexFreshness = {
+              workspaceId,
+              indexedAt: status.value.snapshot.indexedAt,
+              entries: status.value.snapshot.entries.length,
+              watcher: status.value.watcher,
+            };
+          }
+        }
+        return ok({
+          hits,
+          misses,
+          bytesSaved,
+          generation: this.cache.generation,
+          hitRate: hitRate({ hits, misses, bytesSaved, generation: this.cache.generation }),
+          entries,
+          invalidation: 'mtime/content-hash/filesystem-event',
+          identity: { toolCatalogKey, workspaceIndexKey },
+          sources: { incrementalVerifier: verification, contextEconomyLedgerEntries: contextEconomy.ledgerEntries, workspaceIndexFreshness },
+          contextEconomy,
+        });
+      }
       case 'cache_clear':
       case 'cache_invalidate': {
         const previousGeneration = this.cache.generation;
+        const pathScope = readString(input, 'path');
+        const verificationEntriesRemoved = this.incrementalVerifier.invalidate();
+        const contextEntriesRemoved = name === 'cache_clear'
+          ? this.contextEconomy.snapshot().ledgerEntries
+          : this.contextEconomy.invalidate(undefined, pathScope);
+        if (name === 'cache_clear') this.contextEconomy.reset();
         this.cache.hits = 0;
         this.cache.misses = 0;
         this.cache.bytesSaved = 0;
         this.cache.generation += 1;
         return ok({
           cleared: true,
-          scope: name === 'cache_clear' ? 'all' : readString(input, 'path') ?? 'workspace',
+          scope: name === 'cache_clear' ? 'all' : pathScope ?? 'workspace',
           previousGeneration,
           generation: this.cache.generation,
+          entriesRemoved: verificationEntriesRemoved + contextEntriesRemoved,
         });
       }
       case 'hook_list':
@@ -426,10 +497,11 @@ export class UpgradeRuntimeService {
     const requestedReranker = readString(input, 'reranker') ?? readString(input, 'model') ?? 'deterministic';
     const category = readString(input, 'category')?.toLowerCase();
     const route = routeIntent(query);
+    const telemetry = this.activityTracker?.telemetrySnapshot();
     const scored = SEARCH_CATALOG
       .filter((entry) => this.isToolExposed(entry.name))
       .filter((entry) => category === undefined || entry.tags.some((tag) => tag.toLowerCase() === category))
-      .map((entry) => scoreToolEntry(entry, normalized, route))
+      .map((entry) => scoreToolEntry(entry, normalized, route, telemetry?.byTool[entry.name], telemetry))
       .filter((entry) => normalized.length === 0 || entry.score > 0)
       .sort((left, right) => right.score - left.score || Number(right.entry.primitive === true) - Number(left.entry.primitive === true) || left.entry.name.localeCompare(right.entry.name));
     const rankedCandidates: readonly RankedToolCandidate[] = scored.slice(0, limit).map((candidate) => ({
@@ -442,19 +514,30 @@ export class UpgradeRuntimeService {
         authorization: 'not_granted_by_ranking',
         destructiveHint: candidate.entry.permission === 'DANGEROUS',
       },
+      rankingSignals: candidate.rankingSignals,
       source: candidate.entry.primitive === true ? 'primitive' : 'upgrade',
       tags: candidate.entry.tags,
       phase: candidate.entry.phase,
     }));
-    const selectedModel = requestedReranker === 'local' ? 'deterministic' : 'deterministic';
+    const normalizedReranker = requestedReranker.toLowerCase();
+    const rerankerDisposition = normalizedReranker === 'local'
+      ? 'unavailable'
+      : normalizedReranker === 'deterministic' ? 'deterministic' : 'unsupported';
     return {
       query,
       matches: scored.slice(0, limit).map((candidate) => candidate.entry),
       totalMatches: scored.length,
       limit,
       rankedCandidates,
-      selectedModel,
-      ...(requestedReranker === 'local' ? { fallbackReason: 'local_model_not_configured' } : {}),
+      selectedModel: 'deterministic',
+      reranker: {
+        requested: requestedReranker,
+        disposition: rerankerDisposition,
+        localExecutionPerformed: false,
+        deterministicFallbackApplied: rerankerDisposition !== 'deterministic',
+      },
+      ...(rerankerDisposition === 'unavailable' ? { fallbackReason: 'local_model_not_configured' } : {}),
+      ...(rerankerDisposition === 'unsupported' ? { fallbackReason: 'unsupported_reranker' } : {}),
       primitiveToolsRemainAvailable: true,
       authorizationUnchanged: true,
       route: route.route,
@@ -463,7 +546,29 @@ export class UpgradeRuntimeService {
 
   private describeTool(name: string | undefined): unknown {
     const entry = SEARCH_CATALOG.find((candidate) => candidate.name === name && this.isToolExposed(candidate.name));
-    return entry === undefined ? { found: false, name: name ?? null } : { found: true, ...entry, schema: { type: 'object', additionalProperties: true }, authorizationUnchanged: true };
+    if (entry === undefined) return { found: false, name: name ?? null };
+    const upgradeEntry = UPGRADE_TOOL_CATALOG.find((candidate) => candidate.name === entry.name);
+    if (upgradeEntry === undefined) {
+      return {
+        found: true,
+        ...entry,
+        schema: { type: 'object', additionalProperties: true },
+        contractSource: 'primitive-registry',
+        authorizationUnchanged: true,
+      };
+    }
+    const inputSchema = upgradeToolInputJsonSchema(upgradeEntry);
+    return {
+      found: true,
+      ...entry,
+      schema: inputSchema,
+      inputSchema,
+      outputSchema: upgradeToolOutputJsonSchema(),
+      annotations: upgradeToolAnnotations(upgradeEntry),
+      execution: upgradeToolExecution(upgradeEntry),
+      contractSource: 'upgrade-tool-contracts',
+      authorizationUnchanged: true,
+    };
   }
 
   private categories(): { readonly categories: readonly { readonly category: string; readonly tools: number }[] } {
@@ -485,6 +590,14 @@ export class UpgradeRuntimeService {
     if (name === undefined || name.length === 0 || name.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._@/-]*$/.test(name)) {
       return err(appError('INVALID_INPUT', 'Plugin name must be 1-128 characters and use only letters, numbers, dot, underscore, @, slash, or hyphen'));
     }
+    const source = readString(input, 'source') ?? 'runtime-declaration';
+    const version = readString(input, 'version') ?? '0.0.0';
+    if (source.length > 2048 || containsAsciiControlCharacter(source)) {
+      return err(appError('INVALID_INPUT', 'Plugin source must be a bounded printable provenance string'));
+    }
+    if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+      return err(appError('INVALID_INPUT', 'Plugin version must be a semantic version such as 1.0.0'));
+    }
     if (operation === 'plugin_remove' && !isApplicationAuthorized(authorization, input.userConfirmed === true)) {
       return err(appError('PERMISSION_REQUIRED', 'Removing a plugin requires explicit user confirmation'));
     }
@@ -504,7 +617,14 @@ export class UpgradeRuntimeService {
       }
       if (operation === 'plugin_install') {
         if (!exists) {
-          plugins.set(name, { name, enabled: input.enabled !== false });
+          plugins.set(name, {
+            name,
+            enabled: input.enabled !== false,
+            source,
+            version,
+            trustTier: 'external',
+            namespace: `plugin:${name}`,
+          });
           changed = true;
         }
         return;
@@ -512,7 +632,7 @@ export class UpgradeRuntimeService {
       if (existing !== undefined) {
         const enabled = operation === 'plugin_enable';
         if (existing.enabled !== enabled) {
-          plugins.set(name, { name, enabled });
+          plugins.set(name, { ...existing, enabled });
           changed = true;
         }
       }
@@ -522,8 +642,15 @@ export class UpgradeRuntimeService {
     if (operation !== 'plugin_install' && operation !== 'plugin_remove' && !exists) return err(appError('INVALID_INPUT', 'Plugin must be installed before it can be enabled or disabled'));
     if (operation === 'plugin_remove') return ok({ tool: operation, status: 'ready', available: true, executed: true, changed, name, removed: changed });
     const enabled = operation === 'plugin_install' ? input.enabled !== false : operation === 'plugin_enable';
+    const descriptor = this.plugins.get(name);
     return ok({
       tool: operation, status: 'ready', available: true, executed: true, changed, name, enabled,
+      ...(descriptor === undefined ? {} : {
+        source: descriptor.source,
+        version: descriptor.version,
+        trustTier: descriptor.trustTier,
+        namespace: descriptor.namespace,
+      }),
       ...(currentEnabled === undefined ? {} : { previousEnabled: currentEnabled }),
       persistence: 'shared_locked_state',
     });
@@ -598,6 +725,37 @@ export class UpgradeRuntimeService {
 
   private async telemetryDashboard(): Promise<Result<unknown>> {
     const contextEconomy = this.contextEconomy.snapshot();
+    const verification = this.incrementalVerifier.stats();
+    const cacheHits = verification.hits + contextEconomy.ledgerHits;
+    const cacheMisses = verification.misses + Math.max(0, contextEconomy.filesDelivered - contextEconomy.ledgerHits);
+    const cacheHitRate = cacheHits + cacheMisses === 0 ? 0 : cacheHits / (cacheHits + cacheMisses);
+    const runtimeTelemetry = this.activityTracker?.telemetrySnapshot();
+    if (runtimeTelemetry !== undefined) {
+      return ok({
+        tool: 'telemetry_dashboard', status: 'ready', available: true, ready: true, executed: true,
+        source: 'activity-tracker',
+        mcpCalls: runtimeTelemetry.calls,
+        completedCalls: runtimeTelemetry.completed,
+        successes: runtimeTelemetry.successes,
+        errors: runtimeTelemetry.errors,
+        cancellations: runtimeTelemetry.cancellations,
+        active: runtimeTelemetry.active,
+        averageLatencyMs: runtimeTelemetry.averageLatencyMs,
+        p50LatencyMs: runtimeTelemetry.p50LatencyMs,
+        p95LatencyMs: runtimeTelemetry.p95LatencyMs,
+        maxLatencyMs: runtimeTelemetry.maxLatencyMs,
+        perTool: runtimeTelemetry.byTool,
+        batchPartialFailures: runtimeTelemetry.batchPartialFailures,
+        taskLifecycleCalls: runtimeTelemetry.taskLifecycleCalls,
+        recentErrorClasses: runtimeTelemetry.recentErrorClasses,
+        cache: { hits: cacheHits, misses: cacheMisses, hitRate: cacheHitRate, entries: verification.entries + contextEconomy.ledgerEntries, bytesSaved: verification.bytesSaved + contextEconomy.previouslySeenBytesAvoided },
+        cacheHitRate,
+        contextBytes: contextEconomy.contextSentBytes,
+        filesScanned: contextEconomy.filesDiscovered,
+        filesDelivered: contextEconomy.filesDelivered,
+        contextEconomy,
+      });
+    }
     const filePath = this.activityLogPath();
     if (filePath === undefined) {
       return ok({
@@ -761,7 +919,13 @@ export class UpgradeRuntimeService {
   private listToolSchemas(): readonly Record<string, unknown>[] {
     const baseline = UPGRADE_TOOL_CATALOG.map((entry) => ({
       id: entry.name, version: '1.0.0', permissions: [entry.permission], streamable: entry.streamable === true,
-      parallelSafe: entry.parallelSafe === true, source: 'built_in', schema: { type: 'object', additionalProperties: true },
+      parallelSafe: entry.parallelSafe === true,
+      source: 'built_in',
+      schema: upgradeToolInputJsonSchema(entry),
+      inputSchema: upgradeToolInputJsonSchema(entry),
+      outputSchema: upgradeToolOutputJsonSchema(),
+      annotations: upgradeToolAnnotations(entry),
+      execution: upgradeToolExecution(entry),
     }));
     const stored = this.session.get('toolSchemas');
     const custom = Array.isArray(stored) ? stored.filter(isRegisteredToolSchema) : [];
@@ -1508,9 +1672,13 @@ export class UpgradeRuntimeService {
       const baseline = readString(input, 'baseline_base64') ?? readString(input, 'left_base64');
       const actual = readString(input, 'actual_base64') ?? readString(input, 'right_base64');
       if (baseline === undefined || actual === undefined) return err(appError('INVALID_INPUT', 'compare_screenshot requires baseline_base64/actual_base64 or left_base64/right_base64'));
-      const baselineHash = createHash('sha256').update(baseline).digest('hex');
-      const actualHash = createHash('sha256').update(actual).digest('hex');
-      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, equal: baselineHash === actualHash, baseline: { sha256: baselineHash, encodedBytes: Buffer.byteLength(baseline, 'utf8') }, actual: { sha256: actualHash, encodedBytes: Buffer.byteLength(actual, 'utf8') }, comparison: 'exact artifact identity; pixel-diff renderer remains optional' });
+      const baselineArtifact = decodeBase64Artifact(baseline, 'baseline');
+      if (!baselineArtifact.ok) return baselineArtifact;
+      const actualArtifact = decodeBase64Artifact(actual, 'actual');
+      if (!actualArtifact.ok) return actualArtifact;
+      const baselineHash = createHash('sha256').update(baselineArtifact.value).digest('hex');
+      const actualHash = createHash('sha256').update(actualArtifact.value).digest('hex');
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, equal: baselineHash === actualHash, baseline: { sha256: baselineHash, bytes: baselineArtifact.value.byteLength }, actual: { sha256: actualHash, bytes: actualArtifact.value.byteLength }, comparison: 'exact decoded artifact identity; pixel-diff renderer remains optional' });
     }
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok({ tool: name, status: 'optional', available: false, ready: false, executed: false, requirements: ['DOM/CDP capability'] });
@@ -1625,7 +1793,10 @@ export class UpgradeRuntimeService {
   private replaceSharedState(state: UpgradeRuntimeSharedState): void {
     this.plugins.clear();
     this.worktrees.splice(0);
-    for (const plugin of state.plugins) if (isPlugin(plugin)) this.plugins.set(plugin.name, { ...plugin });
+    for (const plugin of state.plugins) {
+      const normalized = normalizePlugin(plugin);
+      if (normalized !== undefined) this.plugins.set(normalized.name, normalized);
+    }
     for (const worktree of state.worktrees) if (isWorktreeLedgerEntry(worktree)) this.worktrees.push(worktree);
   }
 
@@ -1641,7 +1812,7 @@ export class UpgradeRuntimeService {
   }
 
   private async mutateSharedState(
-    mutate: (plugins: Map<string, { readonly name: string; enabled: boolean }>, worktrees: WorktreeLedgerEntry[]) => void,
+    mutate: (plugins: Map<string, RuntimePluginDescriptor>, worktrees: WorktreeLedgerEntry[]) => void,
     failClosed = false,
   ): Promise<boolean> {
     if (this.stateStore === undefined) {
@@ -1651,9 +1822,12 @@ export class UpgradeRuntimeService {
     }
     try {
       const next = await this.stateStore.updateShared((current) => {
-        const plugins = new Map<string, { readonly name: string; enabled: boolean }>();
+        const plugins = new Map<string, RuntimePluginDescriptor>();
         const worktrees: WorktreeLedgerEntry[] = [];
-        for (const plugin of current.plugins) if (isPlugin(plugin)) plugins.set(plugin.name, { ...plugin });
+        for (const plugin of current.plugins) {
+          const normalized = normalizePlugin(plugin);
+          if (normalized !== undefined) plugins.set(normalized.name, normalized);
+        }
         for (const worktree of current.worktrees) if (isWorktreeLedgerEntry(worktree)) worktrees.push(worktree);
         mutate(plugins, worktrees);
         return { plugins: [...plugins.values()], worktrees };
@@ -1925,12 +2099,36 @@ function dedupeSearchEntries(entries: readonly SearchCatalogEntry[]): readonly S
   });
 }
 
-function scoreToolEntry(entry: SearchCatalogEntry, query: string, route: ReturnType<typeof routeIntent>): { readonly entry: SearchCatalogEntry; readonly score: number; readonly reasonCodes: readonly string[] } {
-  if (query.length === 0) return { entry, score: 0, reasonCodes: ['empty-query'] };
+function scoreToolEntry(
+  entry: SearchCatalogEntry,
+  query: string,
+  route: ReturnType<typeof routeIntent>,
+  toolTelemetry?: ToolTelemetrySnapshot,
+  globalTelemetry?: ActivityTelemetrySnapshot,
+): {
+  readonly entry: SearchCatalogEntry;
+  readonly score: number;
+  readonly reasonCodes: readonly string[];
+  readonly rankingSignals: RankedToolCandidate['rankingSignals'];
+} {
   const queryTokens = tokenize(query);
   const nameTokens = tokenize(entry.name);
   const tagTokens = entry.tags.flatMap((tag) => tokenize(tag));
   const description = entry.description.toLowerCase();
+  const schemaMatchedFields = schemaFieldMatches(entry, queryTokens);
+  const completedTelemetrySamples = toolTelemetry === undefined ? 0 : Math.max(0, toolTelemetry.calls - toolTelemetry.active);
+  const successRate = completedTelemetrySamples === 0 || toolTelemetry === undefined
+    ? null
+    : toolTelemetry.successes / completedTelemetrySamples;
+  const rankingSignals: RankedToolCandidate['rankingSignals'] = {
+    readiness: entry.deliveryState,
+    schemaMatchedFields,
+    telemetrySamples: completedTelemetrySamples,
+    successRate,
+    p95LatencyMs: completedTelemetrySamples === 0 || toolTelemetry === undefined ? null : toolTelemetry.p95LatencyMs,
+  };
+  if (query.length === 0) return { entry, score: 0, reasonCodes: ['empty-query'], rankingSignals };
+
   let score = 0;
   const reasons = new Set<string>();
   if (entry.name.toLowerCase() === query) {
@@ -1961,7 +2159,55 @@ function scoreToolEntry(entry: SearchCatalogEntry, query: string, route: ReturnT
     score += 0.25;
     reasons.add('primitive-visible');
   }
-  return { entry, score, reasonCodes: [...reasons] };
+
+  if (entry.deliveryState === 'operational') {
+    score += 0.15;
+    reasons.add('readiness:operational');
+  } else if (entry.deliveryState === 'dependency_gated') {
+    score -= 0.1;
+    reasons.add('readiness:dependency-gated');
+  } else {
+    score -= 0.4;
+    reasons.add(`readiness:${entry.deliveryState}`);
+  }
+
+  if (entry.permission === 'WRITE') {
+    score -= 0.05;
+    reasons.add('risk:write');
+  } else if (entry.permission === 'DANGEROUS') {
+    score -= 0.25;
+    reasons.add('risk:dangerous');
+  }
+
+  for (const field of schemaMatchedFields.slice(0, 3)) {
+    score += 0.12;
+    reasons.add(`schema-field:${field}`);
+  }
+
+  if (completedTelemetrySamples >= 3 && successRate !== null && toolTelemetry !== undefined) {
+    if (successRate >= 0.9) {
+      score += 0.15;
+      reasons.add('telemetry:reliable');
+    } else if (successRate <= 0.6) {
+      score -= 0.2;
+      reasons.add('telemetry:error-prone');
+    }
+    const globalP95 = globalTelemetry?.p95LatencyMs ?? 0;
+    if (globalP95 > 0 && toolTelemetry.p95LatencyMs > globalP95 * 1.5) {
+      score -= 0.1;
+      reasons.add('telemetry:high-latency');
+    }
+  }
+  return { entry, score, reasonCodes: [...reasons], rankingSignals };
+}
+
+function schemaFieldMatches(entry: SearchCatalogEntry, queryTokens: readonly string[]): readonly string[] {
+  if (entry.primitive === true || queryTokens.length === 0) return [];
+  const schema = upgradeToolInputJsonSchema(entry);
+  const properties = typeof schema.properties === 'object' && schema.properties !== null && !Array.isArray(schema.properties)
+    ? schema.properties as Record<string, unknown>
+    : {};
+  return Object.keys(properties).filter((field) => tokenize(field).some((token) => queryTokens.includes(token)));
 }
 
 function tokenize(value: string): string[] {
@@ -2018,6 +2264,10 @@ function contractStatus(name: string, input: Record<string, unknown>): Record<st
   };
 }
 
+function normalizeRouteText(value: string): string {
+  return ` ${value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ')} `;
+}
+
 function routeIntent(prompt: string): {
   readonly route: string;
   readonly domain: string;
@@ -2026,7 +2276,7 @@ function routeIntent(prompt: string): {
   readonly reasonCodes: readonly string[];
   readonly authorizationUnchanged: true;
 } {
-  const normalized = prompt.toLowerCase();
+  const normalized = normalizeRouteText(prompt);
   const rules: readonly { readonly route: string; readonly domain: string; readonly confidence: 'high' | 'medium'; readonly terms: readonly (readonly [string, string])[] }[] = [
     { route: 'debug', domain: 'desktop/mcp/logging', confidence: 'high' as const, terms: [['live log', 'live-logs'], ['mcp activity', 'mcp'], ['tunnel', 'tunnel'], ['stdio', 'stdio'], ['connect', 'connect'], ['debug', 'debug'], ['wsl', 'wsl'], ['timeout', 'timeout'], ['crash', 'crash']] },
     { route: 'test', domain: 'project/tests', confidence: 'high' as const, terms: [['test', 'test'], ['vitest', 'vitest'], ['jest', 'jest'], ['playwright', 'playwright'], ['pytest', 'pytest']] },
@@ -2036,7 +2286,7 @@ function routeIntent(prompt: string): {
   ];
   const scored = rules.map((rule, index) => ({
     ...rule,
-    matches: rule.terms.filter(([term]) => normalized.includes(term)),
+    matches: rule.terms.filter(([term]) => normalized.includes(normalizeRouteText(term))),
     index,
   })).filter((rule) => rule.matches.length > 0);
   const selected = scored.sort((left, right) => right.matches.length - left.matches.length || left.index - right.index)[0];
@@ -2074,6 +2324,17 @@ function planFor(prompt: string): { readonly route: string; readonly operations:
   return { route: route.route, operations, permissions: ['filesystem.read', 'git.read'] };
 }
 
+function decodeBase64Artifact(value: string, label: string): Result<Buffer> {
+  if (value.length === 0 || value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    return err(appError('INVALID_INPUT', `compare_screenshot ${label}_base64 must be canonical base64 data`));
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.length === 0 || decoded.toString('base64') !== value) {
+    return err(appError('INVALID_INPUT', `compare_screenshot ${label}_base64 must decode to a non-empty canonical artifact`));
+  }
+  return ok(decoded);
+}
+
 function permissionDecision(action: string): { readonly action: string; readonly decision: 'allow' | 'ask'; readonly class: string; readonly contextAccess: 'unrestricted' } {
   const normalized = action.toLowerCase();
   const dangerousAction = /(delete|destructive|admin|system\.admin|shell\.destructive|git\.destructive)/.test(normalized);
@@ -2086,6 +2347,14 @@ function actorSessionId(actor: FileActor): string {
 
 function runtimeOwnerKey(actor: FileActor): string {
   return `${actor.clientId}\u0000${actorSessionId(actor)}`;
+}
+
+function containsAsciiControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) return true;
+  }
+  return false;
 }
 
 function isWorktreeLedgerEntry(value: unknown): value is WorktreeLedgerEntry {
@@ -2111,10 +2380,25 @@ function isCheckpoint(value: unknown): value is SessionCheckpoint {
   return typeof record.id === 'string' && typeof record.createdAt === 'string' && typeof record.summary === 'string' && typeof record.inputDigest === 'string';
 }
 
-function isPlugin(value: unknown): value is { readonly name: string; readonly enabled: boolean } {
-  if (typeof value !== 'object' || value === null) return false;
+function normalizePlugin(value: unknown): RuntimePluginDescriptor | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
-  return typeof record.name === 'string' && typeof record.enabled === 'boolean';
+  const name = typeof record.name === 'string' ? record.name.trim() : '';
+  if (name.length === 0 || name.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._@/-]*$/.test(name) || typeof record.enabled !== 'boolean') return undefined;
+  const persistedSource = typeof record.source === 'string' ? record.source.trim() : '';
+  const source = persistedSource.length > 0 && persistedSource.length <= 2048 && !containsAsciiControlCharacter(persistedSource)
+    ? persistedSource
+    : 'legacy-runtime-state';
+  const persistedVersion = typeof record.version === 'string' ? record.version.trim() : '';
+  const version = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(persistedVersion) ? persistedVersion : '0.0.0';
+  return {
+    name,
+    enabled: record.enabled,
+    source,
+    version,
+    trustTier: 'external',
+    namespace: `plugin:${name}`,
+  };
 }
 
 export function upgradeCatalogByName(name: string): UpgradeToolCatalogEntry | undefined {

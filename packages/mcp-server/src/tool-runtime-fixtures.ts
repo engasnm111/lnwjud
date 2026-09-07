@@ -145,6 +145,7 @@ export const CORE_TOOL_RUNTIME_FIXTURES = {
   }, 'goals.checkpointGoal'),
   finish_goal: service({ goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, status: 'completed', summary: 'smoke', evidence: [] }, 'goals.finishGoal'),
   cancel_goal: service({ goalId: 'goal-1', expectedRevision: 0, summary: 'cancel smoke', evidence: [] }, 'goals.cancelGoal'),
+  reconcile_goals: service({ workspaceId, goalIds: ['goal-1'], reason: 'abandoned', summary: 'reconcile smoke', apply: false }, 'goals.reconcileGoals'),
   list_goals: service({}, 'goals.listGoals'),
   prepare_scheduled_continuation: service({
     goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 0, currentPhase: 'smoke', summary: 'smoke',
@@ -205,7 +206,7 @@ export const PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES = {
     alternate: { input: { prompt: 'test the smoke project', dryRun: true }, expected: { route: 'test', operations: ['workspace_context', 'discover_tests', 'test_context'] } },
   }),
   dry_run: deterministic({ prompt: 'build the smoke project' }, {
-    expected: { route: 'frontend', operations: ['workspace_context', 'repo_map'], permissions: ['filesystem.read', 'git.read'], sideEffects: { writes: [], shell: [], gitMutations: [], network: [] }, sideEffectsStarted: false },
+    expected: { route: 'workspace', operations: ['workspace_context', 'repo_map'], permissions: ['filesystem.read', 'git.read'], sideEffects: { writes: [], shell: [], gitMutations: [], network: [] }, sideEffectsStarted: false },
     alternate: { input: { prompt: 'test the smoke project' }, expected: { route: 'test', operations: ['workspace_context', 'discover_tests', 'test_context'] } },
   }),
   review_changes: service({ workspaceId }, 'git.status'),
@@ -312,7 +313,7 @@ export const PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES = {
   dev_context: service({ workspaceId, query: 'smoke development context' }, 'git.status'),
   recipe_catalog: deterministic({}, { expected: {}, requiredKeys: ['recipes'] }),
   capture_screenshot: service({ tab_id: 'tab-1' }, 'capabilities.dom_cdp'),
-  compare_screenshot: deterministic({ baseline_base64: 'same', actual_base64: 'same' }, { expected: { executed: true, equal: true }, requiredKeys: ['baseline', 'actual'] }),
+  compare_screenshot: deterministic({ baseline_base64: 'c2FtZQ==', actual_base64: 'c2FtZQ==' }, { expected: { executed: true, equal: true }, requiredKeys: ['baseline', 'actual'] }),
   dom_snapshot: service({ tab_id: 'tab-1' }, 'capabilities.dom_cdp'),
   layout_metadata: service({ tab_id: 'tab-1' }, 'capabilities.dom_cdp'),
   visual_context: service({ tab_id: 'tab-1' }, 'capabilities.dom_cdp'),

@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
-import type { McpResourceSummary, McpServerLaunchConfig, McpToolSummary } from './types.js';
+import type { ExternalMcpContractDrift, McpResourceSummary, McpServerLaunchConfig, McpToolSummary } from './types.js';
 
 export interface McpClientSession {
   listTools(signal?: AbortSignal): Promise<readonly McpToolSummary[]>;
@@ -22,13 +23,18 @@ export interface McpSessionManagerOptions {
 
 interface ManagedSession {
   readonly session: McpClientSession;
-  readonly tools: readonly McpToolSummary[];
+  tools: readonly McpToolSummary[];
+  readonly launchFingerprint: string;
+  catalogFingerprint: string;
+  readonly launchDriftDetected: boolean;
   lastUsedAt: number;
   queue: Promise<unknown>;
 }
 
 export class McpSessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
+  private readonly lastLaunchFingerprints = new Map<string, string>();
+  private readonly lastCatalogFingerprints = new Map<string, string>();
   private readonly factory: McpClientFactory;
   private readonly callTimeoutMs: number;
   private readonly idleTimeoutMs: number;
@@ -47,12 +53,29 @@ export class McpSessionManager {
   public async describe(server: string, config: McpServerLaunchConfig, signal?: AbortSignal): Promise<Result<{
     readonly connected: boolean;
     readonly tools: readonly McpToolSummary[];
+    readonly launchFingerprint: string;
+    readonly catalogFingerprint: string;
+    readonly drift: ExternalMcpContractDrift;
   }>> {
     try {
       if (isAborted(signal)) return cancelledCall();
       const managed = await this.ensure(server, config, signal);
       if (isAborted(signal)) return cancelledCall();
-      return ok({ connected: true, tools: managed.tools });
+      const refreshed = await this.refreshCatalog(server, managed, signal);
+      return ok({
+        connected: true,
+        tools: managed.tools,
+        launchFingerprint: managed.launchFingerprint,
+        catalogFingerprint: managed.catalogFingerprint,
+        drift: {
+          detected: managed.launchDriftDetected || refreshed.detected,
+          reasons: [
+            ...(managed.launchDriftDetected ? ['launch_config' as const] : []),
+            ...(refreshed.detected ? ['tool_catalog' as const] : []),
+          ],
+          ...(refreshed.previousCatalogFingerprint === undefined ? {} : { previousCatalogFingerprint: refreshed.previousCatalogFingerprint }),
+        },
+      });
     } catch (error: unknown) {
       if (isAborted(signal)) return cancelledCall();
       return err(appError('INTERNAL_ERROR', sanitizeError(error), true));
@@ -95,12 +118,19 @@ export class McpSessionManager {
       if (isAborted(signal)) return cancelledCall();
       const managed = await this.ensure(server, config, signal);
       if (isAborted(signal)) return cancelledCall();
+      await this.refreshCatalog(server, managed, signal);
+      const declaredTool = managed.tools.find((entry) => entry.name === tool);
+      if (declaredTool === undefined) {
+        return err(appError('INVALID_INPUT', `Child MCP tool is not declared by ${server}: ${tool}`));
+      }
       const result = await this.enqueue(managed, () => withTimeout(
         (callSignal) => managed.session.callTool(tool, args, callSignal),
         this.callTimeoutMs,
         `Timed out calling ${server}/${tool}`,
         signal,
       ));
+      const outputError = validateDeclaredOutput(declaredTool, result);
+      if (outputError !== undefined) return err(appError('INVALID_INPUT', `Child MCP output schema mismatch for ${server}/${tool}: ${outputError}`));
       managed.lastUsedAt = Date.now();
       this.scheduleIdleSweep();
       return ok(result);
@@ -123,23 +153,33 @@ export class McpSessionManager {
 
   private async ensure(server: string, config: McpServerLaunchConfig, signal?: AbortSignal): Promise<ManagedSession> {
     if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
+    const launchFingerprint = fingerprintExternalMcpValue(config);
     const existing = this.sessions.get(server);
-    if (existing !== undefined) {
+    if (existing !== undefined && existing.launchFingerprint === launchFingerprint) {
       existing.lastUsedAt = Date.now();
       return existing;
     }
+    if (existing !== undefined) await this.drop(server);
 
     const session = await this.factory.connect(config, signal);
     try {
       if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
-      const tools = await session.listTools(signal);
+      const listedTools = await session.listTools(signal);
       if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
+      const tools = normalizeExternalToolCatalog(listedTools);
+      const catalogFingerprint = fingerprintExternalMcpValue(tools);
+      const previousLaunchFingerprint = this.lastLaunchFingerprints.get(server);
       const managed: ManagedSession = {
         session,
         tools,
+        launchFingerprint,
+        catalogFingerprint,
+        launchDriftDetected: previousLaunchFingerprint !== undefined && previousLaunchFingerprint !== launchFingerprint,
         lastUsedAt: Date.now(),
         queue: Promise.resolve(),
       };
+      this.lastLaunchFingerprints.set(server, launchFingerprint);
+      this.lastCatalogFingerprints.set(server, catalogFingerprint);
       this.sessions.set(server, managed);
       this.scheduleIdleSweep();
       return managed;
@@ -147,6 +187,29 @@ export class McpSessionManager {
       await session.close().catch(() => undefined);
       throw error;
     }
+  }
+
+  private async refreshCatalog(
+    server: string,
+    managed: ManagedSession,
+    signal?: AbortSignal,
+  ): Promise<{ readonly detected: boolean; readonly previousCatalogFingerprint?: string }> {
+    const listedTools = await this.enqueue(managed, () => withTimeout(
+      (callSignal) => managed.session.listTools(callSignal),
+      this.callTimeoutMs,
+      `Timed out refreshing tool catalog for ${server}`,
+      signal,
+    ));
+    const tools = normalizeExternalToolCatalog(listedTools);
+    const nextFingerprint = fingerprintExternalMcpValue(tools);
+    const previousFingerprint = managed.catalogFingerprint;
+    managed.tools = tools;
+    managed.catalogFingerprint = nextFingerprint;
+    managed.lastUsedAt = Date.now();
+    this.lastCatalogFingerprints.set(server, nextFingerprint);
+    return nextFingerprint === previousFingerprint
+      ? { detected: false }
+      : { detected: true, previousCatalogFingerprint: previousFingerprint };
   }
 
   private enqueue<T>(managed: ManagedSession, operation: () => Promise<T>): Promise<T> {
@@ -202,6 +265,7 @@ export const defaultMcpClientFactory: McpClientFactory = {
           name: tool.name,
           description: tool.description ?? '',
           ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
+          ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
         }));
       },
       async listResources(listSignal?: AbortSignal): Promise<readonly McpResourceSummary[]> {
@@ -277,6 +341,132 @@ function isAborted(signal: AbortSignal | undefined): boolean {
 
 function cancelledCall(): Result<never> {
   return err(appError('PROCESS_TIMEOUT', 'Child MCP operation was cancelled', true));
+}
+
+function normalizeExternalToolCatalog(tools: readonly McpToolSummary[]): readonly McpToolSummary[] {
+  if (tools.length > 512) throw new Error(`Child MCP tool catalog exceeds 512 tools (${tools.length})`);
+  const names = new Set<string>();
+  return tools.map((tool) => {
+    const name = tool.name.trim();
+    if (name.length === 0 || name.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(name)) {
+      throw new Error('Child MCP tool name is invalid or exceeds 128 characters');
+    }
+    if (names.has(name)) throw new Error(`Child MCP tool catalog contains duplicate tool: ${name}`);
+    names.add(name);
+    const description = tool.description.replace(/\s+/g, ' ').trim().slice(0, 4096);
+    const normalized: { name: string; description: string; inputSchema?: unknown; outputSchema?: unknown } = { name, description };
+    if (tool.inputSchema !== undefined) {
+      validateExternalSchema(tool.inputSchema, name, 'input');
+      normalized.inputSchema = tool.inputSchema;
+    }
+    if (tool.outputSchema !== undefined) {
+      validateExternalSchema(tool.outputSchema, name, 'output');
+      normalized.outputSchema = tool.outputSchema;
+    }
+    return normalized;
+  });
+}
+
+function validateExternalSchema(schema: unknown, toolName: string, direction: 'input' | 'output'): asserts schema is Record<string, unknown> {
+  if (!isPlainRecord(schema)) throw new Error(`Child MCP tool ${direction} schema must be an object: ${toolName}`);
+  const schemaBytes = Buffer.byteLength(JSON.stringify(schema), 'utf8');
+  if (schemaBytes > 256 * 1024) throw new Error(`Child MCP tool ${direction} schema exceeds 256 KiB: ${toolName}`);
+  const type = schema.type;
+  if (type !== undefined && type !== 'object') throw new Error(`Child MCP tool ${direction} schema root must be object: ${toolName}`);
+}
+
+function validateDeclaredOutput(tool: McpToolSummary, result: unknown): string | undefined {
+  if (tool.outputSchema === undefined) return undefined;
+  const resultRecord = isPlainRecord(result) ? result : undefined;
+  if (resultRecord === undefined || resultRecord.structuredContent === undefined) return 'declared outputSchema requires structuredContent';
+  return validateJsonSchemaSubset(tool.outputSchema, resultRecord.structuredContent, '$');
+}
+
+function validateJsonSchemaSubset(schema: unknown, value: unknown, path: string): string | undefined {
+  if (!isPlainRecord(schema)) return undefined;
+  if (Array.isArray(schema.allOf)) {
+    for (const branch of schema.allOf) {
+      const error = validateJsonSchemaSubset(branch, value, path);
+      if (error !== undefined) return error;
+    }
+  }
+  if (Array.isArray(schema.anyOf) && !schema.anyOf.some((branch) => validateJsonSchemaSubset(branch, value, path) === undefined)) {
+    return `${path} does not match anyOf`;
+  }
+  if (Array.isArray(schema.oneOf)) {
+    const matches = schema.oneOf.filter((branch) => validateJsonSchemaSubset(branch, value, path) === undefined).length;
+    if (matches !== 1) return `${path} must match exactly one oneOf branch`;
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => deepEqualJson(candidate, value))) return `${path} is not in enum`;
+  if (Object.hasOwn(schema, 'const') && !deepEqualJson(schema.const, value)) return `${path} does not match const`;
+
+  const declaredTypes = typeof schema.type === 'string'
+    ? [schema.type]
+    : Array.isArray(schema.type) ? schema.type.filter((entry): entry is string => typeof entry === 'string') : [];
+  if (declaredTypes.length > 0 && !declaredTypes.some((type) => matchesJsonType(type, value))) {
+    return `${path} expected ${declaredTypes.join('|')}`;
+  }
+
+  if ((declaredTypes.includes('object') || schema.properties !== undefined || schema.required !== undefined) && isPlainRecord(value)) {
+    const required = Array.isArray(schema.required) ? schema.required.filter((entry): entry is string => typeof entry === 'string') : [];
+    for (const key of required) if (!Object.hasOwn(value, key)) return `${path}.${key} is required`;
+    const properties = isPlainRecord(schema.properties) ? schema.properties : {};
+    for (const [key, childSchema] of Object.entries(properties)) {
+      if (!Object.hasOwn(value, key)) continue;
+      const error = validateJsonSchemaSubset(childSchema, value[key], `${path}.${key}`);
+      if (error !== undefined) return error;
+    }
+    for (const [key, childValue] of Object.entries(value)) {
+      if (Object.hasOwn(properties, key)) continue;
+      if (schema.additionalProperties === false) return `${path}.${key} is not allowed`;
+      if (isPlainRecord(schema.additionalProperties)) {
+        const error = validateJsonSchemaSubset(schema.additionalProperties, childValue, `${path}.${key}`);
+        if (error !== undefined) return error;
+      }
+    }
+  }
+
+  if ((declaredTypes.includes('array') || schema.items !== undefined) && Array.isArray(value) && schema.items !== undefined) {
+    for (let index = 0; index < value.length; index += 1) {
+      const error = validateJsonSchemaSubset(schema.items, value[index], `${path}[${index}]`);
+      if (error !== undefined) return error;
+    }
+  }
+  return undefined;
+}
+
+function matchesJsonType(type: string, value: unknown): boolean {
+  switch (type) {
+    case 'object': return isPlainRecord(value);
+    case 'array': return Array.isArray(value);
+    case 'string': return typeof value === 'string';
+    case 'number': return typeof value === 'number' && Number.isFinite(value);
+    case 'integer': return typeof value === 'number' && Number.isInteger(value);
+    case 'boolean': return typeof value === 'boolean';
+    case 'null': return value === null;
+    default: return true;
+  }
+}
+
+function deepEqualJson(left: unknown, right: unknown): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
+export function fingerprintExternalMcpValue(value: unknown): string {
+  return createHash('sha256').update(stableJson(value), 'utf8').digest('hex');
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+    .join(',')}}`;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function sanitizeError(error: unknown): string {

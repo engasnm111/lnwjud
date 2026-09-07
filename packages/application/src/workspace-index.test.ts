@@ -39,6 +39,17 @@ describe('WorkspaceIndexService', () => {
     expect(paths).not.toEqual(expect.arrayContaining(['.git', '.git/config', 'dist', 'dist/app.js', 'node_modules', 'node_modules/fixture/index.js']));
     expect(result.value.entries.find((entry) => entry.relativePath === 'src.ts')?.functions).toContain('answer');
     expect((await service.snapshot(workspace.id)).ok).toBe(true);
+    const initialStatus = await service.status(workspace.id);
+    expect(initialStatus.ok).toBe(true);
+    if (initialStatus.ok) {
+      expect(initialStatus.value).toMatchObject({
+        indexed: true,
+        freshness: 'unverified',
+        stale: null,
+        watcher: null,
+      });
+      expect(initialStatus.value.generation).toMatch(/^[a-f0-9]{64}$/);
+    }
 
     await writeFile(path.join(root, 'src.ts'), 'export function updated(): string { return "ok"; }\n');
     const update = await service.indexPath(workspace.id, 'src.ts');

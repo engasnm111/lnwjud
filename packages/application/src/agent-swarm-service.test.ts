@@ -149,7 +149,7 @@ describe('AgentSwarmService', () => {
     }
   });
 
-  it('rolls back already-started children when a later launch in the same admission batch fails', async () => {
+  it('isolates a child launch failure while keeping running and independent siblings alive', async () => {
     let sequence = 0;
     const stop = vi.fn<AgentSwarmCodexPort['stop']>(async () => ok(undefined));
     const codex: AgentSwarmCodexPort = {
@@ -167,14 +167,18 @@ describe('AgentSwarmService', () => {
       const started = await service.start(actor, startRequest([
         { id: 'first', prompt: 'first task' },
         { id: 'second', prompt: 'second task' },
+        { id: 'third', prompt: 'third task' },
       ], 2), undefined, authorization);
       expect(started.ok).toBe(true);
       if (!started.ok) return;
-      expect(stop).toHaveBeenCalledWith(actor, 'workspace-a', 'codex-1', false, authorization);
+      expect(stop).not.toHaveBeenCalled();
+      expect(codex.run).toHaveBeenCalledTimes(3);
       const states = new Map(started.value.tasks.map((task) => [task.id, task.state]));
-      expect(states.get('first')).toBe('cancelled');
+      expect(states.get('first')).toBe('running');
       expect(states.get('second')).toBe('failed');
-      expect(started.value.state).toBe('failed');
+      expect(states.get('third')).toBe('running');
+      expect(started.value.state).toBe('running');
+      await service.cancel(actor, 'workspace-a', started.value.swarmId, authorization);
     } finally {
       database.close();
     }

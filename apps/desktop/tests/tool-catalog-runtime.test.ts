@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDesktopRuntime, toolAvailabilityHostSyncDisposition } from '../src/main/desktop-services.js';
+import { catalogDefinitions } from '../src/main/tool-catalog/catalog-definitions.js';
 
 const temporaryRoots: string[] = [];
 
@@ -36,7 +37,7 @@ describe('Desktop Tool Catalog runtime', () => {
         new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('Tool Catalog runtime read timed out')), 5_000)),
       ]);
 
-      expect(catalog.items.filter((item) => item.origin === 'lnwjud')).toHaveLength(231);
+      expect(catalog.items.filter((item) => item.origin === 'lnwjud')).toHaveLength(Object.keys(catalogDefinitions).length);
       expect(catalog.remediations.length).toBeGreaterThan(0);
       expect(() => structuredClone(catalog)).not.toThrow();
       expect(catalog.items.find((item) => item.name === 'run_goal')?.inputSchema).toMatchObject({ type: 'object' });

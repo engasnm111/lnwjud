@@ -202,7 +202,7 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
   audio: 'Record and play audio',
   screen_record: 'Record the screen to MP4',
   office: 'Automate Excel and Word',
-  scheduler: 'Manage Windows scheduled tasks',
+  scheduler: 'Windows Task Scheduler (local)',
   wsl_exec: 'Run scoped Linux developer tasks',
   wsl_fs: 'Translate scoped Windows and WSL paths',
 };
@@ -223,7 +223,7 @@ const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[numbe
   audio: 'Microphone recording and local audio playback',
   screen_record: 'ffmpeg gdigrab screen capture with start/stop/status',
   office: 'Excel range read/write and Word text operations via COM',
-  scheduler: 'schtasks.exe list/create/run/delete operations',
+  scheduler: 'Local schtasks.exe list/create/run/delete operations; not Native ChatGPT Scheduled Tasks',
   wsl_exec: 'WSL2 argv-only execution inside registered workspaces',
   wsl_fs: 'Path translation and metadata without raw WSL filesystem access',
 };

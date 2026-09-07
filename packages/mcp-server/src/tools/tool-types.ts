@@ -25,7 +25,7 @@ import type {
   WorkspaceQueryService,
   WriteFileRequest,
 } from '@lnwjud/application';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { ContextEconomyRuntime } from '../context-economy.js';
 
 export interface WorkspaceInfoPort {
@@ -60,7 +60,7 @@ export interface McpApplicationServices {
   readonly project?: Pick<ProjectService, 'detect'>;
   readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
   readonly checkpoint?: Pick<CheckpointService, 'list' | 'restore'>;
-  readonly goals?: Pick<GoalContinuationService, 'runGoal' | 'getGoal' | 'checkpointGoal' | 'finishGoal' | 'cancelGoal' | 'listGoals'>;
+  readonly goals?: Pick<GoalContinuationService, 'runGoal' | 'getGoal' | 'checkpointGoal' | 'finishGoal' | 'cancelGoal' | 'reconcileGoals' | 'listGoals'>;
   /** Runtime-shared cancellation registry for in-flight fenced MCP requests. */
   readonly goalRequestCancellation?: GoalRequestCancellationPort;
   readonly scheduledContinuations?: Pick<ScheduledContinuationService, 'prepareScheduledContinuation' | 'recordScheduledContinuationReceipt' | 'cancelScheduledContinuation' | 'claimScheduledContinuation' | 'getScheduledContinuation' | 'expediteScheduledContinuation'>;
@@ -76,6 +76,19 @@ export interface McpApplicationServices {
 export interface McpToolAnnotations {
   readonly readOnlyHint: boolean;
   readonly destructiveHint: boolean;
+  readonly idempotentHint: boolean;
+  readonly openWorldHint: boolean;
+}
+
+export interface McpToolAnnotationInput {
+  readonly readOnlyHint: boolean;
+  readonly destructiveHint: boolean;
+  readonly idempotentHint?: boolean;
+  readonly openWorldHint?: boolean;
+}
+
+export interface McpToolExecution {
+  readonly taskSupport: 'required' | 'optional' | 'forbidden';
 }
 
 export type McpPermissionLevel = 'READ' | 'WRITE' | 'EXECUTE' | 'DANGEROUS';
@@ -86,6 +99,8 @@ export interface McpToolDefinition {
   readonly permission: McpPermissionLevel;
   readonly annotations: McpToolAnnotations;
   readonly inputSchema: z.ZodType;
+  readonly outputSchema: z.ZodType;
+  readonly execution: McpToolExecution;
   parse(input: unknown): Result<unknown>;
   execute(input: unknown, signal: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>>;
 }
@@ -102,18 +117,29 @@ export interface ToolConfig<T extends z.ZodType> {
   readonly name: string;
   readonly description: string;
   readonly permission: McpPermissionLevel;
-  readonly annotations: McpToolAnnotations;
+  readonly annotations: McpToolAnnotationInput;
   readonly inputSchema: T;
+  readonly outputSchema?: z.ZodType;
+  readonly execution?: Partial<McpToolExecution>;
   handler(input: z.infer<T>, signal: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>>;
 }
+
+const defaultStructuredOutputSchema = z.object({}).catchall(z.unknown());
 
 export function defineTool<T extends z.ZodType>(config: ToolConfig<T>): McpToolDefinition {
   return {
     name: config.name,
     description: config.description,
     permission: config.permission,
-    annotations: config.annotations,
+    annotations: {
+      readOnlyHint: config.annotations.readOnlyHint,
+      destructiveHint: config.annotations.destructiveHint,
+      idempotentHint: config.annotations.idempotentHint ?? config.permission === 'READ',
+      openWorldHint: config.annotations.openWorldHint ?? false,
+    },
     inputSchema: config.inputSchema,
+    outputSchema: config.outputSchema ?? defaultStructuredOutputSchema,
+    execution: { taskSupport: config.execution?.taskSupport ?? 'forbidden' },
     parse(input: unknown): Result<unknown> {
       const parsed = config.inputSchema.safeParse(input);
       return parsed.success ? ok(parsed.data) : err({ code: 'INVALID_INPUT', message: 'Tool input is invalid', recoverable: false });

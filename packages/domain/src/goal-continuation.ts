@@ -205,6 +205,21 @@ export interface CancelGoalRecordResult {
   readonly trackedTasks?: readonly GoalTrackedTask[];
 }
 
+export type GoalReconciliationReason = 'abandoned' | 'superseded';
+
+export interface ReconcileGoalRecordRequest {
+  readonly checkpointId: string;
+  readonly goalId: string;
+  readonly ownerClientId: string;
+  readonly expectedRevision: number;
+  readonly expectedLeaseGeneration: number;
+  readonly expectedLeaseActivitySeq: number;
+  readonly reason: GoalReconciliationReason;
+  readonly summary: string;
+  readonly evidence: readonly GoalEvidence[];
+  readonly now: string;
+}
+
 export interface ListGoalRecordsRequest {
   readonly ownerClientId: string;
   readonly workspaceId?: string;
@@ -233,4 +248,5 @@ export interface GoalRepository {
   checkpoint(request: CheckpointGoalRecordRequest): Promise<GoalRecord>;
   finish(request: FinishGoalRecordRequest): Promise<GoalRecord>;
   cancel(request: CancelGoalRecordRequest): Promise<CancelGoalRecordResult>;
+  reconcile(request: ReconcileGoalRecordRequest): Promise<GoalRecord>;
 }

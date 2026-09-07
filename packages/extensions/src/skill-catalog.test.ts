@@ -48,6 +48,8 @@ Do the thing.
         id: 'cursor-skills-cursor/demo-skill',
         name: 'demo-skill',
         source: 'cursor-skills-cursor',
+        trustTier: 'user',
+        canonicalSkillPath: expect.any(String),
       }),
     ]);
 
@@ -55,6 +57,8 @@ Do the thing.
     expect(read.ok).toBe(true);
     if (!read.ok) return;
     expect(read.value.content).toContain('Do the thing.');
+    expect(read.value.trustTier).toBe('user');
+    expect(read.value.canonicalPath).toEqual(expect.any(String));
 
     const relative = await catalog.read({ skillId: 'cursor-skills-cursor/demo-skill', relativePath: 'notes.md' });
     expect(relative.ok).toBe(true);
@@ -94,6 +98,8 @@ Use one native successor.
         id: 'workspace-agents-skills/lnwjud-scheduled-continuation',
         name: 'lnwjud-scheduled-continuation',
         source: 'workspace-agents-skills',
+        trustTier: 'workspace',
+        canonicalSkillPath: expect.any(String),
       }),
     ]);
 

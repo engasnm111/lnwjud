@@ -1,6 +1,27 @@
 import type { UiLocale } from '@lnwjud/ipc-contracts';
 import { catalogDefinitions, catalogSourceDescriptions } from './catalog-definitions.js';
 
+interface ToolCopy {
+  readonly title: string;
+  readonly short: string;
+  readonly long: string;
+}
+
+const SPECIAL_TOOL_COPY: Readonly<Record<string, Readonly<Record<UiLocale, ToolCopy>>>> = Object.freeze({
+  scheduler: {
+    en: {
+      title: 'Windows Task Scheduler (local)',
+      short: 'Manage the local Windows Task Scheduler through schtasks.exe. This is not Native ChatGPT Scheduled Tasks.',
+      long: 'Manage list/create/run/delete operations in Windows Task Scheduler on this machine through schtasks.exe. This local scheduler does not create, update, or manage Native ChatGPT Scheduled Tasks; ChatGPT cloud/current-chat scheduling is host-owned through the ChatGPT Scheduled Task surface.',
+    },
+    th: {
+      title: 'Windows Task Scheduler (ภายในเครื่อง)',
+      short: 'จัดการ Windows Task Scheduler บนเครื่องนี้ผ่าน schtasks.exe ซึ่งไม่ใช่ Native ChatGPT Scheduled Tasks',
+      long: 'จัดการการ list/create/run/delete ของ Windows Task Scheduler บนเครื่องนี้ผ่าน schtasks.exe เท่านั้น เครื่องมือนี้ไม่สร้าง อัปเดต หรือจัดการ Native ChatGPT Scheduled Tasks; งานตั้งเวลาของ ChatGPT แบบ cloud/current chat เป็นความสามารถที่ ChatGPT host เป็นผู้จัดการผ่านหน้า Scheduled Tasks',
+    },
+  },
+});
+
 const CATEGORY_LABELS: Readonly<Record<string, Readonly<Record<UiLocale, string>>>> = Object.freeze({
   workspace: { en: 'Workspace', th: 'พื้นที่ทำงาน' },
   files: { en: 'Files', th: 'ไฟล์' },
@@ -26,7 +47,13 @@ export function resolveCatalogCopy(locale: UiLocale, key: string): string {
   const description = catalogSourceDescriptions[name]?.trim() ?? '';
   const title = humanizeToolName(name);
   const category = CATEGORY_LABELS[definition.category]?.[locale] ?? definition.category;
+  const special = SPECIAL_TOOL_COPY[name]?.[locale];
 
+  if (special !== undefined) {
+    if (field === 'title') return special.title;
+    if (field === 'short') return special.short;
+    return special.long;
+  }
   if (field === 'title') return locale === 'th' ? `${title} · ${category}` : title;
   if (field === 'short') {
     return locale === 'th'

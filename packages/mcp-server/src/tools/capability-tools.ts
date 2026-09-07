@@ -93,6 +93,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
       permission: 'EXECUTE',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: shellCapabilitySchema,
+      execution: { taskSupport: 'optional' },
       handler: async (input, signal, authorization) => execute('shell', input, signal, authorization),
     }),
     defineTool({

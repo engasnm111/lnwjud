@@ -99,6 +99,87 @@ describe('LocalExtensionsService MCP bridge', () => {
     await service.close();
   });
 
+  it('fingerprints external MCP contracts and surfaces live tool-catalog drift', async (): Promise<void> => {
+    let catalog = [{
+      name: 'ping',
+      description: 'Ping tool',
+      inputSchema: { type: 'object', additionalProperties: false },
+      outputSchema: { type: 'object', required: ['answer'], properties: { answer: { type: 'number' } }, additionalProperties: false },
+    }];
+    const session: McpClientSession = {
+      listTools: async () => catalog,
+      listResources: async () => [],
+      callTool: async () => ({ structuredContent: { answer: 1 }, content: [] }),
+      close: async () => undefined,
+    };
+    const service = new LocalExtensionsService({
+      settings: settingsWithMockServer(),
+      homeDir: process.cwd(),
+      appDataDir: process.cwd(),
+      clientFactory: { connect: async (): Promise<McpClientSession> => session },
+    });
+
+    const first = await service.describeMcpServer({ server: 'mock' });
+    expect(first).toMatchObject({
+      ok: true,
+      value: {
+        provenance: {
+          trustTier: 'external',
+          namespace: 'mcp:mock',
+          descriptorFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          catalogFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          drift: { detected: false, reasons: [] },
+        },
+        tools: [expect.objectContaining({ qualifiedName: 'mcp:mock/ping', outputSchema: expect.any(Object) })],
+      },
+    });
+    if (!first.ok) return;
+    const initialFingerprint = first.value.provenance.catalogFingerprint;
+
+    catalog = [{
+      name: 'ping',
+      description: 'Ping tool',
+      inputSchema: { type: 'object', additionalProperties: false },
+      outputSchema: { type: 'object', required: ['answer'], properties: { answer: { type: 'string' } }, additionalProperties: false },
+    }];
+    const changed = await service.describeMcpServer({ server: 'mock' });
+    expect(changed).toMatchObject({
+      ok: true,
+      value: {
+        provenance: {
+          drift: { detected: true, reasons: ['tool_catalog'], previousCatalogFingerprint: initialFingerprint },
+        },
+      },
+    });
+    if (changed.ok) expect(changed.value.provenance.catalogFingerprint).not.toBe(initialFingerprint);
+    await service.close();
+  });
+
+  it('rejects child structured output that violates a declared external output schema', async (): Promise<void> => {
+    const session: McpClientSession = {
+      listTools: async () => [{
+        name: 'ping',
+        description: 'Ping tool',
+        outputSchema: { type: 'object', required: ['answer'], properties: { answer: { type: 'number' } }, additionalProperties: false },
+      }],
+      listResources: async () => [],
+      callTool: async () => ({ structuredContent: { answer: 'spoofed' }, content: [] }),
+      close: async () => undefined,
+    };
+    const service = new LocalExtensionsService({
+      settings: settingsWithMockServer(),
+      homeDir: process.cwd(),
+      appDataDir: process.cwd(),
+      clientFactory: { connect: async (): Promise<McpClientSession> => session },
+    });
+
+    await expect(service.callMcpTool({ server: 'mock', tool: 'ping' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT', message: expect.stringContaining('output schema mismatch') },
+    });
+    await service.close();
+  });
+
   it('does not connect a child MCP server when the request is already cancelled', async () => {
     let connects = 0;
     const factory: McpClientFactory = {
