@@ -7,10 +7,14 @@ import path from 'node:path';
 import type { RemoteMcpStatus } from '@lnwjud/ipc-contracts';
 import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
 
+export type TokenEndpointAuthMethod = 'none' | 'client_secret_post';
+
 interface RegisteredClient {
   readonly clientId: string;
   readonly redirectUris: readonly string[];
   readonly clientName: string | null;
+  readonly tokenEndpointAuthMethod: TokenEndpointAuthMethod;
+  readonly clientSecret: string | null;
   readonly trusted: boolean;
 }
 
@@ -21,6 +25,8 @@ export interface RemoteMcpPersistedState {
     readonly clientId: string;
     readonly redirectUris: readonly string[];
     readonly clientName: string | null;
+    readonly tokenEndpointAuthMethod: TokenEndpointAuthMethod;
+    readonly clientSecret: string | null;
   }>;
   readonly refreshGrants: ReadonlyArray<{
     readonly refreshToken: string;
@@ -328,18 +334,57 @@ export class RemoteMcpController {
         registration_endpoint: `${origin}/oauth/register`,
         response_types_supported: ['code'],
         grant_types_supported: ['authorization_code', 'refresh_token'],
-        token_endpoint_auth_methods_supported: ['none'],
+        token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
         code_challenge_methods_supported: ['S256'],
       });
       return;
     }
     if (request.method === 'POST' && url.pathname === '/oauth/register') {
-      const body = await readJson(request, 64 * 1024);
-      const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris.filter((entry): entry is string => typeof entry === 'string' && isSafeRedirectUri(entry)) : [];
-      if (redirectUris.length === 0) { json(response, 400, { error: 'invalid_redirect_uri' }); return; }
+      let body: Record<string, unknown>;
+      try {
+        body = await readJson(request, 64 * 1024);
+      } catch {
+        json(response, 400, { error: 'invalid_client_metadata', error_description: 'Registration body must be a valid JSON object.' });
+        return;
+      }
+      const requestedRedirectUris = body.redirect_uris;
+      if (!Array.isArray(requestedRedirectUris)
+        || requestedRedirectUris.length === 0
+        || requestedRedirectUris.length > 16
+        || requestedRedirectUris.some((entry) => typeof entry !== 'string' || entry.length > 2_048 || !isSafeRedirectUri(entry))) {
+        json(response, 400, { error: 'invalid_redirect_uri' });
+        return;
+      }
+      const redirectUris = [...new Set(requestedRedirectUris as string[])];
+      const requestedAuthMethod = body.token_endpoint_auth_method ?? 'none';
+      if (requestedAuthMethod !== 'none' && requestedAuthMethod !== 'client_secret_post') {
+        json(response, 400, { error: 'invalid_client_metadata', error_description: 'Unsupported token_endpoint_auth_method.' });
+        return;
+      }
+      if (!isSupportedRegistrationStringArray(body.grant_types, ['authorization_code', 'refresh_token'])
+        || !isSupportedRegistrationStringArray(body.response_types, ['code'])) {
+        json(response, 400, { error: 'invalid_client_metadata', error_description: 'Unsupported OAuth client metadata.' });
+        return;
+      }
+      const tokenEndpointAuthMethod: TokenEndpointAuthMethod = requestedAuthMethod;
       const clientId = token(24);
-      this.clients.set(clientId, { clientId, redirectUris, clientName: typeof body.client_name === 'string' ? body.client_name.slice(0, 120) : null, trusted: false });
-      json(response, 201, { client_id: clientId, redirect_uris: redirectUris, token_endpoint_auth_method: 'none' });
+      const clientSecret = tokenEndpointAuthMethod === 'client_secret_post' ? token(32) : null;
+      const clientName = typeof body.client_name === 'string' ? body.client_name.slice(0, 120) : null;
+      this.clients.set(clientId, { clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret, trusted: false });
+      const registration: Record<string, unknown> = {
+        client_id: clientId,
+        client_id_issued_at: Math.floor(this.now() / 1_000),
+        redirect_uris: redirectUris,
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: tokenEndpointAuthMethod,
+      };
+      if (clientName !== null) registration.client_name = clientName;
+      if (clientSecret !== null) {
+        registration.client_secret = clientSecret;
+        registration.client_secret_expires_at = 0;
+      }
+      json(response, 201, registration);
       return;
     }
     if (url.pathname === '/oauth/authorize' && (request.method === 'GET' || request.method === 'POST')) {
@@ -422,6 +467,11 @@ export class RemoteMcpController {
   private async handleToken(params: URLSearchParams, response: ServerResponse): Promise<void> {
     const grantType = params.get('grant_type');
     const clientId = params.get('client_id') ?? '';
+    const client = this.clients.get(clientId);
+    if (client === undefined || !verifyClientAuthentication(client, params.get('client_secret'))) {
+      json(response, 401, { error: 'invalid_client' });
+      return;
+    }
     if (grantType === 'authorization_code') {
       const code = params.get('code') ?? '';
       const grant = this.authCodes.get(code);
@@ -518,7 +568,7 @@ export class RemoteMcpController {
     const trustedClients = [...this.clients.values()]
       .filter((client) => client.trusted)
       .slice(0, 32)
-      .map(({ clientId, redirectUris, clientName }) => ({ clientId, redirectUris: [...redirectUris], clientName }));
+      .map(({ clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }) => ({ clientId, redirectUris: [...redirectUris], clientName, tokenEndpointAuthMethod, clientSecret }));
     const trustedClientIds = new Set(trustedClients.map((client) => client.clientId));
     const refreshGrants = [...this.refreshTokens.entries()]
       .filter(([, grant]) => grant.expiresAt > now && trustedClientIds.has(grant.clientId))
@@ -594,7 +644,12 @@ function normalizePersistedState(value: unknown): RemoteMcpPersistedState | null
       : [];
     if (redirectUris.length === 0) return [];
     const clientName = typeof client.clientName === 'string' ? client.clientName.slice(0, 120) : null;
-    return [{ clientId: client.clientId, redirectUris, clientName }];
+    const tokenEndpointAuthMethod: TokenEndpointAuthMethod = client.tokenEndpointAuthMethod === 'client_secret_post' ? 'client_secret_post' : 'none';
+    const clientSecret = tokenEndpointAuthMethod === 'client_secret_post' && typeof client.clientSecret === 'string' && client.clientSecret.length >= 32 && client.clientSecret.length <= 256
+      ? client.clientSecret
+      : null;
+    if (tokenEndpointAuthMethod === 'client_secret_post' && clientSecret === null) return [];
+    return [{ clientId: client.clientId, redirectUris, clientName, tokenEndpointAuthMethod, clientSecret }];
   }).slice(0, 32);
   const trustedClientIds = new Set(trustedClients.map((client) => client.clientId));
   const grants = Array.isArray(record.refreshGrants) ? record.refreshGrants : [];
@@ -867,9 +922,21 @@ function parseBearer(value: string | undefined): string | null {
   const match = /^Bearer\s+([^\s]+)$/i.exec(value ?? '');
   return match?.[1] ?? null;
 }
+function isSupportedRegistrationStringArray(value: unknown, supported: readonly string[]): boolean {
+  if (value === undefined) return true;
+  return Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === 'string' && supported.includes(entry));
+}
+function verifyClientAuthentication(client: RegisteredClient, providedSecret: string | null): boolean {
+  if (client.tokenEndpointAuthMethod === 'none') return true;
+  if (client.clientSecret === null || providedSecret === null) return false;
+  const expected = Buffer.from(client.clientSecret, 'utf8');
+  const actual = Buffer.from(providedSecret, 'utf8');
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
 function isSafeRedirectUri(value: string): boolean {
   try {
     const url = new URL(value);
+    if (url.hash.length > 0 || url.username.length > 0 || url.password.length > 0) return false;
     return url.protocol === 'https:' || ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.protocol === 'http:');
   } catch { return false; }
 }

@@ -44,14 +44,24 @@ over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the Windows
 machine.
 
-## Current version: v4.55.0
+## Current version: v4.55.1
 
-The v4.55.0 release target and runtime contract contain **232 total MCP tool definitions**,
+The v4.55.1 release target and runtime contract contain **232 total MCP tool definitions**,
 with **225 advertised by default** and **all 232 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
+
+### What's new in v4.55.1
+
+#### Remote MCP OAuth / ChatGPT DCR hotfix
+
+- Remote MCP Dynamic Client Registration now handles ChatGPT-style OAuth client metadata without falling through to an HTTP 500 when the registration payload is malformed or unsupported.
+- Invalid registration JSON is returned as OAuth `400 invalid_client_metadata`, while redirect URI and client-metadata validation fail closed with explicit 4xx errors instead of internal-server failures.
+- DCR now supports both public OAuth clients (`token_endpoint_auth_method: none`) and `client_secret_post` clients, including generated client secrets and token-endpoint client authentication.
+- Trusted `client_secret_post` credentials are retained inside the existing DPAPI-protected Remote MCP OAuth state; existing v4.55.0 trusted public-client state remains loadable.
+- Redirect URI validation is tightened, and regression coverage now exercises ChatGPT-style DCR + Authorization Code/PKCE as well as malformed registration payloads.
 
 ### What's new in v4.55.0
 
@@ -270,13 +280,13 @@ stops the current local HTTP listener.
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.55.0.exe` (recommended installer) and `lnwjud-Portable-4.55.0.exe` (no installation required).
+   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.55.1.exe` (recommended installer) and `lnwjud-Portable-4.55.1.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.55.0.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.55.1.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -386,8 +396,8 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.55.0.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.55.0.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.55.1.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.55.1.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -669,8 +679,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.55.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.55.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.55.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.55.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
