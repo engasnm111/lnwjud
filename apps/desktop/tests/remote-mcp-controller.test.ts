@@ -185,6 +185,100 @@ describe('Remote MCP OAuth gateway', () => {
     await controller.close();
   });
 
+  it('accepts ChatGPT-style DCR metadata with client_secret_post and validates the client secret at the token endpoint', async () => {
+    const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
+    const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-chatgpt-dcr-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    await internal.startGateway(`${upstreamOrigin}/mcp`);
+    internal.publicOrigin = internal.gatewayUrl;
+    internal.issuePairingCode();
+    const origin = internal.gatewayUrl!;
+    const redirectUri = 'https://chatgpt.com/connector_platform_oauth_redirect';
+
+    const registration = await fetch(`${origin}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'ChatGPT',
+        redirect_uris: [redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'client_secret_post',
+      }),
+    });
+    expect(registration.status).toBe(201);
+    const registered = await registration.json() as {
+      client_id: string;
+      client_secret: string;
+      client_id_issued_at: number;
+      client_secret_expires_at: number;
+      token_endpoint_auth_method: string;
+      grant_types: string[];
+      response_types: string[];
+    };
+    expect(registered.client_id.length).toBeGreaterThan(20);
+    expect(registered.client_secret.length).toBeGreaterThan(30);
+    expect(registered.client_id_issued_at).toBeGreaterThan(0);
+    expect(registered.client_secret_expires_at).toBe(0);
+    expect(registered.token_endpoint_auth_method).toBe('client_secret_post');
+    expect(registered.grant_types).toEqual(['authorization_code', 'refresh_token']);
+    expect(registered.response_types).toEqual(['code']);
+
+    const verifier = 's'.repeat(64);
+    const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
+    const approved = await fetch(`${origin}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      redirect: 'manual',
+      body: new URLSearchParams({
+        response_type: 'code', client_id: registered.client_id, redirect_uri: redirectUri,
+        state: 'chatgpt-fixture-state', code_challenge: challenge, code_challenge_method: 'S256',
+        pairing_code: internal.pairingCode!,
+      }),
+    });
+    expect(approved.status).toBe(302);
+    const code = new URL(approved.headers.get('location')!).searchParams.get('code');
+    expect(code).toBeTruthy();
+
+    const missingSecret = await fetch(`${origin}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code: code!, client_id: registered.client_id, redirect_uri: redirectUri, code_verifier: verifier }),
+    });
+    expect(missingSecret.status).toBe(401);
+    expect(await missingSecret.json()).toEqual({ error: 'invalid_client' });
+
+    const tokenResponse = await fetch(`${origin}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code', code: code!, client_id: registered.client_id, client_secret: registered.client_secret,
+        redirect_uri: redirectUri, code_verifier: verifier,
+      }),
+    });
+    expect(tokenResponse.status).toBe(200);
+    const tokens = await tokenResponse.json() as { access_token: string; refresh_token: string };
+    expect(tokens.access_token.length).toBeGreaterThan(30);
+    expect(tokens.refresh_token.length).toBeGreaterThan(30);
+    await controller.close();
+  });
+
+  it('returns an OAuth client-metadata error instead of HTTP 500 for malformed DCR JSON', async () => {
+    const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
+    const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-malformed-dcr-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    await internal.startGateway(`${upstreamOrigin}/mcp`);
+    internal.publicOrigin = internal.gatewayUrl;
+    const response = await fetch(`${internal.gatewayUrl}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{',
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_client_metadata', error_description: 'Registration body must be a valid JSON object.' });
+    await controller.close();
+  });
+
   it('rejects insecure non-loopback OAuth redirect URIs', async () => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-test-2', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
