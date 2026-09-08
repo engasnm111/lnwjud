@@ -98,7 +98,11 @@ export function normalizeLaunchConfig(
 }
 
 export function exclusionReason(name: string, config: McpServerLaunchConfig): string | undefined {
-  const lowered = name.trim().toLowerCase();
+  const normalizedName = name.trim();
+  if (normalizedName.length === 0 || normalizedName.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(normalizedName)) {
+    return 'MCP server name is invalid for a stable external namespace';
+  }
+  const lowered = normalizedName.toLowerCase();
   if (lowered === 'lnwjud' || lowered.startsWith('lnwjud-')) {
     return 'Refusing to aggregate lnwjud itself';
   }

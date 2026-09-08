@@ -21,6 +21,8 @@ export interface ActivitySinkEvent {
   readonly timestamp: string;
   readonly traceId?: string;
   readonly traceParent?: string;
+  readonly traceState?: string;
+  readonly baggage?: string;
   readonly authorizationMode?: 'standard' | 'full_bypass';
 }
 
@@ -28,6 +30,37 @@ export interface TraceContext {
   readonly sessionId?: string;
   readonly traceId?: string;
   readonly traceParent?: string;
+  readonly traceState?: string;
+  readonly baggage?: string;
+}
+
+export interface ToolTelemetrySnapshot {
+  readonly calls: number;
+  readonly successes: number;
+  readonly errors: number;
+  readonly cancellations: number;
+  readonly active: number;
+  readonly averageLatencyMs: number;
+  readonly p50LatencyMs: number;
+  readonly p95LatencyMs: number;
+  readonly maxLatencyMs: number;
+}
+
+export interface ActivityTelemetrySnapshot {
+  readonly calls: number;
+  readonly completed: number;
+  readonly successes: number;
+  readonly errors: number;
+  readonly cancellations: number;
+  readonly active: number;
+  readonly averageLatencyMs: number;
+  readonly p50LatencyMs: number;
+  readonly p95LatencyMs: number;
+  readonly maxLatencyMs: number;
+  readonly byTool: Readonly<Record<string, ToolTelemetrySnapshot>>;
+  readonly batchPartialFailures: number;
+  readonly taskLifecycleCalls: number;
+  readonly recentErrorClasses: readonly { readonly code: string; readonly count: number }[];
 }
 
 export interface ActivitySink {
@@ -50,12 +83,16 @@ export interface InFlightToolCall {
   readonly targetDetail: ActivityTargetReference;
   readonly traceId?: string;
   readonly traceParent?: string;
+  readonly traceState?: string;
+  readonly baggage?: string;
   readonly authorizationMode?: 'standard' | 'full_bypass';
 }
 
 export class ActivityTracker {
   private readonly inflight = new Map<string, InFlightToolCall>();
+  private readonly completedTelemetry: Array<{ readonly toolName: string; readonly resultCode: string; readonly durationMs: number; readonly partialFailure: boolean }> = [];
   private activityRevision = 0;
+  private readonly maxTelemetryEntries = 4096;
 
   public constructor(
     private readonly sink?: ActivitySink,
@@ -69,6 +106,59 @@ export class ActivityTracker {
 
   public revision(): number {
     return this.activityRevision;
+  }
+
+  public telemetrySnapshot(): ActivityTelemetrySnapshot {
+    const activeByTool = new Map<string, number>();
+    for (const entry of this.inflight.values()) activeByTool.set(entry.toolName, (activeByTool.get(entry.toolName) ?? 0) + 1);
+    const completedByTool = new Map<string, Array<{ readonly resultCode: string; readonly durationMs: number }>>();
+    const errorCounts = new Map<string, number>();
+    for (const entry of this.completedTelemetry) {
+      const bucket = completedByTool.get(entry.toolName) ?? [];
+      bucket.push({ resultCode: entry.resultCode, durationMs: entry.durationMs });
+      completedByTool.set(entry.toolName, bucket);
+      if (telemetryOutcome(entry.resultCode) === 'error') errorCounts.set(entry.resultCode, (errorCounts.get(entry.resultCode) ?? 0) + 1);
+    }
+    const toolNames = [...new Set([...completedByTool.keys(), ...activeByTool.keys()])].sort();
+    const byTool: Record<string, ToolTelemetrySnapshot> = {};
+    for (const toolName of toolNames) {
+      const completed = completedByTool.get(toolName) ?? [];
+      const durations = completed.map((entry) => entry.durationMs);
+      const successes = completed.filter((entry) => telemetryOutcome(entry.resultCode) === 'success').length;
+      const errors = completed.filter((entry) => telemetryOutcome(entry.resultCode) === 'error').length;
+      const cancellations = completed.filter((entry) => telemetryOutcome(entry.resultCode) === 'cancelled').length;
+      byTool[toolName] = {
+        calls: completed.length + (activeByTool.get(toolName) ?? 0),
+        successes,
+        errors,
+        cancellations,
+        active: activeByTool.get(toolName) ?? 0,
+        averageLatencyMs: average(durations),
+        p50LatencyMs: percentile(durations, 0.5),
+        p95LatencyMs: percentile(durations, 0.95),
+        maxLatencyMs: durations.length === 0 ? 0 : Math.max(...durations),
+      };
+    }
+    const durations = this.completedTelemetry.map((entry) => entry.durationMs);
+    const successes = this.completedTelemetry.filter((entry) => telemetryOutcome(entry.resultCode) === 'success').length;
+    const errors = this.completedTelemetry.filter((entry) => telemetryOutcome(entry.resultCode) === 'error').length;
+    const cancellations = this.completedTelemetry.filter((entry) => telemetryOutcome(entry.resultCode) === 'cancelled').length;
+    return {
+      calls: this.completedTelemetry.length + this.inflight.size,
+      completed: this.completedTelemetry.length,
+      successes,
+      errors,
+      cancellations,
+      active: this.inflight.size,
+      averageLatencyMs: average(durations),
+      p50LatencyMs: percentile(durations, 0.5),
+      p95LatencyMs: percentile(durations, 0.95),
+      maxLatencyMs: durations.length === 0 ? 0 : Math.max(...durations),
+      byTool,
+      batchPartialFailures: this.completedTelemetry.filter((entry) => entry.toolName === 'tool_batch' && entry.partialFailure).length,
+      taskLifecycleCalls: this.completedTelemetry.filter((entry) => /^(task_|delegate_|agent_swarm_)/.test(entry.toolName)).length,
+      recentErrorClasses: [...errorCounts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 16).map(([code, count]) => ({ code, count })),
+    };
   }
 
   public async begin(
@@ -94,6 +184,8 @@ export class ActivityTracker {
       targetDetail,
       ...(trace.traceId === undefined ? {} : { traceId: trace.traceId }),
       ...(trace.traceParent === undefined ? {} : { traceParent: trace.traceParent }),
+      ...(trace.traceState === undefined ? {} : { traceState: trace.traceState }),
+      ...(trace.baggage === undefined ? {} : { baggage: trace.baggage }),
       ...(authorizationMode === undefined ? {} : { authorizationMode }),
     };
     this.inflight.set(callId, entry);
@@ -111,6 +203,8 @@ export class ActivityTracker {
       targetDetail,
       ...(trace.traceId === undefined ? {} : { traceId: trace.traceId }),
       ...(trace.traceParent === undefined ? {} : { traceParent: trace.traceParent }),
+      ...(trace.traceState === undefined ? {} : { traceState: trace.traceState }),
+      ...(trace.baggage === undefined ? {} : { baggage: trace.baggage }),
       ...(authorizationMode === undefined ? {} : { authorizationMode }),
     }, describedTarget.detail);
     return callId;
@@ -141,6 +235,13 @@ export class ActivityTracker {
     const existing = this.inflight.get(callId);
     this.inflight.delete(callId);
     this.activityRevision += 1;
+    this.completedTelemetry.push({
+      toolName: existing?.toolName ?? 'unknown',
+      resultCode,
+      durationMs: Math.max(0, Number.isFinite(durationMs) ? durationMs : 0),
+      partialFailure: existing?.toolName === 'tool_batch' && hasPartialFailure(resultDetail),
+    });
+    if (this.completedTelemetry.length > this.maxTelemetryEntries) this.completedTelemetry.splice(0, this.completedTelemetry.length - this.maxTelemetryEntries);
     const timestamp = new Date().toISOString();
     const targetDetail = resultDetail === undefined
       ? existing?.targetDetail ?? activityTargetReference(null, undefined, undefined)
@@ -158,6 +259,8 @@ export class ActivityTracker {
       targetDetail,
       ...(existing?.traceId === undefined ? {} : { traceId: existing.traceId }),
       ...(existing?.traceParent === undefined ? {} : { traceParent: existing.traceParent }),
+      ...(existing?.traceState === undefined ? {} : { traceState: existing.traceState }),
+      ...(existing?.baggage === undefined ? {} : { baggage: existing.baggage }),
       ...(existing?.authorizationMode === undefined ? {} : { authorizationMode: existing.authorizationMode }),
       ...(resultMessage === undefined || resultMessage.length === 0 ? {} : { resultMessage }),
     }, resultDetail);
@@ -369,9 +472,13 @@ export function readTraceContext(input: unknown): TraceContext {
   const metadata = isRecord(input.metadata) ? input.metadata : undefined;
   const traceId = boundedTraceValue(input.trace_id ?? input.traceId ?? metadata?.trace_id ?? metadata?.traceId);
   const traceParent = boundedTraceValue(input.traceparent ?? input.traceParent ?? metadata?.traceparent ?? metadata?.traceParent);
+  const traceState = boundedTraceValue(input.tracestate ?? input.traceState ?? metadata?.tracestate ?? metadata?.traceState);
+  const baggage = boundedBaggage(input.baggage ?? metadata?.baggage);
   return {
     ...(traceId === undefined ? {} : { traceId }),
     ...(traceParent === undefined ? {} : { traceParent }),
+    ...(traceState === undefined ? {} : { traceState }),
+    ...(baggage === undefined ? {} : { baggage }),
   };
 }
 
@@ -526,6 +633,50 @@ function truncate(value: string, max: number): string {
 function boundedTraceValue(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.trim().length === 0) return undefined;
   return truncate(value.trim(), 256);
+}
+
+function boundedBaggage(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  const redacted = value
+    .split(',')
+    .slice(0, 32)
+    .map((member) => {
+      const [rawKey, ...rest] = member.trim().split('=');
+      if (rawKey === undefined || rest.length === 0) return undefined;
+      const key = rawKey.trim();
+      if (key.length === 0) return undefined;
+      if (isSensitiveKey(key)) return `${key}=[redacted]`;
+      return `${key}=${redactSensitiveLogText(rest.join('=').trim())}`;
+    })
+    .filter((member): member is string => member !== undefined)
+    .join(',');
+  return redacted.length === 0 ? undefined : truncate(redacted, 1024);
+}
+
+function hasPartialFailure(detail: ActivityTargetDetail | undefined): boolean {
+  if (detail === undefined) return false;
+  const serialized = JSON.stringify(detail);
+  return /(?:isError|failed|error|ok)[^\n]{0,64}(?:true|false|ERROR|failed)/i.test(serialized)
+    && /(?:isError\W*true|ok\W*false|failed|error)/i.test(serialized);
+}
+
+function telemetryOutcome(resultCode: string): 'success' | 'error' | 'cancelled' {
+  const normalized = resultCode.toUpperCase();
+  if (normalized === 'SUCCESS' || normalized === 'OK' || normalized === 'COMPLETED') return 'success';
+  if (/CANCEL|ABORT|TIMEOUT|TERMINAT/.test(normalized)) return 'cancelled';
+  return 'error';
+}
+
+function average(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+}
+
+function percentile(values: readonly number[], fraction: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * fraction) - 1));
+  return sorted[index] ?? 0;
 }
 
 function humanizeToolName(toolName: string): string {

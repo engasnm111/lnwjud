@@ -181,7 +181,7 @@ export class ToolRegistry {
       ...sessionTools(context, incrementalVerifier),
       ...goalTools(context),
       ...scheduledContinuationTools(context),
-      ...upgradeTools(context),
+      ...upgradeTools(context, incrementalVerifier, this.activity),
     ];
     const exposedAllBaseTools = allBaseTools.map((tool) => withToolEnvelopes(tool));
     const systemEligibleBaseTools = exposedAllBaseTools.filter((tool) => {
@@ -984,7 +984,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.54.0 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.55.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

@@ -124,6 +124,10 @@ describe('session tools', () => {
     expect(first).toMatchObject({ ok: true, value: { cache: 'miss', passed: true } });
     expect(second).toMatchObject({ ok: true, value: { cache: 'hit', passed: true } });
     expect(third).toMatchObject({ ok: true, value: { cache: 'miss', passed: true } });
+    expect(verifier.stats()).toMatchObject({ entries: 1, hits: 1, misses: 2, hitRate: 1 / 3 });
+    expect(verifier.stats().bytesSaved).toBeGreaterThan(0);
+    expect(verifier.invalidate('workspace-1')).toBe(1);
+    expect(verifier.stats()).toMatchObject({ entries: 0, hits: 1, misses: 2 });
     expect(starts).toBe(2);
   });
 });

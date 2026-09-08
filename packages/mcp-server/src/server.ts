@@ -7,6 +7,8 @@ import { withProgressHeartbeat, type ProgressNotifyContext } from './progress-he
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard, type RunBudgetContext } from './run-budget.js';
 import { registerTasksProtocol } from './tasks-protocol.js';
+import { MODERN_TASKS_EXTENSION_ID } from './modern-tasks-protocol.js';
+import { registerModernTasksProtocol } from './modern-tasks-wire.js';
 import { ToolRegistry, type ActiveProjectScope, type AuthorizationMode, type HostMutationApprovalRequest, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
 import type { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { actorForRequestScope, type McpRequestScope } from './request-scope.js';
@@ -90,11 +92,12 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   const server = new McpServer({ name: APP_NAME, version: APP_VERSION }, {
     capabilities: legacyTasksProtocol
       ? { tools: {}, tasks: { list: {}, cancel: {} } }
-      : { tools: {} },
+      : { tools: {}, extensions: { [MODERN_TASKS_EXTENSION_ID]: {} } },
     instructions: MCP_OUTCOME_DRIVEN_INSTRUCTIONS,
     debouncedNotificationMethods: ['notifications/tools/list_changed'],
   });
   if (legacyTasksProtocol) registerTasksProtocol(server, options.services, { actor });
+  else registerModernTasksProtocol(server, options.services, { actor });
 
   const registeredTools = new Map<string, RegisteredTool>();
   const initiallyExposed = new Set(registry.list().map((tool) => tool.name));
@@ -102,14 +105,26 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     const registeredTool = server.registerTool(tool.name, {
       description: tool.description,
       inputSchema: tool.inputSchema,
+      outputSchema: tool.outputSchema,
       annotations: tool.annotations,
     }, async (input: unknown, context): Promise<CallToolResult> => {
       const dispatchContext = context as ProgressNotifyContext & RunBudgetContext;
       runBudgetGuard.begin(dispatchContext);
+      const sdkTrace = readTraceContext(context);
+      const requestScope = options.requestScope;
+      const traceContext = {
+        ...sdkTrace,
+        ...(requestScope?.sessionId === undefined ? {} : { sessionId: requestScope.sessionId }),
+        ...(sdkTrace.traceId !== undefined || requestScope?.traceId === undefined ? {} : { traceId: requestScope.traceId }),
+        ...(sdkTrace.traceParent !== undefined || requestScope?.traceParent === undefined ? {} : { traceParent: requestScope.traceParent }),
+        ...(sdkTrace.traceState !== undefined || requestScope?.traceState === undefined ? {} : { traceState: requestScope.traceState }),
+        ...(sdkTrace.baggage !== undefined || requestScope?.baggage === undefined ? {} : { baggage: requestScope.baggage }),
+      };
       const result = await withProgressHeartbeat(dispatchContext, tool.name, async () => (
-        registry.invoke(tool.name, input, readTraceContext(context)) as unknown as Promise<CallToolResult>
+        registry.invoke(tool.name, input, traceContext) as unknown as Promise<CallToolResult>
       ));
-      return runBudgetGuard.finish(dispatchContext, result);
+      const finished = runBudgetGuard.finish(dispatchContext, result);
+      return finished;
     });
     if (!initiallyExposed.has(tool.name)) registeredTool.disable();
     registeredTools.set(tool.name, registeredTool);

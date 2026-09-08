@@ -19,13 +19,17 @@ export interface ExtensionsSettings {
   readonly extraMcpServers: Readonly<Record<string, McpServerLaunchConfig>>;
 }
 
+export type ExtensionTrustTier = 'bundled' | 'workspace' | 'user' | 'external';
+
 export interface SkillSummary {
   readonly id: string;
   readonly name: string;
   readonly description: string;
   readonly source: string;
+  readonly trustTier: ExtensionTrustTier;
   readonly rootPath: string;
   readonly skillPath: string;
+  readonly canonicalSkillPath?: string;
 }
 
 export interface SkillContent {
@@ -33,7 +37,9 @@ export interface SkillContent {
   readonly name: string;
   readonly description: string;
   readonly source: string;
+  readonly trustTier: ExtensionTrustTier;
   readonly path: string;
+  readonly canonicalPath?: string;
   readonly content: string;
 }
 
@@ -50,6 +56,22 @@ export interface McpToolSummary {
   readonly name: string;
   readonly description: string;
   readonly inputSchema?: unknown;
+  readonly outputSchema?: unknown;
+}
+
+export interface ExternalMcpContractDrift {
+  readonly detected: boolean;
+  readonly reasons: readonly ('launch_config' | 'tool_catalog')[];
+  readonly previousCatalogFingerprint?: string;
+}
+
+export interface ExternalMcpProvenance {
+  readonly source: string;
+  readonly trustTier: 'external';
+  readonly namespace: string;
+  readonly descriptorFingerprint: string;
+  readonly catalogFingerprint: string;
+  readonly drift: ExternalMcpContractDrift;
 }
 
 export interface McpResourceSummary {
@@ -67,7 +89,8 @@ export interface ExtensionsService {
     readonly server: string;
     readonly enabled: boolean;
     readonly connected: boolean;
-    readonly tools: readonly McpToolSummary[];
+    readonly provenance: ExternalMcpProvenance;
+    readonly tools: readonly (McpToolSummary & { readonly qualifiedName: string })[];
   }>>;
   listMcpResources(input: { readonly server: string }, signal?: AbortSignal): Promise<Result<{
     readonly server: string;

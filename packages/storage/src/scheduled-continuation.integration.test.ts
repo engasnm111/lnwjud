@@ -1232,7 +1232,7 @@ describe('scheduled continuation repository state machine', () => {
     }
   });
 
-  it('recovers a stale still-valid recurring lease in the current hourly tick without waiting for expiry or another tick', async () => {
+  it('recovers the exact ghost-worker case in the current hourly tick when process/task evidence is empty and no fenced call is live', async () => {
     const database = await openDatabase();
     const repository = new SqliteGoalRepository(database);
     try {
@@ -1919,6 +1919,59 @@ describe('scheduled continuation repository state machine', () => {
         },
       });
       expect(secondProbe.outcome).not.toBe('acquired');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not cap a recurring goal checkpoint to the historical first due_at', async () => {
+    const database = await openDatabase();
+    const repository = new SqliteGoalRepository(database);
+    try {
+      await acquireGoalLease(repository, '2026-08-27T00:20:00.000Z');
+      const prepared = await repository.prepareScheduledContinuation({
+        ...prepareRequest(
+          '2026-08-27T00:20:00.000Z',
+          '2026-08-27T00:22:00.000Z',
+          0,
+          'recurring-checkpoint-lease-fp',
+          'continuation-recurring-checkpoint-lease',
+        ),
+        occurrence: 'interval',
+        intervalMinutes: 60,
+      });
+      expect(prepared.goal.leaseExpiresAt).toBe('2026-08-27T01:20:00.000Z');
+      await repository.recordScheduledContinuationReceipt({
+        continuationId: prepared.continuation.continuationId,
+        ownerClientId: 'chatgpt-web-client',
+        expectedVersion: prepared.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-recurring-checkpoint-lease',
+        dueAt: prepared.continuation.dueAt,
+        runsOn: 'cloud',
+        now: '2026-08-27T00:20:05.000Z',
+      });
+
+      const checkpointed = await repository.checkpoint({
+        checkpointId: 'checkpoint-recurring-after-first-due',
+        goalId: 'goal-1',
+        ownerClientId: 'chatgpt-web-client',
+        ownerSessionId: 'session-a',
+        leaseTokenHash: 'lease-hash-a',
+        expectedRevision: 1,
+        plan: { steps: [] },
+        currentPhase: 'still-working',
+        summary: 'Recurring worker continues after the first interval tick.',
+        stepUpdates: [],
+        nextAction: 'Keep working under the natural rolling lease.',
+        blockers: [],
+        evidence: [],
+        activeTaskIds: [],
+        releaseLease: false,
+        now: '2026-08-27T00:30:00.000Z',
+      });
+      expect(checkpointed.leaseExpiresAt).toBe('2026-08-27T01:30:00.000Z');
+      expect(checkpointed.revision).toBe(2);
     } finally {
       database.close();
     }

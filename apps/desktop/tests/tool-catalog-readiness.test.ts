@@ -51,9 +51,12 @@ describe('tool catalog readiness aggregation', () => {
     expect(unknownGit?.available).toBeUndefined();
 
     const unsupported = service({ platform_windows: 'fail' });
-    expect((await unsupported.catalog.getSnapshot('en')).items.find((item) => item.name === 'accessibility')).toMatchObject({
-      readiness: 'unsupported', readinessReason: 'unsupported_platform', deliveryState: 'unsupported', available: false,
-    });
+    const unsupportedSnapshot = await unsupported.catalog.getSnapshot('en');
+    for (const name of ['accessibility', 'system_info', 'notification', 'file_dialog', 'clipboard', 'audio', 'screen_record', 'office', 'scheduler']) {
+      expect(unsupportedSnapshot.items.find((item) => item.name === name), name).toMatchObject({
+        readiness: 'unsupported', readinessReason: 'unsupported_platform', deliveryState: 'unsupported', available: false,
+      });
+    }
 
     const blocked = service({}, { profileDecision: 'DENY' });
     const blockedItem = (await blocked.catalog.getSnapshot('en')).items.find((item) => item.name === 'read_file');

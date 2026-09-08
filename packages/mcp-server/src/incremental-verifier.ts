@@ -9,6 +9,15 @@ const LOG_TAIL_LINES = 80;
 interface VerificationCacheEntry {
   readonly cacheKey: string;
   readonly value: Record<string, unknown>;
+  readonly bytes: number;
+}
+
+export interface IncrementalVerifierCacheStats {
+  readonly entries: number;
+  readonly hits: number;
+  readonly misses: number;
+  readonly hitRate: number;
+  readonly bytesSaved: number;
 }
 
 export interface IncrementalVerifierOptions {
@@ -23,6 +32,9 @@ export class IncrementalVerifier {
   private readonly maxWaitMs: number;
   private readonly pollMs: number;
   private readonly now: () => number;
+  private hits = 0;
+  private misses = 0;
+  private bytesSaved = 0;
 
   public constructor(options: IncrementalVerifierOptions = {}) {
     this.maxWaitMs = positiveFinite(options.maxWaitMs, DEFAULT_VERIFY_WAIT_MS);
@@ -41,6 +53,8 @@ export class IncrementalVerifier {
     if (!fingerprint.ok) return fingerprint;
     const cached = this.cache.get(workspaceId);
     if (cached?.cacheKey === fingerprint.value.cacheKey) {
+      this.hits += 1;
+      this.bytesSaved += cached.bytes;
       return ok({
         cache: 'hit',
         cache_key: cached.cacheKey,
@@ -48,6 +62,7 @@ export class IncrementalVerifier {
         ...cached.value,
       });
     }
+    this.misses += 1;
 
     if (signal.aborted) return cancelledVerification();
     const started = await processService.startProjectCommand(context.actor, workspaceId, 'typecheck', signal, userConfirmed, undefined, authorization);
@@ -84,13 +99,37 @@ export class IncrementalVerifier {
       logs_truncated: logs.value.truncated,
       verified_at: new Date(this.now()).toISOString(),
     } satisfies Record<string, unknown>;
-    this.cache.set(workspaceId, { cacheKey: fingerprint.value.cacheKey, value: verification });
+    const bytes = Buffer.byteLength(JSON.stringify(verification), 'utf8');
+    this.cache.set(workspaceId, { cacheKey: fingerprint.value.cacheKey, value: verification, bytes });
     return ok({
       cache: 'miss',
       cache_key: fingerprint.value.cacheKey,
       changed_files: fingerprint.value.changedFiles,
       ...verification,
     });
+  }
+
+  public stats(): IncrementalVerifierCacheStats {
+    const total = this.hits + this.misses;
+    return {
+      entries: this.cache.size,
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: total === 0 ? 0 : this.hits / total,
+      bytesSaved: this.bytesSaved,
+    };
+  }
+
+  public invalidate(workspaceId?: string): number {
+    if (workspaceId === undefined) {
+      const removed = this.cache.size;
+      this.cache.clear();
+      this.hits = 0;
+      this.misses = 0;
+      this.bytesSaved = 0;
+      return removed;
+    }
+    return this.cache.delete(workspaceId) ? 1 : 0;
   }
 }
 

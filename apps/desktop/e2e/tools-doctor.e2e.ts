@@ -27,8 +27,8 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     const app = await launchDesktop();
     try {
       await openTools(app.page);
-      await expect(app.page.getByRole('tab', { name: /lnwjud \(231\)/ })).toBeVisible();
-      await expect(app.page.locator('.tool-card')).toHaveCount(231);
+      await expect(app.page.getByRole('tab', { name: /lnwjud \(232\)/ })).toBeVisible();
+      await expect(app.page.locator('.tool-card')).toHaveCount(232);
       await expect(app.page.locator('.tool-status-strip')).toContainText(/พร้อม|ต้องดำเนินการ|ready|needs_setup/i);
     } finally { await closeDesktop(app); }
   });

@@ -11,7 +11,10 @@ export function workspaceIndexTools(context: McpToolContext): McpToolDefinition[
       inputSchema: workspaceIndexSchema,
       handler: async (input) => context.services.workspaceIndex === undefined
         ? missingService()
-        : context.services.workspaceIndex.indexWorkspace(input.workspaceId, { discovery: input.includeIgnored ? 'explicit' : 'automatic' }),
+        : context.services.workspaceIndex.indexWorkspace(input.workspaceId, {
+          discovery: input.includeIgnored ? 'explicit' : 'automatic',
+          rebuild: input.rebuild,
+        }),
     }),
     defineTool({
       name: 'workspace_index_status',

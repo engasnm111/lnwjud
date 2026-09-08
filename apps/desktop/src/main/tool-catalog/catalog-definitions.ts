@@ -112,6 +112,7 @@ function requirementsFor(name: string, category: ToolCategory): readonly string[
   if (/^input_event$/.test(name)) { ids.add('platform_windows'); ids.add('windows_input'); }
   if (/^window$/.test(name)) { ids.add('platform_windows'); ids.add('windows_window'); }
   if (/^vision/.test(name)) { ids.add('platform_windows'); ids.add('windows_ocr'); }
+  if (/^(system_info|notification|file_dialog|clipboard|audio|screen_record|office)$/.test(name)) ids.add('platform_windows');
   if (name === 'office' || /^office_(ppt|outlook)$/.test(name) || name === 'inspect_workbook' || name === 'docx_merge') ids.add('office_desktop');
   if (name === 'inspect_pdf' || name === 'pdf_extract_tables') ids.add('local_pdf_provider');
   if (name === 'lsp_diagnostics' || name === 'lsp_rename') ids.add('configured_lsp');

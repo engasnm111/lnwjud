@@ -7,6 +7,7 @@ import {
   type GoalCheckpointRecord,
   type GoalEvidence,
   type GoalLeaseRecoveryEvidence,
+  type GoalReconciliationReason,
   type GoalPlan,
   type GoalPlanStep,
   type GoalRecord,
@@ -106,6 +107,42 @@ export interface CancelGoalRequest {
   readonly expectedRevision: number;
   readonly summary: string;
   readonly evidence: readonly GoalEvidence[];
+}
+
+export interface ReconcileGoalsRequest {
+  readonly workspaceId: string;
+  readonly goalIds: readonly string[];
+  readonly reason: GoalReconciliationReason;
+  readonly summary: string;
+  readonly apply?: boolean;
+  readonly supersededByGoalId?: string;
+}
+
+export type GoalReconciliationDisposition =
+  | 'eligible'
+  | 'reconciled'
+  | 'not_active'
+  | 'live_lease'
+  | 'live_worker'
+  | 'liveness_unavailable'
+  | 'liveness_untrusted'
+  | 'native_cleanup_required'
+  | 'concurrent_change';
+
+export interface GoalReconciliationEntry {
+  readonly goalId: string;
+  readonly goalKey?: string;
+  readonly disposition: GoalReconciliationDisposition;
+  readonly reason?: string;
+  readonly snapshot?: GoalSnapshot;
+  readonly continuationId?: string;
+  readonly nativeTaskId?: string;
+}
+
+export interface ReconcileGoalsResult {
+  readonly apply: boolean;
+  readonly reason: GoalReconciliationReason;
+  readonly results: readonly GoalReconciliationEntry[];
 }
 
 export interface ListGoalsRequest {
@@ -447,6 +484,121 @@ export class GoalContinuationService {
         allRequestsStopped: requestCancellation.remaining === 0,
         scheduledTaskCancellation,
       });
+    } catch (error: unknown) {
+      return this.mapError(error);
+    }
+  }
+
+  public async reconcileGoals(actor: FileActor, request: ReconcileGoalsRequest): Promise<Result<ReconcileGoalsResult>> {
+    try {
+      const ownerClientId = stableOwnerClientId(actor);
+      const workspaceId = requiredBounded(request.workspaceId, 'workspaceId', 128);
+      if (await this.workspaces.get(workspaceId) === null) return err(appError('WORKSPACE_NOT_FOUND', 'Workspace was not found'));
+      if (!Array.isArray(request.goalIds) || request.goalIds.length < 1 || request.goalIds.length > 20) {
+        return err(appError('INVALID_INPUT', 'goalIds must contain between 1 and 20 exact durable goal IDs'));
+      }
+      const goalIds = [...new Set(request.goalIds.map((goalId) => requiredBounded(goalId, 'goalId', 128)))];
+      const summary = safeText(request.summary, MAX_SUMMARY, 'summary');
+      const apply = request.apply === true;
+      const supersededByGoalId = request.supersededByGoalId === undefined
+        ? undefined
+        : requiredBounded(request.supersededByGoalId, 'supersededByGoalId', 128);
+      if (request.reason === 'superseded' && supersededByGoalId === undefined) {
+        return err(appError('INVALID_INPUT', 'supersededByGoalId is required when reason=superseded'));
+      }
+      const results: GoalReconciliationEntry[] = [];
+      for (const goalId of goalIds) {
+        const current = await this.goals.getById(goalId);
+        if (current === null) {
+          results.push({ goalId, disposition: 'not_active', reason: 'goal_not_found' });
+          continue;
+        }
+        if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+        if (current.workspaceId !== workspaceId) {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'not_active', reason: 'workspace_mismatch' });
+          continue;
+        }
+        if (current.status !== 'active') {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'not_active', snapshot: toSnapshot(current) });
+          continue;
+        }
+        const now = this.now();
+        const expiresAtMs = current.leaseExpiresAt === undefined ? Number.NaN : Date.parse(current.leaseExpiresAt);
+        if (Number.isFinite(expiresAtMs) && expiresAtMs > now.getTime()) {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'live_lease', snapshot: toSnapshot(current) });
+          continue;
+        }
+        if (this.workerLiveness === undefined || this.scheduledContinuations === undefined) {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'liveness_unavailable', snapshot: toSnapshot(current) });
+          continue;
+        }
+        const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
+        const observed = await this.workerLiveness.observe(goalId, trackedTasks);
+        if (!observed.trustworthy) {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'liveness_untrusted', snapshot: toSnapshot(current) });
+          continue;
+        }
+        if (observed.leaseGeneration !== current.leaseGeneration || observed.leaseActivitySeq !== current.leaseActivitySeq) {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'concurrent_change', snapshot: toSnapshot(current) });
+          continue;
+        }
+        const blockingStates = observed.blockingTaskStates
+          ?? observed.activeTaskStates?.map((entry) => ({ ...entry, provider: 'legacy_auto' as const }))
+          ?? [];
+        if (observed.liveFencedCallCount > 0 || blockingStates.some((entry) => entry.state === 'running' || entry.state === 'unknown')) {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'live_worker', snapshot: toSnapshot(current) });
+          continue;
+        }
+        const liveContinuation = await this.scheduledContinuations.getLiveScheduledContinuation(goalId);
+        if (liveContinuation !== null) {
+          results.push({
+            goalId,
+            goalKey: current.goalKey,
+            disposition: 'native_cleanup_required',
+            reason: 'scheduled_continuation_must_be_made_historical_before_reconciliation',
+            snapshot: toSnapshot(current),
+            continuationId: liveContinuation.continuationId,
+            ...(liveContinuation.nativeTaskId === undefined ? {} : { nativeTaskId: liveContinuation.nativeTaskId }),
+          });
+          continue;
+        }
+        if (!apply) {
+          results.push({ goalId, goalKey: current.goalKey, disposition: 'eligible', snapshot: toSnapshot(current) });
+          continue;
+        }
+        try {
+          const evidence: GoalEvidence[] = [
+            { kind: 'note', value: `reconciliation_liveness:gen=${observed.leaseGeneration};seq=${observed.leaseActivitySeq};fenced=${observed.liveFencedCallCount}` },
+            ...(supersededByGoalId === undefined ? [] : [{ kind: 'note' as const, value: `superseded_by_goal:${supersededByGoalId}` }]),
+          ];
+          const reconciled = await this.goals.reconcile({
+            checkpointId: randomUUID(),
+            goalId,
+            ownerClientId,
+            expectedRevision: current.revision,
+            expectedLeaseGeneration: current.leaseGeneration,
+            expectedLeaseActivitySeq: current.leaseActivitySeq,
+            reason: request.reason,
+            summary,
+            evidence,
+            now: now.toISOString(),
+          });
+          results.push({ goalId, goalKey: reconciled.goalKey, disposition: 'reconciled', snapshot: toSnapshot(reconciled) });
+        } catch (error: unknown) {
+          if (error instanceof GoalStateError && (error.reason === 'conflict' || error.reason === 'terminal')) {
+            const latest = await this.goals.getById(goalId);
+            results.push({
+              goalId,
+              goalKey: current.goalKey,
+              disposition: 'concurrent_change',
+              ...(latest === null ? {} : { snapshot: toSnapshot(latest) }),
+            });
+            continue;
+          }
+          throw error;
+        }
+      }
+      return ok({ apply, reason: request.reason, results });
     } catch (error: unknown) {
       return this.mapError(error);
     }

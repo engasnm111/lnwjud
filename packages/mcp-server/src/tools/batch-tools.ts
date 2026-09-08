@@ -25,6 +25,7 @@ interface BatchGroupInput {
 
 interface ToolBatchInput {
   readonly parallel: boolean;
+  readonly maxConcurrency: number;
   readonly calls?: readonly BatchCallInput[];
   readonly groups?: readonly BatchGroupInput[];
 }
@@ -54,7 +55,7 @@ export function batchTools(invoker: BatchToolInvoker): readonly McpToolDefinitio
           const response = await invoker.invoke(call.tool, call.input, childSignal);
           if (response.isError === true) throw toChildError(response);
           return response;
-        }, { signal });
+        }, { signal, maxConcurrency: input.maxConcurrency });
         return ok(result);
       } catch (error: unknown) {
         return err({

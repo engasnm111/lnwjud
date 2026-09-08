@@ -231,43 +231,16 @@ export class AgentSwarmService {
       }
       const started = await this.codex.run(live.actor, launchSwarm.workspaceId, prompt, signal, false, live.authorization, 'read-only');
       if (!started.ok) {
+        // Isolate admission failure to this child. Already-running siblings keep
+        // their verified handles and independent queued siblings may continue
+        // launching within the same bounded-concurrency tick.
         this.repository.updateTask(swarmId, task.id, { state: 'failed', error: boundedError(started.error.message), finishedAt: this.now().toISOString() }, this.now().toISOString());
-        await this.rollbackLaunchFailure(swarmId, live, task.id);
-        return;
+        continue;
       }
       this.repository.updateTask(swarmId, task.id, { state: 'running', codexTaskId: started.value.codexTaskId, startedAt: this.now().toISOString() }, this.now().toISOString());
       running += 1;
     }
     this.refreshSwarmState(swarmId, live.actor, swarm.workspaceId);
-  }
-
-  private async rollbackLaunchFailure(swarmId: string, live: LiveSwarm, failedTaskId: string): Promise<void> {
-    live.abortController.abort();
-    const swarm = this.requireOwned(live.actor, live.workspaceId, swarmId);
-    let terminationUnverified = false;
-    for (const task of swarm.tasks) {
-      if (task.id === failedTaskId) continue;
-      if (task.state === 'running' && task.codexTaskId !== undefined) {
-        const stopped = await this.codex.stop(live.actor, live.workspaceId, task.codexTaskId, false, live.authorization);
-        if (stopped.ok) {
-          this.repository.updateTask(swarmId, task.id, { state: 'cancelled', finishedAt: this.now().toISOString() }, this.now().toISOString());
-        } else {
-          terminationUnverified = true;
-          this.repository.updateTask(swarmId, task.id, {
-            state: 'termination_unverified',
-            error: boundedError(stopped.error.message),
-            finishedAt: this.now().toISOString(),
-          }, this.now().toISOString());
-        }
-      } else if (task.state === 'queued' || task.state === 'blocked') {
-        this.repository.updateTask(swarmId, task.id, {
-          state: 'cancelled',
-          error: 'launch batch aborted after another child failed to start',
-          finishedAt: this.now().toISOString(),
-        }, this.now().toISOString());
-      }
-    }
-    this.repository.updateSwarmState(swarmId, terminationUnverified ? 'termination_unverified' : 'failed', this.now().toISOString());
   }
 
   private refreshSwarmState(swarmId: string, actor: FileActor, workspaceId: string): void {
@@ -288,7 +261,7 @@ export class AgentSwarmService {
 }
 
 function validateStart(request: AgentSwarmStartRequest): Result<void> {
-  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v4.54.0 supports read_only access only'));
+  if (request.accessMode !== 'read_only') return err(appError('PERMISSION_DENIED', 'Agent swarm v4.55.0 supports read_only access only'));
   if (!Array.isArray(request.tasks) || request.tasks.length < 1 || request.tasks.length > MAX_TASKS) return err(appError('INVALID_INPUT', 'Agent swarm requires 1 to 4 tasks'));
   const ids = new Set<string>();
   for (const task of request.tasks) {

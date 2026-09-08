@@ -141,7 +141,9 @@ export class SandboxRuntimeService {
 
   private async workspaceRoot(workspaceId: string): Promise<Result<string>> {
     const workspaceInfo = this.services.workspaceInfo;
-    if (workspaceInfo === undefined) return ok(path.resolve('.'));
+    if (workspaceInfo === undefined) {
+      return err(appError('INTERNAL_ERROR', 'Workspace registry is unavailable; refusing sandbox staging outside a verified registered workspace', true));
+    }
     const info = await workspaceInfo.info(this.actor, workspaceId);
     if (!info.ok) return info;
     const rootPath = typeof (info.value as { realRootPath?: unknown }).realRootPath === 'string'

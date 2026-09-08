@@ -62,4 +62,11 @@ describe('McpConfigLoader', () => {
     expect(settings.disabledServers).toEqual(['playwright']);
     expect(exclusionReason('helper', { command: 'node' })).toBeUndefined();
   });
+
+  it('excludes names that cannot form an unambiguous external MCP namespace', () => {
+    expect(exclusionReason('valid-server_1', { command: 'node' })).toBeUndefined();
+    expect(exclusionReason('bad/server', { command: 'node' })).toContain('stable external namespace');
+    expect(exclusionReason(' bad server ', { command: 'node' })).toContain('stable external namespace');
+    expect(exclusionReason('', { command: 'node' })).toContain('stable external namespace');
+  });
 });

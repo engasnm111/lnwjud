@@ -1,6 +1,6 @@
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { McpConfigLoader } from './mcp-config-loader.js';
-import { McpSessionManager, type McpClientFactory } from './mcp-session-manager.js';
+import { fingerprintExternalMcpValue, McpSessionManager, type McpClientFactory } from './mcp-session-manager.js';
 import { SkillCatalog } from './skill-catalog.js';
 import type {
   ExtensionsService,
@@ -71,7 +71,15 @@ export class LocalExtensionsService implements ExtensionsService {
     readonly server: string;
     readonly enabled: boolean;
     readonly connected: boolean;
-    readonly tools: readonly { readonly name: string; readonly description: string; readonly inputSchema?: unknown }[];
+    readonly provenance: {
+      readonly source: string;
+      readonly trustTier: 'external';
+      readonly namespace: string;
+      readonly descriptorFingerprint: string;
+      readonly catalogFingerprint: string;
+      readonly drift: import('./types.js').ExternalMcpContractDrift;
+    };
+    readonly tools: readonly { readonly name: string; readonly qualifiedName: string; readonly description: string; readonly inputSchema?: unknown; readonly outputSchema?: unknown }[];
   }>> {
     if (isAborted(signal)) return cancelledMcpCall();
     const server = await this.findServer(input.server);
@@ -89,7 +97,15 @@ export class LocalExtensionsService implements ExtensionsService {
       server: server.value.name,
       enabled: true,
       connected: described.value.connected,
-      tools: described.value.tools,
+      provenance: {
+        source: server.value.source,
+        trustTier: 'external',
+        namespace: `mcp:${server.value.name}`,
+        descriptorFingerprint: fingerprintExternalMcpValue({ source: server.value.source, config: server.value.config }),
+        catalogFingerprint: described.value.catalogFingerprint,
+        drift: described.value.drift,
+      },
+      tools: described.value.tools.map((tool) => ({ ...tool, qualifiedName: `mcp:${server.value.name}/${tool.name}` })),
     });
   }
 
@@ -144,7 +160,7 @@ export class LocalExtensionsService implements ExtensionsService {
       settings: this.settings,
       ...(this.homeDir === undefined ? {} : { homeDir: this.homeDir }),
       ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
-      extraRoots: this.bundledSkillRoots,
+      bundledRoots: this.bundledSkillRoots,
     });
   }
 

@@ -174,6 +174,24 @@ describe('ActivityTracker', () => {
     ]));
   });
 
+  it('propagates tracestate and bounded redacted baggage while exposing per-tool telemetry', async () => {
+    const events: ActivitySinkEvent[] = [];
+    const tracker = new ActivityTracker({ async record(event): Promise<void> { events.push(event); } });
+    const callId = await tracker.begin('tool_batch', {
+      metadata: {
+        traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+        tracestate: 'vendor=opaque',
+        baggage: 'tenant=acme,api_key=super-secret,region=apac',
+      },
+    });
+    await tracker.end(callId, 'SUCCESS', 20, undefined, { kind: 'details', items: ['results[0].ok=true', 'results[1].ok=false', 'results[1].error.code=FAILED'] });
+    const snapshot = tracker.telemetrySnapshot();
+    expect(snapshot).toMatchObject({ calls: 1, completed: 1, successes: 1, errors: 0, active: 0, p50LatencyMs: 20, p95LatencyMs: 20, maxLatencyMs: 20, batchPartialFailures: 1 });
+    expect(snapshot.byTool.tool_batch).toMatchObject({ calls: 1, successes: 1, averageLatencyMs: 20, p95LatencyMs: 20 });
+    expect(events[0]).toMatchObject({ traceState: 'vendor=opaque', baggage: 'tenant=acme,api_key=[redacted],region=apac' });
+    expect(JSON.stringify(events)).not.toContain('super-secret');
+  });
+
   it('keeps session identity on in-flight and completed activity events', async () => {
     const events: ActivitySinkEvent[] = [];
     const tracker = new ActivityTracker({ async record(event): Promise<void> { events.push(event); } });

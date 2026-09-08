@@ -131,6 +131,25 @@ describe('parallel tool executor', () => {
     expect(result.summary.cancelled).toBe(2);
   });
 
+  it('bounds parallel-safe child concurrency without losing partial results', async () => {
+    let active = 0;
+    let peak = 0;
+    const result = await executeBatch(
+      plan(Array.from({ length: 6 }, (_, index) => call(`read-${index + 1}`))),
+      async (current) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await delay(5);
+        active -= 1;
+        return current.id;
+      },
+      { maxConcurrency: 2 },
+    );
+
+    expect(result.summary.succeeded).toBe(6);
+    expect(peak).toBe(2);
+  });
+
   it('serializes mutation calls as an early compound-tool safety guard', async () => {
     let active = 0;
     let peak = 0;

@@ -6,12 +6,18 @@ import {
   isLegacyRequest,
   localhostAllowedHostnames,
   WebStandardStreamableHTTPServerTransport,
+  isJSONRPCErrorResponse,
+  isJSONRPCRequest,
+  isJSONRPCResultResponse,
+  type JSONRPCMessage,
   type McpHttpHandler,
   type McpServer,
 } from '@modelcontextprotocol/server';
 import { createMcpServer, type McpServerOptions } from './server.js';
 import { SetOfMarksObservationStore } from './set-of-marks-service.js';
-import { createHttpRequestScope, createProtocolHttpRequestScope } from './request-scope.js';
+import { actorForRequestScope, createHttpRequestScope, createProtocolHttpRequestScope } from './request-scope.js';
+import { ModernTasksProtocol } from './modern-tasks-protocol.js';
+import { maybeHandleModernTasksWireRequest, maybeTransformModernTasksWireResponse } from './modern-tasks-wire.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard } from './run-budget.js';
 import { createOriginPolicy, type OriginPolicy } from './origin-policy.js';
@@ -159,6 +165,35 @@ function sessionNotFoundResponse(): Response {
   }, { status: 404 });
 }
 
+async function readJsonRpcRequest(request: Request): Promise<JSONRPCMessage | undefined> {
+  if (request.method !== 'POST') return undefined;
+  try {
+    const value = await request.clone().json();
+    return isJSONRPCRequest(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function transformModernJsonResponse(
+  protocol: ModernTasksProtocol,
+  requestMessage: JSONRPCMessage,
+  response: Response,
+): Promise<Response> {
+  if (!response.headers.get('content-type')?.toLowerCase().includes('application/json')) return response;
+  try {
+    const value = await response.clone().json();
+    if (!isJSONRPCResultResponse(value) && !isJSONRPCErrorResponse(value)) return response;
+    const transformed = await maybeTransformModernTasksWireResponse(protocol, requestMessage, value);
+    if (transformed === value) return response;
+    const headers = new Headers(response.headers);
+    headers.delete('content-length');
+    return new Response(JSON.stringify(transformed), { status: response.status, statusText: response.statusText, headers });
+  } catch {
+    return response;
+  }
+}
+
 function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandler {
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
@@ -223,7 +258,16 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
     bus: modernHandler.bus,
     notify: modernHandler.notify,
     async fetch(request, requestOptions): Promise<Response> {
-      if (!(await isLegacyRequest(request))) return modernHandler.fetch(request, requestOptions);
+      if (!(await isLegacyRequest(request))) {
+        const requestMessage = await readJsonRpcRequest(request);
+        if (requestMessage === undefined) return modernHandler.fetch(request, requestOptions);
+        const requestScope = createHttpRequestScope({ request, fallbackSessionId: endpointFallbackSessionId });
+        const protocol = new ModernTasksProtocol(options.services, { actor: actorForRequestScope(options.actor, requestScope) });
+        const taskResponse = await maybeHandleModernTasksWireRequest(protocol, requestMessage);
+        if (taskResponse !== undefined) return Response.json(taskResponse, { headers: { 'cache-control': 'no-store' } });
+        const result = await modernHandler.fetch(request, requestOptions);
+        return transformModernJsonResponse(protocol, requestMessage, result);
+      }
 
       const sessionId = request.headers.get('mcp-session-id')?.trim();
       if (sessionId === undefined || sessionId.length === 0) {

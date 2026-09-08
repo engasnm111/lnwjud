@@ -1,5 +1,7 @@
-import { serveStdio, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
+import { serveStdio, StdioServerTransport, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 import { createMcpServer, type McpServerOptions } from './server.js';
+import { ModernTasksProtocol } from './modern-tasks-protocol.js';
+import { createModernTasksTransport } from './modern-tasks-transport.js';
 import { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard } from './run-budget.js';
@@ -26,8 +28,10 @@ export function startMcpStdio(options: McpStdioOptions): StdioServerHandle {
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const requestScope = options.requestScope ?? createStdioRequestScope();
+  const modernTasks = new ModernTasksProtocol(options.services, { actor: options.actor });
+  const transport = createModernTasksTransport(new StdioServerTransport(), modernTasks);
   return serveStdio(
     () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, legacyTasksProtocol: false, requestScope }),
-    { legacy: 'reject', onerror: options.onError ?? writeStdioDiagnostic },
+    { legacy: 'reject', onerror: options.onError ?? writeStdioDiagnostic, transport },
   );
 }

@@ -11,6 +11,9 @@ export interface McpRequestScope {
   readonly workspaceId?: string;
   readonly requestId?: string;
   readonly traceId?: string;
+  readonly traceParent?: string;
+  readonly traceState?: string;
+  readonly baggage?: string;
 }
 
 export interface HttpRequestScopeOptions {
@@ -30,12 +33,18 @@ export function createStdioRequestScope(sessionId = randomUUID()): McpRequestSco
  */
 export function createHttpRequestScope(options: HttpRequestScopeOptions): McpRequestScope {
   const protocolSessionId = boundedProtocolSessionId(options.request?.headers.get('mcp-session-id'));
+  const traceParent = boundedHeader(options.request?.headers.get('traceparent'), 256);
+  const traceState = boundedHeader(options.request?.headers.get('tracestate'), 512);
+  const baggage = boundedBaggageHeader(options.request?.headers.get('baggage'));
   return {
     sessionId: protocolSessionId === undefined
       ? normalizeInternalSessionId(options.fallbackSessionId)
       : `http-${fingerprint(protocolSessionId)}`,
     transport: 'http',
     ...(protocolSessionId === undefined ? {} : { protocolSessionId }),
+    ...(traceParent === undefined ? {} : { traceParent }),
+    ...(traceState === undefined ? {} : { traceState }),
+    ...(baggage === undefined ? {} : { baggage }),
   };
 }
 
@@ -82,6 +91,28 @@ function boundedProtocolSessionId(value: string | null | undefined): string | un
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
   return trimmed.slice(0, 256);
+}
+
+function boundedHeader(value: string | null | undefined, maxLength: number): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  return trimmed.slice(0, maxLength);
+}
+
+function boundedBaggageHeader(value: string | null | undefined): string | undefined {
+  const bounded = boundedHeader(value, 2048);
+  if (bounded === undefined) return undefined;
+  const members = bounded.split(',').slice(0, 32).map((member) => {
+    const [rawKey, ...rest] = member.trim().split('=');
+    if (rawKey === undefined || rest.length === 0) return undefined;
+    const key = rawKey.trim();
+    if (key.length === 0) return undefined;
+    if (/(token|secret|password|api[_-]?key|private[_-]?key|authorization|credential)/i.test(key)) return `${key}=[redacted]`;
+    const rawValue = rest.join('=').trim().replace(/(token|secret|password|api[_-]?key|private[_-]?key)\s*[:=]\s*[^\s,]+/gi, '$1=[redacted]');
+    return `${key}=${rawValue}`;
+  }).filter((member): member is string => member !== undefined).join(',');
+  return members.length === 0 ? undefined : members.slice(0, 1024);
 }
 
 function fingerprint(value: string): string {

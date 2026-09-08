@@ -38,10 +38,38 @@ describe('upgrade runtime', () => {
     }
   }, 60_000);
 
+  it('publishes strict upgrade schemas and rejects silently ignored arguments', async () => {
+    const registry = new ToolRegistry({}, actor);
+    const invalid = await registry.invoke('live_logs_query', { level: 'error' });
+    expect(invalid.isError).toBe(true);
+    expect(invalid.structuredContent).toMatchObject({ error: { code: 'INVALID_INPUT' } });
+
+    const valid = await registry.invoke('live_logs_query', { toolName: 'shell', phase: 'completed', limit: 10 });
+    expect(valid.structuredContent).toBeDefined();
+
+    const runtime = new UpgradeRuntimeService({}, actor);
+    const described = await runtime.execute('tool_describe', { name: 'live_logs_query' });
+    expect(described).toMatchObject({ ok: true, value: {
+      found: true,
+      contractSource: 'upgrade-tool-contracts',
+      inputSchema: { type: 'object', additionalProperties: false },
+      outputSchema: { type: 'object' },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execution: { taskSupport: 'forbidden' },
+    } });
+  });
+
   it('routes prompts and searches capabilities without an LLM', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
     const route = await runtime.execute('route_intent', { prompt: 'Live Logs MCP activity ไม่ขึ้น' });
     expect(route).toMatchObject({ ok: true, value: { route: 'debug', domain: 'desktop/mcp/logging' } });
+    const substringRoute = await runtime.execute('route_intent', { prompt: 'build the project package' });
+    expect(substringRoute).toMatchObject({ ok: true, value: { route: 'workspace', reasonCodes: ['fallback:workspace'] } });
     const search = await runtime.execute('tool_search', { query: 'postgres schema inspection' });
     expect(search.ok).toBe(true);
     if (search.ok) expect(search.value).toHaveProperty('matches');
@@ -53,14 +81,59 @@ describe('upgrade runtime', () => {
 
     expect(search).toMatchObject({ ok: true, value: {
       selectedModel: 'deterministic',
+      reranker: {
+        requested: 'local',
+        disposition: 'unavailable',
+        localExecutionPerformed: false,
+        deterministicFallbackApplied: true,
+      },
       fallbackReason: 'local_model_not_configured',
       primitiveToolsRemainAvailable: true,
       authorizationUnchanged: true,
       rankedCandidates: expect.arrayContaining([
-        expect.objectContaining({ name: 'wsl_exec', permission: 'EXECUTE', reasonCodes: expect.any(Array) }),
+        expect.objectContaining({
+          name: 'wsl_exec',
+          permission: 'EXECUTE',
+          reasonCodes: expect.any(Array),
+          rankingSignals: expect.objectContaining({
+            readiness: 'operational',
+            telemetrySamples: 0,
+            successRate: null,
+            p95LatencyMs: null,
+          }),
+        }),
       ]),
     } });
     if (search.ok) expect(search.value.rankedCandidates[0]?.name).toBe('wsl_exec');
+  });
+
+  it('exposes bounded readiness, risk, and schema-fit ranking signals without changing authorization', async () => {
+    const runtime = new UpgradeRuntimeService({}, actor);
+    const search = await runtime.execute('tool_dynamic_filter', {
+      query: 'database sql params query',
+      limit: 30,
+    });
+
+    expect(search).toMatchObject({ ok: true, value: { authorizationUnchanged: true, rankedCandidates: expect.any(Array) } });
+    if (search.ok) {
+      const dbQuery = search.value.rankedCandidates.find((candidate) => candidate.name === 'db_query');
+      expect(dbQuery).toMatchObject({
+        permission: 'READ',
+        rankingSignals: {
+          readiness: 'dependency_gated',
+          schemaMatchedFields: expect.arrayContaining(['database', 'sql', 'params']),
+          telemetrySamples: 0,
+          successRate: null,
+          p95LatencyMs: null,
+        },
+      });
+      expect(dbQuery?.reasonCodes).toEqual(expect.arrayContaining([
+        'readiness:dependency-gated',
+        'schema-field:database',
+        'schema-field:sql',
+        'schema-field:params',
+      ]));
+    }
   });
 
   it('excludes user-disabled tools from dynamic discovery, ranking, describe, and category counts', async () => {
@@ -161,11 +234,19 @@ describe('upgrade runtime', () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-plugin-registry-'));
     try {
       const persistent = new UpgradeRuntimeService({ runtimeStatePath: path.join(directory, 'runtime.json') }, actor);
-      await expect(persistent.execute('plugin_install', { name: 'safe-plugin' })).resolves.toMatchObject({
-        ok: true, value: { tool: 'plugin_install', status: 'ready', executed: true, name: 'safe-plugin', enabled: true, persistence: 'shared_locked_state' },
+      await expect(persistent.execute('plugin_install', { name: 'safe-plugin', source: 'local-test-registry', version: '1.2.3' })).resolves.toMatchObject({
+        ok: true, value: {
+          tool: 'plugin_install', status: 'ready', executed: true, name: 'safe-plugin', enabled: true,
+          source: 'local-test-registry', version: '1.2.3', trustTier: 'external', namespace: 'plugin:safe-plugin',
+          persistence: 'shared_locked_state',
+        },
       });
       await expect(persistent.execute('plugin_list', {})).resolves.toMatchObject({
-        ok: true, value: { status: 'ready', plugins: [{ name: 'safe-plugin', enabled: true }], persistence: 'shared_locked_state' },
+        ok: true, value: {
+          status: 'ready',
+          plugins: [{ name: 'safe-plugin', enabled: true, source: 'local-test-registry', version: '1.2.3', trustTier: 'external', namespace: 'plugin:safe-plugin' }],
+          persistence: 'shared_locked_state',
+        },
       });
       await expect(persistent.execute('plugin_disable', { name: 'safe-plugin' })).resolves.toMatchObject({
         ok: true, value: { status: 'ready', executed: true, enabled: false, previousEnabled: true },

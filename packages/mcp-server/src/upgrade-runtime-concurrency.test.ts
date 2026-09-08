@@ -50,8 +50,8 @@ describe('upgrade runtime multi-session persistence', () => {
     const shared = await new UpgradeRuntimeStateStore(runtimeStatePath, 'audit').readShared();
     expect(shared.plugins).toHaveLength(2);
     expect(shared.plugins).toEqual(expect.arrayContaining([
-      { name: 'plugin-a', enabled: true },
-      { name: 'plugin-b', enabled: true },
+      expect.objectContaining({ name: 'plugin-a', enabled: true, trustTier: 'external', namespace: 'plugin:plugin-a' }),
+      expect.objectContaining({ name: 'plugin-b', enabled: true, trustTier: 'external', namespace: 'plugin:plugin-b' }),
     ]));
   });
 

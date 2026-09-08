@@ -77,6 +77,24 @@ describe('GoalMutationFenceService', () => {
     expect(read).toHaveBeenNthCalledWith(2, 'workspace-1', 'unknown');
   });
 
+  it('treats an empty process/task view with no live fenced calls as trustworthy inactivity', async (): Promise<void> => {
+    const read = vi.fn();
+    const service = new GoalMutationFenceService(repository(), {
+      now: (): Date => new Date('2026-08-27T10:00:00.000Z'),
+      taskStateReader: { read: read as never },
+    });
+
+    await expect(service.observe('goal-1', [])).resolves.toMatchObject({
+      trustworthy: true,
+      leaseGeneration: 3,
+      leaseActivitySeq: 4,
+      liveFencedCallCount: 0,
+      blockingTaskStates: [],
+      activeTaskStates: [],
+    });
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('observes only blocking goal tasks for worker liveness', async (): Promise<void> => {
     const read = vi.fn(async (_workspaceId: string, task: { taskId: string }): Promise<'running' | 'terminal'> => (
       task.taskId === 'job-1' ? 'running' : 'terminal'

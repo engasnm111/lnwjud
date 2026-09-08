@@ -52,7 +52,12 @@ export type BatchInvoker = (call: BatchInvocation, signal: AbortSignal) => Promi
 
 export interface ExecuteBatchOptions {
   readonly signal?: AbortSignal;
+  /** Bounds simultaneously executing parallel-safe children. */
+  readonly maxConcurrency?: number;
 }
+
+const DEFAULT_MAX_CONCURRENCY = 8;
+const MAX_MAX_CONCURRENCY = 16;
 
 type MutableBatchResult = BatchInvocationResult;
 
@@ -79,8 +84,9 @@ export async function executeBatch(
     return finalize(orderedCalls, results);
   }
 
+  const maxConcurrency = normalizeMaxConcurrency(options.maxConcurrency);
   if (plan.calls.length > 0) {
-    await executeSet(plan.calls, plan.parallel, results, invoke, options.signal);
+    await executeSet(plan.calls, plan.parallel, results, invoke, options.signal, maxConcurrency);
   }
   for (const group of plan.groups ?? []) {
     if (options.signal?.aborted) {
@@ -89,7 +95,7 @@ export async function executeBatch(
       }
       continue;
     }
-    await executeSet(group.calls, group.parallel, results, invoke, options.signal);
+    await executeSet(group.calls, group.parallel, results, invoke, options.signal, maxConcurrency);
   }
 
   return finalize(orderedCalls, results);
@@ -101,6 +107,7 @@ async function executeSet(
   results: Map<string, MutableBatchResult>,
   invoke: BatchInvoker,
   signal: AbortSignal | undefined,
+  maxConcurrency: number,
 ): Promise<void> {
   const pending = new Map(calls.map((call) => [call.id, call]));
 
@@ -127,7 +134,7 @@ async function executeSet(
     const runnable = ready.filter((call) => !blocked.includes(call));
     if (runnable.length === 0) continue;
 
-    const wave = selectWave(runnable, parallel);
+    const wave = selectWave(runnable, parallel, maxConcurrency);
     for (const call of wave) pending.delete(call.id);
     const settled = await Promise.allSettled(wave.map((call) => executeOne(call, invoke, signal)));
     for (let index = 0; index < wave.length; index += 1) {
@@ -141,10 +148,15 @@ async function executeSet(
   }
 }
 
-function selectWave(calls: readonly BatchInvocation[], parallel: boolean): readonly BatchInvocation[] {
+function selectWave(calls: readonly BatchInvocation[], parallel: boolean, maxConcurrency: number): readonly BatchInvocation[] {
   if (!parallel) return calls.slice(0, 1);
   const unsafe = calls.find((call) => !call.parallelSafe);
-  return unsafe === undefined ? calls : [unsafe];
+  return unsafe === undefined ? calls.slice(0, maxConcurrency) : [unsafe];
+}
+
+function normalizeMaxConcurrency(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_CONCURRENCY;
+  return Math.max(1, Math.min(MAX_MAX_CONCURRENCY, Math.trunc(value)));
 }
 
 async function executeOne(call: BatchInvocation, invoke: BatchInvoker, parentSignal: AbortSignal | undefined): Promise<MutableBatchResult> {
