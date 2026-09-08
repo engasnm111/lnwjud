@@ -139,12 +139,22 @@ jobs:
             libnss3 libasound2t64 libgtk-3-0t64 libgbm1 libxss1 \
             libatk-bridge2.0-0t64 libdrm2 libxkbcommon0 libfuse2t64
 
+      - name: Install native ARM64 Debian packager
+        if: matrix.platform == 'linux' && matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev build-essential
+          sudo gem install fpm --version 1.16.0 --no-document
+          fpm --version
+
       - name: Build and verify target-native package
+        # Bundled FPM contains x86 Ruby; ARM runners need their native Ruby.
         shell: bash
         env:
           LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
           LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
           LNWJUD_COSIGN_PATH: cosign
+          USE_SYSTEM_FPM: ${{ matrix.platform == 'linux' && matrix.arch == 'arm64' && 'true' || '' }}
         run: |
           set -euo pipefail
           mkdir -p apps/desktop/packaged-e2e-diagnostics
@@ -301,6 +311,17 @@ jobs:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
+
+      - name: Upload Windows E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-${{ github.sha }}
+          path: |
+            apps/desktop/test-results/
+            apps/desktop/playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload verified Windows release artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

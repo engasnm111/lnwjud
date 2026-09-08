@@ -197,14 +197,24 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
   });
   const stderr: string[] = [];
   process.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
-  await waitForDevTools(devToolsPort, process, stderr);
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${devToolsPort}`);
-  const context = browser.contexts()[0];
-  if (context === undefined) throw new Error('Electron did not create a browser context');
-  await expect.poll(() => context.pages().length).toBeGreaterThan(0);
-  const page = context.pages()[0];
-  if (page === undefined) throw new Error('Electron did not create a renderer page');
-  return { process, browser, page, dataRoot, fixtureRoot, devToolsPort };
+  let browser: Browser | undefined;
+  try {
+    await waitForDevTools(devToolsPort, process, stderr);
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${devToolsPort}`);
+    const context = browser.contexts()[0];
+    if (context === undefined) throw new Error('Electron did not create a browser context');
+    // CDP is available before native storage/runtime initialization creates
+    // the window. Use the same startup budget as the visible Doctor checks.
+    await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBeGreaterThan(0);
+    const page = context.pages()[0];
+    if (page === undefined) throw new Error('Electron did not create a renderer page');
+    return { process, browser, page, dataRoot, fixtureRoot, devToolsPort };
+  } catch (cause: unknown) {
+    await browser?.close().catch(() => undefined);
+    await terminateProcessTree(process);
+    await Promise.all([removeTemporaryRoot(dataRoot), removeTemporaryRoot(fixtureRoot)]);
+    throw new Error(`Electron launch failed: ${stderr.join('').slice(-16_384)}`, { cause });
+  }
 }
 
 async function openTools(page: Page, bypassStartupDoctor = false): Promise<void> {

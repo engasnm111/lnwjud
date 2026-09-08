@@ -94,6 +94,12 @@ corepack pnpm@10.15.0 package:macos
 corepack pnpm@10.15.0 package:linux
 ```
 
+On Linux ARM64, install native Ruby development tools and FPM 1.16.0 first,
+then set `USE_SYSTEM_FPM=true` for the packaging command. The pinned
+electron-builder 26 bundles an x86 Ruby/FPM binary, which cannot execute on
+an ARM64 host. CI installs the native packager explicitly; x64 hosts keep
+using the bundled packager.
+
 Those target-native commands use `--publish never`, write evidence locally,
 and never create a GitHub release. The Windows local gate remains:
 
