@@ -90,6 +90,11 @@ describe('cross-platform desktop packaging', () => {
     expect(config).not.toContain('lnwjud-mcp-stdio.cjs');
     expect(config).toContain('mac:');
     expect(config).toContain('linux:');
+    // Linux otherwise derives @lnwjuddesktop from the scoped package name,
+    // breaking the lnwjud executable expected by the launcher and evidence.
+    expect(config).toMatch(/linux:\r?\n\s+executableName: lnwjud(?:\r?\n|$)/);
+    expect(config).toContain('maintainer: Adisorn <engasnm111@users.noreply.github.com>');
+    expect(config).toContain('artifactName: lnwjud-${version}-${env.LNWJUD_RUNTIME_ARCH}.${ext}');
     expect(config).toContain('target: dmg');
     expect(config).toContain('target: zip');
     expect(config).toContain('hardenedRuntime: true');

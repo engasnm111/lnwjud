@@ -82,6 +82,8 @@ mac:
     - from: build/native-host/macos
       to: native-host/macos
 linux:
+  executableName: lnwjud
+  maintainer: Adisorn <engasnm111@users.noreply.github.com>
   icon: build/icons
   category: Development
   synopsis: Local AI-agent runtime and MCP gateway
@@ -95,7 +97,8 @@ linux:
       arch:
         - x64
         - arm64
-  artifactName: lnwjud-${version}-${arch}.${ext}
+  # Keep release filenames aligned with runtime evidence (x64, not amd64/x86_64).
+  artifactName: lnwjud-${version}-${env.LNWJUD_RUNTIME_ARCH}.${ext}
   extraFiles:
     - from: build/lnwjud-mcp-stdio.sh
       to: lnwjud-mcp-stdio
