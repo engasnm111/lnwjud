@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -13,7 +13,9 @@ const commit = '0123456789abcdef0123456789abcdef01234567';
 
 describe('release asset collector', () => {
   it('validates all target evidence and creates architecture-aware public assets', async () => {
-    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-release-collector-'));
+    // Windows hosted runners may expose TEMP through a DOS short-name alias;
+    // the collector intentionally requires canonical staging paths.
+    const temporaryRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-release-collector-')));
     const stagingDirectory = path.join(temporaryRoot, 'staging');
     const assetsDirectory = path.join(temporaryRoot, 'assets');
     try {
