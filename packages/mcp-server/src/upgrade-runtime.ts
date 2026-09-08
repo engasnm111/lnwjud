@@ -1782,7 +1782,11 @@ export class UpgradeRuntimeService {
     }
     if (name === 'event_log_context') {
       const event = await this.eventLog.execute({ operation: 'query', log_name: readString(input, 'log_name') ?? 'Application', ...(readString(input, 'provider') === undefined ? {} : { provider: readString(input, 'provider') }), max_events: boundedInteger(input.max_events, 100, 1, 500) }, signal);
-      return event.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, eventLog: event.value }) : event;
+      if (!event.ok) return event;
+      const payload = event.value as Record<string, unknown>;
+      const ready = payload.available === true && payload.ready === true;
+      return ok({ tool: name, status: ready ? 'ready' : 'optional', available: payload.available === true,
+        ready, executed: ready, eventLog: event.value });
     }
     if (name === 'installed_runtime_context') {
       const checks = this.diagnostics.runtimes;
