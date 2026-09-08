@@ -1,30 +1,23 @@
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BrowserCdpBackend,
   capabilityToolNames,
-  HealthCapabilityBackend,
-  LocalCapabilityService,
-  NodeBrowserCdpProtocol,
-  PowerShellWindowsCapabilityBridge,
-  SchedulerCapabilityBackend,
-  ShellCapabilityBackend,
-  WebFetchCapabilityBackend,
-  VisionCapabilityBackend,
-  WindowsNativeCapabilityBackend,
-  WindowsOcrCapabilityBackend,
-  WindowsOcrProcessBridge,
-  createOcrPackageIdentityProbe,
+  createPlatformCapabilitySet,
+  type HealthCapabilityBackend,
+  type LocalCapabilityService,
+  type PlatformWindowsCapabilityOptions,
+  type ShellCapabilityBackend,
   WINDOWS_CAPABILITY_BRIDGE_SHA256,
   WINDOWS_CAPABILITY_BRIDGE_SIZE_BYTES,
-  WslCapabilityBackend,
-  WslFilesystemCapabilityBackend,
+  LinuxProcessBridge,
+  MacosProcessBridge,
+  type NativeHostProcessBridge,
 } from '@lnwjud/capabilities';
-import type { Result } from '@lnwjud/domain';
+import { createProcessTreeTerminator } from '@lnwjud/process';
 import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS } from '@lnwjud/shared';
-import { AsyncTtlCache } from './async-ttl-cache.js';
+import { createElectronNativeCapabilityBackends, type ElectronNativeCapabilityApi } from './electron-native-capability-backend.js';
 
 export interface LocalCapabilityRuntime {
   readonly service: LocalCapabilityService;
@@ -38,96 +31,67 @@ export function createLocalCapabilityRuntime(
   unrestricted: boolean = false,
   configuredRootsProvider: () => readonly string[] = () => [],
   synchronousWaitSecondsProvider: () => number = () => DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS,
+  nativeApi?: ElectronNativeCapabilityApi,
 ): LocalCapabilityRuntime {
-  const capabilityRootsProvider = async (): Promise<readonly string[]> => {
-    const workspaceRoots = await workspaceRootsProvider();
-    const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()];
-    const roots = [...workspaceRoots, ...configuredRoots];
-    return roots.length === 0 ? [dataPath] : roots;
-  };
-  const shellBackend = new ShellCapabilityBackend({
-    allowedRoots: [dataPath],
-    allowedRootsProvider: capabilityRootsProvider,
+  const bridgeSizeBytes = capabilityBridgeExpectedSizeBytes();
+  const ocrPath = windowsOcrHelperPath();
+  const windows: PlatformWindowsCapabilityOptions | undefined = process.platform === 'win32'
+    ? {
+      bridgeScriptPath: capabilityBridgeScriptPath(),
+      expectedBridgeSha256: capabilityBridgeExpectedSha256(),
+      ...(bridgeSizeBytes === undefined ? {} : { expectedBridgeSizeBytes: bridgeSizeBytes }),
+      ...(ocrPath === undefined ? {} : { ocrHelperPath: ocrPath }),
+    }
+    : undefined;
+  const nativeHost = nativeHostBridge();
+  const runtime = createPlatformCapabilitySet({
+    platform: process.platform,
+    dataPath,
+    workspaceRootsProvider,
     unrestricted,
-    taskStateDirectory: path.join(dataPath, 'background-tasks'),
-    maxSynchronousWaitSecondsProvider: synchronousWaitSecondsProvider,
+    configuredRootsProvider: () => [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()],
+    synchronousWaitSecondsProvider,
+    ...(nativeApi === undefined ? {} : { shared: createElectronNativeCapabilityBackends({ platform: process.platform, api: nativeApi, allowedRootsProvider: workspaceRootsProvider }) }),
+    ...(windows === undefined ? {} : { windows }),
+    ...(nativeHost === undefined ? {} : { nativeHost }),
   });
-  const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: path.join(dataPath, 'browser-profile') });
-  const browserBackend = new BrowserCdpBackend({
-    protocol: browserProtocol,
-    launcher: (url: string | undefined, signal?: AbortSignal): Promise<Result<unknown>> => browserProtocol.launch(url, signal),
-  });
-  const windowsBridgeScript = capabilityBridgeScriptPath();
-  const expectedScriptSha256 = capabilityBridgeExpectedSha256();
-  const expectedScriptSizeBytes = capabilityBridgeExpectedSizeBytes();
-  const windowsBridge = new PowerShellWindowsCapabilityBridge({
-    scriptPath: windowsBridgeScript,
-    expectedScriptSha256,
-    ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
-  });
-  const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
-  const inputEventBackend = new WindowsNativeCapabilityBackend('input_event', windowsBridge);
-  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
-  const ocrHelperPath = windowsOcrHelperPath();
-  const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath });
-  const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-    platform: process.platform,
-    ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
-  }));
-  const windowBackend = new WindowsNativeCapabilityBackend('window', windowsBridge);
-  const systemInfoBackend = new WindowsNativeCapabilityBackend('system_info', windowsBridge);
-  const notificationBackend = new WindowsNativeCapabilityBackend('notification', windowsBridge);
-  const fileDialogBackend = new WindowsNativeCapabilityBackend('file_dialog', windowsBridge);
-  const clipboardBackend = new WindowsNativeCapabilityBackend('clipboard', windowsBridge);
-  const audioBackend = new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions);
-  const screenRecordBackend = new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions);
-  const officeBackend = new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions);
-  const webFetchBackend = new WebFetchCapabilityBackend();
-  const schedulerBackend = new SchedulerCapabilityBackend();
-  const wslAvailabilityCache = new AsyncTtlCache<Result<unknown>>(15_000);
-  const wslAvailabilityProbe = (): Promise<Result<unknown>> => wslAvailabilityCache.get(async () => {
-    const result = await shellBackend.execute({ operation: 'run', executable: 'wsl.exe', arguments: ['--status'], cwd: dataPath, execution: 'foreground', timeout_seconds: 5, max_output_bytes: 32 * 1024, userConfirmed: false });
-    if (!result.ok) return { ok: true, value: { available: false, ready: false, local: true, reason: 'wsl_executable_unavailable' } };
-    const value = isRecord(result.value) ? result.value : {};
-    const ready = value.state === 'completed' && value.exit_code === 0;
-    return { ok: true, value: { available: ready, ready, local: true, ...(ready ? {} : { reason: 'wsl_status_failed' }) } };
-  });
-  const wslBackend = new WslCapabilityBackend({
-    platform: process.platform,
-    runner: shellBackend,
-    allowedRoots: [dataPath],
-    allowedRootsProvider: capabilityRootsProvider,
-    availabilityProbe: wslAvailabilityProbe,
-  });
-  const wslFsBackend = new WslFilesystemCapabilityBackend({
-    platform: process.platform,
-    allowedRoots: [dataPath],
-    allowedRootsProvider: capabilityRootsProvider,
-    availabilityProbe: wslAvailabilityProbe,
-  });
-  const health = new HealthCapabilityBackend({ domCdp: browserBackend, accessibility: accessibilityBackend, wslExec: wslBackend, wslFs: wslFsBackend });
-  const service = new LocalCapabilityService({
-    shell: shellBackend,
-    domCdp: browserBackend,
-    accessibility: accessibilityBackend,
-    inputEvent: inputEventBackend,
-    vision: visionBackend,
-    window: windowBackend,
-    health,
-    systemInfo: systemInfoBackend,
-    notification: notificationBackend,
-    fileDialog: fileDialogBackend,
-    clipboard: clipboardBackend,
-    webFetch: webFetchBackend,
-    audio: audioBackend,
-    screenRecord: screenRecordBackend,
-    office: officeBackend,
-    scheduler: schedulerBackend,
-    wslExec: wslBackend,
-    wslFs: wslFsBackend,
-  });
-  return { service, health, shell: shellBackend };
+  return { service: runtime.service, health: runtime.health, shell: runtime.shell };
+}
+
+function nativeHostBridge(): NativeHostProcessBridge | undefined {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return undefined;
+  const arch = process.arch === 'x64' || process.arch === 'arm64' ? process.arch : undefined;
+  if (arch === undefined) return undefined;
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const platformDirectory = process.platform === 'darwin' ? 'macos' : 'linux';
+  const executableName = process.platform === 'darwin' ? 'lnwjud-macos-host' : 'lnwjud-linux-host';
+  const candidates = [
+    resourcesPath === undefined ? undefined : path.join(resourcesPath, 'native-host', platformDirectory, arch, executableName),
+    path.resolve(process.cwd(), 'build', 'native-host', platformDirectory, arch, executableName),
+    path.resolve(process.cwd(), 'apps', 'desktop', 'build', 'native-host', platformDirectory, arch, executableName),
+  ].filter((candidate): candidate is string => candidate !== undefined);
+  const executable = candidates.find((candidate) => existsSync(candidate));
+  if (executable === undefined) return undefined;
+  const manifestPath = path.join(path.dirname(executable), 'NATIVE_HOST.json');
+  let manifest: Record<string, unknown>;
+  try {
+    const manifestStat = lstatSync(manifestPath);
+    if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || realpathSync(manifestPath) !== manifestPath) return undefined;
+    const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (!isRecord(parsed) || parsed.schemaVersion !== 1 || parsed.platform !== process.platform || parsed.arch !== arch || parsed.name !== executableName || parsed.verified !== true
+      || typeof parsed.sha256 !== 'string' || typeof parsed.sizeBytes !== 'number') return undefined;
+    manifest = parsed;
+  } catch {
+    return undefined;
+  }
+  const options = {
+    executablePath: executable,
+    expectedSha256: manifest.sha256 as string,
+    expectedSizeBytes: manifest.sizeBytes as number,
+    requireIntegrity: true,
+    terminator: createProcessTreeTerminator(process.platform),
+  };
+  return process.platform === 'darwin' ? new MacosProcessBridge(options) : new LinuxProcessBridge(options);
 }
 
 export async function buildCapabilitySummary(health: HealthCapabilityBackend): Promise<DashboardSnapshot['capabilities']> {
@@ -143,7 +107,8 @@ export async function buildCapabilitySummary(health: HealthCapabilityBackend): P
 
 function readCapabilityRoots(value: string | undefined): readonly string[] {
   if (value === undefined || value.trim().length === 0) return [];
-  return value.split(';').map((root) => root.trim()).filter((root) => root.length > 0).map((root) => path.resolve(root));
+  const delimiter = process.platform === 'win32' ? ';' : ':';
+  return value.split(delimiter).map((root) => root.trim()).filter((root) => root.length > 0).map((root) => path.resolve(root));
 }
 
 function capabilityBridgeScriptPath(): string {
@@ -195,35 +160,35 @@ const capabilityTitles: Readonly<Record<(typeof capabilityToolNames)[number], st
   window: 'Manage native desktop windows',
   health: 'Check tool readiness',
   system_info: 'Read system information',
-  notification: 'Show Windows notifications',
+  notification: 'Show desktop notifications',
   file_dialog: 'Native file open/save dialogs',
-  clipboard: 'Read and write the clipboard',
+  clipboard: 'Read and write the desktop clipboard',
   web_fetch: 'Fetch http/https URLs',
   audio: 'Record and play audio',
   screen_record: 'Record the screen to MP4',
   office: 'Automate Excel and Word',
-  scheduler: 'Windows Task Scheduler (local)',
-  wsl_exec: 'Run scoped Linux developer tasks',
+  scheduler: 'Manage host-native scheduled tasks',
+  wsl_exec: 'Run scoped Linux developer tasks on Windows',
   wsl_fs: 'Translate scoped Windows and WSL paths',
 };
 
 const capabilityDescriptions: Readonly<Record<(typeof capabilityToolNames)[number], string>> = {
   shell: 'System, CLI, file, process, and developer tasks',
   dom_cdp: 'DOM work inside a local managed Chrome session',
-  accessibility: 'Windows UI Automation trees and semantic controls',
+  accessibility: 'Host-native accessibility trees and semantic controls',
   input_event: 'Native keyboard, pointer, drag, and scroll events',
-  vision: 'Local screen, monitor, region, and window capture',
-  window: 'List, focus, move, resize, minimize, restore, and close windows',
+  vision: 'Local screen, monitor, region, and window capture when permitted',
+  window: 'List, focus, move, resize, minimize, restore, and close host windows',
   health: 'Readiness and capability diagnostics',
-  system_info: 'OS, CPU, memory, disks, battery, uptime, and top processes',
-  notification: 'Toast or balloon notifications for the local user',
-  file_dialog: 'Windows open/save dialog returning chosen paths',
+  system_info: 'OS, CPU, memory, displays, and uptime metadata',
+  notification: 'Desktop notifications for the local user',
+  file_dialog: 'Native open/save dialog returning scoped paths',
   clipboard: 'Clipboard text and PNG image access',
   web_fetch: 'Bounded HTTP requests with text or base64 responses',
-  audio: 'Microphone recording and local audio playback',
-  screen_record: 'ffmpeg gdigrab screen capture with start/stop/status',
-  office: 'Excel range read/write and Word text operations via COM',
-  scheduler: 'Local schtasks.exe list/create/run/delete operations; not Native ChatGPT Scheduled Tasks',
+  audio: 'Microphone recording and local audio playback when permitted',
+  screen_record: 'Host-native screen capture with start/stop/status',
+  office: 'Dependency-gated spreadsheet and document automation',
+  scheduler: 'Host-native scheduler list/create/run/delete operations',
   wsl_exec: 'WSL2 argv-only execution inside registered workspaces',
   wsl_fs: 'Path translation and metadata without raw WSL filesystem access',
 };

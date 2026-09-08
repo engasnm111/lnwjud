@@ -3,6 +3,7 @@ import { ToolRegistry, upgradeCatalogEntry, type McpToolDefinition } from '@lnwj
 
 export const KNOWN_TOOL_REQUIREMENT_IDS = Object.freeze([
   'platform_windows',
+  'platform_supported',
   'registered_workspace',
   'active_project',
   'executable_git',
@@ -15,6 +16,11 @@ export const KNOWN_TOOL_REQUIREMENT_IDS = Object.freeze([
   'windows_input',
   'windows_window',
   'windows_ocr',
+  'native_accessibility',
+  'native_input',
+  'native_window',
+  'native_capture',
+  'native_office',
   'office_desktop',
   'network_access',
   'scheduler_runtime',
@@ -97,31 +103,41 @@ function requirementsFor(name: string, category: ToolCategory): readonly string[
   if (/^git(?:_|$)/.test(name)) ids.add('executable_git');
   if (/^(search_files|search_text|search_all)$/.test(name)) ids.add('executable_ripgrep');
   if (/^codex_/.test(name) || name === 'agent_swarm_run') ids.add('codex_runtime');
-  if (/^wsl_/.test(name)) ids.add('wsl_runtime');
+  if (/^wsl_/.test(name)) {
+    ids.add('wsl_runtime');
+    // WSL is a Windows-specific boundary. Keep the platform requirement in
+    // the catalog so non-Windows clients see unsupported_platform rather than
+    // an actionable "install WSL" setup state.
+    ids.add('platform_windows');
+  }
   if (/^(mcp_describe|mcp_call|mcp_resources)$/.test(name)) ids.add('external_mcp_connection');
   if (/^(dom_cdp$|inspect_web_app$|debug_ui$|capture_ui_state$|form_context$|network_context$|console_context$|browser_debug_context$|capture_screenshot$|dom_snapshot$|layout_metadata$|visual_context$)/.test(name)) ids.add('browser_cdp');
-  if (name === 'accessibility') { ids.add('platform_windows'); ids.add('windows_ui_automation'); }
+  if (name === 'accessibility') { ids.add('platform_supported'); ids.add('native_accessibility'); }
   if (name === 'computer_use') {
-    ids.add('platform_windows');
-    ids.add('windows_ui_automation');
-    ids.add('windows_input');
-    ids.add('windows_window');
-    ids.add('windows_ocr');
+    ids.add('platform_supported');
+    ids.add('native_accessibility');
+    ids.add('native_input');
+    ids.add('native_window');
+    ids.add('native_capture');
   }
-  if (name === 'ui_target_action') { ids.add('platform_windows'); ids.add('windows_ui_automation'); ids.add('windows_ocr'); }
-  if (/^input_event$/.test(name)) { ids.add('platform_windows'); ids.add('windows_input'); }
-  if (/^window$/.test(name)) { ids.add('platform_windows'); ids.add('windows_window'); }
-  if (/^vision/.test(name)) { ids.add('platform_windows'); ids.add('windows_ocr'); }
-  if (/^(system_info|notification|file_dialog|clipboard|audio|screen_record|office)$/.test(name)) ids.add('platform_windows');
-  if (name === 'office' || /^office_(ppt|outlook)$/.test(name) || name === 'inspect_workbook' || name === 'docx_merge') ids.add('office_desktop');
+  if (name === 'ui_target_action') { ids.add('platform_supported'); ids.add('native_accessibility'); ids.add('native_input'); ids.add('native_window'); ids.add('native_capture'); }
+  if (/^input_event$/.test(name)) { ids.add('platform_supported'); ids.add('native_input'); }
+  if (/^window$/.test(name)) { ids.add('platform_supported'); ids.add('native_window'); }
+  if (/^vision/.test(name)) { ids.add('platform_supported'); ids.add('native_capture'); }
+  if (name === 'office' || /^office_(ppt|outlook)$/.test(name) || name === 'inspect_workbook' || name === 'docx_merge') { ids.add('platform_supported'); ids.add('native_office'); }
+  // Outlook automation is COM-specific and has no portable provider. Keep it
+  // visibly unsupported on macOS/Linux instead of showing a misleading
+  // dependency/setup state when a different Office app is installed.
+  if (name === 'office_outlook') ids.add('platform_windows');
   if (name === 'inspect_pdf' || name === 'pdf_extract_tables') ids.add('local_pdf_provider');
   if (name === 'lsp_diagnostics' || name === 'lsp_rename') ids.add('configured_lsp');
   if (name === 'db_inspect' || name === 'db_query') ids.add('database_target');
   if (name === 'sandbox_exec') ids.add('windows_sandbox');
   if (name === 'network_context' || name === 'console_context') ids.add('browser_event_stream');
   if (/^(web_fetch$|network_context$|mcp_)/.test(name)) ids.add('network_access');
-  if (/^scheduler$/.test(name)) { ids.add('platform_windows'); ids.add('scheduler_runtime'); }
-  if (/^(windows_environment$|service_context$|process_context$|port_context$|registry_context$|event_log_context$|installed_runtime_context$|path_context$|startup_context$|event_watch$|crash_trace$|sandbox_exec$)/.test(name)) ids.add('platform_windows');
+  if (/^scheduler$/.test(name)) { ids.add('platform_supported'); ids.add('scheduler_runtime'); }
+  if (/^(service_context$|process_context$|port_context$|event_log_context$|installed_runtime_context$|path_context$|startup_context$|event_watch$|crash_trace$)/.test(name)) ids.add('platform_supported');
+  if (/^(windows_environment$|registry_context$|sandbox_exec$)/.test(name)) { ids.add('platform_windows'); }
   const upgrade = upgradeCatalogEntry(name);
   if (upgrade !== undefined && (upgrade.deliveryState === 'feature_disabled' || upgrade.deliveryState === 'planned')) ids.add('feature_delivery');
   return Object.freeze([...ids]);

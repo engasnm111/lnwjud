@@ -1,8 +1,8 @@
-import path from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
+import { hostPathApi, isAbsoluteHostPath, isHostPathWithin, resolveHostPath } from '@lnwjud/workspace';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 /**
@@ -19,6 +19,7 @@ export class DatabaseRuntimeService {
   public constructor(
     private readonly services: McpApplicationServices,
     private readonly actor: FileActor,
+    private readonly platform: NodeJS.Platform = process.platform,
   ) {}
 
   public async inspect(input: Record<string, unknown>): Promise<Result<unknown>> {
@@ -93,14 +94,20 @@ export class DatabaseRuntimeService {
     const workspaceId = readTrimmed(input.workspaceId);
     const requested = readTrimmed(input.target ?? input.path ?? input.database);
     if (workspaceId === undefined || requested === undefined) return err(appError('INVALID_INPUT', 'db tools require workspaceId and target'));
-    if (SQLITE_EXTENSIONS.has(path.extname(requested).toLowerCase()) === false) {
+    const pathApi = hostPathApi(this.platform);
+    if (SQLITE_EXTENSIONS.has(pathApi.extname(requested).toLowerCase()) === false) {
       return err(appError('INVALID_INPUT', `Database target must end with ${[...SQLITE_EXTENSIONS].join(', ')}`));
     }
     const root = await this.workspaceRoot(workspaceId);
     if (!root.ok) return root;
-    const pathApi = path.win32.isAbsolute(root.value) ? path.win32 : path;
-    const requestedAbsolute = pathApi.isAbsolute(requested) ? pathApi.resolve(requested) : pathApi.resolve(root.value, requested);
-    if (!isWithin(root.value, requestedAbsolute)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
+    if (!isAbsoluteHostPath(requested, this.platform) && requested.includes('\\') && this.platform !== 'win32') {
+      return err(appError('INVALID_INPUT', 'Database target uses a foreign host path syntax'));
+    }
+    const requestedAbsolute = isAbsoluteHostPath(requested, this.platform)
+      ? resolveHostPath(requested, this.platform)
+      : resolveHostPath(pathApi.join(root.value, requested), this.platform);
+    if (requestedAbsolute === null) return err(appError('INVALID_INPUT', 'Database target uses a foreign host path syntax'));
+    if (!isHostPathWithin(root.value, requestedAbsolute, this.platform)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
     let canonicalTarget: string;
     try {
       canonicalTarget = await realpath(requestedAbsolute);
@@ -108,10 +115,10 @@ export class DatabaseRuntimeService {
       if (isNodeError(error, 'ENOENT')) return err(appError('FILE_NOT_FOUND', `Database target was not found: ${requestedAbsolute}`));
       return err(appError('INVALID_INPUT', 'Database target could not be canonically resolved'));
     }
-    if (SQLITE_EXTENSIONS.has(path.extname(canonicalTarget).toLowerCase()) === false) {
+    if (SQLITE_EXTENSIONS.has(pathApi.extname(canonicalTarget).toLowerCase()) === false) {
       return err(appError('INVALID_INPUT', `Database target must resolve to ${[...SQLITE_EXTENSIONS].join(', ')}`));
     }
-    if (!isWithin(root.value, canonicalTarget)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
+    if (!isHostPathWithin(root.value, canonicalTarget, this.platform)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Database target must stay inside the registered workspace'));
     return ok(canonicalTarget);
   }
 
@@ -124,8 +131,10 @@ export class DatabaseRuntimeService {
       ? (info.value as { realRootPath: string }).realRootPath
       : undefined;
     if (rootPath === undefined) return err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true));
+    const resolvedRoot = resolveHostPath(rootPath, this.platform);
+    if (resolvedRoot === null) return err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'));
     try {
-      return ok(await realpath(rootPath));
+      return ok(await realpath(resolvedRoot));
     } catch {
       return err(appError('INTERNAL_ERROR', 'Workspace root could not be canonically resolved', true));
     }
@@ -157,18 +166,6 @@ function bindParameters(input: Record<string, unknown>): (null | number | bigint
     if (value === null || typeof value === 'number' || typeof value === 'bigint' || typeof value === 'string') return value;
     return JSON.stringify(value);
   }) : [];
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const pathApi = path.win32.isAbsolute(root) ? path.win32 : path;
-  const caseInsensitive = pathApi === path.win32;
-  const normalizedRoot = caseInsensitive ? root.toLowerCase() : root;
-  const normalizedCandidate = caseInsensitive ? candidate.toLowerCase() : candidate;
-  const relative = pathApi.relative(normalizedRoot, normalizedCandidate);
-  if (relative === '') return true;
-  if (pathApi.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(pathApi.sep);
-  return firstSegment !== '..';
 }
 
 function readTrimmed(value: unknown): string | undefined {

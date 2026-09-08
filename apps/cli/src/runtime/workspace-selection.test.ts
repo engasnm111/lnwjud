@@ -20,4 +20,9 @@ describe('direct STDIO workspace selection', () => {
       registeredProjectPaths: ['C:\\old-project'],
     })).toBe(path.resolve('C:\\old-project'));
   });
+
+  it('does not rewrite a foreign Windows path on a POSIX host', () => {
+    expect(resolveRequestedWorkspacePath({ requestedPath: 'C:\\old-project', registeredProjectPaths: [], platform: 'linux' })).toBeNull();
+    expect(resolveRequestedWorkspacePath({ registeredProjectPaths: ['C:\\old-project'], platform: 'linux' })).toBeNull();
+  });
 });

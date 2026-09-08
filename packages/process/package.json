@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/process",
-  "version": "4.55.1",
+  "version": "4.56.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -16,7 +16,7 @@
     "@lnwjud/domain": "workspace:*"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "typecheck": "tsc --noEmit",
     "build": "tsc --outDir dist"
   },

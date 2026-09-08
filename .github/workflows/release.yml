@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   publish-release:
-    name: Publish Verified Windows Release
-    runs-on: windows-latest
+    name: Publish Verified Cross-Platform Release
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
@@ -28,117 +28,106 @@ jobs:
           node-version: '24'
 
       - name: Verify release tag matches package version
-        shell: pwsh
+        shell: bash
         run: |
-          $package = Get-Content package.json -Raw | ConvertFrom-Json
-          $expectedTag = "v$($package.version)"
-          if ("${{ github.ref_name }}" -ne $expectedTag) {
-            throw "Release tag must match package.json version. Expected $expectedTag but got ${{ github.ref_name }}"
-          }
+          set -euo pipefail
+          expected_tag="v$(node -p "require('./package.json').version")"
+          if [[ "${GITHUB_REF_NAME}" != "$expected_tag" ]]; then
+            echo "Release tag must match package.json version. Expected $expected_tag but got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
 
-      - name: Download verified CI artifact
-        shell: pwsh
+      - name: Download verified target-native CI artifacts for the exact commit
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $repository = "${{ github.repository }}"
-          $sha = "${{ github.sha }}"
-          $artifactName = "windows-release-$sha"
-          $runsJson = gh run list --repo $repository --workflow ci.yml --commit $sha --event push --status success --limit 20 --json databaseId,headSha,conclusion
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to query successful CI runs for $sha"
-          }
-          $runs = @($runsJson | ConvertFrom-Json)
-          $run = $runs | Where-Object { $_.headSha -eq $sha -and $_.conclusion -eq 'success' } | Select-Object -First 1
-          if ($null -eq $run) {
-            throw "Release requires a successful CI run for exact commit $sha before tagging."
-          }
+          set -euo pipefail
+          repository="${GITHUB_REPOSITORY}"
+          sha="${GITHUB_SHA}"
+          staging_directory="$PWD/release-staging"
+          mkdir -p "$staging_directory"
 
-          $installerDirectory = Join-Path $PWD 'apps\desktop\dist\installers'
-          New-Item -ItemType Directory -Force -Path $installerDirectory | Out-Null
-          gh run download "$($run.databaseId)" --repo $repository --name $artifactName --dir $installerDirectory
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to download verified artifact '$artifactName' from CI run $($run.databaseId)."
-          }
+          run_id="$(gh run list \
+            --repo "$repository" \
+            --workflow ci.yml \
+            --commit "$sha" \
+            --event push \
+            --status success \
+            --limit 20 \
+            --json databaseId,headSha,conclusion \
+            --jq ".[] | select(.headSha == \"$sha\" and .conclusion == \"success\") | .databaseId" | sed -n '1p')"
+          if [[ -z "$run_id" ]]; then
+            echo "Release requires a successful CI push run for exact commit $sha before tagging." >&2
+            exit 1
+          fi
 
-          $package = Get-Content package.json -Raw | ConvertFrom-Json
-          $requiredFiles = @(
-            "lnwjud-Setup-$($package.version).exe",
-            "lnwjud-Setup-$($package.version).exe.blockmap",
-            "lnwjud-Portable-$($package.version).exe",
-            'latest.yml',
-            'portable.yml',
-            'SHA256SUMS.txt',
-            'PROVENANCE.json'
+          declare -a targets=(
+            "win32-x64|windows-release-$sha"
+            "darwin-arm64|native-darwin-arm64-$sha"
+            "darwin-x64|native-darwin-x64-$sha"
+            "linux-x64|native-linux-x64-$sha"
+            "linux-arm64|native-linux-arm64-$sha"
           )
-          foreach ($fileName in $requiredFiles) {
-            $filePath = Join-Path $installerDirectory $fileName
-            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
-              throw "Verified CI artifact is missing required release file: $fileName"
-            }
-          }
-          Write-Host "Using verified CI artifact from run $($run.databaseId) for commit $sha"
+          for target in "${targets[@]}"; do
+            key="${target%%|*}"
+            artifact_name="${target#*|}"
+            mkdir -p "$staging_directory/$key"
+            gh run download "$run_id" --repo "$repository" --name "$artifact_name" --dir "$staging_directory/$key"
+          done
+          echo "Using successful CI run $run_id for exact commit $sha"
 
-      - name: Prepare capability bridge integrity evidence
-        shell: pwsh
-        run: node apps/desktop/scripts/write-capability-integrity.mjs
-
-      - name: Verify source provenance and SHA-256 evidence
-        shell: pwsh
+      - name: Verify each downloaded release evidence bundle
+        shell: bash
         env:
-          LNWJUD_EXPECTED_COMMIT_SHA: ${{ github.sha }}
-          LNWJUD_REQUIRE_CLEAN_PROVENANCE: '1'
           LNWJUD_RELEASE_ARTIFACT_ONLY: '1'
-        run: node apps/desktop/scripts/verify-release-evidence.mjs
-
-      - name: Verify Windows Authenticode when signing is configured
-        shell: pwsh
-        env:
-          WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-          WINDOWS_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: |
-          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_LINK)
-          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_KEY_PASSWORD)
-          if ($hasCertificate -ne $hasPassword) {
-            throw 'WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD must either both be configured or both be absent.'
-          }
+          set -euo pipefail
+          staging_directory="$PWD/release-staging"
+          sha="${GITHUB_SHA}"
 
-          $package = Get-Content package.json -Raw | ConvertFrom-Json
-          $installerDirectory = Join-Path $PWD 'apps\desktop\dist\installers'
-          $releaseArtifacts = @(
-            (Join-Path $installerDirectory "lnwjud-Setup-$($package.version).exe"),
-            (Join-Path $installerDirectory "lnwjud-Portable-$($package.version).exe")
+          declare -a targets=(
+            "win32-x64|win32|x64"
+            "darwin-arm64|darwin|arm64"
+            "darwin-x64|darwin|x64"
+            "linux-x64|linux|x64"
+            "linux-arm64|linux|arm64"
           )
-          foreach ($artifact in $releaseArtifacts) {
-            $signature = Get-AuthenticodeSignature -LiteralPath $artifact
-            if ($hasCertificate) {
-              if ($signature.Status -ne 'Valid') {
-                throw "Windows signing credentials are configured but the release artifact is not validly Authenticode-signed: $artifact (status=$($signature.Status))."
-              }
-              Write-Host "Authenticode valid: $artifact signer=$($signature.SignerCertificate.Subject)"
-            }
-            else {
-              if ($signature.Status -eq 'Valid') {
-                Write-Host "Authenticode valid even though repository signing secrets are not configured: $artifact signer=$($signature.SignerCertificate.Subject)"
-              }
-              else {
-                Write-Warning "Publishing unsigned Windows artifact: $artifact (Authenticode status=$($signature.Status)). SHA-256 and source provenance remain mandatory."
-              }
-            }
-          }
+          for target in "${targets[@]}"; do
+            IFS='|' read -r key platform arch <<< "$target"
+            mapfile -t provenance_files < <(find "$staging_directory/$key" -type f -name PROVENANCE.json -print)
+            if [[ "${#provenance_files[@]}" -ne 1 ]]; then
+              echo "Expected one PROVENANCE.json for $key, found ${#provenance_files[@]}" >&2
+              exit 1
+            fi
+            installer_directory="$(dirname "${provenance_files[0]}")"
+            LNWJUD_RELEASE_INSTALLER_DIRECTORY="$installer_directory" \
+            LNWJUD_RELEASE_PLATFORM="$platform" \
+            LNWJUD_RELEASE_ARCH="$arch" \
+            LNWJUD_EXPECTED_COMMIT_SHA="$sha" \
+            LNWJUD_REQUIRE_CLEAN_PROVENANCE='1' \
+              node apps/desktop/scripts/verify-release-evidence.mjs
+          done
 
-      - name: Create GitHub Release & Upload Windows Artifacts
+      - name: Aggregate target-native artifacts and update feeds
+        shell: bash
+        env:
+          LNWJUD_RELEASE_STAGING_DIRECTORY: ${{ github.workspace }}/release-staging
+          LNWJUD_RELEASE_ASSETS_DIRECTORY: ${{ github.workspace }}/release-assets
+          LNWJUD_RELEASE_COMMIT: ${{ github.sha }}
+        run: node scripts/collect-release-assets.mjs
+
+      - name: Publish verified cross-platform release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            apps/desktop/dist/installers/*.exe
-            apps/desktop/dist/installers/*.blockmap
-            apps/desktop/dist/installers/latest.yml
-            apps/desktop/dist/installers/portable.yml
-            apps/desktop/dist/installers/SHA256SUMS.txt
-            apps/desktop/dist/installers/PROVENANCE.json
+          files: release-assets/*
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
           generate_release_notes: true
+          body: |
+            Published from the exact successful CI commit `${{ github.sha }}`.
+
+            The release contains target-native Windows, macOS (arm64/x64), and Linux (x64/arm64) artifacts. `RELEASE_MANIFEST.json`, per-target provenance, and aggregate SHA-256 evidence describe the artifact set. No package or build step runs in this tag workflow.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

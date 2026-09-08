@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,35 @@ afterEach(async () => {
 });
 
 describe('TunnelController lifecycle', () => {
+  it('replaces a redirected secret path without touching the link target', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-secret-atomic-'));
+    temporaryRoots.push(dataPath);
+    vi.stubEnv('XDG_DATA_HOME', dataPath);
+    const controller = new TunnelController({
+      platform: 'linux',
+      getClientPath: (): string | null => null,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      encryptSecret: async (value): Promise<string> => `safe:v1:${value}`,
+    });
+    const secretPath = controller.secretPath();
+    const outsidePath = path.join(dataPath, 'outside-secret');
+    await (await import('node:fs/promises')).mkdir(path.dirname(secretPath), { recursive: true });
+    await writeFile(outsidePath, 'outside-value', 'utf8');
+    try {
+      await symlink(outsidePath, secretPath, 'file');
+    } catch {
+      // Windows CI may not grant symlink creation to the test user.
+      return;
+    }
+
+    await expect(controller.hasApiKey()).resolves.toBe(false);
+    await controller.saveApiKey('runtime-value');
+    await expect(readFile(outsidePath, 'utf8')).resolves.toBe('outside-value');
+    await expect(readFile(secretPath, 'utf8')).resolves.toBe('safe:v1:runtime-value');
+    await expect(stat(secretPath)).resolves.toMatchObject({ isFile: expect.any(Function) });
+  });
+
   it('holds shutdown completion until a delayed tunnel child exits', async () => {
     const child = new EventEmitter() as EventEmitter & { exitCode: number | null };
     child.exitCode = null;
@@ -1017,6 +1046,29 @@ describe('TunnelController lifecycle', () => {
     expect(await readTunnelLock(fixture.profileDir)).toEqual(fixture.owner);
   });
 
+  it('uses identity-bound process-group termination on POSIX instead of ChildProcess.kill', async () => {
+    let nakedKillCalled = false;
+    let terminated = false;
+    const startedAt = '2026-08-20T00:00:00.000Z';
+    const fixture = await ownedController(() => {
+      nakedKillCalled = true;
+      return true;
+    }, 20, {
+      platform: 'linux',
+      terminateOwnedProcessTree: async (): Promise<void> => {
+        terminated = true;
+        fixture.child.exitCode = 0;
+        fixture.child.emit('exit', 0);
+      },
+      inspectOwnedProcess: async (): Promise<ProcessProbeResult> => terminated ? { state: 'gone' } : { state: 'live', processStartedAt: startedAt },
+    });
+    fixture.child.pid = 7658;
+
+    await expect(fixture.controller.stopOwned()).resolves.toMatchObject({ state: 'stopped' });
+    expect(nakedKillCalled).toBe(false);
+    expect(terminated).toBe(true);
+  });
+
   it('releases ownership when secret read or decryption fails after lock acquisition', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-secret-failure-'));
     temporaryRoots.push(dataPath);
@@ -1355,6 +1407,7 @@ interface FakeChild extends EventEmitter {
 }
 
 async function ownedController(kill: () => boolean, stopTimeoutMs = 2_000, shutdownOptions: {
+  platform?: NodeJS.Platform;
   terminateOwnedProcessTree?: (pid: number) => Promise<void>;
   inspectOwnedProcess?: (pid: number) => Promise<import('@lnwjud/mcp-server').ProcessProbeResult>;
   inspectOwnedProcessTree?: (rootPid: number) => Promise<readonly { readonly pid: number; readonly processStartedAt: string }[]>;

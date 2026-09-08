@@ -59,6 +59,7 @@ export interface ProcessProbeOptions {
   readonly runProbe?: (pid: number, timeoutMs: number) => Promise<string>;
   readonly timeoutMs?: number;
   readonly attempts?: number;
+  readonly platform?: NodeJS.Platform;
 }
 
 export type SharedActivityObservation =
@@ -272,7 +273,8 @@ export async function currentSharedActivityOwner(): Promise<SharedActivityOwner>
 
 export async function probeProcessStart(pid: number, options: ProcessProbeOptions = {}): Promise<ProcessProbeResult> {
   if (!Number.isInteger(pid) || pid <= 0 || pid > 2_147_483_647) return { state: 'unverifiable', reason: 'invalid_pid' };
-  const runProbe = options.runProbe ?? runWindowsProcessProbe;
+  const platform = options.platform ?? process.platform;
+  const runProbe = options.runProbe ?? (platform === 'win32' ? runWindowsProcessProbe : runPosixProcessProbe);
   const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_PROCESS_PROBE_TIMEOUT_MS);
   const attempts = Math.min(3, positiveInteger(options.attempts, DEFAULT_PROCESS_PROBE_ATTEMPTS));
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -489,6 +491,33 @@ async function runWindowsProcessProbe(pid: number, timeoutMs: number): Promise<s
     `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
   ], { windowsHide: true, encoding: 'utf8', timeout: timeoutMs });
   return stdout;
+}
+
+async function runPosixProcessProbe(pid: number, timeoutMs: number): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], {
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      maxBuffer: 16 * 1024,
+    });
+    const startedAt = stdout.trim();
+    if (startedAt.length === 0) return 'GONE';
+    const parsed = Date.parse(startedAt);
+    if (!Number.isFinite(parsed)) throw new Error('POSIX process start metadata was unparsable');
+    return `LIVE|${new Date(parsed).toISOString()}`;
+  } catch (error: unknown) {
+    // `ps` exits non-zero with no output for a process that disappeared. An
+    // error carrying output is retained as unverifiable instead of guessing.
+    const output = isRecord(error) && typeof error.stdout === 'string' ? error.stdout.trim() : '';
+    if (output.length === 0 && isProcessProbeNotFound(error)) return 'GONE';
+    throw error;
+  }
+}
+
+function isProcessProbeNotFound(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  const code = error.code;
+  return code === 1 || code === 'ESRCH' || code === 'ENOENT';
 }
 
 function isProcessProbeTimeout(error: unknown): boolean {

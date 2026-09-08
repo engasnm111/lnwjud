@@ -27,6 +27,8 @@ export type WindowsCapabilityName =
 
 export interface WindowsCapabilityBridge {
   execute(request: { readonly capability: WindowsCapabilityName; readonly input: unknown }, signal?: AbortSignal): Promise<Result<unknown>>;
+  /** Optional provider-level probe used by health/Doctor without dispatching a UI action. */
+  status?(): Promise<Result<unknown>>;
 }
 
 export interface WindowsNativeBackendOptions {
@@ -68,6 +70,18 @@ export class WindowsNativeCapabilityBackend implements CapabilityBackend {
     if (!isRecord(input)) return err(appError('INVALID_INPUT', 'Native capability input must be an object'));
     if (input.dry_run === true) return ok({ dry_run: true, capability: this.capability });
     if (isSignalAborted(signal)) return cancelledOperation();
+
+    const action = typeof input.action === 'string'
+      ? input.action
+      : typeof input.operation === 'string'
+        ? input.operation
+        : '';
+    if (action === 'status') {
+      if (this.bridge.status !== undefined) return this.bridge.status();
+      // Older injected test/dev bridges do not expose a probe. Keep the
+      // provider visible without pretending that a UI action was executed.
+      return ok({ available: true, ready: true, local: true, backend: 'windows-native', platform: 'win32' });
+    }
 
     const pathCheck = await this.assertPathsAllowed(input, authorization);
     if (!pathCheck.ok) return pathCheck;

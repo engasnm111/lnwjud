@@ -7,6 +7,7 @@ import type { DiscoveredMcpServer, ExtensionsSettings, McpServerLaunchConfig } f
 export interface McpConfigLoaderOptions {
   readonly homeDir?: string;
   readonly appDataDir?: string;
+  readonly platform?: NodeJS.Platform;
   readonly workspaceRoot?: string;
   readonly settings: ExtensionsSettings;
   readonly env?: NodeJS.ProcessEnv;
@@ -17,17 +18,19 @@ export class McpConfigLoader {
 
   public async discover(): Promise<readonly DiscoveredMcpServer[]> {
     const home = this.options.homeDir ?? os.homedir();
-    const appData = this.options.appDataDir ?? process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+    const platform = this.options.platform ?? process.platform;
+    const pathApi = platform === 'win32' ? path.win32 : path.posix;
+    const appData = this.options.appDataDir ?? defaultApplicationDataDirectory(platform, home, this.options.env ?? process.env);
     const discovered: DiscoveredMcpServer[] = [];
 
     await this.loadFile(
       discovered,
-      path.join(home, '.cursor', 'mcp.json'),
+      pathApi.join(home, '.cursor', 'mcp.json'),
       'cursor',
     );
     await this.loadFile(
       discovered,
-      path.join(appData, 'Claude', 'claude_desktop_config.json'),
+      pathApi.join(appData, 'Claude', 'claude_desktop_config.json'),
       'claude-desktop',
     );
 
@@ -68,6 +71,12 @@ export class McpConfigLoader {
       config,
     };
   }
+}
+
+function defaultApplicationDataDirectory(platform: NodeJS.Platform, home: string, environment: NodeJS.ProcessEnv): string {
+  if (platform === 'win32') return environment.APPDATA ?? path.win32.join(home, 'AppData', 'Roaming');
+  if (platform === 'darwin') return path.posix.join(home, 'Library', 'Application Support');
+  return environment.XDG_CONFIG_HOME?.trim() || path.posix.join(home, '.config');
 }
 
 export function normalizeLaunchConfig(

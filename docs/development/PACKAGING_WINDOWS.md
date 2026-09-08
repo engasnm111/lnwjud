@@ -2,17 +2,17 @@
 
 The lnwjud desktop package is built with Electron and packaged for **Windows 10/11 x64** as both an NSIS installer and a single-file portable executable. The graphical Electron application carries its own Electron runtime; a separate system Node installation is not required merely to open the dashboard.
 
-The packaged MCP stdio launcher is self-contained: `lnwjud-mcp-stdio.cmd` launches the generated MCP bundle with a private `lnwjud-node.exe` copied from the pinned Node.js 24 build runtime. Installed and portable users do not need a separate system Node.js installation for stdio MCP or OpenAI Secure MCP Tunnel.
+The packaged MCP stdio launcher is self-contained: `lnwjud-mcp-stdio.cmd` launches the packaged Electron host with `--mcp-stdio`. No private Node executable or generated CJS bundle is shipped, and installed users do not need a separate system Node.js installation for stdio MCP or OpenAI Secure MCP Tunnel.
 
 Core text/file search is also self-contained. Packaging downloads the pinned official Windows x64 ripgrep archive, verifies its SHA-256, preserves its license notices, and ships `resources/runtime-tools/ripgrep/rg.exe` in both Setup and Portable builds. Desktop and `lnwjud-mcp-stdio.cmd` prepend that private directory to the child runtime PATH, so users do not need to install ripgrep themselves.
 
-OpenAI Secure MCP Tunnel is self-contained as well. Packaging pins official `tunnel-client v0.0.13` for Windows amd64 and verifies archive SHA-256 `17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb` before extraction. The complete seven-file upstream payload is preserved under `resources/tunnel-client/`: `tunnel-client.exe`, pinned `cloudflared.exe` v2026.8.2, `cloudflared-manifest.json`, `LICENSE`, `NOTICE`, the Windows amd64 license inventory, and SPDX SBOM; lnwjud also writes `BUNDLED_TUNNEL_CLIENT.txt` with the archive/runtime hashes used for provenance. Shipping the adjacent Cloudflared companion does not enable Cloudflared mode by default; normal lnwjud Secure MCP Tunnel behavior remains unchanged unless that upstream mode is explicitly configured.
+OpenAI Secure MCP Tunnel is self-contained as well. Packaging pins official `tunnel-client v0.0.13` for Windows amd64 and verifies the archive SHA-256 before extraction. The target-native payload is preserved under `resources/tunnel-client/` with the executable, license/notice inventory, SPDX metadata, and Sigstore provenance; lnwjud also records the archive/runtime hashes used for provenance. The bundled client is selected only when the override is empty, and a missing or invalid custom override fails closed instead of silently falling back.
 
 On the first launch of each lnwjud version, Desktop runs the core Doctor checks automatically before tunnel onboarding. Only core failures (supported Windows x64, database, bundled ripgrep, workspace initialization, and local MCP readiness) interrupt startup and keep navigation on Doctor. Git and optional capabilities such as Codex, WSL, Python, FFmpeg, and Windows OCR may report warnings or feature-specific unavailable states but do not block first-run.
 
 The current release target is x64 only. Windows 7/8/8.1 and 32-bit Windows are not supported release targets.
 
-Windows 10 and Windows 11 use different renderer compatibility defaults. `windows-compatibility.ts` recognizes NT build 10240+ as Windows 10 and build 22000+ as Windows 11. Windows 10 disables Electron hardware acceleration before `app.whenReady()` so older Intel/AMD/NVIDIA drivers use software rendering; Windows 11 keeps hardware acceleration enabled. This does not weaken `sandbox`, `contextIsolation`, or `webSecurity`.
+Windows 10 and Windows 11 use different renderer compatibility defaults. `platform-compatibility.ts` recognizes NT build 10240+ as Windows 10 and build 22000+ as Windows 11. Windows 10 disables Electron hardware acceleration before `app.whenReady()` so older Intel/AMD/NVIDIA drivers use software rendering; Windows 11 keeps hardware acceleration enabled. This does not weaken `sandbox`, `contextIsolation`, or `webSecurity`.
 
 Product-internal Windows plumbing uses built-in `powershell.exe` rather than requiring PowerShell 7. Runtime child launches use `windowsHide: true`. Durable shell workers have a default global cap of 16 active tasks per runtime process and `ProcessManager` has a default cap of 24 active managed processes, preventing an unbounded child/conhost fan-out when multiple chats/projects submit work concurrently.
 
@@ -29,7 +29,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v4.55.1 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v4.56.0 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
@@ -46,10 +46,10 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 - The updater never crosses distribution types: an installed user remains on Setup/NSIS updates and a Portable user remains on Portable EXE updates.
 - Installer and Portable intentionally continue to share the same per-user lnwjud settings/data location.
 - The Windows capability bridge is copied as an extra resource.
-- The generated `lnwjud-mcp-stdio.cjs`, `lnwjud-mcp-stdio.cmd`, and private `lnwjud-node.exe` have one canonical packaged copy beside `lnwjud.exe` for tunnel/local stdio use. They are not duplicated under `resources`, reducing AV scan surface and keeping one runtime hash authoritative.
+- The generated `lnwjud-mcp-stdio.cmd` has one canonical packaged copy beside `lnwjud.exe` for local stdio use. POSIX packages use the matching executable shell launcher. The package also includes the hash-bound native Windows secret migrator for one-time legacy data migration; no PowerShell secret runtime is shipped.
 - Pinned ripgrep is shipped under `resources/runtime-tools/ripgrep`; both Desktop and the stdio launcher resolve this private `rg.exe` before any system PATH copy.
 - The repository's `lnwjud-scheduled-continuation` skill is shipped under `resources/agent-skills` in both Setup/NSIS and Portable. The runtime adds that bundled root to `skills_list` without replacing machine-global or active-workspace Cursor, Claude, Agents, Codex, Codex-plugin, GitHub workspace, or configured skill roots.
-- The launcher never falls back to Program Files, LocalAppData, or Node from PATH; a missing bundled Node runtime fails closed.
+- The launcher never falls back to a system Node runtime; a missing packaged Electron executable fails closed.
 - Generated stdio runtime files are ignored by Git and must be regenerated from source for each build/release.
 
 `signAndEditExecutable: true` does not by itself mean the release is Authenticode-signed with a publisher certificate. Production code-signing identity/certificate handling is a separate release/CI concern.
@@ -72,12 +72,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v4.55.1:
+For v4.56.0:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.55.1.exe
-apps/desktop/dist/installers/lnwjud-Setup-4.55.1.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-4.55.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.56.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.56.0.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-4.56.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt

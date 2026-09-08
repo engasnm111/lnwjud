@@ -13,22 +13,25 @@ function section(start: string, end: string): string {
 
 describe('desktop packaged startup regression contract', () => {
   it('loads v3 safeStorage checkpoint keys before constructing native runtimes', () => {
-    const nativeRuntime = section(
-      'function createNativeDesktopRuntime',
-      'function bootstrapDesktop',
+    const secretBootstrap = section(
+      'async function resolveDesktopRuntimeSecrets',
+      'async function migrateV3SafeStorageSecrets',
     );
-    expect(nativeRuntime).toContain('loadV3CheckpointKeyIfPresent(dataPath, safeStorage)');
-    expect(nativeRuntime).toContain('checkpointEncryptionKey');
+    const nativeRuntime = section('async function createNativeDesktopRuntime', 'function createElectronNativeCapabilityApi');
+    expect(secretBootstrap).toContain('new CheckpointKeyStore');
+    expect(secretBootstrap).toContain('.loadOrCreate()');
+    expect(nativeRuntime).toContain('resolveDesktopRuntimeSecrets(dataPath)');
+    expect(secretBootstrap).toContain('checkpointEncryptionKey');
   });
 
-  it('routes migrated v3 tunnel secrets through safeStorage before legacy PowerShell DPAPI', () => {
-    const compat = section('async function decryptTunnelSecretCompat', 'function createNativeDesktopRuntime');
-    const nativeRuntime = section('function createNativeDesktopRuntime', 'function bootstrapDesktop');
-    const stdio = section('function bootstrapMcpStdio', 'function applyDesktopUserSettings');
-    expect(compat).toContain('decryptV3WindowsSafeStorageSecretIfPresent(cipherText, safeStorage)');
-    expect(compat).toContain('return unprotectTunnelSecret(cipherText);');
-    expect(nativeRuntime).toContain('decryptTunnelSecret: decryptTunnelSecretCompat');
-    expect(stdio).toContain('decryptTunnelSecret: decryptTunnelSecretCompat');
+  it('routes migrated v3 tunnel secrets through safeStorage before legacy migration', () => {
+    const resolver = section('async function resolveDesktopRuntimeSecrets', 'async function migrateV3SafeStorageSecrets');
+    const migration = section('async function migrateV3SafeStorageSecrets', 'async function readTrustedSecretFile');
+    expect(resolver).toContain('await migrateV3SafeStorageSecrets(dataPath, secretProtector);');
+    expect(resolver.indexOf('migrateV3SafeStorageSecrets')).toBeLessThan(resolver.indexOf('migrateLegacyWindowsSecrets'));
+    expect(migration).toContain('decryptV3WindowsSafeStorageSecretIfPresent(tunnelEnvelope, safeStorage)');
+    expect(migration).toContain("secretProtector.encrypt('tunnel_api_key'");
+    expect(migration).not.toContain('unprotectTunnelSecret');
   });
 
   it('creates the desktop window before background MCP auto-start', () => {
@@ -52,9 +55,15 @@ describe('desktop packaged startup regression contract', () => {
     expect(instances).toContain('revealMainWindow();');
   });
 
+  it('selects the configured user-data path before acquiring the instance lock', () => {
+    const instances = section('const holdsSingleInstanceLock', 'if (!gotInstanceLock');
+    expect(instances.indexOf('configureUserDataPath()')).toBeLessThan(instances.indexOf('app.requestSingleInstanceLock()'));
+    expect(source).toContain('const dataPath = configuredDataPath ?? configureUserDataPath();');
+  });
+
   it('fails stdio startup explicitly if checkpoint/runtime bootstrap rejects', () => {
     const stdio = section('function bootstrapMcpStdio', 'function applyDesktopUserSettings');
-    expect(stdio).toContain('loadV3CheckpointKeyIfPresent(dataPath, safeStorage)');
+    expect(stdio).toContain('resolveDesktopRuntimeSecrets(dataPath)');
     expect(stdio).toContain('lnwjud MCP stdio startup failed:');
     expect(stdio).toContain('app.quit();');
   });

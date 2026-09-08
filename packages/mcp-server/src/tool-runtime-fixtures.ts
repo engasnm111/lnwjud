@@ -76,7 +76,7 @@ export const CORE_TOOL_RUNTIME_FIXTURES = {
   restore_deleted_file: service({ workspaceId, recoveryId: zeroUuid, userConfirmed: true }, 'file.restoreDeletedFile'),
   list_checkpoints: service({ workspaceId }, 'checkpoint.list'),
   restore_checkpoint: service({ workspaceId, checkpointId: zeroUuid, userConfirmed: true }, 'checkpoint.restore'),
-  process_start: service({ workspaceId, executable: 'node.exe', args: ['--version'] }, 'process.start'),
+  process_start: service({ workspaceId, executable: 'node', args: ['--version'] }, 'process.start'),
   process_list: service({ workspaceId }, 'process.list'),
   process_status: service({ workspaceId, processId: 'process-1' }, 'process.status'),
   process_logs: service({ workspaceId, processId: 'process-1' }, 'process.logs'),

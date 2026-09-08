@@ -10,6 +10,7 @@ export * from './migrations/retire-auto-machine-roots-migration.js';
 export * from './settings-repository.js';
 export * from './workspace-repository.js';
 export * from './checkpoint-cipher.js';
+export * from './checkpoint-key-store.js';
 export * from './backup-service.js';
 export * from './agent-swarm-repository.js';
 export * from './migrations/agent-swarm-migration.js';

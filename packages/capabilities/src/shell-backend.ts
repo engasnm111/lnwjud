@@ -12,7 +12,7 @@ import {
   type InvocationAuthorization,
   type Result,
 } from '@lnwjud/domain';
-import { PathExecutableResolver, WindowsProcessTree, toWindowsSpawnInvocation, type ExecutableResolver, type ProcessTreeTerminator } from '@lnwjud/process';
+import { createProcessTreeTerminator, PathExecutableResolver, toSpawnInvocation, type ExecutableResolver, type ProcessTreeTerminator } from '@lnwjud/process';
 import type { CapabilityBackend } from './local-capability-service.js';
 import { prohibitedAgentCommandReason, riskyAgentCommandReason } from './agent-command-policy.js';
 import { DurableShellTaskStore } from './durable-shell-task-store.js';
@@ -115,7 +115,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     this.allowedRoots = options.allowedRoots.map((root) => path.resolve(root));
     this.allowedRootsProvider = options.allowedRootsProvider;
     this.executableResolver = options.executableResolver ?? new PathExecutableResolver();
-    this.terminator = options.terminator ?? new WindowsProcessTree();
+    this.terminator = options.terminator ?? createProcessTreeTerminator();
     this.defaultTimeoutSeconds = clampNumber(options.defaultTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, 0.1, MAX_TIMEOUT_SECONDS);
     this.defaultBackgroundTimeoutSeconds = clampNumber(options.defaultBackgroundTimeoutSeconds ?? DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 0.1, MAX_TIMEOUT_SECONDS);
     this.durableStore = options.taskStateDirectory === undefined ? undefined : new DurableShellTaskStore(path.resolve(options.taskStateDirectory));
@@ -205,7 +205,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     const executable = await this.executableResolver.resolve(request.executable);
     if (!executable.ok) return executable;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
-    const invocation = toWindowsSpawnInvocation(executable.value, request.arguments, { allowMetacharacters: this.unrestricted || fullBypass });
+    const invocation = toSpawnInvocation(executable.value, request.arguments, { allowMetacharacters: this.unrestricted || fullBypass });
     if (!invocation.ok) return invocation;
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Shell request was cancelled before launch', true));
 
@@ -223,6 +223,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
         cwd: cwd.value,
         env: createSafeEnvironment(process.env, this.unrestricted),
         shell: false,
+        detached: process.platform !== 'win32',
         windowsHide: true,
         ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
       });
@@ -621,7 +622,15 @@ function isWithin(root: string, candidate: string): boolean {
 
 function createSafeEnvironment(source: NodeJS.ProcessEnv, unrestricted: boolean): NodeJS.ProcessEnv {
   if (unrestricted) return { ...source };
-  const allowed = new Set(['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME', 'LANG', 'LC_ALL', 'APPDATA', 'LOCALAPPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ComSpec'].map((key) => process.platform === 'win32' ? key.toLowerCase() : key));
+  const allowed = new Set([
+    'PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME',
+    'LANG', 'LC_ALL', 'APPDATA', 'LOCALAPPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ComSpec',
+    // POSIX desktop-session handles are not credentials. Preserve them so a
+    // scoped child can use the user's X11/Wayland/DBus/PipeWire session.
+    'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'XDG_SESSION_TYPE', 'DBUS_SESSION_BUS_ADDRESS',
+    'XDG_CURRENT_DESKTOP', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'PULSE_SERVER', 'PIPEWIRE_REMOTE', 'AT_SPI_BUS_ADDRESS',
+    'GDK_BACKEND', 'QT_QPA_PLATFORM',
+  ].map((key) => process.platform === 'win32' ? key.toLowerCase() : key));
   return Object.fromEntries(Object.entries(source).filter(([key, entry]) => {
     const normalizedKey = process.platform === 'win32' ? key.toLowerCase() : key;
     return entry !== undefined && allowed.has(normalizedKey);

@@ -1,5 +1,5 @@
-import path from 'node:path';
 import { isProtectedCriticalPath, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
+import { hostPathApi, isAbsoluteHostPath, isFilesystemRoot, isHostPathWithin, relativeHostPath, resolveHostPath } from '@lnwjud/workspace';
 import type { MutationPolicyDecision } from './mutation-policy.js';
 
 export interface WorkspaceScope {
@@ -21,6 +21,7 @@ export function isScopedAutoApprovalAllowed(
   decision: MutationPolicyDecision,
   policy: DestructiveAutoApprovalPolicy,
   scope: WorkspaceScope | null,
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   const approvalKey = decision.approvalKey;
   if (decision.kind !== 'delete'
@@ -29,37 +30,37 @@ export function isScopedAutoApprovalAllowed(
     || policy.protectCriticalFiles !== true
     || scope === null) return false;
 
-  const root = path.win32.resolve(scope.rootPath);
-  if (isDriveRoot(root)) return false;
+  const root = resolveHostPath(scope.rootPath, platform);
+  if (root === null || isFilesystemRoot(root, platform)) return false;
   const value = asRecord(input);
   if (value === null) return false;
   const workspaceId = typeof value.workspaceId === 'string' ? value.workspaceId : undefined;
   if (workspaceId !== undefined && workspaceId !== scope.workspaceId) return false;
-  const cwd = scopedCwd(root, value.cwd);
+  const cwd = scopedCwd(root, value.cwd, platform);
   if (cwd === null) return false;
 
   if (approvalKey === 'delete_file') {
     return policy.recoverableDelete === true
       && toolName === 'delete_file'
       && typeof value.path === 'string'
-      && safeTarget(root, root, value.path, policy);
+      && safeTarget(root, root, value.path, policy, platform);
   }
 
   if (approvalKey === 'git_rm') {
     const args = stringArray(value.args);
     const target = exactGitTarget(args, 'rm', ['-r', '--recursive']);
-    return target !== null && safeTarget(root, cwd, target, policy);
+    return target !== null && safeTarget(root, cwd, target, policy, platform);
   }
   if (approvalKey === 'git_clean') {
     const args = stringArray(value.args);
     const target = exactGitTarget(args, 'clean', ['-d', '--directories', '-x', '-X']);
-    return target !== null && safeTarget(root, cwd, target, policy);
+    return target !== null && safeTarget(root, cwd, target, policy, platform);
   }
   if (approvalKey === 'git_reset_restore') {
     const args = stringArray(value.args);
     if (args[0]?.toLowerCase() !== 'restore') return false;
     const target = exactGitTarget(args, 'restore', []);
-    return target !== null && safeTarget(root, cwd, target, policy);
+    return target !== null && safeTarget(root, cwd, target, policy, platform);
   }
 
   const executable = executableBasename(typeof value.executable === 'string' ? value.executable : '');
@@ -67,26 +68,29 @@ export function isScopedAutoApprovalAllowed(
   if (approvalKey === 'shell_rm_unlink' || approvalKey === 'wsl_rm_unlink') {
     if (!['rm', 'unlink'].includes(executable) || hasOption(args, ['-r', '-R', '--recursive', '--dir'])) return false;
     const target = exactCommandTarget(args);
-    return target !== null && safeTarget(root, cwd, target, policy);
+    return target !== null && safeTarget(root, cwd, target, policy, platform);
   }
   if (approvalKey === 'shell_rmdir' || approvalKey === 'wsl_rmdir') {
     if (executable !== 'rmdir' || hasOption(args, ['/s', '-p', '--parents'])) return false;
     const target = exactCommandTarget(args);
-    return target !== null && safeTarget(root, cwd, target, policy);
+    return target !== null && safeTarget(root, cwd, target, policy, platform);
   }
   if (approvalKey === 'shell_del_erase') {
     if (!['del', 'erase'].includes(executable) || hasOption(args, ['/s'])) return false;
     const target = exactCommandTarget(args);
-    return target !== null && safeTarget(root, cwd, target, policy);
+    return target !== null && safeTarget(root, cwd, target, policy, platform);
   }
   return false;
 }
 
-function scopedCwd(root: string, input: unknown): string | null {
+function scopedCwd(root: string, input: unknown, platform: NodeJS.Platform): string | null {
   if (input === undefined) return root;
   if (typeof input !== 'string' || input.trim().length === 0) return null;
-  const cwd = path.win32.isAbsolute(input) ? path.win32.resolve(input) : path.win32.resolve(root, input);
-  return isWithin(root, cwd) ? cwd : null;
+  const api = hostPathApi(platform);
+  const cwd = isAbsoluteHostPath(input, platform)
+    ? resolveHostPath(input, platform)
+    : resolveHostPath(api.join(root, input), platform);
+  return cwd !== null && isHostPathWithin(root, cwd, platform) ? cwd : null;
 }
 
 function exactGitTarget(args: readonly string[], expectedSubcommand: string, rejectedOptions: readonly string[]): string | null {
@@ -116,9 +120,9 @@ function hasOption(args: readonly string[], options: readonly string[]): boolean
   });
 }
 
-function safeTarget(root: string, cwd: string, target: string, policy: DestructiveAutoApprovalPolicy): boolean {
+function safeTarget(root: string, cwd: string, target: string, policy: DestructiveAutoApprovalPolicy, platform: NodeJS.Platform): boolean {
   if (target.length === 0 || target.startsWith('/') || hasPatternMagic(target)) return false;
-  const relative = relativeProjectPath(root, cwd, target);
+  const relative = relativeProjectPath(root, cwd, target, platform);
   return relative !== null
     && relative.length > 0
     && (!policy.protectCriticalFiles || !isProtectedCriticalPath(relative));
@@ -128,23 +132,13 @@ function hasPatternMagic(value: string): boolean {
   return value.startsWith(':') || ['*', '?', '[', ']', '{', '}'].some((token) => value.includes(token));
 }
 
-function relativeProjectPath(root: string, cwd: string, target: string): string | null {
+function relativeProjectPath(root: string, cwd: string, target: string, platform: NodeJS.Platform): string | null {
   if (target.includes('\0')) return null;
-  const candidate = path.win32.isAbsolute(target) ? path.win32.resolve(target) : path.win32.resolve(cwd, target);
-  if (!isWithin(root, candidate)) return null;
-  return path.win32.relative(root, candidate).replaceAll('\\', '/');
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(path.win32.resolve(root), path.win32.resolve(candidate));
-  if (relative === '') return true;
-  if (path.win32.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.win32.sep);
-  return firstSegment !== '..';
-}
-
-function isDriveRoot(value: string): boolean {
-  return /^[A-Za-z]:\\$/.test(path.win32.resolve(value));
+  const candidate = isAbsoluteHostPath(target, platform)
+    ? resolveHostPath(target, platform)
+    : resolveHostPath(hostPathApi(platform).join(cwd, target), platform);
+  if (candidate === null || !isHostPathWithin(root, candidate, platform)) return null;
+  return relativeHostPath(root, candidate, platform)?.replaceAll(hostPathApi(platform).sep, '/') ?? null;
 }
 
 function executableBasename(executable: string): string {

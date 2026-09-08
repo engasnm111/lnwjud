@@ -7,7 +7,8 @@ on:
       - dev
       - 'release/v*'
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +18,150 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-platform-contract:
+    name: Native Platform Contract (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-15
+          - name: Linux
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        shell: bash
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Run portable typecheck
+        shell: bash
+        run: corepack pnpm@10.15.0 typecheck
+
+      - name: Run native platform contract tests
+        shell: bash
+        run: corepack pnpm@10.15.0 exec vitest run tests/integration/platform-composition.test.ts tests/release/platform-support-contract.test.ts
+
+      - name: Test macOS native host protocol
+        if: matrix.name == 'macOS'
+        shell: bash
+        run: swift test --package-path native/macos-host
+
+      - name: Test Linux native host protocol
+        if: matrix.name == 'Linux'
+        shell: bash
+        run: cargo test --manifest-path native/linux-host/Cargo.toml --locked
+
+      - name: Test Linux artifact verifier with package fixtures
+        if: matrix.name == 'Linux'
+        shell: bash
+        run: bash tests/packaging/linux-release-layout.sh
+
+  native-package-verification:
+    name: Native Package Verification (${{ matrix.name }})
+    # Packaging downloads target-native runtimes and builds unsigned local
+    # artifacts. Keep it on protected push/manual runs; pull requests still
+    # receive the fast platform-contract matrix above.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: native-platform-contract
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-15
+            platform: darwin
+            arch: arm64
+          - name: macOS x64
+            os: macos-15-intel
+            platform: darwin
+            arch: x64
+          - name: Linux x64
+            os: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - name: Linux arm64
+            os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install cosign for tunnel provenance verification
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        shell: bash
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Build and verify target-native package
+        shell: bash
+        env:
+          LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
+          LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
+          LNWJUD_COSIGN_PATH: cosign
+        run: corepack pnpm@10.15.0 verify:platform -- --package
+
+      - name: Verify packaged artifact layout
+        shell: bash
+        env:
+          LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
+          LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ "${{ matrix.platform }}" == "darwin" ]]; then
+            corepack pnpm@10.15.0 verify:macos-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.dmg"
+            corepack pnpm@10.15.0 verify:macos-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.zip"
+          else
+            corepack pnpm@10.15.0 verify:linux-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.AppImage"
+            corepack pnpm@10.15.0 verify:linux-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.deb"
+          fi
+
+      - name: Upload verified native package evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            apps/desktop/dist/installers/*
+            apps/desktop/build/platform-verification-${{ matrix.platform }}-${{ matrix.arch }}.json
+            apps/desktop/build/packaged-runtime-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   verify:
     # Keep this check name stable because main branch protection requires it.
     name: Authoritative Release Verification (Windows)
@@ -30,6 +175,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+
+      - name: Install cosign for tunnel provenance verification
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
 
       - name: Enable Corepack & Setup pnpm
         run: |

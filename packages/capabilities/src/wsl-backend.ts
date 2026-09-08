@@ -99,6 +99,11 @@ export class WslCapabilityBackend implements CapabilityBackend {
   }
 
   public async execute(input: unknown, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    // WSL is a Windows-only compatibility surface.  Keep the platform gate
+    // before request parsing so every operation (including task lifecycle
+    // calls) fails closed consistently on macOS/Linux instead of leaking a
+    // Windows-path validation or PROCESS_NOT_FOUND result.
+    if (this.platform !== 'win32') return ok(this.unavailable());
     const parsed = parseWslRequest(input, this.defaultDistro, this.defaultTimeoutSeconds, this.maxOutputBytes);
     if (!parsed.ok) return parsed;
     if (parsed.value.operation === 'status' && parsed.value.taskId === undefined) return this.status();
@@ -172,12 +177,22 @@ export class WslCapabilityBackend implements CapabilityBackend {
   }
 
   private async status(): Promise<Result<unknown>> {
-    if (this.platform !== 'win32') return ok({ available: false, ready: false, local: true, backend: 'wsl', reason: 'WSL is only available on Windows' });
     if (this.availabilityProbe !== undefined) {
       const result = await this.availabilityProbe();
       return annotateResult(result, { backend: 'wsl', local: true });
     }
     return ok({ available: true, ready: true, local: true, backend: 'wsl', reason: 'wsl.exe is available; distribution state is checked on execution' });
+  }
+
+  private unavailable(): Record<string, unknown> {
+    return {
+      available: false,
+      ready: false,
+      local: true,
+      backend: 'wsl',
+      reason: 'unsupported_platform',
+      readinessReason: 'unsupported_platform',
+    };
   }
 
   private forwardTaskRequest(request: WslRequest): Record<string, unknown> {
@@ -285,15 +300,17 @@ export class WslFilesystemCapabilityBackend implements CapabilityBackend {
   }
 
   public async execute(input: unknown, _signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    // Do not parse or translate Windows/WSL paths on POSIX hosts.  The
+    // capability is intentionally cut there; callers receive one stable
+    // unsupported-platform contract for status and all filesystem operations.
+    if (this.platform !== 'win32') return ok({ available: false, ready: false, local: true, backend: 'wsl_fs', raw_access: false, reason: 'unsupported_platform', readinessReason: 'unsupported_platform' });
     if (!isRecord(input)) return err(appError('INVALID_INPUT', 'WSL filesystem input must be an object'));
     if (input.operation === 'status') {
-      if (this.platform === 'win32' && this.availabilityProbe !== undefined) {
+      if (this.availabilityProbe !== undefined) {
         const probe = await this.availabilityProbe();
         return annotateResult(probe, { backend: 'wsl_fs', raw_access: false });
       }
-      return ok(this.platform === 'win32'
-        ? { available: true, ready: true, local: true, backend: 'wsl_fs', raw_access: false }
-        : { available: false, ready: false, local: true, backend: 'wsl_fs', raw_access: false, reason: 'WSL is only available on Windows' });
+      return ok({ available: true, ready: true, local: true, backend: 'wsl_fs', raw_access: false });
     }
     const workspaceId = readNonEmptyString(input.workspaceId);
     if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'workspaceId is required for WSL filesystem operations'));

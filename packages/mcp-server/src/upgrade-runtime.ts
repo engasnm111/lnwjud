@@ -14,6 +14,8 @@ import {
 } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { capabilityDescriptors, EventLogCapabilityBackend, type CapabilityDescriptor } from '@lnwjud/capabilities';
+import { createProcessTreeTerminator } from '@lnwjud/process';
+import { hostPathApi, isAbsoluteHostPath, normalizeHostPath } from '@lnwjud/workspace';
 import type { McpApplicationServices } from './tools/tool-types.js';
 import { ContextEngine } from './context-engine.js';
 import type { ActivityTelemetrySnapshot, ActivityTracker, ToolTelemetrySnapshot } from './activity-tracker.js';
@@ -170,6 +172,7 @@ export class UpgradeRuntimeService {
   private readonly database: DatabaseRuntimeService;
   private readonly lsp: LspRuntimeService;
   private readonly documents: DocumentRuntimeService;
+  private readonly diagnostics: PlatformDiagnosticsProvider;
   private readonly stateStore: UpgradeRuntimeStateStore | undefined;
   private loaded = false;
 
@@ -188,11 +191,13 @@ export class UpgradeRuntimeService {
       : new UpgradeRuntimeStateStore(path.resolve(services.runtimeStatePath), runtimeOwnerKey(actor));
     this.contextEconomy = contextEconomy;
     this.contextEngine = new ContextEngine(services, actor, contextEconomy);
-    this.eventLog = new EventLogCapabilityBackend();
-    this.sandbox = new SandboxRuntimeService(services, actor, services.sandboxRuntimeOptions);
+    const platform = services.platform ?? services.sandboxRuntimeOptions?.platform ?? process.platform;
+    this.eventLog = new EventLogCapabilityBackend({ platform });
+    this.sandbox = new SandboxRuntimeService(services, actor, { ...(services.sandboxRuntimeOptions ?? {}), platform });
     this.database = new DatabaseRuntimeService(services, actor);
     this.lsp = new LspRuntimeService(services, actor);
     this.documents = new DocumentRuntimeService(services, actor);
+    this.diagnostics = createPlatformDiagnosticsProvider(platform);
   }
 
   public async execute(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
@@ -489,7 +494,7 @@ export class UpgradeRuntimeService {
       case 'installed_runtime_context':
       case 'path_context':
       case 'startup_context':
-        return this.windowsInsight(name, input, signal, authorization);
+        return this.diagnosticInsight(name, input, signal, authorization);
       case 'capture_screenshot':
       case 'compare_screenshot':
       case 'dom_snapshot':
@@ -1195,6 +1200,9 @@ export class UpgradeRuntimeService {
   }
 
   private async officeOutlook(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    if (this.diagnostics.platform !== 'win32') {
+      return ok(truthfulUnavailable('office_outlook', 'unsupported', ['Windows host', 'Microsoft Outlook COM'])) as Result<unknown>;
+    }
     const capabilities = this.services.capabilities;
     if (capabilities === undefined) return ok({ tool: 'office_outlook', status: 'optional', available: false, reason: 'Office capability is not configured' });
     const action = readString(input, 'action') ?? 'list_messages';
@@ -1227,8 +1235,15 @@ export class UpgradeRuntimeService {
     const workspaceId = readString(input, 'workspaceId');
     if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'workspaceId is required for a Git worktree'));
     const worktreePath = readString(input, 'worktreePath') ?? `.worktrees/agent-${randomUUID().slice(0, 8)}`;
-    const absolutePath = path.win32.isAbsolute(worktreePath);
-    const normalizedPath = path.win32.normalize(worktreePath).replaceAll('\\', '/');
+    const platform = this.diagnostics.platform;
+    if (platform !== 'win32' && worktreePath.includes('\\')) {
+      return err(appError('INVALID_INPUT', 'Git worktree path uses a foreign host path syntax'));
+    }
+    const pathApi = hostPathApi(platform);
+    const normalizedHostPath = normalizeHostPath(worktreePath, platform);
+    if (normalizedHostPath === null) return err(appError('INVALID_INPUT', 'Git worktree path uses a foreign host path syntax'));
+    const absolutePath = isAbsoluteHostPath(worktreePath, platform);
+    const normalizedPath = normalizedHostPath.split(pathApi.sep).join('/');
     const scopedRelativePath = !absolutePath
       && !normalizedPath.split('/').some((part) => part === '..')
       && (normalizedPath.startsWith('.worktrees/') || normalizedPath.startsWith('.lnwjud/worktrees/'));
@@ -1271,7 +1286,15 @@ export class UpgradeRuntimeService {
 
   private async gitWorktreeRemove(input: Record<string, unknown>, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
     const workspaceId = readString(input, 'workspaceId');
-    const worktreePath = readString(input, 'worktreePath')?.replaceAll('\\', '/');
+    const rawWorktreePath = readString(input, 'worktreePath');
+    const platform = this.diagnostics.platform;
+    if (rawWorktreePath !== undefined && platform !== 'win32' && rawWorktreePath.includes('\\')) {
+      return err(appError('INVALID_INPUT', 'Git worktree path uses a foreign host path syntax'));
+    }
+    const normalizedHostPath = rawWorktreePath === undefined ? undefined : normalizeHostPath(rawWorktreePath, platform);
+    const worktreePath = normalizedHostPath === null || normalizedHostPath === undefined
+      ? undefined
+      : normalizedHostPath.split(hostPathApi(platform).sep).join('/');
     if (workspaceId === undefined || worktreePath === undefined) return err(appError('INVALID_INPUT', 'workspaceId and worktreePath are required'));
     await this.refreshSharedState();
     const entry = this.worktrees.find((candidate) => candidate.workspaceId === workspaceId && candidate.worktreePath === worktreePath);
@@ -1714,8 +1737,10 @@ export class UpgradeRuntimeService {
     return screenshot.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, dom: dom.value, screenshot: screenshot.value }) : screenshot;
   }
 
-  private async windowsInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
-    if (process.platform !== 'win32') return ok(truthfulUnavailable(name, 'unsupported', ['Windows host']));
+  private async diagnosticInsight(name: string, input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
+    if ((name === 'windows_environment' || name === 'registry_context') && this.diagnostics.platform !== 'win32') {
+      return ok(truthfulUnavailable(name, 'unsupported', ['Windows host']));
+    }
 
     if (name === 'windows_environment') {
       let systemInfo: unknown = null;
@@ -1723,31 +1748,36 @@ export class UpgradeRuntimeService {
         const info = await this.services.capabilities.execute('system_info', { operation: 'all' }, signal, authorization);
         systemInfo = info.ok ? info.value : { error: info.error };
       }
-      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, platform: process.platform, arch: process.arch, hostname: os.hostname(), release: os.release(), node: process.version, cwd: process.cwd(), systemInfo });
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, platform: this.diagnostics.platform, arch: process.arch, hostname: os.hostname(), release: os.release(), node: process.version, cwd: process.cwd(), systemInfo });
     }
     if (name === 'process_context') {
-      if (this.services.capabilities !== undefined) {
+      if (this.diagnostics.platform === 'win32' && this.services.capabilities !== undefined) {
         const processes = await this.services.capabilities.execute('system_info', { operation: 'processes', top_count: boundedInteger(input.top_count, 50, 1, 500) }, signal, authorization);
         return processes.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, processes: processes.value }) : processes;
       }
-      const processes = await runBoundedProcess('tasklist.exe', ['/FO', 'CSV', '/NH'], signal);
-      return processes.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, processes: processes.value.stdout }) : processes;
+      const processes = await runBoundedProcess(this.diagnostics.process.executable, this.diagnostics.process.args, signal, 15_000, 1024 * 1024, this.diagnostics.platform);
+      return diagnosticProcessResult(name, processes, 'processes');
     }
     if (name === 'service_context') {
       const serviceName = readString(input, 'service') ?? readString(input, 'name');
-      const result = await runBoundedProcess('sc.exe', serviceName === undefined ? ['query', 'state=', 'all'] : ['query', serviceName], signal);
-      return result.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, service: serviceName ?? null, output: result.value.stdout }) : result;
+      if (serviceName !== undefined && !isSafeDiagnosticServiceName(serviceName, this.diagnostics.platform)) {
+        return err(appError('INVALID_INPUT', 'service_context service name contains unsupported characters'));
+      }
+      const invocation = this.diagnostics.service(serviceName);
+      const result = await runBoundedProcess(invocation.executable, invocation.args, signal, 15_000, 1024 * 1024, this.diagnostics.platform);
+      return diagnosticProcessResult(name, result, 'services', { service: serviceName ?? null, backend: invocation.backend });
     }
     if (name === 'port_context') {
-      const result = await runBoundedProcess('netstat.exe', ['-ano', '-p', 'tcp'], signal);
-      if (!result.ok) return result;
-      const listening = result.value.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\bLISTENING\b/i.test(line)).slice(0, 1000);
-      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, listening });
+      const invocation = this.diagnostics.port();
+      const result = await runBoundedProcess(invocation.executable, invocation.args, signal, 15_000, 1024 * 1024, this.diagnostics.platform);
+      if (!result.ok) return diagnosticProcessResult(name, result, 'listeners', { backend: invocation.backend });
+      const listening = result.value.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => this.diagnostics.platform === 'win32' ? /\bLISTENING\b/i.test(line) : line.length > 0).slice(0, 1000);
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, listening, backend: invocation.backend });
     }
     if (name === 'registry_context') {
       const key = readString(input, 'key') ?? 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
       if (!/^(HKCU|HKLM)\\[A-Za-z0-9 _.,{}()\-\\]+$/i.test(key)) return err(appError('PERMISSION_DENIED', 'registry_context only allows read-only HKCU/HKLM key paths with safe characters'));
-      const result = await runBoundedProcess('reg.exe', ['query', key], signal);
+      const result = await runBoundedProcess('reg.exe', ['query', key], signal, 15_000, 1024 * 1024, this.diagnostics.platform);
       return result.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, key, output: result.value.stdout }) : result;
     }
     if (name === 'event_log_context') {
@@ -1755,16 +1785,16 @@ export class UpgradeRuntimeService {
       return event.ok ? ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, eventLog: event.value }) : event;
     }
     if (name === 'installed_runtime_context') {
-      const checks: readonly [string, string, readonly string[]][] = [
-        ['node', 'node.exe', ['--version']], ['npm', 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd --version']], ['corepack', 'cmd.exe', ['/d', '/s', '/c', 'corepack.cmd --version']],
-        ['git', 'git.exe', ['--version']], ['python', 'python.exe', ['--version']], ['pwsh', 'pwsh.exe', ['--version']],
-      ];
+      const checks = this.diagnostics.runtimes;
       const runtimes: Record<string, unknown>[] = [];
       for (const [runtime, executable, args] of checks) {
-        const result = await runBoundedProcess(executable, args, signal, 5_000, 64 * 1024);
-        runtimes.push(result.ok ? { runtime, available: true, version: result.value.stdout.trim() } : { runtime, available: false });
+        const result = await runBoundedProcess(executable, args, signal, 5_000, 64 * 1024, this.diagnostics.platform);
+        runtimes.push(result.ok
+          ? { runtime, available: true, version: result.value.stdout.trim() }
+          : { runtime, available: false, reason: result.error.code === 'PROCESS_NOT_FOUND' ? 'not_installed' : 'query_failed' });
       }
-      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, runtimes });
+      const ready = runtimes.length > 0 && runtimes.every((runtime) => runtime.available === true);
+      return ok({ tool: name, status: ready ? 'ready' : 'optional', available: true, ready, executed: true, platform: this.diagnostics.platform, ...(ready ? {} : { readinessReason: 'dependency_missing' }), runtimes });
     }
     if (name === 'path_context') {
       const pathValue = process.env.Path ?? process.env.PATH ?? '';
@@ -1772,12 +1802,17 @@ export class UpgradeRuntimeService {
       const executable = readString(input, 'executable');
       if (executable === undefined) return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, entries });
       if (!/^[A-Za-z0-9_.-]+$/.test(executable)) return err(appError('INVALID_INPUT', 'path_context executable must be a simple executable name'));
-      const found = await runBoundedProcess('where.exe', [executable], signal, 5_000, 64 * 1024);
+      const found = await runBoundedProcess(this.diagnostics.pathResolver, [executable], signal, 5_000, 64 * 1024, this.diagnostics.platform);
       return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, entries, executable, matches: found.ok ? found.value.stdout.split(/\r?\n/).filter(Boolean) : [] });
     }
-    const userStartup = await runBoundedProcess('reg.exe', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal);
-    const machineStartup = await runBoundedProcess('reg.exe', ['query', 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal);
-    return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, user: userStartup.ok ? userStartup.value.stdout : null, machine: machineStartup.ok ? machineStartup.value.stdout : null, errors: [userStartup.ok ? null : userStartup.error.message, machineStartup.ok ? null : machineStartup.error.message].filter(Boolean) });
+    if (this.diagnostics.platform === 'win32') {
+      const userStartup = await runBoundedProcess('reg.exe', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal, 15_000, 1024 * 1024, this.diagnostics.platform);
+      const machineStartup = await runBoundedProcess('reg.exe', ['query', 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], signal, 15_000, 1024 * 1024, this.diagnostics.platform);
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, platform: this.diagnostics.platform, user: userStartup.ok ? userStartup.value.stdout : null, machine: machineStartup.ok ? machineStartup.value.stdout : null, errors: [userStartup.ok ? null : userStartup.error.message, machineStartup.ok ? null : machineStartup.error.message].filter(Boolean) });
+    }
+    const invocation = this.diagnostics.startup;
+    const startup = await runBoundedProcess(invocation.executable, invocation.args, signal, 15_000, 1024 * 1024, this.diagnostics.platform);
+    return diagnosticProcessResult(name, startup, 'startup', { platform: this.diagnostics.platform, backend: invocation.backend });
   }
 
   private actorForOperation(): FileActor {
@@ -1888,6 +1923,7 @@ function runBoundedProcess(
   signal?: AbortSignal,
   timeoutMs = 15_000,
   maxBytes = 1024 * 1024,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<Result<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }>> {
   return new Promise((resolve) => {
     if (signal?.aborted === true) {
@@ -1899,7 +1935,12 @@ function runBoundedProcess(
     let stderr = '';
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(executable, [...args], { windowsHide: true, shell: false });
+      child = spawn(executable, [...args], {
+        windowsHide: true,
+        shell: false,
+        detached: platform !== 'win32',
+        env: sanitizedDiagnosticEnvironment(),
+      });
     } catch {
       resolve(err(appError('PROCESS_NOT_FOUND', `${executable} could not be started`, true)));
       return;
@@ -1916,19 +1957,39 @@ function runBoundedProcess(
       const remaining = maxBytes - Buffer.byteLength(current, 'utf8');
       return current + chunk.subarray(0, remaining).toString('utf8');
     };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(err(appError('PROCESS_TIMEOUT', `${executable} query timed out`, true)));
-    }, timeoutMs);
-    const onAbort = (): void => {
-      child.kill();
-      finish(err(appError('PROCESS_TIMEOUT', `${executable} query was cancelled`, true)));
+    const terminator = createProcessTreeTerminator(platform);
+    let terminationRequested = false;
+    let terminationInFlight: Promise<void> | undefined;
+    const requestTermination = (message: string): void => {
+      if (settled || terminationRequested) return;
+      terminationRequested = true;
+      terminationInFlight = (async (): Promise<void> => {
+        const pid = child.pid;
+        if (!Number.isInteger(pid) || (pid ?? 0) <= 0) {
+          finish(err(appError('PROCESS_TIMEOUT', `${message}; process termination could not be verified`, true)));
+          return;
+        }
+        try {
+          await terminator.stop(child, pid as number);
+          finish(err(appError('PROCESS_TIMEOUT', message, true)));
+        } catch {
+          finish(err(appError('PROCESS_TIMEOUT', `${message}; process termination could not be verified`, true)));
+        }
+      })();
     };
+    const timer = setTimeout(() => requestTermination(`${executable} query timed out`), timeoutMs);
+    const onAbort = (): void => requestTermination(`${executable} query was cancelled`);
     signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout?.on('data', (chunk: Buffer) => { stdout = append(stdout, chunk); });
     child.stderr?.on('data', (chunk: Buffer) => { stderr = append(stderr, chunk); });
     child.once('error', () => finish(err(appError('PROCESS_NOT_FOUND', `${executable} is unavailable`, true))));
     child.once('close', (code) => {
+      if (terminationRequested) {
+        // Wait for the identity-bound terminator above. A root close event by
+        // itself does not prove that a detached POSIX process group is gone.
+        void terminationInFlight;
+        return;
+      }
       const exitCode = code ?? -1;
       if (exitCode !== 0) {
         finish(err(appError('INTERNAL_ERROR', `${executable} query failed with exit code ${exitCode}`, true)));
@@ -1940,9 +2001,139 @@ function runBoundedProcess(
   });
 }
 
+interface DiagnosticInvocation {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly backend: string;
+}
+
+interface PlatformDiagnosticsProvider {
+  readonly platform: NodeJS.Platform;
+  readonly process: DiagnosticInvocation;
+  readonly pathResolver: string;
+  readonly runtimes: readonly [string, string, readonly string[]][];
+  readonly startup: DiagnosticInvocation;
+  service(serviceName: string | undefined): DiagnosticInvocation;
+  port(): DiagnosticInvocation;
+}
+
+function createPlatformDiagnosticsProvider(platform: NodeJS.Platform): PlatformDiagnosticsProvider {
+  const processInvocation: DiagnosticInvocation = platform === 'win32'
+    ? { executable: 'tasklist.exe', args: ['/FO', 'CSV', '/NH'], backend: 'windows-tasklist' }
+    : { executable: 'ps', args: ['-axo', 'pid=,ppid=,comm=,%cpu=,%mem='], backend: 'posix-ps' };
+  const runtimes: readonly [string, string, readonly string[]][] = platform === 'win32'
+    ? [
+      ['node', 'node.exe', ['--version']], ['npm', 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd --version']], ['corepack', 'cmd.exe', ['/d', '/s', '/c', 'corepack.cmd --version']],
+      ['git', 'git.exe', ['--version']], ['python', 'python.exe', ['--version']], ['pwsh', 'pwsh.exe', ['--version']],
+    ]
+    : [
+      ['node', process.execPath, ['--version']], ['npm', 'npm', ['--version']], ['corepack', 'corepack', ['--version']],
+      ['git', 'git', ['--version']], ['python', 'python3', ['--version']], ['pwsh', 'pwsh', ['--version']],
+    ];
+  const startup: DiagnosticInvocation = platform === 'win32'
+    ? { executable: 'reg.exe', args: ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'], backend: 'windows-registry' }
+    : platform === 'darwin'
+      ? { executable: 'launchctl', args: ['print-disabled', `gui/${typeof process.getuid === 'function' ? process.getuid() : 0}`], backend: 'launchd' }
+      : { executable: 'systemctl', args: ['--user', 'list-unit-files', '--state=enabled', '--no-pager', '--plain'], backend: 'systemd-user' };
+  return {
+    platform,
+    process: processInvocation,
+    pathResolver: platform === 'win32' ? 'where.exe' : 'which',
+    runtimes,
+    startup,
+    service: (serviceName) => serviceInvocation(platform, serviceName),
+    port: () => portInvocation(platform),
+  };
+}
+
+function serviceInvocation(platform: NodeJS.Platform, serviceName: string | undefined): DiagnosticInvocation {
+  if (platform === 'win32') {
+    return {
+      executable: 'sc.exe',
+      args: serviceName === undefined ? ['query', 'state=', 'all'] : ['query', serviceName],
+      backend: 'windows-service',
+    };
+  }
+  if (platform === 'darwin') {
+    return {
+      executable: 'launchctl',
+      args: serviceName === undefined
+        ? ['list']
+        : ['print', `gui/${typeof process.getuid === 'function' ? process.getuid() : 0}/${serviceName}`],
+      backend: 'launchd-user',
+    };
+  }
+  return {
+    executable: 'systemctl',
+    args: serviceName === undefined
+      ? ['--user', 'list-units', '--type=service', '--all', '--no-pager', '--plain']
+      : ['--user', 'status', serviceName, '--no-pager', '--plain'],
+    backend: 'systemd-user',
+  };
+}
+
+function portInvocation(platform: NodeJS.Platform): DiagnosticInvocation {
+  if (platform === 'win32') {
+    return { executable: 'netstat.exe', args: ['-ano', '-p', 'tcp'], backend: 'windows-netstat' };
+  }
+  if (platform === 'darwin') {
+    return { executable: 'lsof', args: ['-nP', '-iTCP', '-sTCP:LISTEN'], backend: 'macos-lsof' };
+  }
+  return { executable: 'ss', args: ['-ltnp'], backend: 'linux-ss' };
+}
+
+function diagnosticProcessResult(
+  name: string,
+  result: Result<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }>,
+  field: string,
+  extra: Readonly<Record<string, unknown>> = {},
+): Result<unknown> {
+  if (!result.ok) {
+    if (result.error.code === 'PROCESS_NOT_FOUND') {
+      return ok({
+        tool: name,
+        status: 'optional',
+        available: false,
+        ready: false,
+        executed: false,
+        readinessReason: 'dependency_missing',
+        ...extra,
+        error: result.error.message,
+      });
+    }
+    return result;
+  }
+  return ok({
+    tool: name,
+    status: 'ready',
+    available: true,
+    ready: true,
+    executed: true,
+    ...extra,
+    [field]: result.value.stdout,
+    ...(result.value.stderr.trim().length === 0 ? {} : { stderr: result.value.stderr }),
+  });
+}
+
 function readString(input: Record<string, unknown>, key: string): string | undefined {
   const value = input[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+function sanitizedDiagnosticEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:api[_-]?key|token|password|secret)/iu.test(key)));
+}
+
+function isSafeDiagnosticServiceName(value: string, platform: NodeJS.Platform): boolean {
+  const name = value.trim();
+  if (name.length === 0 || name.length > 256 || name.startsWith('-')) return false;
+  // Service-manager names are passed as one argv element. Keep the accepted
+  // grammar narrower than each manager's full syntax so a diagnostic query
+  // cannot smuggle option-looking arguments or path separators into launchd,
+  // systemd, or `sc.exe`.
+  return platform === 'win32'
+    ? /^[A-Za-z0-9_.:@ -]+$/u.test(name)
+    : /^[A-Za-z0-9_.:@-]+$/u.test(name);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

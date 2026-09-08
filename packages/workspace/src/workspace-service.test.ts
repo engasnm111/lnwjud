@@ -54,4 +54,13 @@ describe('WorkspaceService', () => {
     expect(file).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     expect(repository.inserted).toEqual([]);
   });
+
+  it('rejects POSIX mount roots and foreign persisted paths before touching the repository', async () => {
+    const repository = repositorySpy();
+    const service = new WorkspaceService(repository, { platform: 'linux' });
+
+    await expect(service.add('Root', '/')).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    await expect(service.add('Windows path', 'C:\\Users\\alice\\project')).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    expect(repository.inserted).toEqual([]);
+  });
 });

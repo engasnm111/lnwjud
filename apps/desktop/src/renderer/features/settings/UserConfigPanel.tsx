@@ -13,6 +13,7 @@ export type UserConfigSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunn
 
 interface UserConfigPanelProps {
   readonly locale: UiLocale;
+  readonly hostPlatform?: 'win32' | 'darwin' | 'linux';
   readonly permissionProfile: PermissionProfileName;
   readonly stdioPermissionProfile: PermissionProfileName;
   readonly settings?: UserSettings;
@@ -50,8 +51,12 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
-export function UserConfigPanel({ locale, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider }: UserConfigPanelProps): ReactElement {
+export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider }: UserConfigPanelProps): ReactElement {
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
+  // Older dashboard fixtures omit hostPlatform; keep their Windows-shaped
+  // rendering while production dashboards always provide the authoritative
+  // startup platform.
+  const isWindowsHost = (hostPlatform ?? 'win32') === 'win32';
   const [draft, setDraft] = useState<UserSettings>(effectiveSettings);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -179,7 +184,7 @@ export function UserConfigPanel({ locale, permissionProfile, stdioPermissionProf
             <NumberField label={locale === 'th' ? 'ช่วงตรวจอัปเดต (นาที)' : 'Update interval (minutes)'} value={draft.updateIntervalMinutes} min={5} max={1440} onChange={(value) => patch({ updateIntervalMinutes: value })} />
           </div>
           <div className="switch-grid">
-            <SettingSwitch checked={draft.launchAtStartup} label={locale === 'th' ? 'เปิดพร้อม Windows' : 'Start with Windows'} description={locale === 'th' ? 'เปิด lnwjud อัตโนมัติหลัง Sign in' : 'Launch lnwjud automatically after sign in'} onChange={(value) => patch({ launchAtStartup: value })} />
+            <SettingSwitch checked={draft.launchAtStartup} label={locale === 'th' ? 'เปิดพร้อมเครื่อง' : 'Start with the host'} description={locale === 'th' ? 'เปิด lnwjud อัตโนมัติหลัง Sign in' : 'Launch lnwjud automatically after sign in'} onChange={(value) => patch({ launchAtStartup: value })} />
             <SettingSwitch checked={draft.startMinimized} label={locale === 'th' ? 'เริ่มแบบซ่อนใน Tray' : 'Start minimized'} description={locale === 'th' ? 'ไม่แสดงหน้าต่างหลักตอนเปิดอัตโนมัติ' : 'Keep the main window hidden on startup'} onChange={(value) => patch({ startMinimized: value })} />
             <SettingSwitch checked={draft.updateAutoCheck} label={locale === 'th' ? 'ตรวจอัปเดตอัตโนมัติ' : 'Automatic update checks'} description={locale === 'th' ? 'ตรวจตามช่วงเวลาที่กำหนด' : 'Check periodically using the interval above'} onChange={(value) => patch({ updateAutoCheck: value })} />
             <SettingSwitch checked={draft.updateCheckOnStartup} label={locale === 'th' ? 'ตรวจเมื่อเปิดโปรแกรม' : 'Check on startup'} description={locale === 'th' ? 'ตรวจหลังเปิดโปรแกรมไม่นาน' : 'Check shortly after the app starts'} onChange={(value) => patch({ updateCheckOnStartup: value })} />
@@ -200,7 +205,7 @@ export function UserConfigPanel({ locale, permissionProfile, stdioPermissionProf
             <SettingSwitch
               checked={unrestricted}
               label="Unrestricted mode"
-              description={locale === 'th' ? 'อนุญาต absolute path ที่ผู้ใช้หรือ AI ระบุ โดยไม่สแกนหรือลงทะเบียน drive letter อัตโนมัติ และยังใช้กฎยืนยันตาม Profile ตามปกติ' : 'Allow explicitly requested absolute paths without scanning or registering drive letters, while keeping the active profile approval rules in force.'}
+              description={locale === 'th' ? 'อนุญาต absolute path ที่ผู้ใช้หรือ AI ระบุ โดยไม่สแกนหรือลงทะเบียน filesystem root อัตโนมัติ และยังใช้กฎยืนยันตาม Profile ตามปกติ' : 'Allow explicitly requested absolute paths without scanning or registering filesystem roots, while keeping the active profile approval rules in force.'}
               onChange={(enabled) => { void onUnrestrictedChange(enabled).then((restartRequired) => setUnrestrictedMessage(restartRequired ? (locale === 'th' ? 'ต้อง Restart MCP/Tunnel เพื่อใช้ค่าครบถ้วน' : 'Restart MCP/Tunnel to apply this everywhere.') : null)); }}
             />
             {unrestrictedMessage === null ? null : <div className="alert-box-warning" role="status">⚠️ {unrestrictedMessage}</div>}
@@ -282,33 +287,42 @@ export function UserConfigPanel({ locale, permissionProfile, stdioPermissionProf
           <section className="panel settings-card settings-card-polished" aria-label="Capability roots">
             <CardHeading icon="⌂" title={locale === 'th' ? 'Capability Roots' : 'Capability Roots'} subtitle={locale === 'th' ? 'เพิ่มพื้นที่ที่ tools สามารถเข้าถึงได้' : 'Additional roots available to local capability tools'} />
             <label className="field-label" htmlFor="capability-roots">{locale === 'th' ? 'หนึ่ง path ต่อบรรทัด' : 'One path per line'}</label>
-            <textarea id="capability-roots" className="settings-textarea" rows={5} value={draft.capabilityRoots.join('\n')} placeholder={'D:\\Projects\nE:\\Work'} onChange={(event) => patch({ capabilityRoots: splitList(event.target.value) })} />
-            <p className="hint">{locale === 'th' ? 'ใช้กับ Shell, Office, Screen Record และ WSL โดยไม่ต้องแก้ environment variable เอง' : 'Used by Shell, Office, screen recording, and WSL without editing environment variables.'}</p>
+            <textarea id="capability-roots" className="settings-textarea" rows={5} value={draft.capabilityRoots.join('\n')} placeholder={isWindowsHost ? 'D:\\Projects\nE:\\Work' : '/Users/name/Projects\n/home/name/Work'} onChange={(event) => patch({ capabilityRoots: splitList(event.target.value) })} />
+            <p className="hint">{locale === 'th' ? 'ใช้กับ Shell, native providers และ Screen Record โดยไม่ต้องแก้ environment variable เอง' : 'Used by Shell, native providers, and screen recording without editing environment variables.'}</p>
           </section>
 
           <section className="panel settings-card settings-card-polished" aria-label="Local providers" data-settings-focus="tools-local-providers" tabIndex={-1}>
-            <CardHeading icon="◫" title={locale === 'th' ? 'Local Providers' : 'Local Providers'} subtitle={locale === 'th' ? 'ตั้งค่า PDF และ Language Server โดยไม่ต้องแก้ Environment Variable' : 'Configure PDF and language-server providers without environment variables'} badge="ADVANCED" />
+            <CardHeading icon="◫" title={locale === 'th' ? 'Local Providers' : 'Local Providers'} subtitle={locale === 'th' ? 'ตั้งค่า Language Server และ provider ที่ระบบรองรับ' : 'Configure language servers and host-supported providers'} badge="ADVANCED" />
             <div className="setting-grid two-col">
-              <div className="pdf-provider-install-control">
-                <Field
-                  label={locale === 'th' ? 'PDF Provider (pdftotext.exe)' : 'PDF Provider (pdftotext.exe)'}
-                  value={draft.pdfProviderPath}
-                  placeholder={locale === 'th' ? 'พาธไปยัง pdftotext.exe (ถ้ามี)' : 'Path to pdftotext.exe (optional)'}
-                  onChange={(value) => patch({ pdfProviderPath: value })}
-                />
-                <div className="inline-actions">
-                  <button type="button" className="btn-save-gold" disabled={pdfInstallBusy} onClick={() => { void installPdf(); }}>
-                    {pdfInstallBusy
-                      ? (locale === 'th' ? 'กำลังดาวน์โหลดและติดตั้ง…' : 'Downloading and installing…')
-                      : (locale === 'th' ? 'ดาวน์โหลดและติดตั้งอัตโนมัติ' : 'Download & install automatically')}
-                  </button>
+              {isWindowsHost ? (
+                <div className="pdf-provider-install-control">
+                  <Field
+                    label={locale === 'th' ? 'PDF Provider (pdftotext.exe)' : 'PDF Provider (pdftotext.exe)'}
+                    value={draft.pdfProviderPath}
+                    placeholder={locale === 'th' ? 'พาธไปยัง pdftotext.exe (ถ้ามี)' : 'Path to pdftotext.exe (optional)'}
+                    onChange={(value) => patch({ pdfProviderPath: value })}
+                  />
+                  <div className="inline-actions">
+                    <button type="button" className="btn-save-gold" disabled={pdfInstallBusy} onClick={() => { void installPdf(); }}>
+                      {pdfInstallBusy
+                        ? (locale === 'th' ? 'กำลังดาวน์โหลดและติดตั้ง…' : 'Downloading and installing…')
+                        : (locale === 'th' ? 'ดาวน์โหลดและติดตั้งอัตโนมัติ' : 'Download & install automatically')}
+                    </button>
+                  </div>
+                  <p className="hint">{locale === 'th'
+                    ? 'ดาวน์โหลด Poppler for Windows รุ่นที่ lnwjud กำหนดไว้จาก GitHub Release ตรวจ SHA-256 ก่อนแตกไฟล์ แล้วเก็บไว้ในโฟลเดอร์ข้อมูลของ lnwjud โดยไม่ต้องเพิ่ม PATH หรือใช้สิทธิ์ Administrator'
+                    : 'Downloads the lnwjud-pinned Poppler for Windows release from GitHub, verifies SHA-256 before extraction, and installs it in the lnwjud data directory without changing PATH or requiring Administrator rights.'}</p>
+                  {pdfInstallError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {pdfInstallError}</div>}
+                  {pdfInstallMessage === null ? null : <div className="toast-success-banner" role="status">✓ {pdfInstallMessage}</div>}
                 </div>
-                <p className="hint">{locale === 'th'
-                  ? 'ดาวน์โหลด Poppler for Windows รุ่นที่ lnwjud กำหนดไว้จาก GitHub Release ตรวจ SHA-256 ก่อนแตกไฟล์ แล้วเก็บไว้ในโฟลเดอร์ข้อมูลของ lnwjud โดยไม่ต้องเพิ่ม PATH หรือใช้สิทธิ์ Administrator'
-                  : 'Downloads the lnwjud-pinned Poppler for Windows release from GitHub, verifies SHA-256 before extraction, and installs it in the lnwjud data directory without changing PATH or requiring Administrator rights.'}</p>
-                {pdfInstallError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {pdfInstallError}</div>}
-                {pdfInstallMessage === null ? null : <div className="toast-success-banner" role="status">✓ {pdfInstallMessage}</div>}
-              </div>
+              ) : (
+                <div className="setting-field">
+                  <span className="field-label">PDF Provider</span>
+                  <p className="hint">{locale === 'th'
+                    ? 'ตัวติดตั้ง PDF แบบฝังของ Windows ถูกตัดออกบน host นี้ ให้ติดตั้ง pdftotext ของระบบเองแล้วตั้งค่าใน configuration หากต้องการใช้ PDF tools'
+                    : 'The bundled Windows PDF installer is disabled on this host. Install a native pdftotext provider yourself and configure it only if you need PDF tools.'}</p>
+                </div>
+              )}
               <TextArea
                 label={locale === 'th' ? 'LSP Commands — LANGUAGE=COMMAND' : 'LSP Commands — LANGUAGE=COMMAND'}
                 value={stringMapToText(draft.lspCommands)}
@@ -350,7 +364,7 @@ export function UserConfigPanel({ locale, permissionProfile, stdioPermissionProf
                 <div className="section-heading"><strong>{server.name || `MCP Server ${index + 1}`}</strong><button type="button" className="danger-soft-button" onClick={() => patchExtensions({ extraMcpServers: draft.extensions.extraMcpServers.filter((_entry, current) => current !== index) })}>{locale === 'th' ? 'ลบ' : 'Remove'}</button></div>
                 <div className="setting-grid two-col">
                   <Field label="Name" value={server.name} onChange={(value) => updateServer(index, { name: value })} />
-                  <Field label="Command" value={server.command} placeholder="npx.cmd" onChange={(value) => updateServer(index, { command: value })} />
+                  <Field label="Command" value={server.command} placeholder="npx" onChange={(value) => updateServer(index, { command: value })} />
                   <Field label="Working directory" value={server.cwd} placeholder="optional" onChange={(value) => updateServer(index, { cwd: value })} />
                   <Field label="Type" value={server.type} placeholder="optional (for example stdio)" onChange={(value) => updateServer(index, { type: value })} />
                   <TextArea label="Args — one per line" value={server.args.join('\n')} onChange={(value) => updateServer(index, { args: splitLines(value) })} />

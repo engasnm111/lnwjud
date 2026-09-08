@@ -4,10 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { PathExecutableResolver, type ExecutableResolver } from './executable-resolver.js';
 import { LogRingBuffer } from './ring-buffer.js';
-import type { ProcessTreeTerminator } from './windows-process-tree.js';
-import { WindowsProcessTree } from './windows-process-tree.js';
+import { createProcessTreeTerminator, type ProcessTreeTerminator } from './process-tree.js';
+import { createSpawnInvocationFactory, type SpawnInvocationFactory } from './spawn-invocation.js';
 import type { LogQuery, ManagedProcess, ManagedProcessStart, ManagedProcessState, ProcessLogResult } from './process-types.js';
-import { toWindowsSpawnInvocation } from './windows-spawn.js';
 
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_TIMEOUT_MS = 4 * 60 * 60 * 1000;
@@ -37,9 +36,10 @@ export class ProcessManager {
   private readonly records = new Map<string, ManagedRecord>();
 
   public constructor(
-    private readonly terminator: ProcessTreeTerminator = new WindowsProcessTree(),
+    private readonly terminator: ProcessTreeTerminator = createProcessTreeTerminator(),
     private readonly executableResolver: ExecutableResolver = new PathExecutableResolver(),
     private readonly maxActiveProcesses: number = DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES,
+    private readonly invocationFactory: SpawnInvocationFactory = createSpawnInvocationFactory(),
   ) {}
 
   public async start(
@@ -57,7 +57,7 @@ export class ProcessManager {
     const resolvedExecutable = await this.executableResolver.resolve(spec.executable);
     if (isAborted(signal)) return cancelledStart();
     if (!resolvedExecutable.ok) return resolvedExecutable;
-    const invocation = toWindowsSpawnInvocation(resolvedExecutable.value, spec.args);
+    const invocation = this.invocationFactory.create(resolvedExecutable.value, spec.args);
     if (!invocation.ok) return invocation;
     if (isAborted(signal)) return cancelledStart();
     const processId = randomUUID();
@@ -65,6 +65,7 @@ export class ProcessManager {
       cwd: spec.cwd,
       env: createSafeEnvironment(process.env),
       shell: false,
+      detached: process.platform !== 'win32',
       windowsHide: true,
       ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
     });
@@ -314,6 +315,10 @@ function createSafeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const allowed = new Set([
     'PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
     'HOME', 'LANG', 'LC_ALL', 'APPDATA', 'LOCALAPPDATA', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)',
+    // Preserve non-secret POSIX desktop-session handles for UI processes.
+    'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'XDG_SESSION_TYPE', 'DBUS_SESSION_BUS_ADDRESS',
+    'XDG_CURRENT_DESKTOP', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'PULSE_SERVER', 'PIPEWIRE_REMOTE', 'AT_SPI_BUS_ADDRESS',
+    'GDK_BACKEND', 'QT_QPA_PLATFORM',
   ].map((key) => process.platform === 'win32' ? key.toLowerCase() : key));
   return Object.fromEntries(Object.entries(source).filter(([key, value]) => {
     const normalizedKey = process.platform === 'win32' ? key.toLowerCase() : key;

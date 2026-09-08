@@ -19,6 +19,8 @@ import { RECURRING_SCHEDULED_CONTINUATION_MIGRATION_SQL } from './migrations/rec
 
 export interface SqliteDatabaseOptions {
   readonly backupDirectory?: string;
+  readonly platform?: NodeJS.Platform;
+  readonly arch?: string;
 }
 
 export interface Migration {
@@ -89,7 +91,7 @@ export class SqliteDatabase {
 
   private backupBeforeFirstPendingMigration(): void {
     if (this.preMigrationBackupCreated || !this.existedBeforeOpen || this.options.backupDirectory === undefined) return;
-    createPreMigrationBackupSync(this.connection, this.options.backupDirectory);
+    createPreMigrationBackupSync(this.connection, this.options.backupDirectory, this.options.platform, this.options.arch);
     this.preMigrationBackupCreated = true;
   }
 

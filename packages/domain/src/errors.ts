@@ -14,6 +14,7 @@ export type AppErrorCode =
   | 'EXECUTABLE_NOT_FOUND'
   | 'GIT_NOT_REPOSITORY'
   | 'CODEX_NOT_AVAILABLE'
+  | 'UNSUPPORTED_PLATFORM'
   | 'INTERNAL_ERROR';
 
 export interface AppError {

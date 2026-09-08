@@ -47,6 +47,16 @@ describe('SandboxRuntimeService', () => {
     source: 'full_bypass',
   } as const;
 
+  it('reports Windows Sandbox as unsupported rather than a missing dependency on POSIX hosts', async () => {
+    const runtime = new SandboxRuntimeService(servicesWithRoot('/tmp/project'), actor, {
+      platform: 'linux',
+      sandboxExecutable: '/usr/bin/WindowsSandbox.exe',
+    });
+    await expect(runtime.execute({ workspaceId: 'ws-1', executable: 'node', arguments: ['--version'] })).resolves.toMatchObject({
+      ok: true, value: { status: 'unsupported', available: false, ready: false, reason: 'unsupported_platform', readinessReason: 'unsupported_platform' },
+    });
+  });
+
   it('reports a truthful unavailable state when WindowsSandbox.exe is missing', async () => {
     const runtime = new SandboxRuntimeService(servicesWithRoot('C:\\nowhere'), actor, {
       platform: 'win32',

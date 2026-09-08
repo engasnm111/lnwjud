@@ -9,6 +9,7 @@
   "references": [
     { "path": "../audit" },
     { "path": "../domain" },
+    { "path": "../shared" },
     { "path": "../workspace" }
   ],
   "include": ["src/**/*.ts"],

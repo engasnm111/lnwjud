@@ -103,4 +103,49 @@ describe('Backup settings UI', () => {
     expect(markup).toContain('Stop Tunnel and local MCP before scheduling a database restore.');
     expect(markup).toContain('<button type="button" disabled="">Restore</button>');
   });
+
+  it('explains the incomplete parts of a cross-platform restore', () => {
+    const markup = renderToStaticMarkup(createElement(SettingsPage, {
+      locale: 'en',
+      initialSection: 'backup',
+      dashboard: {
+        ...dashboard,
+        backups: [{ ...dashboard.backups[0]!, platform: 'win32', arch: 'x64', dataSchemaVersion: 15, hostCompatibility: 'cross_host' }],
+        restoreNotice: {
+          schemaVersion: 1,
+          backupId: dashboard.backups[0]!.id,
+          restoredAt: '2026-08-22T00:00:00.000Z',
+          sourcePlatform: 'win32',
+          sourceArch: 'x64',
+          targetPlatform: 'linux',
+          targetArch: 'x64',
+          hostCompatibility: 'cross_host',
+          incomplete: true,
+          relinkRequired: true,
+          quarantinedItems: ['workspace:foreign-workspace', 'file:checkpoint-master.key'],
+        },
+      },
+      onLocaleChange: noop,
+      onPermissionProfileChange: noop,
+      onUnrestrictedChange: async (): Promise<boolean> => false,
+      onDestructiveDeletePolicyChange: noop,
+      onStdioPolicyChange: async (): Promise<boolean> => false,
+      onCreateBackup: noop,
+      onScheduleRestoreBackup: async (): Promise<boolean> => true,
+      onRestoreRecoveryItem: noop,
+      onRestoreCheckpoint: noop,
+      onSaveTunnelApiKey: noop,
+      onSetTunnelClientPath: noop,
+      onUserSettingsChange: async (): Promise<boolean> => false,
+      onChooseTunnelClientPath: async (): Promise<string | null> => null,
+      onConfigureTunnelProfile: async (): Promise<string> => '',
+      onStartTunnel: noop,
+      onStopTunnel: noop,
+    }));
+
+    expect(markup).toContain('A backup from another platform was restored.');
+    expect(markup).toContain('Add or relink each project folder on this machine');
+    expect(markup).toContain('Host-bound secrets and providers were not transplanted.');
+    expect(markup).toContain('Cross-platform');
+  });
 });

@@ -42,9 +42,8 @@ Every Windows package build produces:
 `PROVENANCE.json` records the exact source commit and hashes/sizes for the distributed Setup/Portable artifacts plus critical installed runtime files, including:
 
 - `lnwjud.exe`
-- `lnwjud-mcp-stdio.cjs`
 - `lnwjud-mcp-stdio.cmd`
-- `lnwjud-node.exe`
+- `windows-secret-migrator/lnwjud-windows-secret-migrator.exe`
 - bundled `rg.exe`
 - bundled `tunnel-client.exe`
 

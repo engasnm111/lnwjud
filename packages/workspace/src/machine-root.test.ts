@@ -19,4 +19,9 @@ describe('machine-root helpers', () => {
     expect(machineRootPath(undefined, { SystemDrive: 'C:' })).toBe('C:\\');
     expect(machineRootPath(undefined, { HOMEDRIVE: 'F:' })).toBe('F:\\');
   });
+
+  it('does not turn a POSIX host into an implicit trusted root', () => {
+    expect(machineRootPath('/home/alice/project', { HOME: '/home/alice' }, 'linux')).toBe('/');
+    expect(normalizeWorkspaceRoot('/', 'linux')).toBe('/');
+  });
 });

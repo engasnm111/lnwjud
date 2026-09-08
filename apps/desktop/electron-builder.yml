@@ -20,28 +20,14 @@ publish:
 afterPack: scripts/capture-packaged-runtime-evidence.mjs
 afterSign: scripts/capture-packaged-runtime-evidence.mjs
 extraResources:
-  - from: build/capability-bridge/windows-capability-bridge.ps1
-    to: windows-capability-bridge.ps1
-  - from: build/capability-bridge/windows-capability-bridge.sha256
-    to: windows-capability-bridge.sha256
-  - from: build/capability-bridge/windows-capability-bridge.integrity.json
-    to: windows-capability-bridge.integrity.json
-  - from: ../../native/windows-ocr/bin
-    to: windows-ocr
   - from: build/tunnel-client
     to: tunnel-client
   - from: build/runtime-tools
     to: runtime-tools
   - from: ../../.agents/skills/lnwjud-scheduled-continuation
     to: agent-skills/lnwjud-scheduled-continuation
-# Tunnel profile expects these next to lnwjud.exe (not only under resources/).
-extraFiles:
-  - from: build/lnwjud-mcp-stdio.cjs
-    to: lnwjud-mcp-stdio.cjs
-  - from: build/lnwjud-mcp-stdio.cmd
-    to: lnwjud-mcp-stdio.cmd
-  - from: build/lnwjud-node.exe
-    to: lnwjud-node.exe
+# Target-native STDIO launchers invoke the packaged Electron host. No private
+# Node runtime or duplicated CJS entry is shipped.
 win:
   icon: build/icon.ico
   target:
@@ -54,6 +40,68 @@ win:
   artifactName: lnwjud-Setup-${version}.${ext}
   # Keep the branded icon embedded in lnwjud.exe for Windows shortcuts and taskbar.
   signAndEditExecutable: true
+  extraFiles:
+    - from: build/lnwjud-mcp-stdio.cmd
+      to: lnwjud-mcp-stdio.cmd
+  extraResources:
+    - from: build/capability-bridge/windows-capability-bridge.ps1
+      to: windows-capability-bridge.ps1
+    - from: build/capability-bridge/windows-capability-bridge.sha256
+      to: windows-capability-bridge.sha256
+    - from: build/capability-bridge/windows-capability-bridge.integrity.json
+      to: windows-capability-bridge.integrity.json
+    - from: ../../native/windows-ocr/bin
+      to: windows-ocr
+    - from: ../../native/windows-secret-migrator/bin/win-x64
+      to: windows-secret-migrator
+mac:
+  sign: scripts/sign-macos-runtime.mjs
+  icon: build/icon-1024.png
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  extendInfo:
+    NSAccessibilityUsageDescription: lnwjud uses Accessibility only after you approve a native UI action.
+    NSScreenCaptureUsageDescription: lnwjud uses Screen Recording only for an explicitly requested capture.
+    NSMicrophoneUsageDescription: lnwjud uses the microphone only for an explicitly requested audio task.
+    NSAppleEventsUsageDescription: lnwjud uses Apple Events only for an explicitly approved Office action.
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  artifactName: lnwjud-${version}-${arch}.${ext}
+  extraFiles:
+    - from: build/lnwjud-mcp-stdio.sh
+      to: lnwjud-mcp-stdio
+  extraResources:
+    - from: build/native-host/macos
+      to: native-host/macos
+linux:
+  icon: build/icons
+  category: Development
+  synopsis: Local AI-agent runtime and MCP gateway
+  description: Cross-platform local MCP gateway with host-native permissions and bounded providers.
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+  artifactName: lnwjud-${version}-${arch}.${ext}
+  extraFiles:
+    - from: build/lnwjud-mcp-stdio.sh
+      to: lnwjud-mcp-stdio
+  extraResources:
+    - from: build/native-host/linux
+      to: native-host/linux
 nsis:
   oneClick: false
   perMachine: false

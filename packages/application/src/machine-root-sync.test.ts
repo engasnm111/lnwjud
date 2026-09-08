@@ -19,6 +19,14 @@ describe('machine-root synchronization', () => {
 
     expect(addedRoots).toEqual([]);
   });
+
+  it('never synchronizes a POSIX mount as an implicit machine root', async () => {
+    const { service, addedRoots } = recordingWorkspaceService();
+
+    await expect(syncPreferredMachineRoot(service, '/', 'linux')).resolves.toBeNull();
+
+    expect(addedRoots).toEqual([]);
+  });
 });
 
 function recordingWorkspaceService(): { readonly service: WorkspaceService; readonly addedRoots: string[] } {

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
+import { hostPathApi, isAbsoluteHostPath, isHostPathWithin, resolveHostPath } from '@lnwjud/workspace';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 /**
@@ -30,6 +31,8 @@ export interface LspRuntimeOptions {
   readonly timeoutMs?: number;
   /** Injectable for tests: creates the server process. */
   readonly spawner?: (command: readonly string[]) => Result<ChildProcess>;
+  /** Test/fixture override; production uses the actual host platform. */
+  readonly platform?: NodeJS.Platform;
 }
 
 /** One JSON-RPC demultiplexer per server process. */
@@ -118,6 +121,7 @@ export class LspRuntimeService {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly timeoutMs: number;
   private readonly spawner: (command: readonly string[]) => Result<ChildProcess>;
+  private readonly platform: NodeJS.Platform;
   private readonly published = new Map<string, unknown[]>();
 
   public constructor(
@@ -128,6 +132,7 @@ export class LspRuntimeService {
     this.environment = options.environment ?? process.env;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.spawner = options.spawner ?? defaultSpawner;
+    this.platform = options.platform ?? process.platform;
   }
 
   public async diagnostics(input: Record<string, unknown>): Promise<Result<unknown>> {
@@ -152,7 +157,7 @@ export class LspRuntimeService {
         tool: 'lsp_diagnostics', status: 'ready', available: true,
         language: session.value.language, server: session.value.command[0],
         filesChecked: this.published.size,
-        diagnostics: [...this.published.entries()].map(([uri, entries]) => ({ file: uriToPath(uri), count: entries.length, entries })),
+        diagnostics: [...this.published.entries()].map(([uri, entries]) => ({ file: uriToPath(uri, this.platform), count: entries.length, entries })),
       });
     } finally {
       session.value.connection.close();
@@ -174,7 +179,7 @@ export class LspRuntimeService {
       await this.openFiles(session.value.connection, session.value.files, session.value.language);
       const targetFile = session.value.files[0]!;
       const edit = await session.value.connection.request('textDocument/rename', {
-        textDocument: { uri: pathToUri(targetFile) },
+        textDocument: { uri: pathToUri(targetFile, this.platform) },
         position: { line: typeof input.line === 'number' ? input.line : 0, character: typeof input.character === 'number' ? input.character : 0 },
         newName,
       }, this.timeoutMs);
@@ -200,7 +205,7 @@ export class LspRuntimeService {
       .filter((value) => value.length > 0)
       .slice(0, MAX_OPEN_FILES);
     if (requestedFiles.length === 0) return err(appError('INVALID_INPUT', 'LSP tools require file or files'));
-    const language = readString(input.language) ?? LANGUAGE_BY_EXTENSION[path.extname(requestedFiles[0]!).toLowerCase()] ?? '';
+    const language = readString(input.language) ?? LANGUAGE_BY_EXTENSION[hostPathApi(this.platform).extname(requestedFiles[0]!).toLowerCase()] ?? '';
     if (language === '') return err(appError('INVALID_INPUT', 'Could not infer a language; pass language explicitly'));
     const command = this.serverCommand(language);
     if (command === undefined) {
@@ -218,7 +223,7 @@ export class LspRuntimeService {
     try {
       await connection.request('initialize', {
         processId: process.pid,
-        rootUri: pathToUri(root.value),
+        rootUri: pathToUri(root.value, this.platform),
         capabilities: { textDocument: { synchronization: { dynamicRegistration: false } } },
       }, this.timeoutMs);
     } catch (error) {
@@ -232,22 +237,29 @@ export class LspRuntimeService {
   private async resolveWorkspaceFiles(root: string, files: readonly string[]): Promise<Result<readonly string[]>> {
     let canonicalRoot: string;
     try {
-      canonicalRoot = path.win32.normalize(await realpath(root));
+      const resolvedRoot = resolveHostPath(root, this.platform);
+      if (resolvedRoot === null) return err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'));
+      canonicalRoot = await realpath(resolvedRoot);
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root could not be resolved'));
     }
     const resolved: string[] = [];
     for (const file of files) {
-      const candidate = path.win32.isAbsolute(file) ? path.win32.normalize(file) : path.win32.join(canonicalRoot, file);
-      if (!isWithin(canonicalRoot, candidate)) return err(appError('PATH_OUTSIDE_WORKSPACE', `LSP file is outside the registered workspace: ${file}`));
+      if (this.platform !== 'win32' && file.includes('\\')) return err(appError('INVALID_INPUT', `LSP file uses a foreign host syntax: ${file}`));
+      const api = hostPathApi(this.platform);
+      const candidate = isAbsoluteHostPath(file, this.platform)
+        ? resolveHostPath(file, this.platform)
+        : resolveHostPath(api.join(canonicalRoot, file), this.platform);
+      if (candidate === null) return err(appError('INVALID_INPUT', `LSP file uses a foreign host syntax: ${file}`));
+      if (!isHostPathWithin(canonicalRoot, candidate, this.platform)) return err(appError('PATH_OUTSIDE_WORKSPACE', `LSP file is outside the registered workspace: ${file}`));
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `LSP file was not found: ${file}`));
       let canonicalFile: string;
       try {
-        canonicalFile = path.win32.normalize(await realpath(candidate));
+        canonicalFile = await realpath(candidate);
       } catch {
         return err(appError('FILE_NOT_FOUND', `LSP file could not be resolved: ${file}`));
       }
-      if (!isWithin(canonicalRoot, canonicalFile)) return err(appError('PATH_OUTSIDE_WORKSPACE', `LSP file resolves outside the registered workspace: ${file}`));
+      if (!isHostPathWithin(canonicalRoot, canonicalFile, this.platform)) return err(appError('PATH_OUTSIDE_WORKSPACE', `LSP file resolves outside the registered workspace: ${file}`));
       resolved.push(canonicalFile);
     }
     return ok(resolved);
@@ -258,7 +270,7 @@ export class LspRuntimeService {
       const content = await readFile(absolute, 'utf8');
       if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) continue;
       connection.notify('textDocument/didOpen', {
-        textDocument: { uri: pathToUri(absolute), languageId: languageIdForFile(absolute, language), version: 1, text: content },
+        textDocument: { uri: pathToUri(absolute, this.platform), languageId: languageIdForFile(absolute, language), version: 1, text: content },
       });
     }
   }
@@ -292,7 +304,12 @@ export class LspRuntimeService {
       : undefined;
     return rootPath === undefined
       ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(path.win32.normalize(rootPath));
+      : ((): Result<string> => {
+        const resolved = resolveHostPath(rootPath, this.platform);
+        return resolved === null
+          ? err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'))
+          : ok(resolved);
+      })();
   }
 }
 
@@ -316,7 +333,7 @@ function firstFile(input: Record<string, unknown>): string | undefined {
 }
 
 function languageIdForFile(file: string, fallback: string): string {
-  switch (path.extname(file).toLowerCase()) {
+  switch (path.posix.extname(file.replaceAll('\\', '/')).toLowerCase()) {
     case '.tsx': return 'typescriptreact';
     case '.ts':
     case '.mts':
@@ -333,25 +350,22 @@ function languageIdForFile(file: string, fallback: string): string {
   }
 }
 
-function pathToUri(file: string): string {
-  const normalized = path.win32.normalize(file).replaceAll('\\', '/').replace(/^\/+/, '');
-  return `file:///${encodeURI(normalized).replaceAll('#', '%23').replaceAll('?', '%3F')}`;
+function pathToUri(file: string, platform: NodeJS.Platform = process.platform): string {
+  const normalized = platform === 'win32'
+    ? path.win32.normalize(file).replaceAll('\\', '/').replace(/^\/+/, '')
+    : path.posix.normalize(file);
+  const prefix = platform === 'win32' ? 'file:///' : 'file://';
+  return `${prefix}${encodeURI(normalized).replaceAll('#', '%23').replaceAll('?', '%3F')}`;
 }
 
-function uriToPath(uri: string): string {
+function uriToPath(uri: string, platform: NodeJS.Platform = process.platform): string {
   try {
-    return decodeURIComponent(uri.replace(/^file:\/\/\//, '')).replaceAll('/', '\\');
+    const decoded = decodeURIComponent(uri.replace(/^file:\/\/\//, ''));
+    return platform === 'win32' ? decoded.replaceAll('/', '\\') : decoded;
   } catch {
-    return uri.replace(/^file:\/\/\//, '').replaceAll('/', '\\');
+    const fallback = uri.replace(/^file:\/\/\//, '');
+    return platform === 'win32' ? fallback.replaceAll('/', '\\') : fallback;
   }
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(root.toLowerCase(), candidate.toLowerCase());
-  if (relative === '') return true;
-  if (path.win32.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.win32.sep);
-  return firstSegment !== '..';
 }
 
 function readString(value: unknown): string | undefined {

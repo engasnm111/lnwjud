@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { classifyContextPath, type ContextDiscoveryMode } from '@lnwjud/search';
-import type { Workspace, WorkspaceRepository } from '@lnwjud/workspace';
+import { hostPathApi, isHostPathWithin, resolveHostPath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import { WorkspaceIndexQueue, type WorkspaceIndexQueueOptions, type WorkspaceIndexQueueStatus } from './workspace-index-queue.js';
 
 export interface WorkspaceIndexEntry {
@@ -107,7 +107,9 @@ export class WorkspaceIndexService {
       if (refreshed !== null) return ok(refreshed);
     }
     const entries: WorkspaceIndexEntry[] = [];
-    await this.scanDirectory(workspace.value.realRootPath, workspace.value.realRootPath, entries, options.discovery ?? 'automatic');
+    const rootPath = resolveHostPath(workspace.value.realRootPath);
+    if (rootPath === null) return err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'));
+    await this.scanDirectory(rootPath, rootPath, entries, options.discovery ?? 'automatic');
     const snapshot = this.snapshotValue(workspace.value, entries);
     await this.store.save(snapshot);
     return ok(snapshot);
@@ -118,8 +120,10 @@ export class WorkspaceIndexService {
     if (!workspace.ok) return workspace;
     const normalized = normalizeRelativePath(relativePath);
     if (normalized === '') return this.indexWorkspace(workspaceId, options);
-    const absolutePath = path.resolve(workspace.value.realRootPath, normalized);
-    if (!isWithin(workspace.value.realRootPath, absolutePath)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Index path is outside workspace'));
+    const rootPath = resolveHostPath(workspace.value.realRootPath);
+    const absolutePath = rootPath === null ? null : resolveHostPath(hostPathApi(process.platform).join(rootPath, normalized));
+    if (rootPath === null || absolutePath === null) return err(appError('INVALID_INPUT', 'Index path uses a foreign host path syntax'));
+    if (!isHostPathWithin(rootPath, absolutePath)) return err(appError('PATH_OUTSIDE_WORKSPACE', 'Index path is outside workspace'));
     const current = await this.store.load(workspaceId) ?? this.snapshotValue(workspace.value, []);
     const discovery = options.discovery ?? 'automatic';
     if (!classifyContextPath(normalized, discovery).discoverable) return ok(current);
@@ -127,8 +131,8 @@ export class WorkspaceIndexService {
     try {
       const metadata = await stat(absolutePath);
       const additions: WorkspaceIndexEntry[] = [];
-      if (metadata.isDirectory()) await this.scanDirectory(workspace.value.realRootPath, absolutePath, additions, discovery);
-      else additions.push(await this.describePath(workspace.value.realRootPath, absolutePath, metadata));
+      if (metadata.isDirectory()) await this.scanDirectory(rootPath, absolutePath, additions, discovery);
+      else additions.push(await this.describePath(rootPath, absolutePath, metadata));
       const snapshot = this.snapshotValue(workspace.value, [...remaining, ...additions]);
       await this.store.save(snapshot);
       return ok(snapshot);
@@ -219,14 +223,15 @@ export class WorkspaceIndexService {
   }
 
   private async scanDirectory(rootPath: string, directoryPath: string, entries: WorkspaceIndexEntry[], discovery: ContextDiscoveryMode): Promise<void> {
-    const directoryRelativePath = normalizeRelativePath(path.relative(rootPath, directoryPath));
+    const api = hostPathApi(process.platform);
+    const directoryRelativePath = normalizeRelativePath(api.relative(rootPath, directoryPath));
     if (directoryRelativePath !== '' && !classifyContextPath(directoryRelativePath, discovery).discoverable) return;
     if (directoryRelativePath !== '') entries.push(await this.describePath(rootPath, directoryPath, await stat(directoryPath)));
     const children = await readdir(directoryPath, { withFileTypes: true });
     children.sort((left, right) => left.name.localeCompare(right.name));
     for (const child of children) {
-      const childPath = path.join(directoryPath, child.name);
-      const childRelativePath = normalizeRelativePath(path.relative(rootPath, childPath));
+      const childPath = api.join(directoryPath, child.name);
+      const childRelativePath = normalizeRelativePath(api.relative(rootPath, childPath));
       if (!classifyContextPath(childRelativePath, discovery).discoverable) continue;
       if (child.isDirectory()) await this.scanDirectory(rootPath, childPath, entries, discovery);
       else if (child.isSymbolicLink()) entries.push(await this.describePath(rootPath, childPath, await statOrLstat(childPath, true)));
@@ -235,7 +240,7 @@ export class WorkspaceIndexService {
   }
 
   private async describePath(rootPath: string, absolutePath: string, metadata: Awaited<ReturnType<typeof stat>>): Promise<WorkspaceIndexEntry> {
-    const relativePath = normalizeRelativePath(path.relative(rootPath, absolutePath));
+    const relativePath = normalizeRelativePath(hostPathApi(process.platform).relative(rootPath, absolutePath));
     const indexedAt = new Date().toISOString();
     if (metadata.isDirectory()) return { relativePath, kind: 'directory', size: 0, mtimeMs: Number(metadata.mtimeMs), contentHash: null, gitBlobSha: null, language: null, isTest: false, symbols: [], imports: [], exports: [], functions: [], classes: [], interfaces: [], indexedAt };
     if (metadata.isSymbolicLink()) return { relativePath, kind: 'symlink', size: Number(metadata.size), mtimeMs: Number(metadata.mtimeMs), contentHash: null, gitBlobSha: null, language: languageFor(relativePath), isTest: isTestPath(relativePath), symbols: [], imports: [], exports: [], functions: [], classes: [], interfaces: [], indexedAt };
@@ -293,14 +298,6 @@ function indexFreshness(
 
 function normalizeRelativePath(value: string): string {
   return value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
-}
-
-function isWithin(rootPath: string, candidatePath: string): boolean {
-  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
-  if (relative === '') return true;
-  if (path.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.sep);
-  return firstSegment !== '..';
 }
 
 function languageFor(relativePath: string): string | null {

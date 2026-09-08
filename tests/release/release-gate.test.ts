@@ -103,6 +103,18 @@ describe('MVP release verification gate', () => {
     expect(workflow).toContain("github.ref == 'refs/heads/main'");
   });
 
+  it('installs the pinned Sigstore verifier before authoritative Windows packaging', async () => {
+    const workflow = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
+    const authoritativeStart = workflow.indexOf('  verify:');
+    expect(authoritativeStart).toBeGreaterThan(-1);
+    const authoritativeJob = workflow.slice(authoritativeStart);
+    const cosign = authoritativeJob.indexOf('Install cosign for tunnel provenance verification');
+    const authoritative = authoritativeJob.indexOf('Run authoritative release verification gate');
+    expect(cosign).toBeGreaterThan(-1);
+    expect(authoritativeJob).toContain("cosign-release: 'v3.1.3'");
+    expect(cosign).toBeLessThan(authoritative);
+  });
+
   it('documents one canonical exact-SHA release sequence', async () => {
     const releaseProcess = await readFile(path.join(repositoryRoot, 'docs', 'development', 'RELEASE_PROCESS.md'), 'utf8');
     const contributing = await readFile(path.join(repositoryRoot, 'CONTRIBUTING.md'), 'utf8');
@@ -120,43 +132,62 @@ describe('MVP release verification gate', () => {
     expect(contributing).toContain('docs/development/RELEASE_PROCESS.md');
   });
 
-  it('uploads the verified Windows installer and portable executable once in CI and reuses that exact SHA artifact for releases', async () => {
-    const ci = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
-    const release = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+  it('uploads every verified target-native package once in CI and reuses exact SHA artifacts for releases', async () => {
+    const ci = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
+    const release = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8')).replaceAll('\r\n', '\n');
 
     expect(ci).toContain('actions/upload-artifact@v4');
     expect(ci).toContain('apps/desktop/dist/installers/latest.yml');
-    expect(ci).toContain('apps/desktop/dist/installers/portable.yml');
-    expect(ci).toContain('apps/desktop/dist/installers/*.blockmap');
     expect(ci).toContain('windows-release-${{ github.sha }}');
     expect(ci).toContain('apps/desktop/dist/installers/*.exe');
     expect(ci.indexOf('Run authoritative release verification gate')).toBeLessThan(ci.indexOf('Upload verified Windows release artifact'));
+    expect(ci).toContain('name: native-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.sha }}');
+    for (const target of ['platform: darwin', 'arch: arm64', 'arch: x64', 'platform: linux']) expect(ci).toContain(target);
 
     expect(release).toContain('actions: read');
     expect(release).toContain('gh run list');
     expect(release).toContain('--workflow ci.yml');
-    expect(release).toContain('--commit $sha');
+    expect(release).toContain('--commit "$sha"');
     expect(release).toContain('gh run download');
     expect(release).toContain('windows-release-$sha');
-    expect(release).toContain('successful CI run for exact commit');
-    expect(release).toContain('lnwjud-Portable-$($package.version).exe');
-    expect(release).toContain('Prepare capability bridge integrity evidence');
-    expect(release).toContain('node apps/desktop/scripts/write-capability-integrity.mjs');
+    expect(release).toContain('native-darwin-arm64-$sha');
+    expect(release).toContain('native-darwin-x64-$sha');
+    expect(release).toContain('native-linux-x64-$sha');
+    expect(release).toContain('native-linux-arm64-$sha');
+    expect(release).toContain('successful CI push run for exact commit');
+    expect(release).toContain('LNWJUD_RELEASE_INSTALLER_DIRECTORY');
+    expect(release).toContain('node scripts/collect-release-assets.mjs');
+    expect(release).toContain('release-assets/*');
+    expect(release).toContain('RELEASE_MANIFEST.json');
     expect(release).toContain("LNWJUD_RELEASE_ARTIFACT_ONLY: '1'");
-    expect(release).toContain('apps/desktop/dist/installers/PROVENANCE.json');
-    expect(release.indexOf('Download verified CI artifact')).toBeLessThan(release.indexOf('Prepare capability bridge integrity evidence'));
-    expect(release.indexOf('Prepare capability bridge integrity evidence')).toBeLessThan(release.indexOf('Verify source provenance and SHA-256 evidence'));
+    expect(release.indexOf('Download verified target-native CI artifacts')).toBeLessThan(release.indexOf('Verify each downloaded release evidence bundle'));
+    expect(release.indexOf('Verify each downloaded release evidence bundle')).toBeLessThan(release.indexOf('Aggregate target-native artifacts and update feeds'));
     expect(release).not.toContain('verify-release.ps1');
-    expect(release).toContain('apps/desktop/dist/installers/latest.yml');
-    expect(release).toContain('apps/desktop/dist/installers/portable.yml');
-    expect(release).not.toContain('Run authoritative verification gate');
     expect(release).not.toContain('package:windows');
     expect(release).not.toContain('Install ripgrep for E2E search');
   });
 
+  it('keeps release asset aggregation target-aware and architecture-aware', async () => {
+    const collector = await readFile(path.join(repositoryRoot, 'scripts', 'collect-release-assets.mjs'), 'utf8');
+    const verifier = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'scripts', 'verify-release-evidence.mjs'), 'utf8');
+    expect(collector).toContain('LNWJUD_RELEASE_STAGING_DIRECTORY');
+    expect(collector).toContain('LNWJUD_RELEASE_ASSETS_DIRECTORY');
+    expect(collector).toContain('win32-x64');
+    expect(collector).toContain('darwin-arm64');
+    expect(collector).toContain('darwin-x64');
+    expect(collector).toContain('linux-x64');
+    expect(collector).toContain('linux-arm64');
+    expect(collector).toContain('latest-linux-${arch}.yml');
+    expect(collector).toContain('latest-mac.yml');
+    expect(collector).toContain('RELEASE_MANIFEST.json');
+    expect(collector).toContain('sourceProvenanceSha256');
+    expect(verifier).toContain('LNWJUD_RELEASE_INSTALLER_DIRECTORY');
+    expect(verifier).toContain('latest-linux-${normalizeArtifactArch(arch)}.yml');
+  });
+
   it('rejects release tags that do not match the packaged application version', async () => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8');
-    expect(workflow).toContain('github.ref_name');
+    expect(workflow).toMatch(/GITHUB_REF_NAME|github\.ref_name/);
     expect(workflow).toContain('package.json');
     expect(workflow).toMatch(/tag.*match|match.*tag/i);
   });

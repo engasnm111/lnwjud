@@ -5,7 +5,7 @@
 <h1 align="center">lnwjud</h1>
 
 <p align="center">
-  <strong>Windows-first local AI-agent runtime and MCP gateway</strong><br />
+  <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
   <em>232 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, and extensibility; 225 are advertised by default and all 232 when Codex delegation plus Agent Swarm is enabled.</em>
 
   <em>อ่านที่เหลือใน Readme ได้เลยครับ ติดปัญหาทักมาได้ใน FB: Adisorn NM ได้ตลอดครับ / กำลังพัฒนาให้เรื่อยๆครับ ท่านที่ถามหาช่องสนับสนุนค่ากาแฟ แปะลิงค์ ไว้ให้แล้วครับ ขอบคุณครับ</em>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/engasnm111/lnwjud/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/engasnm111/lnwjud" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
   <img alt="MCP" src="https://img.shields.io/badge/MCP-232%20tools-6f42c1" />
 </p>
@@ -24,7 +24,7 @@
 
 ## What is lnwjud?
 
-lnwjud is a Windows-first local development gateway that exposes trusted local
+lnwjud is a cross-platform local development gateway that exposes trusted local
 capabilities through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
 It is designed for AI-assisted software development where the agent needs more
 than a text-only chat: it may need to inspect a repository, search code, edit
@@ -32,7 +32,7 @@ files, review Git state, run project commands, manage owned processes, inspect
 Windows UI state, automate a managed browser, work with WSL, or call an
 additional local MCP server.
 
-The runtime stays on the Windows machine. Local filesystem paths, processes,
+The runtime stays on the local host. Local filesystem paths, processes,
 SQLite state, credentials, and capability backends are owned by lnwjud on that
 machine. Remote AI clients only receive the MCP requests and results that travel
 through the connection mode you choose.
@@ -41,27 +41,31 @@ For ChatGPT web and other supported OpenAI surfaces, lnwjud supports the officia
 [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
 The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
-and returns the response without opening a public inbound port on the Windows
-machine.
+and returns the response without opening a public inbound port on the host.
 
-## Current version: v4.55.1
+## Current version: v4.56.0
 
-The v4.55.1 release target and runtime contract contain **232 total MCP tool definitions**,
+The v4.56.0 release target and runtime contract contain **232 total MCP tool definitions**,
 with **225 advertised by default** and **all 232 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
 
-### What's new in v4.55.1
+### What's new in v4.56.0
 
-#### Remote MCP OAuth / ChatGPT DCR hotfix
+#### Target-native macOS/Linux release foundation
 
-- Remote MCP Dynamic Client Registration now handles ChatGPT-style OAuth client metadata without falling through to an HTTP 500 when the registration payload is malformed or unsupported.
-- Invalid registration JSON is returned as OAuth `400 invalid_client_metadata`, while redirect URI and client-metadata validation fail closed with explicit 4xx errors instead of internal-server failures.
-- DCR now supports both public OAuth clients (`token_endpoint_auth_method: none`) and `client_secret_post` clients, including generated client secrets and token-endpoint client authentication.
-- Trusted `client_secret_post` credentials are retained inside the existing DPAPI-protected Remote MCP OAuth state; existing v4.55.0 trusted public-client state remains loadable.
-- Redirect URI validation is tightened, and regression coverage now exercises ChatGPT-style DCR + Authorization Code/PKCE as well as malformed registration payloads.
+- Adds target-native macOS and Linux Desktop packaging for arm64/x64 where the native host, runtime tools, Secure MCP Tunnel client, launcher, permissions, and release evidence are built and verified on the target operating system.
+- Keeps Windows Setup and Portable packaging in the same release contract while moving secret persistence to Electron secure storage and isolating legacy Windows migration in a native helper.
+- Publishes one exact-commit release set with per-target provenance and SHA-256 evidence, Linux architecture-specific updater feeds, and a merged macOS feed that selects the correct zip for Intel or Apple silicon.
+- Reports Windows-only WSL, Registry, Sandbox, Outlook/COM, and PDF provider surfaces as unsupported on macOS/Linux instead of emulating them with an unsafe fallback.
+
+#### Remote MCP OAuth / ChatGPT DCR compatibility hotfix
+
+- Carries forward the v4.55.1 ChatGPT OAuth Dynamic Client Registration fix in the v4.56.0 release candidate.
+- Accepts ChatGPT-style client metadata, including public clients and `client_secret_post`, and validates the generated client secret at the token endpoint.
+- Returns explicit OAuth 4xx metadata/redirect errors for malformed or unsupported registration requests instead of an internal-server failure, with regression coverage for Authorization Code + PKCE.
 
 ### What's new in v4.55.0
 
@@ -165,14 +169,14 @@ capabilities are additive.
 #### v4.45.0 — Secure Tunnel, continuation, logs, and performance hardening
 
 - Keeps the v4.45 runtime hardening and upgrades intact, including the bundled official OpenAI Secure MCP Tunnel client `v0.0.13` for Windows x64 with pinned release evidence.
-- Preserves the complete official v0.0.13 adjacent runtime set inside Setup and Portable, including `tunnel-client.exe`, pinned `cloudflared.exe`, its manifest, license/notice inventory and SPDX metadata; the Cloudflared companion is packaged but is not enabled automatically by lnwjud.
+- Preserves the complete official v0.0.13 target-native tunnel-client payload inside each platform package, including its executable, license/notice inventory, SPDX metadata, and Sigstore provenance; the selected client is never replaced by an unverified system binary.
 - Verifies the real v0.0.13 managed-runtime CLI/status contract while retaining v0.0.12 parser compatibility for users who deliberately select an older manual override.
 - Separates **Persistent Tunnel Identity** from runtime Run/Stop intent: an explicit **Stop Tunnel** is now durable across lnwjud restarts and automatic reconnect remains paused until the user explicitly starts the tunnel again.
 - Makes a saved custom `tunnel-client.exe` override authoritative instead of silently falling back to the bundled binary when that path is missing, and records the executable that actually owns the active persistent runtime so Stop/recovery uses the correct client.
 - Makes client switching transactional: lnwjud stops and verifies the old persistent runtime through its recorded owner before committing a new custom/bundled selection, preventing duplicate or orphan runtimes during client changes.
 - Closes the rolling-continuation chain gap without fixed host polling: omitted preparation and successful wake claims derive a fresh successor from the current lease (normally 600 seconds -> about 10 minutes), while firing collisions retire the consumed one-time task and reserve a deterministic adaptive successor with roughly 4/8/16/25-minute backoff plus lease/liveness floors. Same-task expedite is reserved only for a future task that is still pending before it fires.
 - Makes goal completion two-phase when a successor is still live or host state is uncertain: `finish_goal` first returns `status=active` with `completionState=pending_native_cleanup`, and only a matching native deletion/run receipt followed by a second `finish_goal` can produce terminal `completionState=completed`.
-- Extends packaged-runtime trust evidence so `PROVENANCE.json` and `SHA256SUMS.txt` cover the tunnel client, Cloudflared companion, manifest and accompanying release metadata rather than only the outer lnwjud executables.
+- Extends packaged-runtime trust evidence so `PROVENANCE.json` and `SHA256SUMS.txt` cover the target-native tunnel client, runtime tools, native helper, launcher, and accompanying release metadata rather than only the outer lnwjud executables.
 - Repairs the version synchronization helper so current package, runtime, UI, architecture and release-document references move together to **v4.45.0** without rewriting historical release evidence.
 - Reduces Desktop hitching and background process churn by replacing overlapping one-second full-dashboard refreshes with guarded refreshes plus TTL/single-flight caching for expensive Git, Codex, WSL, and capability probes; the detached Live Logs viewer no longer triggers redundant dashboard polling.
 - Preserves complete Activity Logs diagnostics end to end: full workspace/session IDs, inputs, results, errors, metadata, copy/export detail, and lazy expandable payloads are retained without lossy `(+N)` summaries; **Show more** appears only when meaningful additional detail exists.
@@ -192,9 +196,11 @@ Current v4 highlights include:
 - Project-aware development, test, lint, typecheck, and build commands.
 - Local Codex discovery and optional delegation without reading Codex credential
   files.
-- Native Windows capabilities for shell execution, windows, accessibility,
-  input, screen capture, notifications, clipboard, file dialogs, audio, screen
-  recording, Office automation, and scheduler integration.
+- Host-native capabilities for shell execution, windows, accessibility, input,
+  screen capture, notifications, clipboard, file dialogs, audio, screen
+  recording, Office automation, and scheduling where the declared platform
+  provider and permissions are available. Windows-only features remain clearly
+  marked unsupported elsewhere.
 - Managed Chrome / CDP automation and Set-of-Marks annotated observations with
   expiring observation hashes and approval-gated target actions.
 - Scoped WSL execution and Windows/WSL path translation for registered
@@ -206,13 +212,23 @@ Current v4 highlights include:
   Context Economy telemetry.
 - Trace-correlated activity, NDJSON/SQLite audit metadata, Work Log, Live Logs,
   Doctor checks, health surfaces, and background tray operation.
-- OpenAI Secure MCP Tunnel management with Windows DPAPI-encrypted runtime-key
-  storage and reconnect handling.
+- OpenAI Secure MCP Tunnel management with operating-system secure runtime-key
+  storage, target-native bundled clients, and reconnect handling. Windows
+  legacy DPAPI envelopes migrate once through the native helper.
 
 Authoritative in-repository references:
 
+- [Native platform support contract](docs/architecture/PLATFORM_SUPPORT.md) —
+  macOS/Linux support tiers, bundled official `tunnel-client` evidence, and
+  the Windows-only features deliberately marked unsupported on foreign hosts.
+- [macOS installation guide](docs/INSTALL_MACOS.md) and [Linux installation
+  guide](docs/INSTALL_LINUX.md) — clean-machine install, permissions, tunnel,
+  STDIO, troubleshooting, and platform limits.
+- [Native provider development](docs/NATIVE_PROVIDER_DEVELOPMENT.md) — bounded
+  helper protocol, target-host build rules, integrity evidence, and readiness
+  boundaries.
 - [Tool contract](docs/architecture/TOOL_CONTRACT.md) — core primitive schemas,
-  policy classes, and compatibility rules; the 231-definition complete index below comes from the live runtime registry.
+  policy classes, and compatibility rules; the 232-definition complete index below comes from the live runtime registry.
 - [Upgrade architecture](docs/architecture/UPGRADE_ARCHITECTURE.md) — v4 runtime
   architecture and additive gateway design.
 - [Release process](docs/development/RELEASE_PROCESS.md) — canonical `dev -> PR -> main CI -> tag -> Release -> dev sync` sequence, exact-SHA artifact rule, and failure handling.
@@ -224,7 +240,7 @@ Authoritative in-repository references:
 lnwjud is intentionally powerful. It is intended for a machine and workspace you
 trust, not as a sandbox for unknown code.
 
-- **Unrestricted mode is enabled by default for read/discovery compatibility, but it never scans or registers drive letters automatically.** It permits explicitly requested absolute paths. With Full Bypass OFF, Unrestricted does not widen the host-selected Active Project mutation boundary or bypass command/approval policy. Full Bypass is a separate explicit control.
+- **Unrestricted mode is enabled by default for read/discovery compatibility, but it never scans or registers filesystem roots automatically.** It permits explicitly requested absolute paths. With Full Bypass OFF, Unrestricted does not widen the host-selected Active Project mutation boundary or bypass command/approval policy. Full Bypass is a separate explicit control.
 - Desktop MCP applies the selected permission profile (`safe`, `balanced`,
   `full`, or `custom`) to tool calls.
 - The packaged standalone/headless STDIO runtime supports selectable `safe`,
@@ -247,8 +263,8 @@ trust, not as a sandbox for unknown code.
 - The local Streamable HTTP MCP endpoint binds to loopback. Do not publish that
   loopback endpoint through a generic reverse proxy. For a private remote
   connection, use Secure MCP Tunnel.
-- Runtime tunnel API keys saved from the desktop UI are encrypted with Windows
-  DPAPI for the current Windows user. Never commit a runtime key, `.env`, tunnel
+- Runtime tunnel API keys saved from the desktop UI are encrypted with the host's
+  secure storage provider. Never commit a runtime key, `.env`, tunnel
   profile containing a plaintext secret, private key, or credential file.
 
 The Context Economy Engine reduces automatic discovery cost without acting as a
@@ -258,7 +274,7 @@ full scans can still inspect paths allowed by the active workspace/policy.
 
 ## Connection modes
 
-| Client / use case | Connection | What must run on Windows | Notes |
+| Client / use case | Connection | What must run on the host | Notes |
 | --- | --- | --- | --- |
 | ChatGPT web developer-mode app | Remote MCP via ngrok + OAuth | lnwjud Desktop + ngrok | Recommended easy path: public HTTPS `/mcp` terminates at a separate OAuth-protected loopback gateway; 6-digit pairing is required only for the first authorization or an explicit Reconnect ChatGPT |
 | ChatGPT web developer-mode app | OpenAI Secure MCP Tunnel | `tunnel-client` + lnwjud Desktop | Private outbound-only path to the Desktop loopback HTTP MCP; no public MCP port |
@@ -274,19 +290,25 @@ loopback port; always use the endpoint shown in the dashboard. The **Start
 Connection** button is useful after a manual stop, while **Stop Connection**
 stops the current local HTTP listener.
 
-## Quick start: install the Windows release
+## Quick start: install a supported release
+
+Choose the guide for the host you will run lnwjud on:
+
+- [macOS 13+ (arm64/x64)](docs/INSTALL_MACOS.md)
+- [Linux x64/arm64 on Ubuntu 24.04 LTS](docs/INSTALL_LINUX.md) (arm64 requires the matching native artifact)
+- Windows 10/11 x64: the Windows flow below
 
 ### 1. Install lnwjud Desktop
 
 1. Download the latest published installer from
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest).
-   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.55.1.exe` (recommended installer) and `lnwjud-Portable-4.55.1.exe` (no installation required).
+   Current Windows 10/11 x64 artifacts are `lnwjud-Setup-4.56.0.exe` (recommended installer) and `lnwjud-Portable-4.56.0.exe` (no installation required).
 2. Run the NSIS installer and launch **lnwjud Agent Control Center**.
 3. Add or select the project/workspace you want lnwjud to operate on.
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.55.1.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.56.0.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -298,11 +320,10 @@ converts a Portable install into an Installer install or the reverse.
 
 
 The graphical desktop app and the packaged **local STDIO** launcher are
-self-contained. Both Windows packages ship Electron for the dashboard and a private
-Node.js 24 runtime for `lnwjud-mcp-stdio.cmd`, so end users do **not** need a
-separate system Node.js installation. Secure Tunnel uses the running Desktop HTTP
-MCP plus the bundled official `tunnel-client.exe`; it does not
-spawn the packaged STDIO launcher.
+self-contained. Target packages ship Electron and a native launcher, so end
+users do **not** need a separate system Node.js installation. Secure Tunnel uses
+the running Desktop HTTP MCP plus the bundled official target-native
+`tunnel-client`; it does not spawn the packaged STDIO launcher.
 
 ### Windows vision / Set-of-Marks requirements
 
@@ -340,7 +361,7 @@ For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is 
 3. Save your ngrok authtoken once, then click **Start Remote MCP**. lnwjud starts the OAuth gateway and ngrok, detects the public HTTPS MCP URL, and shows a **Copy MCP URL** action.
 4. In ChatGPT, enable Developer mode when your plan/workspace allows it, add a custom MCP connection, paste the copied public `https://.../mcp` URL, and choose **OAuth** authentication.
 5. On the **first authorization only**, the browser opens the lnwjud approval page. Enter the short-lived **6-digit OAuth Pairing Code** shown in lnwjud and authorize ChatGPT. The browser then redirects back to ChatGPT.
-6. After that first approval, lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in Windows DPAPI-protected state. Ordinary app restarts or **Start Remote MCP** do not require pairing again. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to re-authorize or replace that relationship.
+6. After that first approval, lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require pairing again. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to re-authorize or replace that relationship.
 7. Confirm the connection discovers **225 tools by default** (or **232** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
 
 The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
@@ -349,7 +370,7 @@ The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OA
 
 Use this path only when you specifically prefer the official outbound-only Secure MCP Tunnel transport or your organization requires it. **Tunnel ID + Runtime API key is an alternative/advanced setup, not the default Quick Start path.**
 
-The Secure MCP Tunnel flow requires a Platform tunnel ID and a runtime API key. The published Windows x64 installer and portable executable already contain the official OpenAI `tunnel-client v0.0.13`, so release users do **not** download or extract a separate tunnel-client package. The official Windows x64 bundle is kept intact beside the client, including pinned `cloudflared.exe` v2026.8.2, its manifest, license/notice files, license inventory, and SPDX SBOM. lnwjud does **not** enable Cloudflared mode merely because that companion is packaged. Creating or editing a tunnel requires **Tunnels Read + Manage**; the runtime key needs **Tunnels Read + Use**.
+The Secure MCP Tunnel flow requires a Platform tunnel ID and a runtime API key. Published target-native packages include the official OpenAI `tunnel-client v0.0.13` for the packaged OS and architecture, with pinned checksum, license, and provenance evidence. Release users do **not** download or extract a separate tunnel-client package. Creating or editing a tunnel requires **Tunnels Read + Manage**; the runtime key needs **Tunnels Read + Use**.
 
 1. Open [OpenAI Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels).
 2. Create a tunnel named `lnwjud` and associate it with the Platform organization and ChatGPT workspace that should use it.
@@ -396,8 +417,8 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.55.1.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.55.1.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.56.0.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.56.0.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -414,7 +435,7 @@ Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Window
 5. ใน ChatGPT เปิด Developer mode หากบัญชี/Workspace รองรับ แล้วเพิ่ม custom MCP connection โดยวาง URL ที่คัดลอกมาและเลือก **OAuth**
 6. **เฉพาะการอนุมัติครั้งแรก** browser จะเปิดหน้า lnwjud ให้กรอก **OAuth Pairing Code 6 หลัก** ที่แสดงในแอป แล้วกดอนุมัติ เมื่อสำเร็จจะ redirect กลับ ChatGPT
 7. หลังอนุมัติครั้งแรก lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย Windows DPAPI การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้อง pairing ซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้าง/อนุมัติความสัมพันธ์ใหม่จริง ๆ
-8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **224 tools**, หรือ **231** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
+8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **225 tools**, หรือ **232** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
 
 public ngrok URL นี้ชี้เข้า OAuth gateway แยกต่างหาก ไม่ใช่การเปิด `http://127.0.0.1:<port>/mcp` ตรง ๆ ออกอินเทอร์เน็ต และ request ต้องผ่าน OAuth/bearer-token validation ก่อนถึง Local MCP
 
@@ -450,12 +471,11 @@ Use lnwjud to list registered workspaces, show Git status for the selected proje
 
 Requirements for source development:
 
-- Windows x64.
+- Windows x64, macOS 13+ arm64/x64, or Linux x64 on Ubuntu 24.04 LTS.
 - Node.js `>=24.0.0 <25`.
 - Git.
 - Corepack with the repository-pinned `pnpm@10.15.0`.
-- PowerShell 7 recommended; Windows PowerShell 5.1 is sufficient for most helper
-  scripts.
+- PowerShell is needed only for Windows-specific migration/packaging helpers.
 - `rg` (ripgrep) recommended.
 
 ```powershell
@@ -499,12 +519,10 @@ not use this launcher; it forwards to the Desktop loopback HTTP MCP:
 lnwjud-mcp-stdio.cmd --workspace D:\projects\my-app
 ```
 
-The build generates `lnwjud-mcp-stdio.cjs`, `lnwjud-mcp-stdio.cmd`, and a
-private `lnwjud-node.exe` copied from the pinned Node.js 24 build runtime.
-These generated runtime files are intentionally ignored by Git. The Windows
-package copies them next to the installed application and into its resources
-directory, and the launcher uses only this bundled runtime rather than a system
-Node installation or `PATH`.
+The build generates a Windows `lnwjud-mcp-stdio.cmd` launcher and a POSIX
+`lnwjud-mcp-stdio` shell launcher. Both invoke the packaged Electron executable
+with `--mcp-stdio`, preserve arguments, and use the same protected checkpoint
+storage as Desktop. No private Node executable or CJS stdio bundle is shipped.
 
 ### Bundled autonomous continuation skill (Setup and Portable)
 
@@ -574,7 +592,7 @@ taken ownership.
 
 ### STDIO permission profiles and strict roots
 
-The packaged stdio launcher keeps `full` as its backward-compatible permission profile, but it no longer discovers or registers drive letters. Pass `--workspace` on first use; later launches may reuse an already registered project. You can opt into a narrower policy per launch:
+The packaged stdio launcher keeps `full` as its backward-compatible permission profile, but it no longer discovers or registers filesystem roots. Pass `--workspace` on first use; later launches may reuse an already registered project. You can opt into a narrower policy per launch:
 
 ```text
 lnwjud-mcp-stdio.cmd --workspace D:\\projects\\my-app --profile safe --strict-roots --allowed-root D:\\projects\\my-app
@@ -596,8 +614,8 @@ With Full Bypass OFF, the **AI Destructive Actions** setting is deliberately nar
 
 ### Core requirements
 
-- Windows x64.
-- Node.js 24.x for source development/builds. Installed releases bundle their own private Node 24 runtime for direct local STDIO; Secure Tunnel uses the Desktop HTTP MCP and official tunnel-client.
+- Windows x64, macOS 13+ arm64/x64, or Linux Ubuntu 24.04 LTS arm64/x64 with the matching native artifact.
+- Node.js 24.x for source development/builds. Installed releases provide their own Electron/native launcher for direct local STDIO; Secure Tunnel uses the Desktop HTTP MCP and official target-native tunnel-client.
 - Git/Corepack/pnpm for source development.
 
 ### Optional dependencies
@@ -679,8 +697,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.55.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.55.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.56.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.56.0.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -795,10 +813,10 @@ codex mcp add lnwjud -- "$env:LOCALAPPDATA\Programs\lnwjud\lnwjud-mcp-stdio.cmd"
 codex mcp list
 ```
 
-The stdio launcher is `lnwjud-mcp-stdio.cmd` shipped next to the desktop app
-(not the GUI `lnwjud.exe`). It exposes the full tool catalog, including
-skills/MCP bridge meta-tools, and uses the bundled private `lnwjud-node.exe`;
-no separate Node.js installation is required for an installed release.
+The stdio launcher is `lnwjud-mcp-stdio.cmd` on Windows or
+`lnwjud-mcp-stdio` on macOS/Linux, shipped next to the desktop app (not the GUI
+entrypoint). It exposes the full tool catalog and needs no separate Node.js
+installation for an installed release.
 
 The same server can be added in ChatGPT desktop or an IDE extension under
 Settings → MCP servers → Add server → STDIO. Restart the host after saving.
@@ -883,7 +901,8 @@ stay host-owned.
 ### 5. Run diagnostics and the tunnel
 
 Prefer the desktop Control Center: save the Runtime API key once under Settings,
-then click Start Tunnel. The key is stored with Windows DPAPI.
+then click Start Tunnel. The key is stored with the operating-system secure
+storage and is supplied to the tunnel process only for the active session.
 
 Manual session (still supported):
 
@@ -914,20 +933,8 @@ a public/LAN MCP address, or `lnwjud-mcp-stdio.cmd` for the Secure Tunnel flow.
 
 Normal installed-release users should use the Desktop persistent tunnel runtime
 and its reconnect controls; the bundled tunnel-client requires no separate
-scheduled task. The example below is only for an intentionally manual runner.
-It stores the runtime key encrypted with the current Windows user's DPAPI; the
-key is not written in plain text to the profile or task command line.
-
-### Save the key once
-
-```powershell
-$secretDir = Join-Path $env:APPDATA 'tunnel-client'
-New-Item -ItemType Directory -Path $secretDir -Force | Out-Null
-$secureKey = Read-Host 'Tunnel runtime API key' -AsSecureString
-$secureKey | ConvertFrom-SecureString | Set-Content (Join-Path $secretDir 'lnwjud.runtime.secret')
-```
-
-The encrypted value is tied to the same Windows user and machine.
+scheduled task. The Desktop owns secure-storage access and supplies the key to
+the active tunnel process without putting it in the profile or command line.
 
 ### Create a runner script
 
@@ -937,30 +944,19 @@ Save as start-lnwjud-tunnel.ps1:
 $ErrorActionPreference = 'Stop'
 $tc = 'C:/path/to/tunnel-client.exe' # advanced manual override only
 $profile = 'lnwjud'
-$secretPath = Join-Path $env:APPDATA 'tunnel-client/lnwjud.runtime.secret'
 
 if (-not (Test-Path $tc)) { throw "Missing tunnel-client: $tc" }
-if (-not (Test-Path $secretPath)) { throw "Missing encrypted runtime key: $secretPath" }
-
-$encrypted = Get-Content $secretPath -Raw
-$secureKey = ConvertTo-SecureString $encrypted
-$keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
-try {
-  $env:CONTROL_PLANE_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
-  & $tc doctor --profile $profile --explain
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  & $tc run --profile $profile
-  exit $LASTEXITCODE
-}
-finally {
-  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer)
-  Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
-}
+if (-not $env:CONTROL_PLANE_API_KEY) { throw 'Set CONTROL_PLANE_API_KEY for this transient troubleshooting session, or use Desktop Start Tunnel.' }
+& $tc doctor --profile $profile --explain
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $tc run --profile $profile
+exit $LASTEXITCODE
 ```
 
 ### Register the logon task
 
-Run once as the same Windows user who saved the DPAPI secret:
+Run only as a temporary troubleshooting task. Do not place the key in the
+scheduled-task command line; prefer Desktop Start Tunnel for persisted use.
 
 ```powershell
 $runner = 'C:/path/to/start-lnwjud-tunnel.ps1'
@@ -1073,23 +1069,23 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 40 | `agent_swarm_run` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | Run or inspect a bounded 1-4 task Codex-backed agent swarm in enforced read-only mode. The tool is available only when Codex tools are explicitly enabled. start/cancel require trusted host approval; status/result/list are owner-scoped reads. Prompts are never persisted in plaintext and unverifiable post-restart tasks report termination_unverified. |
 | 41 | `shell` | EXECUTE | default | operational | service_dispatch | Non-blocking command runner for real command execution, builds/tests, package managers, and system operations. Never use shell as a source/config/text editor. For any direct text-file change, call edit_file first; use apply_patch for reviewed whole-file or multi-file replacements and write_file for file creation/replacement. Inline Node/Python/PowerShell/sed commands that rewrite text files are rejected before native approval so the client can route to the guarded file tools instead. MCP run calls are ALWAYS forced to execution=background, even if a client requests foreground or auto, so the call returns a task_id immediately instead of waiting for command completion. Follow with status/logs/result; wait uses the user-configurable MCP poll window (5-60 seconds, default 5). When the user requires babysitting until completion, keep using bounded waits and do not report completion until the terminal result is inspected. Otherwise, if the host turn must yield while a durable task is still running, checkpoint it as trackedTasks {taskId, provider: shell, role: blocking_job, cancelWithGoal: true} and use the active scheduled-continuation handoff instead of abandoning the goal. Shared services must be marked supporting_service with cancelWithGoal false. With Full Bypass OFF, Full Access runs ordinary policy-allowed commands without confirmation while destructive, broad, recursive, critical, outside-project, or unparseable forms retain normal approval/command policy. Trusted Full Bypass skips lnwjud approval, command-policy, Active Project, goalLease, and allowed-root checks, including an explicitly absolute cwd outside the project; input validation, executable availability, Windows ACL/UAC, and child-process failures still apply. dry_run and task observation are non-mutating. |
 | 42 | `dom_cdp` | READ | default | operational | service_dispatch | Default for web-page DOM work inside managed Chrome. Call list_tabs first, select the exact returned tab_id by URL/title, and pass that tab_id to every query, click, type, navigate, evaluate, wait, screenshot, close, or steps call. If no safe matching tab exists, call new_tab and use its returned ID. Target order and the OS-active tab are never ownership signals. Never navigate through the browser address bar with computer_use/accessibility/input_event. Protected ChatGPT tab mutations additionally require allow_protected_tab_action=true plus explicit user confirmation. |
-| 43 | `computer_use` | EXECUTE | default | operational | service_dispatch | Codex-style native Windows computer use for testing desktop apps. Take annotated screenshots, inspect semantic controls, and operate by semantic target, numbered visual mark, or explicit coordinates. Routes through Accessibility first and uses guarded pointer/keyboard input only when needed. Supports click, typing, keys, hotkeys, scroll, drag, pointer movement, and window activation. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id. |
-| 44 | `accessibility` | READ | default | operational | service_dispatch | Semantic native Windows UI tool. Inspect UI trees and named controls, then click, focus, read or set values, select controls and menus, or manage a native element. Prefer shell for direct system work and dom_cdp for web pages. |
-| 45 | `input_event` | EXECUTE | default | operational | service_dispatch | Low-level keyboard and pointer fallback. Use only when DOM/CDP and Accessibility cannot operate the target. Supports text, keys, mouse movement, clicks, drag, scroll, held buttons, release_all, and batched sequences. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id. |
-| 46 | `vision` | READ | default | operational | service_dispatch | Visual and OCR fallback for content unavailable through DOM or Accessibility. Capture a display, window, or region, or run local Vision OCR. It never clicks or types. |
-| 47 | `vision_annotated_capture` | READ | default | operational | service_dispatch | Capture a local Windows screen/region/window and return a short-lived Set-of-Marks observation with numbered bounds, a content hash, and an annotated PNG. This tool only observes; use ui_target_action for a separately gated action. |
+| 43 | `computer_use` | EXECUTE | default | operational | service_dispatch | Codex-style native computer use for testing desktop apps when the host provider and session permissions are available. Take annotated screenshots, inspect semantic controls, and operate by semantic target, numbered visual mark, or explicit coordinates. Routes through Accessibility first and uses guarded pointer/keyboard input only when needed. Supports click, typing, keys, hotkeys, scroll, drag, pointer movement, and window activation. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id. |
+| 44 | `accessibility` | READ | default | operational | service_dispatch | Semantic host-native UI tool. Inspect UI trees and named controls, then click, focus, read or set values, select controls and menus, or manage a native element when the platform provider and permission are available. Prefer shell for direct system work and dom_cdp for web pages. |
+| 45 | `input_event` | EXECUTE | default | operational | service_dispatch | Low-level keyboard and pointer fallback. Use only when DOM/CDP and host Accessibility cannot operate the target and the active desktop session grants input permission. Supports text, keys, mouse movement, clicks, drag, scroll, held buttons, release_all, and batched sequences. For web navigation, do not focus/type into a browser address bar; use dom_cdp list_tabs/new_tab plus an explicit tab_id. |
+| 46 | `vision` | READ | default | operational | service_dispatch | Visual and OCR fallback for content unavailable through DOM or host Accessibility. Capture a display, window, or region, or run local Vision OCR when the host capture permission/dependency is ready. It never clicks or types. |
+| 47 | `vision_annotated_capture` | READ | default | operational | service_dispatch | Capture a local host screen/region/window and return a short-lived Set-of-Marks observation with numbered bounds, a content hash, and an annotated PNG when the host capture provider is ready. This tool only observes; use ui_target_action for a separately gated action. |
 | 48 | `ui_target_action` | EXECUTE | default | operational | service_dispatch | Act on one mark from a current vision_annotated_capture observation. The observation ID, optional hash, TTL, workspace owner, and current Accessibility element are checked before the action is sent. |
-| 49 | `window` | EXECUTE | default | operational | service_dispatch | Direct native Windows window management. List, inspect, activate, move, resize, minimize, maximize, restore, or close windows without raw coordinates when a window operation is sufficient. |
+| 49 | `window` | EXECUTE | default | operational | service_dispatch | Direct host-native window management. List, inspect, activate, move, resize, minimize, maximize, restore, or close windows when the active session provider proves the operation is supported. |
 | 50 | `health` | READ | default | operational | service_dispatch | Diagnostics only. Check all lnwjud backends or one public tool after a failure, when asked for status, or while diagnosing permissions. Do not use as a preflight before normal work. |
 | 51 | `system_info` | READ | default | operational | service_dispatch | Read-only system information: OS, CPU, memory, disks, battery, uptime, and top processes by memory. Use for environment checks and diagnostics. |
-| 52 | `notification` | EXECUTE | default | operational | service_dispatch | Show a Windows notification (toast when BurntToast is installed, balloon otherwise). Use to tell the user when a long task finishes. |
-| 53 | `file_dialog` | EXECUTE | default | operational | service_dispatch | Open a native Windows file open/save dialog and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards. |
-| 54 | `clipboard` | EXECUTE | default | operational | service_dispatch | Read or write the Windows clipboard (text, or PNG image as base64). Use get_text/get_image to read and set_text to write. |
+| 52 | `notification` | EXECUTE | default | operational | service_dispatch | Show a host-native desktop notification when a notification session is available. Use to tell the user when a long task finishes. |
+| 53 | `file_dialog` | EXECUTE | default | operational | service_dispatch | Open a host-native file open/save dialog and return the chosen path(s). The dialog does not read or write files itself; use the guarded file tools afterwards. |
+| 54 | `clipboard` | EXECUTE | default | operational | service_dispatch | Read or write the host clipboard (text or PNG image as base64). Use get_text/get_image to read and set_text to write. |
 | 55 | `web_fetch` | READ | default | operational | service_dispatch | Fetch an http/https URL (GET/POST/PUT/DELETE/HEAD) with bounded size and timeout. In standard mode every POST, PUT, or DELETE requires explicit chat confirmation and host approval; trusted Full Bypass skips lnwjud approval. dry_run remains safe. Returns status, headers, and text or base64 body. |
-| 56 | `audio` | EXECUTE | default | operational | service_dispatch | Record the microphone to a WAV file or play a local audio file through MCI. In standard mode recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. record is synchronous and limited to 600 seconds. Use stop to abort an ongoing record/play. |
-| 57 | `screen_record` | EXECUTE | default | operational | service_dispatch | Record the screen to an MP4 using ffmpeg gdigrab (requires ffmpeg on PATH). In standard mode starting a recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. start spawns a background capture, status checks it, stop finalizes the file. Recording stops automatically after 3600 seconds. |
-| 58 | `office` | WRITE | default | operational | service_dispatch | Automate Excel, Word, PowerPoint, or Outlook through COM. In standard mode every write, replace, merge, or save_as action requires an Active Project workspaceId, explicit chat confirmation, and host approval. Trusted Full Bypass skips lnwjud approval/scope checks without forging userConfirmed. Existing in-workspace targets use Recovery Trash before replacement when available. Requires Microsoft Office installed. |
-| 59 | `scheduler` | EXECUTE | default | operational | service_dispatch | Manage Windows scheduled tasks with schtasks.exe. list is read-only; in standard mode create, run, and delete require explicit chat confirmation and host approval. Trusted Full Bypass skips lnwjud approval without forging userConfirmed. |
+| 56 | `audio` | EXECUTE | default | operational | service_dispatch | Record the microphone to a WAV file or play a local audio file through the host media provider. In standard mode recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. record is synchronous and limited to 600 seconds. Use stop to abort an ongoing record/play. |
+| 57 | `screen_record` | EXECUTE | default | operational | service_dispatch | Record the screen to an MP4 using the host-native media provider. In standard mode starting a recording requires the host-selected Active Project workspaceId and explicit confirmation; trusted Full Bypass skips lnwjud approval/scope checks. Existing in-workspace outputs use Recovery Trash before replacement when available. start spawns a background capture, status checks it, stop finalizes the file. Recording stops automatically after 3600 seconds. |
+| 58 | `office` | WRITE | default | operational | service_dispatch | Automate a supported spreadsheet/document provider when installed. In standard mode every write, replace, merge, or save_as action requires an Active Project workspaceId, explicit chat confirmation, and host approval. Trusted Full Bypass skips lnwjud approval/scope checks without forging userConfirmed. Existing in-workspace targets use Recovery Trash before replacement when available. Unsupported app/action pairs are dependency-gated rather than approximated. |
+| 59 | `scheduler` | EXECUTE | default | operational | service_dispatch | Manage host-native scheduled tasks. list is read-only; in standard mode create, run, and delete require explicit chat confirmation and host approval. Trusted Full Bypass skips lnwjud approval without forging userConfirmed. The provider uses the current OS scheduler and never silently falls back to another scheduler. |
 | 60 | `wsl_exec` | EXECUTE | default | operational | service_dispatch | Non-blocking WSL2 developer runner for one Linux executable plus argv; shell command strings are not accepted. Do not use wsl_exec as a source/config/text editor. For any direct text-file change, call edit_file first; use apply_patch for reviewed whole-file or multi-file replacements and write_file for file creation/replacement. Inline Node/Python/PowerShell-style rewrites and sed in-place edits are rejected before native approval so the client can route to guarded file tools. MCP run calls are ALWAYS forced to execution=background, even if a client requests foreground or auto, and return a task_id immediately. Follow with status/logs/result; wait uses the user-configurable MCP poll window (5-60 seconds, default 5). When the user requires babysitting until completion, keep using bounded waits and do not report completion until the terminal result is inspected. Otherwise, if the host turn must yield while a durable task is still running, checkpoint it as trackedTasks {taskId, provider: shell, role: blocking_job, cancelWithGoal: true} and use the active scheduled-continuation handoff instead of abandoning the goal. With Full Bypass OFF, Full Access runs ordinary WSL commands without confirmation while destructive, broad, recursive, outside-project, or unparseable forms retain normal approval/command policy. Trusted Full Bypass skips lnwjud approval, command-policy, Active Project, goalLease, and allowed-root checks, including an explicitly requested external cwd; WSL availability, argv validation, Linux permissions, and process failures still apply. |
 | 61 | `wsl_fs` | READ | default | operational | service_dispatch | Translate paths and inspect metadata between a registered Windows workspace and WSL without exposing raw \\wsl$ read/write access. |
 | 62 | `skills_list` | READ | default | operational | service_dispatch | List the union of bundled skills and every discovered machine-global or active-workspace skill from Cursor, Claude, Agents, Codex, the Codex plugin cache, GitHub workspace roots, and lnwjud settings. Nested and symlinked skill collections are included. Filter with query or source. |
@@ -1185,15 +1181,15 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 152 | `network_context` | READ | default | dependency_gated | truthful_unavailable | Summarize browser network context when a retained CDP network event stream is available. |
 | 153 | `console_context` | READ | default | dependency_gated | truthful_unavailable | Summarize browser console context when a retained CDP Runtime/Log event stream is available. |
 | 154 | `browser_debug_context` | READ | default | operational | service_dispatch | Combine browser diagnostics for one request. Requires an exact dom_cdp tab_id from list_tabs or new_tab; never uses the active/first tab. |
-| 155 | `windows_environment` | READ | default | operational | service_dispatch | Inspect Windows environment metadata. |
-| 156 | `service_context` | READ | default | operational | deterministic_operation | Inspect Windows service metadata. |
-| 157 | `process_context` | READ | default | operational | service_dispatch | Inspect process-tree context. |
+| 155 | `windows_environment` | READ | default | dependency_gated | service_dispatch | Inspect Windows environment metadata. |
+| 156 | `service_context` | READ | default | operational | deterministic_operation | Inspect host service-manager metadata. |
+| 157 | `process_context` | READ | default | operational | service_dispatch | Inspect host process-tree context. |
 | 158 | `port_context` | READ | default | operational | deterministic_operation | Inspect local listening-port context. |
-| 159 | `registry_context` | READ | default | operational | deterministic_operation | Inspect registry context through the Windows capability boundary. |
-| 160 | `event_log_context` | READ | default | operational | deterministic_operation | Inspect Windows event-log context. |
+| 159 | `registry_context` | READ | default | dependency_gated | deterministic_operation | Inspect Windows registry context through the Windows capability boundary. |
+| 160 | `event_log_context` | READ | default | operational | deterministic_operation | Inspect host-native event and log context. |
 | 161 | `installed_runtime_context` | READ | default | operational | deterministic_operation | Inspect installed runtimes and package managers. |
 | 162 | `path_context` | READ | default | operational | deterministic_operation | Resolve executable and PATH context. |
-| 163 | `startup_context` | READ | default | operational | deterministic_operation | Inspect startup configuration context. |
+| 163 | `startup_context` | READ | default | operational | deterministic_operation | Inspect host startup configuration context. |
 | 164 | `mcp_discover` | READ | default | operational | service_dispatch | Discover external MCP servers without flattening native tools. |
 | 165 | `mcp_health` | READ | default | operational | service_dispatch | Return external MCP connection health. |
 | 166 | `mcp_resources` | READ | default | dependency_gated | service_dispatch | List resources exposed by connected MCP servers when the child server supports resources/list. |
@@ -1505,7 +1501,7 @@ higher-level APIs cannot operate; and window for native window management.
 ## Unrestricted full-access mode
 
 Unrestricted mode expands **explicit absolute-path read/discovery visibility**
-for compatibility. It never scans or registers drive letters automatically and
+for compatibility. It never scans or registers filesystem roots automatically and
 does **not** lift the host-selected Active
 Project mutation boundary, shared command/Git policy, independent host approval,
 or hard blocks. Enable the visibility mode either way:
@@ -1706,7 +1702,7 @@ launch; standalone `git_reset` / `git_clean` capabilities do not exist.
 | Symptom | Fix |
 | --- | --- |
 | Secure Tunnel profile still contains `mcp.commands` or `lnwjud-mcp-stdio.cmd` | Open lnwjud Desktop → Settings → OpenAI Secure MCP Tunnel → Configure Tunnel. v4.10.0 rewrites the profile to the current Desktop loopback HTTP `/mcp` endpoint. |
-| Direct local stdio launcher is missing | This affects local stdio hosts such as Codex CLI, not Secure Tunnel. Reinstall the current Windows package and confirm `lnwjud-mcp-stdio.cmd`, `lnwjud-mcp-stdio.cjs`, and `lnwjud-node.exe` are shipped beside lnwjud.exe or under resources. |
+| Direct local stdio launcher is missing | This affects local stdio hosts such as Codex CLI, not Secure Tunnel. Reinstall the current package and confirm the target-native `lnwjud-mcp-stdio` launcher is shipped beside the packaged Electron executable. |
 | profile_load says the YAML file is missing | Run init with profile lnwjud and verify %APPDATA%/tunnel-client/lnwjud.yaml |
 | doctor rejects the key | Use a runtime key with Tunnels Read + Use; do not substitute an Admin or unrelated project key |
 | Tunnel is not listed in ChatGPT | Associate it with the target ChatGPT workspace and verify Tunnels Read + Use |
@@ -1796,7 +1792,7 @@ Electron end-to-end tests:
 corepack pnpm@10.15.0 test:e2e
 ```
 
-Use `git diff --check` before committing. For publishing, follow the canonical [release process](docs/development/RELEASE_PROCESS.md): PR/non-main CI skips only the expensive Windows installer packaging, while the exact commit on `main` runs the full gate and creates the SHA-scoped artifact that the tag-triggered Release workflow reuses.
+Use `git diff --check` before committing. For publishing, follow the canonical [release process](docs/development/RELEASE_PROCESS.md): the exact commit on `main` runs the Windows and target-native macOS/Linux gates, creates SHA-scoped artifacts for every release target, and the tag-triggered Release workflow reuses those artifacts without rebuilding.
 
 ## Repository layout
 

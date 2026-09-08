@@ -4,20 +4,22 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
 import { chromium, expect, test } from '@playwright/test';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronDistPath = path.join(desktopRoot, 'node_modules', 'electron', 'dist');
-const electronExecutable = path.join(electronDistPath, 'electron.exe');
+const electronExecutable = electronExecutablePath(desktopRoot);
 
 test('renderer cannot access Node globals', async () => {
   const devToolsPort = await findEphemeralPort();
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-security-data-'));
   const electronProcess = spawn(electronExecutable, [`--remote-debugging-port=${devToolsPort}`, `--user-data-dir=${dataRoot}`, mainEntry], {
     cwd: desktopRoot,
+    detached: process.platform !== 'win32',
     shell: false,
     windowsHide: true,
+    env: { ...process.env, LNWJUD_DATA_PATH: dataRoot, LNWJUD_E2E_FIXTURE: '1', LNWJUD_E2E_NODE_PATH: process.execPath },
   });
   const stderr: string[] = [];
   electronProcess.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
@@ -67,15 +69,6 @@ async function waitForDevTools(port: number, electronProcess: ChildProcess, stde
       return false;
     }
   }, { timeout: 10_000, intervals: [50, 100, 250] }).toBe(true);
-}
-
-async function terminateProcessTree(process: ChildProcess): Promise<void> {
-  if (process.exitCode !== null || process.pid === undefined) return;
-  await new Promise<void>((resolve) => {
-    const killer = spawn('taskkill.exe', ['/PID', String(process.pid), '/T', '/F'], { shell: false, windowsHide: true });
-    killer.once('error', () => resolve());
-    killer.once('close', () => resolve());
-  });
 }
 
 async function removeTemporaryRoot(root: string): Promise<void> {

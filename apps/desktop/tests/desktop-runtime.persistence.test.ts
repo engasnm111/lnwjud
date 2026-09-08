@@ -553,7 +553,7 @@ describe('DesktopRuntime persistence', () => {
         if (process.platform === 'win32') {
           const windowHealth = await client.callTool({ name: 'health', arguments: { operation: 'check_tool', tool: 'window' } });
           expect(windowHealth.isError).not.toBe(true);
-          expect(windowHealth.structuredContent).toMatchObject({ tool: 'window', availability: 'windows', available: true });
+          expect(windowHealth.structuredContent).toMatchObject({ tool: 'window', availability: 'optional', available: true });
 
           const input = await client.callTool({ name: 'input_event', arguments: { operation: 'click', parameters: { x: 0, y: 0 }, dry_run: true } });
           expect(input.isError).not.toBe(true);

@@ -63,4 +63,12 @@ describe('scoped destructive auto approval', () => {
     const decision = inspectMutationOperation('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, 'DANGEROUS');
     expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, decision, current, { workspaceId: 'drive', rootPath: 'E:\\' })).toBe(false);
   });
+
+  it('applies POSIX root and case-sensitive containment rules', () => {
+    const current = policy(['delete_file', 'shell_rm_unlink']);
+    const decision = inspectMutationOperation('delete_file', { workspaceId: 'posix', path: 'src/old.txt' }, 'DANGEROUS');
+    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'posix', path: 'src/old.txt' }, decision, current, { workspaceId: 'posix', rootPath: '/home/alice/project' }, 'linux')).toBe(true);
+    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'posix', path: '../outside.txt' }, decision, current, { workspaceId: 'posix', rootPath: '/home/alice/project' }, 'linux')).toBe(false);
+    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'posix', path: 'src/old.txt' }, decision, current, { workspaceId: 'posix', rootPath: '/' }, 'linux')).toBe(false);
+  });
 });

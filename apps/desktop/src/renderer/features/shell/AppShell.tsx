@@ -104,7 +104,7 @@ export function AppShell(props: AppShellProps): ReactElement {
             ))}
           </nav>
           <div className="sidebar-footer">
-            <span>Windows Desktop</span>
+            <span>Native Desktop</span>
             <strong className={props.mcpRunning ? 'status-online' : 'status-offline'}>
               {props.mcpRunning ? t('footer.connected') : t('footer.disconnected')}
             </strong>

@@ -144,6 +144,9 @@ importers:
         specifier: 19.1.1
         version: 19.1.1(react@19.1.1)
     devDependencies:
+      '@electron-internal/extract-zip':
+        specifier: 1.0.5
+        version: 1.0.5
       '@modelcontextprotocol/client':
         specifier: 2.0.0
         version: 2.0.0
@@ -285,6 +288,9 @@ importers:
       '@lnwjud/permissions':
         specifier: workspace:*
         version: link:../permissions
+      '@lnwjud/process':
+        specifier: workspace:*
+        version: link:../process
       '@lnwjud/search':
         specifier: workspace:*
         version: link:../search
@@ -328,6 +334,9 @@ importers:
       '@lnwjud/domain':
         specifier: workspace:*
         version: link:../domain
+      '@lnwjud/process':
+        specifier: workspace:*
+        version: link:../process
 
   packages/shared: {}
 
@@ -339,6 +348,9 @@ importers:
       '@lnwjud/domain':
         specifier: workspace:*
         version: link:../domain
+      '@lnwjud/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@lnwjud/workspace':
         specifier: workspace:*
         version: link:../workspace

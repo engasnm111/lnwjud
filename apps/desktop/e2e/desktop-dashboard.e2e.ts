@@ -4,13 +4,14 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
 import { chromium, expect, test, type Page } from '@playwright/test';
 import { AuditService, redactActivityTargetDetail } from '@lnwjud/audit';
 import { SqliteAuditRepository, SqliteDatabase } from '@lnwjud/storage';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronExecutable = electronExecutablePath(desktopRoot);
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('control center auto-starts MCP and supports project + doctor journey', async ({ browserName }, testInfo) => {
@@ -29,6 +30,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     : [`--remote-debugging-port=${devToolsPort}`, `--user-data-dir=${dataRoot}`];
   const electronProcess = spawn(launchExecutable, launchArguments, {
     cwd: desktopRoot,
+    detached: process.platform !== 'win32',
     shell: false,
     windowsHide: true,
     env: {
@@ -44,6 +46,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
   });
   const stderr: string[] = [];
   electronProcess.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
+  let diagnosticPage: Page | undefined;
 
   try {
     await waitForDevTools(devToolsPort, electronProcess, stderr);
@@ -53,8 +56,22 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await expect.poll(() => context.pages().length).toBeGreaterThan(0);
     const page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
+    diagnosticPage = page;
 
     const firstRunDialog = page.getByRole('dialog', { name: /ตั้งค่า ChatGPT ให้ใช้ lnwjud|Set up ChatGPT to use lnwjud/ });
+    await expect.poll(async () => {
+      if (await firstRunDialog.isVisible()) return true;
+      if (await page.getByRole('heading', { name: 'Doctor', exact: true }).isVisible()) {
+        const failures = await page.evaluate(async () => {
+          const coreIds = new Set(['os', 'database', 'executable_ripgrep', 'mcp-port']);
+          const report = await window.lnwjud.runDoctor();
+          return report.checks.filter((check) => coreIds.has(check.id) && (check.status === 'fail' || check.status === 'unknown'))
+            .map(({ id, status, message }) => ({ id, status, message }));
+        });
+        if (failures.length > 0) throw new Error(`Startup prerequisites failed before onboarding: ${JSON.stringify(failures)}`);
+      }
+      return false;
+    }, { timeout: 30_000, intervals: [100, 250, 500] }).toBe(true);
     await page.getByRole('button', { name: /ไว้ทีหลัง|Set up later/ }).click({ timeout: 30_000 });
     await expect(firstRunDialog).toBeHidden();
 
@@ -127,6 +144,19 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await expect(page.getByTestId('doctor-check-registered_workspace')).toBeVisible();
     await expect(page.locator('body')).not.toContainText('do-not-display');
     await browser.close();
+  } catch (error: unknown) {
+    const stderrPath = testInfo.outputPath('electron-stderr.txt');
+    await writeFile(stderrPath, stderr.join(''), 'utf8');
+    await testInfo.attach('electron-stderr', { path: stderrPath, contentType: 'text/plain' });
+    if (diagnosticPage !== undefined && !diagnosticPage.isClosed()) {
+      const domPath = testInfo.outputPath('failure-dom.html');
+      await writeFile(domPath, await diagnosticPage.content(), 'utf8');
+      await testInfo.attach('failure-dom', { path: domPath, contentType: 'text/html' });
+      const uiPath = testInfo.outputPath('failure-ui.txt');
+      await writeFile(uiPath, await diagnosticPage.locator('body').innerText(), 'utf8');
+      await testInfo.attach('failure-ui', { path: uiPath, contentType: 'text/plain' });
+    }
+    throw error;
   } finally {
     await terminateProcessTree(electronProcess);
     await Promise.all([
@@ -186,24 +216,6 @@ async function waitForDevTools(port: number, child: ChildProcess, stderr: string
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`Timed out waiting for Electron DevTools: ${stderr.join('')}`);
-}
-
-async function terminateProcessTree(child: ChildProcess): Promise<void> {
-  if (child.pid !== undefined) {
-    const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true });
-    await new Promise<void>((resolve) => {
-      killer.once('error', () => resolve());
-      killer.once('close', () => resolve());
-    });
-  }
-  await new Promise<void>((resolve) => {
-    if (child.exitCode !== null) {
-      resolve();
-      return;
-    }
-    child.once('exit', () => resolve());
-    setTimeout(() => resolve(), 5_000);
-  });
 }
 
 async function removeTemporaryRoot(root: string): Promise<void> {
