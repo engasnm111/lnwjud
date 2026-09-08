@@ -1,4 +1,7 @@
-import { mkdir, readFile, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, mkdtemp, rm, stat, writeFile, realpath } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -12,6 +15,61 @@ const TUNNEL_KEY = 'legacy-tunnel-api-key';
 const LEGACY_TUNNEL_HEX = '01000000d08c9ddf0115d1118c7a00c04fc297eb' + 'ab'.repeat(80);
 
 describe('legacy Windows secret migration', () => {
+  it.each([false, true])('checks the helper checksum (explicit override: %s) and preserves legacy data on mismatch', async (explicitOverride) => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-helper-integrity-')));
+    try {
+      const helperPath = path.join(root, 'lnwjud-windows-secret-migrator.exe');
+      const checkpointPath = path.join(root, 'checkpoint-master.key');
+      await writeFile(helperPath, 'invalid helper fixture');
+      const helperSha256Path = path.join(root, explicitOverride ? 'custom-checksum.txt' : 'lnwjud-windows-secret-migrator.sha256');
+      await writeFile(helperSha256Path, `${'0'.repeat(64)}  lnwjud-windows-secret-migrator.exe\n`);
+      await writeFile(checkpointPath, 'dpapi:v2:legacy-fixture');
+      await expect(migrateLegacyWindowsSecrets({
+        platform: 'win32', helperPath, checkpointPath, tunnelSecretPath: path.join(root, 'missing.secret'),
+        ...(explicitOverride ? { helperSha256Path } : {}),
+        secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x21)),
+      })).rejects.toThrow('Windows secret migration helper integrity check failed');
+      expect(await readFile(checkpointPath, 'utf8')).toBe('dpapi:v2:legacy-fixture');
+      await expect(stat(`${checkpointPath}.legacy-backup`)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('migrates real Windows DPAPI and SecureString values with the shipped native helper', async () => {
+    const exec = promisify(execFile);
+    const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+    const helperPath = process.env.LNWJUD_TEST_WINDOWS_SECRET_MIGRATOR
+      ?? path.join(repositoryRoot, 'native/windows-secret-migrator/bin/win-x64/lnwjud-windows-secret-migrator.exe');
+    const powershell = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+    const powershellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'));
+    if (!existsSync(helperPath)) {
+      if (process.env.LNWJUD_TEST_WINDOWS_SECRET_MIGRATOR !== undefined) throw new Error('Configured test helper does not exist');
+      await exec(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(repositoryRoot, 'scripts/build-windows-secret-migrator.ps1')], { windowsHide: true, timeout: 120_000, env: powershellEnv });
+    }
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-native-migration-')));
+    try {
+      const fixture = await exec(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+        `Add-Type -AssemblyName System.Security; $bytes = [Text.Encoding]::UTF8.GetBytes('${CHECKPOINT_KEY}'); $cipher = [Security.Cryptography.ProtectedData]::Protect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser); $secure = ConvertTo-SecureString '${TUNNEL_KEY}' -AsPlainText -Force; @{ checkpoint = [Convert]::ToBase64String($cipher); tunnel = (ConvertFrom-SecureString $secure) } | ConvertTo-Json -Compress`,
+      ], { windowsHide: true, env: powershellEnv });
+      const legacy = JSON.parse(fixture.stdout) as { checkpoint: string; tunnel: string };
+      const checkpointPath = path.join(root, 'checkpoint-master.key');
+      const tunnelSecretPath = path.join(root, 'lnwjud.runtime.secret');
+      await writeFile(checkpointPath, `dpapi:v2:${legacy.checkpoint}`);
+      await writeFile(tunnelSecretPath, legacy.tunnel);
+      const secretProtector = createExplicitKeySecretProtector(Buffer.alloc(32, 0x42));
+      const options = { helperPath, checkpointPath, tunnelSecretPath, secretProtector };
+      expect(await migrateLegacyWindowsSecrets(options)).toEqual({ checkpoint: 'migrated', tunnel: 'migrated' });
+      expect(await secretProtector.decrypt('checkpoint_master_key', await readFile(checkpointPath, 'utf8'))).toMatchObject({ plainText: CHECKPOINT_KEY });
+      expect(await secretProtector.decrypt('tunnel_api_key', await readFile(tunnelSecretPath, 'utf8'))).toMatchObject({ plainText: TUNNEL_KEY });
+      expect(await readFile(`${checkpointPath}.legacy-backup`, 'utf8')).toBe(`dpapi:v2:${legacy.checkpoint}`);
+      expect(await readFile(`${tunnelSecretPath}.legacy-backup`, 'utf8')).toBe(legacy.tunnel);
+      expect(await migrateLegacyWindowsSecrets(options)).toEqual({ checkpoint: 'already_safe', tunnel: 'already_safe' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 150_000);
+
   it('migrates every persisted OAuth/ngrok secret using the existing startup arguments', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-oauth-migration-'));
     try {

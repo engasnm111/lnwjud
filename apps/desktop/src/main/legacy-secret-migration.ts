@@ -234,7 +234,7 @@ async function acquireMigrationLock(lockPath: string, secretPath: string, timeou
 function createNativeHelperRunner(options: { readonly helperPath: string; readonly helperSha256Path?: string }): (request: LegacySecretHelperRequest) => Promise<string> {
   let integrity: Promise<void> | null = null;
   return async (request) => {
-    integrity ??= verifyHelperIntegrity(options.helperPath, options.helperSha256Path ?? `${options.helperPath}.sha256`);
+    integrity ??= verifyHelperIntegrity(options.helperPath, options.helperSha256Path ?? `${options.helperPath.replace(/\.exe$/i, '')}.sha256`);
     await integrity;
     return runHelperProcess(options.helperPath, request);
   };

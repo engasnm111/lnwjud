@@ -1,5 +1,7 @@
-import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { access, copyFile, mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +25,19 @@ type LaunchedDesktop = {
 
 test.describe('Tools catalog and Doctor real Electron acceptance', () => {
   test.setTimeout(120_000);
+
+  test('Windows upgrade opens with a real legacy checkpoint and retains its backup', async () => {
+    test.setTimeout(180_000); // Includes first-run native helper fixture compilation in source mode.
+    test.skip(process.platform !== 'win32', 'Windows DPAPI upgrade acceptance');
+    const app = await launchDesktop({ legacyCheckpoint: true });
+    try {
+      await openTools(app.page);
+      await expect(app.page.locator('.tool-card')).toHaveCount(232);
+      expect(await readFile(path.join(app.dataRoot, 'checkpoint-master.key'), 'utf8')).toMatch(/^safe:v1:/);
+      expect(await readFile(path.join(app.dataRoot, 'checkpoint-master.key.legacy-backup'), 'utf8')).toMatch(/^dpapi:v2:/);
+      expect(JSON.parse(await readFile(path.join(app.dataRoot, 'checkpoint-master.key.migration.json'), 'utf8'))).toMatchObject({ operation: 'dpapi_v2' });
+    } finally { await closeDesktop(app); }
+  });
 
   test('normal runtime renders the full first-party catalog and readiness counts', async () => {
     const app = await launchDesktop();
@@ -162,8 +177,20 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
   });
 });
 
-async function launchDesktop(options: { readonly dataRoot?: string; readonly fixtureRoot?: string; readonly pathOverride?: string } = {}): Promise<LaunchedDesktop> {
+async function launchDesktop(options: { readonly dataRoot?: string; readonly fixtureRoot?: string; readonly pathOverride?: string; readonly legacyCheckpoint?: boolean } = {}): Promise<LaunchedDesktop> {
   const dataRoot = options.dataRoot ?? await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tools-doctor-data-'));
+  if (options.legacyCheckpoint) {
+    const powershell = path.join(globalThis.process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+    const env = Object.fromEntries(Object.entries(globalThis.process.env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'));
+    const sourceHelper = path.join(desktopRoot, '../../native/windows-secret-migrator/bin/win-x64/lnwjud-windows-secret-migrator.exe');
+    if (packagedExecutable === undefined && !existsSync(sourceHelper)) {
+      await promisify(execFile)(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(desktopRoot, '../../scripts/build-windows-secret-migrator.ps1')], { windowsHide: true, env, timeout: 120_000 });
+    }
+    const encrypted = await promisify(execFile)(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+      "Add-Type -AssemblyName System.Security; $bytes = [Text.Encoding]::UTF8.GetBytes('KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio='); [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser))",
+    ], { windowsHide: true, env });
+    await writeFile(path.join(dataRoot, 'checkpoint-master.key'), `dpapi:v2:${encrypted.stdout.trim()}`);
+  }
   const fixtureRoot = options.fixtureRoot ?? await createFixture();
   const devToolsPort = await findEphemeralPort();
   const mcpPort = await findEphemeralPort();
@@ -183,7 +210,7 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
     shell: false,
     windowsHide: true,
     env: {
-      ...globalThis.process.env,
+      ...Object.fromEntries(Object.entries(globalThis.process.env).filter(([key]) => packagedExecutable === undefined || key.toLowerCase() !== 'lnwjud_windows_secret_migrator')),
       PATH: effectivePath,
       Path: effectivePath,
       APPDATA: dataRoot,
@@ -193,6 +220,9 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
       LNWJUD_UNRESTRICTED: '1',
       LNWJUD_E2E_FIXTURE: '1',
       LNWJUD_E2E_NODE_PATH: globalThis.process.execPath,
+      ...(options.legacyCheckpoint && packagedExecutable === undefined ? {
+        LNWJUD_WINDOWS_SECRET_MIGRATOR: path.join(desktopRoot, '../../native/windows-secret-migrator/bin/win-x64/lnwjud-windows-secret-migrator.exe'),
+      } : {}),
     },
   });
   const stderr: string[] = [];
