@@ -188,11 +188,24 @@ export async function buildIncidentReport(evidence: IncidentEvidence): Promise<I
 export interface IncidentExportOptions { readonly choosePath: () => Promise<string | null>; readonly writeAtomically: (filePath: string, content: string) => Promise<void>; }
 export async function exportIncidentReport(evidence: IncidentEvidence, options: IncidentExportOptions): Promise<{ readonly exported: boolean; readonly cancelled: boolean; readonly classification: IncidentClassification; readonly capturedAt: string | null }> { const report = await buildIncidentReport(evidence); const filePath = await options.choosePath(); if (filePath === null) return { exported: false, cancelled: true, classification: report.classification, capturedAt: null }; await options.writeAtomically(filePath, JSON.stringify(report, null, 2) + '\n'); return { exported: true, cancelled: false, classification: report.classification, capturedAt: report.capturedAt }; }
 export async function atomicWrite(filePath: string, content: string): Promise<void> { const temp = `${filePath}.${randomUUID()}.tmp`; try { await writeFile(temp, content, { encoding: 'utf8', flag: 'wx' }); await rename(temp, filePath); } catch (error) { await unlink(temp).catch(() => undefined); throw error; } }
-export async function collectRelevantProcessTree(pids: readonly number[]): Promise<readonly IncidentProcess[]> {
+export async function collectRelevantProcessTree(pids: readonly number[], platform: NodeJS.Platform = process.platform): Promise<readonly IncidentProcess[]> {
   const roots = trustedPids(pids);
   if (roots.length === 0) return [];
   // Query only non-sensitive identity/parent/name fields. Descendant expansion
   // happens locally and remains anchored to the verified root PIDs.
+  if (platform !== 'win32') {
+    const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 3_000, maxBuffer: 512 * 1024 });
+    const rows: IncidentProcess[] = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+      if (match === null) continue;
+      const pid = Number(match[1]);
+      const parentPid = Number(match[2]);
+      if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(parentPid) || parentPid < 0) continue;
+      rows.push({ pid, parentPid: parentPid > 0 ? parentPid : null, executable: safe(match[3] ?? 'unknown') });
+    }
+    return selectRelevantProcesses(rows, roots);
+  }
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress'], { windowsHide: true, timeout: 3_000, encoding: 'utf8' });
   const rows = parseRows(stdout, null).map((row) => ({ pid: number(row.ProcessId), parentPid: nullableNumber(row.ParentProcessId), executable: safe(typeof row.Name === 'string' ? row.Name : 'unknown') }))
     .filter((entry) => entry.pid > 0);
@@ -211,7 +224,29 @@ export function selectRelevantProcesses(entries: readonly IncidentProcess[], roo
   }
   return entries.filter((entry) => included.has(entry.pid)).slice(0, MAX_ENTRIES);
 }
-export async function collectRelevantListeners(pids: readonly number[]): Promise<readonly IncidentListener[]> { if (pids.length === 0) return []; const clause = pids.map((pid) => `$_.OwningProcess -eq ${pid}`).join(' -or '); const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { ${clause} } | Select-Object OwningProcess,LocalAddress,LocalPort | ConvertTo-Json -Compress`], { windowsHide: true, timeout: 3_000, encoding: 'utf8' }); return parseRows(stdout).map((row) => ({ pid: number(row.OwningProcess), address: safe(typeof row.LocalAddress === 'string' ? row.LocalAddress : 'unknown'), port: number(row.LocalPort) })); }
+export async function collectRelevantListeners(pids: readonly number[], platform: NodeJS.Platform = process.platform): Promise<readonly IncidentListener[]> {
+  const roots = trustedPids(pids);
+  if (roots.length === 0) return [];
+  if (platform !== 'win32') {
+    const { stdout } = await execFileAsync('lsof', ['-nP', '-a', '-p', roots.join(','), '-iTCP', '-sTCP:LISTEN'], {
+      encoding: 'utf8', timeout: 3_000, maxBuffer: 256 * 1024,
+    });
+    const listeners: IncidentListener[] = [];
+    for (const line of stdout.split(/\r?\n/).slice(1)) {
+      const columns = line.trim().split(/\s+/);
+      const pid = Number(columns[1]);
+      const match = /\s(.*):(\d+)(?:\s+\(LISTEN\))?\s*$/.exec(line.trim());
+      if (!Number.isInteger(pid) || pid <= 0 || match === null) continue;
+      const port = Number(match[2]);
+      if (!Number.isInteger(port) || port <= 0 || port > 65_535) continue;
+      listeners.push({ pid, address: safe(match[1] ?? 'unknown'), port });
+    }
+    return listeners.slice(0, MAX_ENTRIES);
+  }
+  const clause = roots.map((pid) => `$_.OwningProcess -eq ${pid}`).join(' -or ');
+  const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { ${clause} } | Select-Object OwningProcess,LocalAddress,LocalPort | ConvertTo-Json -Compress`], { windowsHide: true, timeout: 3_000, encoding: 'utf8' });
+  return parseRows(stdout).map((row) => ({ pid: number(row.OwningProcess), address: safe(typeof row.LocalAddress === 'string' ? row.LocalAddress : 'unknown'), port: number(row.LocalPort) }));
+}
 async function collectProcesses(collector: IncidentEvidence['collectProcessTree'], pids: readonly number[], noPidReason: string): Promise<IncidentReport['processTree']> {
   if (pids.length === 0) return { available: false, entries: [], error: safe(noPidReason) };
   if (collector === undefined) return { available: false, entries: [], error: 'collector_unavailable' };

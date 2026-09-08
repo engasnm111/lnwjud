@@ -1,21 +1,33 @@
-# คู่มือใช้งาน lnwjud v4.55.1 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v4.56.0 (ภาษาไทย)
 
-lnwjud คือ Windows-first local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่อง Windows ของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส, Windows UI automation, WSL, Office และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ
+lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-> สำหรับผู้ใช้ Windows x64 ที่ใช้ `lnwjud-Setup-4.55.1.exe` หรือ `lnwjud-Portable-4.55.1.exe` **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client.exe` เอง** ตัว release รวม private Node.js runtime และ official OpenAI `tunnel-client v0.0.13` มาให้แล้ว
+> สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.13` ที่ตรงกับ target ไว้ให้แล้ว
+
+คู่มือ target ใหม่:
+
+- [ติดตั้งบน macOS 13+](INSTALL_MACOS.md) (arm64/x64)
+- [ติดตั้งบน Linux](INSTALL_LINUX.md) (Ubuntu 24.04 LTS x64; arm64 เป็น preview ที่ใช้ artifact ตรงสถาปัตยกรรม)
+
+ทั้งสามระบบใช้ core MCP/Workspace ชุดเดียวกันและเลือก provider ตาม host ตอน
+เริ่มโปรแกรม ส่วน WSL, Registry, Windows Sandbox, Windows PDF installer และ
+Outlook/COM ยังคงเป็น Windows-only และจะรายงาน `unsupported_platform` บนระบบอื่น
+อย่างชัดเจน
 
 ---
 
 ## 1. สิ่งที่ต้องมี
 
-สำหรับผู้ใช้ทั่วไปที่ใช้ Windows release:
+สำหรับผู้ใช้ทั่วไป ให้เลือก package ให้ตรงกับ host:
 
 - Windows 10/11 x64
+- macOS 13+ arm64/x64
+- Linux x64 บน Ubuntu 24.04 LTS (Linux arm64 มี artifact แยก แต่ยังเป็น preview)
 
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- `lnwjud-Setup-4.55.1.exe` หรือ `lnwjud-Portable-4.55.1.exe`
+- `lnwjud-Setup-4.56.0.exe` หรือ `lnwjud-Portable-4.56.0.exe`
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -27,7 +39,7 @@ lnwjud คือ Windows-first local AI-agent runtime / MCP gateway สำหร
 - การโหลด ZIP `tunnel-client` เอง
 - การพิมพ์ `tunnel-client init` ใน PowerShell เอง
 
-Release ปัจจุบันเป็น **x64 เท่านั้น** ไม่รองรับ Windows 32-bit และไม่ได้ทำ target สำหรับ Windows 7/8/8.1
+Windows release ปัจจุบันเป็น **x64 เท่านั้น** ไม่รองรับ Windows 32-bit และไม่ได้ทำ target สำหรับ Windows 7/8/8.1. macOS มี package arm64/x64 และ Linux มี package x64 พร้อม Linux arm64 preview ที่ต้องเลือก artifact ให้ตรงสถาปัตยกรรม
 
 Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพัฒนา/build จาก source ตามหัวข้อท้ายเอกสาร
 
@@ -35,7 +47,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด `lnwjud-Setup-4.55.1.exe` จาก GitHub Releases
+1. ดาวน์โหลด `lnwjud-Setup-4.56.0.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -43,13 +55,13 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด `lnwjud-Portable-4.55.1.exe`
+1. ดาวน์โหลด `lnwjud-Portable-4.56.0.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
 Portable ของ lnwjud หมายถึง **ตัวโปรแกรมเปิดได้โดยไม่ต้องติดตั้ง** แต่ตั้งใจใช้ข้อมูล/Settings ต่อผู้ใช้ Windows ชุดเดียวกับตัวติดตั้ง จึงไม่ใช่โหมดที่เก็บ database/settings ทุกอย่างไว้ข้างไฟล์ EXE ถ้าเคยใช้ตัวติดตั้งใน Windows account เดียวกัน Portable จะเห็นการตั้งค่าชุดเดียวกัน
 
-ทั้ง Installer และ Portable รวม official OpenAI `tunnel-client v0.0.13` และ private Node runtime ไว้ใน package โดย lnwjud จะเลือก path ภายใน package เองเมื่อช่อง Tunnel Client Override ว่าง ตัว Windows x64 bundle เก็บชุด runtime ทางการไว้ครบข้างกัน ได้แก่ `tunnel-client.exe`, `cloudflared.exe` v2026.8.2, `cloudflared-manifest.json`, LICENSE/NOTICE, license inventory และ SPDX SBOM แต่การมี `cloudflared.exe` อยู่ใน package **ไม่ได้หมายความว่า lnwjud เปิด Cloudflared mode ให้อัตโนมัติ** การเชื่อม Secure MCP Tunnel ปกติยังใช้พฤติกรรมเดิมจนกว่าจะตั้งค่าโหมดนั้นอย่างชัดเจน
+ทั้ง Installer และ Portable รวม `tunnel-client` target-native ไว้ใน package โดย lnwjud จะเลือก path ภายใน package เองเมื่อช่อง Tunnel Client Override ว่าง
 
 ### เปิดครั้งแรกและยังไม่มี Project
 
@@ -59,6 +71,8 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 
 - ถ้ากำลังใช้ **Installer** โปรแกรมจะอ่าน `latest.yml` และดาวน์โหลด/ติดตั้ง `lnwjud-Setup-<version>.exe` รุ่นใหม่
 - ถ้ากำลังใช้ **Portable** โปรแกรมจะอ่าน `portable.yml` และดาวน์โหลด `lnwjud-Portable-<version>.exe` รุ่นใหม่เท่านั้น
+- macOS ใช้ `latest-mac.yml` ซึ่งรวม zip ของ Intel และ Apple silicon แล้วเลือกไฟล์ตามสถาปัตยกรรมของเครื่อง
+- Linux AppImage ใช้ `latest-linux.yml` สำหรับ x64 และ `latest-linux-arm64.yml` สำหรับ arm64; DEB ยังคงให้ package manager จัดการ
 - Portable updater จะรอให้โปรแกรมเดิมปิด, สำรอง EXE เดิม, วาง EXE ใหม่ทับ **path เดิมที่ผู้ใช้เปิดอยู่**, เปิดโปรแกรมใหม่ และ rollback กลับ EXE เดิมถ้าการ replace ล้มเหลว
 - Auto Update จะ **ไม่เปลี่ยนชนิดให้เอง**: Portable จะไม่กลายเป็น Installer และ Installer จะไม่ถูกเปลี่ยนเป็น Portable
 - ไฟล์ update ถูกตรวจตาม SHA-512/size ใน update manifest ก่อนเข้าสู่ขั้นตอน install/replace
@@ -105,7 +119,7 @@ OAuth จะเปิดให้กด Sign in เฉพาะเมื่อ p
 
 1. ใส่ Runtime API key แล้วกด **Save key**
 2. ช่อง **tunnel-client (รวมมากับโปรแกรมแล้ว)** ให้ปล่อยว่างไว้
-   - lnwjud จะใช้ official OpenAI `tunnel-client v0.0.13` ที่ bundle มากับ Windows x64 package อัตโนมัติ
+   - lnwjud จะใช้ official OpenAI `tunnel-client v0.0.13` ที่ bundle ตาม target อัตโนมัติ
    - ปุ่ม Browse / Save override ใช้เฉพาะกรณี troubleshoot หรือต้องการทดสอบ client อื่น
    - เมื่อบันทึก custom override แล้ว path นั้นเป็นตัวเลือกหลัก ถ้าไฟล์หาย lnwjud จะแจ้ง error และ **จะไม่ fallback ไป bundled เองแบบเงียบ ๆ**
    - ถ้าเคยตั้ง override แล้วอยากกลับไปใช้ตัวที่มากับโปรแกรม ให้ล้างช่องแล้วกด **ใช้ตัวที่มากับโปรแกรม / Use bundled** โดยชัดเจน
@@ -120,7 +134,7 @@ OAuth จะเปิดให้กด Sign in เฉพาะเมื่อ p
 
 ไม่ต้องรันคำสั่ง `init`, `doctor` หรือ `run` เองในการใช้งานปกติ
 
-Runtime key ถูกเก็บด้วย Windows DPAPI และ profile จะอ้าง key ผ่าน `env:CONTROL_PLANE_API_KEY` แทนการเขียน key จริงลง YAML
+Runtime key ถูกเก็บด้วย secure storage ของระบบและ profile จะอ้าง key ผ่าน `env:CONTROL_PLANE_API_KEY` แทนการเขียน key จริงลง YAML Windows legacy envelope จะ migrate ผ่าน native helper ครั้งเดียว
 
 ## 5. เชื่อม lnwjud เข้ากับ ChatGPT
 
@@ -208,7 +222,7 @@ v4.11.0 รองรับ Active Projects หลายรายการพร�
 
 อย่าเลือกทั้งไดรฟ์เป็น Active Project เพียงเพื่อความสะดวก ถ้างานจริงอยู่ใน project folder ที่เจาะจง
 
-lnwjud จะไม่สแกนหรือลงทะเบียน drive letter `A:`–`Z:` อัตโนมัติแล้ว รวมถึง mapped/network drive เช่น `Z:` ที่ชี้ไป DGX Spark. ให้เพิ่มเฉพาะโฟลเดอร์โปรเจกต์ที่ต้องใช้ผ่านหน้า Projects หรือระบุ `--workspace` สำหรับ STDIO. รายการเก่าแบบ `Local Disk X:` ที่ระบบเคยสร้างเองจะถูก archive แบบกู้กลับได้ โดยไม่ลบโฟลเดอร์หรือ project registration จริง
+lnwjud จะไม่สแกนหรือลงทะเบียน filesystem root อัตโนมัติแล้ว รวมถึง mount/network path ที่ไม่ได้เลือกเอง ให้เพิ่มเฉพาะโฟลเดอร์โปรเจกต์ที่ต้องใช้ผ่านหน้า Projects หรือระบุ `--workspace` สำหรับ STDIO. รายการ legacy ที่ระบบเคยสร้างเองจะถูก archive แบบกู้กลับได้ โดยไม่ลบโฟลเดอร์หรือ project registration จริง
 
 ## 10. Permission และการลบไฟล์
 
@@ -290,7 +304,7 @@ lnwjud-mcp-stdio.cmd --workspace E:\projects\my-app
 
 ครั้งแรกต้องระบุ `--workspace` (หรือเพิ่มโปรเจกต์ไว้ก่อน) ระบบจะไม่เดา drive เริ่มต้นจาก `C:`/home/current directory
 
-ตัว release bundle private Node.js 24 มาให้ launcher นี้แล้ว จึงไม่ต้องลง Node.js system-wide
+launcher ใช้ packaged Electron host และไม่ต้องลง Node.js system-wide
 
 ## 15. Build จาก source
 
@@ -313,13 +327,13 @@ corepack pnpm@10.15.0 build
 corepack pnpm@10.15.0 package:windows
 ```
 
-`package:windows` จะดาวน์โหลด official OpenAI tunnel-client v0.0.13 Windows x64 archive สำหรับ **ขั้นตอน build Windows artifacts** เท่านั้น ตรวจ SHA-256 ที่ pin ไว้แบบ fail-closed แล้วเก็บ payload ทางการทั้งชุด (`tunnel-client.exe`, `cloudflared.exe` v2026.8.2, manifest, LICENSE/NOTICE, license inventory และ SPDX SBOM) เข้า Installer/Portable อัตโนมัติ End user ที่ใช้ release ไม่ต้องทำขั้นตอนนี้
+`package:windows`, `package:macos` และ `package:linux` จะดาวน์โหลด official OpenAI tunnel-client v0.0.13 สำหรับ **ขั้นตอน build ของ target นั้น** เท่านั้น ตรวจ SHA-256/provenance ที่ pin ไว้ แล้ว bundle binary เข้า package อัตโนมัติ End user ที่ใช้ release ไม่ต้องทำขั้นตอนนี้
 
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.55.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.55.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.56.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.56.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

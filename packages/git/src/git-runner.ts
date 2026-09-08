@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { WindowsProcessTree, type ProcessTreeTerminator } from '@lnwjud/process';
+import { createProcessTreeTerminator, type ProcessTreeTerminator } from '@lnwjud/process';
 
 export interface GitRunResult {
   readonly exitCode: number;
@@ -23,7 +23,7 @@ const DEFAULT_TERMINATION_RETRY_MS = 250;
 
 export class DirectGitRunner implements GitRunner {
   public constructor(
-    private readonly processTree: ProcessTreeTerminator = new WindowsProcessTree(),
+    private readonly processTree: ProcessTreeTerminator = createProcessTreeTerminator(),
     private readonly terminationRetryMs = DEFAULT_TERMINATION_RETRY_MS,
   ) {}
 
@@ -39,6 +39,7 @@ export class DirectGitRunner implements GitRunner {
           cwd,
           env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
           shell: false,
+          detached: process.platform !== 'win32',
           windowsHide: true,
         });
       } catch (error: unknown) {

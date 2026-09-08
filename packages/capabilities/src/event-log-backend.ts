@@ -1,6 +1,8 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import type { CapabilityBackend } from './local-capability-service.js';
+import { sanitizedChildEnvironment } from './sanitized-child-environment.js';
 
 /**
  * Read-only Windows Event Log queries behind the `event_watch` and
@@ -15,11 +17,19 @@ export interface EventLogBackendOptions {
   readonly timeoutSeconds?: number;
   /** Injectable for tests: runs the PowerShell query and returns raw stdout. */
   readonly runner?: EventLogRunner;
+  /** Injectable host-native runner for macOS Unified Log/Linux journal. */
+  readonly portableRunner?: EventLogPortableRunner;
 }
 
 export type EventLogRunner = (
   script: string,
   environment: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
+) => Promise<Result<string>>;
+
+export type EventLogPortableRunner = (
+  executable: string,
+  args: readonly string[],
   signal?: AbortSignal,
 ) => Promise<Result<string>>;
 
@@ -61,28 +71,30 @@ const QUERY_SCRIPT = [
   '$json = @($mapped) | ConvertTo-Json -Compress -Depth 4',
   'if (-not $json -or $json.Trim().Length -eq 0) { \'[]\' } elseif (-not $json.TrimStart().StartsWith(\'[\')) { \'[\' + $json.Trim() + \']\' } else { $json.Trim() }',
 ].join('\n');
+const execFileAsync = promisify(execFile);
 
 export class EventLogCapabilityBackend implements CapabilityBackend {
   private readonly platform: NodeJS.Platform;
   private readonly timeoutSeconds: number;
   private readonly runner: EventLogRunner;
+  private readonly portableRunner: EventLogPortableRunner;
 
   public constructor(options: EventLogBackendOptions = {}) {
     this.platform = options.platform ?? process.platform;
     this.timeoutSeconds = Math.min(600, Math.max(1, options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS));
     this.runner = options.runner ?? defaultRunner(this.timeoutSeconds);
+    this.portableRunner = options.portableRunner ?? defaultPortableRunner(this.timeoutSeconds);
   }
 
   public async execute(input: unknown, signal?: AbortSignal): Promise<Result<unknown>> {
-    if (this.platform !== 'win32') {
-      return ok({ available: false, ready: false, local: true, reason: 'platform_unavailable', backend: 'windows-event-log' });
-    }
     if (signal?.aborted === true) return err(appError('PROCESS_TIMEOUT', 'Event log query was cancelled', true));
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
       return err(appError('INVALID_INPUT', 'Event log input must be an object'));
     }
     const request = input as Record<string, unknown>;
     const mode = request.operation === 'crashes' ? 'crashes' : 'query';
+
+    if (this.platform !== 'win32') return this.executePortable(mode, request, signal);
 
     const environment: Record<string, string> = {
       LNWJUD_EVENT_MODE: mode,
@@ -123,6 +135,122 @@ export class EventLogCapabilityBackend implements CapabilityBackend {
     if (!Array.isArray(events)) return err(appError('INTERNAL_ERROR', 'Event log query returned a non-array response', true));
     return ok({ available: true, ready: true, local: true, backend: 'windows-event-log', mode, count: events.length, events });
   }
+
+  private async executePortable(mode: 'query' | 'crashes', request: Record<string, unknown>, signal?: AbortSignal): Promise<Result<unknown>> {
+    const maxEvents = clampInteger(request.max_events ?? request.maxEvents, 100, 1, MAX_EVENTS_HARD_LIMIT);
+    const hours = clampNumber(request.hours, 24, 1, 720);
+    const logName = readTrimmedString(request.log_name ?? request.logName);
+    const provider = readTrimmedString(request.provider);
+    if (mode === 'query' && logName === undefined && provider === undefined) return err(appError('INVALID_INPUT', 'event_watch requires log_name or provider'));
+    for (const value of [logName, provider]) {
+      if (value !== undefined && (value.length > 256 || !/^[\w .:@/-]+$/u.test(value))) return err(appError('INVALID_INPUT', 'Portable log filters contain unsupported characters'));
+    }
+    const since = readTrimmedString(request.since);
+    if (since !== undefined && !Number.isFinite(Date.parse(since))) return err(appError('INVALID_INPUT', 'since must be an ISO-8601 timestamp'));
+    const normalizedSince = since === undefined ? undefined : new Date(Date.parse(since)).toISOString();
+    const invocation = portableInvocation(this.platform, mode, {
+      maxEvents,
+      hours,
+      ...(normalizedSince === undefined ? {} : { since: normalizedSince }),
+      ...(logName === undefined ? {} : { logName }),
+      ...(provider === undefined ? {} : { provider }),
+    });
+    if (invocation === null) return ok({ available: false, ready: false, local: true, reason: 'portable_log_provider_missing', backend: `${this.platform}-native-log`, mode });
+    const result = await this.portableRunner(invocation.executable, invocation.args, signal);
+    if (!result.ok) {
+      if (result.error.code === 'PROCESS_NOT_FOUND') return ok({ available: false, ready: false, local: true, reason: 'portable_log_provider_missing', backend: `${this.platform}-native-log`, mode });
+      return result;
+    }
+    const events = parsePortableEvents(result.value, this.platform, maxEvents);
+    return ok({ available: true, ready: true, local: true, backend: `${this.platform}-native-log`, mode, count: events.length, events, ...(provider === undefined ? {} : { provider }), ...(logName === undefined ? {} : { logName }) });
+  }
+}
+
+function portableInvocation(
+  platform: NodeJS.Platform,
+  mode: 'query' | 'crashes',
+  input: {
+    readonly maxEvents: number;
+    readonly hours: number;
+    readonly since?: string;
+    readonly logName?: string;
+    readonly provider?: string;
+  },
+): { readonly executable: string; readonly args: readonly string[] } | null {
+  if (platform === 'darwin') {
+    // `log show` has no event-count switch (unlike `log stats`); the runner's
+    // byte cap and parser's maxEvents bound keep this read-only query finite.
+    // NDJSON keeps parsing bounded and avoids buffering one potentially huge
+    // top-level JSON array. Use an absolute start when the caller supplied one;
+    // combining `--last` and `--start` is ambiguous across macOS releases.
+    const args = ['show', '--style', 'ndjson', '--no-pager'];
+    if (input.since === undefined) args.push('--last', `${input.hours}h`);
+    const predicates: string[] = [];
+    if (mode === 'crashes') predicates.push('(eventMessage CONTAINS[c] "crash" OR eventMessage CONTAINS[c] "exception")');
+    if (input.provider !== undefined) {
+      const provider = predicateLiteral(input.provider);
+      // Unified Log has no Windows-style provider column. Match the stable
+      // process/subsystem/sender fields without interpolating raw request
+      // text into an executable command or predicate expression.
+      predicates.push(`(process == ${provider} OR subsystem == ${provider} OR senderImagePath ENDSWITH[c] ${provider})`);
+    }
+    if (predicates.length > 0) args.push('--predicate', predicates.join(' AND '));
+    if (input.since !== undefined) args.push('--start', input.since);
+    return { executable: 'log', args };
+  }
+  if (platform === 'linux') {
+    const args = ['--no-pager', '--output=json', '-n', String(input.maxEvents)];
+    if (input.logName?.toLowerCase() === 'application') args.push('--user');
+    if (mode === 'crashes') args.push('-p', 'err..emerg');
+    if (input.provider !== undefined) args.push('-t', input.provider);
+    if (input.since !== undefined) args.push('--since', input.since);
+    return { executable: 'journalctl', args };
+  }
+  return null;
+}
+
+function predicateLiteral(value: string): string {
+  return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+}
+
+function parsePortableEvents(raw: string, platform: NodeJS.Platform, maxEvents: number): readonly Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (events.length >= maxEvents) break;
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      const records = Array.isArray(parsed) ? parsed : [parsed];
+      for (const value of records) {
+        if (events.length >= maxEvents) break;
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+        // `log --style ndjson` emits a final `{ "finished": ... }` marker.
+        if (platform === 'darwin' && 'finished' in value) continue;
+        const record = value as Record<string, unknown>;
+        const time = platform === 'linux'
+          ? record.__REALTIME_TIMESTAMP ?? record._SOURCE_REALTIME_TIMESTAMP
+          : record.timestamp ?? record.time;
+        const message = platform === 'linux' ? record.MESSAGE : record.eventMessage;
+        const provider = platform === 'linux'
+          ? record.SYSLOG_IDENTIFIER
+          : record.process ?? record.processImagePath ?? record.sender ?? record.senderImagePath;
+        const id = platform === 'linux' ? record._PID : record.processID ?? record.processIdentifier;
+        const level = platform === 'linux' ? record.PRIORITY : record.messageType ?? record.logType;
+        events.push({
+          time: typeof time === 'string' || typeof time === 'number' ? String(time) : null,
+          provider: typeof provider === 'string' ? provider : null,
+          id: typeof id === 'string' || typeof id === 'number' ? id : null,
+          level: typeof level === 'string' || typeof level === 'number' ? level : null,
+          message: typeof message === 'string' ? message.slice(0, 16_384) : JSON.stringify(record).slice(0, 16_384),
+        });
+      }
+    } catch {
+      // Unified Log may emit non-JSON framing; skip it rather than exposing
+      // unbounded diagnostic text or claiming a parsed event.
+    }
+  }
+  return events;
 }
 
 function defaultRunner(timeoutSeconds: number): EventLogRunner {
@@ -131,7 +259,8 @@ function defaultRunner(timeoutSeconds: number): EventLogRunner {
     // passing it as the -Command argument is injection-safe.
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
       windowsHide: true,
-      env: { ...process.env, ...environment },
+      shell: false,
+      env: { ...sanitizedChildEnvironment(), ...environment },
     });
     let stdout = '';
     let settled = false;
@@ -157,6 +286,28 @@ function defaultRunner(timeoutSeconds: number): EventLogRunner {
     child.once('close', () => finish(ok(stdout)));
     child.stdin?.end();
   });
+}
+
+function defaultPortableRunner(timeoutSeconds: number): EventLogPortableRunner {
+  return async (executable, args, signal): Promise<Result<string>> => {
+    try {
+      const result = await execFileAsync(executable, [...args], {
+        windowsHide: true,
+        shell: false,
+        env: sanitizedChildEnvironment(),
+        encoding: 'utf8',
+        timeout: timeoutSeconds * 1_000,
+        maxBuffer: 4 * 1024 * 1024,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      return ok(typeof result.stdout === 'string' ? result.stdout : '');
+    } catch (error: unknown) {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : undefined;
+      if (code === 'ENOENT') return err(appError('PROCESS_NOT_FOUND', `${executable} is unavailable`, true));
+      if (code === 'ETIMEDOUT' || code === 'ABORT_ERR') return err(appError('PROCESS_TIMEOUT', `${executable} query timed out`, true));
+      return err(appError('INTERNAL_ERROR', `${executable} query failed`, true));
+    }
+  };
 }
 
 function readTrimmedString(value: unknown): string | undefined {

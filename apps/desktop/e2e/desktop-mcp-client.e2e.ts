@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
 import { promisify } from 'node:util';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { isAdvertisedDeliveryState, UPGRADE_TOOL_CATALOG } from '@lnwjud/mcp-server';
@@ -13,7 +14,7 @@ import { chromium, expect, test, type Page } from '@playwright/test';
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronExecutable = electronExecutablePath(desktopRoot);
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE;
 
 test('desktop serves the real MCP client development workflow', async () => {
@@ -34,6 +35,7 @@ test('desktop serves the real MCP client development workflow', async () => {
       : [`--remote-debugging-port=${devToolsPort}`, `--user-data-dir=${dataRoot}`];
     electronProcess = spawn(launchExecutable, launchArguments, {
       cwd: desktopRoot,
+      detached: process.platform !== 'win32',
       shell: false,
       windowsHide: true,
       env: {
@@ -124,7 +126,7 @@ test('desktop serves the real MCP client development workflow', async () => {
     const info = await callTool(client, 'workspace_info', { workspaceId });
     expect(toolRecord(info)).toMatchObject({ id: workspaceId, realRootPath: fixtureRealRoot });
 
-    const readBefore = await callTool(client, 'read_file', { workspaceId, path: 'src\\app.ts' });
+    const readBefore = await callTool(client, 'read_file', { workspaceId, path: 'src/app.ts' });
     expect(toolRecord(readBefore)).toMatchObject({ content: "export const value = 'before';\n" });
     const search = await callTool(client, 'search_text', { workspaceId, query: 'before', glob: 'src/*.ts' });
     expect(toolRecord(search)).toMatchObject({ matches: [{ path: expect.stringContaining('src'), text: expect.stringContaining('before') }] });
@@ -136,7 +138,7 @@ test('desktop serves the real MCP client development workflow', async () => {
     const secretRead = await callTool(client, 'read_file', { workspaceId, path: '.env' });
     expect(JSON.stringify(secretRead)).toContain('hidden');
     expect(JSON.stringify(secretRead)).not.toContain('SECRET_ACCESS_DENIED');
-    const deniedTraversal = await callTool(client, 'read_file', { workspaceId, path: '..\\outside.txt' });
+    const deniedTraversal = await callTool(client, 'read_file', { workspaceId, path: '../outside.txt' });
     expect(deniedTraversal).toMatchObject({ isError: true });
     expect(toolRecord(deniedTraversal)).toMatchObject({ error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
 
@@ -146,7 +148,7 @@ test('desktop serves the real MCP client development workflow', async () => {
     expect(gitEntries).toEqual([
       expect.objectContaining({ path: '.env', kind: 'untracked' }),
     ]);
-    const gitDiff = await callTool(client, 'git_diff', { workspaceId, path: 'src\\app.ts' });
+    const gitDiff = await callTool(client, 'git_diff', { workspaceId, path: 'src/app.ts' });
     expect(toolRecord(gitDiff)).toMatchObject({ patch: '' });
 
     const snapshot = await callTool(client, 'project_snapshot', { workspaceId });
@@ -210,15 +212,6 @@ async function waitForDevTools(port: number, electronProcess: ChildProcess, stde
       return false;
     }
   }, { timeout: 15_000, intervals: [50, 100, 250] }).toBe(true);
-}
-
-async function terminateProcessTree(process: ChildProcess): Promise<void> {
-  if (process.exitCode !== null || process.pid === undefined) return;
-  await new Promise<void>((resolve) => {
-    const killer = spawn('taskkill.exe', ['/PID', String(process.pid), '/T', '/F'], { shell: false, windowsHide: true });
-    killer.once('error', () => resolve());
-    killer.once('close', () => resolve());
-  });
 }
 
 async function removeTemporaryRoot(root: string): Promise<void> {

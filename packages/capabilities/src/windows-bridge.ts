@@ -24,7 +24,7 @@ const DEFAULT_TERMINATION_RETRY_MS = 250;
 const APP_ERROR_CODES: readonly AppErrorCode[] = [
   'INVALID_INPUT', 'WORKSPACE_NOT_FOUND', 'PATH_OUTSIDE_WORKSPACE', 'SECRET_ACCESS_DENIED', 'PERMISSION_DENIED',
   'PERMISSION_REQUIRED', 'FILE_NOT_FOUND', 'FILE_TOO_LARGE', 'BINARY_FILE', 'PROCESS_NOT_FOUND', 'PROCESS_TIMEOUT',
-  'EXECUTABLE_NOT_FOUND', 'GIT_NOT_REPOSITORY', 'CODEX_NOT_AVAILABLE', 'INTERNAL_ERROR',
+  'EXECUTABLE_NOT_FOUND', 'GIT_NOT_REPOSITORY', 'CODEX_NOT_AVAILABLE', 'UNSUPPORTED_PLATFORM', 'INTERNAL_ERROR',
 ];
 
 export class PowerShellWindowsCapabilityBridge implements WindowsCapabilityBridge {
@@ -121,6 +121,13 @@ export class PowerShellWindowsCapabilityBridge implements WindowsCapabilityBridg
       };
       child.stdin?.end(serialized, 'utf8');
     });
+  }
+
+  public async status(): Promise<Result<unknown>> {
+    if (this.platform !== 'win32') return err(appError('INTERNAL_ERROR', 'Windows bridge is unavailable on this platform', true));
+    const integrity = await this.verifyIntegrity();
+    if (!integrity.ok) return integrity;
+    return ok({ available: true, ready: true, local: true, backend: 'windows-native', platform: 'win32' });
   }
 
   private async verifyIntegrity(): Promise<Result<void>> {

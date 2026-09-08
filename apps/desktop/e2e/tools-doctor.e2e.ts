@@ -1,14 +1,15 @@
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
 import { chromium, expect, test, type Browser, type Locator, type Page } from '@playwright/test';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronExecutable = electronExecutablePath(desktopRoot);
 const packagedExecutable = process.env.LNWJUD_PACKAGED_EXECUTABLE?.trim() || undefined;
 
 type LaunchedDesktop = {
@@ -88,19 +89,22 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     const first = await launchDesktop();
     const { dataRoot, fixtureRoot } = first;
     try {
-      await first.page.evaluate(async () => {
+      await first.page.evaluate(async (missingCommand) => {
         const dashboard = await window.lnwjud.getDashboard();
         await window.lnwjud.setUserSettings({
           settings: {
             ...dashboard.settings,
             extensions: {
               mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [],
-              extraMcpServers: [{ name: 'offline-fixture', command: 'Z:\\missing\\offline-mcp.exe', args: [], cwd: '', type: 'stdio', env: {} }],
+              extraMcpServers: [{ name: 'offline-fixture', command: missingCommand, args: [], cwd: '', type: 'stdio', env: {} }],
             },
           },
         });
-      });
-    } finally { await closeDesktop(first, true); }
+      }, path.join(fixtureRoot, 'missing', 'offline-mcp'));
+    } finally {
+      await waitForSafeStoragePersistence(dataRoot);
+      await closeDesktop(first, true);
+    }
 
     const second = await launchDesktop({ dataRoot, fixtureRoot });
     try {
@@ -137,7 +141,7 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     test.skip(packagedExecutable !== undefined, 'Packaged builds carry bundled required executables; PATH-only startup dependency failure is a source-build scenario.');
     const requiredFailBin = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-path-required-fail-'));
     const optionalFailBin = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-path-optional-fail-'));
-    await copyFile(process.execPath, path.join(optionalFailBin, 'rg.exe'));
+    await copyFile(process.execPath, path.join(optionalFailBin, process.platform === 'win32' ? 'rg.exe' : 'rg'));
 
     const requiredFail = await launchDesktop({ pathOverride: requiredFailBin });
     try {
@@ -175,6 +179,7 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
   const effectivePath = options.pathOverride ?? defaultPath;
   const process = spawn(launchExecutable, launchArgs, {
     cwd: desktopRoot,
+    detached: globalThis.process.platform !== 'win32',
     shell: false,
     windowsHide: true,
     env: {
@@ -192,14 +197,24 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
   });
   const stderr: string[] = [];
   process.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
-  await waitForDevTools(devToolsPort, process, stderr);
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${devToolsPort}`);
-  const context = browser.contexts()[0];
-  if (context === undefined) throw new Error('Electron did not create a browser context');
-  await expect.poll(() => context.pages().length).toBeGreaterThan(0);
-  const page = context.pages()[0];
-  if (page === undefined) throw new Error('Electron did not create a renderer page');
-  return { process, browser, page, dataRoot, fixtureRoot, devToolsPort };
+  let browser: Browser | undefined;
+  try {
+    await waitForDevTools(devToolsPort, process, stderr);
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${devToolsPort}`);
+    const context = browser.contexts()[0];
+    if (context === undefined) throw new Error('Electron did not create a browser context');
+    // CDP is available before native storage/runtime initialization creates
+    // the window. Use the same startup budget as the visible Doctor checks.
+    await expect.poll(() => context.pages().length, { timeout: 30_000 }).toBeGreaterThan(0);
+    const page = context.pages()[0];
+    if (page === undefined) throw new Error('Electron did not create a renderer page');
+    return { process, browser, page, dataRoot, fixtureRoot, devToolsPort };
+  } catch (cause: unknown) {
+    await browser?.close().catch(() => undefined);
+    await terminateProcessTree(process);
+    await Promise.all([removeTemporaryRoot(dataRoot), removeTemporaryRoot(fixtureRoot)]);
+    throw new Error(`Electron launch failed: ${stderr.join('').slice(-16_384)}`, { cause });
+  }
 }
 
 async function openTools(page: Page, bypassStartupDoctor = false): Promise<void> {
@@ -293,6 +308,7 @@ async function closeDesktop(app: LaunchedDesktop, keepRoots = false): Promise<vo
 }
 
 async function terminateDevToolsProcess(port: number): Promise<void> {
+  if (process.platform !== 'win32') return;
   const output = await new Promise<string>((resolve) => {
     const netstat = spawn('netstat.exe', ['-ano', '-p', 'tcp'], { shell: false, windowsHide: true });
     let stdout = '';
@@ -314,11 +330,6 @@ async function terminateDevToolsProcess(port: number): Promise<void> {
   }, { timeout: 10_000, intervals: [50, 100, 250] }).toBe(true);
 }
 
-async function terminateProcessTree(process: ChildProcess): Promise<void> {
-  if (process.pid === undefined) return;
-  await terminatePidTree(process.pid);
-}
-
 async function terminatePidTree(pid: number): Promise<void> {
   await new Promise<void>((resolve) => {
     const killer = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { shell: false, windowsHide: true });
@@ -331,4 +342,16 @@ async function removeTemporaryRoot(root: string): Promise<void> {
   await expect.poll(async () => {
     try { await rm(root, { recursive: true, force: true }); return true; } catch { return false; }
   }, { timeout: 10_000, intervals: [50, 100, 250] }).toBe(true);
+}
+
+async function waitForSafeStoragePersistence(dataRoot: string): Promise<void> {
+  if (process.platform !== 'win32') return;
+  await expect.poll(async () => {
+    try {
+      await access(path.join(dataRoot, 'Local State'));
+      return true;
+    } catch {
+      return false;
+    }
+  }, { timeout: 30_000, intervals: [100, 250, 500] }).toBe(true);
 }

@@ -7,7 +7,8 @@ on:
       - dev
       - 'release/v*'
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +18,266 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-platform-contract:
+    name: Native Platform Contract (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-15
+          - name: Linux
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        shell: bash
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Run portable typecheck
+        shell: bash
+        run: corepack pnpm@10.15.0 typecheck
+
+      - name: Run native platform contract tests
+        shell: bash
+        run: corepack pnpm@10.15.0 exec vitest run tests/integration/platform-composition.test.ts tests/release/platform-support-contract.test.ts packages/mcp-server/src/tool-runtime-contract.test.ts
+
+      - name: Run complete native unit and service acceptance suites
+        if: matrix.name != 'Windows'
+        shell: bash
+        run: corepack pnpm@10.15.0 test
+
+      - name: Test macOS native host protocol
+        timeout-minutes: 10
+        if: matrix.name == 'macOS'
+        shell: bash
+        run: swift test --package-path native/macos-host
+
+      - name: Test Linux native host protocol
+        if: matrix.name == 'Linux'
+        shell: bash
+        run: cargo test --manifest-path native/linux-host/Cargo.toml --locked
+
+      - name: Test Linux artifact verifier with package fixtures
+        if: matrix.name == 'Linux'
+        shell: bash
+        run: bash tests/packaging/linux-release-layout.sh
+
+  native-package-verification:
+    name: Native Package Verification (${{ matrix.name }})
+    timeout-minutes: 45
+    # Packaging downloads target-native runtimes and builds unsigned local
+    # artifacts. Keep it on protected push/manual runs; pull requests still
+    # receive the fast platform-contract matrix above.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: native-platform-contract
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-15
+            platform: darwin
+            arch: arm64
+          - name: macOS x64
+            os: macos-15-intel
+            platform: darwin
+            arch: x64
+          - name: Linux x64
+            os: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - name: Linux arm64
+            os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install cosign for tunnel provenance verification
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Install dependencies
+        shell: bash
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Install Linux packaging and Electron smoke prerequisites
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gnome-keyring libsecret-1-0 dbus dbus-x11 xvfb xauth ripgrep \
+            libnss3 libasound2t64 libgtk-3-0t64 libgbm1 libxss1 \
+            libatk-bridge2.0-0t64 libdrm2 libxkbcommon0 libfuse2t64
+
+      - name: Install native ARM64 Debian packager
+        if: matrix.platform == 'linux' && matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev build-essential
+          sudo gem install fpm --version 1.16.0 --no-document
+          fpm --version
+
+      - name: Build and verify target-native package
+        # Bundled FPM contains x86 Ruby; ARM runners need their native Ruby.
+        shell: bash
+        env:
+          LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
+          LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
+          LNWJUD_COSIGN_PATH: cosign
+        run: |
+          set -euo pipefail
+          # app-builder checks presence, not truthiness: even an empty value
+          # selects system FPM, so leave it completely unset on other targets.
+          if [[ "$LNWJUD_VERIFY_PLATFORM/$LNWJUD_VERIFY_ARCH" == linux/arm64 ]]; then
+            export USE_SYSTEM_FPM=true
+          else
+            unset USE_SYSTEM_FPM
+          fi
+          mkdir -p apps/desktop/packaged-e2e-diagnostics
+          corepack pnpm@10.15.0 verify:platform -- --package 2>&1 \
+            | tee apps/desktop/packaged-e2e-diagnostics/platform-package.log
+
+      - name: Verify packaged artifact layout
+        shell: bash
+        env:
+          LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
+          LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ "${{ matrix.platform }}" == "darwin" ]]; then
+            corepack pnpm@10.15.0 verify:macos-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.dmg"
+            corepack pnpm@10.15.0 verify:macos-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.zip"
+          else
+            corepack pnpm@10.15.0 verify:linux-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.AppImage"
+            corepack pnpm@10.15.0 verify:linux-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.deb"
+          fi
+
+      - name: Run native packaged Electron E2E smoke
+        shell: bash
+        timeout-minutes: 10
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          DEBUG: pw:browser*
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          set -euo pipefail
+          # app-builder-lib PlatformPackager.computeAppOutDir + getArchSuffix:
+          # defaultArch is x64; macOS adds <productName>.app/Contents/MacOS.
+          case "$TARGET_PLATFORM/$TARGET_ARCH" in
+            linux/x64) relative='linux-unpacked/lnwjud' ;;
+            linux/arm64) relative='linux-arm64-unpacked/lnwjud' ;;
+            darwin/x64) relative='mac/lnwjud.app/Contents/MacOS/lnwjud' ;;
+            darwin/arm64) relative='mac-arm64/lnwjud.app/Contents/MacOS/lnwjud' ;;
+            *) echo 'Unsupported native smoke target' >&2; exit 1 ;;
+          esac
+          export LNWJUD_PACKAGED_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/dist/installers/$relative"
+          if [[ "$TARGET_PLATFORM" == linux ]]; then
+            # Install the real DEB on this disposable runner. Its post-install
+            # hook configures the supported AppArmor/userns or SUID sandbox.
+            # A generic unshare probe does not prove Electron can use userns.
+            version="$(node -p "require('./package.json').version")"
+            sudo apt-get install -y "$GITHUB_WORKSPACE/apps/desktop/dist/installers/lnwjud-${version}-${TARGET_ARCH}.deb"
+            export LNWJUD_PACKAGED_EXECUTABLE=/opt/lnwjud/lnwjud
+          fi
+          test -f "$LNWJUD_PACKAGED_EXECUTABLE" && test -x "$LNWJUD_PACKAGED_EXECUTABLE"
+          test "$(id -u)" -ne 0
+          cd "$GITHUB_WORKSPACE/apps/desktop"
+          mkdir -p packaged-e2e-diagnostics
+          printf '%s\n' "$LNWJUD_PACKAGED_EXECUTABLE" > packaged-e2e-diagnostics/executable.txt
+          # Execute the installed Linux package or sealed macOS app just built.
+          smoke=(node node_modules/@playwright/test/cli.js test --config playwright.config.ts
+            desktop-dashboard.e2e.ts desktop-mcp-client.e2e.ts tools-doctor.e2e.ts electron-security.e2e.ts
+            --trace=retain-on-failure --reporter=list,html)
+          if [[ "$TARGET_PLATFORM" == linux ]]; then
+            # Record installed sandbox state without altering the artifact or
+            # disabling sandboxing. The Electron security test asserts that
+            # the actual renderer remains sandboxed.
+            sandbox="$(dirname "$LNWJUD_PACKAGED_EXECUTABLE")/chrome-sandbox"
+            test -f "$sandbox" && test ! -L "$sandbox"
+            stat -c '%a %u:%g %n' "$sandbox" | tee packaged-e2e-diagnostics/sandbox.txt
+            dpkg-query -W lnwjud | tee -a packaged-e2e-diagnostics/sandbox.txt
+            if [[ -f /etc/apparmor.d/lnwjud ]]; then
+              cat /etc/apparmor.d/lnwjud >> packaged-e2e-diagnostics/sandbox.txt
+            fi
+            umask 077
+            session_root="$(mktemp -d "$RUNNER_TEMP/lnwjud-keyring.XXXXXXXX")"
+            trap 'case "$session_root" in "$RUNNER_TEMP"/lnwjud-keyring.?*) rm -rf -- "$session_root" ;; esac' EXIT
+            export XDG_DATA_HOME="$session_root/data" XDG_CONFIG_HOME="$session_root/config"
+            export XDG_CACHE_HOME="$session_root/cache" XDG_RUNTIME_DIR="$session_root/runtime"
+            export XDG_CURRENT_DESKTOP=GNOME
+            mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
+            dbus-run-session -- xvfb-run -a bash -euo pipefail -c '
+              password="$(node -e "process.stdout.write(require(\"node:crypto\").randomBytes(32).toString(\"hex\"))")"
+              printf "%s" "$password" | gnome-keyring-daemon --unlock --components=secrets
+              unset password
+              exec "$@"
+            ' bash "${smoke[@]}" 2>&1 | tee packaged-e2e-diagnostics/run.log
+          else
+            "${smoke[@]}" 2>&1 | tee packaged-e2e-diagnostics/run.log
+          fi
+
+      - name: Upload native package and E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-e2e-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            apps/desktop/test-results/
+            apps/desktop/playwright-report/
+            apps/desktop/packaged-e2e-diagnostics/
+            apps/desktop/build/platform-verification-${{ matrix.platform }}-${{ matrix.arch }}.json
+            apps/desktop/build/packaged-runtime-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload verified native package evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            apps/desktop/dist/installers/*
+            apps/desktop/build/platform-verification-${{ matrix.platform }}-${{ matrix.arch }}.json
+            apps/desktop/build/packaged-runtime-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   verify:
     # Keep this check name stable because main branch protection requires it.
     name: Authoritative Release Verification (Windows)
@@ -30,6 +291,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+
+      - name: Install cosign for tunnel provenance verification
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
 
       - name: Enable Corepack & Setup pnpm
         run: |
@@ -60,6 +326,17 @@ jobs:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
+
+      - name: Upload Windows E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-${{ github.sha }}
+          path: |
+            apps/desktop/test-results/
+            apps/desktop/playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload verified Windows release artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

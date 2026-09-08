@@ -29,6 +29,11 @@ describe('strict stdio workspace repository', () => {
     await expect(requestedPathInsideAllowedRoot(allowed, canonical)).resolves.toBe(canonical[0]);
     await expect(requestedPathInsideAllowedRoot(outside, canonical)).rejects.toThrow(/outside strict allowed roots/);
   });
+
+  it('rejects foreign roots and POSIX mount roots before they become trusted workspaces', async () => {
+    await expect(canonicalizeAllowedRoots(['/'], 'linux')).rejects.toThrow(/POSIX mount root/);
+    await expect(canonicalizeAllowedRoots(['C:\\Users\\alice\\project'], 'linux')).rejects.toThrow(/foreign host path/);
+  });
 });
 
 function workspace(id: string, rootPath: string, realRootPath: string): Workspace {

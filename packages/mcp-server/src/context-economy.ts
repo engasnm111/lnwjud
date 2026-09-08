@@ -69,6 +69,8 @@ interface MutableStats {
 export interface ContextEconomyOptions {
   readonly maxEntries?: number;
   readonly maxStoredBytes?: number;
+  /** Test/fixture override; production composition uses the real host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 const DEFAULT_MAX_ENTRIES = 256;
@@ -79,6 +81,7 @@ export class ContextEconomyRuntime {
   private readonly byFingerprint = new Map<string, StoredEntry>();
   private readonly maxEntries: number;
   private readonly maxStoredBytes: number;
+  private readonly platform: NodeJS.Platform;
   private storedBytes = 0;
   private readonly delivered = new WeakSet<object>();
   private readonly stats: MutableStats = {
@@ -99,6 +102,7 @@ export class ContextEconomyRuntime {
   public constructor(options: ContextEconomyOptions = {}) {
     this.maxEntries = Math.max(1, Math.floor(options.maxEntries ?? DEFAULT_MAX_ENTRIES));
     this.maxStoredBytes = Math.max(0, Math.floor(options.maxStoredBytes ?? DEFAULT_MAX_STORED_BYTES));
+    this.platform = options.platform ?? process.platform;
   }
 
   public beginRequest(): void {
@@ -274,6 +278,7 @@ export class ContextEconomyRuntime {
   }
 
   private entryKey(workspaceId: string, filePath: string): string {
-    return `${workspaceId}\0${filePath.replaceAll('\\', '/').toLowerCase()}`;
+    const normalized = filePath.replaceAll('\\', '/');
+    return `${workspaceId}\0${this.platform === 'win32' ? normalized.toLowerCase() : normalized}`;
   }
 }

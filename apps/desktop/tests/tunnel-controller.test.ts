@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { isolateTunnelProfile } from './tunnel-profile-fixture.js';
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TunnelController } from '../src/main/tunnel-controller.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TunnelController, resolveTunnelProfileDirectory } from '../src/main/tunnel-controller.js';
 import { waitForTunnelChildExit } from '../src/main/tunnel-controller.js';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
@@ -13,13 +14,49 @@ import type { TunnelRuntimeCapabilities } from '../src/main/tunnel-runtime-state
 
 const temporaryRoots: string[] = [];
 
+beforeEach(async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-controller-profile-'));
+  temporaryRoots.push(root);
+  isolateTunnelProfile(root);
+});
+
 afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('TunnelController lifecycle', () => {
+  it('replaces a redirected secret path without touching the link target', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-secret-atomic-'));
+    temporaryRoots.push(dataPath);
+    vi.stubEnv('XDG_DATA_HOME', dataPath);
+    const controller = new TunnelController({
+      platform: 'linux',
+      getClientPath: (): string | null => null,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      encryptSecret: async (value): Promise<string> => `safe:v1:${value}`,
+    });
+    const secretPath = controller.secretPath();
+    const outsidePath = path.join(dataPath, 'outside-secret');
+    await (await import('node:fs/promises')).mkdir(path.dirname(secretPath), { recursive: true });
+    await writeFile(outsidePath, 'outside-value', 'utf8');
+    try {
+      await symlink(outsidePath, secretPath, 'file');
+    } catch {
+      // Windows CI may not grant symlink creation to the test user.
+      return;
+    }
+
+    await expect(controller.hasApiKey()).resolves.toBe(false);
+    await controller.saveApiKey('runtime-value');
+    await expect(readFile(outsidePath, 'utf8')).resolves.toBe('outside-value');
+    await expect(readFile(secretPath, 'utf8')).resolves.toBe('safe:v1:runtime-value');
+    await expect(stat(secretPath)).resolves.toMatchObject({ isFile: expect.any(Function) });
+  });
+
   it('holds shutdown completion until a delayed tunnel child exits', async () => {
     const child = new EventEmitter() as EventEmitter & { exitCode: number | null };
     child.exitCode = null;
@@ -50,7 +87,7 @@ describe('TunnelController lifecycle', () => {
   it('kills an owned profile child before reconciling a recorded owner with no native runtime support', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-profile-child-stop-order-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const ownerClient = path.join(dataPath, 'owner-tunnel-client.exe');
     await writeFile(ownerClient, 'owner', 'utf8');
     let ownerPath = ownerClient;
@@ -72,6 +109,10 @@ describe('TunnelController lifecycle', () => {
       getRuntimeOwnerPath: (): string => ownerPath,
       setRuntimeOwnerPath: (value): void => { ownerPath = value; },
       isExternalTunnelRunning: async (): Promise<boolean> => externalLive,
+      inspectOwnedProcess: async (): Promise<ProcessProbeResult> => child.exitCode === null
+        ? { state: 'live', processStartedAt: '2026-08-20T00:00:00.000Z' } : { state: 'gone' },
+      inspectOwnedProcessTree: async (): Promise<readonly { readonly pid: number; readonly processStartedAt: string }[]> => [],
+      terminateOwnedProcessTree: async (): Promise<void> => { child.kill(); },
       createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => ({
         runtimeAlias: (): string => 'lnwjud',
         capabilities: vi.fn(async () => ({
@@ -100,7 +141,7 @@ describe('TunnelController lifecycle', () => {
   it('retains the old client when an exited profile child leaves external runtime liveness unverified', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-profile-child-survivor-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const ownerClient = path.join(dataPath, 'owner-tunnel-client.exe');
     const nextClient = path.join(dataPath, 'next-tunnel-client.exe');
     await writeFile(ownerClient, 'owner', 'utf8');
@@ -151,7 +192,7 @@ describe('TunnelController lifecycle', () => {
   it('does not let a pending automatic start override an explicit operator stop', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-auto-stop-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const controller = new TunnelController({
       getClientPath: (): string | null => null,
       setClientPath: (): void => undefined,
@@ -166,7 +207,7 @@ describe('TunnelController lifecycle', () => {
   it('persists explicit operator Stop intent so a new controller stays stopped after app restart', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-durable-stop-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     let desiredState: 'running' | 'stopped' | null = null;
     const options = {
       getClientPath: (): string | null => null,
@@ -189,7 +230,7 @@ describe('TunnelController lifecycle', () => {
   it('enforces a durable stopped desired state on restart by stopping a surviving recorded owner runtime', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-durable-stop-survivor-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const ownerClient = path.join(dataPath, 'owner-tunnel-client.exe');
     await writeFile(ownerClient, 'owner', 'utf8');
     let ownerPath = ownerClient;
@@ -249,7 +290,7 @@ describe('TunnelController lifecycle', () => {
   it('stops a surviving persistent runtime through its recorded owner executable, not the newly selected client', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-owner-client-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const ownerClient = path.join(dataPath, 'owner-tunnel-client.exe');
     const newlySelectedClient = path.join(dataPath, 'new-tunnel-client.exe');
     await writeFile(ownerClient, 'owner', 'utf8');
@@ -296,7 +337,7 @@ describe('TunnelController lifecycle', () => {
   it('commits a client-path switch only after the active owner runtime is confirmed stopped', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-client-switch-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const ownerClient = path.join(dataPath, 'owner-tunnel-client.exe');
     const nextClient = path.join(dataPath, 'next-tunnel-client.exe');
     await writeFile(ownerClient, 'owner', 'utf8');
@@ -446,7 +487,7 @@ describe('TunnelController lifecycle', () => {
   it('clears a stale recorded owner and commits the client switch when alias absence and external liveness both prove it is gone', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-client-switch-gone-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const ownerClient = path.join(dataPath, 'owner-tunnel-client.exe');
     const nextClient = path.join(dataPath, 'next-tunnel-client.exe');
     await writeFile(ownerClient, 'owner', 'utf8');
@@ -485,9 +526,8 @@ describe('TunnelController lifecycle', () => {
   it('re-adopts a surviving native runtime after status first observes it as external', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-restart-adopt-'));
     temporaryRoots.push(dataPath);
-    const appData = path.join(dataPath, 'appdata');
-    vi.stubEnv('APPDATA', appData);
-    const profileDir = path.join(appData, 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
       control_plane: { tunnel_id: 'tunnel_fixture012345' },
@@ -542,9 +582,8 @@ describe('TunnelController lifecycle', () => {
   it('manual Start safely stops a mismatched persistent runtime before reconnecting the saved Tunnel ID', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-manual-reconfigure-'));
     temporaryRoots.push(dataPath);
-    const appData = path.join(dataPath, 'appdata');
-    vi.stubEnv('APPDATA', appData);
-    const profileDir = path.join(appData, 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
       control_plane: { tunnel_id: 'tunnel_new012345678' },
@@ -599,9 +638,8 @@ describe('TunnelController lifecycle', () => {
   it('automatic reconnect never replaces a running persistent runtime with a different Tunnel ID', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-auto-mismatch-'));
     temporaryRoots.push(dataPath);
-    const appData = path.join(dataPath, 'appdata');
-    vi.stubEnv('APPDATA', appData);
-    const profileDir = path.join(appData, 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
       control_plane: { tunnel_id: 'tunnel_new012345678' },
@@ -650,9 +688,8 @@ describe('TunnelController lifecycle', () => {
   it('manual Start restarts the same persistent Tunnel ID after credentials change', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-key-restart-'));
     temporaryRoots.push(dataPath);
-    const appData = path.join(dataPath, 'appdata');
-    vi.stubEnv('APPDATA', appData);
-    const profileDir = path.join(appData, 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
       control_plane: { tunnel_id: 'tunnel_fixture012345' },
@@ -702,7 +739,7 @@ describe('TunnelController lifecycle', () => {
   it('invalidates a cached external-live probe when the operator explicitly stops the tunnel', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-stop-cache-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     let probes = 0;
     const controller = new TunnelController({
       getClientPath: (): string | null => null,
@@ -722,9 +759,8 @@ describe('TunnelController lifecycle', () => {
   it('enriches Doctor status from a live external runtime alias without taking ownership', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-doctor-observe-'));
     temporaryRoots.push(dataPath);
-    const appData = path.join(dataPath, 'appdata');
-    vi.stubEnv('APPDATA', appData);
-    const profileDir = path.join(appData, 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
       control_plane: { tunnel_id: 'tunnel_fixture012345' },
@@ -775,8 +811,7 @@ describe('TunnelController lifecycle', () => {
   it('stops the persisted native lnwjud alias after Desktop restart when the stored Tunnel ID still matches', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-persisted-stop-'));
     temporaryRoots.push(dataPath);
-    const appData = path.join(dataPath, 'appdata');
-    vi.stubEnv('APPDATA', appData);
+    isolateTunnelProfile(dataPath);
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     await writeFile(clientPath, 'fixture');
     const capabilities: TunnelRuntimeCapabilities = {
@@ -814,7 +849,7 @@ describe('TunnelController lifecycle', () => {
   it('stops the dedicated lnwjud persistent alias even after the saved Tunnel ID was deleted', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-orphan-stop-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     await writeFile(clientPath, 'fixture');
     const capabilities: TunnelRuntimeCapabilities = {
@@ -852,7 +887,7 @@ describe('TunnelController lifecycle', () => {
   it('refuses to stop a persisted native alias when it reports a different Tunnel ID', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-persisted-mismatch-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     await writeFile(clientPath, 'fixture');
     const capabilities: TunnelRuntimeCapabilities = {
@@ -893,7 +928,7 @@ describe('TunnelController lifecycle', () => {
     expect(await readTunnelLock(fixture.profileDir)).toBeNull();
   });
 
-  it('returns promptly and retains ownership when the child rejects the stop signal', async () => {
+  it.runIf(process.platform === 'win32')('returns promptly and retains ownership when the Windows child rejects the stop signal', async () => {
     const fixture = await ownedController(() => false);
 
     await expect(fixture.controller.stop()).rejects.toThrow('did not accept stop signal');
@@ -903,7 +938,7 @@ describe('TunnelController lifecycle', () => {
     await expectSecondControllerBlocked(fixture.dataPath, fixture.owner);
   });
 
-  it('returns promptly and retains ownership when signaling the child throws', async () => {
+  it.runIf(process.platform === 'win32')('returns promptly and retains ownership when signaling the Windows child throws', async () => {
     const fixture = await ownedController(() => { throw new Error('signal failed'); });
 
     await expect(fixture.controller.stop()).rejects.toThrow('signal failed');
@@ -913,7 +948,7 @@ describe('TunnelController lifecycle', () => {
     await expectSecondControllerBlocked(fixture.dataPath, fixture.owner);
   });
 
-  it('uses the injected bound and retains ownership when no child exit is observed', async () => {
+  it.runIf(process.platform === 'win32')('uses the injected Windows graceful-stop bound and retains ownership when no child exit is observed', async () => {
     vi.useFakeTimers();
     const fixture = await ownedController(() => true, 20);
     let stoppedWith: unknown;
@@ -1017,11 +1052,34 @@ describe('TunnelController lifecycle', () => {
     expect(await readTunnelLock(fixture.profileDir)).toEqual(fixture.owner);
   });
 
+  it('uses identity-bound process-group termination on POSIX instead of ChildProcess.kill', async () => {
+    let nakedKillCalled = false;
+    let terminated = false;
+    const startedAt = '2026-08-20T00:00:00.000Z';
+    const fixture = await ownedController(() => {
+      nakedKillCalled = true;
+      return true;
+    }, 20, {
+      platform: 'linux',
+      terminateOwnedProcessTree: async (): Promise<void> => {
+        terminated = true;
+        fixture.child.exitCode = 0;
+        fixture.child.emit('exit', 0);
+      },
+      inspectOwnedProcess: async (): Promise<ProcessProbeResult> => terminated ? { state: 'gone' } : { state: 'live', processStartedAt: startedAt },
+    });
+    fixture.child.pid = 7658;
+
+    await expect(fixture.controller.stopOwned()).resolves.toMatchObject({ state: 'stopped' });
+    expect(nakedKillCalled).toBe(false);
+    expect(terminated).toBe(true);
+  });
+
   it('releases ownership when secret read or decryption fails after lock acquisition', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-secret-failure-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     await writeFile(clientPath, 'fixture', 'utf8');
@@ -1061,8 +1119,8 @@ describe('TunnelController lifecycle', () => {
   it('does not start a second tunnel when the shared lock belongs to another owner', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-controller-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await (await import('node:fs/promises')).writeFile(path.join(profileDir, 'lnwjud.tunnel.lock'), JSON.stringify({
       version: 1,
@@ -1091,8 +1149,8 @@ describe('TunnelController lifecycle', () => {
   it('keeps verified foreign ownership when the external process probe is unavailable', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-controller-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await (await import('node:fs/promises')).writeFile(path.join(profileDir, 'lnwjud.tunnel.lock'), JSON.stringify({
       version: 1,
@@ -1119,8 +1177,8 @@ describe('TunnelController lifecycle', () => {
   it('fails closed without launching when the external process probe is unavailable and no lock exists', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-controller-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     await writeFile(clientPath, 'fixture', 'utf8');
@@ -1147,8 +1205,8 @@ describe('TunnelController lifecycle', () => {
   it('does not acquire ownership or launch a duplicate when another app already has a live tunnel', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-controller-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     await writeFile(clientPath, 'fixture', 'utf8');
@@ -1172,7 +1230,7 @@ describe('TunnelController lifecycle', () => {
   it('reports an externally running tunnel as health/status evidence', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-controller-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
+    isolateTunnelProfile(dataPath);
     let running = false;
     let probeCalls = 0;
     const controller = new TunnelController({
@@ -1199,8 +1257,8 @@ describe('TunnelController lifecycle', () => {
     const server = await healthServer((_request, response) => { response.writeHead(200); response.end('live'); });
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-external-health-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     const healthUrlFile = path.join(profileDir, 'health', 'lnwjud.url');
     await (await import('node:fs/promises')).mkdir(path.dirname(healthUrlFile), { recursive: true });
     await writeFile(path.join(profileDir, 'lnwjud.yaml'), JSON.stringify({
@@ -1355,6 +1413,7 @@ interface FakeChild extends EventEmitter {
 }
 
 async function ownedController(kill: () => boolean, stopTimeoutMs = 2_000, shutdownOptions: {
+  platform?: NodeJS.Platform;
   terminateOwnedProcessTree?: (pid: number) => Promise<void>;
   inspectOwnedProcess?: (pid: number) => Promise<import('@lnwjud/mcp-server').ProcessProbeResult>;
   inspectOwnedProcessTree?: (rootPid: number) => Promise<readonly { readonly pid: number; readonly processStartedAt: string }[]>;
@@ -1368,8 +1427,8 @@ async function ownedController(kill: () => boolean, stopTimeoutMs = 2_000, shutd
 }> {
   const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-controller-'));
   temporaryRoots.push(dataPath);
-  vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-  const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+  isolateTunnelProfile(dataPath);
+  const profileDir = resolveTunnelProfileDirectory();
   const lockOwner: TunnelLockOwner = {
     pid: 7001,
     processStartedAt: '2026-08-20T00:00:00.000Z',
@@ -1383,11 +1442,17 @@ async function ownedController(kill: () => boolean, stopTimeoutMs = 2_000, shutd
     getDataPath: (): string => dataPath,
     isExternalTunnelRunning: async (): Promise<boolean> => false,
     stopTimeoutMs,
+    ...(process.platform === 'win32' ? {} : {
+      inspectOwnedProcess: async (): Promise<ProcessProbeResult> => child.exitCode === null
+        ? { state: 'live', processStartedAt: '2026-08-20T00:00:00.000Z' } : { state: 'gone' },
+      terminateOwnedProcessTree: async (): Promise<void> => { child.kill(); },
+    }),
     inspectOwnedProcessTree: async (): Promise<readonly { readonly pid: number; readonly processStartedAt: string }[]> => [],
     ...shutdownOptions,
   });
   const child = new EventEmitter() as FakeChild;
   child.exitCode = null;
+  if (process.platform !== 'win32') child.pid = 7001;
   child.kill = kill;
   const internals = controllerInternals(controller);
   internals.child = child as unknown as ChildProcess;
@@ -1446,8 +1511,8 @@ function controllerInternals(controller: TunnelController): {
 async function healthController(options: { profile: string; log: string; healthProbeTimeoutMs?: number }): Promise<{ controller: TunnelController }> {
   const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-health-'));
   temporaryRoots.push(dataPath);
-  vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-  const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+  isolateTunnelProfile(dataPath);
+  const profileDir = resolveTunnelProfileDirectory();
   await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
   await writeFile(path.join(profileDir, 'lnwjud.yaml'), options.profile, 'utf8');
   await writeFile(path.join(profileDir, 'lnwjud-tunnel.log'), options.log, 'utf8');

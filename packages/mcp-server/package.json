@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/mcp-server",
-  "version": "4.55.1",
+  "version": "4.56.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -19,6 +19,7 @@
     "@lnwjud/domain": "workspace:*",
     "@lnwjud/extensions": "workspace:*",
     "@lnwjud/permissions": "workspace:*",
+    "@lnwjud/process": "workspace:*",
     "@lnwjud/search": "workspace:*",
     "@lnwjud/shared": "workspace:*",
     "@modelcontextprotocol/server": "2.0.0",

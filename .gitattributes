@@ -1,3 +1,4 @@
 # Keep integrity-verified source and generated expectations byte-stable across OS checkouts.
 packages/capabilities/src/windows-capability-bridge.ps1 text eol=lf
 packages/capabilities/src/windows-capability-integrity.generated.ts text eol=lf
+*.sh text eol=lf

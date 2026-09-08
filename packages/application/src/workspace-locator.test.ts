@@ -29,7 +29,7 @@ describe('resolveWorkspaceForPath', () => {
   };
 
   it('requires workspaceId for relative paths', async () => {
-    const result = await resolveWorkspaceForPath(repository([drive]), undefined, 'src\\file.ts');
+    const result = await resolveWorkspaceForPath(repository([drive]), undefined, 'src\\file.ts', undefined, 'win32');
     expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
   });
 
@@ -38,6 +38,7 @@ describe('resolveWorkspaceForPath', () => {
       repository([drive, nested]),
       undefined,
       'C:\\Users\\me\\proj\\docs\\plan.md',
+      undefined, 'win32',
     );
     expect(result).toMatchObject({ ok: true, value: { id: 'project' } });
   });
@@ -47,6 +48,7 @@ describe('resolveWorkspaceForPath', () => {
       repository([drive, nested]),
       nested.id,
       'C:\\Windows\\notepad.exe',
+      undefined, 'win32',
     );
     expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
   });
@@ -57,6 +59,7 @@ describe('resolveWorkspaceForPath', () => {
       nested.id,
       'D:\\outside\\proof.txt',
       { mode: 'full_bypass', applicationApproved: true, bypassApplicationAuthorization: true, source: 'full_bypass' },
+      'win32',
     );
     expect(result).toMatchObject({ ok: true, value: { id: 'project' } });
   });
@@ -74,7 +77,20 @@ describe('resolveWorkspaceForPath', () => {
       undefined,
       path.win32.join('C:\\', 'a.txt'),
       path.win32.join('D:\\', 'a.txt'),
+      undefined, 'win32',
     );
+    expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+  });
+
+  it('does not separator-rewrite foreign persisted paths on POSIX', async () => {
+    const project: Workspace = {
+      id: 'posix-project',
+      displayName: 'Project',
+      rootPath: '/home/alice/project',
+      realRootPath: '/home/alice/project',
+      createdAt: new Date(0).toISOString(),
+    };
+    const result = await resolveWorkspaceForPath(repository([project]), undefined, 'C:\\home\\alice\\project\\file.txt', undefined, 'linux');
     expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
   });
 });

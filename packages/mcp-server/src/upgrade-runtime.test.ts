@@ -301,6 +301,7 @@ describe('upgrade runtime', () => {
   it('keeps Git worktree spawning path-scoped and dry-run first', async () => {
     const calls: unknown[] = [];
     const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
       git: {
         async run(_actor, request): Promise<ReturnType<typeof ok>> {
           calls.push(request);
@@ -328,6 +329,33 @@ describe('upgrade runtime', () => {
     expect(calls.at(-1)).toMatchObject({ args: ['worktree', 'add', '--detach', 'E:/outside/agent-1', 'main'] });
   });
 
+  it('uses POSIX worktree syntax without rewriting foreign Windows paths', async () => {
+    const calls: unknown[] = [];
+    const runtime = new UpgradeRuntimeService({
+      platform: 'linux',
+      git: {
+        async run(_actor, request): Promise<ReturnType<typeof ok>> {
+          calls.push(request);
+          return ok({ exitCode: 0, stdout: 'worktree ready', stderr: '' });
+        },
+      },
+    }, actor);
+
+    await expect(runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-linux', worktreePath: '..\\outside', ref: 'main', dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    await expect(runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-linux', worktreePath: '../outside', ref: 'main', dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+    await expect(runtime.execute('git_worktree_spawn', {
+      workspaceId: 'ws-linux', worktreePath: '.worktrees/agent-1', ref: 'main', dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: true, value: { status: 'completed', worktreePath: '.worktrees/agent-1' } });
+    expect(calls).toEqual([{ workspaceId: 'ws-linux', args: ['worktree', 'add', '--detach', '.worktrees/agent-1', 'main'] }]);
+    await expect(runtime.execute('git_worktree_remove', {
+      workspaceId: 'ws-linux', worktreePath: '.worktrees\\agent-1', dryRun: false, userConfirmed: true,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+  });
+
   it('uses trusted Full Bypass for inner always-confirm upgrade mutations', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
     await runtime.execute('hook_register', { name: 'audit', event: 'beforeTool' });
@@ -343,6 +371,7 @@ describe('upgrade runtime', () => {
   it('routes PowerPoint and Outlook upgrade tools into the Office capability', async () => {
     const calls: Record<string, unknown>[] = [];
     const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
       capabilities: {
         async execute(tool: string, request: Record<string, unknown>): Promise<ReturnType<typeof ok>> {
           expect(tool).toBe('office');

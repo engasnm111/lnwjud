@@ -22,7 +22,7 @@ function servicesWithRoot(root: string): McpApplicationServices {
 }
 
 async function withDatabase(run: (root: string, database: string) => Promise<void>): Promise<void> {
-  const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
+  const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
   const database = path.join(root, 'app.db');
   const connection = new DatabaseSync(database);
   connection.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE VIEW fancy_users AS SELECT id FROM users;\nCREATE INDEX users_name ON users(name);\nINSERT INTO users (name) VALUES (\'alice\'), (\'bob\');');
@@ -74,7 +74,7 @@ describe('DatabaseRuntimeService', () => {
 
   it('rejects a junction or symlink whose canonical SQLite target escapes the workspace', async () => {
     await withDatabase(async (root) => {
-      const outside = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-outside-')));
+      const outside = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-outside-')));
       const outsideDatabase = path.join(outside, 'outside.db');
       const connection = new DatabaseSync(outsideDatabase);
       connection.exec('CREATE TABLE outside_data (id INTEGER PRIMARY KEY);');
@@ -89,7 +89,7 @@ describe('DatabaseRuntimeService', () => {
   });
 
   it('fails closed when the file is not a SQLite database', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
+    const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
     await writeFile(path.join(root, 'fake.db'), 'this is not sqlite', 'utf8');
     const runtime = new DatabaseRuntimeService(servicesWithRoot(root), actor);
     await expect(runtime.query({ workspaceId: 'ws-1', target: 'fake.db', sql: 'SELECT 1' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });

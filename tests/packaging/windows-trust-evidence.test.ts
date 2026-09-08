@@ -43,9 +43,22 @@ describe('Windows release trust evidence', () => {
     expect(evidenceVerifier).toContain('const releaseArtifactOnly');
     expect(evidenceVerifier).toContain('verifyCapabilityBridgeArtifacts');
     expect(bridgeVerifier).toContain('packaged bridge bytes differ from staged package bytes');
-    for (const name of ['lnwjud-mcp-stdio.cjs', 'lnwjud-node.exe', 'windows-capability-bridge.ps1', 'windows-capability-bridge.sha256', 'windows-capability-bridge.integrity.json', 'rg.exe', 'tunnel-client.exe', 'cloudflared.exe', 'cloudflared-manifest.json', "relativePath: 'resources/tunnel-client/LICENSE'", "relativePath: 'resources/tunnel-client/NOTICE'", 'tunnel-client-v0.0.13-windows-amd64-licenses.txt', 'tunnel-client-v0.0.13-windows-amd64.spdx.json', 'BUNDLED_TUNNEL_CLIENT.txt']) {
+    for (const name of ['lnwjud-mcp-stdio.cmd', 'windows-capability-bridge.ps1', 'windows-capability-bridge.sha256', 'windows-capability-bridge.integrity.json', 'windows-secret-migrator.exe', 'windows-secret-migrator.sha256', 'rg.exe', 'tunnel-client.exe']) {
       expect(captureHook).toContain(name);
     }
+    expect(captureHook).not.toContain('lnwjud-mcp-stdio.cjs');
+    expect(captureHook).not.toContain('lnwjud-node.exe');
+    expect(evidenceWriter).toContain('runtimeEvidence.platform');
+    expect(evidenceVerifier).toContain('expectedArtifactNames');
+    expect(captureHook).toContain('lstat');
+    expect(captureHook).toContain('realpath(filePath)');
+    expect(evidenceWriter).toContain('lstat');
+    expect(evidenceWriter).toContain('realpath(filePath)');
+    const evidenceVerifierSource = await readFile(path.join(desktopRoot, 'scripts', 'verify-release-evidence.mjs'), 'utf8');
+    const portableManifestSource = await readFile(path.join(desktopRoot, 'scripts', 'write-portable-update-manifest.mjs'), 'utf8');
+    expect(evidenceVerifierSource).toContain('lstat');
+    expect(evidenceVerifierSource).toContain('realpath(filePath)');
+    expect(portableManifestSource).toContain('isSymbolicLink');
   });
 
   it('keeps the integrity-verified bridge bytes stable across Windows checkouts', async () => {
@@ -57,19 +70,19 @@ describe('Windows release trust evidence', () => {
   });
 
   it('uploads trust evidence from CI and verifies Authenticode when production signing is configured', async () => {
-    const ci = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
-    const release = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+    const ci = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8')).replaceAll('\r\n', '\n');
+    const release = (await readFile(path.join(repositoryRoot, '.github', 'workflows', 'release.yml'), 'utf8')).replaceAll('\r\n', '\n');
 
     expect(ci).toContain('CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}');
     expect(ci).toContain('CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}');
     expect(ci).toContain('apps/desktop/dist/installers/SHA256SUMS.txt');
     expect(ci).toContain('apps/desktop/dist/installers/PROVENANCE.json');
-    expect(release).toContain("'SHA256SUMS.txt'");
-    expect(release).toContain("'PROVENANCE.json'");
-    expect(release).toContain('Get-AuthenticodeSignature');
-    expect(release).toContain('$hasCertificate -ne $hasPassword');
-    expect(release).toContain("$signature.Status -ne 'Valid'");
-    expect(release).toContain('Publishing unsigned Windows artifact');
+    expect(ci).toContain('WINDOWS_CSC_LINK');
+    expect(ci).toContain('WINDOWS_CSC_KEY_PASSWORD');
+    expect(release).toContain('native-darwin-arm64-$sha');
+    expect(release).toContain('native-linux-arm64-$sha');
+    expect(release).toContain('RELEASE_MANIFEST.json');
+    expect(release).not.toContain('Get-AuthenticodeSignature');
     expect(release).toContain('LNWJUD_EXPECTED_COMMIT_SHA');
     expect(release).toContain('verify-release-evidence.mjs');
   });

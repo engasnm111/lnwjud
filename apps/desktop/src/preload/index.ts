@@ -4,6 +4,7 @@ import {
   pushChannels,
   type AddWorkspaceRequest,
   type AgentState,
+  type BackupRestoreNotice,
   type BackupSummary,
   type ClearLogBufferRequest,
   type ClearWorkLogRequest,
@@ -425,6 +426,7 @@ function dashboard(value: unknown): DashboardSnapshot {
     stdioStrictRoots: booleanField(value, 'stdioStrictRoots'),
     stdioAllowedRoots: stringList(value.stdioAllowedRoots),
     backups: backupSummaries(value.backups),
+    restoreNotice: backupRestoreNotice(value.restoreNotice),
     recovery: recoveryCenter(value.recovery),
     connectionModes: {
       httpUrl: nullableString(value.connectionModes.httpUrl),
@@ -445,8 +447,45 @@ function backupSummaries(value: unknown): readonly BackupSummary[] {
     if (!isRecord(entry)) throw new Error('Invalid IPC response');
     const reason = entry.reason;
     if (reason !== 'daily' && reason !== 'manual' && reason !== 'pre-update' && reason !== 'pre-migration') throw new Error('Invalid IPC response');
-    return { id: stringField(entry, 'id'), createdAt: stringField(entry, 'createdAt'), reason, sizeBytes: numberField(entry, 'sizeBytes') };
+    if (entry.platform !== undefined && (typeof entry.platform !== 'string' || entry.platform.trim().length === 0)) throw new Error('Invalid IPC response');
+    if (entry.arch !== undefined && (typeof entry.arch !== 'string' || entry.arch.trim().length === 0)) throw new Error('Invalid IPC response');
+    if (entry.dataSchemaVersion !== undefined && (typeof entry.dataSchemaVersion !== 'number' || !Number.isInteger(entry.dataSchemaVersion) || entry.dataSchemaVersion < 0)) throw new Error('Invalid IPC response');
+    if (entry.hostCompatibility !== undefined && entry.hostCompatibility !== 'same_host' && entry.hostCompatibility !== 'cross_host' && entry.hostCompatibility !== 'legacy_unknown') throw new Error('Invalid IPC response');
+    return {
+      id: stringField(entry, 'id'),
+      createdAt: stringField(entry, 'createdAt'),
+      reason,
+      sizeBytes: numberField(entry, 'sizeBytes'),
+      ...(entry.platform === undefined ? {} : { platform: entry.platform }),
+      ...(entry.arch === undefined ? {} : { arch: entry.arch }),
+      ...(entry.dataSchemaVersion === undefined ? {} : { dataSchemaVersion: entry.dataSchemaVersion }),
+      ...(entry.hostCompatibility === undefined ? {} : { hostCompatibility: entry.hostCompatibility }),
+    };
   });
+}
+
+function backupRestoreNotice(value: unknown): BackupRestoreNotice | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value) || value.schemaVersion !== 1 || typeof value.backupId !== 'string' || typeof value.restoredAt !== 'string'
+    || (value.sourcePlatform !== null && typeof value.sourcePlatform !== 'string')
+    || (value.sourceArch !== null && typeof value.sourceArch !== 'string')
+    || typeof value.targetPlatform !== 'string' || typeof value.targetArch !== 'string'
+    || (value.hostCompatibility !== 'same_host' && value.hostCompatibility !== 'cross_host' && value.hostCompatibility !== 'legacy_unknown')
+    || typeof value.incomplete !== 'boolean' || typeof value.relinkRequired !== 'boolean'
+    || !Array.isArray(value.quarantinedItems) || !value.quarantinedItems.every((entry) => typeof entry === 'string')) throw new Error('Invalid IPC response');
+  return {
+    schemaVersion: 1,
+    backupId: value.backupId,
+    restoredAt: value.restoredAt,
+    sourcePlatform: value.sourcePlatform,
+    sourceArch: value.sourceArch,
+    targetPlatform: value.targetPlatform,
+    targetArch: value.targetArch,
+    hostCompatibility: value.hostCompatibility,
+    incomplete: value.incomplete,
+    relinkRequired: value.relinkRequired,
+    quarantinedItems: value.quarantinedItems,
+  };
 }
 
 function recoveryCenter(value: unknown): DashboardSnapshot['recovery'] {

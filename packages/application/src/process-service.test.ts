@@ -96,7 +96,7 @@ describe('ProcessService', () => {
     const result = await service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, {
       executable: 'custom-tool.exe',
       args: [],
-      cwd: '..\\outside',
+      cwd: path.join('..', 'outside'),
     });
 
     expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });

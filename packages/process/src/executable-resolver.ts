@@ -7,15 +7,19 @@ export interface ExecutableResolver {
 }
 
 export class PathExecutableResolver implements ExecutableResolver {
-  public constructor(private readonly environment: NodeJS.ProcessEnv = process.env) {}
+  public constructor(
+    private readonly environment: NodeJS.ProcessEnv = process.env,
+    private readonly platform: NodeJS.Platform = process.platform,
+  ) {}
 
   public async resolve(executable: string): Promise<Result<string>> {
     if (executable.trim().length === 0) return err({ code: 'INVALID_INPUT', message: 'Executable is required', recoverable: false });
-    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? '').split(path.delimiter).filter(Boolean);
-    const hasPath = path.isAbsolute(executable) || executable.includes(path.sep) || executable.includes('/') || executable.includes('\\');
+    const pathApi = this.platform === 'win32' ? path.win32 : path.posix;
+    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? '').split(this.platform === 'win32' ? ';' : path.delimiter).filter(Boolean);
+    const hasPath = pathApi.isAbsolute(executable) || executable.includes(this.platform === 'win32' ? '\\' : '/');
     const candidates = hasPath
       ? this.withWindowsExtensions(executable)
-      : pathEntries.flatMap((entry) => this.withWindowsExtensions(path.join(entry, executable)));
+      : pathEntries.flatMap((entry) => this.withWindowsExtensions(pathApi.join(entry, executable)));
     for (const candidate of candidates) {
       try {
         await access(candidate, constants.F_OK);
@@ -28,7 +32,7 @@ export class PathExecutableResolver implements ExecutableResolver {
   }
 
   private withWindowsExtensions(candidate: string): string[] {
-    if (path.extname(candidate).length > 0 || process.platform !== 'win32') return [candidate];
+    if (path.win32.extname(candidate).length > 0 || this.platform !== 'win32') return [candidate];
     const extensions = (this.environment.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';');
     return [...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`), candidate];
   }

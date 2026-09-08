@@ -1,8 +1,8 @@
 import { realpath, stat } from 'node:fs/promises';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appError, err, ok, type Result, type WorkspaceId } from '@lnwjud/domain';
 import type { Workspace } from './workspace-types.js';
+import { isPosixMountRoot, resolveHostPath } from './filesystem-root.js';
 
 export interface WorkspaceRepository {
   list(): Promise<Workspace[]>;
@@ -11,15 +11,30 @@ export interface WorkspaceRepository {
   delete(id: WorkspaceId): Promise<void>;
 }
 
+export interface WorkspaceServiceOptions {
+  /** Test/fixture override; production composition uses the real host. */
+  readonly platform?: NodeJS.Platform;
+}
+
 export class WorkspaceService {
-  public constructor(private readonly repository: WorkspaceRepository) {}
+  public constructor(
+    private readonly repository: WorkspaceRepository,
+    private readonly options: WorkspaceServiceOptions = {},
+  ) {}
 
   public async add(displayName: string, rootPath: string): Promise<Result<Workspace>> {
     if (displayName.trim().length === 0 || rootPath.trim().length === 0) {
       return err(appError('INVALID_INPUT', 'Workspace name and root path are required'));
     }
 
-    const absoluteRootPath = path.resolve(rootPath);
+    const platform = this.options.platform ?? process.platform;
+    const absoluteRootPath = resolveHostPath(rootPath, platform);
+    if (absoluteRootPath === null) {
+      return err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'));
+    }
+    if (isPosixMountRoot(absoluteRootPath, platform)) {
+      return err(appError('INVALID_INPUT', 'A POSIX filesystem mount root cannot be registered as a project'));
+    }
     let rootStats;
     try {
       rootStats = await stat(absoluteRootPath);

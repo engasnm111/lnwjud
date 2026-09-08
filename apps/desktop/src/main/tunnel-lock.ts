@@ -5,6 +5,7 @@ import path from 'node:path';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
 
 const LOCK_FILE = 'lnwjud.tunnel.lock';
+const POSIX_MUTEX_FILE = 'lnwjud.tunnel.mutex';
 const LOCK_VERSION = 1;
 const MUTEX_WAIT_MS = 5_000;
 const ISO_UTC_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -31,6 +32,7 @@ export interface TunnelLockAlreadyOwned {
 
 export interface TunnelLockOptions {
   readonly profileDirectory: string;
+  readonly platform?: NodeJS.Platform;
   readonly owner?: TunnelLockOwner;
   readonly inspectProcess?: (pid: number) => Promise<ProcessProbeResult>;
   readonly hooks?: {
@@ -53,7 +55,7 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
     if (existing.state === 'invalid') throw new Error(`Tunnel lock has invalid owner metadata: ${lockPath}`);
     if (existing.state === 'missing') {
       await publishOwner(lockPath, owner, options.hooks);
-      return acquiredClaim(lockPath, owner, options.hooks);
+      return acquiredClaim(lockPath, owner, options.hooks, options.platform ?? process.platform);
     }
 
     const probe = await inspectProcess(existing.owner.pid);
@@ -63,8 +65,8 @@ export async function acquireTunnelLock(options: TunnelLockOptions): Promise<Tun
     }
 
     await replaceVerifiedStaleOwner(lockPath, existing.owner, owner, options.hooks);
-    return acquiredClaim(lockPath, owner, options.hooks);
-  });
+    return acquiredClaim(lockPath, owner, options.hooks, options.platform ?? process.platform);
+  }, options.platform ?? process.platform, inspectProcess, owner);
 }
 
 export async function readTunnelLock(profileDirectory: string): Promise<TunnelLockOwner | null> {
@@ -123,11 +125,11 @@ async function prepareOwnerRecord(lockPath: string, owner: TunnelLockOwner): Pro
   return temporaryPath;
 }
 
-function acquiredClaim(lockPath: string, owner: TunnelLockOwner, hooks: TunnelLockOptions['hooks']): TunnelLockAcquisition {
+function acquiredClaim(lockPath: string, owner: TunnelLockOwner, hooks: TunnelLockOptions['hooks'], platform: NodeJS.Platform): TunnelLockAcquisition {
   return {
     acquired: true,
     owner,
-    release: async (): Promise<boolean> => withTunnelLockCriticalSection(path.dirname(lockPath), () => releaseTunnelLock(lockPath, owner, hooks)),
+    release: async (): Promise<boolean> => withTunnelLockCriticalSection(path.dirname(lockPath), () => releaseTunnelLock(lockPath, owner, hooks), platform, probeProcessStart, owner),
   };
 }
 
@@ -223,7 +225,14 @@ async function currentProcessOwner(): Promise<TunnelLockOwner> {
   return { pid: process.pid, processStartedAt: probe.processStartedAt, acquiredAt: new Date().toISOString() };
 }
 
-async function withTunnelLockCriticalSection<T>(profileDirectory: string, action: () => Promise<T>): Promise<T> {
+async function withTunnelLockCriticalSection<T>(
+  profileDirectory: string,
+  action: () => Promise<T>,
+  platform: NodeJS.Platform,
+  inspectProcess: (pid: number) => Promise<ProcessProbeResult>,
+  owner: TunnelLockOwner,
+): Promise<T> {
+  if (platform !== 'win32') return withPosixCriticalSection(profileDirectory, action, inspectProcess, owner);
   const mutexName = tunnelLockMutexName(profileDirectory);
   const script = [
     "$ErrorActionPreference='Stop'",
@@ -282,6 +291,71 @@ async function withTunnelLockCriticalSection<T>(profileDirectory: string, action
     console.warn('Tunnel lock mutex cleanup failed after the authoritative action completed');
   }
   return actionResult;
+}
+
+/** Serialize lock-file mutations without a Windows named mutex on POSIX. */
+async function withPosixCriticalSection<T>(
+  profileDirectory: string,
+  action: () => Promise<T>,
+  inspectProcess: (pid: number) => Promise<ProcessProbeResult>,
+  owner: TunnelLockOwner,
+): Promise<T> {
+  const mutexPath = path.join(profileDirectory, POSIX_MUTEX_FILE);
+  const deadline = Date.now() + MUTEX_WAIT_MS;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  while (handle === undefined) {
+    try {
+      handle = await open(mutexPath, 'wx');
+      await handle.writeFile(JSON.stringify({ version: LOCK_VERSION, pid: owner.pid, processStartedAt: owner.processStartedAt }), 'utf8');
+      await handle.sync();
+    } catch (error: unknown) {
+      await handle?.close().catch(() => undefined);
+      handle = undefined;
+      if (!isAlreadyExists(error)) throw error;
+      const stale = await readPosixMutex(mutexPath);
+      if (stale === null) {
+        if (Date.now() >= deadline) throw new Error('Timed out waiting for the lnwjud tunnel lock critical section');
+        await delay(25);
+        continue;
+      }
+      const probe = await inspectProcess(stale.pid);
+      if (probe.state === 'unverifiable') throw new Error(`Tunnel lock critical section owner is unverifiable: ${probe.reason}`);
+      if (probe.state === 'live' && probe.processStartedAt === stale.processStartedAt) {
+        if (Date.now() >= deadline) throw new Error('Timed out waiting for the lnwjud tunnel lock critical section');
+        await delay(25);
+        continue;
+      }
+      // Reclaim only a verified dead or identity-changed owner. ENOENT means a
+      // competing waiter already reclaimed it; retry the atomic create.
+      await rm(mutexPath, { force: true });
+    }
+  }
+  try {
+    return await action();
+  } finally {
+    await handle.close().catch(() => undefined);
+    const current = await readPosixMutex(mutexPath);
+    if (current !== null && current.pid === owner.pid && current.processStartedAt === owner.processStartedAt) {
+      await rm(mutexPath, { force: true });
+    }
+  }
+}
+
+async function readPosixMutex(filename: string): Promise<{ readonly pid: number; readonly processStartedAt: string } | null> {
+  try {
+    const raw: unknown = JSON.parse(await readFile(filename, 'utf8'));
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+    const record = raw as Record<string, unknown>;
+    return Number.isSafeInteger(record.pid) && (record.pid as number) > 0 && typeof record.processStartedAt === 'string'
+      ? { pid: record.pid as number, processStartedAt: record.processStartedAt }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function tunnelLockMutexName(profileDirectory: string): string {

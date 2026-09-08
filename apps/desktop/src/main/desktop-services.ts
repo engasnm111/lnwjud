@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -86,15 +87,17 @@ import {
   serializeDestructiveAutoApprovalPolicy,
   serializePathList,
   serializeStringRecordSetting,
-  loadCheckpointEncryptionKey,
+  currentPlatformProfile,
+  type SecretProtector,
   type DestructiveAutoApprovalPolicy,
 } from '@lnwjud/shared';
-import { AesGcmCheckpointCipher, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupSummary } from '@lnwjud/storage';
+import { AesGcmCheckpointCipher, BACKUP_RESTORE_NOTICE_SETTING_KEY, parseBackupRestoreNotice, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupRestoreNotice as StorageBackupRestoreNotice, type BackupSummary } from '@lnwjud/storage';
 import { SqliteGoalRepository } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
-import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
+import { comparableHostPath, isDriveRoot, isMachineRootPath, resolveHostPath, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
 import {
   type AddWorkspaceRequest,
+  type BackupRestoreNotice as IpcBackupRestoreNotice,
   type BackupSummary as IpcBackupSummary,
   type AgentState,
   type AuditEventSummary,
@@ -150,6 +153,7 @@ import {
 import type { DesktopIpcServices } from './main.js';
 import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
 import { AsyncTtlCache } from './async-ttl-cache.js';
+import type { ElectronNativeCapabilityApi } from './electron-native-capability-backend.js';
 import { RequirementRegistry, type RequirementDefinition, type RequirementProbeResult } from './tool-catalog/requirement-registry.js';
 import { RemediationRegistry } from './tool-catalog/remediation-registry.js';
 import { ToolCatalogService, type ToolCatalogServiceOptions } from './tool-catalog/tool-catalog-service.js';
@@ -169,6 +173,7 @@ import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
+const BUNDLED_TUNNEL_CLIENT_VERSION = '0.0.13';
 const permissionSettingKey = 'permission_profile';
 const selectedWorkspaceSettingKey = 'selected_workspace_id';
 const activeWorkspaceIdsSettingKey = 'active_workspace_ids';
@@ -209,6 +214,10 @@ export interface DesktopRuntimeOptions {
   readonly watchToolAvailability?: boolean;
   /** Injectable only when an officially supported Tunnel OAuth provisioning contract exists. */
   readonly tunnelOAuthBackend?: TunnelOAuthProvisioningBackend;
+  /** Provider used for tunnel credentials and future secret-backed services. */
+  readonly secretProtector?: SecretProtector;
+  /** Electron main-process surface for cross-platform native UI capabilities. */
+  readonly nativeCapabilityApi?: ElectronNativeCapabilityApi;
 }
 
 export function toolAvailabilityHostSyncDisposition(
@@ -255,9 +264,12 @@ export async function autoStartPersistentTunnel(
 }
 
 export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOptions = {}): DesktopRuntime {
+  if (options.secretProtector !== undefined && options.checkpointEncryptionKey === undefined) {
+    throw new Error('Desktop runtime requires a resolved checkpoint encryption key before startup');
+  }
   const databaseFilename = path.join(dataPath, 'lnwjud.sqlite');
   const backupDirectory = path.join(dataPath, 'backups');
-  const database = new SqliteDatabase(databaseFilename, { backupDirectory });
+  const database = new SqliteDatabase(databaseFilename, { backupDirectory, platform: process.platform, arch: process.arch });
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const goalRepository = new SqliteGoalRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
@@ -269,10 +281,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const workLogViewState = new WorkLogViewState(settingsRepository);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
-  const checkpointCipher = new AesGcmCheckpointCipher(options.checkpointEncryptionKey ?? loadCheckpointEncryptionKey(dataPath));
+  const checkpointEncryptionKey = options.checkpointEncryptionKey ?? resolveTestCheckpointEncryptionKey();
+  if (checkpointEncryptionKey === undefined) {
+    throw new Error('Desktop runtime requires a checkpoint encryption key resolved by the Electron composition root');
+  }
+  const checkpointCipher = new AesGcmCheckpointCipher(checkpointEncryptionKey);
   const checkpointRepository = new SqliteCheckpointRepository(database, checkpointCipher);
-  const backupService = new SqliteBackupService(database, { backupDirectory, databaseFilename });
-  void backupService.ensureRecent().catch((error: unknown) => {
+  const backupService = new SqliteBackupService(database, { backupDirectory, databaseFilename, platform: process.platform, arch: process.arch });
+  const startupBackup = backupService.ensureRecent().catch((error: unknown) => {
     console.error(`Automatic database backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
   });
   const workspaceService = new WorkspaceService(workspaceRepository);
@@ -303,6 +319,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
     profileProvider: activePermissionProfile,
+    platform: process.platform,
   });
   const recoveryTrashRoot = path.join(dataPath, 'recovery-trash');
   const pathGuard = new WorkspacePathGuard(new SecretPolicy(), { unrestricted, trustedWorkspaceAccess: true });
@@ -332,9 +349,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const agentSwarmService = new AgentSwarmService(new SqliteAgentSwarmRepository(database), codexService);
   const capabilityRuntime = createLocalCapabilityRuntime(dataPath, async (): Promise<readonly string[]> => (
     (await workspaceRepository.list())
-      .filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath))
+      .filter((workspace) => !isMachineRootPath(workspace.realRootPath) && !isMachineRootPath(workspace.rootPath))
       .map((workspace) => workspace.realRootPath)
-  ), unrestricted, () => readSettings().capabilityRoots, () => readSettings().shellSynchronousWaitSeconds);
+  ), unrestricted, () => readSettings().capabilityRoots, () => readSettings().shellSynchronousWaitSeconds, options.nativeCapabilityApi);
   const taskCancellation = new GoalTaskCancellationService([
     { provider: 'process', cancelForGoal: processService.cancelForGoal.bind(processService) },
     { provider: 'codex', cancelForGoal: codexService.cancelForGoal.bind(codexService) },
@@ -365,6 +382,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     idleTimeoutMs: readSettings().mcpIdleTimeoutMs,
   });
   const mcpServices: McpApplicationServices = {
+    platform: process.platform,
     runtimeStatePath: path.join(dataPath, 'upgrade-runtime.json'),
     runtimeTiming: () => ({ mcpPollWaitSeconds: readSettings().mcpPollWaitSeconds }),
     localProviders: () => {
@@ -457,6 +475,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     : { decryptSecret: options.decryptTunnelSecret };
   const legacyTunnelAuthProvider = new LegacyApiKeyCredentialProvider({
     secretPath: (): string => legacyTunnelSecretPath(),
+    ...(options.secretProtector === undefined ? {} : { secretProtector: options.secretProtector }),
     ...tunnelSecretDecryptOption,
   });
   const oauthTunnelBackend = options.tunnelOAuthBackend ?? unavailableTunnelOAuthBackend();
@@ -464,6 +483,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     backend: oauthTunnelBackend,
     sessionStore: new TunnelOAuthSessionStore({
       filePath: oauthTunnelSessionPath(),
+      ...(options.secretProtector === undefined ? {} : { secretProtector: options.secretProtector }),
       ...tunnelSecretDecryptOption,
     }),
     expectedTunnelId: (): string | null => settingsRepository.get(tunnelIdentitySettingKey),
@@ -485,6 +505,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     setClientPath: (value: string): void => { settingsRepository.set(CLIENT_PATH_SETTING, value); },
     getDataPath: (): string => dataPath,
     authProvider: tunnelAuthCoordinator,
+    ...(options.secretProtector === undefined ? {} : { secretProtector: options.secretProtector }),
     getMcpServerUrl: async (): Promise<string | null> => {
       const status = await mcpLifecycle.start();
       return status.url;
@@ -508,6 +529,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     dataPath,
     getLocalMcpUrl: async (): Promise<string | null> => mcpLifecycle.status().url,
     ensureLocalMcpUrl: async (): Promise<string | null> => (await mcpLifecycle.start()).url,
+    ...(options.secretProtector === undefined ? {} : { secretProtector: options.secretProtector }),
   });
   const oauthLoginManager = new TunnelOAuthLoginManager({
     backend: oauthTunnelBackend,
@@ -607,14 +629,14 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   async function resolveManageableWorkspace(workspaceId: string): Promise<Workspace> {
     const workspace = await workspaceRepository.getAny(workspaceId);
     if (workspace === null) throw new Error('Workspace was not found');
-    if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) {
+    if (isMachineRootPath(workspace.realRootPath) || isMachineRootPath(workspace.rootPath)) {
       throw new Error('Machine-root workspaces are managed automatically and cannot be archived or deleted');
     }
     return workspace;
   }
 
   async function resolveActiveProjectWorkspaces(): Promise<readonly Workspace[]> {
-    const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+    const workspaces = (await workspaceService.list()).filter((workspace) => !isMachineRootPath(workspace.realRootPath) && !isMachineRootPath(workspace.rootPath));
     if (workspaces.length === 0) {
       settingsRepository.delete(activeWorkspaceIdsSettingKey);
       settingsRepository.delete(selectedWorkspaceSettingKey);
@@ -699,6 +721,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     const available = result.value.available !== false;
     const ready = result.value.ready !== false;
     const reason = typeof result.value.reason === 'string' ? result.value.reason : undefined;
+    if (reason === 'unsupported_platform') {
+      return { status: 'fail', detail: `${name} is unsupported on ${process.platform} (unsupported_platform)` };
+    }
     if (ready) return { status: 'pass', detail: reason ?? `${name} is ready` };
     return {
       status: available ? 'fail' : 'unknown',
@@ -740,7 +765,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       : { status: 'warn', detail: 'Configured language-server commands could not be resolved' };
   };
   const windowsSandboxRequirement = async (): Promise<RequirementProbeResult> => {
-    if (process.platform !== 'win32') return { status: 'fail', detail: 'Windows Sandbox is supported only on Windows' };
+    if (process.platform !== 'win32') return { status: 'fail', detail: 'Windows Sandbox is supported only on Windows (unsupported_platform)' };
     const root = process.env.SystemRoot ?? process.env.WINDIR;
     const executable = root === undefined ? '' : path.join(root, 'System32', 'WindowsSandbox.exe');
     return executable.length > 0 && existsSync(executable)
@@ -748,11 +773,24 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       : { status: 'warn', detail: 'Windows Sandbox feature is not installed or enabled' };
   };
   const requirementDefinitions: readonly RequirementDefinition[] = [
-    { id: 'os', required: true, summaryKey: 'requirement.os', probe: async () => ({ status: process.platform === 'win32' && process.arch === 'x64' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
+    { id: 'os', required: true, summaryKey: 'requirement.os', probe: async (): Promise<RequirementProbeResult> => { const profile = currentPlatformProfile(); return { status: profile.supportTier === 'unsupported' ? 'fail' : 'pass', detail: `${profile.family} ${profile.arch} (${profile.supportTier})` }; } },
+    {
+      id: 'secret_storage',
+      required: true,
+      summaryKey: 'requirement.secret_storage',
+      remediationId: 'configure_secret_storage',
+      probe: async (): Promise<RequirementProbeResult> => {
+        if (options.secretProtector === undefined) return { status: 'unknown', detail: 'Secure secret provider was not injected by the startup composition root' };
+        const status = await options.secretProtector.status();
+        if (status.secure) return { status: 'pass', detail: `${status.backend} secure storage is ready` };
+        return { status: status.reason === 'temporarily_unavailable' ? 'unknown' : 'fail', detail: status.reason === 'plaintext_backend' ? 'Linux keyring selected basic_text; plaintext encryption is disabled' : `Secure secret storage is unavailable (${status.backend})` };
+      },
+    },
     { id: 'database', required: true, summaryKey: 'requirement.database', probe: async () => ({ status: 'pass', detail: 'SQLite database ready' }) },
     { id: 'mcp-port', required: true, summaryKey: 'requirement.mcp_port', probe: () => requirementProbeFromDoctor(() => checkConfiguredMcpPort(mcpLifecycle.status(), mcpPort)) },
-    { id: 'platform_windows', required: false, summaryKey: 'requirement.platform_windows', probe: async () => ({ status: process.platform === 'win32' ? 'pass' : 'fail', detail: `${process.platform} ${process.arch}` }) },
-    { id: 'registered_workspace', required: false, summaryKey: 'requirement.registered_workspace', remediationId: 'add_project', probe: async () => ({ status: (await workspaceService.list()).some((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath)) ? 'pass' : 'fail' }) },
+    { id: 'platform_windows', required: false, summaryKey: 'requirement.platform_windows', probe: async () => ({ status: process.platform === 'win32' ? 'pass' : 'fail', detail: process.platform === 'win32' ? `${process.platform} ${process.arch}` : `${process.platform} ${process.arch} (unsupported_platform)` }) },
+    { id: 'platform_supported', required: false, summaryKey: 'requirement.platform_supported', probe: async (): Promise<RequirementProbeResult> => { const profile = currentPlatformProfile(); return { status: profile.supportTier === 'unsupported' ? 'fail' : 'pass', detail: `${profile.family} ${profile.arch} (${profile.supportTier})` }; } },
+    { id: 'registered_workspace', required: false, summaryKey: 'requirement.registered_workspace', remediationId: 'add_project', probe: async () => ({ status: (await workspaceService.list()).some((workspace) => !isMachineRootPath(workspace.realRootPath) && !isMachineRootPath(workspace.rootPath)) ? 'pass' : 'fail' }) },
     { id: 'active_project', required: false, summaryKey: 'requirement.active_project', remediationId: 'add_project', probe: async () => ({ status: (await resolveActiveProjectWorkspaces()).length > 0 ? 'pass' : 'fail' }) },
     { id: 'executable_git', required: false, summaryKey: 'requirement.executable_git', remediationId: 'install_git', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'git', 'warn')) },
     { id: 'executable_ripgrep', required: true, summaryKey: 'requirement.executable_ripgrep', remediationId: 'install_ripgrep', probe: () => requirementProbeFromDoctor(() => checkExecutable(executableResolver, 'rg', 'fail')) },
@@ -764,6 +802,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'windows_input', required: false, summaryKey: 'requirement.windows_input', probe: () => capabilityRequirement('input_event') },
     { id: 'windows_window', required: false, summaryKey: 'requirement.windows_window', probe: () => capabilityRequirement('window') },
     { id: 'windows_ocr', required: false, summaryKey: 'requirement.windows_ocr', probe: () => capabilityRequirement('vision') },
+    { id: 'native_accessibility', required: false, summaryKey: 'requirement.native_accessibility', probe: () => capabilityRequirement('accessibility') },
+    { id: 'native_input', required: false, summaryKey: 'requirement.native_input', probe: () => capabilityRequirement('input_event') },
+    { id: 'native_window', required: false, summaryKey: 'requirement.native_window', probe: () => capabilityRequirement('window') },
+    { id: 'native_capture', required: false, summaryKey: 'requirement.native_capture', probe: () => capabilityRequirement('vision') },
+    { id: 'native_office', required: false, summaryKey: 'requirement.native_office', probe: () => capabilityRequirement('office') },
     { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', probe: () => capabilityRequirement('office') },
     { id: 'network_access', required: false, summaryKey: 'requirement.network_access', probe: () => capabilityRequirement('web_fetch') },
     { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
@@ -842,7 +885,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
 
   async function selectWorkspaceOnly(workspaceId: string): Promise<WorkspaceSummary> {
     const workspace = await resolveWorkspaceOrThrow(workspaceId);
-    if (isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
+    if (isMachineRootPath(workspace.realRootPath) || isMachineRootPath(workspace.rootPath)) throw new Error('Machine-root workspace cannot be the Primary Project');
     await activateWorkspace(workspaceId);
     settingsRepository.set(selectedWorkspaceSettingKey, workspaceId);
     await resolveActiveProjectWorkspaces();
@@ -856,9 +899,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         .map(toWorkspaceSummary);
     },
     addWorkspace: async (request: AddWorkspaceRequest): Promise<WorkspaceSummary> => {
-      const requestedRoot = path.resolve(request.rootPath).toLowerCase();
-      const existing = (await workspaceRepository.listAll()).find((entry) => path.resolve(entry.rootPath).toLowerCase() === requestedRoot);
+      const requestedRoot = comparableHostPath(request.rootPath, process.platform);
+      if (requestedRoot === null) throw new Error('Workspace root uses a foreign host path syntax');
+      const existing = (await workspaceRepository.listAll()).find((entry) => comparableHostPath(entry.rootPath, process.platform) === requestedRoot);
       if (existing !== undefined) {
+        if (existing.archivedAt !== undefined && existing.archivedAt !== null) await assertWorkspaceRelinkable(existing);
         if (existing.archivedAt !== undefined && existing.archivedAt !== null) await workspaceRepository.restore(existing.id);
         settingsRepository.set(selectedWorkspaceSettingKey, existing.id);
         await activateWorkspace(existing.id);
@@ -894,6 +939,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         await workspaceRepository.archive(workspace.id);
         await repairSelectedWorkspace(workspace.id);
       } else if (workspace.archivedAt !== undefined && workspace.archivedAt !== null) {
+        await assertWorkspaceRelinkable(workspace);
         await workspaceRepository.restore(workspace.id);
       }
       const updated = await workspaceRepository.getAny(workspace.id);
@@ -984,6 +1030,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         stdioStrictRoots: parseBooleanSetting(settingsRepository.get(STDIO_STRICT_ROOTS_SETTING_KEY), false),
         stdioAllowedRoots: parseAllowedRoots(settingsRepository.get(STDIO_ALLOWED_ROOTS_SETTING_KEY)),
         backups: backups.map(toIpcBackupSummary),
+        restoreNotice: toIpcBackupRestoreNotice(parseBackupRestoreNotice(settingsRepository.get(BACKUP_RESTORE_NOTICE_SETTING_KEY))),
         recovery,
         connectionModes: buildConnectionModes({
           httpUrl: mcp.url,
@@ -998,6 +1045,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         tunnel,
         remoteMcp,
         settings: readSettings(),
+        hostPlatform: process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : 'win32',
         appVersion: APP_VERSION,
       };
     },
@@ -1167,6 +1215,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
     installPdfProvider: async (): Promise<PdfProviderInstallResult> => {
+      if (process.platform !== 'win32') throw new Error('The bundled PDF provider installer is available only on Windows; configure a native pdftotext provider on this host.');
       const installed = await (options.pdfProviderInstaller ?? installPdfProvider)(dataPath);
       const previous = readSettings();
       settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, installed.providerPath);
@@ -1248,20 +1297,22 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     createBackup: (reason: BackupReason = 'manual'): Promise<BackupSummary> => backupService.create(reason),
     ensureDefaultWorkspace: async (rootPath: string): Promise<string> => {
       const existing = await workspaceService.list();
-      const resolvedRoot = path.resolve(rootPath);
-      const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedRoot.toLowerCase());
-      if (matched !== undefined && !isDriveRoot(matched.realRootPath) && !isDriveRoot(matched.rootPath)) {
+      const resolvedRoot = resolveHostPath(rootPath, process.platform);
+      if (resolvedRoot === null) throw new Error('Workspace root uses a foreign host path syntax');
+      const comparableRoot = comparableHostPath(resolvedRoot, process.platform);
+      const matched = comparableRoot === null ? undefined : existing.find((workspace) => comparableHostPath(workspace.realRootPath, process.platform) === comparableRoot);
+      if (matched !== undefined && !isMachineRootPath(matched.realRootPath) && !isMachineRootPath(matched.rootPath)) {
         settingsRepository.set(selectedWorkspaceSettingKey, matched.id);
         await activateWorkspace(matched.id);
         return matched.id;
       }
-      const projects = existing.filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+      const projects = existing.filter((workspace) => !isMachineRootPath(workspace.realRootPath) && !isMachineRootPath(workspace.rootPath));
       const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
       if (selectedId !== null) {
         const selected = projects.find((workspace) => workspace.id === selectedId);
         if (selected !== undefined) { await activateWorkspace(selected.id); return selected.id; }
       }
-      if (!isDriveRoot(resolvedRoot)) {
+      if (!isMachineRootPath(resolvedRoot)) {
         const displayName = path.basename(resolvedRoot) || 'Workspace';
         const added = unwrap(await workspaceService.add(displayName, resolvedRoot), 'Workspace could not be added');
         settingsRepository.set(selectedWorkspaceSettingKey, added.id);
@@ -1278,9 +1329,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     autoStartMcp: async (): Promise<McpConnectionStatus> => {
       const envWorkspacePath = process.env.LNWJUD_WORKSPACE?.trim();
       if (envWorkspacePath !== undefined && envWorkspacePath.length > 0) {
-        const resolvedPath = path.resolve(envWorkspacePath);
+        const resolvedPath = resolveHostPath(envWorkspacePath, process.platform);
+        if (resolvedPath === null) throw new Error('LNWJUD_WORKSPACE uses a foreign host path syntax');
         const existing = await workspaceService.list();
-        const matched = existing.find((workspace) => workspace.realRootPath.toLowerCase() === resolvedPath.toLowerCase());
+        const comparablePath = comparableHostPath(resolvedPath, process.platform);
+        const matched = comparablePath === null ? undefined : existing.find((workspace) => comparableHostPath(workspace.realRootPath, process.platform) === comparablePath);
         const workspaceId = matched === undefined
           ? unwrap(await workspaceService.add(path.basename(resolvedPath) || 'Workspace', resolvedPath), 'Workspace could not be added').id
           : matched.id;
@@ -1310,15 +1363,101 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       await mcpLifecycle.close();
       await extensionsService.close().catch(() => undefined);
       await workspaceIndex.close().catch(() => undefined);
+      await startupBackup;
       database.close();
     },
   };
 }
 
+/** Direct DesktopRuntime construction is test-only; production injects safeStorage output. */
+function resolveTestCheckpointEncryptionKey(): Buffer | undefined {
+  if (process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') return undefined;
+  const encoded = process.env.LNWJUD_CHECKPOINT_KEY_BASE64?.trim();
+  if (encoded === undefined || encoded.length === 0) return undefined;
+  const key = Buffer.from(encoded, 'base64');
+  if (key.byteLength !== 32 || key.toString('base64') !== encoded) throw new Error('LNWJUD_CHECKPOINT_KEY_BASE64 must decode to 32 bytes');
+  return key;
+}
+
 function bundledTunnelClientPath(): string | null {
   const resourcesPath = (process as NodeJS.Process & { readonly resourcesPath?: string }).resourcesPath;
+  return resolveBundledTunnelClientPath({ resourcesPath });
+}
+
+export function resolveBundledTunnelClientPath(options: {
+  readonly resourcesPath?: string;
+  readonly platform?: NodeJS.Platform;
+  readonly architecture?: string;
+}): string | null {
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
+  const resourcesPath = options.resourcesPath;
   if (typeof resourcesPath !== 'string' || resourcesPath.trim().length === 0) return null;
-  return path.join(resourcesPath, 'tunnel-client', 'tunnel-client.exe');
+  if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux') return null;
+  if (architecture !== 'x64' && architecture !== 'arm64') return null;
+  const executable = platform === 'win32' ? 'tunnel-client.exe' : 'tunnel-client';
+  const candidate = path.join(resourcesPath, 'tunnel-client', executable);
+  if (!existsSync(candidate)) return null;
+  const manifestPath = path.join(path.dirname(candidate), 'BUNDLED_TUNNEL_CLIENT.json');
+  const releaseTarget = platform === 'win32' ? 'windows' : platform;
+  const releaseArch = architecture === 'x64' ? 'amd64' : 'arm64';
+  const releasePrefix = `tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-${releaseTarget}-${releaseArch}`;
+  const expectedAsset = `${releasePrefix}.zip`;
+  // The upstream ZIP is verified and provenance-bound by the build stager but
+  // is deliberately not copied into the installed app. Keep the lightweight
+  // license, SPDX, and Sigstore evidence beside the executable so runtime
+  // integrity can be checked without shipping a second copy of the archive.
+  const expectedEvidence = {
+    licenseAsset: `${releasePrefix}-licenses.txt`,
+    spdxAsset: `${releasePrefix}.spdx.json`,
+    provenanceAsset: `tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`,
+  } as const;
+  try {
+    const info = lstatSync(candidate);
+    if (!info.isFile() || info.isSymbolicLink()) return null;
+    if (realpathSync(candidate) !== candidate) return null;
+    if (platform !== 'win32' && (info.mode & 0o111) === 0) return null;
+    const manifestInfo = lstatSync(manifestPath);
+    if (!manifestInfo.isFile() || manifestInfo.isSymbolicLink() || realpathSync(manifestPath) !== manifestPath) return null;
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    const verified = manifest.verified as Record<string, unknown> | undefined;
+    if (manifest.schemaVersion !== 1
+      || manifest.product !== 'lnwjud'
+      || manifest.version !== BUNDLED_TUNNEL_CLIENT_VERSION
+      || manifest.platform !== platform
+      || manifest.arch !== architecture
+      || manifest.executable !== executable
+      || manifest.asset !== expectedAsset
+      || manifest.licenseAsset !== expectedEvidence.licenseAsset
+      || manifest.spdxAsset !== expectedEvidence.spdxAsset
+      || manifest.provenanceAsset !== expectedEvidence.provenanceAsset
+      || typeof manifest.executableSha256 !== 'string'
+      || !/^[0-9a-f]{64}$/iu.test(manifest.executableSha256)
+      || manifest.assetSha256 !== undefined && (typeof manifest.assetSha256 !== 'string' || !/^[0-9a-f]{64}$/iu.test(manifest.assetSha256))
+      || verified?.archiveSha256 !== true
+      || verified?.executableVersion !== true
+      || (platform !== 'win32' && verified?.executableBit !== true)
+      || (platform === 'win32' && verified?.executableBit !== false)) return null;
+    const bundleDirectory = path.dirname(candidate);
+    for (const evidenceName of Object.values(expectedEvidence)) {
+      if (!isTrustedBundledFile(path.join(bundleDirectory, evidenceName))) return null;
+    }
+    const bytes = readFileSync(candidate);
+    if (bytes.byteLength !== info.size) return null;
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    return digest === manifest.executableSha256.toLowerCase() ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+function isTrustedBundledFile(filePath: string): boolean {
+  try {
+    const info = lstatSync(filePath);
+    return info.isFile() && !info.isSymbolicLink() && realpathSync(filePath) === filePath;
+  } catch {
+    return false;
+  }
 }
 
 function fixtureNodeExecutable(): string {
@@ -1333,7 +1472,7 @@ async function resolveSelectedWorkspace(
   workspaceService: WorkspaceService,
   settingsRepository: SqliteSettingsRepository,
 ): Promise<Workspace | null> {
-  const workspaces = (await workspaceService.list()).filter((workspace) => !isDriveRoot(workspace.realRootPath) && !isDriveRoot(workspace.rootPath));
+  const workspaces = (await workspaceService.list()).filter((workspace) => !isMachineRootPath(workspace.realRootPath) && !isMachineRootPath(workspace.rootPath));
   if (workspaces.length === 0) return null;
   const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
   const selected = selectedId === null ? undefined : workspaces.find((workspace) => workspace.id === selectedId);
@@ -1384,7 +1523,33 @@ function toProcessSummary(processValue: ManagedProcess, workspaceId: string, log
 }
 
 function toIpcBackupSummary(value: BackupSummary): IpcBackupSummary {
-  return { id: value.id, createdAt: value.createdAt, reason: value.reason, sizeBytes: value.sizeBytes };
+  return {
+    id: value.id,
+    createdAt: value.createdAt,
+    reason: value.reason,
+    sizeBytes: value.sizeBytes,
+    ...(value.platform === undefined ? {} : { platform: value.platform }),
+    ...(value.arch === undefined ? {} : { arch: value.arch }),
+    ...(value.dataSchemaVersion === undefined ? {} : { dataSchemaVersion: value.dataSchemaVersion }),
+    ...(value.hostCompatibility === undefined ? {} : { hostCompatibility: value.hostCompatibility }),
+  };
+}
+
+function toIpcBackupRestoreNotice(value: StorageBackupRestoreNotice | null): IpcBackupRestoreNotice | null {
+  if (value === null) return null;
+  return {
+    schemaVersion: 1,
+    backupId: value.backupId,
+    restoredAt: value.restoredAt,
+    sourcePlatform: value.sourcePlatform,
+    sourceArch: value.sourceArch,
+    targetPlatform: value.targetPlatform,
+    targetArch: value.targetArch,
+    hostCompatibility: value.hostCompatibility,
+    incomplete: value.incomplete,
+    relinkRequired: value.relinkRequired,
+    quarantinedItems: value.quarantinedItems,
+  };
 }
 
 function toWorkspaceSummary(workspace: Workspace): WorkspaceSummary {
@@ -1395,12 +1560,23 @@ function toWorkspaceSummary(workspace: Workspace): WorkspaceSummary {
     realRootPath: workspace.realRootPath,
     createdAt: workspace.createdAt,
     archivedAt: workspace.archivedAt ?? null,
-    kind: isDriveRoot(workspace.realRootPath) || isDriveRoot(workspace.rootPath) ? 'machine_root' : 'project',
+    kind: isMachineRootPath(workspace.realRootPath) || isMachineRootPath(workspace.rootPath) ? 'machine_root' : 'project',
   };
 }
 
 function isGeneratedAutoMachineRoot(workspace: Workspace): boolean {
   return isDriveRoot(workspace.rootPath) && /^Local Disk [A-Z]:$/i.test(workspace.displayName.trim());
+}
+
+/** Restored cross-host registrations remain archived until the user relinks a real local directory. */
+async function assertWorkspaceRelinkable(workspace: Workspace): Promise<void> {
+  const resolved = resolveHostPath(workspace.realRootPath, process.platform);
+  if (resolved === null) throw new Error('Workspace was restored from another host; add or relink a local directory before activating it');
+  try {
+    if (!statSync(resolved).isDirectory()) throw new Error('Workspace relink target is not a directory');
+  } catch {
+    throw new Error('Workspace was restored from another host; add or relink a local directory before activating it');
+  }
 }
 
 async function buildGitSummary(
@@ -1522,9 +1698,12 @@ function buildConnectionModes(input: {
   readonly allowedRoots: readonly string[];
   readonly fullBypassAll: boolean;
 }): ConnectionModes {
-  const launcher = path.win32.basename(process.execPath).toLowerCase() === 'lnwjud.exe'
-    ? path.join(path.dirname(process.execPath), 'lnwjud-mcp-stdio.cmd')
-    : 'lnwjud-mcp-stdio.cmd';
+  const isWindows = process.platform === 'win32';
+  const launcherName = isWindows ? 'lnwjud-mcp-stdio.cmd' : 'lnwjud-mcp-stdio';
+  const executableName = isWindows ? path.win32.basename(process.execPath).toLowerCase() : path.basename(process.execPath);
+  const launcher = executableName === (isWindows ? 'lnwjud.exe' : 'lnwjud')
+    ? path.join(path.dirname(process.execPath), ...(process.platform === 'darwin' ? ['..', 'Resources'] : []), launcherName)
+    : launcherName;
   const args = [quoteCommandArgument(launcher)];
   if (input.workspaceRoot !== undefined) args.push('--workspace', quoteCommandArgument(input.workspaceRoot));
   args.push('--profile', input.profile);
@@ -1971,6 +2150,11 @@ export async function checkConfiguredMcpPort(
 }
 
 async function probeLnwjudMcpIdentity(endpoint: URL): Promise<boolean> {
+  const started = Date.now();
+  const failed = (reason: string): false => {
+    console.warn(`[Doctor] MCP identity probe failed: ${reason} after ${Date.now() - started}ms`);
+    return false;
+  };
   const identityUrl = new URL(LNWJUD_MCP_IDENTITY_PATH, endpoint.origin);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 750);
@@ -1980,14 +2164,15 @@ async function probeLnwjudMcpIdentity(endpoint: URL): Promise<boolean> {
       cache: 'no-store',
       signal: controller.signal,
     });
-    if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') return false;
+    if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') return failed(`unexpected HTTP response (${response.status})`);
     const body: unknown = await response.json();
-    return typeof body === 'object' && body !== null
+    const matches = typeof body === 'object' && body !== null
       && 'product' in body && body.product === 'lnwjud'
       && 'service' in body && body.service === 'desktop-mcp'
       && 'protocol' in body && body.protocol === 1;
-  } catch {
-    return false;
+    return matches || failed('identity document mismatch');
+  } catch (error: unknown) {
+    return failed(controller.signal.aborted ? 'timeout' : error instanceof SyntaxError ? 'invalid JSON' : 'transport error');
   } finally {
     clearTimeout(timer);
   }

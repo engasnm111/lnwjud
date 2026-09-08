@@ -4,38 +4,52 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
-import { WindowsProcessTree, type ProcessTreeTerminator } from '@lnwjud/process';
+import { createProcessTreeTerminator, type ProcessTreeTerminator } from '@lnwjud/process';
 import type { BrowserCdpProtocol, BrowserCdpTab } from './browser-cdp-backend.js';
 
 interface BrowserCdpProtocolOptions {
+  readonly platform?: NodeJS.Platform;
   readonly port?: number;
   readonly profileDir?: string;
   readonly chromeExecutable?: string;
   readonly terminator?: ProcessTreeTerminator;
   readonly terminationRetryMs?: number;
+  /** Injectable filesystem probe for deterministic platform/readiness tests. */
+  readonly executableExists?: (executable: string) => boolean;
 }
 
 export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
   public readonly port: number;
   private readonly profileDir: string;
   private readonly chromeExecutable: string | undefined;
+  private readonly platform: NodeJS.Platform;
   private readonly terminator: ProcessTreeTerminator;
   private readonly terminationRetryMs: number;
+  private readonly executableExists: (executable: string) => boolean;
 
   public constructor(options: BrowserCdpProtocolOptions = {}) {
+    this.platform = options.platform ?? process.platform;
     this.port = options.port ?? readPort(process.env.LNWJUD_BROWSER_CDP_PORT);
     this.profileDir = options.profileDir ?? process.env.LNWJUD_BROWSER_PROFILE ?? path.join(os.tmpdir(), 'lnwjud-browser-profile');
     this.chromeExecutable = options.chromeExecutable ?? process.env.LNWJUD_BROWSER_EXECUTABLE;
-    this.terminator = options.terminator ?? new WindowsProcessTree();
+    this.terminator = options.terminator ?? createProcessTreeTerminator();
     this.terminationRetryMs = Math.max(1, options.terminationRetryMs ?? 250);
+    this.executableExists = options.executableExists ?? existsSync;
   }
 
-  public async status(signal?: AbortSignal): Promise<{ readonly ready: boolean; readonly port: number }> {
+  public async status(signal?: AbortSignal): Promise<{
+    readonly ready: boolean;
+    readonly port: number;
+    readonly browserInstalled: boolean;
+    readonly readinessReason: 'browser_ready' | 'browser_not_installed' | 'browser_not_running' | 'probe_failed';
+  }> {
+    const executable = this.findChromeExecutable();
+    if (executable === undefined) return { ready: false, port: this.port, browserInstalled: false, readinessReason: 'browser_not_installed' };
     try {
       const response = await fetch(this.endpoint('/json/version'), signal === undefined ? undefined : { signal });
-      return { ready: response.ok, port: this.port };
+      return { ready: response.ok, port: this.port, browserInstalled: true, readinessReason: response.ok ? 'browser_ready' : 'browser_not_running' };
     } catch {
-      return { ready: false, port: this.port };
+      return { ready: false, port: this.port, browserInstalled: true, readinessReason: 'browser_not_running' };
     }
   }
 
@@ -87,7 +101,7 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
         '--no-default-browser-check',
         ...(url === undefined ? [] : [url]),
       ];
-      const child = spawn(executable, args, { shell: false, windowsHide: true, detached: false, stdio: 'ignore' });
+      const child = spawn(executable, args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: 'ignore' });
       return this.waitForLaunch(child, signal);
     } catch {
       return err(appError('INTERNAL_ERROR', 'Chrome could not be started', true));
@@ -125,8 +139,27 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
   }
 
   private findChromeExecutable(): string | undefined {
-    if (this.chromeExecutable !== undefined && this.chromeExecutable.trim().length > 0) return this.chromeExecutable;
-    if (process.platform !== 'win32') return undefined;
+    if (this.chromeExecutable !== undefined && this.chromeExecutable.trim().length > 0) {
+      return this.executableExists(this.chromeExecutable) ? this.chromeExecutable : undefined;
+    }
+    if (this.platform === 'darwin') {
+      const candidates = [
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+        path.join(process.env.HOME ?? '', 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+        path.join(process.env.HOME ?? '', 'Applications', 'Microsoft Edge.app', 'Contents', 'MacOS', 'Microsoft Edge'),
+      ];
+      return candidates.find((candidate) => candidate.length > 0 && this.executableExists(candidate));
+    }
+    if (this.platform === 'linux') {
+      const candidates = [
+        '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium',
+        '/usr/bin/chromium-browser', '/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable',
+        path.join(process.env.HOME ?? '', '.local', 'bin', 'google-chrome'),
+      ];
+      return candidates.find((candidate) => candidate.length > 0 && this.executableExists(candidate));
+    }
+    if (this.platform !== 'win32') return undefined;
     const localAppData = process.env.LOCALAPPDATA;
     const programFiles = process.env.ProgramFiles;
     const programFilesX86 = process.env['ProgramFiles(x86)'];
@@ -138,7 +171,7 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
       programFiles === undefined ? undefined : path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
       programFilesX86 === undefined ? undefined : path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     ];
-    return candidates.find((candidate): candidate is string => candidate !== undefined && existsSync(candidate));
+    return candidates.find((candidate): candidate is string => candidate !== undefined && this.executableExists(candidate));
   }
 }
 

@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
-import path from 'node:path';
 import {
   appError,
   err,
@@ -12,6 +11,7 @@ import {
   type Result,
 } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
+import { hostPathApi, isAbsoluteHostPath, isHostPathWithin, resolveHostPath } from '@lnwjud/workspace';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
@@ -31,12 +31,15 @@ export interface DocumentRuntimeOptions {
   readonly pdfProvider?: string;
   /** Injectable for tests: runs the provider with argv and returns stdout. */
   readonly pdfRunner?: (provider: string, args: readonly string[], signal?: AbortSignal) => Promise<Result<string>>;
+  /** Test/fixture override; production uses the actual host platform. */
+  readonly platform?: NodeJS.Platform;
 }
 
 export class DocumentRuntimeService {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly pdfProviderOverride: string | undefined;
   private readonly pdfRunner: (provider: string, args: readonly string[], signal?: AbortSignal) => Promise<Result<string>>;
+  private readonly platform: NodeJS.Platform;
   private providerCache: string | null | undefined;
 
   public constructor(
@@ -47,6 +50,7 @@ export class DocumentRuntimeService {
     this.environment = options.environment ?? process.env;
     this.pdfProviderOverride = options.pdfProvider;
     this.pdfRunner = options.pdfRunner ?? runPdfProvider;
+    this.platform = options.platform ?? process.platform;
   }
 
   public async extractTables(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
@@ -271,16 +275,17 @@ export class DocumentRuntimeService {
     const settingsProvider = this.services.localProviders?.().pdfProvider;
     const configured = readString(settingsProvider) ?? readString(this.environment[PROVIDER_ENV]);
     if (configured !== undefined) {
-      const resolved = path.resolve(configured);
-      this.providerCache = existsSync(resolved) ? resolved : null;
+      const resolved = resolveHostPath(configured, this.platform);
+      this.providerCache = resolved !== null && existsSync(resolved) ? resolved : null;
       return this.providerCache;
     }
     if (this.pdfProviderOverride !== undefined) {
-      this.providerCache = existsSync(this.pdfProviderOverride) ? this.pdfProviderOverride : null;
+      const resolved = resolveHostPath(this.pdfProviderOverride, this.platform);
+      this.providerCache = resolved !== null && existsSync(resolved) ? resolved : null;
       return this.providerCache;
     }
     for (const candidate of PROVIDER_CANDIDATES) {
-      const resolved = lookupOnPath(candidate, this.environment.PATH);
+      const resolved = lookupOnPath(candidate, this.environment.PATH, this.platform);
       if (resolved !== null) {
         this.providerCache = resolved;
         return resolved;
@@ -304,22 +309,31 @@ export class DocumentRuntimeService {
     if (!root.ok) return root;
     let canonicalRoot: string;
     try {
-      canonicalRoot = path.win32.normalize(await realpath(root.value));
+      const resolvedRoot = resolveHostPath(root.value, this.platform);
+      if (resolvedRoot === null) return err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'));
+      canonicalRoot = await realpath(resolvedRoot);
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root could not be resolved'));
     }
     // Windows can expose the same physical location under an 8.3 short path
     // while realpath() returns the long spelling. Do not make a lexical
     // containment decision until the candidate (or its parent) is canonical.
-    const absoluteRequest = path.win32.isAbsolute(requested);
-    const candidate = absoluteRequest ? path.win32.normalize(requested) : path.win32.join(canonicalRoot, requested);
+    if (this.platform !== 'win32' && requested.includes('\\')) {
+      return err(appError('INVALID_INPUT', `Document path uses a foreign host syntax: ${requested}`));
+    }
+    const api = hostPathApi(this.platform);
+    const absoluteRequest = isAbsoluteHostPath(requested, this.platform);
+    const candidate = absoluteRequest
+      ? resolveHostPath(requested, this.platform)
+      : resolveHostPath(api.join(canonicalRoot, requested), this.platform);
+    if (candidate === null) return err(appError('INVALID_INPUT', `Document path uses a foreign host syntax: ${requested}`));
     const allowOutsideAbsolute = absoluteRequest && isFullBypassAuthorization(authorization);
 
     if (mustExist) {
       if (!existsSync(candidate)) return err(appError('FILE_NOT_FOUND', `File was not found: ${candidate}`));
       try {
-        const canonical = path.win32.normalize(await realpath(candidate));
-        return allowOutsideAbsolute || isWithin(canonicalRoot, canonical)
+        const canonical = await realpath(candidate);
+        return allowOutsideAbsolute || isHostPathWithin(canonicalRoot, canonical, this.platform)
           ? ok(canonical)
           : err(appError('PATH_OUTSIDE_WORKSPACE', `Document path resolves outside the registered workspace: ${requested}`));
       } catch {
@@ -327,11 +341,11 @@ export class DocumentRuntimeService {
       }
     }
 
-    const parent = path.win32.dirname(candidate);
+    const parent = api.dirname(candidate);
     try {
-      const canonicalParent = path.win32.normalize(await realpath(parent));
-      if (!allowOutsideAbsolute && !isWithin(canonicalRoot, canonicalParent)) return err(appError('PATH_OUTSIDE_WORKSPACE', `Document target resolves outside the registered workspace: ${requested}`));
-      return ok(path.win32.join(canonicalParent, path.win32.basename(candidate)));
+      const canonicalParent = await realpath(parent);
+      if (!allowOutsideAbsolute && !isHostPathWithin(canonicalRoot, canonicalParent, this.platform)) return err(appError('PATH_OUTSIDE_WORKSPACE', `Document target resolves outside the registered workspace: ${requested}`));
+      return ok(api.join(canonicalParent, api.basename(candidate)));
     } catch {
       return err(appError('FILE_NOT_FOUND', `Document target parent was not found: ${parent}`));
     }
@@ -345,16 +359,19 @@ export class DocumentRuntimeService {
     const rootPath = typeof (info.value as { realRootPath?: unknown }).realRootPath === 'string'
       ? (info.value as { realRootPath: string }).realRootPath
       : undefined;
-    return rootPath === undefined
-      ? err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true))
-      : ok(path.win32.normalize(rootPath));
+    if (rootPath === undefined) return err(appError('INTERNAL_ERROR', 'Workspace root could not be resolved', true));
+    const resolved = resolveHostPath(rootPath, this.platform);
+    return resolved === null
+      ? err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'))
+      : ok(resolved);
   }
 }
 
-function lookupOnPath(executable: string, pathValue: string | undefined): string | null {
-  const directories = (pathValue ?? '').split(path.delimiter).filter((directory) => directory.trim().length > 0);
+function lookupOnPath(executable: string, pathValue: string | undefined, platform: NodeJS.Platform): string | null {
+  const api = hostPathApi(platform);
+  const directories = (pathValue ?? '').split(api.delimiter).filter((directory) => directory.trim().length > 0);
   for (const directory of directories) {
-    const candidate = path.join(directory, executable);
+    const candidate = api.join(directory, executable);
     if (existsSync(candidate)) return candidate;
   }
   return null;
@@ -399,14 +416,6 @@ function unavailable(tool: string, reason: string, requirements: readonly string
     reason, requirements,
     primitiveFallbacks: ['read_file', 'search_text', 'workspace_tree'],
   });
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.win32.relative(root.toLowerCase(), candidate.toLowerCase());
-  if (relative === '') return true;
-  if (path.win32.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.win32.sep);
-  return firstSegment !== '..';
 }
 
 function readString(value: unknown): string | undefined {

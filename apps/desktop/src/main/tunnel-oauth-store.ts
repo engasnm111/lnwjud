@@ -1,6 +1,7 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
+import type { SecretProtector } from '@lnwjud/shared';
+import { readRegularSecret, writeSecretAtomically } from './secret-file.js';
 
 export interface TunnelOAuthStoredSession {
   readonly schemaVersion: 1;
@@ -16,23 +17,26 @@ export interface TunnelOAuthStoredSession {
 
 export interface TunnelOAuthSessionStoreOptions {
   readonly filePath: string;
+  readonly secretProtector?: SecretProtector;
   readonly encryptSecret?: (plainText: string) => Promise<string>;
   readonly decryptSecret?: (cipherText: string) => Promise<string>;
 }
 
-/** Stores OAuth refresh/session secrets only inside a DPAPI-encrypted blob. */
+/** Stores OAuth refresh/session secrets only inside the injected secure envelope. */
 export class TunnelOAuthSessionStore {
   public constructor(private readonly options: TunnelOAuthSessionStoreOptions) {}
 
   public async read(): Promise<TunnelOAuthStoredSession | null> {
     let encrypted: string;
     try {
-      encrypted = await readFile(this.options.filePath, 'utf8');
+      encrypted = await readRegularSecret(this.options.filePath);
     } catch {
       return null;
     }
     if (encrypted.trim().length === 0) return null;
-    const plain = await (this.options.decryptSecret?.(encrypted) ?? unprotectTunnelSecret(encrypted));
+    const plain = this.options.secretProtector === undefined
+      ? await (this.options.decryptSecret?.(encrypted) ?? Promise.reject(new Error('Secure secret provider was not injected before reading the OAuth session')))
+      : (await this.options.secretProtector.decrypt('tunnel_api_key', encrypted)).plainText;
     const parsed: unknown = JSON.parse(plain);
     return validateStoredSession(parsed);
   }
@@ -40,8 +44,11 @@ export class TunnelOAuthSessionStore {
   public async write(session: TunnelOAuthStoredSession): Promise<void> {
     const validated = validateStoredSession(session);
     await mkdir(path.dirname(this.options.filePath), { recursive: true });
-    const encrypted = await (this.options.encryptSecret?.(JSON.stringify(validated)) ?? protectTunnelSecret(JSON.stringify(validated)));
-    await writeFile(this.options.filePath, encrypted, 'utf8');
+    const serialized = JSON.stringify(validated);
+    const encrypted = this.options.secretProtector === undefined
+      ? await (this.options.encryptSecret?.(serialized) ?? Promise.reject(new Error('Secure secret provider was not injected before saving the OAuth session')))
+      : await this.options.secretProtector.encrypt('tunnel_api_key', serialized);
+    await writeSecretAtomically(this.options.filePath, encrypted);
   }
 
   public async clear(): Promise<void> {

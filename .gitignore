@@ -10,7 +10,12 @@ build/
 apps/desktop/build/*.cjs
 apps/desktop/build/*.cmd
 apps/desktop/build/*.mjs
+apps/desktop/build/*.sh
 apps/desktop/build/*.exe
+native/linux-host/target/
+native/macos-host/.build/
+native/windows-secret-migrator/bin/
+native/windows-secret-migrator/obj/
 *.tsbuildinfo
 *.tsbuildinfo.*
 *.last-run.json
@@ -65,6 +70,7 @@ docs/architecture/*
 !docs/architecture/MUTATION_SAFETY_MATRIX.md
 !docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md
 !docs/architecture/PERSISTENT_OPENAI_TUNNEL_RUNTIME.md
+!docs/architecture/PLATFORM_SUPPORT.md
 !docs/roadmap/
 docs/roadmap/*
 !docs/roadmap/2026-08-25-v4.11.0-persistent-openai-tunnel-runtime-plan.md
@@ -76,8 +82,13 @@ docs/development/*
 !docs/development/RELEASE_CHECKLIST.md
 !docs/development/WINDOWS_DEFENDER_FALSE_POSITIVE.md
 !docs/development/SCHEDULED_CONTINUATION_CAPABILITY_EVIDENCE.md
+!docs/NATIVE_PROVIDER_DEVELOPMENT.md
+!docs/INSTALL_MACOS.md
+!docs/INSTALL_LINUX.md
 apps/desktop/build/packaged-runtime-evidence.json
+apps/desktop/build/platform-verification-*.json
 apps/desktop/build/capability-bridge/
+apps/desktop/build/native-host/
 !docs/benchmarks/
 docs/benchmarks/*
 !docs/benchmarks/BASELINE.md

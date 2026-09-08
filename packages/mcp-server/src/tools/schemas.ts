@@ -550,6 +550,8 @@ export const schedulerCapabilitySchema = z.object({
   arguments: z.array(z.string().max(2_048)).max(64).optional(),
   schedule: z.string().regex(/^[A-Z]{1,16}$/i).optional(),
   start_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  weekday: z.number().int().min(0).max(6).optional(),
   ...capabilityRequestSchema,
 }).strict();
 

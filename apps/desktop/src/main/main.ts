@@ -1,7 +1,7 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, safeStorage, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
-import { access } from 'node:fs/promises';
+import { access, lstat, readFile } from 'node:fs/promises';
 import { autoUpdater } from 'electron-updater';
 import {
   APP_NAME,
@@ -64,8 +64,10 @@ import {
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
 import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
-import { applyPendingSqliteRestoreSync } from '@lnwjud/storage';
+import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
+import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
+import { migrateLegacyWindowsSecrets } from './legacy-secret-migration.js';
 import { installPdfProvider } from './pdf-provider-installer.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
@@ -76,21 +78,25 @@ import { confirmTunnelStopForUpdate, UpdateInstallCoordinator, updateInstallNeed
 import { UpdateCheckScheduler } from './update-check-scheduler.js';
 import {
   configureUpdaterForDistribution,
+  configureUpdaterForPlatform,
   currentPortableExecutablePath,
   detectWindowsDistribution,
+  detectUpdaterDistribution,
   launchPortableReplacement,
   preparePortableReplacement,
 } from './portable-update.js';
-import { windowsCompatibilityProfile } from './windows-compatibility.js';
+import { platformCompatibilityProfile } from './platform-compatibility.js';
 import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
 import { CrashDiagnosticsRecorder, RendererRecoveryPolicy } from './crash-recovery.js';
-import { decryptV3WindowsSafeStorageSecretIfPresent, loadV3CheckpointKeyIfPresent } from './checkpoint-key-compat.js';
-import { unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
+import { decryptV3WindowsSafeStorageSecretIfPresent } from './checkpoint-key-compat.js';
 import { isMutationApprovalResponse, mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
+import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
+import type { ElectronNativeCapabilityApi, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
+import { configureLinuxAutostart } from './linux-autostart.js';
 
 export interface DesktopIpcServices {
   listWorkspaces(): Promise<IpcResponseMap[typeof ipcChannels.listWorkspaces]>;
@@ -247,7 +253,7 @@ const defaultDesktopServices: DesktopIpcServices = {
     stdioAllowedRoots: [],
     backups: [],
     recovery: { trashRoot: null, trashItems: [], checkpoints: [] },
-    connectionModes: { httpUrl: null, stdioCommand: 'lnwjud-mcp-stdio.cmd --profile full' },
+    connectionModes: { httpUrl: null, stdioCommand: defaultStdioCommand('full') },
     workLog: [],
     inFlight: [],
     tunnel: emptyTunnel,
@@ -551,10 +557,11 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     const window = getMainWindow();
     if (window === null) return { clientPath: null };
+    const isWindows = process.platform === 'win32';
     const result = await dialog.showOpenDialog(window, {
-      title: 'Select tunnel-client.exe',
+      title: isWindows ? 'Select tunnel-client.exe' : 'Select tunnel-client',
       properties: ['openFile'],
-      filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }],
+      ...(isWindows ? { filters: [{ name: 'OpenAI Secure MCP Tunnel client', extensions: ['exe'] }] } : {}),
     });
     return { clientPath: result.canceled ? null : (result.filePaths[0] ?? null) };
   });
@@ -603,6 +610,7 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     const request = parseOpenToolSetupTargetRequest(payload);
     if (request.target === 'windows_optional_features') {
+      if (process.platform !== 'win32') throw new Error('Windows Optional Features are unavailable on this platform');
       const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows';
       const openError = await shell.openPath(path.join(windowsRoot, 'System32', 'OptionalFeatures.exe'));
       if (openError.length > 0) throw new Error(`Could not open Windows Optional Features: ${openError}`);
@@ -616,6 +624,9 @@ export function registerIpcHandlers(
   ipcMain.handle(ipcChannels.copyToolCommand, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const request = parseCopyToolCommandRequest(payload);
+    if (request.commandId === 'enable_windows_sandbox' && process.platform !== 'win32') {
+      throw new Error('Windows Sandbox is unavailable on this platform');
+    }
     const command = COPY_COMMANDS[request.commandId as keyof typeof COPY_COMMANDS];
     if (command === undefined) throw new Error('Unknown tool command id');
     clipboard.writeText(command);
@@ -1136,7 +1147,8 @@ let updateInstallConfirmationPending = false;
 let updateCheckScheduler: UpdateCheckScheduler | null = null;
 let pendingUpdateCheckSource: 'automatic' | 'tray' | 'renderer' | null = null;
 const windowsDistribution = detectWindowsDistribution(app.isPackaged);
-const windowsCompatibility = windowsCompatibilityProfile(process.platform, os.release(), process.arch);
+const updaterDistribution = detectUpdaterDistribution(app.isPackaged, process.platform, process.env);
+const platformCompatibility = platformCompatibilityProfile(process.platform, os.release(), process.arch);
 let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
 let crashDiagnostics: CrashDiagnosticsRecorder | null = null;
 const rendererRecoveryPolicy = new RendererRecoveryPolicy();
@@ -1410,14 +1422,15 @@ function bootstrapMcpStdio(): void {
   app.commandLine.appendSwitch('disable-software-rasterizer');
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
+    assertSupportedPlatform();
     prependBundledRuntimeToolsToPath();
-    const checkpointEncryptionKey = loadV3CheckpointKeyIfPresent(dataPath, safeStorage);
+    const secrets = await resolveDesktopRuntimeSecrets(dataPath);
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestNativeMutationApproval,
-      decryptTunnelSecret: decryptTunnelSecretCompat,
+      nativeCapabilityApi: createElectronNativeCapabilityApi(() => null),
+      ...secrets,
       watchToolAvailability: true,
-      ...(checkpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey }),
     });
     desktopRuntime = runtime;
     const workspacePath = readArgValue('--workspace')
@@ -1461,7 +1474,7 @@ function bootstrapMcpStdio(): void {
       }
     });
   }).catch((error: unknown) => {
-    process.stderr.write('lnwjud MCP stdio startup failed: ' + (error instanceof Error ? error.message : 'unknown error') + '\n');
+    process.stderr.write(`lnwjud MCP stdio startup failed: ${error instanceof Error ? error.message : 'unknown error'}\n`);
     app.quit();
   });
   app.on('window-all-closed', () => {
@@ -1474,12 +1487,21 @@ function bootstrapMcpStdio(): void {
 
 function applyDesktopUserSettings(settings: UserSettings): void {
   desktopUserSettings = settings;
-  if (process.platform === 'win32' && app.isPackaged) {
+  if ((process.platform === 'win32' || process.platform === 'darwin') && app.isPackaged) {
     try {
-      app.setLoginItemSettings({ openAtLogin: settings.launchAtStartup, path: process.execPath });
+      app.setLoginItemSettings({
+        openAtLogin: settings.launchAtStartup,
+        path: process.execPath,
+        ...(process.platform === 'darwin' ? { openAsHidden: settings.startMinimized } : {}),
+      });
     } catch (error: unknown) {
-      console.error(`Could not update Windows startup setting: ${error instanceof Error ? error.message : 'unknown error'}`);
+      console.error(`Could not update ${process.platform} startup setting: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
+  }
+  if (process.platform === 'linux' && app.isPackaged) {
+    void configureLinuxAutostart({ executablePath: process.execPath, enabled: settings.launchAtStartup }).catch((error: unknown) => {
+      console.error(`Could not update Linux startup setting: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
   }
   if (autoUpdaterInitialized) {
     autoUpdater.autoDownload = settings.updateAutoDownload;
@@ -1504,8 +1526,13 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePackagedOnly, canInstall: false });
     return;
   }
+  if (updaterDistribution === 'unsupported') {
+    patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePlatform, canInstall: false });
+    return;
+  }
   try {
     configureUpdaterForDistribution(autoUpdater, windowsDistribution);
+    configureUpdaterForPlatform(autoUpdater, updaterDistribution);
     autoUpdater.autoDownload = desktopUserSettings.updateAutoDownload;
     autoUpdater.autoInstallOnAppQuit = false;
     updateInstallCoordinator = new UpdateInstallCoordinator({
@@ -1515,7 +1542,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
         try {
           if ((await runtime.services.getTunnelStatus()).state === 'running') return true;
           try {
-            await access(path.join(process.env.APPDATA ?? app.getPath('appData'), 'tunnel-client', 'lnwjud.tunnel.lock'));
+            await access(path.join(resolveTunnelProfileDirectory(), 'lnwjud.tunnel.lock'));
             return true;
           } catch (error: unknown) {
             return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : 'unverifiable';
@@ -1525,7 +1552,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
         }
       },
       sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => {
-        const snapshot = await readSharedActivitySnapshot({ profileDirectory: path.join(process.env.APPDATA ?? app.getPath('appData'), 'tunnel-client') });
+        const snapshot = await readSharedActivitySnapshot({ profileDirectory: resolveTunnelProfileDirectory() });
         return snapshot.state === 'available'
           ? { state: 'available', activeCallCount: snapshot.activeCount, revision: snapshot.revision, ownerKey: snapshot.ownerKey }
           : { state: snapshot.state, reason: snapshot.reason };
@@ -1687,35 +1714,149 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
   }
 }
 
-async function decryptTunnelSecretCompat(cipherText: string): Promise<string> {
-  const v3Secret = decryptV3WindowsSafeStorageSecretIfPresent(cipherText, safeStorage);
-  if (v3Secret !== undefined) return v3Secret.toString('utf8');
-  return unprotectTunnelSecret(cipherText);
+async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
+  readonly checkpointEncryptionKey: Buffer;
+  readonly secretProtector: SafeStorageSecretProtector;
+}> {
+  const secretProtector = new SafeStorageSecretProtector({ api: safeStorage, platform: process.platform });
+  const status = await secretProtector.status();
+  if (!status.secure) {
+    throw new Error(status.reason === 'plaintext_backend'
+      ? 'Secure secret storage is unavailable: Linux is using the basic_text backend'
+      : `Secure secret storage is unavailable (${status.backend})`);
+  }
+  await migrateV3SafeStorageSecrets(dataPath, secretProtector);
+  await migrateLegacyWindowsSecrets({
+    platform: process.platform,
+    checkpointPath: path.join(dataPath, 'checkpoint-master.key'),
+    tunnelSecretPath: path.join(resolveTunnelProfileDirectory(), TUNNEL_SECRET_FILE_NAME),
+    secretProtector,
+  });
+  const checkpointKey = await new CheckpointKeyStore({
+    filePath: path.join(dataPath, 'checkpoint-master.key'),
+    secretProtector,
+  }).loadOrCreate();
+  return { checkpointEncryptionKey: checkpointKey, secretProtector };
 }
 
-function createNativeDesktopRuntime(dataPath: string): DesktopRuntime {
-  const checkpointEncryptionKey = loadV3CheckpointKeyIfPresent(dataPath, safeStorage);
+async function migrateV3SafeStorageSecrets(dataPath: string, secretProtector: SafeStorageSecretProtector): Promise<void> {
+  if (process.platform !== 'win32') return;
+  const checkpointPath = path.join(dataPath, 'checkpoint-master.key');
+  const checkpointEnvelope = await readTrustedSecretFile(checkpointPath);
+  if (checkpointEnvelope !== null && checkpointEnvelope.trim().startsWith('lnwjud-secret:v3:')) {
+    const key = decryptV3WindowsSafeStorageSecretIfPresent(checkpointEnvelope, safeStorage);
+    if (key === undefined || key.byteLength !== 32) throw new Error('Legacy v3 checkpoint secret has an invalid key length');
+    await atomicWrite(checkpointPath, await secretProtector.encrypt('checkpoint_master_key', key.toString('base64')));
+  }
+
+  const tunnelPath = path.join(resolveTunnelProfileDirectory(), TUNNEL_SECRET_FILE_NAME);
+  const tunnelEnvelope = await readTrustedSecretFile(tunnelPath);
+  if (tunnelEnvelope === null || !tunnelEnvelope.trim().startsWith('lnwjud-secret:v3:')) return;
+  const secret = decryptV3WindowsSafeStorageSecretIfPresent(tunnelEnvelope, safeStorage);
+  if (secret === undefined) return;
+  await atomicWrite(tunnelPath, await secretProtector.encrypt('tunnel_api_key', secret.toString('utf8')));
+}
+
+async function readTrustedSecretFile(filePath: string): Promise<string | null> {
+  try {
+    const metadata = await lstat(filePath);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error(`Protected secret file is not a trusted regular file: ${filePath}`);
+    return await readFile(filePath, 'utf8');
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function defaultStdioCommand(profile: PermissionProfileName): string {
+  const launcher = process.platform === 'win32' ? 'lnwjud-mcp-stdio.cmd' : 'lnwjud-mcp-stdio';
+  return `${launcher} --profile ${profile}`;
+}
+
+async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRuntime> {
+  const secrets = await resolveDesktopRuntimeSecrets(dataPath);
   return createDesktopRuntime(dataPath, {
+    ...secrets,
+    nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
     hostMutationApprovalProvider: requestNativeMutationApproval,
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
     }),
-    decryptTunnelSecret: decryptTunnelSecretCompat,
-    ...(checkpointEncryptionKey === undefined ? {} : { checkpointEncryptionKey }),
+    watchToolAvailability: true,
   });
 }
 
-function bootstrapDesktop(): void {
-  if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
-  const dataPath = configureDataPath();
+function createElectronNativeCapabilityApi(windowProvider: () => BrowserWindow | null): ElectronNativeCapabilityApi {
+  return {
+    getDisplays: (): readonly NativeDisplayMetadata[] => {
+      try {
+        return screen.getAllDisplays().map((display) => ({
+          id: display.id,
+          bounds: display.bounds,
+          workArea: display.workArea,
+          scaleFactor: display.scaleFactor,
+          rotation: display.rotation,
+          label: display.label,
+        }));
+      } catch {
+        return [];
+      }
+    },
+    showNotification: (title, body): void => {
+      if (!Notification.isSupported()) throw new Error('Desktop notifications are not supported by this session');
+      new Notification({ title, body }).show();
+    },
+    showOpenDialog: async (options: NativeDialogOptions): Promise<NativeDialogResult> => {
+      const owner = windowProvider();
+      const electronOptions = toElectronOpenDialogOptions(options);
+      return owner === null ? dialog.showOpenDialog(electronOptions) : dialog.showOpenDialog(owner, electronOptions);
+    },
+    showSaveDialog: async (options: NativeDialogOptions): Promise<NativeDialogResult> => {
+      const owner = windowProvider();
+      const electronOptions = toElectronSaveDialogOptions(options);
+      return owner === null ? dialog.showSaveDialog(electronOptions) : dialog.showSaveDialog(owner, electronOptions);
+    },
+    readClipboardText: () => clipboard.readText(),
+    writeClipboardText: (value) => clipboard.writeText(value),
+    readClipboardImageBase64: (): string | null => {
+      const image = clipboard.readImage();
+      return image.isEmpty() ? null : image.toPNG().toString('base64');
+    },
+    writeClipboardImageBase64: (value) => clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(value, 'base64'))),
+    hasWindow: () => windowProvider() !== null,
+  };
+}
+
+function toElectronOpenDialogOptions(options: NativeDialogOptions): Electron.OpenDialogOptions {
+  const result: Electron.OpenDialogOptions = {};
+  if (options.title !== undefined) result.title = options.title;
+  if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
+  if (options.filters !== undefined) result.filters = options.filters.map((filter) => ({ name: filter.name, extensions: [...filter.extensions] }));
+  if (options.properties !== undefined) result.properties = options.properties as NonNullable<Electron.OpenDialogOptions['properties']>;
+  return result;
+}
+
+function toElectronSaveDialogOptions(options: NativeDialogOptions): Electron.SaveDialogOptions {
+  const result: Electron.SaveDialogOptions = {};
+  if (options.title !== undefined) result.title = options.title;
+  if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
+  if (options.filters !== undefined) result.filters = options.filters.map((filter) => ({ name: filter.name, extensions: [...filter.extensions] }));
+  return result;
+}
+
+function bootstrapDesktop(configuredDataPath?: string): void {
+  if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
+  const dataPath = configureDataPath(configuredDataPath);
   void app.whenReady().then(async () => {
+    assertSupportedPlatform();
     app.setAppUserModelId('com.lnwjud.desktop');
+    const session = platformCompatibility.linuxSession;
     console.log(
-      `[WindowsCompatibility] ${windowsCompatibility.generation} build=${windowsCompatibility.build ?? 'unknown'} arch=${process.arch} gpu=${windowsCompatibility.disableHardwareAcceleration ? 'software' : 'hardware'}; ${windowsCompatibility.reason}`,
+      `[PlatformCompatibility] family=${platformCompatibility.family} tier=${platformCompatibility.supportTier} generation=${platformCompatibility.generation} build=${platformCompatibility.build ?? 'unknown'} arch=${process.arch} gpu=${platformCompatibility.disableHardwareAcceleration ? 'software' : 'hardware'}${session === undefined ? '' : ` session=${session.sessionType} dbus=${session.dbusAvailable} portal=${session.portalAvailable} atspi=${session.atSpiAvailable} pipewire=${session.pipewireAvailable}`}; ${platformCompatibility.reason}`,
     );
 
     prependBundledRuntimeToolsToPath();
-    const runtime = createNativeDesktopRuntime(dataPath);
+    const runtime = await createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     setDesktopLocale(runtime.getLocale());
     applyDesktopUserSettings(runtime.getUserSettings());
@@ -1745,13 +1886,14 @@ function bootstrapDesktop(): void {
   });
 }
 
-function bootstrapLogViewerOnly(): void {
-  const dataPath = configureDataPath();
-  if (windowsCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
+function bootstrapLogViewerOnly(configuredDataPath?: string): void {
+  const dataPath = configureDataPath(configuredDataPath);
+  if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   void app.whenReady().then(async () => {
+    assertSupportedPlatform();
     app.setAppUserModelId('com.lnwjud.desktop');
     prependBundledRuntimeToolsToPath();
-    const runtime = createNativeDesktopRuntime(dataPath);
+    const runtime = await createNativeDesktopRuntime(dataPath);
     desktopRuntime = runtime;
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
@@ -1780,6 +1922,12 @@ function handleDesktopStartupFailure(scope: string, error: unknown): void {
     // Console/crash diagnostics remain available if native dialogs cannot be shown.
   }
   app.quit();
+}
+
+function assertSupportedPlatform(): void {
+  if (!platformCompatibility.supportedReleaseTarget) {
+    throw new Error(`Unsupported lnwjud host: ${platformCompatibility.reason}`);
+  }
 }
 
 function configureDesktopShutdown(runtime: DesktopRuntime): void {
@@ -1873,22 +2021,36 @@ function configureCrashRecovery(dataPath: string): void {
   });
 }
 
-function configureDataPath(): string {
+function configureUserDataPath(): string {
   app.setName(APP_NAME);
-  const dataPath = resolveLnwjudDataPath(process.env, app.getPath('appData'));
+  const dataPath = resolveLnwjudDataPath(process.env, app.getPath('appData'), process.platform);
   app.setPath('userData', dataPath);
+  return dataPath;
+}
+
+function configureDataPath(configuredDataPath?: string): string {
+  const dataPath = configuredDataPath ?? configureUserDataPath();
   configureCrashRecovery(dataPath);
-  const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'));
+  const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'), {
+    platform: process.platform,
+    arch: process.arch,
+    hostBoundPaths: [
+      path.join(dataPath, 'checkpoint-master.key'),
+      path.join(resolveTunnelProfileDirectory(), TUNNEL_SECRET_FILE_NAME),
+    ],
+  });
   if (restore.error !== undefined) console.error(`Scheduled database restore failed: ${restore.error}`);
   if (restore.applied) console.log(`Database restore applied from ${restore.backupId ?? 'scheduled backup'}`);
   return dataPath;
 }
 
-const gotInstanceLock = shouldHoldSingleInstanceLock(process.argv) ? app.requestSingleInstanceLock() : true;
+const holdsSingleInstanceLock = shouldHoldSingleInstanceLock(process.argv);
+const configuredUserDataPath = holdsSingleInstanceLock ? configureUserDataPath() : undefined;
+const gotInstanceLock = holdsSingleInstanceLock ? app.requestSingleInstanceLock() : true;
 if (!gotInstanceLock) {
   app.quit();
 } else {
-  if (shouldHoldSingleInstanceLock(process.argv)) {
+  if (holdsSingleInstanceLock) {
     app.on('second-instance', (_event, argv) => {
       const existing = logViewerWindow !== null && !logViewerWindow.isDestroyed() ? logViewerWindow : null;
       if (existing !== null) {
@@ -1905,8 +2067,8 @@ if (!gotInstanceLock) {
   if (wantsMcpStdio(process.argv)) {
     bootstrapMcpStdio();
   } else if (process.argv.includes('--log-viewer')) {
-    bootstrapLogViewerOnly();
+    bootstrapLogViewerOnly(configuredUserDataPath);
   } else {
-    bootstrapDesktop();
+    bootstrapDesktop(configuredUserDataPath);
   }
 }

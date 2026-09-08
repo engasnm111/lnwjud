@@ -17,12 +17,12 @@ describe('desktop performance contract', () => {
 
   it('caches expensive dashboard probes and shares the WSL availability probe', () => {
     const desktop = readFileSync(new URL('../src/main/desktop-services.ts', import.meta.url), 'utf8');
-    const capabilities = readFileSync(new URL('../src/main/capability-runtime.ts', import.meta.url), 'utf8');
+    const capabilities = readFileSync(new URL('../../../packages/capabilities/src/platform-capability-set.ts', import.meta.url), 'utf8');
 
     expect(desktop).toContain("new AsyncTtlCache<DashboardSnapshot['gitSummary']>(5_000)");
     expect(desktop).toContain("new AsyncTtlCache<DashboardSnapshot['codex']>(60_000)");
     expect(desktop).toContain("new AsyncTtlCache<DashboardSnapshot['capabilities']>(15_000)");
-    expect(capabilities).toContain('const wslAvailabilityCache = new AsyncTtlCache<Result<unknown>>(15_000);');
+    expect(capabilities).toContain('const wslAvailabilityCache = new AsyncTtlCache<import(\'@lnwjud/domain\').Result<unknown>>(15_000);');
     expect(capabilities).toContain('wslAvailabilityCache.get(async () =>');
   });
 });

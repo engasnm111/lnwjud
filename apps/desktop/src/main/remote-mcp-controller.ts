@@ -1,11 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RemoteMcpStatus } from '@lnwjud/ipc-contracts';
-import { protectTunnelSecret, unprotectTunnelSecret } from './tunnel-secret-dpapi.js';
+import type { SecretProtector } from '@lnwjud/shared';
 
 export type TokenEndpointAuthMethod = 'none' | 'client_secret_post';
 
@@ -70,6 +69,7 @@ export interface RemoteMcpControllerOptions {
   readonly ensureLocalMcpUrl?: () => Promise<string | null>;
   readonly now?: () => number;
   readonly persistence?: RemoteMcpStatePersistence;
+  readonly secretProtector?: SecretProtector;
 }
 
 const NGROK_API = 'http://127.0.0.1:4040/api/tunnels';
@@ -84,7 +84,9 @@ export class RemoteMcpController {
   private readonly ensureLocalMcpUrl: () => Promise<string | null>;
   private readonly now: () => number;
   private readonly persistence: RemoteMcpStatePersistence;
+  private readonly secretProtector?: SecretProtector;
   private persistenceLoaded = false;
+  private persistenceLoad: Promise<void> | null = null;
   private desiredRunning = false;
   private gateway: Server | null = null;
   private gatewayUrl: string | null = null;
@@ -107,7 +109,8 @@ export class RemoteMcpController {
     this.getLocalMcpUrl = options.getLocalMcpUrl;
     this.ensureLocalMcpUrl = options.ensureLocalMcpUrl ?? options.getLocalMcpUrl;
     this.now = options.now ?? Date.now;
-    this.persistence = options.persistence ?? createRemoteMcpStatePersistence(options.dataPath);
+    if (options.secretProtector !== undefined) this.secretProtector = options.secretProtector;
+    this.persistence = options.persistence ?? createRemoteMcpStatePersistence(options.dataPath, options.secretProtector);
   }
 
   public async status(): Promise<RemoteMcpStatus> {
@@ -119,7 +122,7 @@ export class RemoteMcpController {
       this.ngrokProbeAt = probeNow;
     }
     const executable = this.ngrokPath;
-    const hasAuthtoken = existsSync(this.secretPath());
+    const hasAuthtoken = await this.hasAuthtoken();
     if (this.pairingCode !== null && this.now() >= this.pairingExpiresAt) {
       this.pairingCode = null;
       this.pairingExpiresAt = 0;
@@ -172,9 +175,10 @@ export class RemoteMcpController {
     const token = raw.trim();
     if (token.length < 16 || /\s/.test(token)) throw new Error('Enter a valid ngrok authtoken');
     await mkdir(this.secretDir(), { recursive: true });
-    const encrypted = await protectTunnelSecret(token);
+    if (this.secretProtector === undefined) throw new Error('Secure secret provider was not injected before saving the ngrok authtoken');
+    const encrypted = await this.secretProtector.encrypt('tunnel_api_key', token);
     await writeFile(this.secretPath(), encrypted, { encoding: 'utf8', mode: 0o600 });
-    this.message = 'ngrok authtoken saved securely with Windows DPAPI';
+    this.message = 'ngrok authtoken saved in the host secure-storage provider';
     return this.status();
   }
 
@@ -542,13 +546,25 @@ export class RemoteMcpController {
 
   private async ensurePersistenceLoaded(): Promise<void> {
     if (this.persistenceLoaded) return;
-    this.persistenceLoaded = true;
+    this.persistenceLoad ??= this.loadPersistedAuthorization();
+    try {
+      await this.persistenceLoad;
+    } finally {
+      this.persistenceLoad = null;
+    }
+  }
+
+  private async loadPersistedAuthorization(): Promise<void> {
     let state: RemoteMcpPersistedState | null = null;
     try {
       state = await this.persistence.load();
     } catch (error) {
       this.message = `Saved Remote MCP authorization could not be loaded: ${errorMessage(error)}`;
+      // Keep writes disabled and allow a later retry. A failed decryption is
+      // not an empty account and must never replace saved clients/grants.
+      return;
     }
+    this.persistenceLoaded = true;
     if (state === null) return;
     this.desiredRunning = state.desiredRunning;
     for (const client of state.trustedClients.slice(0, 32)) {
@@ -581,9 +597,11 @@ export class RemoteMcpController {
   private secretPath(): string { return path.join(this.secretDir(), 'ngrok-authtoken.secret'); }
   private async hasAuthtoken(): Promise<boolean> { return (await this.loadAuthtoken().catch(() => null)) !== null; }
   private async loadAuthtoken(): Promise<string | null> {
+    if (this.secretProtector === undefined) return null;
     try {
       const encrypted = await readFile(this.secretPath(), 'utf8');
-      const value = (await unprotectTunnelSecret(encrypted)).trim();
+      const decrypted = await this.secretProtector.decrypt('tunnel_api_key', encrypted.trim());
+      const value = decrypted.plainText.trim();
       return value.length > 0 ? value : null;
     } catch { return null; }
   }
@@ -607,7 +625,7 @@ export class RemoteMcpController {
   }
 }
 
-function createRemoteMcpStatePersistence(dataPath: string): RemoteMcpStatePersistence {
+function createRemoteMcpStatePersistence(dataPath: string, secretProtector?: SecretProtector): RemoteMcpStatePersistence {
   const directory = path.join(dataPath, 'remote-mcp');
   const filename = path.join(directory, 'oauth-state.secret');
   return {
@@ -619,12 +637,14 @@ function createRemoteMcpStatePersistence(dataPath: string): RemoteMcpStatePersis
         if (isMissingFileError(error)) return null;
         throw error;
       }
-      const plainText = await unprotectTunnelSecret(encrypted);
+      if (secretProtector === undefined) throw new Error('Secure secret provider was not injected before reading Remote MCP state');
+      const plainText = (await secretProtector.decrypt('tunnel_api_key', encrypted.trim())).plainText;
       return normalizePersistedState(JSON.parse(plainText) as unknown);
     },
     save: async (state: RemoteMcpPersistedState): Promise<void> => {
       await mkdir(directory, { recursive: true });
-      const encrypted = await protectTunnelSecret(JSON.stringify(state));
+      if (secretProtector === undefined) throw new Error('Secure secret provider was not injected before saving Remote MCP state');
+      const encrypted = await secretProtector.encrypt('tunnel_api_key', JSON.stringify(state));
       await writeFile(filename, encrypted, { encoding: 'utf8', mode: 0o600 });
     },
   };
