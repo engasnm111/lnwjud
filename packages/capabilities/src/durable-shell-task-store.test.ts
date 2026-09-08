@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ShellCapabilityBackend } from './shell-backend.js';
 import { DurableShellTaskStore } from './durable-shell-task-store.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const temporaryRoots: string[] = [];
 
@@ -17,6 +19,41 @@ afterEach(async () => {
 });
 
 describe('durable shell background tasks', () => {
+  it.skipIf(process.platform === 'win32')('cancels the detached child group before retiring its durable worker', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-groups-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    const started = await backend.execute({
+      operation: 'run', executable: process.execPath, arguments: ['-e', 'setTimeout(() => {}, 30000)'],
+      cwd: root, execution: 'background', timeout_seconds: 40, userConfirmed: true,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const taskId = String(started.value.task_id);
+    let childPid: number | undefined;
+    let childStartedAt: string | undefined;
+    try {
+      await expect.poll(async () => {
+        const status = await backend.execute({ operation: 'status', task_id: taskId });
+        if (status.ok && typeof status.value.child_pid === 'number' && typeof status.value.child_started_at === 'string') {
+          childPid = status.value.child_pid;
+          childStartedAt = status.value.child_started_at;
+          return true;
+        }
+        return false;
+      }, { timeout: 5000 }).toBe(true);
+      const cancelled = await backend.execute({ operation: 'cancel', task_id: taskId, userConfirmed: true });
+      expect(cancelled).toMatchObject({ ok: true, value: { state: 'cancelled' } });
+      expect(() => process.kill(childPid!, 0)).toThrow();
+    } finally {
+      // Red-phase cleanup is restricted to the exact fixture child identity.
+      if (childPid !== undefined && childStartedAt !== undefined) {
+        const probe = await promisify(execFile)('ps', ['-p', String(childPid), '-o', 'lstart=']).catch(() => null);
+        if (probe && new Date(probe.stdout.trim()).toISOString() === childStartedAt) process.kill(-childPid, 'SIGKILL');
+      }
+    }
+  }, 15000);
+
   it('survives a backend/runtime replacement and returns logs and result by task id', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
     temporaryRoots.push(root);

@@ -268,7 +268,13 @@ export class DurableShellTaskStore {
       : await probeProcessIdentity(metadata.child_pid, this.platform);
     const workerRunning = isTrackedProcessLive(workerProbe, metadata.worker_started_at);
     const childRunning = isTrackedProcessLive(childProbe, metadata.child_started_at);
-    const terminationPid = workerRunning ? metadata.worker_pid : (childRunning ? metadata.child_pid : undefined);
+    // POSIX workers and their children own separate detached process groups.
+    // Stop the real child first and keep the worker alive to reap it, flush
+    // output and exit. The termination verifier still requires both PIDs gone.
+    // Windows taskkill /T instead needs the worker root to traverse its child.
+    const terminationPid = this.platform !== 'win32' && childRunning
+      ? metadata.child_pid
+      : workerRunning ? metadata.worker_pid : (childRunning ? metadata.child_pid : undefined);
     if (terminationPid === undefined) {
       metadata.state = 'termination_unverified';
       metadata.error = 'Durable task process PID is unavailable; process termination could not be verified';
