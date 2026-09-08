@@ -63,6 +63,17 @@ interface SearchCatalogEntry extends UpgradeToolCatalogEntry {
   readonly auditTarget?: string;
 }
 
+interface SearchEntryIndex {
+  readonly normalizedName: string;
+  readonly nameTokens: ReadonlySet<string>;
+  readonly tagTokens: ReadonlySet<string>;
+  readonly description: string;
+  readonly schemaFields: readonly {
+    readonly field: string;
+    readonly tokens: readonly string[];
+  }[];
+}
+
 interface RankedToolCandidate {
   readonly name: string;
   readonly score: number;
@@ -138,6 +149,9 @@ const SEARCH_CATALOG: readonly SearchCatalogEntry[] = dedupeSearchEntries([
   ...CAPABILITY_SEARCH_ENTRIES,
   ...UPGRADE_TOOL_CATALOG,
 ]);
+const SEARCH_ENTRY_INDEX: ReadonlyMap<string, SearchEntryIndex> = new Map(
+  SEARCH_CATALOG.map((entry) => [entry.name, indexSearchEntry(entry)]),
+);
 
 export class UpgradeRuntimeService {
   private readonly contextEngine: ContextEngine;
@@ -493,6 +507,8 @@ export class UpgradeRuntimeService {
 
   private searchTools(query: string, input: Record<string, unknown> = {}): Record<string, unknown> {
     const normalized = query.toLowerCase().trim();
+    const queryTokens = tokenize(normalized);
+    const queryTokenSet = new Set(queryTokens);
     const limit = boundedInteger(input.limit ?? input.topK, 20, 1, 100);
     const requestedReranker = readString(input, 'reranker') ?? readString(input, 'model') ?? 'deterministic';
     const category = readString(input, 'category')?.toLowerCase();
@@ -501,7 +517,7 @@ export class UpgradeRuntimeService {
     const scored = SEARCH_CATALOG
       .filter((entry) => this.isToolExposed(entry.name))
       .filter((entry) => category === undefined || entry.tags.some((tag) => tag.toLowerCase() === category))
-      .map((entry) => scoreToolEntry(entry, normalized, route, telemetry?.byTool[entry.name], telemetry))
+      .map((entry) => scoreToolEntry(entry, normalized, queryTokens, queryTokenSet, route, telemetry?.byTool[entry.name], telemetry))
       .filter((entry) => normalized.length === 0 || entry.score > 0)
       .sort((left, right) => right.score - left.score || Number(right.entry.primitive === true) - Number(left.entry.primitive === true) || left.entry.name.localeCompare(right.entry.name));
     const rankedCandidates: readonly RankedToolCandidate[] = scored.slice(0, limit).map((candidate) => ({
@@ -2102,6 +2118,8 @@ function dedupeSearchEntries(entries: readonly SearchCatalogEntry[]): readonly S
 function scoreToolEntry(
   entry: SearchCatalogEntry,
   query: string,
+  queryTokens: readonly string[],
+  queryTokenSet: ReadonlySet<string>,
   route: ReturnType<typeof routeIntent>,
   toolTelemetry?: ToolTelemetrySnapshot,
   globalTelemetry?: ActivityTelemetrySnapshot,
@@ -2111,11 +2129,8 @@ function scoreToolEntry(
   readonly reasonCodes: readonly string[];
   readonly rankingSignals: RankedToolCandidate['rankingSignals'];
 } {
-  const queryTokens = tokenize(query);
-  const nameTokens = tokenize(entry.name);
-  const tagTokens = entry.tags.flatMap((tag) => tokenize(tag));
-  const description = entry.description.toLowerCase();
-  const schemaMatchedFields = schemaFieldMatches(entry, queryTokens);
+  const indexed = SEARCH_ENTRY_INDEX.get(entry.name) ?? indexSearchEntry(entry);
+  const schemaMatchedFields = schemaFieldMatches(indexed, queryTokenSet);
   const completedTelemetrySamples = toolTelemetry === undefined ? 0 : Math.max(0, toolTelemetry.calls - toolTelemetry.active);
   const successRate = completedTelemetrySamples === 0 || toolTelemetry === undefined
     ? null
@@ -2131,22 +2146,22 @@ function scoreToolEntry(
 
   let score = 0;
   const reasons = new Set<string>();
-  if (entry.name.toLowerCase() === query) {
+  if (indexed.normalizedName === query) {
     score += 2;
     reasons.add('exact-name');
   }
-  if (entry.name.toLowerCase().includes(query)) {
+  if (indexed.normalizedName.includes(query)) {
     score += 1;
     reasons.add('name-phrase');
   }
   for (const token of queryTokens) {
-    if (nameTokens.includes(token)) {
+    if (indexed.nameTokens.has(token)) {
       score += 1;
       reasons.add(`name-token:${token}`);
-    } else if (tagTokens.includes(token)) {
+    } else if (indexed.tagTokens.has(token)) {
       score += 0.8;
       reasons.add(`tag-token:${token}`);
-    } else if (description.includes(token)) {
+    } else if (indexed.description.includes(token)) {
       score += 0.25;
       reasons.add(`description-token:${token}`);
     }
@@ -2201,13 +2216,25 @@ function scoreToolEntry(
   return { entry, score, reasonCodes: [...reasons], rankingSignals };
 }
 
-function schemaFieldMatches(entry: SearchCatalogEntry, queryTokens: readonly string[]): readonly string[] {
-  if (entry.primitive === true || queryTokens.length === 0) return [];
-  const schema = upgradeToolInputJsonSchema(entry);
-  const properties = typeof schema.properties === 'object' && schema.properties !== null && !Array.isArray(schema.properties)
+function indexSearchEntry(entry: SearchCatalogEntry): SearchEntryIndex {
+  const schema = entry.primitive === true ? undefined : upgradeToolInputJsonSchema(entry);
+  const properties = typeof schema?.properties === 'object' && schema.properties !== null && !Array.isArray(schema.properties)
     ? schema.properties as Record<string, unknown>
     : {};
-  return Object.keys(properties).filter((field) => tokenize(field).some((token) => queryTokens.includes(token)));
+  return {
+    normalizedName: entry.name.toLowerCase(),
+    nameTokens: new Set(tokenize(entry.name)),
+    tagTokens: new Set(entry.tags.flatMap((tag) => tokenize(tag))),
+    description: entry.description.toLowerCase(),
+    schemaFields: Object.keys(properties).map((field) => ({ field, tokens: tokenize(field) })),
+  };
+}
+
+function schemaFieldMatches(indexed: SearchEntryIndex, queryTokens: ReadonlySet<string>): readonly string[] {
+  if (queryTokens.size === 0 || indexed.schemaFields.length === 0) return [];
+  return indexed.schemaFields
+    .filter(({ tokens }) => tokens.some((token) => queryTokens.has(token)))
+    .map(({ field }) => field);
 }
 
 function tokenize(value: string): string[] {
