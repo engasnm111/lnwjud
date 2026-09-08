@@ -327,6 +327,12 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
 
+      - name: Verify packaged Windows legacy-profile startup
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          LNWJUD_PACKAGED_EXECUTABLE: ${{ github.workspace }}/apps/desktop/dist/installers/win-unpacked/lnwjud.exe
+        run: corepack pnpm@10.15.0 --filter @lnwjud/desktop exec playwright test --config playwright.config.ts --grep "Windows upgrade opens"
+
       - name: Upload Windows E2E diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
