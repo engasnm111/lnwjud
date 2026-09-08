@@ -12,7 +12,7 @@ const version = '4.56.0';
 const commit = '0123456789abcdef0123456789abcdef01234567';
 
 describe('release asset collector', () => {
-  it('validates all target evidence and creates architecture-aware public assets', async () => {
+  it('validates target evidence beside provenance without confusing bundled dependency checksums', async () => {
     // Windows hosted runners may expose TEMP through a DOS short-name alias;
     // the collector intentionally requires canonical staging paths.
     const temporaryRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-release-collector-')));
@@ -27,6 +27,9 @@ describe('release asset collector', () => {
         { key: 'linux-arm64', platform: 'linux', arch: 'arm64' },
       ]) {
         await writeTargetFixture(stagingDirectory, target);
+        const dependencyDirectory = path.join(stagingDirectory, target.key, 'apps', 'desktop', 'dist', 'installers', 'unpacked', 'dependency');
+        await mkdir(dependencyDirectory, { recursive: true });
+        await writeFile(path.join(dependencyDirectory, 'SHA256SUMS.txt'), 'unrelated dependency checksums\n');
       }
 
       await execFileAsync(process.execPath, [path.join(repositoryRoot, 'scripts', 'collect-release-assets.mjs')], {
@@ -80,6 +83,31 @@ describe('release asset collector', () => {
       };
       expect(releaseManifest.sourceCommit).toBe(commit);
       expect(releaseManifest.targets).toHaveLength(5);
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a missing sibling checksum instead of using a nested copy', async () => {
+    const temporaryRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-release-collector-')));
+    const stagingDirectory = path.join(temporaryRoot, 'staging');
+    try {
+      await writeTargetFixture(stagingDirectory, { key: 'win32-x64', platform: 'win32', arch: 'x64' });
+      const installerDirectory = path.join(stagingDirectory, 'win32-x64', 'apps', 'desktop', 'dist', 'installers');
+      const sums = await readFile(path.join(installerDirectory, 'SHA256SUMS.txt'));
+      await mkdir(path.join(installerDirectory, 'nested'));
+      await writeFile(path.join(installerDirectory, 'nested', 'SHA256SUMS.txt'), sums);
+      await rm(path.join(installerDirectory, 'SHA256SUMS.txt'));
+      await expect(execFileAsync(process.execPath, [path.join(repositoryRoot, 'scripts', 'collect-release-assets.mjs')], {
+        cwd: repositoryRoot,
+        env: {
+          ...process.env,
+          LNWJUD_RELEASE_STAGING_DIRECTORY: stagingDirectory,
+          LNWJUD_RELEASE_ASSETS_DIRECTORY: path.join(temporaryRoot, 'assets'),
+          LNWJUD_RELEASE_COMMIT: commit,
+        },
+        windowsHide: true,
+      })).rejects.toThrow(/ENOENT.*SHA256SUMS\.txt/s);
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }

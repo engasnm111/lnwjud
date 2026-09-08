@@ -32,7 +32,11 @@ for (const target of targets) {
   const targetDirectory = path.join(stagingDirectory, target.key);
   await assertRegularDirectory(targetDirectory, `Staged ${target.key} artifact`);
   const provenancePath = await findUniqueFile(targetDirectory, 'PROVENANCE.json');
-  const sumsPath = await findUniqueFile(targetDirectory, 'SHA256SUMS.txt');
+  // CI also uploads unpacked apps whose dependencies have their own checksums.
+  // Only the files beside the unique release provenance belong to this bundle.
+  const installerDirectory = path.dirname(provenancePath);
+  const sumsPath = path.join(installerDirectory, 'SHA256SUMS.txt');
+  await assertRegularFile(sumsPath, 'Release checksums');
   const provenance = JSON.parse(await readFile(provenancePath, 'utf8'));
   const sumsText = await readFile(sumsPath, 'utf8');
   const sums = parseSums(sumsText);
@@ -41,7 +45,8 @@ for (const target of targets) {
   const artifactNames = expectedArtifactNames(target.platform, version, target.arch);
   const sourceArtifacts = [];
   for (const artifactName of artifactNames) {
-    const artifactPath = await findUniqueFile(targetDirectory, artifactName);
+    const artifactPath = path.join(installerDirectory, artifactName);
+    await assertRegularFile(artifactPath, artifactName);
     const provenanceEntry = provenance.artifacts?.find((entry) => entry?.name === artifactName);
     if (!provenanceEntry) throw new Error(`${target.key} provenance is missing ${artifactName}`);
     const actualHash = await sha256File(artifactPath);
