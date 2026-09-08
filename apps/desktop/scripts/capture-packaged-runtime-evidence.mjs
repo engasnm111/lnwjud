@@ -28,7 +28,7 @@ const TARGETS = Object.freeze({
   darwin: Object.freeze({
     required: Object.freeze([
       ['lnwjud', 'Contents/MacOS/lnwjud'],
-      ['lnwjud-mcp-stdio', 'Contents/lnwjud-mcp-stdio'],
+      ['lnwjud-mcp-stdio', 'Contents/Resources/lnwjud-mcp-stdio'],
       ['rg', 'Contents/Resources/runtime-tools/ripgrep/rg'],
       ['rg-manifest', 'Contents/Resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json'],
       ['tunnel-client', 'Contents/Resources/tunnel-client/tunnel-client'],

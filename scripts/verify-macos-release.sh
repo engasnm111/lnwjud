@@ -54,7 +54,7 @@ if [[ -z "${app_path:-}" || ! -d "$app_path" ]]; then
   exit 1
 fi
 require_regular_executable "$app_path/Contents/MacOS/lnwjud"
-require_regular_executable "$app_path/Contents/lnwjud-mcp-stdio"
+require_regular_executable "$app_path/Contents/Resources/lnwjud-mcp-stdio"
 require_regular_executable "$app_path/Contents/Resources/runtime-tools/ripgrep/rg"
 require_regular_executable "$app_path/Contents/Resources/tunnel-client/tunnel-client"
 machine_arch="$(uname -m)"

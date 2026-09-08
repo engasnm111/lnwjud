@@ -301,6 +301,7 @@ describe('upgrade runtime', () => {
   it('keeps Git worktree spawning path-scoped and dry-run first', async () => {
     const calls: unknown[] = [];
     const runtime = new UpgradeRuntimeService({
+      platform: 'win32',
       git: {
         async run(_actor, request): Promise<ReturnType<typeof ok>> {
           calls.push(request);

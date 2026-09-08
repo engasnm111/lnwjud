@@ -48,7 +48,7 @@ For local MCP clients, use the packaged executable launcher shown in the app's
 MCP panel:
 
 ```text
-/Applications/lnwjud.app/Contents/lnwjud-mcp-stdio --workspace /path/to/project
+/Applications/lnwjud.app/Contents/Resources/lnwjud-mcp-stdio --workspace /path/to/project
 ```
 
 The launcher invokes the packaged Electron host with `--mcp-stdio`, preserves

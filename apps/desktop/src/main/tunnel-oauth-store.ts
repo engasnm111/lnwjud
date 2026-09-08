@@ -1,6 +1,7 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { SecretProtector } from '@lnwjud/shared';
+import { readRegularSecret, writeSecretAtomically } from './secret-file.js';
 
 export interface TunnelOAuthStoredSession {
   readonly schemaVersion: 1;
@@ -28,7 +29,7 @@ export class TunnelOAuthSessionStore {
   public async read(): Promise<TunnelOAuthStoredSession | null> {
     let encrypted: string;
     try {
-      encrypted = await readFile(this.options.filePath, 'utf8');
+      encrypted = await readRegularSecret(this.options.filePath);
     } catch {
       return null;
     }
@@ -47,7 +48,7 @@ export class TunnelOAuthSessionStore {
     const encrypted = this.options.secretProtector === undefined
       ? await (this.options.encryptSecret?.(serialized) ?? Promise.reject(new Error('Secure secret provider was not injected before saving the OAuth session')))
       : await this.options.secretProtector.encrypt('tunnel_api_key', serialized);
-    await writeFile(this.options.filePath, encrypted, { encoding: 'utf8', mode: 0o600 });
+    await writeSecretAtomically(this.options.filePath, encrypted);
   }
 
   public async clear(): Promise<void> {

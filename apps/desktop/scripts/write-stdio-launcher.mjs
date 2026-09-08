@@ -31,6 +31,7 @@ for candidate in \
   "$BASE/lnwjud" \
   "$BASE/lnwjud.app/Contents/MacOS/lnwjud" \
   "$BASE/MacOS/lnwjud" \
+  "$BASE/../MacOS/lnwjud" \
   "$BASE/../lib/lnwjud/lnwjud" \
   "$BASE/../opt/lnwjud/lnwjud"; do
   if [ -x "$candidate" ]; then APP="$candidate"; break; fi

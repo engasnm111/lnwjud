@@ -200,7 +200,7 @@ export function packagedStdioLauncherCandidates(execPath: string, resourcesPath?
     path.join(execDir, launcher),
     path.join(execDir, 'resources', launcher),
   ];
-  if (platform === 'darwin') candidates.push(path.join(execDir, '..', launcher));
+  if (platform === 'darwin') candidates.push(path.join(execDir, '..', 'Resources', launcher));
   if (typeof resourcesPath === 'string' && resourcesPath.trim().length > 0) {
     candidates.push(path.join(resourcesPath, launcher));
   }

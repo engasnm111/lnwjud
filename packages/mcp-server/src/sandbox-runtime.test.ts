@@ -1,12 +1,36 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ok } from '@lnwjud/domain';
 import { SandboxRuntimeService } from './sandbox-runtime.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 const actor = { clientId: 'test-client', clientName: 'test' };
+
+// Translate only this fixture's Windows volume at the filesystem boundary.
+// The runtime and sandbox plan still perform real Windows path validation;
+// artifacts are persisted in an actual host-native temporary directory.
+const fixtureFs = vi.hoisted(() => ({ root: '', windowsRoot: 'C:\\sandbox-fixture' }));
+function hostFile<T>(file: T): T | string {
+  if (typeof file !== 'string') return file;
+  const relative = path.win32.relative(fixtureFs.windowsRoot, file);
+  if (relative.startsWith('..') || path.win32.isAbsolute(relative)) return file;
+  return path.join(fixtureFs.root, ...relative.split('\\'));
+}
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, existsSync: (file: Parameters<typeof actual.existsSync>[0]) => actual.existsSync(hostFile(file)) };
+});
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    mkdir: (file: string, options: Parameters<typeof actual.mkdir>[1]) => actual.mkdir(hostFile(file), options),
+    readFile: (file: string, options: 'utf8') => actual.readFile(hostFile(file), options),
+    writeFile: (file: string, data: string, options?: 'utf8') => actual.writeFile(hostFile(file), data, options),
+  };
+});
 
 function servicesWithRoot(root: string): McpApplicationServices {
   return {
@@ -31,11 +55,13 @@ function service(options: {
 
 async function withTempRoot(run: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
+  fixtureFs.root = root;
   await writeFile(path.join(root, 'WindowsSandbox.exe'), 'stub');
   try {
-    await run(path.win32.normalize(root));
+    await run(fixtureFs.windowsRoot);
   } finally {
-    // Best-effort cleanup; artifacts stay for audit in production too.
+    await rm(root, { recursive: true, force: true });
+    fixtureFs.root = '';
   }
 }
 

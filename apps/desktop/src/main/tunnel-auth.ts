@@ -1,8 +1,9 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TunnelAuthStatus } from '@lnwjud/ipc-contracts';
 import type { SecretProtector } from '@lnwjud/shared';
+import { readRegularSecret, writeSecretAtomically } from './secret-file.js';
 
 export const LEGACY_TUNNEL_SECRET_FILE = 'lnwjud.runtime.secret';
 export const OAUTH_TUNNEL_SESSION_FILE = 'lnwjud.oauth.session.secret';
@@ -85,7 +86,7 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
   public async getRuntimeCredential(): Promise<TunnelRuntimeCredential | null> {
     let encrypted: string;
     try {
-      encrypted = await readFile(this.options.secretPath(), 'utf8');
+      encrypted = await readRegularSecret(this.options.secretPath());
     } catch {
       return null;
     }
@@ -106,12 +107,12 @@ export class LegacyApiKeyCredentialProvider implements TunnelAuthProvider {
     const encrypted = this.options.secretProtector === undefined
       ? await (this.options.encryptSecret?.(trimmed) ?? Promise.reject(new Error('Secure secret provider was not injected before saving the Runtime API key')))
       : await this.options.secretProtector.encrypt('tunnel_api_key', trimmed);
-    await writeFile(secretPath, encrypted, { encoding: 'utf8', mode: 0o600 });
+    await writeSecretAtomically(secretPath, encrypted);
   }
 
   private async hasStoredSecret(): Promise<boolean> {
     try {
-      const raw = await readFile(this.options.secretPath(), 'utf8');
+      const raw = await readRegularSecret(this.options.secretPath());
       return raw.trim().length > 0;
     } catch {
       return false;

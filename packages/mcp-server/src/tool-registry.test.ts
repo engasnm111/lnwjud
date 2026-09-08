@@ -23,6 +23,71 @@ afterEach(() => {
 });
 
 describe('MCP tool registry', () => {
+  it.each([
+    ['/tmp/Project', '/tmp/Project/src'],
+    ['E:\\Project', 'E:\\Project\\src'],
+    ['\\\\server\\share\\Project', '\\\\server\\share\\Project\\src'],
+  ])('preserves command path syntax for %s', async (rootPath, expectedCwd) => {
+    const calls: unknown[] = [];
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input) {
+      calls.push({ tool, input }); return ok({ accepted: true });
+    } } }, actor, {
+      activeWorkspaceScopeProvider: async () => ({ workspaceId: 'workspace-a', rootPath }),
+      hostMutationApprovalProvider: approveMutation,
+    });
+    for (const cwd of [undefined, 'src', expectedCwd]) {
+      const result = await registry.invoke('shell', {
+        workspaceId: 'workspace-a', operation: 'run', executable: 'node', arguments: ['--version'], cwd,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(calls.at(-1)).toMatchObject({ tool: 'shell', input: {
+        cwd: cwd === undefined ? rootPath : expectedCwd,
+        metadata: { 'lnwjud.activeWorkspaceRoot.v1': rootPath },
+      } });
+    }
+  });
+
+  it('keeps POSIX activity attribution case-sensitive', async () => {
+    const events: ActivitySinkEvent[] = [];
+    const registry = new ToolRegistry({
+      workspaceInfo: {
+        async info() { return err(appError('WORKSPACE_NOT_FOUND', 'not used')); },
+        async list() { return ok([
+          { id: 'upper', rootPath: '/tmp/Project', realRootPath: '/tmp/Project' },
+          { id: 'lower', rootPath: '/tmp/project', realRootPath: '/tmp/project' },
+        ]); },
+      },
+      capabilities: { async execute() { return ok({ accepted: true }); } },
+    }, actor, {
+      activity: { async record(event) { events.push(event); } },
+      hostMutationApprovalProvider: approveMutation,
+    });
+    for (const cwd of ['/tmp/Project/src', '/tmp/project/src', '/tmp/PROJECT/src']) {
+      await registry.invoke('shell', { operation: 'run', executable: 'node', arguments: ['--version'], cwd });
+    }
+    expect(events.filter((event) => event.phase === 'started').map((event) => event.workspaceId))
+      .toEqual(['upper', 'lower', undefined]);
+  });
+
+  it('requires approval for a case-distinct POSIX sibling and strips its workspace metadata', async () => {
+    const calls: unknown[] = [];
+    const approval = vi.fn(async () => false);
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input) {
+      calls.push({ tool, input }); return ok({ accepted: true });
+    } } }, actor, {
+      activeWorkspaceScopeProvider: async () => ({ workspaceId: 'workspace-a', rootPath: '/tmp/Project' }),
+      hostMutationApprovalProvider: approval,
+    });
+    const input = { workspaceId: 'workspace-a', operation: 'run', executable: 'node', arguments: ['--version'],
+      cwd: '/tmp/project', userConfirmed: true, metadata: { 'lnwjud.activeWorkspaceRoot.v1': '/tmp/Project' } };
+    expect((await registry.invoke('shell', input)).isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    approval.mockResolvedValue(true);
+    expect((await registry.invoke('shell', input)).isError).not.toBe(true);
+    expect(calls).toEqual([{ tool: 'shell', input: expect.objectContaining({ cwd: '/tmp/project',
+      metadata: expect.not.objectContaining({ 'lnwjud.activeWorkspaceRoot.v1': expect.anything() }) }) }]);
+  });
+
   it('returns the exact deterministic tool order', () => {
     const registry = new ToolRegistry({}, actor);
     expect(registry.list().map((tool) => tool.name)).toEqual([

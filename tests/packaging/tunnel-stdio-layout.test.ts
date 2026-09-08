@@ -21,6 +21,8 @@ describe('target-native Secure Tunnel packaged stdio layout', () => {
     const linux = config.slice(config.indexOf('linux:'));
     expect(win).toContain('from: build/lnwjud-mcp-stdio.cmd');
     expect(mac).toContain('from: build/lnwjud-mcp-stdio.sh');
+    expect(mac).toContain('to: Resources/lnwjud-mcp-stdio');
+    expect(mac).not.toMatch(/to: lnwjud-mcp-stdio\s/);
     expect(mac).toContain('arch:');
     expect(mac).toContain('- x64');
     expect(mac).toContain('- arm64');
@@ -48,6 +50,7 @@ describe('target-native Secure Tunnel packaged stdio layout', () => {
     expect(launcher).toContain('exec "$APP" --mcp-stdio "$@"');
     expect(launcher).toContain('lnwjud.app/Contents/MacOS/lnwjud');
     expect(launcher).toContain('$BASE/MacOS/lnwjud');
+    expect(launcher).toContain('$BASE/../MacOS/lnwjud');
     expect(launcher).toContain('../lib/lnwjud/lnwjud');
     expect(launcher).not.toContain('node ');
     await access(launcherPath);

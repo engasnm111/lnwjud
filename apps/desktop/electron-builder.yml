@@ -77,7 +77,8 @@ mac:
   artifactName: lnwjud-${version}-${arch}.${ext}
   extraFiles:
     - from: build/lnwjud-mcp-stdio.sh
-      to: lnwjud-mcp-stdio
+      # Shell scripts belong in Resources, not the signed-code area at Contents.
+      to: Resources/lnwjud-mcp-stdio
   extraResources:
     - from: build/native-host/macos
       to: native-host/macos

@@ -59,7 +59,7 @@ async function fixture(platform: 'linux' | 'darwin', arch = 'x64'): Promise<{
   const bundle = platform === 'darwin' ? path.join(appOutDir, 'lnwjud.app') : appOutDir;
   const resources = platform === 'darwin' ? 'Contents/Resources' : 'resources';
   const executable = platform === 'darwin' ? 'Contents/MacOS/lnwjud' : 'lnwjud';
-  const launcher = platform === 'darwin' ? 'Contents/lnwjud-mcp-stdio' : 'lnwjud-mcp-stdio';
+  const launcher = platform === 'darwin' ? 'Contents/Resources/lnwjud-mcp-stdio' : 'lnwjud-mcp-stdio';
   const nativeName = platform === 'darwin' ? 'lnwjud-macos-host' : 'lnwjud-linux-host';
   const nativeDir = `${resources}/native-host/${platform === 'darwin' ? 'macos' : 'linux'}/${arch}`;
   const binaries = [executable, launcher, `${resources}/runtime-tools/ripgrep/rg`, `${resources}/tunnel-client/tunnel-client`, `${nativeDir}/${nativeName}`];

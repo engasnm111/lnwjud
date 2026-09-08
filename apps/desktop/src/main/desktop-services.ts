@@ -1701,7 +1701,7 @@ function buildConnectionModes(input: {
   const launcherName = isWindows ? 'lnwjud-mcp-stdio.cmd' : 'lnwjud-mcp-stdio';
   const executableName = isWindows ? path.win32.basename(process.execPath).toLowerCase() : path.basename(process.execPath);
   const launcher = executableName === (isWindows ? 'lnwjud.exe' : 'lnwjud')
-    ? path.join(isWindows ? path.dirname(process.execPath) : path.dirname(process.execPath), ...(isWindows ? [] : process.platform === 'darwin' ? ['..'] : []), launcherName)
+    ? path.join(path.dirname(process.execPath), ...(process.platform === 'darwin' ? ['..', 'Resources'] : []), launcherName)
     : launcherName;
   const args = [quoteCommandArgument(launcher)];
   if (input.workspaceRoot !== undefined) args.push('--workspace', quoteCommandArgument(input.workspaceRoot));
