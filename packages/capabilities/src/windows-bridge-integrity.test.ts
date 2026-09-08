@@ -1,12 +1,34 @@
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PowerShellWindowsCapabilityBridge } from './windows-bridge.js';
 
 const temporaryRoots: string[] = [];
+
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawn: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.mocked(spawn).mockReset();
+  vi.mocked(spawn).mockImplementation(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+    });
+    child.stdin.on('finish', () => {
+      child.stdout.write('{"ok":true,"value":{"trusted":true}}');
+      child.emit('close', 0);
+    });
+    return child as ReturnType<typeof spawn>;
+  });
+});
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -22,6 +44,7 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
     const bridge = new PowerShellWindowsCapabilityBridge({ scriptPath, expectedScriptSha256, platform: 'win32' });
 
     await expect(bridge.execute({ capability: 'system_info', input: { action: 'summary' } })).resolves.toEqual({ ok: true, value: { trusted: true } });
+    expect(spawn).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining(['-File', scriptPath]), expect.objectContaining({ shell: false }));
   }, 15_000);
 
   it('fails closed after the script changes, even if it was valid on a previous call', async () => {
@@ -38,6 +61,7 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
       ok: false,
       error: { code: 'INTERNAL_ERROR', message: 'Windows bridge script integrity check failed' },
     });
+    expect(spawn).toHaveBeenCalledTimes(1);
   }, 15_000);
 
   it('fails closed when the bridge byte count differs from the embedded expectation', async () => {
@@ -56,6 +80,7 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
       ok: false,
       error: { code: 'INTERNAL_ERROR', message: 'Windows bridge script integrity check failed' },
     });
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('never quits the user Outlook instance from read-only bridge actions', async () => {

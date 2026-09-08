@@ -51,6 +51,7 @@ async function runCheck(name, command, args) {
   const executable = process.platform === 'win32' && command === 'corepack' ? 'corepack.cmd' : command;
   const invocation = resolveInvocation(executable, args, command);
   const startedAt = Date.now();
+  process.stdout.write(`Running ${name} for ${target}/${architecture}\n`);
   try {
     await execFileAsync(invocation.executable, invocation.args, {
       cwd: repositoryRoot,
@@ -65,8 +66,13 @@ async function runCheck(name, command, args) {
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
     });
+    process.stdout.write(`Passed ${name}\n`);
     return { name, ok: true, durationMs: Date.now() - startedAt };
   } catch (error) {
+    // Keep actionable native compiler/packager output in CI logs. The JSON
+    // summary stays bounded, but must not be the only failure evidence.
+    const diagnostic = [error?.stdout, error?.stderr].filter((value) => typeof value === 'string').join('\n');
+    if (diagnostic) process.stderr.write(`${diagnostic.slice(-32_768)}\n`);
     return { name, ok: false, durationMs: Date.now() - startedAt, error: error instanceof Error ? error.message.slice(0, 512) : 'unknown error' };
   }
 }

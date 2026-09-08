@@ -89,7 +89,7 @@ describe('WorkspaceInfoService.register', () => {
       async insert(): Promise<void> {},
       async delete(): Promise<void> {},
     };
-    const listed = await new WorkspaceInfoService(repository).list({ clientId: 't', clientName: 't' });
+    const listed = await new WorkspaceInfoService(repository, undefined, false, 'win32').list({ clientId: 't', clientName: 't' });
     expect(listed).toMatchObject({ ok: true, value: [{ kind: 'machine_root' }] });
   });
 });

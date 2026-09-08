@@ -14,7 +14,7 @@ function policy(enabled: readonly DestructiveApprovalKey[], protectCriticalFiles
 }
 
 function allowed(toolName: string, input: Record<string, unknown>, activePolicy: DestructiveAutoApprovalPolicy): boolean {
-  return isScopedAutoApprovalAllowed(toolName, input, inspectMutationOperation(toolName, input, 'DANGEROUS'), activePolicy, scope);
+  return isScopedAutoApprovalAllowed(toolName, input, inspectMutationOperation(toolName, input, 'DANGEROUS'), activePolicy, scope, 'win32');
 }
 
 describe('scoped destructive auto approval', () => {
@@ -61,7 +61,7 @@ describe('scoped destructive auto approval', () => {
   it('never auto-approves a whole-drive active project', () => {
     const current = policy(['delete_file', 'shell_rm_unlink']);
     const decision = inspectMutationOperation('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, 'DANGEROUS');
-    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, decision, current, { workspaceId: 'drive', rootPath: 'E:\\' })).toBe(false);
+    expect(isScopedAutoApprovalAllowed('delete_file', { workspaceId: 'drive', path: 'temp.txt' }, decision, current, { workspaceId: 'drive', rootPath: 'E:\\' }, 'win32')).toBe(false);
   });
 
   it('applies POSIX root and case-sensitive containment rules', () => {

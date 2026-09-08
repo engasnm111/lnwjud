@@ -59,8 +59,11 @@ describe('EventLogCapabilityBackend', () => {
     await expect(backend.execute({ operation: 'query', provider: '.NET Runtime', since: 'yesterday' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
   });
 
-  it('reports a truthful unavailable state off Windows and surfaces helper errors', async () => {
-    const backend = new EventLogCapabilityBackend({ platform: 'linux' });
+  it('reports a missing portable log executable and surfaces helper errors', async () => {
+    const backend = new EventLogCapabilityBackend({
+      platform: 'linux',
+      portableRunner: async (): Promise<Result<string>> => ({ ok: false, error: { code: 'PROCESS_NOT_FOUND', message: 'journalctl not installed', recoverable: true } }),
+    });
     await expect(backend.execute({ operation: 'crashes' })).resolves.toMatchObject({ ok: true, value: { available: false, reason: 'portable_log_provider_missing' } });
 
     const failing = backendWithRunner(async () => Promise.resolve({ ok: false as const, error: { code: 'PROCESS_TIMEOUT' as const, message: 'timeout', recoverable: true } }));

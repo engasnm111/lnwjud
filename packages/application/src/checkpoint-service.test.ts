@@ -42,12 +42,12 @@ describe('CheckpointService', () => {
     const service = new CheckpointService(workspaces(workspace), checkpoints);
     const actor = { clientId: 'client-1', clientName: 'test' };
 
-    const created = await service.createForFiles(actor, workspace.id, ['src\\file.txt']);
+    const created = await service.createForFiles(actor, workspace.id, [path.join('src', 'file.txt')]);
     await writeFile(target, 'after', 'utf8');
     if (!created.ok) throw new Error('checkpoint creation failed');
     const restored = await service.restore(actor, workspace.id, created.value.id, { profile: permissionProfiles.full, userConfirmed: true });
 
-    expect(restored).toMatchObject({ ok: true, value: { restoredPaths: ['src\\file.txt'], rollbackCheckpointId: expect.any(String) } });
+    expect(restored).toMatchObject({ ok: true, value: { restoredPaths: [path.join('src', 'file.txt')], rollbackCheckpointId: expect.any(String) } });
     await expect(readFile(target, 'utf8')).resolves.toBe('before');
     if (!restored.ok || restored.value.rollbackCheckpointId === undefined) throw new Error('rollback checkpoint missing');
     await expect(service.restore(actor, workspace.id, restored.value.rollbackCheckpointId, { profile: permissionProfiles.full, userConfirmed: true }))
@@ -61,7 +61,7 @@ describe('CheckpointService', () => {
     await writeFile(target, 'secret-before-content', 'utf8');
     const service = new CheckpointService(workspaces(workspace), checkpoints);
     const actor = { clientId: 'client-1', clientName: 'test' };
-    const created = await service.createForFiles(actor, workspace.id, ['src\\file.txt']);
+    const created = await service.createForFiles(actor, workspace.id, [path.join('src', 'file.txt')]);
     if (!created.ok) throw new Error('checkpoint creation failed');
 
     const listed = await service.list(workspace.id);
@@ -69,7 +69,7 @@ describe('CheckpointService', () => {
     expect(listed).toMatchObject({ ok: true, value: [{
       id: created.value.id,
       workspaceId: workspace.id,
-      files: [{ path: 'src\\file.txt', size: Buffer.byteLength('secret-before-content'), contentSha256: expect.any(String) }],
+      files: [{ path: path.join('src', 'file.txt'), size: Buffer.byteLength('secret-before-content'), contentSha256: expect.any(String) }],
     }] });
     expect(JSON.stringify(listed)).not.toContain('secret-before-content');
   });
@@ -83,7 +83,7 @@ describe('CheckpointService', () => {
       profileProvider: (): PermissionProfile => permissionProfiles[profileName],
     });
     const actor = { clientId: 'client-1', clientName: 'test' };
-    const created = await service.createForFiles(actor, workspace.id, ['src\\profile.txt']);
+    const created = await service.createForFiles(actor, workspace.id, [path.join('src', 'profile.txt')]);
     if (!created.ok) throw new Error('checkpoint creation failed');
     await writeFile(target, 'after', 'utf8');
 
@@ -98,7 +98,7 @@ describe('CheckpointService', () => {
 
   it('rejects a checkpoint path that no longer resolves inside the workspace', async () => {
     const { workspace, checkpoints } = await setup();
-    await checkpoints.insert({ id: 'checkpoint-1', workspaceId: workspace.id, createdAt: new Date(0).toISOString(), files: [{ path: '..\\outside.txt', content: 'secret', contentSha256: 'hash', size: 6 }] });
+    await checkpoints.insert({ id: 'checkpoint-1', workspaceId: workspace.id, createdAt: new Date(0).toISOString(), files: [{ path: path.join('..', 'outside.txt'), content: 'secret', contentSha256: 'hash', size: 6 }] });
     const result = await new CheckpointService(workspaces(workspace), checkpoints).restore(
       { clientId: 'client-1', clientName: 'test' }, workspace.id, 'checkpoint-1', { profile: permissionProfiles.full, userConfirmed: true },
     );

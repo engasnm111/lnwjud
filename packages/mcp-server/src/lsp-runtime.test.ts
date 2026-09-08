@@ -28,7 +28,7 @@ describe('LspRuntimeService', () => {
   });
 
   it('rejects lexical workspace escapes before spawning a language server', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
     const outside = path.join(root, '..', 'outside.ts');
     await writeFile(outside, 'export const outside = true;\n', 'utf8');
     let spawns = 0;
@@ -36,14 +36,14 @@ describe('LspRuntimeService', () => {
       environment: { LNWJUD_LSP_TYPESCRIPT_COMMAND: JSON.stringify([process.execPath, 'unused-server.mjs']) },
       spawner: (): ReturnType<typeof ok> => { spawns += 1; return ok({ kill: () => undefined } as never); },
     });
-    await expect(runtime.diagnostics({ workspaceId: 'ws-1', files: ['..\\outside.ts'] })).resolves.toMatchObject({
+    await expect(runtime.diagnostics({ workspaceId: 'ws-1', files: [path.join('..', 'outside.ts')] })).resolves.toMatchObject({
       ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' },
     });
     expect(spawns).toBe(0);
   });
 
   it('collects published diagnostics from a configured language server', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
 
     const fakeServer = await createFakeServer();
@@ -63,7 +63,7 @@ describe('LspRuntimeService', () => {
   });
 
   it('returns an approval-gated rename plan without applying it', async () => {
-    const root = path.win32.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
+    const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-lsp-test-')));
     await writeFile(path.join(root, 'a.ts'), 'export const broken = 1;\n', 'utf8');
     const fakeServer = await createFakeServer();
     const runtime = new LspRuntimeService(servicesWithRoot(root), actor, {

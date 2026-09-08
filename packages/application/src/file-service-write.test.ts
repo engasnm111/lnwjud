@@ -87,7 +87,7 @@ describe('FileService writes', () => {
     const controller = new AbortController();
 
     const writing = service.writeFile(actor, workspace.id, {
-      path: 'src\\file.txt', content: 'after', overwriteExisting: true, userConfirmed: true,
+      path: path.join('src', 'file.txt'), content: 'after', overwriteExisting: true, userConfirmed: true,
     }, controller.signal);
     await checkpointEntered;
     controller.abort();
@@ -104,7 +104,7 @@ describe('FileService writes', () => {
       profile: permissionProfiles.safe,
       checkpointService: checkpointService(),
     }).writeFile(actor, workspace.id, {
-      path: 'src\\file.txt', content: 'after', overwriteExisting: true, userConfirmed: true,
+      path: path.join('src', 'file.txt'), content: 'after', overwriteExisting: true, userConfirmed: true,
     });
 
     expect(result).toMatchObject({ ok: true, value: { checkpointId: 'checkpoint-1' } });
@@ -116,9 +116,9 @@ describe('FileService writes', () => {
     const checkpoints = checkpointService();
     await writeFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'before', 'utf8');
     const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpoints, profile: permissionProfiles.full });
-    const result = await service.writeFile(actor, workspace.id, { path: 'src\\file.txt', content: 'after' });
+    const result = await service.writeFile(actor, workspace.id, { path: path.join('src', 'file.txt'), content: 'after' });
     expect(result).toMatchObject({ ok: true, value: { checkpointId: 'checkpoint-1' } });
-    expect(checkpoints.calls).toEqual([['src\\file.txt']]);
+    expect(checkpoints.calls).toEqual([[path.join('src', 'file.txt')]]);
     await expect(readFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'utf8')).resolves.toBe('after');
   });
 
@@ -128,11 +128,11 @@ describe('FileService writes', () => {
     await writeFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'before', 'utf8');
     const result = await new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpoints })
       .writeFile(actor, workspace.id, {
-        path: 'src\\file.txt', content: 'after', overwriteExisting: true, userConfirmed: true,
+        path: path.join('src', 'file.txt'), content: 'after', overwriteExisting: true, userConfirmed: true,
       });
 
-    expect(result).toMatchObject({ ok: true, value: { path: 'src\\file.txt', checkpointId: 'checkpoint-1' } });
-    expect(checkpoints.calls).toEqual([['src\\file.txt']]);
+    expect(result).toMatchObject({ ok: true, value: { path: path.join('src', 'file.txt'), checkpointId: 'checkpoint-1' } });
+    expect(checkpoints.calls).toEqual([[path.join('src', 'file.txt')]]);
     await expect(readFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'utf8')).resolves.toBe('after');
   });
 
@@ -145,11 +145,11 @@ describe('FileService writes', () => {
       profileProvider: (): typeof profile => profile,
     });
 
-    await expect(service.writeFile(actor, workspace.id, { path: 'src\\dynamic.txt', content: 'blocked' }))
+    await expect(service.writeFile(actor, workspace.id, { path: path.join('src', 'dynamic.txt'), content: 'blocked' }))
       .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
     profile = permissionProfiles.balanced;
-    await expect(service.writeFile(actor, workspace.id, { path: 'src\\dynamic.txt', content: 'allowed' }))
-      .resolves.toMatchObject({ ok: true, value: { path: 'src\\dynamic.txt' } });
+    await expect(service.writeFile(actor, workspace.id, { path: path.join('src', 'dynamic.txt'), content: 'allowed' }))
+      .resolves.toMatchObject({ ok: true, value: { path: path.join('src', 'dynamic.txt') } });
   });
 
   it('validates every patch path before changing the first file', async () => {
@@ -157,8 +157,8 @@ describe('FileService writes', () => {
     await writeFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'before', 'utf8');
     const result = await new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() })
       .applyPatch(actor, workspace.id, { files: [
-        { path: 'src\\file.txt', content: 'changed' },
-        { path: '..\\outside.txt', content: 'must not write' },
+        { path: path.join('src', 'file.txt'), content: 'changed' },
+        { path: path.join('..', 'outside.txt'), content: 'must not write' },
       ] });
 
     expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
@@ -171,11 +171,11 @@ describe('FileService writes', () => {
     await writeFile(target, 'before', 'utf8');
     const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() });
 
-    await expect(service.applyPatch(actor, workspace.id, { files: [{ path: 'src\\file.txt', content: 'after' }] }))
+    await expect(service.applyPatch(actor, workspace.id, { files: [{ path: path.join('src', 'file.txt'), content: 'after' }] }))
       .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
     await expect(readFile(target, 'utf8')).resolves.toBe('before');
     await expect(service.applyPatch(actor, workspace.id, {
-      files: [{ path: 'src\\file.txt', content: 'after' }], userConfirmed: true,
+      files: [{ path: path.join('src', 'file.txt'), content: 'after' }], userConfirmed: true,
     })).resolves.toMatchObject({ ok: true, value: { checkpointId: 'checkpoint-1' } });
     await expect(readFile(target, 'utf8')).resolves.toBe('after');
   });
@@ -253,12 +253,12 @@ describe('FileService writes', () => {
     });
 
     await expect(service.moveFile(actor, workspace.id, {
-      sourcePath: '.env', destinationPath: 'config\\.env',
+      sourcePath: '.env', destinationPath: path.join('config', '.env'),
     })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
     await expect(readFile(source, 'utf8')).resolves.toBe('SECRET=kept\n');
 
     await expect(service.moveFile(actor, workspace.id, {
-      sourcePath: '.env', destinationPath: 'config\\.env', userConfirmed: true,
+      sourcePath: '.env', destinationPath: path.join('config', '.env'), userConfirmed: true,
     })).resolves.toEqual({ ok: true, value: undefined });
     await expect(readFile(destination, 'utf8')).resolves.toBe('SECRET=kept\n');
   });
@@ -269,9 +269,9 @@ describe('FileService writes', () => {
     await writeFile(target, 'before', 'utf8');
     const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() });
 
-    await expect(service.writeFile(actor, workspace.id, { path: 'src\\file.txt', content: 'after' }))
+    await expect(service.writeFile(actor, workspace.id, { path: path.join('src', 'file.txt'), content: 'after' }))
       .resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-    await expect(service.writeFile(actor, workspace.id, { path: 'src\\file.txt', content: 'after', overwriteExisting: true }))
+    await expect(service.writeFile(actor, workspace.id, { path: path.join('src', 'file.txt'), content: 'after', overwriteExisting: true }))
       .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
     await expect(readFile(target, 'utf8')).resolves.toBe('before');
   });
@@ -284,11 +284,11 @@ describe('FileService writes', () => {
     const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpoints });
 
     const result = await service.editFile(actor, workspace.id, {
-      path: 'src\\file.txt', oldText: 'beta', newText: 'fixed', expectedOccurrences: 1,
+      path: path.join('src', 'file.txt'), oldText: 'beta', newText: 'fixed', expectedOccurrences: 1,
     });
 
-    expect(result).toMatchObject({ ok: true, value: { path: 'src\\file.txt', replacements: 1, checkpointId: 'checkpoint-1' } });
-    expect(checkpoints.calls).toEqual([['src\\file.txt']]);
+    expect(result).toMatchObject({ ok: true, value: { path: path.join('src', 'file.txt'), replacements: 1, checkpointId: 'checkpoint-1' } });
+    expect(checkpoints.calls).toEqual([[path.join('src', 'file.txt')]]);
     await expect(readFile(target, 'utf8')).resolves.toBe('alpha\nfixed\ngamma\n');
   });
 
@@ -300,7 +300,7 @@ describe('FileService writes', () => {
     const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpoints });
 
     await expect(service.editFile(actor, workspace.id, {
-      path: 'src\\file.txt', oldText: 'same', newText: 'changed', expectedOccurrences: 1,
+      path: path.join('src', 'file.txt'), oldText: 'same', newText: 'changed', expectedOccurrences: 1,
     })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     expect(checkpoints.calls).toEqual([]);
     await expect(readFile(target, 'utf8')).resolves.toBe('same same');
@@ -330,16 +330,16 @@ describe('FileService writes', () => {
     await expect(readFile(source, 'utf8')).rejects.toThrow();
     await expect(readFile(result.value.recoveryPath!, 'utf8')).resolves.toBe('recoverable payload');
     const metadata = JSON.parse(await readFile(path.join(path.dirname(result.value.recoveryPath!), 'metadata.json'), 'utf8')) as Record<string, unknown>;
-    expect(metadata).toMatchObject({ workspaceId: workspace.id, relativePath: 'src\\recover-me.txt' });
-    expect(checkpoints.calls).toEqual([['src\\recover-me.txt']]);
+    expect(metadata).toMatchObject({ workspaceId: workspace.id, relativePath: path.join('src', 'recover-me.txt') });
+    expect(checkpoints.calls).toEqual([[path.join('src', 'recover-me.txt')]]);
 
     await expect(service.listRecoveryItems(workspace.id)).resolves.toMatchObject({ ok: true, value: {
       recoveryTrashRoot: recoveryRoot,
-      items: [{ recoveryId: result.value.recoveryId, workspaceId: workspace.id, relativePath: 'src\\recover-me.txt', payloadAvailable: true }],
+      items: [{ recoveryId: result.value.recoveryId, workspaceId: workspace.id, relativePath: path.join('src', 'recover-me.txt'), payloadAvailable: true }],
     } });
 
     const restored = await service.restoreDeletedFile(actor, workspace.id, { recoveryId: result.value.recoveryId!, userConfirmed: true });
-    expect(restored).toMatchObject({ ok: true, value: { recoveryId: result.value.recoveryId, path: 'src\\recover-me.txt' } });
+    expect(restored).toMatchObject({ ok: true, value: { recoveryId: result.value.recoveryId, path: path.join('src', 'recover-me.txt') } });
     await expect(readFile(source, 'utf8')).resolves.toBe('recoverable payload');
     await expect(readFile(result.value.recoveryPath!, 'utf8')).rejects.toThrow();
   });
@@ -358,17 +358,17 @@ describe('FileService writes', () => {
     });
 
     await expect(service.prepareExternalFileMutation(actor, workspace.id, {
-      targetPath: 'src\\report.docx',
+      targetPath: path.join('src', 'report.docx'),
     })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_REQUIRED' } });
 
     const prepared = await service.prepareExternalFileMutation(actor, workspace.id, {
-      targetPath: 'src\\report.docx', userConfirmed: true,
+      targetPath: path.join('src', 'report.docx'), userConfirmed: true,
     });
     expect(prepared).toMatchObject({
       ok: true,
       value: {
         targetPath: target,
-        targetRelativePath: 'src\\report.docx',
+        targetRelativePath: path.join('src', 'report.docx'),
         replacementBackup: { recoveryId: expect.any(String), recoveryPath: expect.any(String) },
       },
     });
@@ -387,7 +387,7 @@ describe('FileService writes', () => {
     expect(recovery).toMatchObject({ ok: true, value: { items: [{
       recoveryId: restored.ok ? restored.value.rollbackRecoveryId : undefined,
       kind: 'replacement_backup',
-      relativePath: 'src\\report.docx',
+      relativePath: path.join('src', 'report.docx'),
       payloadAvailable: true,
     }] } });
     if (!recovery.ok) throw new Error(recovery.error.message);
@@ -400,18 +400,18 @@ describe('FileService writes', () => {
 
     const workspace = await createWorkspace();
     const result = await new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() })
-      .writeFile(actor, workspace.id, { path: 'docs\\superpowers\\plans\\plan.md', content: 'hello' });
+      .writeFile(actor, workspace.id, { path: path.join('docs', 'superpowers', 'plans', 'plan.md'), content: 'hello' });
 
-    expect(result).toMatchObject({ ok: true, value: { path: 'docs\\superpowers\\plans\\plan.md' } });
+    expect(result).toMatchObject({ ok: true, value: { path: path.join('docs', 'superpowers', 'plans', 'plan.md') } });
     await expect(readFile(path.join(workspace.rootPath, 'docs', 'superpowers', 'plans', 'plan.md'), 'utf8')).resolves.toBe('hello');
   });
 
   it('patches a nested file that does not exist yet', async () => {
     const workspace = await createWorkspace();
     const result = await new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() })
-      .applyPatch(actor, workspace.id, { files: [{ path: 'nested\\a\\b.txt', content: 'patched' }] });
+      .applyPatch(actor, workspace.id, { files: [{ path: path.join('nested', 'a', 'b.txt'), content: 'patched' }] });
 
-    expect(result).toMatchObject({ ok: true, value: { paths: ['nested\\a\\b.txt'] } });
+    expect(result).toMatchObject({ ok: true, value: { paths: [path.join('nested', 'a', 'b.txt')] } });
     await expect(readFile(path.join(workspace.rootPath, 'nested', 'a', 'b.txt'), 'utf8')).resolves.toBe('patched');
   });
 
@@ -419,7 +419,7 @@ describe('FileService writes', () => {
     const workspace = await createWorkspace();
     await writeFile(path.join(workspace.rootPath, 'src', 'file.txt'), 'payload', 'utf8');
     const result = await new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() })
-      .moveFile(actor, workspace.id, { sourcePath: 'src\\file.txt', destinationPath: 'docs\\moved\\file.txt', userConfirmed: true });
+      .moveFile(actor, workspace.id, { sourcePath: path.join('src', 'file.txt'), destinationPath: path.join('docs', 'moved', 'file.txt'), userConfirmed: true });
 
     expect(result).toEqual({ ok: true, value: undefined });
     await expect(readFile(path.join(workspace.rootPath, 'docs', 'moved', 'file.txt'), 'utf8')).resolves.toBe('payload');
@@ -431,16 +431,16 @@ describe('FileService writes', () => {
     await writeFile(path.join(workspace.rootPath, 'src', 'pkg', 'a.ts'), 'export const a = 1;\n', 'utf8');
     const service = new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() });
 
-    await expect(service.copyFile(actor, workspace.id, { sourcePath: 'src\\pkg\\a.ts', destinationPath: 'out\\copy\\a.ts' }))
-      .resolves.toMatchObject({ ok: true, value: { destinationPath: 'out\\copy\\a.ts' } });
+    await expect(service.copyFile(actor, workspace.id, { sourcePath: path.join('src', 'pkg', 'a.ts'), destinationPath: path.join('out', 'copy', 'a.ts') }))
+      .resolves.toMatchObject({ ok: true, value: { destinationPath: path.join('out', 'copy', 'a.ts') } });
     await expect(readFile(path.join(workspace.rootPath, 'src', 'pkg', 'a.ts'), 'utf8')).resolves.toBe('export const a = 1;\n');
     await expect(readFile(path.join(workspace.rootPath, 'out', 'copy', 'a.ts'), 'utf8')).resolves.toBe('export const a = 1;\n');
 
-    await expect(service.copyFile(actor, workspace.id, { sourcePath: 'src\\pkg', destinationPath: 'out\\pkg-copy' }))
+    await expect(service.copyFile(actor, workspace.id, { sourcePath: path.join('src', 'pkg'), destinationPath: path.join('out', 'pkg-copy') }))
       .resolves.toMatchObject({ ok: true });
     await expect(readFile(path.join(workspace.rootPath, 'out', 'pkg-copy', 'a.ts'), 'utf8')).resolves.toBe('export const a = 1;\n');
 
-    await expect(service.moveFile(actor, workspace.id, { sourcePath: 'src\\pkg', destinationPath: 'relocated\\pkg', userConfirmed: true }))
+    await expect(service.moveFile(actor, workspace.id, { sourcePath: path.join('src', 'pkg'), destinationPath: path.join('relocated', 'pkg'), userConfirmed: true }))
       .resolves.toEqual({ ok: true, value: undefined });
     await expect(readFile(path.join(workspace.rootPath, 'relocated', 'pkg', 'a.ts'), 'utf8')).resolves.toBe('export const a = 1;\n');
   });
@@ -459,7 +459,7 @@ describe('FileService writes', () => {
     const workspace = await createWorkspace();
     await writeFile(path.join(workspace.rootPath, 'docs'), 'not-a-dir', 'utf8');
     const result = await new FileService(repository(workspace), undefined, undefined, { checkpointService: checkpointService() })
-      .writeFile(actor, workspace.id, { path: 'docs\\plan.md', content: 'nope' });
+      .writeFile(actor, workspace.id, { path: path.join('docs', 'plan.md'), content: 'nope' });
 
     expect(result).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
   });

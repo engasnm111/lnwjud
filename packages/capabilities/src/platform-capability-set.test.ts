@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPlatformCapabilitySet } from './platform-capability-set.js';
+import { LinuxSchedulerCapabilityBackend } from './linux-scheduler-backend.js';
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('platform capability composition', () => {
   it('does not construct Windows providers for macOS/Linux profiles', async () => {
+    const scheduler = vi.spyOn(LinuxSchedulerCapabilityBackend.prototype, 'execute').mockResolvedValue({
+      ok: true, value: { available: false, ready: false, reason: 'scheduler_provider_unavailable' },
+    });
     const runtime = createPlatformCapabilitySet({
       platform: 'linux',
       dataPath: '/tmp/lnwjud-data',
@@ -29,6 +35,7 @@ describe('platform capability composition', () => {
       ok: true,
       value: { available: false, ready: false, reason: 'scheduler_provider_unavailable' },
     });
+    expect(scheduler).toHaveBeenCalled();
   });
 
   it('keeps Windows bridge composition explicit and injectable', () => {

@@ -103,7 +103,7 @@ describe('GitService', () => {
     } as unknown as GitAdapter;
     const service = new GitService(repository(workspace), undefined, adapter);
 
-    const result = await service.diff({ clientId: 'test', clientName: 'test' }, workspace.id, { path: 'src\\new.txt' });
+    const result = await service.diff({ clientId: 'test', clientName: 'test' }, workspace.id, { path: path.join('src', 'new.txt') });
 
     expect(result).toEqual({ ok: true, value: { patch: '', truncated: false } });
   });
@@ -116,7 +116,7 @@ describe('GitService', () => {
       async log(): Promise<never> { throw new Error('not used'); },
     } as unknown as GitAdapter);
 
-    const result = await service.diff({ clientId: 'test', clientName: 'test' }, workspace.id, { path: '..\\outside.txt' });
+    const result = await service.diff({ clientId: 'test', clientName: 'test' }, workspace.id, { path: path.join('..', 'outside.txt') });
 
     expect(result).toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
   });
