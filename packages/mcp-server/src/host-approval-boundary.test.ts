@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { ok } from '@lnwjud/domain';
 import { permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
 import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
 import { ToolRegistry, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
 
 const actor = { clientId: 'host-approval', clientName: 'host-approval-test' };
-const activeScope = async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: 'E:\\project-a' });
+const activeScope = async (): Promise<WorkspaceScope | null> => ({ workspaceId: 'workspace-a', rootPath: path.resolve(tmpdir(), 'lnwjud-approval-fixture') });
 const balancedProfile = (): PermissionProfile => permissionProfiles.balanced;
 
 describe('mandatory independent host approval', () => {

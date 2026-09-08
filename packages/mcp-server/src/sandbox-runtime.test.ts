@@ -136,7 +136,7 @@ describe('SandboxRuntimeService', () => {
         sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
         launcher: async (): Promise<ReturnType<typeof ok>> => ok(undefined),
         waiter: async (file): Promise<boolean> => {
-          const output = path.dirname(file);
+          const output = path.win32.dirname(file);
           await writeFile(path.join(output, 'exit-code.txt'), '0');
           await writeFile(path.join(output, 'stdout.log'), 'bypassed');
           await writeFile(path.join(output, 'stderr.log'), '');
@@ -161,7 +161,7 @@ describe('SandboxRuntimeService', () => {
         sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
         launcher: async (): Promise<ReturnType<typeof ok>> => ok(undefined),
         waiter: async (file): Promise<boolean> => {
-          stagedOutput = path.dirname(file);
+          stagedOutput = path.win32.dirname(file);
           await writeFile(path.join(stagedOutput, 'exit-code.txt'), '0');
           await writeFile(path.join(stagedOutput, 'stdout.log'), 'detonated ok');
           await writeFile(path.join(stagedOutput, 'stderr.log'), '');

@@ -154,9 +154,15 @@ jobs:
           LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
           LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
           LNWJUD_COSIGN_PATH: cosign
-          USE_SYSTEM_FPM: ${{ matrix.platform == 'linux' && matrix.arch == 'arm64' && 'true' || '' }}
         run: |
           set -euo pipefail
+          # app-builder checks presence, not truthiness: even an empty value
+          # selects system FPM, so leave it completely unset on other targets.
+          if [[ "$LNWJUD_VERIFY_PLATFORM/$LNWJUD_VERIFY_ARCH" == linux/arm64 ]]; then
+            export USE_SYSTEM_FPM=true
+          else
+            unset USE_SYSTEM_FPM
+          fi
           mkdir -p apps/desktop/packaged-e2e-diagnostics
           corepack pnpm@10.15.0 verify:platform -- --package 2>&1 \
             | tee apps/desktop/packaged-e2e-diagnostics/platform-package.log

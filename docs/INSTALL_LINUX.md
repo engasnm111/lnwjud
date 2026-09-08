@@ -19,6 +19,14 @@ package smoke, and provenance all have matching production evidence.
 4. Add a project explicitly in Projects. lnwjud does not auto-register `/`, a
    mount root, or a home directory.
 
+On Ubuntu 24.04, prefer the DEB: its installation hook configures the
+application's AppArmor profile for Chromium sandboxing. Running an unpacked
+binary or AppImage from an arbitrary path may be blocked by the host's user
+namespace policy even when a shell `unshare` check succeeds. If startup reports
+a sandbox error, use the installed DEB; do not disable the Electron sandbox or
+the host-wide AppArmor policy. Native CI tests the installed DEB, while the
+AppImage has a separate extraction/layout check.
+
 The package includes Electron, target-native ripgrep, the official OpenAI
 `tunnel-client`, and the bounded native-host protocol helper. System Node.js is
 not required for the packaged Desktop app or the packaged STDIO launcher.
