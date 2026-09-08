@@ -288,7 +288,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const checkpointCipher = new AesGcmCheckpointCipher(checkpointEncryptionKey);
   const checkpointRepository = new SqliteCheckpointRepository(database, checkpointCipher);
   const backupService = new SqliteBackupService(database, { backupDirectory, databaseFilename, platform: process.platform, arch: process.arch });
-  void backupService.ensureRecent().catch((error: unknown) => {
+  const startupBackup = backupService.ensureRecent().catch((error: unknown) => {
     console.error(`Automatic database backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
   });
   const workspaceService = new WorkspaceService(workspaceRepository);
@@ -1363,6 +1363,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       await mcpLifecycle.close();
       await extensionsService.close().catch(() => undefined);
       await workspaceIndex.close().catch(() => undefined);
+      await startupBackup;
       database.close();
     },
   };

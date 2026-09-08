@@ -14,12 +14,12 @@ describe('bundled target-native runtime tools', () => {
   });
 
   it('prepends an existing bundled tool directory without dropping the system PATH', () => {
-    const environment: NodeJS.ProcessEnv = { Path: ['C:\\Windows\\System32', 'C:\\Tools'].join(path.delimiter) };
+    const environment: NodeJS.ProcessEnv = { Path: ['C:\\Windows\\System32', 'C:\\Tools'].join(';') };
     const resources = 'C:\\Program Files\\lnwjud\\resources';
-    const bundled = path.join(resources, 'runtime-tools', 'ripgrep');
+    const bundled = path.win32.join(resources, 'runtime-tools', 'ripgrep');
 
     expect(prependBundledRuntimeToolsToPath(environment, resources, (candidate) => candidate === bundled, 'win32')).toEqual([bundled]);
-    expect(environment.Path?.split(path.delimiter)).toEqual([bundled, 'C:\\Windows\\System32', 'C:\\Tools']);
+    expect(environment.Path?.split(';')).toEqual([bundled, 'C:\\Windows\\System32', 'C:\\Tools']);
   });
 
   it('uses POSIX separators and PATH when simulating a macOS package on Windows', () => {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -23,6 +23,18 @@ afterEach(async () => {
 });
 
 describe('DesktopRuntime persistence', () => {
+  it('finishes the startup database backup before an immediate shutdown closes SQLite', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-backup-close-'));
+    temporaryRoots.push(root);
+    const runtime = createDesktopRuntime(await realpath(root));
+    await runtime.close();
+    const directory = path.join(root, 'backups');
+    const manifests = await Promise.all((await readdir(directory))
+      .filter((name) => name.endsWith('.json'))
+      .map(async (name): Promise<{ reason: string }> => JSON.parse(await readFile(path.join(directory, name), 'utf8')) as { reason: string }));
+    expect(manifests).toEqual(expect.arrayContaining([expect.objectContaining({ reason: 'daily' })]));
+  });
+
   it('builds the production dashboard audit summary without parsing large started metadata', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-audit-summary-'));
     temporaryRoots.push(rawDataRoot);
@@ -472,6 +484,11 @@ describe('DesktopRuntime persistence', () => {
       }),
     });
     try {
+      if (process.platform !== 'win32') {
+        await expect(runtime.services.installPdfProvider()).rejects.toThrow('available only on Windows');
+        expect(runtime.getUserSettings().pdfProviderPath).not.toBe(providerPath);
+        return;
+      }
       await expect(runtime.services.installPdfProvider()).resolves.toMatchObject({
         providerPath,
         version: 'fixture',

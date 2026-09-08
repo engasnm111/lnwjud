@@ -18,6 +18,23 @@ function allowed(toolName: string, input: Record<string, unknown>, activePolicy:
 }
 
 describe('scoped destructive auto approval', () => {
+  it.each(['linux', 'darwin'] as const)('accepts an exact in-scope absolute file on %s without accepting outside or critical paths', (platform) => {
+    const nativeScope = { workspaceId: 'posix', rootPath: '/home/alice/project' };
+    for (const [target, expected] of [
+      ['/home/alice/project/src/old.txt', true],
+      ['/home/alice/Project/src/old.txt', false],
+      ['/home/alice/project-other/old.txt', false],
+      ['/home/alice/project/../outside.txt', false],
+      ['/home/alice/project/.env', false],
+      ['/home/alice/project', false],
+      ['/', false],
+    ] as const) {
+      const input = { workspaceId: 'posix', path: target };
+      expect(isScopedAutoApprovalAllowed('delete_file', input,
+        inspectMutationOperation('delete_file', input, 'DANGEROUS'), policy(['delete_file']), nativeScope, platform), target).toBe(expected);
+    }
+  });
+
   it('allows selected exact destructive families inside the active project', () => {
     const current = policy(['delete_file', 'git_rm', 'git_clean', 'git_reset_restore', 'shell_rm_unlink', 'shell_rmdir', 'shell_del_erase', 'wsl_rm_unlink', 'wsl_rmdir']);
     expect(allowed('delete_file', { workspaceId: 'workspace-1', path: 'src\\old.txt' }, current)).toBe(true);

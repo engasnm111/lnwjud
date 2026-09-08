@@ -17,6 +17,7 @@ import { IncidentSaveCoordinator } from '../src/main/incident-save.js';
 import { LogHub } from '../src/main/log-hub.js';
 import { acquireTunnelLock, type TunnelLockOwner } from '../src/main/tunnel-lock.js';
 import { TunnelController } from '../src/main/tunnel-controller.js';
+import { isolateTunnelProfile } from './tunnel-profile-fixture.js';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const lockHelper = path.join(repositoryRoot, 'scripts', 'lib', 'lnwjud-tunnel-lock.ps1');
@@ -27,6 +28,7 @@ const fixtureProcesses = new Set<ChildProcess>();
 afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   await Promise.all([...fixtureProcesses].map(async (child) => {
     if (child.exitCode === null && child.signalCode === null) child.kill();
     await waitForExit(child).catch(() => undefined);
@@ -108,7 +110,7 @@ describe('session resilience acceptance', () => {
     }
   }, 30_000);
 
-  it('keeps the desktop lock and production launcher to one owner in either winner order without running tunnel-client', async () => {
+  it.runIf(process.platform === 'win32')('keeps the desktop lock and production launcher to one owner in either winner order without running tunnel-client', async () => {
     const root = await temporaryDirectory();
     const profileDirectory = path.join(root, 'tunnel-client');
     const sentinel = path.join(root, 'tunnel-client-invoked');
@@ -145,7 +147,7 @@ describe('session resilience acceptance', () => {
     if (afterRelease.acquired) expect(await afterRelease.release()).toBe(true);
   }, 15_000);
 
-  it('uses the same critical section across a TypeScript stale reclaim and PowerShell publisher', async () => {
+  it.runIf(process.platform === 'win32')('uses the same critical section across a TypeScript stale reclaim and PowerShell publisher', async () => {
     const root = await temporaryDirectory();
     const profileDirectory = path.join(root, 'tunnel-client');
     await mkdir(profileDirectory, { recursive: true });
@@ -268,8 +270,7 @@ describe('session resilience acceptance', () => {
 
   it('probes TunnelController against a real ephemeral HTTP /healthz endpoint', async () => {
     const root = await temporaryDirectory();
-    vi.stubEnv('APPDATA', path.join(root, 'appdata'));
-    const profile = path.join(root, 'appdata', 'tunnel-client');
+    const profile = isolateTunnelProfile(root);
     await mkdir(profile, { recursive: true });
     let requested = '';
     const server = createHttpServer((request, response) => { requested = request.url ?? ''; response.writeHead(200, { 'content-type': 'application/json' }); response.end('{"status":"live"}'); });

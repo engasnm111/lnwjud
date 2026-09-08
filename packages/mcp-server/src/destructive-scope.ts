@@ -121,7 +121,9 @@ function hasOption(args: readonly string[], options: readonly string[]): boolean
 }
 
 function safeTarget(root: string, cwd: string, target: string, policy: DestructiveAutoApprovalPolicy, platform: NodeJS.Platform): boolean {
-  if (target.length === 0 || target.startsWith('/') || hasPatternMagic(target)) return false;
+  // A leading slash is a rooted/option-like target on Windows, but is the
+  // normal absolute-path form on POSIX. Containment below still must succeed.
+  if (target.length === 0 || (platform === 'win32' && target.startsWith('/')) || hasPatternMagic(target)) return false;
   const relative = relativeProjectPath(root, cwd, target, platform);
   return relative !== null
     && relative.length > 0

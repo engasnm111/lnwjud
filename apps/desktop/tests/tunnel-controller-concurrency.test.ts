@@ -1,3 +1,4 @@
+import { isolateTunnelProfile } from './tunnel-profile-fixture.js';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -22,8 +23,8 @@ vi.mock('../src/main/tunnel-lock.js', async (importOriginal) => ({
   acquireTunnelLock: tunnelLockMocks.acquire,
 }));
 
-import { TunnelController } from '../src/main/tunnel-controller.js';
-import { readTunnelLock } from '../src/main/tunnel-lock.js';
+import { TunnelController, resolveTunnelProfileDirectory } from '../src/main/tunnel-controller.js';
+import { readTunnelLock, type ProcessProbeResult } from '../src/main/tunnel-lock.js';
 
 const temporaryRoots: string[] = [];
 const desktopMcpUrl = 'http://127.0.0.1:18765/mcp';
@@ -36,6 +37,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -43,8 +45,8 @@ describe('TunnelController concurrent start', () => {
   it('shares one staggered start across lock acquisition, doctor, decryption, and spawn', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-concurrent-start-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
     await writeFile(clientPath, 'fixture', 'utf8');
@@ -73,7 +75,8 @@ describe('TunnelController concurrent start', () => {
       if (typeof callback === 'function') queueMicrotask(() => callback(null, '', ''));
       return undefined;
     });
-    childProcessMocks.spawn.mockImplementation(() => fakeTunnelChild());
+    const child = fakeTunnelChild();
+    childProcessMocks.spawn.mockImplementation(() => child);
     const controller = new TunnelController({
       getClientPath: (): string => clientPath,
       setClientPath: (): void => undefined,
@@ -81,6 +84,10 @@ describe('TunnelController concurrent start', () => {
       getMcpServerUrl: (): string => desktopMcpUrl,
       isExternalTunnelRunning,
       decryptSecret,
+      inspectOwnedProcess: async (): Promise<ProcessProbeResult> => child.exitCode === null
+        ? { state: 'live', processStartedAt: owner.processStartedAt } : { state: 'gone' },
+      inspectOwnedProcessTree: async (): Promise<readonly { readonly pid: number; readonly processStartedAt: string }[]> => [],
+      terminateOwnedProcessTree: async (): Promise<void> => { child.kill(); },
     });
 
     const first = controller.start();
@@ -114,8 +121,8 @@ describe('TunnelController concurrent start', () => {
   it('cancels a start blocked in doctor before stop releases ownership', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-start-stop-'));
     temporaryRoots.push(dataPath);
-    vi.stubEnv('APPDATA', path.join(dataPath, 'appdata'));
-    const profileDir = path.join(dataPath, 'appdata', 'tunnel-client');
+    isolateTunnelProfile(dataPath);
+    const profileDir = resolveTunnelProfileDirectory();
     const clientPath = path.join(dataPath, 'tunnel-client.exe');
     const lockPath = path.join(profileDir, 'lnwjud.tunnel.lock');
     await (await import('node:fs/promises')).mkdir(profileDir, { recursive: true });
@@ -188,7 +195,7 @@ function fakeTunnelChild(): ChildProcess {
   const child = Object.assign(new EventEmitter(), {
     exitCode: null as number | null,
     signalCode: null,
-    pid: undefined,
+    pid: 9001,
     stdin: null,
     stdout: null,
     stderr: null,

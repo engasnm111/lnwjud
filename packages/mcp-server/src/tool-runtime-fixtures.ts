@@ -255,6 +255,15 @@ const windowsRuntime = (
     : service(input, serviceCall)
   : unavailable(input, 'unsupported');
 
+const nativeRuntime = (
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+  portableEvidence: Readonly<Record<string, unknown>>,
+  windowsServiceCall?: string,
+): ToolRuntimeFixture => process.platform === 'win32'
+  ? windowsRuntime(name, input, windowsServiceCall)
+  : deterministic(input, { expected: { tool: name, status: 'ready', available: true, ready: true, executed: true, ...portableEvidence } });
+
 /** Runtime fixtures for the exact 46 upgrade definitions delivered in phases 19-33. */
 export const PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES = {
   inspect_web_app: service({ tab_id: 'tab-1' }, 'capabilities.dom_cdp'),
@@ -265,14 +274,14 @@ export const PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES = {
   console_context: unavailable({}, 'needs_setup'),
   browser_debug_context: service({ tab_id: 'tab-1' }, 'capabilities.dom_cdp'),
   windows_environment: windowsRuntime('windows_environment', {}, 'capabilities.system_info'),
-  service_context: windowsRuntime('service_context', { service: 'EventLog' }),
-  process_context: windowsRuntime('process_context', {}, 'capabilities.system_info'),
-  port_context: windowsRuntime('port_context', {}),
+  service_context: nativeRuntime('service_context', { service: 'EventLog' }, { services: 'fixture service\n' }),
+  process_context: nativeRuntime('process_context', {}, { processes: '42 1 fixture 0.0 0.0\n' }, 'capabilities.system_info'),
+  port_context: nativeRuntime('port_context', {}, { listening: ['fixture listener'] }),
   registry_context: windowsRuntime('registry_context', { key: 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment' }),
-  event_log_context: windowsRuntime('event_log_context', { log_name: 'Application', max_events: 1 }),
-  installed_runtime_context: windowsRuntime('installed_runtime_context', {}),
-  path_context: windowsRuntime('path_context', {}),
-  startup_context: windowsRuntime('startup_context', {}),
+  event_log_context: nativeRuntime('event_log_context', { log_name: 'Application', max_events: 1 }, { eventLog: { count: 1, events: [{ message: 'fixture event' }] } }),
+  installed_runtime_context: nativeRuntime('installed_runtime_context', {}, {}),
+  path_context: nativeRuntime('path_context', {}, {}),
+  startup_context: nativeRuntime('startup_context', {}, { startup: 'fixture startup\n' }),
   mcp_discover: service({}, 'extensions.listMcpServers'),
   mcp_health: service({}, 'extensions.listMcpServers'),
   mcp_resources: service({ server: 'server-1' }, 'extensions.listMcpResources'),
@@ -328,8 +337,8 @@ export const PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES = {
   benchmark_run: service({ workspaceId }, 'file.readFile'),
   regression_report: deterministic({ workspaceId }, { expected: { status: 'ready', available: true, ready: true, executed: true }, requiredKeys: ['runs', 'regressions'] }),
   sandbox_exec: unavailable({}, process.platform === 'win32' ? 'needs_setup' : 'unsupported'),
-  event_watch: deterministic({ log_name: 'Application', max_events: 1 }, { expected: { status: process.platform === 'win32' ? 'ready' : 'optional' }, requiredKeys: ['available'] }),
-  crash_trace: deterministic({ hours: 1, max_events: 1 }, { expected: { status: process.platform === 'win32' ? 'ready' : 'optional' }, requiredKeys: ['available'] }),
+  event_watch: deterministic({ log_name: 'Application', max_events: 1 }, { expected: { status: 'ready', available: true, ...(process.platform === 'win32' ? {} : { count: 1, events: [{ message: 'fixture event' }] }) }, requiredKeys: ['available'] }),
+  crash_trace: deterministic({ hours: 1, max_events: 1 }, { expected: { status: 'ready', available: true, ...(process.platform === 'win32' ? {} : { count: 1, events: [{ message: 'fixture event' }] }) }, requiredKeys: ['available'] }),
   lsp_diagnostics: unavailable({ workspaceId, files: ['src/upgrade-runtime.ts'] }, 'needs_setup'),
   lsp_rename: unavailable({ workspaceId, file: 'src/upgrade-runtime.ts', newName: 'smokeRenamed' }, 'needs_setup'),
   debug_attach: unavailable({ workspaceId }, 'needs_setup'),
@@ -339,7 +348,7 @@ export const PHASE_34_TO_46_TOOL_RUNTIME_FIXTURES = {
   db_inspect: unavailable({}, 'needs_setup'),
   db_query: unavailable({}, 'needs_setup'),
   office_ppt: service({ action: 'read', file_path: 'package.json' }, 'capabilities.office'),
-  office_outlook: service({ action: 'list_folders' }, 'capabilities.office'),
+  office_outlook: process.platform === 'win32' ? service({ action: 'list_folders' }, 'capabilities.office') : unavailable({ action: 'list_folders' }, 'unsupported'),
   pdf_extract_tables: unavailable({ workspaceId, file_path: 'package.json' }, 'needs_setup'),
   docx_merge: service({ workspaceId, file_path: 'package.json', merge_paths: ['tsconfig.json'], target_path: 'runtime-contract-output.docx' }, 'workspaceInfo.info'),
   self_heal_plan: service({}, 'capabilities.shell'),

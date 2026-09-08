@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { err, type Result } from '@lnwjud/domain';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
 import { ToolRegistry } from './tool-registry.js';
+import { withNativeDiagnosticFixture } from './native-diagnostic-test-fixture.js';
 import {
   PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES,
   PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES,
@@ -45,7 +46,7 @@ async function executeDefinition(
   const parsed = tool.parse(input);
   expect(parsed, `${name} representative input`).toMatchObject({ ok: true });
   if (!parsed.ok) throw new Error(`${name} representative input did not parse`);
-  return tool.execute(parsed.value, new AbortController().signal);
+  return withNativeDiagnosticFixture(name, () => tool.execute(parsed.value, new AbortController().signal));
 }
 
 async function preparedInput(

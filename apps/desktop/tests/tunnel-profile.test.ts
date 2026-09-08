@@ -203,7 +203,7 @@ describe('tunnel profile MCP target', () => {
     await mkdir(resources);
     const cmdPath = path.join(root, 'lnwjud-mcp-stdio.cmd');
     await writeFile(cmdPath, '@echo off\n', 'utf8');
-    expect(resolveStdioLauncherPath(packagedStdioLauncherCandidates(path.join(root, 'lnwjud.exe'), resources))).toBe(
+    expect(resolveStdioLauncherPath(packagedStdioLauncherCandidates(path.join(root, 'lnwjud.exe'), resources, 'win32'))).toBe(
       path.resolve(cmdPath),
     );
   });

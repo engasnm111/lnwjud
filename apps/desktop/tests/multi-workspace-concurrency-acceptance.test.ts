@@ -188,8 +188,8 @@ describe('multi-workspace concurrency acceptance', () => {
           arguments: { workspaceId: workspaceB.id, path: path.join(workspaceRootA, 'victim-a.txt') },
         }),
       ]);
-      expect(crossDeleteA.isError).not.toBe(true);
-      expect(crossDeleteB.isError).not.toBe(true);
+      expect(crossDeleteA.isError, JSON.stringify(crossDeleteA)).not.toBe(true);
+      expect(crossDeleteB.isError, JSON.stringify(crossDeleteB)).not.toBe(true);
       await expect(access(path.join(workspaceRootA, 'victim-a.txt'))).rejects.toThrow();
       await expect(access(path.join(workspaceRootB, 'victim-b.txt'))).rejects.toThrow();
 

@@ -57,7 +57,12 @@ jobs:
 
       - name: Run native platform contract tests
         shell: bash
-        run: corepack pnpm@10.15.0 exec vitest run tests/integration/platform-composition.test.ts tests/release/platform-support-contract.test.ts
+        run: corepack pnpm@10.15.0 exec vitest run tests/integration/platform-composition.test.ts tests/release/platform-support-contract.test.ts packages/mcp-server/src/tool-runtime-contract.test.ts
+
+      - name: Run complete native unit and service acceptance suites
+        if: matrix.name != 'Windows'
+        shell: bash
+        run: corepack pnpm@10.15.0 test
 
       - name: Test macOS native host protocol
         timeout-minutes: 10
