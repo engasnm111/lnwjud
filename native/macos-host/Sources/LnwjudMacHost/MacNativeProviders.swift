@@ -102,7 +102,7 @@ enum MacNativeProviders {
                     reason: officeInstalled ? "provider_not_implemented" : "dependency_missing",
                     supportedActions: ["status", "read", "read_text", "sheets", "list_folders", "list_messages", "write", "replace", "merge", "save_as"]
                 )
-            ] as [String: AnyEncodable])
+            ] as [String: [String: AnyEncodable]])
         ]
     }
 
