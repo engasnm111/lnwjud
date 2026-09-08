@@ -20,15 +20,15 @@ function hostFile<T>(file: T): T | string {
 }
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  return { ...actual, existsSync: (file: Parameters<typeof actual.existsSync>[0]) => actual.existsSync(hostFile(file)) };
+  return { ...actual, existsSync: (file: Parameters<typeof actual.existsSync>[0]): boolean => actual.existsSync(hostFile(file)) };
 });
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
-    mkdir: (file: string, options: Parameters<typeof actual.mkdir>[1]) => actual.mkdir(hostFile(file), options),
-    readFile: (file: string, options: 'utf8') => actual.readFile(hostFile(file), options),
-    writeFile: (file: string, data: string, options?: 'utf8') => actual.writeFile(hostFile(file), data, options),
+    mkdir: (file: string, options: Parameters<typeof actual.mkdir>[1]): Promise<string | undefined> => actual.mkdir(hostFile(file), options),
+    readFile: (file: string, options: 'utf8'): Promise<string> => actual.readFile(hostFile(file), options),
+    writeFile: (file: string, data: string, options?: 'utf8'): Promise<void> => actual.writeFile(hostFile(file), data, options),
   };
 });
 

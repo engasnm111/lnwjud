@@ -29,10 +29,10 @@ describe('MCP tool registry', () => {
     ['\\\\server\\share\\Project', '\\\\server\\share\\Project\\src'],
   ])('preserves command path syntax for %s', async (rootPath, expectedCwd) => {
     const calls: unknown[] = [];
-    const registry = new ToolRegistry({ capabilities: { async execute(tool, input) {
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> {
       calls.push({ tool, input }); return ok({ accepted: true });
     } } }, actor, {
-      activeWorkspaceScopeProvider: async () => ({ workspaceId: 'workspace-a', rootPath }),
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: 'workspace-a', rootPath }),
       hostMutationApprovalProvider: approveMutation,
     });
     for (const cwd of [undefined, 'src', expectedCwd]) {
@@ -51,15 +51,15 @@ describe('MCP tool registry', () => {
     const events: ActivitySinkEvent[] = [];
     const registry = new ToolRegistry({
       workspaceInfo: {
-        async info() { return err(appError('WORKSPACE_NOT_FOUND', 'not used')); },
-        async list() { return ok([
+        async info(): Promise<ReturnType<typeof err>> { return err(appError('WORKSPACE_NOT_FOUND', 'not used')); },
+        async list(): Promise<ReturnType<typeof ok>> { return ok([
           { id: 'upper', rootPath: '/tmp/Project', realRootPath: '/tmp/Project' },
           { id: 'lower', rootPath: '/tmp/project', realRootPath: '/tmp/project' },
         ]); },
       },
-      capabilities: { async execute() { return ok({ accepted: true }); } },
+      capabilities: { async execute(): Promise<ReturnType<typeof ok>> { return ok({ accepted: true }); } },
     }, actor, {
-      activity: { async record(event) { events.push(event); } },
+      activity: { async record(event): Promise<void> { events.push(event); } },
       hostMutationApprovalProvider: approveMutation,
     });
     for (const cwd of ['/tmp/Project/src', '/tmp/project/src', '/tmp/PROJECT/src']) {
@@ -72,10 +72,10 @@ describe('MCP tool registry', () => {
   it('requires approval for a case-distinct POSIX sibling and strips its workspace metadata', async () => {
     const calls: unknown[] = [];
     const approval = vi.fn(async () => false);
-    const registry = new ToolRegistry({ capabilities: { async execute(tool, input) {
+    const registry = new ToolRegistry({ capabilities: { async execute(tool, input): Promise<ReturnType<typeof ok>> {
       calls.push({ tool, input }); return ok({ accepted: true });
     } } }, actor, {
-      activeWorkspaceScopeProvider: async () => ({ workspaceId: 'workspace-a', rootPath: '/tmp/Project' }),
+      activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: 'workspace-a', rootPath: '/tmp/Project' }),
       hostMutationApprovalProvider: approval,
     });
     const input = { workspaceId: 'workspace-a', operation: 'run', executable: 'node', arguments: ['--version'],
