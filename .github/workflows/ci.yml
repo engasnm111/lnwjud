@@ -196,29 +196,33 @@ jobs:
             *) echo 'Unsupported native smoke target' >&2; exit 1 ;;
           esac
           export LNWJUD_PACKAGED_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/dist/installers/$relative"
+          if [[ "$TARGET_PLATFORM" == linux ]]; then
+            # Install the real DEB on this disposable runner. Its post-install
+            # hook configures the supported AppArmor/userns or SUID sandbox.
+            # A generic unshare probe does not prove Electron can use userns.
+            version="$(node -p "require('./package.json').version")"
+            sudo apt-get install -y "$GITHUB_WORKSPACE/apps/desktop/dist/installers/lnwjud-${version}-${TARGET_ARCH}.deb"
+            export LNWJUD_PACKAGED_EXECUTABLE=/opt/lnwjud/lnwjud
+          fi
           test -f "$LNWJUD_PACKAGED_EXECUTABLE" && test -x "$LNWJUD_PACKAGED_EXECUTABLE"
           test "$(id -u)" -ne 0
           cd "$GITHUB_WORKSPACE/apps/desktop"
           mkdir -p packaged-e2e-diagnostics
           printf '%s\n' "$LNWJUD_PACKAGED_EXECUTABLE" > packaged-e2e-diagnostics/executable.txt
-          # No build/install command here: execute the native package just built.
+          # Execute the installed Linux package or sealed macOS app just built.
           smoke=(node node_modules/@playwright/test/cli.js test --config playwright.config.ts
             desktop-dashboard.e2e.ts desktop-mcp-client.e2e.ts tools-doctor.e2e.ts electron-security.e2e.ts
             --trace=retain-on-failure --reporter=list,html)
           if [[ "$TARGET_PLATFORM" == linux ]]; then
-            # Do not modify the unpacked artifact after evidence generation.
-            # Builder's DEB after-install.tpl uses 0755 with user namespaces,
-            # otherwise 4755 on the root-owned installed helper. We are not
-            # installing the DEB here, so fail if neither sandbox route works.
+            # Record installed sandbox state without altering the artifact or
+            # disabling sandboxing. The Electron security test asserts that
+            # the actual renderer remains sandboxed.
             sandbox="$(dirname "$LNWJUD_PACKAGED_EXECUTABLE")/chrome-sandbox"
             test -f "$sandbox" && test ! -L "$sandbox"
             stat -c '%a %u:%g %n' "$sandbox" | tee packaged-e2e-diagnostics/sandbox.txt
-            if ! unshare --user true 2>> packaged-e2e-diagnostics/sandbox.txt; then
-              if [[ "$(stat -c '%u:%a' "$sandbox")" != '0:4755' ]]; then
-                echo 'No usable user namespace or root-owned 4755 sandbox helper; unpacked smoke cannot run sandboxed. DEB installation is a separate acceptance path.' \
-                  | tee -a packaged-e2e-diagnostics/sandbox.txt >&2
-                exit 1
-              fi
+            dpkg-query -W lnwjud | tee -a packaged-e2e-diagnostics/sandbox.txt
+            if [[ -f /etc/apparmor.d/lnwjud ]]; then
+              cat /etc/apparmor.d/lnwjud >> packaged-e2e-diagnostics/sandbox.txt
             fi
             umask 077
             session_root="$(mktemp -d "$RUNNER_TEMP/lnwjud-keyring.XXXXXXXX")"
