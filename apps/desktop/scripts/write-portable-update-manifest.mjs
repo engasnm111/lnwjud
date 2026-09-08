@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,8 @@ if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`In
 const installerDirectory = path.join(desktopDirectory, 'dist', 'installers');
 const fileName = `lnwjud-Portable-${version}.exe`;
 const artifactPath = path.join(installerDirectory, fileName);
-const [content, metadata] = await Promise.all([readFile(artifactPath), stat(artifactPath)]);
+const metadata = await assertRegularCanonicalFile(artifactPath);
+const content = await readFile(artifactPath);
 const sha512 = createHash('sha512').update(content).digest('base64');
 const releaseDate = new Date().toISOString();
 const manifest = [
@@ -30,3 +31,10 @@ const manifest = [
 
 await writeFile(path.join(installerDirectory, 'portable.yml'), manifest, 'utf8');
 process.stdout.write(`Wrote portable update manifest for ${fileName}\n`);
+
+async function assertRegularCanonicalFile(filePath) {
+  const metadata = await lstat(filePath);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error(`Portable artifact is not a regular non-symlink file: ${path.basename(filePath)}`);
+  if (await realpath(filePath) !== path.resolve(filePath)) throw new Error(`Portable artifact is not a canonical file: ${path.basename(filePath)}`);
+  return metadata;
+}

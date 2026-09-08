@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.55.1';
+export const APP_VERSION = '4.56.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -591,6 +591,25 @@ export interface BackupSummary {
   readonly createdAt: string;
   readonly reason: 'daily' | 'manual' | 'pre-update' | 'pre-migration';
   readonly sizeBytes: number;
+  /** Source host metadata is optional for v1 backups created before the portable restore contract. */
+  readonly platform?: string;
+  readonly arch?: string;
+  readonly dataSchemaVersion?: number;
+  readonly hostCompatibility?: 'same_host' | 'cross_host' | 'legacy_unknown';
+}
+
+export interface BackupRestoreNotice {
+  readonly schemaVersion: 1;
+  readonly backupId: string;
+  readonly restoredAt: string;
+  readonly sourcePlatform: string | null;
+  readonly sourceArch: string | null;
+  readonly targetPlatform: string;
+  readonly targetArch: string;
+  readonly hostCompatibility: 'same_host' | 'cross_host' | 'legacy_unknown';
+  readonly incomplete: boolean;
+  readonly relinkRequired: boolean;
+  readonly quarantinedItems: readonly string[];
 }
 
 export interface RecoveryTrashItemSummary {
@@ -654,6 +673,8 @@ export interface DashboardSnapshot {
   readonly stdioStrictRoots: boolean;
   readonly stdioAllowedRoots: readonly string[];
   readonly backups: readonly BackupSummary[];
+  /** Present after a cross-host restore until the user has reviewed/relinked host-bound state. */
+  readonly restoreNotice?: BackupRestoreNotice | null;
   readonly recovery: RecoveryCenterSummary;
   readonly connectionModes: ConnectionModes;
   readonly workLog: readonly WorkLogEntry[];
@@ -661,6 +682,8 @@ export interface DashboardSnapshot {
   readonly tunnel: TunnelStatus;
   readonly remoteMcp: RemoteMcpStatus;
   readonly settings: UserSettings;
+  /** Host platform used to keep platform-specific settings and copy truthful. */
+  readonly hostPlatform?: 'win32' | 'darwin' | 'linux';
   readonly appVersion: string;
 }
 

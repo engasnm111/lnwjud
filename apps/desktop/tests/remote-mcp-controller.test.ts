@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
-import { buildNgrokHttpArgs, extractNgrokDiagnostic, formatNgrokExitMessage, RemoteMcpController, selectRecoverableStaleNgrokProcess } from '../src/main/remote-mcp-controller.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildNgrokHttpArgs, extractNgrokDiagnostic, formatNgrokExitMessage, RemoteMcpController, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
 interface RemoteMcpTestAccess {
   gatewayUrl: string | null;
@@ -71,6 +71,30 @@ describe('Remote MCP ngrok runtime', () => {
 });
 
 describe('Remote MCP OAuth gateway', () => {
+  it('does not overwrite unreadable authorization and retries loading after secure storage recovers', async () => {
+    const state: RemoteMcpPersistedState = {
+      schemaVersion: 1, desiredRunning: true,
+      trustedClients: [{ clientId: 'saved-client', clientName: 'Saved client', redirectUris: ['https://example.com/callback'], tokenEndpointAuthMethod: 'none', clientSecret: null }],
+      refreshGrants: [{ clientId: 'saved-client', refreshToken: 'r'.repeat(40), expiresAt: Date.parse('2099-01-01') }],
+    };
+    let locked = true;
+    const load = vi.fn(async () => {
+      if (locked) throw new Error('Secure storage is locked');
+      return state;
+    });
+    const save = vi.fn(async () => undefined);
+    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const internal = controller as unknown as { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
+    await internal.ensurePersistenceLoaded();
+    await internal.persistState();
+    expect(save).not.toHaveBeenCalled();
+    locked = false;
+    await Promise.all([internal.ensurePersistenceLoaded(), internal.ensurePersistenceLoaded()]);
+    await internal.persistState();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledWith(state);
+  });
+
   it('keeps status reads side-effect-free and does not ensure-start Local MCP', async () => {
     let statusReads = 0;
     let ensureStarts = 0;

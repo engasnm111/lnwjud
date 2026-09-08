@@ -76,9 +76,8 @@ export class SandboxRuntimeService {
   }
 
   public async execute(input: Record<string, unknown>, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<unknown>> {
-    if (this.platform !== 'win32' || !existsSync(this.sandboxExecutable)) {
-      return ok(this.unavailable('windows_sandbox_feature_missing'));
-    }
+    if (this.platform !== 'win32') return ok(this.unavailable('unsupported_platform'));
+    if (!existsSync(this.sandboxExecutable)) return ok(this.unavailable('windows_sandbox_feature_missing'));
     const workspaceId = readTrimmed(input.workspaceId);
     if (workspaceId === undefined) return err(appError('INVALID_INPUT', 'sandbox_exec requires workspaceId'));
     const root = await this.workspaceRoot(workspaceId);
@@ -157,7 +156,8 @@ export class SandboxRuntimeService {
   private unavailable(reason: string): Record<string, unknown> {
     return {
       tool: 'sandbox_exec', status: this.platform === 'win32' ? 'needs_setup' : 'unsupported', available: false, ready: false, executed: false,
-      reason, requirements: ['Windows Sandbox feature', 'interactive user session', 'artifact output directory'],
+      reason, readinessReason: this.platform === 'win32' ? reason : 'unsupported_platform',
+      requirements: ['Windows Sandbox feature', 'interactive user session', 'artifact output directory'],
       primitiveFallbacks: ['read_file', 'search_text', 'workspace_tree'],
     };
   }

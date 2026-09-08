@@ -36,7 +36,7 @@ function servicesWithOffice(root: string, officeResults: Record<string, unknown>
 async function withWorkspace(run: (root: string, file: string, provider: string) => Promise<void>): Promise<void> {
   // Hosted Windows runners may report TEMP as an 8.3 path (RUNNER~1) while
   // realpath() returns the long form. Keep fixtures canonical like real workspaces.
-  const root = path.win32.normalize(await realpath(await mkdtemp(path.join(tmpdir(), 'lnwjud-doc-test-'))));
+  const root = path.normalize(await realpath(await mkdtemp(path.join(tmpdir(), 'lnwjud-doc-test-'))));
   const file = path.join(root, 'sample.pdf');
   await writeFile(file, '%PDF-1.4\n%fake-but-present\n%%EOF\n', 'utf8');
   const provider = path.join(root, 'pdftotext.exe');
@@ -160,7 +160,7 @@ describe('DocumentRuntimeService', () => {
         pdfProvider: provider,
         pdfRunner: async (): Promise<ReturnType<typeof ok>> => { calls += 1; return ok('should not run'); },
       });
-      await expect(runtime.extractTables({ workspaceId: 'ws-1', file_path: '..\\outside.pdf' })).resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+      await expect(runtime.extractTables({ workspaceId: 'ws-1', file_path: path.join('..', 'outside.pdf') })).resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
       await expect(runtime.extractTables({ workspaceId: 'ws-1', file_path: outside }, undefined, fullBypassAuthorization))
         .resolves.toMatchObject({ ok: true, value: { file: await realpath(outside) } });
       expect(calls).toBe(1);

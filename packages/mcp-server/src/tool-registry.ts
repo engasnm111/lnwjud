@@ -696,15 +696,23 @@ function withActivityWorkspaceId(input: unknown, workspaceId: string | undefined
 
 function isAbsoluteActivityPath(value: string): boolean { return path.win32.isAbsolute(value) || path.posix.isAbsolute(value); }
 
+// win32.isAbsolute also accepts /tmp, so it cannot select a path dialect.
+function workspacePathApi(value: string): typeof path.win32 {
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('//') ? path.win32 : path.posix;
+}
+
 function activityPathContains(root: string, candidate: string): boolean {
-  const api = path.win32.isAbsolute(root) || path.win32.isAbsolute(candidate) ? path.win32 : path.posix;
+  const api = workspacePathApi(root);
+  if (workspacePathApi(candidate) !== api) return false;
   const relative = api.relative(api.resolve(root), api.resolve(candidate));
   return relativePathStaysWithin(api, relative);
 }
 
 function normalizedActivityPath(value: string): string {
-  const api = path.win32.isAbsolute(value) ? path.win32 : path.posix;
-  return api.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
+  const api = workspacePathApi(value);
+  const resolved = api.resolve(value);
+  const normalized = resolved.replace(/[\\/]+$/, '') || api.parse(resolved).root;
+  return api === path.win32 ? normalized.toLowerCase() : normalized;
 }
 
 function readTrimmedString(value: unknown): string | undefined { return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined; }
@@ -925,7 +933,7 @@ function bindCommandExecutionToActiveWorkspace(toolName: string, input: unknown,
   }
   const rootPath = readTrimmedString(activeWorkspaceScope.rootPath);
   if (rootPath === undefined) return { ok: false, message: 'Host active workspace root is invalid' };
-  const pathApi = path.win32.isAbsolute(rootPath) ? path.win32 : path.posix;
+  const pathApi = workspacePathApi(rootPath);
   if (!pathApi.isAbsolute(rootPath)) return { ok: false, message: 'Host active workspace root is invalid' };
   const normalizedRoot = pathApi.resolve(rootPath);
   if (nativePathTool) {
@@ -984,7 +992,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.55.1 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.56.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);
@@ -1100,7 +1108,7 @@ function commandExecutionLeavesActiveWorkspace(toolName: string, input: unknown,
   const cwd = readTrimmedString(input.cwd);
   const root = readTrimmedString(activeWorkspaceScope.rootPath);
   if (cwd === undefined || root === undefined) return false;
-  const pathApi = path.win32.isAbsolute(root) ? path.win32 : path.posix;
+  const pathApi = workspacePathApi(root);
   if (!pathApi.isAbsolute(cwd)) return false;
   return !scopePathContains(pathApi, pathApi.resolve(root), pathApi.resolve(cwd));
 }

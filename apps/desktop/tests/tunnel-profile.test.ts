@@ -21,6 +21,11 @@ afterEach(async () => {
 });
 
 describe('tunnel profile MCP target', () => {
+  it('resolves the macOS shell launcher from Resources without requiring a resources override', () => {
+    const contents = path.resolve('fixture', 'lnwjud.app', 'Contents');
+    expect(packagedStdioLauncherCandidates(path.join(contents, 'MacOS', 'lnwjud'), undefined, 'darwin'))
+      .toContain(path.join(contents, 'Resources', 'lnwjud-mcp-stdio'));
+  });
   it('rewrites a legacy stdio MCP block to the Desktop loopback HTTP MCP', () => {
     const yaml = [
       'config_version: 1',
@@ -198,7 +203,7 @@ describe('tunnel profile MCP target', () => {
     await mkdir(resources);
     const cmdPath = path.join(root, 'lnwjud-mcp-stdio.cmd');
     await writeFile(cmdPath, '@echo off\n', 'utf8');
-    expect(resolveStdioLauncherPath(packagedStdioLauncherCandidates(path.join(root, 'lnwjud.exe'), resources))).toBe(
+    expect(resolveStdioLauncherPath(packagedStdioLauncherCandidates(path.join(root, 'lnwjud.exe'), resources, 'win32'))).toBe(
       path.resolve(cmdPath),
     );
   });

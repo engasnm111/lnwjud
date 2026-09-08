@@ -1,7 +1,6 @@
 import { lstat, realpath, stat } from 'node:fs/promises';
-import path from 'node:path';
 import { appError, err, isFullBypassAuthorization, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
-import { isWithin } from './path-containment.js';
+import { hostPathApi, isAbsoluteHostPath, isForeignAbsolutePath, isHostPathWithin, relativeHostPath, resolveHostPath } from './filesystem-root.js';
 import { SecretPolicy } from './secret-policy.js';
 import type { ResolvedWorkspacePath, Workspace } from './workspace-types.js';
 
@@ -15,13 +14,19 @@ export interface WorkspacePathGuardOptions {
   readonly unrestricted?: boolean;
   /** Registered/selected workspaces are an explicit trust boundary for agent access. */
   readonly trustedWorkspaceAccess?: boolean;
+  /** Test/fixture override; production uses the actual host platform. */
+  readonly platform?: NodeJS.Platform;
 }
 
 export class WorkspacePathGuard {
+  private readonly platform: NodeJS.Platform;
+
   public constructor(
     private readonly secretPolicy: SecretPolicy = new SecretPolicy(),
     private readonly options: WorkspacePathGuardOptions = {},
-  ) {}
+  ) {
+    this.platform = options.platform ?? process.platform;
+  }
 
   public async resolveForRead(
     workspace: Workspace,
@@ -33,10 +38,12 @@ export class WorkspacePathGuard {
 
     const rootResult = await this.resolveRoot(workspace);
     if (!rootResult.ok) return rootResult;
-    const explicitAbsolutePath = isAbsoluteFsPath(inputPath);
-    const absolutePath = explicitAbsolutePath ? path.resolve(inputPath) : path.resolve(rootResult.value, inputPath);
+    const explicitAbsolutePath = isAbsoluteHostPath(inputPath, this.platform);
+    const absolutePath = explicitAbsolutePath
+      ? resolveHostPath(inputPath, this.platform)!
+      : resolveHostPath(hostPathApi(this.platform).join(rootResult.value, inputPath), this.platform)!;
     const allowOutside = explicitAbsolutePath && isFullBypassAuthorization(authorization);
-    const outsideWorkspace = !isWithin(rootResult.value, absolutePath);
+    const outsideWorkspace = !isHostPathWithin(rootResult.value, absolutePath, this.platform);
     if (outsideWorkspace && !allowOutside) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
@@ -48,18 +55,19 @@ export class WorkspacePathGuard {
       const ancestorResult = await this.findExistingAncestor(absolutePath);
       if (ancestorResult.ok) {
         const ancestorRealPath = await realpath(ancestorResult.value.path);
-        if (!isWithin(rootResult.value, ancestorRealPath) && !allowOutside) {
+        if (!isHostPathWithin(rootResult.value, ancestorRealPath, this.platform) && !allowOutside) {
           return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
         }
       }
       return err(appError('FILE_NOT_FOUND', 'File was not found'));
     }
-    const realTargetOutsideWorkspace = !isWithin(rootResult.value, realTarget);
+    const realTargetOutsideWorkspace = !isHostPathWithin(rootResult.value, realTarget, this.platform);
     if (realTargetOutsideWorkspace && !allowOutside) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
-    const relativePath = path.relative(rootResult.value, realTarget);
+    const relativePath = relativeHostPath(rootResult.value, realTarget, this.platform);
+    if (relativePath === null) return err(appError('INVALID_INPUT', 'Path uses a foreign host syntax'));
     const secretResult = this.assertSecretReadable(workspace, relativePath, authorization);
     if (!secretResult.ok) return secretResult;
 
@@ -88,10 +96,12 @@ export class WorkspacePathGuard {
 
     const rootResult = await this.resolveRoot(workspace);
     if (!rootResult.ok) return rootResult;
-    const explicitAbsolutePath = isAbsoluteFsPath(inputPath);
-    const absolutePath = explicitAbsolutePath ? path.resolve(inputPath) : path.resolve(rootResult.value, inputPath);
+    const explicitAbsolutePath = isAbsoluteHostPath(inputPath, this.platform);
+    const absolutePath = explicitAbsolutePath
+      ? resolveHostPath(inputPath, this.platform)!
+      : resolveHostPath(hostPathApi(this.platform).join(rootResult.value, inputPath), this.platform)!;
     const allowOutside = explicitAbsolutePath && isFullBypassAuthorization(authorization);
-    const outsideWorkspace = !isWithin(rootResult.value, absolutePath);
+    const outsideWorkspace = !isHostPathWithin(rootResult.value, absolutePath, this.platform);
     if (outsideWorkspace && !allowOutside) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
@@ -99,7 +109,7 @@ export class WorkspacePathGuard {
     const ancestorResult = await this.findExistingAncestor(absolutePath);
     if (!ancestorResult.ok) return ancestorResult;
     const ancestorRealPath = await realpath(ancestorResult.value.path);
-    if (!isWithin(rootResult.value, ancestorRealPath) && !allowOutside) {
+    if (!isHostPathWithin(rootResult.value, ancestorRealPath, this.platform) && !allowOutside) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
@@ -111,14 +121,15 @@ export class WorkspacePathGuard {
     } catch {
       exists = false;
     }
-    const realTargetOutsideWorkspace = realTarget !== undefined && !isWithin(rootResult.value, realTarget);
+    const realTargetOutsideWorkspace = realTarget !== undefined && !isHostPathWithin(rootResult.value, realTarget, this.platform);
     if (realTargetOutsideWorkspace && !allowOutside) {
       return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path is outside the workspace'));
     }
 
     const relativePath = realTarget === undefined
-      ? path.relative(rootResult.value, absolutePath)
-      : path.relative(rootResult.value, realTarget);
+      ? relativeHostPath(rootResult.value, absolutePath, this.platform)
+      : relativeHostPath(rootResult.value, realTarget, this.platform);
+    if (relativePath === null) return err(appError('INVALID_INPUT', 'Path uses a foreign host syntax'));
     const secretResult = this.assertSecretReadable(workspace, relativePath, authorization);
     if (!secretResult.ok) return secretResult;
 
@@ -144,12 +155,18 @@ export class WorkspacePathGuard {
     if (typeof inputPath !== 'string' || inputPath.includes('\0')) {
       return err(appError('INVALID_INPUT', 'Path must be a valid string'));
     }
+    if (isForeignAbsolutePath(inputPath, this.platform)
+      || (this.platform !== 'win32' && inputPath.includes('\\'))) {
+      return err(appError('INVALID_INPUT', 'Path uses a foreign host syntax'));
+    }
     return ok(undefined);
   }
 
   private async resolveRoot(workspace: Workspace): Promise<Result<string>> {
+    const rootPath = resolveHostPath(workspace.rootPath, this.platform);
+    if (rootPath === null) return err(appError('INVALID_INPUT', 'Workspace root uses a foreign host path syntax'));
     try {
-      return ok(await realpath(workspace.rootPath));
+      return ok(await realpath(rootPath));
     } catch {
       return err(appError('WORKSPACE_NOT_FOUND', 'Workspace root was not found'));
     }
@@ -158,22 +175,19 @@ export class WorkspacePathGuard {
   private async findExistingAncestor(absolutePath: string): Promise<Result<ExistingAncestor>> {
     const missing: string[] = [];
     let currentPath = absolutePath;
+    const api = hostPathApi(this.platform);
     while (true) {
       try {
         await lstat(currentPath);
         return ok({ path: currentPath, relativeMissing: missing });
       } catch {
-        const parentPath = path.dirname(currentPath);
+        const parentPath = api.dirname(currentPath);
         if (parentPath === currentPath) {
           return err(appError('PATH_OUTSIDE_WORKSPACE', 'Path has no existing ancestor'));
         }
-        missing.unshift(path.basename(currentPath));
+        missing.unshift(api.basename(currentPath));
         currentPath = parentPath;
       }
     }
   }
-}
-
-function isAbsoluteFsPath(inputPath: string): boolean {
-  return path.isAbsolute(inputPath) || path.win32.isAbsolute(inputPath) || path.posix.isAbsolute(inputPath);
 }

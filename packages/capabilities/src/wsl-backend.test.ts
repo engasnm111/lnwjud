@@ -14,6 +14,29 @@ afterEach(async () => {
 });
 
 describe('WslCapabilityBackend', () => {
+  it('cuts every WSL operation on POSIX hosts with one stable unsupported result', async () => {
+    const calls: unknown[] = [];
+    const backend = new WslCapabilityBackend({
+      platform: 'linux',
+      runner: { execute: async (input): Promise<Result<unknown>> => { calls.push(input); return ok({}); } },
+      allowedRoots: ['C:\\workspace'],
+    });
+
+    for (const input of [
+      undefined,
+      { operation: 'status' },
+      { operation: 'run', executable: 'wsl.exe' },
+      { operation: 'wait', workspaceId: 'ws-1', task_id: 'task-1' },
+      { operation: 'cancel', workspaceId: 'ws-1', task_id: 'task-1' },
+    ]) {
+      await expect(backend.execute(input)).resolves.toMatchObject({
+        ok: true,
+        value: { available: false, ready: false, reason: 'unsupported_platform', readinessReason: 'unsupported_platform' },
+      });
+    }
+    expect(calls).toEqual([]);
+  });
+
   it('allows an ordinary unconfirmed WSL run and forwards it', async () => {
     const calls: unknown[] = [];
     const backend = new WslCapabilityBackend({
@@ -181,6 +204,19 @@ describe('WslCapabilityBackend', () => {
 });
 
 describe('WslFilesystemCapabilityBackend', () => {
+  it('cuts WSL filesystem translation on POSIX hosts before parsing Windows paths', async () => {
+    const backend = new WslFilesystemCapabilityBackend({ platform: 'darwin', allowedRoots: ['C:\\workspace'] });
+
+    await expect(backend.execute(undefined)).resolves.toMatchObject({
+      ok: true,
+      value: { available: false, ready: false, reason: 'unsupported_platform', readinessReason: 'unsupported_platform' },
+    });
+    await expect(backend.execute({ operation: 'translate', path: '/not-a-windows-request' })).resolves.toMatchObject({
+      ok: true,
+      value: { available: false, ready: false, reason: 'unsupported_platform' },
+    });
+  });
+
   it('translates registered Windows paths and never exposes raw WSL filesystem access', async () => {
     const backend = new WslFilesystemCapabilityBackend({ platform: 'win32', allowedRoots: ['C:\\workspace'] });
 

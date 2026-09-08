@@ -25,26 +25,14 @@ import {
 } from '@lnwjud/application';
 import { AuditService, decodeActivityTargetReference } from '@lnwjud/audit';
 import {
-  BrowserCdpBackend,
-  HealthCapabilityBackend,
-  LocalCapabilityService,
-  NodeBrowserCdpProtocol,
-  PowerShellWindowsCapabilityBridge,
-  SchedulerCapabilityBackend,
-  ShellCapabilityBackend,
-  VisionCapabilityBackend,
-  WebFetchCapabilityBackend,
-  WindowsNativeCapabilityBackend,
-  WindowsOcrCapabilityBackend,
-  WindowsOcrProcessBridge,
-  createOcrPackageIdentityProbe,
+  createPlatformCapabilitySet,
+  type LocalCapabilityService,
+  type PlatformWindowsCapabilityOptions,
+  type ShellCapabilityBackend,
   WINDOWS_CAPABILITY_BRIDGE_SHA256,
   WINDOWS_CAPABILITY_BRIDGE_SIZE_BYTES,
-  WslCapabilityBackend,
-  WslFilesystemCapabilityBackend,
 } from '@lnwjud/capabilities';
-import type { Result } from '@lnwjud/domain';
-import { ALLOW_AI_DELETE_SETTING_KEY, DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY, DEFAULT_CODEX_TOOLS_ENABLED, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOUT_MS, DEFAULT_PROCESS_TIMEOUT_MS, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, USER_SETTING_KEYS, loadCheckpointEncryptionKey, parseBooleanSetting, parseCustomPermissionSettings, parseDestructiveAutoApprovalPolicy, parseIntegerSetting, parsePathList, parseStringRecordSetting, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
+import { ALLOW_AI_DELETE_SETTING_KEY, DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY, DEFAULT_CODEX_TOOLS_ENABLED, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOUT_MS, DEFAULT_PROCESS_TIMEOUT_MS, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, USER_SETTING_KEYS, parseBooleanSetting, parseCustomPermissionSettings, parseDestructiveAutoApprovalPolicy, parseIntegerSetting, parsePathList, parseStringRecordSetting, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
 import {
   EXTENSIONS_SETTINGS_KEY,
   createLocalExtensionsService,
@@ -62,7 +50,7 @@ import {
   SqliteSettingsRepository,
   SqliteWorkspaceRepository,
 } from '@lnwjud/storage';
-import { isDriveRoot, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { isMachineRootPath, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
 import { StrictWorkspaceRepository } from './strict-workspace-repository.js';
 
 export interface StdioMcpRuntime {
@@ -85,6 +73,8 @@ export interface StdioMcpRuntimeOptions {
   readonly permissionProfile?: PermissionProfileName;
   readonly strictAllowedRoots?: readonly string[];
   readonly fullBypassAll?: boolean;
+  /** Pure Node development only; packaged STDIO is hosted by Electron. */
+  readonly checkpointEncryptionKey?: Uint8Array;
 }
 
 export function createStdioMcpRuntime(
@@ -93,6 +83,7 @@ export function createStdioMcpRuntime(
   unrestricted: boolean = false,
   options: StdioMcpRuntimeOptions = {},
 ): StdioMcpRuntime {
+  const checkpointKey = resolveStdioCheckpointKey(options.checkpointEncryptionKey);
   const databaseFilename = path.join(dataPath, 'lnwjud.sqlite');
   const database = new SqliteDatabase(databaseFilename, { backupDirectory: path.join(dataPath, 'backups') });
   const rawWorkspaceRepository = new SqliteWorkspaceRepository(database);
@@ -106,7 +97,7 @@ export function createStdioMcpRuntime(
   const stopToolAvailabilityWatch = toolAvailabilityService.watch(250);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
-  const checkpointRepository = new SqliteCheckpointRepository(database, new AesGcmCheckpointCipher(loadCheckpointEncryptionKey(dataPath)));
+  const checkpointRepository = new SqliteCheckpointRepository(database, new AesGcmCheckpointCipher(checkpointKey));
   const workspaceService = new WorkspaceService(workspaceRepository);
   const profileName = options.permissionProfile ?? 'full';
   const activeProfile = profileName === 'custom' ? customPermissionProfile(settingsRepository) : permissionProfiles[profileName];
@@ -130,6 +121,7 @@ export function createStdioMcpRuntime(
   });
   const checkpointService = new CheckpointService(workspaceRepository, checkpointRepository, {
     profile: activeProfile,
+    platform: process.platform,
   });
   const pathGuard = new WorkspacePathGuard(new SecretPolicy(), { unrestricted: effectiveUnrestricted, trustedWorkspaceAccess: !strictRoots });
   const fileService = new FileService(workspaceRepository, pathGuard, undefined, {
@@ -158,7 +150,7 @@ export function createStdioMcpRuntime(
   const capabilityRuntime = createStdioCapabilityService(dataPath, workspace.realRootPath, async () => {
     const listed = await workspaceRepository.list();
     const roots = listed
-      .filter((entry) => !isDriveRoot(entry.realRootPath) && !isDriveRoot(entry.rootPath))
+      .filter((entry) => !isMachineRootPath(entry.realRootPath) && !isMachineRootPath(entry.rootPath))
       .map((entry) => entry.realRootPath);
     if (roots.length === 0) return [workspace.realRootPath];
     return roots;
@@ -225,6 +217,7 @@ export function createStdioMcpRuntime(
     },
   });
   const services: McpApplicationServices = {
+    platform: process.platform,
     runtimeStatePath: path.join(dataPath, 'upgrade-runtime.json'),
     runtimeTiming: () => ({
       mcpPollWaitSeconds: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpPollWaitSeconds), DEFAULT_MCP_POLL_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS),
@@ -280,6 +273,20 @@ export function createStdioMcpRuntime(
   };
 }
 
+export function resolveStdioCheckpointKey(configured: Uint8Array | undefined = undefined): Buffer {
+  if (configured !== undefined) {
+    if (configured.byteLength !== 32) throw new Error('Stdio checkpoint encryption key must be 32 bytes');
+    return Buffer.from(configured);
+  }
+  const encoded = process.env.LNWJUD_CHECKPOINT_KEY_BASE64?.trim();
+  if (encoded === undefined || encoded.length === 0) {
+    throw new Error('Pure Node STDIO requires an explicit 32-byte LNWJUD_CHECKPOINT_KEY_BASE64; packaged STDIO must use Electron --mcp-stdio');
+  }
+  const key = Buffer.from(encoded, 'base64');
+  if (key.byteLength !== 32 || key.toString('base64') !== encoded) throw new Error('LNWJUD_CHECKPOINT_KEY_BASE64 must decode to 32 bytes');
+  return key;
+}
+
 function customPermissionProfile(settingsRepository: SqliteSettingsRepository): PermissionProfile {
   const custom = parseCustomPermissionSettings(settingsRepository.get(USER_SETTING_KEYS.customPermissionProfile));
   return {
@@ -308,96 +315,31 @@ function createStdioCapabilityService(
   configuredRootsProvider: () => readonly string[] = () => [],
   synchronousWaitSecondsProvider: () => number = () => DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS,
 ): StdioCapabilityRuntime {
-  const capabilityRootsProvider = async (): Promise<readonly string[]> => {
-    const workspaceRoots = await workspaceRootsProvider();
-    if (strictAllowedRoots !== undefined) return workspaceRoots.length > 0 ? workspaceRoots : strictAllowedRoots;
-    const configuredRoots = [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()];
-    const roots = [...workspaceRoots, ...configuredRoots, restrictedRoot];
-    return roots.length === 0 ? [dataPath] : roots;
-  };
-  const initialCapabilityRoots = strictAllowedRoots ?? [dataPath, restrictedRoot];
-  const shellBackend = new ShellCapabilityBackend({
-    allowedRoots: initialCapabilityRoots,
-    allowedRootsProvider: capabilityRootsProvider,
+  const bridgeSizeBytes = capabilityBridgeExpectedSizeBytes();
+  const ocrPath = windowsOcrHelperPath();
+  const windows: PlatformWindowsCapabilityOptions | undefined = process.platform === 'win32'
+    ? {
+      bridgeScriptPath: capabilityBridgeScriptPath(),
+      expectedBridgeSha256: capabilityBridgeExpectedSha256(),
+      ...(bridgeSizeBytes === undefined ? {} : { expectedBridgeSizeBytes: bridgeSizeBytes }),
+      ...(ocrPath === undefined ? {} : { ocrHelperPath: ocrPath }),
+    }
+    : undefined;
+  const runtime = createPlatformCapabilitySet({
+    platform: process.platform,
+    dataPath,
+    workspaceRootsProvider,
     unrestricted,
-    taskStateDirectory: path.join(dataPath, 'background-tasks'),
-    maxSynchronousWaitSecondsProvider: synchronousWaitSecondsProvider,
+    configuredRootsProvider: () => strictAllowedRoots ?? [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider(), restrictedRoot],
+    synchronousWaitSecondsProvider,
+    ...(windows === undefined ? {} : { windows }),
   });
-  const browserProtocol = new NodeBrowserCdpProtocol({ profileDir: path.join(dataPath, 'browser-profile') });
-  const browserBackend = new BrowserCdpBackend({
-    protocol: browserProtocol,
-    launcher: (url: string | undefined, signal?: AbortSignal): Promise<Result<unknown>> => browserProtocol.launch(url, signal),
-  });
-  const windowsBridgeScript = capabilityBridgeScriptPath();
-  const expectedScriptSha256 = capabilityBridgeExpectedSha256();
-  const expectedScriptSizeBytes = capabilityBridgeExpectedSizeBytes();
-  const windowsBridge = new PowerShellWindowsCapabilityBridge({
-    scriptPath: windowsBridgeScript,
-    expectedScriptSha256,
-    ...(expectedScriptSizeBytes === undefined ? {} : { expectedScriptSizeBytes }),
-  });
-  const nativeOptions = { allowedRootsProvider: capabilityRootsProvider, unrestricted };
-  const accessibilityBackend = new WindowsNativeCapabilityBackend('accessibility', windowsBridge);
-  const nativeVisionBackend = new WindowsNativeCapabilityBackend('vision', windowsBridge);
-  const ocrHelperPath = windowsOcrHelperPath();
-  const ocrHelper = ocrHelperPath === undefined ? undefined : new WindowsOcrProcessBridge({ helperPath: ocrHelperPath });
-  const visionBackend = new VisionCapabilityBackend(nativeVisionBackend, new WindowsOcrCapabilityBackend({
-    platform: process.platform,
-    ...(ocrHelper === undefined ? {} : { helper: ocrHelper, packageIdentity: createOcrPackageIdentityProbe(ocrHelper) }),
-  }));
-  const wslAvailabilityProbe = async (): Promise<Result<unknown>> => {
-    const probeRoots = await capabilityRootsProvider();
-    const result = await shellBackend.execute({ operation: 'run', executable: 'wsl.exe', arguments: ['--status'], cwd: probeRoots[0] ?? dataPath, execution: 'foreground', timeout_seconds: 5, max_output_bytes: 32 * 1024, userConfirmed: false });
-    if (!result.ok) return { ok: true, value: { available: false, ready: false, local: true, reason: 'wsl_executable_unavailable' } };
-    const value = typeof result.value === 'object' && result.value !== null && !Array.isArray(result.value) ? result.value as Record<string, unknown> : {};
-    const ready = value.state === 'completed' && value.exit_code === 0;
-    return { ok: true, value: { available: ready, ready, local: true, ...(ready ? {} : { reason: 'wsl_status_failed' }) } };
-  };
-  const wslBackend = new WslCapabilityBackend({
-    platform: process.platform,
-    runner: shellBackend,
-    allowedRoots: initialCapabilityRoots,
-    allowedRootsProvider: capabilityRootsProvider,
-    availabilityProbe: wslAvailabilityProbe,
-  });
-  const wslFsBackend = new WslFilesystemCapabilityBackend({
-    platform: process.platform,
-    allowedRoots: initialCapabilityRoots,
-    allowedRootsProvider: capabilityRootsProvider,
-    availabilityProbe: wslAvailabilityProbe,
-  });
-  const health = new HealthCapabilityBackend({
-    domCdp: browserBackend,
-    accessibility: accessibilityBackend,
-    wslExec: wslBackend,
-    wslFs: wslFsBackend,
-  });
-  const service = new LocalCapabilityService({
-    shell: shellBackend,
-    domCdp: browserBackend,
-    accessibility: accessibilityBackend,
-    inputEvent: new WindowsNativeCapabilityBackend('input_event', windowsBridge),
-    vision: visionBackend,
-    window: new WindowsNativeCapabilityBackend('window', windowsBridge),
-    health,
-    systemInfo: new WindowsNativeCapabilityBackend('system_info', windowsBridge),
-    notification: new WindowsNativeCapabilityBackend('notification', windowsBridge),
-    fileDialog: new WindowsNativeCapabilityBackend('file_dialog', windowsBridge),
-    clipboard: new WindowsNativeCapabilityBackend('clipboard', windowsBridge),
-    webFetch: new WebFetchCapabilityBackend(),
-    audio: new WindowsNativeCapabilityBackend('audio', windowsBridge, process.platform, nativeOptions),
-    screenRecord: new WindowsNativeCapabilityBackend('screen_record', windowsBridge, process.platform, nativeOptions),
-    office: new WindowsNativeCapabilityBackend('office', windowsBridge, process.platform, nativeOptions),
-    scheduler: new SchedulerCapabilityBackend(),
-    wslExec: wslBackend,
-    wslFs: wslFsBackend,
-  });
-  return { service, shell: shellBackend };
+  return { service: runtime.service, shell: runtime.shell };
 }
 
 function readCapabilityRoots(value: string | undefined): readonly string[] {
   if (value === undefined || value.trim().length === 0) return [];
-  return value.split(';').map((root) => root.trim()).filter((root) => root.length > 0).map((root) => path.resolve(root));
+  return value.split(path.delimiter).map((root) => root.trim()).filter((root) => root.length > 0).map((root) => path.resolve(root));
 }
 
 function capabilityBridgeScriptPath(): string {

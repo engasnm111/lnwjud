@@ -11,13 +11,21 @@ describe('direct STDIO workspace selection', () => {
     expect(resolveRequestedWorkspacePath({
       requestedPath: 'Z:\\dgx-project',
       registeredProjectPaths: ['C:\\old-project'],
-    })).toBe(path.resolve('Z:\\dgx-project'));
+      platform: 'win32',
+    })).toBe(path.win32.resolve('Z:\\dgx-project'));
     expect(resolveRequestedWorkspacePath({
       strictAllowedRoots: ['D:\\strict-project'],
       registeredProjectPaths: ['C:\\old-project'],
-    })).toBe(path.resolve('D:\\strict-project'));
+      platform: 'win32',
+    })).toBe(path.win32.resolve('D:\\strict-project'));
     expect(resolveRequestedWorkspacePath({
       registeredProjectPaths: ['C:\\old-project'],
-    })).toBe(path.resolve('C:\\old-project'));
+      platform: 'win32',
+    })).toBe(path.win32.resolve('C:\\old-project'));
+  });
+
+  it('does not rewrite a foreign Windows path on a POSIX host', () => {
+    expect(resolveRequestedWorkspacePath({ requestedPath: 'C:\\old-project', registeredProjectPaths: [], platform: 'linux' })).toBeNull();
+    expect(resolveRequestedWorkspacePath({ registeredProjectPaths: ['C:\\old-project'], platform: 'linux' })).toBeNull();
   });
 });

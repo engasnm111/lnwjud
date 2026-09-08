@@ -7,6 +7,7 @@ interface RemediationDefinition {
   readonly explanation: Readonly<Record<UiLocale, string>>;
   readonly steps: Readonly<Record<UiLocale, readonly string[]>>;
   readonly actions: readonly RemediationAction[];
+  readonly windowsOnly?: boolean;
 }
 
 const DEFINITIONS: readonly RemediationDefinition[] = [
@@ -23,8 +24,8 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
     'Git is not available to the lnwjud runtime.',
     'runtime ของ lnwjud ยังหา Git ไม่พบ',
     [{ kind: 'open_official_url', target: 'git_download' }, { kind: 'recheck', requirementIds: ['executable_git'] }],
-    ['Install Git for Windows from the official installer.', 'Make sure git.exe is available to newly started applications.', 'Recheck this item.'],
-    ['ติดตั้ง Git for Windows จากเว็บทางการ', 'ให้ git.exe ใช้งานได้กับโปรแกรมที่เปิดใหม่', 'กลับมากดตรวจใหม่'],
+    ['Install Git from the official installer for your host.', 'Make sure git is available to newly started applications.', 'Recheck this item.'],
+    ['ติดตั้ง Git จากตัวติดตั้งทางการสำหรับระบบของคุณ', 'ให้ git ใช้งานได้กับโปรแกรมที่เปิดใหม่', 'กลับมากดตรวจใหม่'],
   ),
   remediation(
     'install_ripgrep', 'Install ripgrep', 'ติดตั้ง ripgrep',
@@ -55,6 +56,14 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
     ['เปิดการตั้งค่า Secure Tunnel', 'ทำ Guided Setup ให้ครบและ Start Tunnel', 'กลับมาหน้านี้แล้วตรวจใหม่'],
   ),
   remediation(
+    'configure_secret_storage', 'Unlock secure secret storage', 'เปิดใช้ secure secret storage',
+    'lnwjud cannot persist checkpoint or tunnel secrets until the operating-system keychain is available. Linux basic_text is intentionally rejected.',
+    'lnwjud จะยังเก็บ checkpoint หรือ tunnel secret ไม่ได้จนกว่า keychain ของระบบจะพร้อมใช้งาน โดย Linux basic_text จะถูกปฏิเสธโดยตั้งใจ',
+    [{ kind: 'open_settings', target: 'security_profile' }, { kind: 'recheck', requirementIds: ['secret_storage'] }],
+    ['Unlock/sign in to the OS keychain or Secret Service/KWallet.', 'Do not enable plaintext encryption or place secrets in environment snapshots.', 'Restart lnwjud if the desktop keychain became available, then recheck.'],
+    ['ปลดล็อก/ลงชื่อเข้าใช้ keychain หรือ Secret Service/KWallet ของระบบ', 'อย่าเปิด plaintext encryption หรือใส่ secret ใน environment snapshot', 'Restart lnwjud หาก keychain พร้อมแล้ว แล้วตรวจใหม่'],
+  ),
+  remediation(
     'connect_external_mcp', 'Connect an external MCP server', 'เชื่อมต่อ External MCP',
     'No enabled external MCP server is currently connected.',
     'ยังไม่มี External MCP Server ที่เปิดใช้งานและเชื่อมต่อสำเร็จ',
@@ -67,7 +76,7 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
     'PDF extraction needs pdftotext.exe. lnwjud can download a pinned Poppler for Windows package, verify its SHA-256, install it inside the lnwjud data directory, and configure the provider path automatically.',
     'การอ่านข้อความ PDF ต้องมี pdftotext.exe โดย lnwjud สามารถดาวน์โหลด Poppler for Windows เวอร์ชันที่กำหนดไว้ ตรวจ SHA-256 ติดตั้งไว้ในโฟลเดอร์ข้อมูลของ lnwjud และตั้งค่าพาธให้อัตโนมัติ',
     [{ kind: 'install_pdf_provider' }, { kind: 'open_settings', target: 'tools_local_providers' }, { kind: 'recheck', requirementIds: ['local_pdf_provider'] }],
-    ['Click Download & install PDF Provider.', 'lnwjud verifies the pinned archive before extraction and configures pdftotext.exe automatically.', 'Use Local Providers only if you prefer a manually installed pdftotext.exe, then recheck.'],
+    ['Click Download & install PDF Provider on Windows.', 'lnwjud verifies the pinned archive before extraction and configures pdftotext.exe automatically.', 'On macOS/Linux, install a native pdftotext provider yourself and configure Local Providers, then recheck.'],
     ['กด ดาวน์โหลดและติดตั้ง PDF Provider', 'lnwjud จะตรวจ SHA-256 ของไฟล์ที่กำหนดไว้ก่อนแตกไฟล์ และตั้งค่า pdftotext.exe ให้อัตโนมัติ', 'ใช้ Local Providers เฉพาะกรณีต้องการเลือก pdftotext.exe ที่ติดตั้งเอง แล้วกดตรวจใหม่'],
   ),
   remediation(
@@ -192,8 +201,13 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
   ),
 ];
 
+const WINDOWS_ONLY_REMEDIATION_IDS = new Set([
+  'configure_pdf_provider', 'configure_windows_sandbox', 'configure_wsl',
+  'repair_windows_ui_automation', 'repair_windows_input', 'repair_windows_window', 'repair_windows_ocr',
+]);
+
 export const OFFICIAL_URL_TARGETS = Object.freeze({
-  git_download: 'https://git-scm.com/download/win',
+  git_download: 'https://git-scm.com/downloads',
   ripgrep_releases: 'https://github.com/BurntSushi/ripgrep/releases',
 } as const);
 
@@ -209,10 +223,11 @@ export class RemediationRegistry {
 
   public has(id: string): boolean { return this.#definitions.has(id); }
   public ids(): readonly string[] { return [...this.#definitions.keys()]; }
-  public resolve(locale: UiLocale, ids: readonly string[] = this.ids()): readonly ResolvedRemediation[] {
+  public resolve(locale: UiLocale, ids: readonly string[] = this.ids(), platform: NodeJS.Platform = process.platform): readonly ResolvedRemediation[] {
     return [...new Set(ids)].map((id) => {
       const definition = this.#definitions.get(id);
       if (definition === undefined) throw new Error(`Unknown remediation id: ${id}`);
+      if ((definition.windowsOnly === true || WINDOWS_ONLY_REMEDIATION_IDS.has(id)) && platform !== 'win32') return null;
       return {
         id,
         title: definition.title[locale],
@@ -220,7 +235,7 @@ export class RemediationRegistry {
         steps: definition.steps[locale],
         actions: definition.actions,
       };
-    });
+    }).filter((value): value is ResolvedRemediation => value !== null);
   }
 }
 

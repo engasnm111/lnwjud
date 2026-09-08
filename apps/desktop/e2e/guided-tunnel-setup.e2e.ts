@@ -3,12 +3,13 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
 import { chromium, expect, test, type Browser, type Page } from '@playwright/test';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
 const mainEntry = path.join(desktopRoot, 'dist', 'main', 'main.js');
-const electronExecutable = path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronExecutable = electronExecutablePath(desktopRoot);
 const artifactParent = path.join(repositoryRoot, '.local-artifacts', 'e2e-guided-setup');
 
 test('fresh user sees Thai Tips, enters Secure Tunnel guide, and switches language without losing the draft', async () => {
@@ -72,6 +73,7 @@ async function withFreshDesktop(run: (page: Page) => Promise<void>): Promise<voi
     [`--remote-debugging-port=${devToolsPort}`, `--user-data-dir=${dataRoot}`, mainEntry],
     {
       cwd: desktopRoot,
+      detached: process.platform !== 'win32',
       shell: false,
       windowsHide: true,
       env: {
@@ -128,15 +130,6 @@ async function waitForDevTools(port: number, electronProcess: ChildProcess, stde
       return false;
     }
   }, { timeout: 30_000, intervals: [100, 250, 500] }).toBe(true);
-}
-
-async function terminateProcessTree(process: ChildProcess): Promise<void> {
-  if (process.exitCode !== null || process.pid === undefined) return;
-  await new Promise<void>((resolve) => {
-    const killer = spawn('taskkill.exe', ['/PID', String(process.pid), '/T', '/F'], { shell: false, windowsHide: true });
-    killer.once('error', () => resolve());
-    killer.once('close', () => resolve());
-  });
 }
 
 async function removeVerifiedArtifactRoot(root: string): Promise<void> {

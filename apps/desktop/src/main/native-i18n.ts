@@ -6,6 +6,7 @@ export interface NativeMessages {
   readonly trayQuit: string;
   readonly trayTooltip: string;
   readonly updaterUnavailablePackagedOnly: string;
+  readonly updaterUnavailablePlatform: string;
   readonly updaterCheckTitle: string;
   readonly updaterUnavailable: string;
   readonly updaterAlreadyChecking: string;
@@ -40,6 +41,7 @@ const th: NativeMessages = {
   trayQuit: 'ปิดโปรแกรม',
   trayTooltip: 'lnwjud — ทำงานเบื้องหลัง',
   updaterUnavailablePackagedOnly: 'ระบบอัปเดตทำงานในแอปที่ติดตั้งจาก Release',
+  updaterUnavailablePlatform: 'รูปแบบการติดตั้งนี้ให้ระบบปฏิบัติการจัดการอัปเดตเอง จึงปิดการอัปเดตอัตโนมัติของ lnwjud',
   updaterCheckTitle: 'ตรวจอัปเดต - lnwjud',
   updaterUnavailable: 'การตรวจอัปเดตจะทำงานเมื่อใช้แอปที่ติดตั้งจาก Release แล้ว',
   updaterAlreadyChecking: 'กำลังตรวจอัปเดตอยู่ กรุณารอผลการตรวจสอบ',
@@ -74,6 +76,7 @@ const en: NativeMessages = {
   trayQuit: 'Quit',
   trayTooltip: 'lnwjud — running in background',
   updaterUnavailablePackagedOnly: 'Updates are available in an installed Release build',
+  updaterUnavailablePlatform: 'This installation format is updated by the operating system package manager; lnwjud automatic updates are disabled.',
   updaterCheckTitle: 'Check for Updates - lnwjud',
   updaterUnavailable: 'Update checks are available after installing a Release build',
   updaterAlreadyChecking: 'An update check is already running. Please wait for it to finish.',

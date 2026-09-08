@@ -26,7 +26,7 @@ import {
 } from '@lnwjud/filesystem';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
 import { isProtectedCriticalPath } from '@lnwjud/shared';
-import { isWithin, WorkspacePathGuard, type ResolvedWorkspacePath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
+import { isFilesystemRoot, isWithin, WorkspacePathGuard, type ResolvedWorkspacePath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { CheckpointServicePort } from './checkpoint-service.js';
 import { resolveSharedWorkspace, resolveWorkspaceForPath } from './workspace-locator.js';
 
@@ -976,11 +976,6 @@ function resultPath(resolved: ResolvedWorkspacePath): string {
   return resolved.outsideWorkspace === true
     ? resolved.realPath ?? resolved.absolutePath
     : resolved.relativePath;
-}
-
-function isFilesystemRoot(targetPath: string): boolean {
-  const normalized = path.resolve(targetPath);
-  return normalized === path.parse(normalized).root;
 }
 
 interface RecoveryMetadata {

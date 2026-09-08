@@ -40,6 +40,8 @@ export interface CheckpointServiceDependencies {
   readonly permissionEngine?: PermissionEngine;
   readonly profile?: PermissionProfile;
   readonly profileProvider?: () => PermissionProfile;
+  /** Test/fixture override; production composition uses the real host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 export class CheckpointService implements CheckpointServicePort {
@@ -47,6 +49,7 @@ export class CheckpointService implements CheckpointServicePort {
   private readonly writer: AtomicFileWriter;
   private readonly permissionEngine: PermissionEngine;
   private readonly profileProvider: () => PermissionProfile;
+  private readonly platform: NodeJS.Platform;
 
   public constructor(
     private readonly workspaces: WorkspaceRepository,
@@ -57,6 +60,7 @@ export class CheckpointService implements CheckpointServicePort {
     this.writer = dependencies.writer ?? new AtomicFileWriter();
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
     this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
+    this.platform = dependencies.platform ?? process.platform;
   }
 
   public async createForFiles(actor: FileActor, workspaceId: string, paths: readonly string[]): Promise<Result<Checkpoint>> {
@@ -70,8 +74,9 @@ export class CheckpointService implements CheckpointServicePort {
     for (const inputPath of paths) {
       const resolved = await this.guard.resolveForRead(workspace.value, inputPath);
       if (!resolved.ok) return resolved;
-      if (seen.has(resolved.value.relativePath.toLowerCase())) return err(appError('INVALID_INPUT', 'Checkpoint contains duplicate paths'));
-      seen.add(resolved.value.relativePath.toLowerCase());
+      const duplicateKey = this.platform === 'win32' ? resolved.value.relativePath.toLowerCase() : resolved.value.relativePath;
+      if (seen.has(duplicateKey)) return err(appError('INVALID_INPUT', 'Checkpoint contains duplicate paths'));
+      seen.add(duplicateKey);
       const file = await this.readCheckpointFile(resolved.value.realPath ?? resolved.value.absolutePath, resolved.value.relativePath);
       if (!file.ok) return file;
       totalBytes += file.value.size;

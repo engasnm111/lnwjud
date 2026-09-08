@@ -10,7 +10,12 @@ export interface BrowserCdpTab {
 }
 
 export interface BrowserCdpProtocol {
-  status(signal?: AbortSignal): Promise<{ readonly ready: boolean; readonly port: number }>;
+  status(signal?: AbortSignal): Promise<{
+    readonly ready: boolean;
+    readonly port: number;
+    readonly browserInstalled?: boolean;
+    readonly readinessReason?: 'browser_ready' | 'browser_not_installed' | 'browser_not_running' | 'probe_failed';
+  }>;
   listTabs(signal?: AbortSignal): Promise<readonly BrowserCdpTab[]>;
   newTab(url: string, signal?: AbortSignal): Promise<BrowserCdpTab>;
   closeTab(tabId: string, signal?: AbortSignal): Promise<unknown>;

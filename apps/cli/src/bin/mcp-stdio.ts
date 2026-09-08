@@ -14,8 +14,8 @@ import {
   resolveLnwjudDataPath,
 } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, SqliteBackupService, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository } from '@lnwjud/storage';
-import { isDriveRoot, normalizeWorkspaceRoot, WorkspaceService, type Workspace } from '@lnwjud/workspace';
-import { createStdioMcpRuntime } from '../runtime/stdio-mcp-runtime.js';
+import { comparableHostPath, hostPathApi, isMachineRootPath, normalizeWorkspaceRoot, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { createStdioMcpRuntime, resolveStdioCheckpointKey } from '../runtime/stdio-mcp-runtime.js';
 import { StrictWorkspaceRepository, canonicalizeAllowedRoots, requestedPathInsideAllowedRoot } from '../runtime/strict-workspace-repository.js';
 import { resolveRequestedWorkspacePath } from '../runtime/workspace-selection.js';
 import { resetWorkspaceRegistrations } from '../runtime/workspace-reset.js';
@@ -48,11 +48,15 @@ function resolveDataPath(): string {
 async function main(): Promise<void> {
   const dataPath = resolveDataPath();
   fs.mkdirSync(dataPath, { recursive: true });
-  const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'));
+  // Resolve the pure-Node checkpoint key before opening SQLite. Packaged
+  // Electron STDIO supplies this through safeStorage instead; this entrypoint
+  // deliberately accepts only an explicit development key.
+  const checkpointEncryptionKey = resolveStdioCheckpointKey();
+  const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'), { platform: process.platform, arch: process.arch });
   if (restore.error !== undefined) process.stderr.write(`lnwjud MCP stdio: scheduled restore failed: ${restore.error}\n`);
   if (restore.applied) process.stderr.write(`lnwjud MCP stdio: restored database from ${restore.backupId ?? 'scheduled backup'}\n`);
 
-  const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'), { backupDirectory: path.join(dataPath, 'backups') });
+  const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'), { backupDirectory: path.join(dataPath, 'backups'), platform: process.platform, arch: process.arch });
   const rawWorkspaceRepository = new SqliteWorkspaceRepository(database);
   const settingsRepository = new SqliteSettingsRepository(database);
 
@@ -90,6 +94,8 @@ async function main(): Promise<void> {
     const backupService = new SqliteBackupService(database, {
       databaseFilename: path.join(dataPath, 'lnwjud.sqlite'),
       backupDirectory: path.join(dataPath, 'backups'),
+      platform: process.platform,
+      arch: process.arch,
     });
     const result = await resetWorkspaceRegistrations(
       rawWorkspaceService,
@@ -112,7 +118,7 @@ async function main(): Promise<void> {
 
   const requestedRaw = readArg('--workspace') ?? process.env.LNWJUD_WORKSPACE;
   const registeredProjects = (await workspaceService.list())
-    .filter((entry) => !isDriveRoot(entry.realRootPath) && !isDriveRoot(entry.rootPath));
+    .filter((entry) => !isMachineRootPath(entry.realRootPath) && !isMachineRootPath(entry.rootPath));
   const requestedPath = resolveRequestedWorkspacePath({
     ...(requestedRaw === undefined ? {} : { requestedPath: requestedRaw }),
     ...(strictAllowedRoots === undefined ? {} : { strictAllowedRoots }),
@@ -129,28 +135,31 @@ async function main(): Promise<void> {
 
   let workspace: Workspace;
   if (strictAllowedRoots !== undefined) {
-    process.env.LNWJUD_CAPABILITY_ROOTS = strictAllowedRoots.join(';');
+    // This environment variable is consumed by the host-native runtime. Use
+    // the platform delimiter so POSIX roots remain independently addressable
+    // while Windows drive-letter paths continue to use `;`.
+    process.env.LNWJUD_CAPABILITY_ROOTS = strictAllowedRoots.join(path.delimiter);
     for (const root of strictAllowedRoots) {
-      const normalized = normalizeWorkspaceRoot(root).toLowerCase();
-      const existing = (await workspaceService.list()).find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === normalized);
+      const normalized = comparableWorkspaceRoot(root);
+      const existing = normalized === null ? undefined : (await workspaceService.list()).find((entry) => comparableWorkspaceRoot(entry.realRootPath) === normalized);
       if (existing !== undefined) continue;
-      const added = await workspaceService.add(path.basename(root) || root, root);
+      const added = await workspaceService.add(hostPathApi(process.platform).basename(root) || root, root);
       if (!added.ok) throw new Error(`Could not register strict allowed root ${root}: ${added.error.message}`);
     }
     const selectedAllowedRoot = await requestedPathInsideAllowedRoot(requestedPath, strictAllowedRoots);
-    const selectedNorm = normalizeWorkspaceRoot(selectedAllowedRoot).toLowerCase();
-    const selected = (await workspaceService.list()).find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === selectedNorm);
+    const selectedNorm = comparableWorkspaceRoot(selectedAllowedRoot);
+    const selected = selectedNorm === null ? undefined : (await workspaceService.list()).find((entry) => comparableWorkspaceRoot(entry.realRootPath) === selectedNorm);
     if (selected === undefined) throw new Error(`Strict allowed root was not registered: ${selectedAllowedRoot}`);
     workspace = selected;
   } else {
     process.env.LNWJUD_CAPABILITY_ROOTS = process.env.LNWJUD_CAPABILITY_ROOTS?.trim()
       || requestedPath.replace(/\\/g, '/');
 
-    const requestedNorm = normalizeWorkspaceRoot(requestedPath).toLowerCase();
+    const requestedNorm = comparableWorkspaceRoot(requestedPath);
     const workspaces = await workspaceService.list();
-    let selected = workspaces.find((entry) => normalizeWorkspaceRoot(entry.realRootPath).toLowerCase() === requestedNorm);
+    let selected = requestedNorm === null ? undefined : workspaces.find((entry) => comparableWorkspaceRoot(entry.realRootPath) === requestedNorm);
     if (selected === undefined) {
-      const added = await workspaceService.add(path.basename(requestedPath) || 'Workspace', requestedPath);
+      const added = await workspaceService.add(hostPathApi(process.platform).basename(requestedPath) || 'Workspace', requestedPath);
       if (!added.ok) throw new Error(`Could not register ${requestedPath}: ${added.error.message}`);
       selected = added.value;
     }
@@ -163,6 +172,7 @@ async function main(): Promise<void> {
   database.close();
 
   const runtime = createStdioMcpRuntime(dataPath, workspace, unrestricted, {
+    checkpointEncryptionKey,
     permissionProfile: profileName,
     fullBypassAll: stdioFullBypassAll,
     ...(strictAllowedRoots === undefined ? {} : { strictAllowedRoots }),
@@ -211,6 +221,10 @@ async function main(): Promise<void> {
   });
   process.on('SIGINT', () => { void shutdown(); });
   process.on('SIGTERM', () => { void shutdown(); });
+}
+
+function comparableWorkspaceRoot(value: string): string | null {
+  return comparableHostPath(normalizeWorkspaceRoot(value, process.platform), process.platform);
 }
 
 main().catch((error: unknown) => {

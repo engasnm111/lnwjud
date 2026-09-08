@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { DEFAULT_SEARCH_RESULTS, err, MAX_PROCESS_LOG_BYTES, MAX_SEARCH_RESULTS, ok, type Result } from '@lnwjud/domain';
-import { PathExecutableResolver, type ExecutableResolver } from './executable-resolver.js';
+import { createProcessTreeTerminator, createSpawnInvocationFactory, PathExecutableResolver, type ExecutableResolver, type ProcessTreeTerminator, type SpawnInvocationFactory } from '@lnwjud/process';
 import {
   classifyContextPath,
   DEFAULT_CONTEXT_IGNORE_GLOBS,
@@ -24,16 +24,56 @@ export interface ProcessRunner {
 }
 
 export class DirectProcessRunner implements ProcessRunner {
+  public constructor(
+    private readonly terminator: ProcessTreeTerminator = createProcessTreeTerminator(),
+    private readonly invocationFactory: SpawnInvocationFactory = createSpawnInvocationFactory(),
+    private readonly platform: NodeJS.Platform = process.platform,
+  ) {}
+
   public run(command: string, args: readonly string[], cwd: string, options: ProcessRunOptions = {}): Promise<ProcessRunResult> {
     return new Promise((resolve) => {
-      const child = spawn(command, [...args], { cwd, shell: false, windowsHide: true });
+      const invocation = this.invocationFactory.create(command, args);
+      if (!invocation.ok) {
+        resolve({ exitCode: -1, stdout: '', stderr: invocation.error.message });
+        return;
+      }
+      const child = spawn(invocation.value.executable, [...invocation.value.args], {
+        cwd,
+        shell: false,
+        windowsHide: true,
+        detached: this.platform !== 'win32',
+        ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
+      });
       let stdout = '';
       let stderr = '';
       let timedOut = false;
       let settled = false;
+      let terminationPending = false;
+      let pendingExitCode: number | null = null;
+      const complete = (exitCode: number): void => {
+        if (terminationPending) {
+          pendingExitCode = exitCode;
+          return;
+        }
+        finish(exitCode);
+      };
       const abort = (): void => {
+        if (terminationPending || settled) return;
         timedOut = true;
-        child.kill();
+        const pid = child.pid;
+        if (pid === undefined) {
+          finish(-1);
+          return;
+        }
+        terminationPending = true;
+        void this.terminator.stop(child, pid).then(() => {
+          terminationPending = false;
+          finish(pendingExitCode ?? -1);
+        }).catch((error: unknown) => {
+          terminationPending = false;
+          stderr = `${stderr}${error instanceof Error ? error.message : 'process termination could not be verified'}`;
+          finish(-1);
+        });
       };
       const append = (current: string, chunk: Buffer): string => Buffer.from(`${current}${chunk.toString('utf8')}`, 'utf8').subarray(-MAX_PROCESS_LOG_BYTES).toString('utf8');
       const finish = (exitCode: number): void => {
@@ -55,9 +95,9 @@ export class DirectProcessRunner implements ProcessRunner {
       child.stderr?.on('data', (chunk: Buffer) => { stderr = append(stderr, chunk); });
       child.on('error', (error: Error) => {
         stderr = `${stderr}${error.message}`;
-        finish(-1);
+        complete(-1);
       });
-      child.on('close', (exitCode) => finish(exitCode ?? -1));
+      child.on('close', (exitCode) => complete(exitCode ?? -1));
     });
   }
 }

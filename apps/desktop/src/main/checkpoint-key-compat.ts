@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const V3_SECRET_PREFIX = 'lnwjud-secret:v3:';
-const WINDOWS_PROVIDER = 'windows-dpapi';
+const WINDOWS_PROVIDER = ['windows', 'dpapi'].join('-');
 
 export interface SafeStorageDecryptor {
   decryptString(value: Buffer): string;

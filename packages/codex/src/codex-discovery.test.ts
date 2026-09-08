@@ -69,7 +69,7 @@ describe('CodexDiscovery', () => {
         recoverable: true,
         details: {
           stage: '--version',
-          executablePath: `%USERPROFILE%${path.sep}tools${path.sep}codex.exe`,
+          executablePath: `${process.platform === 'win32' ? '%USERPROFILE%' : '$HOME'}${path.sep}tools${path.sep}codex.exe`,
           spawnErrorCode: 'EACCES',
           exitCode: -1,
         },
@@ -78,7 +78,7 @@ describe('CodexDiscovery', () => {
   });
 
   it('reports the help discovery stage when help invocation cannot start', async () => {
-    const resolver: CodexExecutableResolver = { async resolve(): Promise<Result<string>> { return ok('C:\\tools\\codex.exe'); } };
+    const resolver: CodexExecutableResolver = { async resolve(): Promise<Result<string>> { return ok(path.join(os.homedir(), 'tools', 'codex.exe')); } };
     let invocation = 0;
     const runner: CodexCommandRunner = {
       async run(): Promise<CodexCommandResult> {
@@ -101,7 +101,7 @@ describe('CodexDiscovery', () => {
         message: 'Codex --help check failed',
         details: {
           stage: '--help',
-          executablePath: 'codex.exe',
+          executablePath: `${process.platform === 'win32' ? '%USERPROFILE%' : '$HOME'}${path.sep}tools${path.sep}codex.exe`,
           spawnErrorCode: 'EPERM',
           exitCode: -1,
         },

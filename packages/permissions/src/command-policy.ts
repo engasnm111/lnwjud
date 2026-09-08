@@ -15,6 +15,7 @@ export interface CommandPolicyOptions {
    * classified separately before dispatch.
    */
   readonly unrestricted?: boolean;
+  readonly platform?: NodeJS.Platform;
 }
 
 export class CommandPolicy {
@@ -23,7 +24,8 @@ export class CommandPolicy {
   public decide(profile: PermissionProfile, executable: string, source: CommandSource, args: readonly string[] = []): PermissionDecision {
     void this.options;
     void args;
-    const basename = path.win32.basename(executable).toLowerCase();
+    const pathApi = (this.options.platform ?? process.platform) === 'win32' ? path.win32 : path.posix;
+    const basename = pathApi.basename(executable.replaceAll('\\', pathApi.sep)).toLowerCase();
     if (DELETE_EXECUTABLES.has(basename)) return 'ASK';
 
     if (source === 'project') {

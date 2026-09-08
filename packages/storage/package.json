@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/storage",
-  "version": "4.55.1",
+  "version": "4.56.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -15,12 +15,13 @@
   "dependencies": {
     "@lnwjud/audit": "workspace:*",
     "@lnwjud/domain": "workspace:*",
+    "@lnwjud/shared": "workspace:*",
     "@lnwjud/workspace": "workspace:*"
   },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --outDir dist"
+    "build": "node ../../scripts/clean-ts-output.mjs dist && tsc --outDir dist"
   },
   "license": "MIT"
 }

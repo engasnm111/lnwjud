@@ -49,6 +49,7 @@ type DestructiveApprovalKey = keyof DestructiveDeletePolicy['approvals'];
 
 export function SettingsPage(props: SettingsPageProps): ReactElement {
   const t = createTranslator(props.locale);
+  const hostPlatform = props.dashboard.hostPlatform ?? 'win32';
   const guidedTunnelRunning = isTunnelRunning(props.dashboard.tunnel);
   const guidedTunnelConfigured = tunnelRuntimeCredentialAvailable(props.dashboard.tunnel) && props.dashboard.tunnel.profileExists;
   const tunnelPresentation = tunnelAuthPresentation(props.dashboard.tunnel);
@@ -217,9 +218,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       if (selected === null) return;
       setClientPath(selected);
       await props.onSetTunnelClientPath(selected);
-      setSavedMessage(props.locale === 'th' ? 'บันทึก tunnel-client.exe แล้ว' : 'tunnel-client.exe saved.');
+      setSavedMessage(props.locale === 'th' ? 'บันทึก tunnel-client แล้ว' : 'tunnel-client saved.');
     } catch (cause: unknown) {
-      setTunnelMessage(cause instanceof Error ? cause.message : 'Could not select tunnel-client.exe');
+      setTunnelMessage(cause instanceof Error ? cause.message : 'Could not select tunnel-client');
     }
   }
 
@@ -474,6 +475,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
 
               <UserConfigPanel
                 locale={props.locale}
+                hostPlatform={hostPlatform}
                 permissionProfile={props.dashboard.permissionProfile}
                 stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
                 settings={props.dashboard.settings}
@@ -518,11 +520,15 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.shell_del_erase} label="shell_del_erase" description={props.locale === 'th' ? 'Auto-approve del/erase แบบ exact target เมื่อ parser พิสูจน์รูปแบบได้; /s และ broad forms ยังถาม' : 'Auto-approves exact del/erase targets when the parser can prove the form; /s and broad forms still ask'} onChange={(enabled) => setDestructiveApproval('shell_del_erase', enabled)} />
                 </div>
 
-                <div className="settings-mini-heading"><strong>WSL destructive families</strong><span>{props.locale === 'th' ? 'exact scoped forms เท่านั้น' : 'exact scoped forms only'}</span></div>
-                <div className="setting-grid two-col align-center">
-                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.wsl_rm_unlink} label="wsl_rm_unlink" description={props.locale === 'th' ? 'Auto-approve WSL rm/unlink target เดียวใน Active Project; recursive/absolute Linux path/broad forms ยังถาม' : 'Auto-approves one WSL rm/unlink target in the Active Project; recursive, absolute Linux paths, and broad forms still ask'} onChange={(enabled) => setDestructiveApproval('wsl_rm_unlink', enabled)} />
-                  <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.wsl_rmdir} label="wsl_rmdir" description={props.locale === 'th' ? 'Auto-approve WSL rmdir target เดียว; parents/broad/outside forms ยังถาม' : 'Auto-approves one WSL rmdir target; parents, broad, and outside forms still ask'} onChange={(enabled) => setDestructiveApproval('wsl_rmdir', enabled)} />
-                </div>
+                {hostPlatform === 'win32' ? (
+                  <>
+                    <div className="settings-mini-heading"><strong>WSL destructive families</strong><span>{props.locale === 'th' ? 'exact scoped forms เท่านั้น' : 'exact scoped forms only'}</span></div>
+                    <div className="setting-grid two-col align-center">
+                      <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.wsl_rm_unlink} label="wsl_rm_unlink" description={props.locale === 'th' ? 'Auto-approve WSL rm/unlink target เดียวใน Active Project; recursive/absolute Linux path/broad forms ยังถาม' : 'Auto-approves one WSL rm/unlink target in the Active Project; recursive, absolute Linux paths, and broad forms still ask'} onChange={(enabled) => setDestructiveApproval('wsl_rm_unlink', enabled)} />
+                      <SettingSwitch checked={props.dashboard.destructiveDeletePolicy.approvals.wsl_rmdir} label="wsl_rmdir" description={props.locale === 'th' ? 'Auto-approve WSL rmdir target เดียว; parents/broad/outside forms ยังถาม' : 'Auto-approves one WSL rmdir target; parents, broad, and outside forms still ask'} onChange={(enabled) => setDestructiveApproval('wsl_rmdir', enabled)} />
+                    </div>
+                  </>
+                ) : null}
 
                 <p className="hint">{props.locale === 'th' ? 'Full: READ / WRITE / EXECUTE และ mutation ปกติไม่ถาม ส่วน destructive family ที่ปิดไว้หรือพิสูจน์ exact scope ไม่ได้จะถามตามปกติ การ auto-approve command family ไม่ได้ทำให้ผลคำสั่งเข้า Recovery Trash' : 'Full: ordinary READ / WRITE / EXECUTE and normal mutations do not prompt. A destructive family still asks when disabled or when exact scope cannot be proven. Auto-approved command-family effects are not covered by Recovery Trash.'}</p>
               </section>
@@ -540,7 +546,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="stdio-roots">{props.locale === 'th' ? 'Allowed Roots — หนึ่ง path ต่อบรรทัด' : 'Allowed Roots — one path per line'}</label>
-                  <textarea id="stdio-roots" className="settings-textarea" rows={5} value={allowedRootsText} placeholder={'E:\\Projects\\MyApp\nD:\\Shared\\Source'} onChange={(event) => { setAllowedRootsText(event.target.value); setStdioDirty(true); }} />
+                  <textarea id="stdio-roots" className="settings-textarea" rows={5} value={allowedRootsText} placeholder={hostPlatform === 'win32' ? 'E:\\Projects\\MyApp\nD:\\Shared\\Source' : '/Users/name/Projects\n/home/name/Source'} onChange={(event) => { setAllowedRootsText(event.target.value); setStdioDirty(true); }} />
                 </div>
                 <div className="inline-actions"><button type="button" className="btn-save-gold" disabled={!stdioDirty} onClick={() => { void saveStdioPolicy(); }}>{props.locale === 'th' ? 'บันทึก STDIO Policy' : 'Save STDIO Policy'}</button></div>
                 {policyError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {policyError}</div>}
@@ -552,6 +558,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
           {userConfigSection === 'security' ? null : (
             <UserConfigPanel
               locale={props.locale}
+              hostPlatform={hostPlatform}
               permissionProfile={props.dashboard.permissionProfile}
               stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
               settings={props.dashboard.settings}
@@ -752,16 +759,16 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-key">{t('settings.tunnelKey')}</label>
                   <div className="form-row"><div className="password-input-wrapper"><input id="tunnel-key" type={showApiKey ? 'text' : 'password'} placeholder={props.dashboard.tunnel.hasApiKey ? '••••••••••••••••' : 'sk-...'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" /><button type="button" className="toggle-pw-btn" onClick={() => setShowApiKey((value) => !value)}>{showApiKey ? 'Hide' : 'Show'}</button></div><button type="button" className="btn-save-gold" onClick={() => { void props.onSaveTunnelApiKey(apiKey).then(() => { setApiKey(''); setSavedMessage(t('settings.saved')); }); }}>{t('settings.saveKey')}</button></div>
-                  <p className="hint">{props.dashboard.tunnel.hasApiKey ? 'Protected with Windows DPAPI' : t('tunnel.needKey')}</p>
+                  <p className="hint">{props.dashboard.tunnel.hasApiKey ? (props.locale === 'th' ? 'ป้องกันด้วย secure storage ของระบบ' : 'Protected with operating system secure storage') : t('tunnel.needKey')}</p>
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-client-path">{props.locale === 'th' ? 'tunnel-client (รวมมากับโปรแกรมแล้ว)' : 'tunnel-client (bundled)'}</label>
                   <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.13 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.13 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
-                  <p className="hint">{props.locale === 'th' ? 'ช่องว่าง = ใช้ OpenAI tunnel-client v0.0.13 ที่มากับโปรแกรม หากบันทึก custom override แล้ว path นั้นจะเป็นตัวเลือกหลัก: ถ้าไฟล์หาย lnwjud จะแจ้ง error และจะไม่สลับกลับ bundled เอง การเปลี่ยน client ขณะ runtime ทำงานจะหยุด/ยืนยัน owner เดิมก่อนจึงค่อยสลับ' : 'Blank = use the bundled OpenAI tunnel-client v0.0.13. A saved custom override is authoritative: if it is missing, lnwjud reports an error and never silently falls back to bundled. Switching clients while running stops and verifies the recorded owner before committing the new selection.'}</p>
+                  <p className="hint">{props.locale === 'th' ? 'ช่องว่าง = ใช้ OpenAI tunnel-client v0.0.13 แบบ native ตาม target ที่มากับโปรแกรม หากบันทึก custom override แล้ว path นั้นจะเป็นตัวเลือกหลัก: ถ้าไฟล์หาย lnwjud จะแจ้ง error และจะไม่สลับกลับ bundled เอง การเปลี่ยน client ขณะ runtime ทำงานจะหยุด/ยืนยัน owner เดิมก่อนจึงค่อยสลับ' : 'Blank = use the bundled target-native OpenAI tunnel-client v0.0.13. A saved custom override is authoritative: if it is missing, lnwjud reports an error and never silently falls back to bundled. Switching clients while running stops and verifies the recorded owner before committing the new selection.'}</p>
                 </div>
               </div>
               <div className="tunnel-setup-box">
-                <div className="settings-mini-heading"><strong>Setup Wizard</strong><span>{props.locale === 'th' ? 'ไม่ต้องเปิด PowerShell init เอง' : 'No manual PowerShell init'}</span></div>
+                <div className="settings-mini-heading"><strong>Setup Wizard</strong><span>{props.locale === 'th' ? 'ไม่ต้องเปิดคำสั่งระบบเอง' : 'No manual platform-specific init'}</span></div>
                 <label className="field-label" htmlFor="tunnel-id">OpenAI Tunnel ID</label>
                 <div className="form-row"><input id="tunnel-id" placeholder="tunnel_0123456789abcdef..." value={tunnelId} onChange={(event) => setTunnelId(event.target.value)} /><button type="button" className="btn-save-gold" disabled={tunnelBusy} onClick={() => { void configureTunnel(); }}>{tunnelBusy ? (props.locale === 'th' ? 'กำลังตั้งค่า…' : 'Configuring…') : (props.locale === 'th' ? 'Configure Tunnel' : 'Configure Tunnel')}</button></div>
               </div>
@@ -837,10 +844,15 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               </section>
 
               <section className="panel settings-card settings-card-polished" aria-label="Backup and restore">
+                {props.dashboard.restoreNotice?.hostCompatibility === 'cross_host' ? (
+                  <div className="alert-box-warning" role="status">
+                    ⚠️ {t('backup.crossHostNotice')} {props.dashboard.restoreNotice.relinkRequired ? t('backup.crossHostRelink') : null} {props.dashboard.restoreNotice.incomplete ? t('backup.crossHostSecret') : null}
+                  </div>
+                ) : null}
                 <SettingsCardHeading icon="▣" title={props.locale === 'th' ? 'สำรองฐานข้อมูลโปรแกรม' : 'Application Database Backup'} subtitle="SQLite consistent snapshots" action={<button type="button" className="btn-save-gold" disabled={backupBusy} onClick={() => { void createBackupNow(); }}>{backupBusy ? (props.locale === 'th' ? 'กำลังทำงาน…' : 'Working…') : (props.locale === 'th' ? 'Backup ตอนนี้' : 'Backup Now')}</button>} />
                 {props.dashboard.backups.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี Backup' : 'No backups yet'}</div> : (
                   <div className="backup-list settings-backup-list">{props.dashboard.backups.slice(0, 5).map((backup) => (
-                    <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
+                    <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}{backup.hostCompatibility === 'cross_host' ? ` · ${t('backup.crossHostLabel')}` : ''}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
                   ))}</div>
                 )}
                 {(props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running) ? <div className="alert-box-warning">⚠️ {props.locale === 'th' ? 'หยุด Tunnel และ Local MCP ก่อน Restore ฐานข้อมูล' : 'Stop Tunnel and local MCP before scheduling a database restore.'}</div> : null}

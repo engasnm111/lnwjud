@@ -61,10 +61,18 @@ describe('canonical bilingual tool catalog', () => {
     expect(th.long).toContain('ChatGPT host');
   });
 
-  it('keeps Windows-native capability tools on an explicit Windows platform boundary', () => {
-    for (const name of ['system_info', 'notification', 'file_dialog', 'clipboard', 'audio', 'screen_record', 'office', 'scheduler'] as const) {
+  it('keeps Windows-only capability tools on an explicit Windows platform boundary', () => {
+    for (const name of ['wsl_exec', 'wsl_fs', 'office_outlook', 'windows_environment', 'registry_context', 'sandbox_exec'] as const) {
       expect(catalogDefinitions[name]?.requirementIds, name).toContain('platform_windows');
     }
+    expect(catalogDefinitions.system_info?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.notification?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.file_dialog?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.clipboard?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.audio?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.screen_record?.requirementIds).not.toContain('platform_windows');
+    expect(catalogDefinitions.office?.requirementIds).toContain('platform_supported');
+    expect(catalogDefinitions.scheduler?.requirementIds).toContain('platform_supported');
     expect(catalogDefinitions.shell?.requirementIds).not.toContain('platform_windows');
     expect(catalogDefinitions.web_fetch?.requirementIds).not.toContain('platform_windows');
   });

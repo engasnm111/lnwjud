@@ -4,7 +4,7 @@ Starts the lnwjud Secure MCP Tunnel against the running Desktop loopback HTTP
 MCP with long TTL, file logging, and automatic restart when the tunnel drops.
 
 .DESCRIPTION
-- Reads the encrypted Runtime API key from %APPDATA%\tunnel-client\lnwjud.runtime.secret (DPAPI)
+- Uses a transient CONTROL_PLANE_API_KEY supplied by the Desktop safe-storage path; it never decrypts a secret itself.
 - Runs `tunnel-client doctor` then `tunnel-client run`
 - Passes --mcp.connection-max-ttl 168h0m0s so ChatGPT connections do not drop every 10 minutes
 - Writes tunnel logs to %APPDATA%\tunnel-client\lnwjud-tunnel.log (tailed by the lnwjud dashboard)
@@ -83,7 +83,6 @@ if ([string]::IsNullOrWhiteSpace($TunnelClientPath)) {
 
 $profileName = 'lnwjud'
 $profileDir = Join-Path $env:APPDATA 'tunnel-client'
-$secretPath = Join-Path $profileDir 'lnwjud.runtime.secret'
 $logPath = Join-Path $profileDir 'lnwjud-tunnel.log'
 $stopFile = Join-Path $profileDir 'lnwjud.tunnel.stop'
 $mcpTtl = '168h0m0s'
@@ -92,7 +91,6 @@ $rapidRestartCount = 0
 $rapidRestartWindowStarted = Get-Date
 
 if (-not (Test-Path $TunnelClientPath)) { throw "Missing tunnel-client: $TunnelClientPath" }
-if (-not (Test-Path $secretPath)) { throw "Missing encrypted runtime key: $secretPath. Save the key once with: Read-Host 'Tunnel runtime API key' -AsSecureString | ConvertFrom-SecureString | Set-Content '$secretPath'" }
 
 function Test-LnwjudTunnelRunning {
   $probe = Get-CimInstance Win32_Process -Filter "Name = 'tunnel-client.exe'" -ErrorAction SilentlyContinue |
@@ -135,7 +133,6 @@ if ($lockHelperItem.PSIsContainer -or (($lockHelperItem.Attributes -band [IO.Fil
 }
 . $lockHelperResolved
 $lockOwner = $null
-$keyPointer = $null
 try {
   $selfProbe = Get-LnwjudTunnelProcessProbe -OwnerPid $PID
   if ($selfProbe.state -ne 'live') { throw "Could not verify launcher process ownership: $($selfProbe.reason)" }
@@ -151,6 +148,9 @@ try {
   }
   if ($ForceRestart) { Write-Host 'lnwjud tunnel: -ForceRestart cannot bypass the ownership lock.' }
   if (Test-LnwjudTunnelRunning) { Write-Host 'lnwjud tunnel: existing tunnel-client process detected as status evidence; the lock remains authoritative.' }
+  if ([string]::IsNullOrWhiteSpace($env:CONTROL_PLANE_API_KEY)) {
+    throw 'CONTROL_PLANE_API_KEY is not set. Use Desktop Start Tunnel so Electron safeStorage can supply the key; this compatibility launcher never decrypts secret files.'
+  }
   $profilePath = Join-Path $profileDir 'lnwjud.yaml'
   if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Missing tunnel profile: $profilePath. Open lnwjud Desktop and run Configure Tunnel first." }
   $profileText = Get-Content -LiteralPath $profilePath -Raw
@@ -163,12 +163,6 @@ try {
     Start-Process -FilePath $LnwjudPath
     Start-Sleep -Seconds 2
   }
-
-  # Decrypt the DPAPI secret into this session only after ownership is secured.
-  $encrypted = Get-Content $secretPath -Raw
-  $secureKey = ConvertTo-SecureString -String $encrypted
-  $keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
-  $env:CONTROL_PLANE_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
 
   Write-Host "lnwjud tunnel: running doctor ..."
   & $TunnelClientPath doctor --profile $profileName --profile-dir $profileDir --explain
@@ -221,7 +215,6 @@ try {
   }
 }
 finally {
-  if ($null -ne $keyPointer) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer) }
   Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
   Remove-Item Env:TUNNEL_CLIENT_PROFILE_DIR -ErrorAction SilentlyContinue
   if ($null -ne $lockOwner) {

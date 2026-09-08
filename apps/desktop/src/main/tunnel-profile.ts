@@ -193,14 +193,16 @@ export function preferredTunnelMcpCommand(execPath: string, cmdFallback: string 
   }
 }
 
-export function packagedStdioLauncherCandidates(execPath: string, resourcesPath?: string): string[] {
+export function packagedStdioLauncherCandidates(execPath: string, resourcesPath?: string, platform: NodeJS.Platform = process.platform): string[] {
   const execDir = path.dirname(execPath);
+  const launcher = platform === 'win32' ? 'lnwjud-mcp-stdio.cmd' : 'lnwjud-mcp-stdio';
   const candidates = [
-    path.join(execDir, 'lnwjud-mcp-stdio.cmd'),
-    path.join(execDir, 'resources', 'lnwjud-mcp-stdio.cmd'),
+    path.join(execDir, launcher),
+    path.join(execDir, 'resources', launcher),
   ];
+  if (platform === 'darwin') candidates.push(path.join(execDir, '..', 'Resources', launcher));
   if (typeof resourcesPath === 'string' && resourcesPath.trim().length > 0) {
-    candidates.push(path.join(resourcesPath, 'lnwjud-mcp-stdio.cmd'));
+    candidates.push(path.join(resourcesPath, launcher));
   }
   return candidates;
 }

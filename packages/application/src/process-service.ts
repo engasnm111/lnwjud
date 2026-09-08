@@ -1,5 +1,4 @@
 import { realpath, stat } from 'node:fs/promises';
-import path from 'node:path';
 import {
   appError,
   err,
@@ -15,7 +14,7 @@ import { CommandPolicy, DefaultPermissionEngine, permissionProfiles, type Permis
 import { ProcessManager, type LogQuery, type ManagedProcess, type ManagedProcessStart, type ProcessLogResult } from '@lnwjud/process';
 import { JsCommandDetector, ProjectDetector, type ProjectCommandKind } from '@lnwjud/project';
 import { prohibitedAgentCommandReason, riskyAgentCommandReason } from '@lnwjud/shared';
-import { WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
+import { isAbsoluteHostPath, isHostPathWithin, resolveHostPath, WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { FileActor } from './file-service.js';
 import { ProjectService } from './project-service.js';
 
@@ -87,7 +86,7 @@ export class ProcessService {
     this.guard = dependencies.guard ?? new WorkspacePathGuard();
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
     this.unrestricted = dependencies.unrestricted === true;
-    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy({ unrestricted: this.unrestricted });
+    this.commandPolicy = dependencies.commandPolicy ?? new CommandPolicy({ unrestricted: this.unrestricted, platform: process.platform });
     this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
     this.defaultTimeoutMsProvider = dependencies.defaultTimeoutMsProvider;
     this.authorizationBypassProvider = dependencies.authorizationBypassProvider ?? ((): boolean => false);
@@ -216,7 +215,7 @@ export class ProcessService {
       if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
       const riskyReason = riskyAgentCommandReason(request.executable, request.args);
       if (riskyReason !== undefined && !applicationApproved) return err(appError('PERMISSION_REQUIRED', riskyReason));
-      if (this.unrestricted && request.cwd !== undefined && path.isAbsolute(request.cwd) && !isWithinWorkspace(workspace.value.realRootPath, cwd.value) && !applicationApproved) {
+      if (this.unrestricted && request.cwd !== undefined && isAbsoluteHostPath(request.cwd) && !isWithinWorkspace(workspace.value.realRootPath, cwd.value) && !applicationApproved) {
         return err(appError('PERMISSION_REQUIRED', 'Running outside the selected workspace requires explicit user confirmation'));
       }
     }
@@ -257,9 +256,11 @@ export class ProcessService {
   }
 
   private async resolveCwd(workspace: Workspace, requestedCwd: string | undefined, bypassAuthorization: boolean): Promise<Result<string>> {
-    if ((this.unrestricted || bypassAuthorization) && requestedCwd !== undefined && path.isAbsolute(requestedCwd) && !pathStaysWithinWorkspace(workspace.realRootPath, requestedCwd)) {
+    if ((this.unrestricted || bypassAuthorization) && requestedCwd !== undefined && isAbsoluteHostPath(requestedCwd) && !pathStaysWithinWorkspace(workspace.realRootPath, requestedCwd)) {
       try {
-        const canonical = await realpath(requestedCwd);
+        const resolved = resolveHostPath(requestedCwd);
+        if (resolved === null) return err(appError('INVALID_INPUT', 'Process cwd uses a foreign host path syntax'));
+        const canonical = await realpath(resolved);
         if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'Process cwd must be a directory'));
         return ok(canonical);
       } catch {
@@ -321,16 +322,11 @@ function cancelledStart(): Result<never> {
 }
 
 function pathStaysWithinWorkspace(root: string, candidate: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  if (relative === '') return true;
-  if (path.isAbsolute(relative)) return false;
-  const [firstSegment] = relative.split(path.sep);
-  return firstSegment !== '..';
+  return isHostPathWithin(root, candidate);
 }
 
 function isWithinWorkspace(root: string, candidate: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === '' || (!path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..');
+  return isHostPathWithin(root, candidate);
 }
 
 function isAborted(signal: AbortSignal | undefined): boolean {

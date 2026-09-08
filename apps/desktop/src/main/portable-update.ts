@@ -7,6 +7,7 @@ export const PORTABLE_UPDATE_FEED_URL = 'https://github.com/engasnm111/lnwjud/re
 export const PORTABLE_UPDATE_CHANNEL = 'portable';
 
 export type WindowsDistribution = 'installer' | 'portable';
+export type UpdaterDistribution = WindowsDistribution | 'macos' | 'linux-appimage' | 'unsupported';
 
 export interface AutoUpdaterFeedAdapter {
   disableDifferentialDownload: boolean;
@@ -42,6 +43,25 @@ export function detectWindowsDistribution(
   return portableExecutable === undefined || portableExecutable.length === 0 ? 'installer' : 'portable';
 }
 
+/**
+ * Select an updater only for installation formats electron-updater can safely
+ * own. Linux DEB installs remain package-manager controlled; they must not
+ * enter the Windows portable replacement path or consume a `latest.yml`
+ * feed. A packaged AppImage is identified by electron-builder's APPIMAGE
+ * environment marker.
+ */
+export function detectUpdaterDistribution(
+  isPackaged: boolean,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+): UpdaterDistribution {
+  if (!isPackaged) return 'unsupported';
+  if (platform === 'win32') return detectWindowsDistribution(true, environment, platform);
+  if (platform === 'darwin') return 'macos';
+  if (platform === 'linux' && environment.APPIMAGE?.trim()) return 'linux-appimage';
+  return 'unsupported';
+}
+
 export function currentPortableExecutablePath(
   environment: NodeJS.ProcessEnv = process.env,
   fallbackExecutablePath: string = process.execPath,
@@ -64,6 +84,22 @@ export function configureUpdaterForDistribution(
     channel: PORTABLE_UPDATE_CHANNEL,
     useMultipleRangeRequest: false,
   });
+}
+
+/** Configure only distribution-specific safeguards; native macOS/Linux feeds use electron-builder metadata. */
+export function configureUpdaterForPlatform(
+  updater: AutoUpdaterFeedAdapter,
+  distribution: UpdaterDistribution,
+): void {
+  if (distribution === 'portable') {
+    configureUpdaterForDistribution(updater, distribution);
+    return;
+  }
+  if (distribution === 'linux-appimage') {
+    // AppImage updates are full-file replacements. Differential blockmaps
+    // are not a supported contract for this portable Linux distribution.
+    updater.disableDifferentialDownload = true;
+  }
 }
 
 export async function preparePortableReplacement(

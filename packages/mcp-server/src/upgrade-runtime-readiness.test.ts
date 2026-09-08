@@ -9,6 +9,33 @@ import type { McpApplicationServices } from './tools/tool-types.js';
 const actor: FileActor = { clientId: 'readiness-test', clientName: 'readiness-test' };
 
 describe('upgrade runtime readiness facades', () => {
+  it('does not turn a missing native log provider into ready event-log context', async () => {
+    // This host has no provider, exercising the real backend's unavailable
+    // result without relying on utilities installed on the test machine.
+    const runtime = new UpgradeRuntimeService({ platform: 'freebsd' }, actor);
+    await expect(runtime.execute('event_log_context', {})).resolves.toMatchObject({
+      ok: true,
+      value: { tool: 'event_log_context', status: 'optional', available: false, ready: false, executed: false,
+        eventLog: { reason: 'portable_log_provider_missing' } },
+    });
+  });
+
+  it('uses the composition-root platform instead of the runner host for Windows-only diagnostics', async () => {
+    const runtime = new UpgradeRuntimeService({ platform: 'linux' }, actor);
+    await expect(runtime.execute('windows_environment', {})).resolves.toMatchObject({
+      ok: true,
+      value: { tool: 'windows_environment', status: 'unsupported', available: false, ready: false },
+    });
+    await expect(runtime.execute('registry_context', {})).resolves.toMatchObject({
+      ok: true,
+      value: { tool: 'registry_context', status: 'unsupported', available: false, ready: false },
+    });
+    await expect(runtime.execute('office_outlook', { action: 'list_messages' })).resolves.toMatchObject({
+      ok: true,
+      value: { tool: 'office_outlook', status: 'unsupported', available: false, ready: false },
+    });
+  });
+
   it('requires every advertised ready upgrade tool to have an explicit runtime implementation case', () => {
     const source = readFileSync(new URL('./upgrade-runtime.ts', import.meta.url), 'utf8');
     const explicitCases = new Set([...source.matchAll(/case '([^']+)'/g)].map((match) => match[1]));

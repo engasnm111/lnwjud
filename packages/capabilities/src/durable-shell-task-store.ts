@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { promisify } from 'node:util';
 import { appError, err, ok, type GoalTaskCancellationObservation, type Result } from '@lnwjud/domain';
 import { capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
 
@@ -33,7 +34,9 @@ interface DurableTaskMetadata {
   readonly max_output_bytes: number;
   readonly deadline_at: string;
   worker_pid?: number;
+  worker_started_at?: string;
   child_pid?: number;
+  child_started_at?: string;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
   readonly owner_client_id?: string;
@@ -64,21 +67,32 @@ const STDOUT_FILENAME = 'stdout.log';
 const STDERR_FILENAME = 'stderr.log';
 const SPEC_FILENAME = 'spec.json';
 const WORKER_PID_FILENAME = 'worker.pid';
+const WORKER_STARTED_FILENAME = 'worker.started';
 const METADATA_READ_RETRIES = 4;
 const PROCESS_EXIT_RECONCILE_DELAY_MS = 75;
 const PROCESS_HANDLE_RELEASE_GRACE_MS = 150;
+// Host process identity probes start a second PowerShell/`ps` process. Under
+// a busy desktop test run that probe can be delayed even though the durable
+// worker is healthy. Keep the startup window finite (so a genuinely
+// unverifiable long-lived process still fails closed) but wide enough not to
+// turn normal short-lived tasks into false `termination_unverified` results.
+const PROCESS_IDENTITY_CAPTURE_GRACE_MS = 10_000;
+const execFileAsync = promisify(execFile);
 
 export interface DurableShellTaskStoreOptions {
   readonly maxConcurrentTasks?: number;
+  readonly platform?: NodeJS.Platform;
 }
 
 export const DEFAULT_MAX_CONCURRENT_DURABLE_TASKS = 16;
 
 export class DurableShellTaskStore {
   private readonly maxConcurrentTasks: number;
+  private readonly platform: NodeJS.Platform;
 
   public constructor(private readonly rootDirectory: string, options: DurableShellTaskStoreOptions = {}) {
     this.maxConcurrentTasks = normalizeMaxConcurrentTasks(options.maxConcurrentTasks);
+    this.platform = options.platform ?? process.platform;
   }
 
   public async launch(request: DurableShellLaunchRequest): Promise<Result<Record<string, unknown>>> {
@@ -144,6 +158,14 @@ export class DurableShellTaskStore {
       await waitForSpawn(worker);
       if (worker.pid === undefined) return err(appError('INTERNAL_ERROR', 'Durable task worker did not return a process ID', true));
       metadata.worker_pid = worker.pid;
+      // Capture the launcher identity without delaying a short-lived task's
+      // return path. The worker owns task.json, so the identity is published
+      // separately when the bounded host probe completes.
+      void probeProcessIdentity(worker.pid, this.platform).then(async (workerIdentity) => {
+        if (workerIdentity.state === 'live') {
+          await writeFile(path.join(taskDirectory, WORKER_STARTED_FILENAME), workerIdentity.processStartedAt, 'utf8').catch(() => undefined);
+        }
+      }).catch(() => undefined);
       // Publish the worker identity on its own file before returning the task handle.
       // The worker owns task.json; keeping launcher identity separate avoids a race
       // where a very fast completion can be overwritten back to running.
@@ -235,10 +257,24 @@ export class DurableShellTaskStore {
     if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(metadataResult.value), owner)) {
       return err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
     }
-    const metadata = await this.reconcile(metadataResult.value);
+    let metadata = await this.reconcile(metadataResult.value);
     if (isTerminal(metadata.state)) return ok(await this.snapshotFromMetadata(metadata));
-    const workerRunning = metadata.worker_pid !== undefined && isProcessRunning(metadata.worker_pid);
-    const terminationPid = workerRunning ? metadata.worker_pid : metadata.child_pid;
+    metadata = await this.hydrateProcessIdentities(metadata);
+    const workerProbe = metadata.worker_pid === undefined
+      ? { state: 'gone' as const }
+      : await probeProcessIdentity(metadata.worker_pid, this.platform);
+    const childProbe = metadata.child_pid === undefined
+      ? { state: 'gone' as const }
+      : await probeProcessIdentity(metadata.child_pid, this.platform);
+    const workerRunning = isTrackedProcessLive(workerProbe, metadata.worker_started_at);
+    const childRunning = isTrackedProcessLive(childProbe, metadata.child_started_at);
+    // POSIX workers and their children own separate detached process groups.
+    // Stop the real child first and keep the worker alive to reap it, flush
+    // output and exit. The termination verifier still requires both PIDs gone.
+    // Windows taskkill /T instead needs the worker root to traverse its child.
+    const terminationPid = this.platform !== 'win32' && childRunning
+      ? metadata.child_pid
+      : workerRunning ? metadata.worker_pid : (childRunning ? metadata.child_pid : undefined);
     if (terminationPid === undefined) {
       metadata.state = 'termination_unverified';
       metadata.error = 'Durable task process PID is unavailable; process termination could not be verified';
@@ -248,7 +284,10 @@ export class DurableShellTaskStore {
     }
     const relatedPids = [metadata.worker_pid, metadata.child_pid]
       .filter((pid): pid is number => pid !== undefined && pid !== terminationPid);
-    const stopped = await stopProcessTree(terminationPid, relatedPids);
+    const identities = new Map<number, string>();
+    if (metadata.worker_pid !== undefined && metadata.worker_started_at !== undefined) identities.set(metadata.worker_pid, metadata.worker_started_at);
+    if (metadata.child_pid !== undefined && metadata.child_started_at !== undefined) identities.set(metadata.child_pid, metadata.child_started_at);
+    const stopped = await stopProcessTree(terminationPid, relatedPids, this.platform, identities);
     if (!stopped) {
       metadata.state = 'termination_unverified';
       metadata.error = 'Durable task process termination could not be verified';
@@ -276,18 +315,51 @@ export class DurableShellTaskStore {
   private async reconcile(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
     if (metadata.state !== 'running' && metadata.state !== 'termination_unverified') return metadata;
     const workerPid = metadata.worker_pid;
-    if (workerPid !== undefined && isProcessRunning(workerPid)) return metadata;
+    if (workerPid !== undefined) {
+      const workerProbe = await probeProcessIdentity(workerPid, this.platform);
+      if (isTrackedProcessLive(workerProbe, metadata.worker_started_at)) return metadata;
+      if (identityCapturePendingForProbe(workerProbe, metadata.worker_started_at, metadata.started_at)) return metadata;
+      if (isUnverifiableTrackedProbe(workerProbe, metadata.worker_started_at)) {
+        metadata.state = 'termination_unverified';
+        metadata.error = metadata.error ?? describeTrackedProbe('worker', workerProbe);
+        delete metadata.finished_at;
+        await this.writeMetadata(metadata);
+        return metadata;
+      }
+    }
     await delay(PROCESS_EXIT_RECONCILE_DELAY_MS);
     const refreshed = await this.readMetadata(metadata.task_id);
     if (refreshed.ok && isTerminal(refreshed.value.state)) return refreshed.value;
     const current = refreshed.ok ? refreshed.value : metadata;
-    if (current.worker_pid !== undefined && isProcessRunning(current.worker_pid)) return current;
-    if (current.child_pid !== undefined && isProcessRunning(current.child_pid)) {
-      current.state = 'termination_unverified';
-      current.error = current.error ?? 'Durable task worker exited while its child process is still running';
-      delete current.finished_at;
-      await this.writeMetadata(current);
-      return current;
+    if (current.worker_pid !== undefined) {
+      const refreshedWorkerProbe = await probeProcessIdentity(current.worker_pid, this.platform);
+      if (isTrackedProcessLive(refreshedWorkerProbe, current.worker_started_at)) return current;
+      if (identityCapturePendingForProbe(refreshedWorkerProbe, current.worker_started_at, current.started_at)) return current;
+      if (isUnverifiableTrackedProbe(refreshedWorkerProbe, current.worker_started_at)) {
+        current.state = 'termination_unverified';
+        current.error = current.error ?? describeTrackedProbe('worker', refreshedWorkerProbe);
+        delete current.finished_at;
+        await this.writeMetadata(current);
+        return current;
+      }
+    }
+    if (current.child_pid !== undefined) {
+      const refreshedChildProbe = await probeProcessIdentity(current.child_pid, this.platform);
+      if (isTrackedProcessLive(refreshedChildProbe, current.child_started_at)) {
+        current.state = 'termination_unverified';
+        current.error = current.error ?? 'Durable task worker exited while its child process is still running';
+        delete current.finished_at;
+        await this.writeMetadata(current);
+        return current;
+      }
+      if (identityCapturePendingForProbe(refreshedChildProbe, current.child_started_at, current.started_at)) return current;
+      if (isUnverifiableTrackedProbe(refreshedChildProbe, current.child_started_at)) {
+        current.state = 'termination_unverified';
+        current.error = current.error ?? describeTrackedProbe('child', refreshedChildProbe);
+        delete current.finished_at;
+        await this.writeMetadata(current);
+        return current;
+      }
     }
     if (current.state === 'termination_unverified') return current;
     current.state = 'failed';
@@ -314,7 +386,9 @@ export class DurableShellTaskStore {
       deadline_at: metadata.deadline_at,
       durable: true,
       ...(metadata.worker_pid === undefined ? {} : { worker_pid: metadata.worker_pid }),
+      ...(metadata.worker_started_at === undefined ? {} : { worker_started_at: metadata.worker_started_at }),
       ...(metadata.child_pid === undefined ? {} : { child_pid: metadata.child_pid }),
+      ...(metadata.child_started_at === undefined ? {} : { child_started_at: metadata.child_started_at }),
       truncated: metadata.stdout_truncated === true || metadata.stderr_truncated === true,
     };
   }
@@ -328,6 +402,10 @@ export class DurableShellTaskStore {
           if (parsed.worker_pid === undefined) {
             const publishedPid = await readPublishedPid(path.join(this.taskDirectory(taskId), WORKER_PID_FILENAME));
             if (publishedPid !== undefined) parsed.worker_pid = publishedPid;
+          }
+          if (parsed.worker_started_at === undefined) {
+            const publishedStartedAt = await readPublishedStartedAt(path.join(this.taskDirectory(taskId), WORKER_STARTED_FILENAME));
+            if (publishedStartedAt !== undefined) parsed.worker_started_at = publishedStartedAt;
           }
           return ok(parsed);
         }
@@ -357,6 +435,25 @@ export class DurableShellTaskStore {
     }
     return workerPath;
   }
+
+  private async hydrateProcessIdentities(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
+    if (metadata.worker_started_at !== undefined && metadata.child_started_at !== undefined) return metadata;
+    const startedAtPath = path.join(this.taskDirectory(metadata.task_id), WORKER_STARTED_FILENAME);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (metadata.worker_started_at === undefined) {
+        const publishedWorkerStartedAt = await readPublishedStartedAt(startedAtPath);
+        if (publishedWorkerStartedAt !== undefined) metadata.worker_started_at = publishedWorkerStartedAt;
+      }
+      const refreshed = await this.readMetadata(metadata.task_id);
+      if (refreshed.ok) {
+        if (refreshed.value.worker_started_at !== undefined) metadata.worker_started_at = refreshed.value.worker_started_at;
+        if (refreshed.value.child_started_at !== undefined) metadata.child_started_at = refreshed.value.child_started_at;
+      }
+      if (metadata.worker_started_at !== undefined && metadata.child_started_at !== undefined) break;
+      await delay(25);
+    }
+    return metadata;
+  }
 }
 
 async function readPublishedPid(filename: string): Promise<number | undefined> {
@@ -378,7 +475,19 @@ function isMetadata(value: unknown): value is DurableTaskMetadata {
     && typeof record.include_stdout === 'boolean'
     && typeof record.include_stderr === 'boolean'
     && typeof record.max_output_bytes === 'number'
-    && typeof record.deadline_at === 'string';
+    && typeof record.deadline_at === 'string'
+    && (record.worker_started_at === undefined || typeof record.worker_started_at === 'string')
+    && (record.child_started_at === undefined || typeof record.child_started_at === 'string');
+}
+
+async function readPublishedStartedAt(filename: string): Promise<string | undefined> {
+  try {
+    const value = (await readFile(filename, 'utf8')).trim();
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) && new Date(parsed).toISOString() === value ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function metadataOwner(metadata: DurableTaskMetadata): CapabilityTaskOwner {
@@ -431,13 +540,101 @@ function waitForSpawn(child: ReturnType<typeof spawn>): Promise<void> {
   });
 }
 
-async function stopProcessTree(pid: number, relatedPids: readonly number[] = []): Promise<boolean> {
+type PortableProcessProbe =
+  | { readonly state: 'live'; readonly processStartedAt: string }
+  | { readonly state: 'gone' }
+  | { readonly state: 'unverifiable'; readonly reason: string };
+
+async function probeProcessIdentity(pid: number, platform: NodeJS.Platform): Promise<PortableProcessProbe> {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 2_147_483_647) return { state: 'unverifiable', reason: 'invalid_pid' };
+  try {
+    if (platform === 'win32') {
+      const { stdout } = await execFileAsync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
+      ], { windowsHide: true, encoding: 'utf8', timeout: 1_750, maxBuffer: 16 * 1024 });
+      return parsePortableProcessProbe(stdout);
+    }
+    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], {
+      encoding: 'utf8', timeout: 1_750, maxBuffer: 16 * 1024,
+    });
+    const value = stdout.trim();
+    if (value.length === 0) return { state: 'gone' };
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? { state: 'live', processStartedAt: new Date(parsed).toISOString() } : { state: 'unverifiable', reason: 'invalid_start_time' };
+  } catch (error: unknown) {
+    if (isProcessProbeNotFound(error)) return { state: 'gone' };
+    return { state: 'unverifiable', reason: isProcessProbeTimeout(error) ? 'probe_timeout' : 'probe_failed' };
+  }
+}
+
+function parsePortableProcessProbe(value: string): PortableProcessProbe {
+  const trimmed = value.trim();
+  if (trimmed === 'GONE') return { state: 'gone' };
+  if (!trimmed.startsWith('LIVE|')) return { state: 'unverifiable', reason: 'invalid_probe_response' };
+  const startedAt = trimmed.slice(5);
+  const parsed = Date.parse(startedAt);
+  return Number.isFinite(parsed) ? { state: 'live', processStartedAt: new Date(parsed).toISOString() } : { state: 'unverifiable', reason: 'invalid_start_time' };
+}
+
+function isTrackedProcessLive(probe: PortableProcessProbe, expectedStartedAt: string | undefined): boolean {
+  return probe.state === 'live' && expectedStartedAt !== undefined && probe.processStartedAt === expectedStartedAt;
+}
+
+function identityCapturePendingForProbe(
+  probe: PortableProcessProbe,
+  expectedStartedAt: string | undefined,
+  taskStartedAt: string,
+): boolean {
+  return expectedStartedAt === undefined
+    && identityCapturePending(taskStartedAt)
+    && (probe.state === 'live' || probe.state === 'unverifiable');
+}
+
+function isUnverifiableTrackedProbe(probe: PortableProcessProbe, expectedStartedAt: string | undefined): boolean {
+  return probe.state === 'unverifiable' || (probe.state === 'live' && (expectedStartedAt === undefined || probe.processStartedAt !== expectedStartedAt));
+}
+
+function describeTrackedProbe(kind: string, probe: PortableProcessProbe): string {
+  if (probe.state === 'unverifiable') return `Durable task ${kind} liveness is unverifiable (${probe.reason})`;
+  if (probe.state === 'live') return `Durable task ${kind} process identity could not be verified`;
+  return `Durable task ${kind} process identity is no longer live`;
+}
+
+function identityCapturePending(startedAt: string): boolean {
+  const started = Date.parse(startedAt);
+  return Number.isFinite(started) && Date.now() - started < PROCESS_IDENTITY_CAPTURE_GRACE_MS;
+}
+
+function isProcessProbeNotFound(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code: unknown = (error as NodeJS.ErrnoException).code;
+  return code === 1 || code === 'ESRCH' || code === 'ENOENT';
+}
+
+function isProcessProbeTimeout(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const record = error as { code?: unknown; killed?: unknown; signal?: unknown };
+  return record.code === 'ETIMEDOUT' || record.killed === true || (record.code == null && record.signal === 'SIGTERM');
+}
+
+async function stopProcessTree(
+  pid: number,
+  relatedPids: readonly number[] = [],
+  platform: NodeJS.Platform = process.platform,
+  identities: ReadonlyMap<number, string> = new Map(),
+): Promise<boolean> {
   const trackedPids = [...new Set([pid, ...relatedPids])];
+  for (const trackedPid of trackedPids) {
+    const expectedStartedAt = identities.get(trackedPid);
+    const probe = await probeProcessIdentity(trackedPid, platform);
+    if (probe.state === 'unverifiable' || (probe.state === 'live' && (expectedStartedAt === undefined || probe.processStartedAt !== expectedStartedAt))) return false;
+  }
   if (!trackedPids.some(isProcessRunning)) {
     await delay(PROCESS_HANDLE_RELEASE_GRACE_MS);
     return true;
   }
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     const exitCode = await new Promise<number | null>((resolve) => {
       const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { shell: false, windowsHide: true, stdio: 'ignore' });
       killer.once('error', () => resolve(null));
@@ -445,7 +642,12 @@ async function stopProcessTree(pid: number, relatedPids: readonly number[] = [])
     });
     if (exitCode !== 0 && trackedPids.some(isProcessRunning)) return false;
   } else {
-    try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { return !isProcessRunning(pid); } }
+    try { process.kill(-pid, 'SIGTERM'); } catch (error: unknown) {
+      // A missing group is safe only when every tracked identity is already
+      // gone. Never fall back to killing a possibly reused naked PID.
+      if (!isNoSuchProcess(error) || trackedPids.some(isProcessRunning)) return false;
+      return true;
+    }
   }
   const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
@@ -457,6 +659,17 @@ async function stopProcessTree(pid: number, relatedPids: readonly number[] = [])
       return !trackedPids.some(isProcessRunning);
     }
     await delay(50);
+  }
+  if (!trackedPids.some(isProcessRunning)) return true;
+  if (platform !== 'win32') {
+    try { process.kill(-pid, 'SIGKILL'); } catch (error: unknown) {
+      if (!isNoSuchProcess(error)) return false;
+    }
+    const killDeadline = Date.now() + 1_500;
+    while (Date.now() < killDeadline) {
+      if (!trackedPids.some(isProcessRunning)) return true;
+      await delay(50);
+    }
   }
   return !trackedPids.some(isProcessRunning);
 }
@@ -470,12 +683,19 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+function isNoSuchProcess(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ESRCH';
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-const DURABLE_WORKER_SOURCE = String.raw`import { spawn } from 'node:child_process';
+const DURABLE_WORKER_SOURCE = String.raw`import { execFile, spawn } from 'node:child_process';
 import { readFile, writeFile, open, unlink } from 'node:fs/promises';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 const specPath = process.argv[2];
 if (!specPath) process.exit(64);
@@ -520,8 +740,28 @@ function processRunning(pid) {
   catch (error) { return error && error.code === 'EPERM'; }
 }
 
+async function processStartedAt(pid) {
+  try {
+    if (process.platform === 'win32') {
+      const result = await execFileAsync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        "$ErrorActionPreference='Stop'; try{$p=Get-Process -Id " + pid + " -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)",
+      ], { windowsHide: true, encoding: 'utf8', timeout: 1750, maxBuffer: 16384 });
+      const output = String(result.stdout || '').trim();
+      return output.startsWith('LIVE|') ? output.slice(5) : null;
+    }
+    const result = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 1750, maxBuffer: 16384 });
+    const value = String(result.stdout || '').trim();
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function stopTree(pid) {
   if (!processRunning(pid)) return true;
+  if (!metadata.child_started_at || await processStartedAt(pid) !== metadata.child_started_at) return false;
   if (process.platform === 'win32') {
     const code = await new Promise((resolve) => {
       const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { shell: false, windowsHide: true, stdio: 'ignore' });
@@ -530,12 +770,26 @@ async function stopTree(pid) {
     });
     if (code !== 0 && processRunning(pid)) return false;
   } else {
-    try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { return !processRunning(pid); } }
+    try { process.kill(-pid, 'SIGTERM'); } catch (error) {
+      if (!(error && error.code === 'ESRCH')) return false;
+      return !processRunning(pid);
+    }
   }
   const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
     if (!processRunning(pid)) return true;
     await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (!processRunning(pid)) return true;
+  if (process.platform !== 'win32') {
+    try { process.kill(-pid, 'SIGKILL'); } catch (error) {
+      if (!(error && error.code === 'ESRCH')) return false;
+    }
+    const killDeadline = Date.now() + 1500;
+    while (Date.now() < killDeadline) {
+      if (!processRunning(pid)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
   return !processRunning(pid);
 }
@@ -562,15 +816,18 @@ try {
     cwd: spec.cwd,
     env: childEnvironment,
     shell: false,
+    detached: process.platform !== 'win32',
     windowsHide: true,
     ...(spec.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: spec.windowsVerbatimArguments }),
   });
   metadata.child_pid = child.pid;
-  await persist();
   child.stdout?.on('data', (chunk) => { appendBounded(stdoutHandle, chunk, 'stdout'); });
   child.stderr?.on('data', (chunk) => { appendBounded(stderrHandle, chunk, 'stderr'); });
   child.once('error', (error) => { void finish('failed', -1, 'Local task failed to start: ' + error.message); });
   child.once('close', (code) => { if (!stopTarget) void finish(code === 0 ? 'completed' : 'failed', code ?? -1); });
+  metadata.child_started_at = child.pid ? await processStartedAt(child.pid) : null;
+  if (metadata.child_started_at === null) delete metadata.child_started_at;
+  await persist();
   timer = setTimeout(() => {
     void (async () => {
       if (settled || !child?.pid) return;

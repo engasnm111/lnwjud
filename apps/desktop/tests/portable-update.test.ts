@@ -3,12 +3,22 @@ import {
   PORTABLE_UPDATE_CHANNEL,
   PORTABLE_UPDATE_FEED_URL,
   configureUpdaterForDistribution,
+  configureUpdaterForPlatform,
   currentPortableExecutablePath,
   detectWindowsDistribution,
+  detectUpdaterDistribution,
   portableReplacementScript,
 } from '../src/main/portable-update.js';
 
 describe('Windows distribution-aware auto updater', () => {
+  it('selects only updater formats with a platform-owned installation path', () => {
+    expect(detectUpdaterDistribution(true, 'darwin', {})).toBe('macos');
+    expect(detectUpdaterDistribution(true, 'linux', { APPIMAGE: '/tmp/lnwjud.AppImage' })).toBe('linux-appimage');
+    expect(detectUpdaterDistribution(true, 'linux', {})).toBe('unsupported');
+    expect(detectUpdaterDistribution(true, 'freebsd', {})).toBe('unsupported');
+    expect(detectUpdaterDistribution(false, 'darwin', {})).toBe('unsupported');
+  });
+
   it('distinguishes electron-builder portable launches from installed builds', () => {
     expect(detectWindowsDistribution(true, { PORTABLE_EXECUTABLE_FILE: 'C:\\Tools\\lnwjud-Portable-4.11.0.exe' }, 'win32')).toBe('portable');
     expect(detectWindowsDistribution(true, {}, 'win32')).toBe('installer');
@@ -33,6 +43,13 @@ describe('Windows distribution-aware auto updater', () => {
       channel: PORTABLE_UPDATE_CHANNEL,
       useMultipleRangeRequest: false,
     });
+  });
+
+  it('disables differential downloads for Linux AppImage without changing the native feed metadata', () => {
+    const updater = { disableDifferentialDownload: false, setFeedURL: vi.fn() };
+    configureUpdaterForPlatform(updater, 'linux-appimage');
+    expect(updater.disableDifferentialDownload).toBe(true);
+    expect(updater.setFeedURL).not.toHaveBeenCalled();
   });
 
   it('replaces the outer portable executable path rather than Electron temporary extraction path', () => {

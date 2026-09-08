@@ -47,6 +47,8 @@ export interface McpRuntimeTiming {
 }
 
 export interface McpApplicationServices {
+  /** Host platform selected by the composition root; tests may inject a deterministic profile. */
+  readonly platform?: NodeJS.Platform;
   readonly runtimeStatePath?: string;
   readonly runtimeTiming?: () => McpRuntimeTiming;
   /** Test-only deterministic override for Windows Sandbox discovery; production runtimes leave this undefined. */

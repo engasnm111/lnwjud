@@ -59,6 +59,7 @@ export class ToolCatalogService {
   }
 
   public async runDoctor(checkIds: readonly string[] | undefined, locale: UiLocale): Promise<DoctorReport> {
+    if (checkIds === undefined) await this.#probeStartupRequirements();
     const ids = checkIds ?? this.#requirements.ids();
     const results = await this.#requirements.probe(ids, checkIds !== undefined);
     const checks: DoctorCheck[] = [];
@@ -88,7 +89,16 @@ export class ToolCatalogService {
     return { checks, exitCode: checks.some((check) => check.required && (check.status === 'fail' || check.status === 'unknown')) ? 1 : 0 };
   }
 
+  async #probeStartupRequirements(): Promise<void> {
+    // Doctor and Catalog are requested concurrently at startup. Share the core
+    // probes before optional native providers fan out and contend with the
+    // loopback MCP identity request on a cold host. No probe is skipped.
+    const required = this.#requirements.ids().filter((id) => this.#requirements.definition(id)?.required === true);
+    await this.#requirements.probe(required);
+  }
+
   async #snapshot(locale: UiLocale, force: boolean): Promise<ToolCatalogSnapshot> {
+    await this.#probeStartupRequirements();
     const requirementIds = [...new Set(Object.values(catalogDefinitions).flatMap((definition) => definition.requirementIds))];
     const requirements = await this.#requirements.probe(requirementIds, force);
     const availabilitySnapshot = this.#options.toolAvailabilitySnapshotProvider?.() ?? DEFAULT_TOOL_AVAILABILITY_SNAPSHOT;
@@ -176,7 +186,7 @@ export class ToolCatalogService {
       generatedAt: (this.#options.now?.() ?? new Date()).toISOString(),
       locale,
       items: [...firstParty, ...external],
-      remediations: this.#remediations.resolve(locale, remediationIds),
+      remediations: this.#remediations.resolve(locale, remediationIds, process.platform),
     };
   }
 }
@@ -200,7 +210,7 @@ function computeReadiness(requirements: readonly RequirementResult[], profileDec
       ...(available === undefined ? {} : { available }),
     };
   }
-  if (requirements.some((result) => result.id === 'platform_windows' && result.status === 'fail')) {
+  if (requirements.some((result) => (result.id === 'platform_windows' || result.id === 'platform_supported' || result.id === 'os') && result.status === 'fail')) {
     return { readiness: 'unsupported', readinessReason: 'unsupported_platform', deliveryState: 'unsupported', available: false };
   }
   if (requirements.some((result) => result.status === 'unknown')) {
@@ -217,7 +227,7 @@ function computeReadiness(requirements: readonly RequirementResult[], profileDec
 
 function inferRuntimeAvailability(requirements: readonly RequirementResult[]): boolean | undefined {
   if (requirements.some((result) => result.status === 'unknown')) return undefined;
-  if (requirements.some((result) => result.id === 'platform_windows' && result.status === 'fail')) return false;
+  if (requirements.some((result) => (result.id === 'platform_windows' || result.id === 'platform_supported' || result.id === 'os') && result.status === 'fail')) return false;
   if (requirements.some((result) => result.id !== 'browser_cdp' && (result.status === 'fail' || result.status === 'warn'))) return false;
   return true;
 }

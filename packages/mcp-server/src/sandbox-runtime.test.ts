@@ -1,12 +1,36 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ok } from '@lnwjud/domain';
 import { SandboxRuntimeService } from './sandbox-runtime.js';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 const actor = { clientId: 'test-client', clientName: 'test' };
+
+// Translate only this fixture's Windows volume at the filesystem boundary.
+// The runtime and sandbox plan still perform real Windows path validation;
+// artifacts are persisted in an actual host-native temporary directory.
+const fixtureFs = vi.hoisted(() => ({ root: '', windowsRoot: 'C:\\sandbox-fixture' }));
+function hostFile<T>(file: T): T | string {
+  if (typeof file !== 'string') return file;
+  const relative = path.win32.relative(fixtureFs.windowsRoot, file);
+  if (relative.startsWith('..') || path.win32.isAbsolute(relative)) return file;
+  return path.join(fixtureFs.root, ...relative.split('\\'));
+}
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, existsSync: (file: Parameters<typeof actual.existsSync>[0]): boolean => actual.existsSync(hostFile(file)) };
+});
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    mkdir: (file: string, options: Parameters<typeof actual.mkdir>[1]): Promise<string | undefined> => actual.mkdir(hostFile(file), options),
+    readFile: (file: string, options: 'utf8'): Promise<string> => actual.readFile(hostFile(file), options),
+    writeFile: (file: string, data: string, options?: 'utf8'): Promise<void> => actual.writeFile(hostFile(file), data, options),
+  };
+});
 
 function servicesWithRoot(root: string): McpApplicationServices {
   return {
@@ -31,11 +55,13 @@ function service(options: {
 
 async function withTempRoot(run: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-sandbox-test-'));
+  fixtureFs.root = root;
   await writeFile(path.join(root, 'WindowsSandbox.exe'), 'stub');
   try {
-    await run(path.win32.normalize(root));
+    await run(fixtureFs.windowsRoot);
   } finally {
-    // Best-effort cleanup; artifacts stay for audit in production too.
+    await rm(root, { recursive: true, force: true });
+    fixtureFs.root = '';
   }
 }
 
@@ -46,6 +72,16 @@ describe('SandboxRuntimeService', () => {
     bypassApplicationAuthorization: true,
     source: 'full_bypass',
   } as const;
+
+  it('reports Windows Sandbox as unsupported rather than a missing dependency on POSIX hosts', async () => {
+    const runtime = new SandboxRuntimeService(servicesWithRoot('/tmp/project'), actor, {
+      platform: 'linux',
+      sandboxExecutable: '/usr/bin/WindowsSandbox.exe',
+    });
+    await expect(runtime.execute({ workspaceId: 'ws-1', executable: 'node', arguments: ['--version'] })).resolves.toMatchObject({
+      ok: true, value: { status: 'unsupported', available: false, ready: false, reason: 'unsupported_platform', readinessReason: 'unsupported_platform' },
+    });
+  });
 
   it('reports a truthful unavailable state when WindowsSandbox.exe is missing', async () => {
     const runtime = new SandboxRuntimeService(servicesWithRoot('C:\\nowhere'), actor, {
@@ -100,7 +136,7 @@ describe('SandboxRuntimeService', () => {
         sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
         launcher: async (): Promise<ReturnType<typeof ok>> => ok(undefined),
         waiter: async (file): Promise<boolean> => {
-          const output = path.dirname(file);
+          const output = path.win32.dirname(file);
           await writeFile(path.join(output, 'exit-code.txt'), '0');
           await writeFile(path.join(output, 'stdout.log'), 'bypassed');
           await writeFile(path.join(output, 'stderr.log'), '');
@@ -125,7 +161,7 @@ describe('SandboxRuntimeService', () => {
         sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
         launcher: async (): Promise<ReturnType<typeof ok>> => ok(undefined),
         waiter: async (file): Promise<boolean> => {
-          stagedOutput = path.dirname(file);
+          stagedOutput = path.win32.dirname(file);
           await writeFile(path.join(stagedOutput, 'exit-code.txt'), '0');
           await writeFile(path.join(stagedOutput, 'stdout.log'), 'detonated ok');
           await writeFile(path.join(stagedOutput, 'stderr.log'), '');

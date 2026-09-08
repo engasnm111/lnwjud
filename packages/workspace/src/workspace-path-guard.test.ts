@@ -30,7 +30,7 @@ afterEach(async () => {
 
 function expectError(
   result: Result<ResolvedWorkspacePath>,
-  code: 'INVALID_INPUT' | 'PATH_OUTSIDE_WORKSPACE' | 'SECRET_ACCESS_DENIED',
+  code: 'INVALID_INPUT' | 'PATH_OUTSIDE_WORKSPACE' | 'SECRET_ACCESS_DENIED' | 'FILE_NOT_FOUND',
 ): void {
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error.code).toBe(code);
@@ -41,7 +41,7 @@ describe('WorkspacePathGuard', () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard();
 
-    const result = await guard.resolveForRead(workspace, 'src\\index.ts');
+    const result = await guard.resolveForRead(workspace, path.join('src', 'index.ts'));
 
     expect(result).toEqual({
       ok: true,
@@ -59,9 +59,9 @@ describe('WorkspacePathGuard', () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard();
 
-    expectError(await guard.resolveForRead(workspace, '..\\..\\Windows\\System32'), 'PATH_OUTSIDE_WORKSPACE');
+    expectError(await guard.resolveForRead(workspace, path.join('..', '..', 'outside')), 'PATH_OUTSIDE_WORKSPACE');
     expectError(await guard.resolveForRead(workspace, path.resolve(workspace.rootPath, '..', 'outside.txt')), 'PATH_OUTSIDE_WORKSPACE');
-    expectError(await guard.resolveForRead(workspace, '\\\\server\\share\\file'), 'PATH_OUTSIDE_WORKSPACE');
+    expectError(await guard.resolveForRead(workspace, '\\\\server\\share\\file'), process.platform === 'win32' ? 'PATH_OUTSIDE_WORKSPACE' : 'INVALID_INPUT');
   });
 
   it('rejects NUL bytes before filesystem access', async () => {
@@ -93,12 +93,13 @@ describe('WorkspacePathGuard', () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard();
 
-    const result = await guard.resolveForRead(workspace, 'SRC\\INDEX.TS');
+    const result = await guard.resolveForRead(workspace, path.join('SRC', 'INDEX.TS'));
 
-    if (process.platform === 'win32') {
+    const caseInsensitive = await realpath(path.join(workspace.rootPath, 'SRC', 'INDEX.TS')).then(() => true, () => false);
+    if (caseInsensitive) {
       expect(result.ok).toBe(true);
     } else {
-      expectError(result, 'PATH_OUTSIDE_WORKSPACE');
+      expectError(result, 'FILE_NOT_FOUND');
     }
   });
 
@@ -116,7 +117,7 @@ describe('WorkspacePathGuard', () => {
     const workspace = await createWorkspace();
     const guard = new WorkspacePathGuard(undefined, { unrestricted: true });
 
-    expectError(await guard.resolveForRead(workspace, '..\\..\\Windows\\System32'), 'PATH_OUTSIDE_WORKSPACE');
+    expectError(await guard.resolveForRead(workspace, path.join('..', '..', 'outside')), 'PATH_OUTSIDE_WORKSPACE');
   });
 
   it('allows only explicit absolute outside paths under per-invocation Full Bypass', async () => {

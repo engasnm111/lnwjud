@@ -1,12 +1,23 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   WINDOWS_10_MIN_BUILD,
   WINDOWS_11_MIN_BUILD,
+  platformCompatibilityProfile,
   windowsBuildFromRelease,
   windowsCompatibilityProfile,
-} from '../src/main/windows-compatibility.js';
+} from '../src/main/platform-compatibility.js';
 
-describe('Windows 10/11 compatibility profile', () => {
+describe('platform compatibility profile', () => {
+  it('uses the platform-owned profile during desktop bootstrap', async () => {
+    const mainSource = await readFile(path.resolve(import.meta.dirname, '../src/main/main.ts'), 'utf8');
+    expect(mainSource).toContain("from './platform-compatibility.js'");
+    expect(mainSource).toContain('platformCompatibilityProfile(process.platform, os.release(), process.arch)');
+    expect(mainSource).not.toContain("from './windows-compatibility.js'");
+    expect(mainSource).toContain('[PlatformCompatibility]');
+  });
+
   it('parses NT build numbers used by Windows 10 and Windows 11', () => {
     expect(windowsBuildFromRelease('10.0.19045')).toBe(19045);
     expect(windowsBuildFromRelease('10.0.22631')).toBe(22631);
@@ -38,9 +49,18 @@ describe('Windows 10/11 compatibility profile', () => {
     }
   });
 
-  it('fails the release-target contract for pre-Windows-10, x86, and non-Windows hosts', () => {
+  it('fails closed for unsupported Windows hosts while admitting supported non-Windows targets', () => {
     expect(windowsCompatibilityProfile('win32', '6.3.9600', 'x64').supportedReleaseTarget).toBe(false);
     expect(windowsCompatibilityProfile('win32', '10.0.19045', 'ia32').supportedReleaseTarget).toBe(false);
-    expect(windowsCompatibilityProfile('linux', '6.8.0', 'x64').supportedReleaseTarget).toBe(false);
+    expect(platformCompatibilityProfile('darwin', '23.6.0', 'arm64')).toMatchObject({
+      family: 'macos',
+      generation: 'non-windows',
+      supportedReleaseTarget: true,
+    });
+    expect(platformCompatibilityProfile('linux', '6.8.0', 'x64')).toMatchObject({
+      family: 'linux',
+      generation: 'non-windows',
+      supportedReleaseTarget: true,
+    });
   });
 });

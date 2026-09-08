@@ -21,7 +21,7 @@ describe('tool catalog security boundaries', () => {
 
   it('keeps system and runtime remediations explicit instead of sending users to unrelated app settings', () => {
     const registry = new RemediationRegistry();
-    const sandbox = registry.resolve('th', ['configure_windows_sandbox'])[0]!;
+    const sandbox = registry.resolve('th', ['configure_windows_sandbox'], 'win32')[0]!;
     expect(sandbox.actions).toContainEqual({ kind: 'open_system_settings', target: 'windows_optional_features' });
     expect(sandbox.actions).not.toContainEqual({ kind: 'open_settings', target: 'tools' });
     expect(sandbox.steps.join(' ')).toContain('Windows Sandbox');
@@ -29,7 +29,7 @@ describe('tool catalog security boundaries', () => {
     const browser = registry.resolve('th', ['configure_browser_cdp'])[0]!;
     expect(browser.actions).toContainEqual({ kind: 'launch_managed_browser' });
 
-    const pdf = registry.resolve('th', ['configure_pdf_provider'])[0]!;
+    const pdf = registry.resolve('th', ['configure_pdf_provider'], 'win32')[0]!;
     expect(pdf.actions).toContainEqual({ kind: 'install_pdf_provider' });
     expect(pdf.explanation).toContain('SHA-256');
 

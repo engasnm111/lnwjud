@@ -8,7 +8,8 @@ import { promisify } from 'node:util';
 import { request as httpRequest } from 'node:http';
 import type { TunnelAuthStatus, TunnelPersistentStatus, TunnelRunState, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { probeProcessStart, type ProcessProbeResult } from '@lnwjud/mcp-server';
-import { defaultTunnelProfileDirectory, LegacyApiKeyCredentialProvider, type TunnelAuthProvider } from './tunnel-auth.js';
+import type { SecretProtector } from '@lnwjud/shared';
+import { LegacyApiKeyCredentialProvider, type TunnelAuthProvider } from './tunnel-auth.js';
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
 import { acquireTunnelLock, readTunnelLock, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
 import { extractTunnelId, extractTunnelMcpServerUrl, normalizeLoopbackMcpUrl, rewriteTunnelYamlMcpServerUrl, rewriteTunnelYamlRuntimeApiKeyRef } from './tunnel-profile.js';
@@ -20,7 +21,7 @@ import { maskTunnelId, TUNNEL_RUNTIME_ALIAS, type TunnelRuntimeSnapshot } from '
 const execFileAsync = promisify(execFile);
 
 const PROFILE_NAME = 'lnwjud';
-const SECRET_FILE = 'lnwjud.runtime.secret';
+export const TUNNEL_SECRET_FILE_NAME = 'lnwjud.runtime.secret';
 const CLIENT_PATH_SETTING = 'tunnel_client_path';
 const MCP_CONNECTION_MAX_TTL = '168h0m0s';
 const EXTERNAL_PROBE_TTL_MS = 4_000;
@@ -30,6 +31,21 @@ const RESTART_WINDOW_MS = 30_000;
 const MAX_HEALTH_METADATA_BYTES = 64 * 1024;
 const MAX_HEALTH_URL_BYTES = 2 * 1024;
 type ExternalTunnelProbe = 'live' | 'gone' | 'unverifiable';
+
+export function resolveTunnelProfileDirectory(environment: NodeJS.ProcessEnv = process.env, homeDirectory: string = os.homedir(), platform: NodeJS.Platform = process.platform): string {
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  if (platform === 'win32') {
+    const appData = environment.APPDATA?.trim();
+    const base = appData !== undefined && path.win32.isAbsolute(appData) ? appData : join(homeDirectory, 'AppData', 'Roaming');
+    return join(base, 'tunnel-client');
+  }
+  const dataHome = platform === 'darwin'
+    ? join(homeDirectory, 'Library', 'Application Support')
+    : (environment.XDG_DATA_HOME?.trim() && path.posix.isAbsolute(environment.XDG_DATA_HOME.trim())
+      ? environment.XDG_DATA_HOME.trim()
+      : join(homeDirectory, '.local', 'share'));
+  return join(dataHome, 'lnwjud', 'tunnel-client');
+}
 
 class StartCancelledError extends Error {}
 
@@ -43,6 +59,7 @@ export interface OwnedProcessIdentity {
 }
 
 export interface TunnelControllerOptions {
+  readonly platform?: NodeJS.Platform;
   readonly getClientPath: () => string | null;
   readonly getBundledClientPath?: () => string | null;
   readonly setClientPath: (value: string) => void;
@@ -54,9 +71,11 @@ export interface TunnelControllerOptions {
   readonly inspectLockProcess?: (pid: number) => Promise<ProcessProbeResult>;
   readonly stopTimeoutMs?: number;
   readonly escalationTimeoutMs?: number;
-  readonly terminateOwnedProcessTree?: (pid: number) => Promise<void>;
+  readonly terminateOwnedProcessTree?: (pid: number, expectedProcessStartedAt?: string) => Promise<void>;
   readonly inspectOwnedProcess?: (pid: number) => Promise<ProcessProbeResult>;
   readonly inspectOwnedProcessTree?: (rootPid: number) => Promise<readonly OwnedProcessIdentity[]>;
+  readonly secretProtector?: SecretProtector;
+  readonly encryptSecret?: (plainText: string) => Promise<string>;
   readonly decryptSecret?: (encrypted: string) => Promise<string>;
   /** Optional OAuth-aware/composite provider. Defaults to the legacy DPAPI Runtime API key provider. */
   readonly authProvider?: TunnelAuthProvider;
@@ -105,16 +124,18 @@ export class TunnelController {
     this.options = options;
     this.authProvider = options.authProvider ?? new LegacyApiKeyCredentialProvider({
       secretPath: (): string => this.secretPath(),
+      ...(options.secretProtector === undefined ? {} : { secretProtector: options.secretProtector }),
+      ...(options.encryptSecret === undefined ? {} : { encryptSecret: options.encryptSecret }),
       ...(options.decryptSecret === undefined ? {} : { decryptSecret: options.decryptSecret }),
     });
   }
 
   public profileDirectory(): string {
-    return defaultTunnelProfileDirectory();
+    return resolveTunnelProfileDirectory(process.env, os.homedir(), this.options.platform ?? process.platform);
   }
 
   public secretPath(): string {
-    return path.join(this.profileDirectory(), SECRET_FILE);
+    return path.join(this.profileDirectory(), TUNNEL_SECRET_FILE_NAME);
   }
 
   public profilePath(): string {
@@ -158,7 +179,7 @@ export class TunnelController {
     const normalizedTunnelId = tunnelId.trim();
     if (!/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(normalizedTunnelId)) throw new Error('Tunnel ID is invalid');
     const clientPath = this.resolveClientPath();
-    if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
+    if (clientPath === null || !existsSync(clientPath)) throw new Error('Bundled tunnel-client executable was not found');
     const mcpServerUrl = await this.requireMcpServerUrl();
     const auth = await this.authStatus();
     if (!auth.runtimeCredentialAvailable) throw new Error(auth.message ?? 'Save a Runtime API key first');
@@ -168,7 +189,7 @@ export class TunnelController {
     await mkdir(this.profileDirectory(), { recursive: true });
     try {
       await execFileAsync(clientPath, buildTunnelInitArgs(normalizedTunnelId, mcpServerUrl, this.profileDirectory()), {
-        env: tunnelClientEnv(apiKey, this.profileDirectory()),
+        env: tunnelClientEnv(apiKey, this.profileDirectory(), this.options.platform ?? process.platform),
         windowsHide: true,
         encoding: 'utf8',
         timeout: 60_000,
@@ -178,7 +199,7 @@ export class TunnelController {
       throw new Error(detail.length > 0 ? detail : 'tunnel-client init failed');
     }
     await this.repairDesktopTunnelProfile();
-    await runTunnelDoctor(clientPath, apiKey, this.profileDirectory());
+    await runTunnelDoctor(clientPath, apiKey, this.profileDirectory(), this.options.platform ?? process.platform);
     this.options.setTunnelId?.(normalizedTunnelId);
     this.runtimeConfigurationDirty = true;
     this.disposeRuntimeSupervisor();
@@ -194,7 +215,7 @@ export class TunnelController {
       return '';
     }
     const resolved = path.resolve(trimmed);
-    if (!existsSync(resolved)) throw new Error('tunnel-client.exe was not found');
+    if (!existsSync(resolved)) throw new Error('Tunnel-client executable was not found');
     this.options.setClientPath(resolved);
     this.runtimeConfigurationDirty = true;
     if (this.runtimeMode === 'native-managed') this.disposeRuntimeSupervisor();
@@ -209,7 +230,7 @@ export class TunnelController {
   public async replaceClientPath(clientPath: string): Promise<string> {
     const trimmed = clientPath.trim();
     const next = trimmed.length === 0 ? '' : path.resolve(trimmed);
-    if (next.length > 0 && !existsSync(next)) throw new Error('tunnel-client.exe was not found');
+    if (next.length > 0 && !existsSync(next)) throw new Error('Tunnel-client executable was not found');
 
     const currentRaw = this.options.getClientPath()?.trim() ?? '';
     const current = currentRaw.length === 0 ? '' : path.resolve(currentRaw);
@@ -350,7 +371,7 @@ export class TunnelController {
     if (!force && now - this.externalProbeAt < EXTERNAL_PROBE_TTL_MS) return this.lastExternalProbe;
     this.externalProbeAt = now;
     try {
-      const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning());
+      const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning(this.options.platform ?? process.platform));
       this.lastExternalProbe = result || await this.configuredHealthIsLive() ? 'live' : 'gone';
     } catch {
       this.lastExternalProbe = await this.configuredHealthIsLive() ? 'live' : 'unverifiable';
@@ -451,7 +472,7 @@ export class TunnelController {
       if (!lockAcquired) return this.status();
 
       const clientPath = this.resolveClientPath();
-      if (clientPath === null || !existsSync(clientPath)) throw new Error('tunnel-client.exe was not found');
+      if (clientPath === null || !existsSync(clientPath)) throw new Error('Bundled tunnel-client executable was not found');
       const auth = await this.authStatus();
       throwIfStartCancelled(signal);
       if (!auth.runtimeCredentialAvailable) throw new Error(auth.message ?? 'Save a Runtime API key first');
@@ -469,7 +490,7 @@ export class TunnelController {
       throwIfStartCancelled(signal);
       await this.repairDesktopTunnelProfile();
       throwIfStartCancelled(signal);
-      await runTunnelDoctor(clientPath, apiKey, this.profileDirectory());
+      await runTunnelDoctor(clientPath, apiKey, this.profileDirectory(), this.options.platform ?? process.platform);
       throwIfStartCancelled(signal);
       this.runtimeMode = 'profile-child';
       this.spawnRun(clientPath, apiKey);
@@ -580,13 +601,48 @@ export class TunnelController {
         }
         return;
       }
+      const platform = this.options.platform ?? process.platform;
+      // On POSIX, ChildProcess.kill() is a naked PID signal and can target a
+      // reused process group. Require the recorded start identity before any
+      // destructive signal and use the group-aware path below.
+      if (platform !== 'win32') {
+        const pid = child.pid;
+        if (!Number.isInteger(pid) || (pid ?? 0) <= 0) throw new Error('Tunnel child PID is unavailable; ownership retained');
+        const expectedStartedAt = this.ownedChildStartedAt;
+        if (expectedStartedAt === null) throw new Error('Tunnel child process identity was not recorded before shutdown; targeted termination refused and ownership retained');
+        const inspect = this.options.inspectOwnedProcess ?? ((candidatePid: number): Promise<ProcessProbeResult> => probeProcessStart(candidatePid, { platform }));
+        const beforeTermination = await inspect(pid as number);
+        if (beforeTermination.state === 'gone') {
+          if (this.child === child) {
+            this.child = null;
+            this.ownedChildStartedAt = null;
+          }
+          return;
+        }
+        if (beforeTermination.state === 'unverifiable') throw new Error(`Tunnel child liveness is unverifiable (${beforeTermination.reason}); ownership retained`);
+        if (beforeTermination.processStartedAt !== expectedStartedAt) throw new Error('Tunnel child process identity changed; targeted termination refused and ownership retained');
+
+        const descendants = await (this.options.inspectOwnedProcessTree?.(pid as number) ?? inspectOwnedProcessTreeIdentities(pid as number, platform));
+        const expectedTree = normalizeOwnedProcessTree([
+          { pid: pid as number, processStartedAt: expectedStartedAt },
+          ...descendants,
+        ]);
+        await (this.options.terminateOwnedProcessTree?.(pid as number, expectedStartedAt) ?? terminateOwnedProcessTree(pid as number, platform, expectedStartedAt));
+        await waitForTunnelChildExit(child, this.options.escalationTimeoutMs ?? 2_000).catch(() => undefined);
+        await verifyOwnedProcessTreeExited(expectedTree, inspect);
+        if (this.child === child) {
+          this.child = null;
+          this.ownedChildStartedAt = null;
+        }
+        return;
+      }
       if (!child.kill()) throw new Error('Tunnel child did not accept stop signal; ownership retained');
       try {
         await waitForTunnelChildExit(child, this.options.stopTimeoutMs ?? 5_000);
       } catch (gracefulError: unknown) {
         const pid = child.pid;
         if (!Number.isInteger(pid) || (pid ?? 0) <= 0) throw gracefulError;
-        const inspect = this.options.inspectOwnedProcess ?? probeProcessStart;
+      const inspect = this.options.inspectOwnedProcess ?? ((pid: number): Promise<ProcessProbeResult> => probeProcessStart(pid, { platform: this.options.platform ?? process.platform }));
         if (this.ownedChildStartedAt === null) {
           const identityProbe = await inspect(pid as number);
           if (identityProbe.state === 'gone') {
@@ -604,12 +660,12 @@ export class TunnelController {
         if (beforeEscalation.state === 'unverifiable') throw new Error(`Tunnel child liveness is unverifiable (${beforeEscalation.reason}); ownership retained`);
         if (beforeEscalation.processStartedAt !== this.ownedChildStartedAt) throw new Error('Tunnel child process identity changed; targeted escalation refused and ownership retained');
 
-        const descendants = await (this.options.inspectOwnedProcessTree?.(pid as number) ?? inspectWindowsProcessTreeIdentities(pid as number));
+        const descendants = await (this.options.inspectOwnedProcessTree?.(pid as number) ?? inspectOwnedProcessTreeIdentities(pid as number, this.options.platform ?? process.platform));
         const expectedTree = normalizeOwnedProcessTree([
           { pid: pid as number, processStartedAt: this.ownedChildStartedAt },
           ...descendants,
         ]);
-        await (this.options.terminateOwnedProcessTree?.(pid as number) ?? terminateWindowsProcessTree(pid as number));
+        await (this.options.terminateOwnedProcessTree?.(pid as number, this.ownedChildStartedAt ?? undefined) ?? terminateOwnedProcessTree(pid as number, platform, this.ownedChildStartedAt ?? undefined));
         await waitForTunnelChildExit(child, this.options.escalationTimeoutMs ?? 2_000).catch(() => undefined);
         await verifyOwnedProcessTreeExited(expectedTree, inspect);
       }
@@ -635,7 +691,7 @@ export class TunnelController {
     const clientPath = this.resolveClientPath();
     if (clientPath === null || !existsSync(clientPath)) return { value: null, reason: 'configured_tunnel_client_not_found' };
     try {
-      const value = await (this.options.inspectFileVersion?.(clientPath) ?? inspectWindowsFileVersion(clientPath));
+      const value = await (this.options.inspectFileVersion?.(clientPath) ?? inspectTunnelClientVersion(clientPath, this.options.platform ?? process.platform));
       return value === null || value.trim().length === 0 ? { value: null, reason: 'file_version_metadata_unavailable' } : { value: value.trim().slice(0, 128), reason: null };
     } catch { return { value: null, reason: 'file_version_metadata_unavailable' }; }
   }
@@ -645,7 +701,7 @@ export class TunnelController {
     if (this.child !== null && this.child.exitCode === null && Number.isInteger(this.child.pid) && (this.child.pid ?? 0) > 0) pids.add(this.child.pid as number);
     if (this.tunnelLock !== null) pids.add(this.tunnelLock.owner.pid);
     try {
-      const external = await (this.options.verifiedExternalTunnelPids?.() ?? findLnwjudTunnelProcessPids());
+      const external = await (this.options.verifiedExternalTunnelPids?.() ?? findLnwjudTunnelProcessPids(this.options.platform ?? process.platform));
       for (const pid of external) if (Number.isInteger(pid) && pid > 0 && pid <= 2_147_483_647) pids.add(pid);
     } catch (error: unknown) {
       if (pids.size === 0) return { pids: [], unavailableReason: error instanceof Error ? `external_tunnel_pid_probe_failed:${error.message}` : 'external_tunnel_pid_probe_failed' };
@@ -680,6 +736,7 @@ export class TunnelController {
         profileDirectory: this.profileDirectory(),
         ...(this.options.currentLockOwner === undefined ? {} : { owner: await this.options.currentLockOwner() }),
         ...(this.options.inspectLockProcess === undefined ? {} : { inspectProcess: this.options.inspectLockProcess }),
+        platform: this.options.platform ?? process.platform,
       });
       if (!claim.acquired) {
         this.foreignOwner = claim.owner;
@@ -704,7 +761,7 @@ export class TunnelController {
       return null;
     }
     try {
-      const probe = await (this.options.inspectLockProcess?.(owner.pid) ?? probeProcessStart(owner.pid));
+      const probe = await (this.options.inspectLockProcess?.(owner.pid) ?? probeProcessStart(owner.pid, { platform: this.options.platform ?? process.platform }));
       this.foreignOwner = probe.state === 'live' && probe.processStartedAt === owner.processStartedAt ? owner : null;
     } catch {
       this.foreignOwner = null;
@@ -730,10 +787,10 @@ export class TunnelController {
         '--mcp.connection-max-ttl', MCP_CONNECTION_MAX_TTL,
       ],
       {
-        env: tunnelClientEnv(apiKey, this.profileDirectory()),
+        env: tunnelClientEnv(apiKey, this.profileDirectory(), this.options.platform ?? process.platform),
         windowsHide: true,
         // detached:true on Windows gives the child its own console window.
-        detached: false,
+        detached: (this.options.platform ?? process.platform) !== 'win32',
         stdio: ['ignore', 'ignore', 'ignore'],
       },
     );
@@ -742,7 +799,7 @@ export class TunnelController {
     this.ownedChildStartedAt = null;
     if (Number.isInteger(child.pid) && (child.pid ?? 0) > 0) {
       const childPid = child.pid as number;
-      void (this.options.inspectOwnedProcess?.(childPid) ?? probeProcessStart(childPid)).then((probe) => {
+      void (this.options.inspectOwnedProcess?.(childPid) ?? probeProcessStart(childPid, { platform: this.options.platform ?? process.platform })).then((probe) => {
         if (this.child === child && probe.state === 'live') this.ownedChildStartedAt = probe.processStartedAt;
       }).catch(() => undefined);
     }
@@ -933,7 +990,7 @@ export class TunnelController {
     const options: TunnelRuntimeAdapterOptions = {
       clientPath,
       profileDirectory: this.profileDirectory(),
-      environment: tunnelClientEnv(apiKey, this.profileDirectory()),
+      environment: tunnelClientEnv(apiKey, this.profileDirectory(), this.options.platform ?? process.platform),
     };
     return this.options.createRuntimeAdapter?.(options) ?? new TunnelRuntimeAdapter(options);
   }
@@ -1182,10 +1239,8 @@ export function buildTunnelInitArgs(tunnelId: string, mcpServerUrl: string, prof
   ];
 }
 
-export function tunnelClientEnv(apiKey: string, profileDirectory: string): NodeJS.ProcessEnv {
+export function tunnelClientEnv(apiKey: string, profileDirectory: string, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  const userProfile = process.env.USERPROFILE ?? os.homedir();
-  const appData = process.env.APPDATA ?? path.join(userProfile, 'AppData', 'Roaming');
   env.CONTROL_PLANE_API_KEY = apiKey.trim();
   env.MCP_CONNECTION_MAX_TTL = MCP_CONNECTION_MAX_TTL;
   // Secure Tunnel forwards to the already-running Desktop HTTP MCP. Do not pass
@@ -1194,17 +1249,25 @@ export function tunnelClientEnv(apiKey: string, profileDirectory: string): NodeJ
   delete env.LNWJUD_UNRESTRICTED;
   env.TUNNEL_CLIENT_PROFILE = PROFILE_NAME;
   env.TUNNEL_CLIENT_PROFILE_DIR = profileDirectory;
-  env.USERPROFILE = userProfile;
-  env.APPDATA = appData;
-  env.HOME = userProfile;
-  delete env.XDG_CONFIG_HOME;
+  if (platform === 'win32') {
+    const userProfile = process.env.USERPROFILE ?? os.homedir();
+    const appData = process.env.APPDATA ?? path.join(userProfile, 'AppData', 'Roaming');
+    env.USERPROFILE = userProfile;
+    env.APPDATA = appData;
+    env.HOME = userProfile;
+    delete env.XDG_CONFIG_HOME;
+  } else {
+    env.HOME = process.env.HOME ?? os.homedir();
+    delete env.USERPROFILE;
+    delete env.APPDATA;
+  }
   return env;
 }
 
-async function runTunnelDoctor(clientPath: string, apiKey: string, profileDirectory: string): Promise<void> {
+async function runTunnelDoctor(clientPath: string, apiKey: string, profileDirectory: string, platform: NodeJS.Platform = process.platform): Promise<void> {
   try {
     await execFileAsync(clientPath, ['doctor', '--profile', PROFILE_NAME, '--profile-dir', profileDirectory, '--explain'], {
-      env: tunnelClientEnv(apiKey, profileDirectory),
+      env: tunnelClientEnv(apiKey, profileDirectory, platform),
       windowsHide: true,
       encoding: 'utf8',
       timeout: 60_000,
@@ -1225,11 +1288,29 @@ function extractExecDetail(error: unknown): string {
   return typeof record.message === 'string' ? record.message : '';
 }
 
-async function isLnwjudTunnelProcessRunning(): Promise<boolean> {
-  return (await findLnwjudTunnelProcessPids()).length > 0;
+async function isLnwjudTunnelProcessRunning(platform: NodeJS.Platform = process.platform): Promise<boolean> {
+  return (await findLnwjudTunnelProcessPids(platform)).length > 0;
 }
 
-async function findLnwjudTunnelProcessPids(): Promise<readonly number[]> {
+async function findLnwjudTunnelProcessPids(platform: NodeJS.Platform = process.platform): Promise<readonly number[]> {
+  if (platform !== 'win32') {
+    const result = await Promise.race([
+      execFileAsync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8', timeout: 3_000, maxBuffer: 256 * 1024 }),
+      new Promise<never>((_, reject) => { setTimeout(() => reject(new Error('tunnel process probe timed out')), 3_500); }),
+    ]);
+    const pids: number[] = [];
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+      if (match === null) continue;
+      const pid = Number(match[1]);
+      const command = match[2]?.trim() ?? '';
+      if (!Number.isInteger(pid) || pid <= 0 || pid > 2_147_483_647) continue;
+      if (!/(?:^|[\\/])tunnel-client(?:\s|$)/i.test(command)) continue;
+      if (!/(?:--profile\s+(?:"lnwjud"|'lnwjud'|lnwjud)(?:\s|$)|(?:^|[\\/])lnwjud\.ya?ml(?:\s|$))/i.test(command)) continue;
+      pids.push(pid);
+    }
+    return [...new Set(pids)];
+  }
   const result = await Promise.race([
     execFileAsync('powershell.exe', [
       '-NoProfile',
@@ -1254,6 +1335,11 @@ export function waitForTunnelChildExit(child: Pick<ChildProcess, 'exitCode' | 'o
     }, timeoutMs);
     child.once('exit', onExit);
   });
+}
+
+async function inspectOwnedProcessTreeIdentities(rootPid: number, platform: NodeJS.Platform = process.platform): Promise<readonly OwnedProcessIdentity[]> {
+  if (platform !== 'win32') return inspectPosixProcessTreeIdentities(rootPid);
+  return inspectWindowsProcessTreeIdentities(rootPid);
 }
 
 async function inspectWindowsProcessTreeIdentities(rootPid: number): Promise<readonly OwnedProcessIdentity[]> {
@@ -1286,6 +1372,40 @@ async function inspectWindowsProcessTreeIdentities(rootPid: number): Promise<rea
     }
   }
   return rows.filter((row) => row.pid !== rootPid && included.has(row.pid)).map((row) => ({ pid: row.pid, processStartedAt: row.processStartedAt }));
+}
+
+async function inspectPosixProcessTreeIdentities(rootPid: number): Promise<readonly OwnedProcessIdentity[]> {
+  const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,lstart='], {
+    encoding: 'utf8',
+    timeout: 3_000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  const rows: Array<{ readonly pid: number; readonly parentPid: number; readonly processStartedAt: string }> = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (match === null) continue;
+    const pid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    const parsedStart = Date.parse(match[3] ?? '');
+    if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(parentPid) || parentPid < 0 || !Number.isFinite(parsedStart)) continue;
+    const processStartedAt = new Date(parsedStart).toISOString();
+    if (!validOwnedProcessTimestamp(processStartedAt)) continue;
+    rows.push({ pid, parentPid, processStartedAt });
+  }
+  const included = new Set<number>([rootPid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      if (included.has(row.pid) || !included.has(row.parentPid)) continue;
+      included.add(row.pid);
+      changed = true;
+    }
+  }
+  return rows.filter((row) => row.pid !== rootPid && included.has(row.pid)).map((row) => ({
+    pid: row.pid,
+    processStartedAt: row.processStartedAt,
+  }));
 }
 
 function normalizeOwnedProcessTree(identities: readonly OwnedProcessIdentity[]): readonly OwnedProcessIdentity[] {
@@ -1324,12 +1444,83 @@ function validOwnedProcessTimestamp(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
+async function terminateOwnedProcessTree(pid: number, platform: NodeJS.Platform = process.platform, expectedStartedAt?: string): Promise<void> {
+  if (platform === 'win32') {
+    await terminateWindowsProcessTree(pid);
+    return;
+  }
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('POSIX process identity is invalid');
+  if (expectedStartedAt === undefined) throw new Error('POSIX process start identity is required; targeted termination refused');
+  const verifyIdentity = async (): Promise<boolean> => {
+    const probe = await probeProcessStart(pid, { platform });
+    if (probe.state === 'gone') return false;
+    if (probe.state === 'unverifiable') throw new Error(`POSIX process liveness is unverifiable (${probe.reason}); targeted termination refused`);
+    if (probe.processStartedAt !== expectedStartedAt) throw new Error('POSIX process identity changed; targeted termination refused');
+    return true;
+  };
+  if (!(await verifyIdentity())) return;
+  try {
+    // The tunnel child is spawned detached, so its PID is the process-group ID.
+    // Never fall back to kill(pid): that could target a reused/unrelated process.
+    process.kill(-pid, 'SIGTERM');
+  } catch (error: unknown) {
+    if (!isNoSuchProcess(error)) throw new Error('POSIX process-group termination could not be started', { cause: error });
+    if (await verifyIdentity()) throw new Error('POSIX process-group identity could not be verified');
+    return;
+  }
+  if (await waitForProcessGone(pid, 1_500)) return;
+  if (!(await verifyIdentity())) return;
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch (error: unknown) {
+    if (!isNoSuchProcess(error)) throw new Error('POSIX process-group escalation could not be started', { cause: error });
+    if (!(await verifyIdentity())) return;
+  }
+  if (!(await waitForProcessGone(pid, 1_500))) throw new Error('POSIX process-group termination could not be verified');
+}
+
 async function terminateWindowsProcessTree(pid: number): Promise<void> {
   await execFileAsync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
     windowsHide: true,
     timeout: 5_000,
     encoding: 'utf8',
   });
+}
+
+async function inspectTunnelClientVersion(filePath: string, platform: NodeJS.Platform = process.platform): Promise<string | null> {
+  if (platform === 'win32') return inspectWindowsFileVersion(filePath);
+  const result = await execFileAsync(filePath, ['--version'], {
+    encoding: 'utf8',
+    timeout: 3_000,
+    maxBuffer: 16 * 1024,
+  });
+  const output = [result.stdout, result.stderr]
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap((value) => value.split(/\r?\n/))
+    .map((value) => value.trim())
+    .find((value) => value.length > 0);
+  return output === undefined ? null : output.slice(0, 128);
+}
+
+async function waitForProcessGone(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  while (isProcessAlive(pid) && Date.now() < deadline) {
+    await new Promise<void>((resolve) => { setTimeout(resolve, 25); });
+  }
+  return !isProcessAlive(pid);
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
+}
+
+function isNoSuchProcess(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ESRCH';
 }
 
 function probeLoopbackHealth(host: string, port: number, timeoutMs: number): Promise<boolean> {

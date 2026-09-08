@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BrowserWindow } from 'electron';
+import { comparableHostPath } from '@lnwjud/workspace';
+import { windowChromeOptions } from './window-chrome.js';
 
 const mainDirectory = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,8 +35,8 @@ export function isAllowedRendererUrl(navigationUrl: string, rendererEntryPath: s
   try {
     const parsedUrl = new URL(navigationUrl);
     if (parsedUrl.protocol !== 'file:') return false;
-    const requestedPath = path.normalize(fileURLToPath(parsedUrl)).toLowerCase();
-    const allowedPath = path.normalize(rendererEntryPath).toLowerCase();
+    const requestedPath = comparableHostPath(path.normalize(fileURLToPath(parsedUrl)), process.platform);
+    const allowedPath = comparableHostPath(path.normalize(rendererEntryPath), process.platform);
     return requestedPath === allowedPath;
   } catch {
     return false;
@@ -49,12 +51,7 @@ export function createMainWindow(showOnReady = true): BrowserWindow {
     height: 800,
     show: showOnReady,
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#07090e',
-      symbolColor: '#f5c542',
-      height: 38,
-    },
+    ...windowChromeOptions(),
     ...(iconPath !== undefined ? { icon: iconPath } : {}),
     webPreferences: {
       preload: getPreloadPath(),
@@ -96,12 +93,7 @@ export function createLogViewerWindow(): BrowserWindow {
     show: true,
     autoHideMenuBar: true,
     title: 'lnwjud — Live Logs',
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#07090e',
-      symbolColor: '#f5c542',
-      height: 38,
-    },
+    ...windowChromeOptions(),
     ...(iconPath !== undefined ? { icon: iconPath } : {}),
     webPreferences: {
       preload: getPreloadPath(),

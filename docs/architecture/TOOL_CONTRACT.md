@@ -1,6 +1,6 @@
 # lnwjud tool contract
 
-Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.55.1`.
+Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v4.56.0`.
 
 This is the compatibility contract for the current MCP surface. The runtime
 advertises the JSON Schema for every input through `tools/list`; the TypeScript
@@ -8,7 +8,7 @@ Zod schemas in `packages/mcp-server/src/tools/` are the implementation source
 of truth. The existing human-oriented catalog remains useful for field details,
 while this document records the primitive/core contract, preserves the earlier
 compatibility baseline, and records policy class, annotations, and schema source.
-The complete v4 inventory contains 231 tool definitions. The default runtime currently advertises 224 through `tools/list`, and all 231 are advertised when the six `codex_*` delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled. The seven Codex/Agent Swarm definitions are opt-in; every other current first-party definition remains available through the default catalog and reports dependency/setup state truthfully at runtime. The additive v4 entries are defined
+The complete v4 inventory contains 232 tool definitions. The default runtime currently advertises 225 through `tools/list`, and all 232 are advertised when the six `codex_*` delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled. The seven Codex/Agent Swarm definitions are opt-in; every other current first-party definition remains available through the default catalog and reports dependency/setup state truthfully at runtime. The additive v4 entries are defined
 in `packages/mcp-server/src/upgrade-catalog.ts` and the exact runtime order is
 verified by `packages/mcp-server/src/tool-registry.test.ts`.
 
@@ -17,6 +17,13 @@ Desktop readiness is a separate presentation contract built from the same live d
 **Effective exposure boundary (v4.54.0):** First-party tool exposure is resolved independently from readiness and permission using persisted per-tool intent plus canonical Settings/runtime eligibility and default exposure. Hard Settings/runtime prerequisites are authoritative: a persisted `enabled` override cannot bypass a disabled family gate, missing provider, unsupported platform, or other system-ineligible state. `codex_*` and `agent_swarm_run`, for example, remain effectively hidden until Codex Delegation and the required runtime/provider make that family eligible. `ToolRegistry.listAll()` always remains the recovery-safe canonical inventory; `ToolRegistry.list()`, new `invoke()` calls, `tool_batch` children, and tool discovery/ranking/describe surfaces apply `effectiveExposed`. Disabling a tool blocks new execution but does not cancel a call that already crossed the registry boundary. Long-lived MCP servers keep canonical SDK registrations and toggle `RegisteredTool.enable()/disable()` handles so `notifications/tools/list_changed` is emitted for meaningful list transitions. Desktop and direct stdio share persisted availability state, while external MCP child tools retain their own control plane.
 
 **ChatGPT host-sync boundary:** MCP list-change notification proves only that the MCP server offered a different list. It is not proof that an approved ChatGPT app/action snapshot was refreshed. ChatGPT-specific guidance is conditional and must never promise that browser F5 alone updates a frozen/approved host snapshot.
+
+Native host support is governed by [`PLATFORM_SUPPORT.md`](PLATFORM_SUPPORT.md).
+That matrix is authoritative for platform disposition, bundled
+`tunnel-client` artifacts, permission/dependency gates, and explicit
+`unsupported_platform` behavior for WSL, Windows Registry, Windows Sandbox, and
+other Windows-only operations. A foreign provider must not be instantiated and
+allowed to fail later.
 
 **Active Workspace Set boundary:** Primary/Selected Project is only the default. Every tool may target any registered workspace currently in the host Active Projects set. When an input contains an absolute path/cwd/database target/native path that belongs to another active root, the registry routes the effective `workspaceId` to the most-specific matching active workspace before policy and handler dispatch. Targets outside the active set remain guarded; one call is not allowed to silently span multiple active roots.
 
@@ -184,11 +191,11 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 | 152 | `network_context` | READ | default | dependency_gated | truthful_unavailable | yes | no |
 | 153 | `console_context` | READ | default | dependency_gated | truthful_unavailable | yes | no |
 | 154 | `browser_debug_context` | READ | default | operational | service_dispatch | yes | no |
-| 155 | `windows_environment` | READ | default | operational | service_dispatch | yes | no |
+| 155 | `windows_environment` | READ | default | dependency_gated | service_dispatch | yes | no |
 | 156 | `service_context` | READ | default | operational | deterministic_operation | yes | no |
 | 157 | `process_context` | READ | default | operational | service_dispatch | yes | no |
 | 158 | `port_context` | READ | default | operational | deterministic_operation | yes | no |
-| 159 | `registry_context` | READ | default | operational | deterministic_operation | yes | no |
+| 159 | `registry_context` | READ | default | dependency_gated | deterministic_operation | yes | no |
 | 160 | `event_log_context` | READ | default | operational | deterministic_operation | yes | no |
 | 161 | `installed_runtime_context` | READ | default | operational | deterministic_operation | yes | no |
 | 162 | `path_context` | READ | default | operational | deterministic_operation | yes | no |
@@ -296,7 +303,7 @@ Mutations still receive typed policy classification for audit/dispatch behavior.
 
 ## Core primitive runtime catalog
 
-The generated live `ToolRegistry.listAll()` index above is the authoritative complete catalog for all **231 tool definitions**. It is generated from the built registry and checked in CI. This section intentionally does not maintain a second hand-numbered primitive table, because duplicate permission/schema tables can drift from the registry. The Zod schemas in `packages/mcp-server/src/tools/` and the generated table above remain the source of truth for names, permissions, annotations, ordering, and input JSON Schema; `tools/list` exposes only the currently advertised subset.
+The generated live `ToolRegistry.listAll()` index above is the authoritative complete catalog for all **232 tool definitions**. It is generated from the built registry and checked in CI. This section intentionally does not maintain a second hand-numbered primitive table, because duplicate permission/schema tables can drift from the registry. The Zod schemas in `packages/mcp-server/src/tools/` and the generated table above remain the source of truth for names, permissions, annotations, ordering, and input JSON Schema; `tools/list` exposes only the currently advertised subset.
 
 ## Schema groups and contract examples
 
@@ -387,7 +394,7 @@ capability backends. Important invariants are:
 - `vision`, `health`, and `system_info` remain truthful read-only diagnostics;
 - `web_fetch` remains HTTP(S)-only and bounded by explicit byte/timeout fields;
 - `skills_*` and `mcp_*` remain bridge tools and do not silently flatten
-  child-server tools into the 231-definition complete inventory; `mcp_list` and
+  child-server tools into the 232-definition complete inventory; `mcp_list` and
   `mcp_describe` are read-only inspection while `mcp_call` is opaque mutation.
 
 The additive Windows gateway contract is:

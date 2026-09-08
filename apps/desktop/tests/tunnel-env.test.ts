@@ -1,5 +1,6 @@
+import os from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { buildTunnelInitArgs, tunnelClientEnv } from '../src/main/tunnel-controller.js';
+import { buildTunnelInitArgs, resolveTunnelProfileDirectory, tunnelClientEnv } from '../src/main/tunnel-controller.js';
 
 describe('Secure Tunnel Desktop HTTP wiring', () => {
   it('passes only tunnel-client runtime state and does not leak headless lnwjud scope switches', () => {
@@ -31,5 +32,28 @@ describe('Secure Tunnel Desktop HTTP wiring', () => {
     ]));
     expect(args).not.toContain('--mcp-command');
     expect(args.join(' ')).not.toContain('lnwjud-mcp-stdio');
+  });
+
+  it('uses XDG data on Linux and preserves POSIX environment boundaries', () => {
+    const profile = resolveTunnelProfileDirectory({ XDG_DATA_HOME: '/tmp/xdg-data' }, '/home/alice', 'linux');
+    expect(profile).toBe('/tmp/xdg-data/lnwjud/tunnel-client');
+    const env = tunnelClientEnv('key', profile, 'linux');
+    expect(env.HOME).toBe(process.env.HOME ?? os.homedir());
+    expect(env.USERPROFILE).toBeUndefined();
+    expect(env.APPDATA).toBeUndefined();
+    expect(env.XDG_CONFIG_HOME).toBe(process.env.XDG_CONFIG_HOME);
+  });
+
+  it('ignores a relative XDG data directory instead of placing secrets under cwd', () => {
+    const profile = resolveTunnelProfileDirectory({ XDG_DATA_HOME: 'relative-data' }, '/home/alice', 'linux');
+    expect(profile).toBe('/home/alice/.local/share/lnwjud/tunnel-client');
+  });
+
+  it('uses the macOS Application Support profile root', () => {
+    expect(resolveTunnelProfileDirectory({}, '/Users/alice', 'darwin')).toBe('/Users/alice/Library/Application Support/lnwjud/tunnel-client');
+  });
+
+  it('ignores a relative Windows APPDATA override', () => {
+    expect(resolveTunnelProfileDirectory({ APPDATA: 'relative-data' }, 'C:\\Users\\alice', 'win32')).toBe('C:\\Users\\alice\\AppData\\Roaming\\tunnel-client');
   });
 });

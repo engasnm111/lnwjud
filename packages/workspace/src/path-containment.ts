@@ -1,9 +1,5 @@
-import path from 'node:path';
+import { isHostPathWithin } from './filesystem-root.js';
 
-export function isWithin(rootPath: string, candidatePath: string): boolean {
-  const relativePath = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
-  if (relativePath === '') return true;
-  if (path.isAbsolute(relativePath)) return false;
-  const [firstSegment] = relativePath.split(path.sep);
-  return firstSegment !== '..';
+export function isWithin(rootPath: string, candidatePath: string, platform: NodeJS.Platform = process.platform): boolean {
+  return isHostPathWithin(rootPath, candidatePath, platform);
 }
