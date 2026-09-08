@@ -59,11 +59,18 @@ for (const target of targets) {
   const provenanceFile = `PROVENANCE-${target.key}.json`;
   const sumsFile = `SHA256SUMS-${target.key}.txt`;
   await copyFile(provenancePath, path.join(assetsDirectory, provenanceFile));
-  const rewrittenSums = sumsText.replace(
+  let rewrittenSums = sumsText.replace(
     /^([0-9a-f]{64}) {2}PROVENANCE\.json$/im,
     `$1  ${provenanceFile}`,
   );
   if (rewrittenSums === sumsText) throw new Error(`${target.key} SHA256SUMS.txt does not contain its provenance entry`);
+  const sourceMacManifestName = `latest-mac-${target.arch}.yml`;
+  if (target.platform === 'darwin') {
+    rewrittenSums = rewrittenSums.replace(
+      /^([0-9a-f]{64}) {2}latest-mac\.yml$/im,
+      `$1  ${sourceMacManifestName}`,
+    );
+  }
   await writeFile(path.join(assetsDirectory, sumsFile), rewrittenSums, 'utf8');
 
   const copiedArtifacts = [];
@@ -71,6 +78,10 @@ for (const target of targets) {
     if (target.platform === 'darwin' && artifact.name === 'latest-mac.yml') {
       const manifest = parseMacUpdateManifest(await readFile(artifact.path, 'utf8'), artifact.name, target);
       macManifests.push({ target, manifest });
+      // Retain the exact CI feed bytes referenced by the target provenance.
+      // The merged public updater feed receives its own aggregate checksum.
+      await copyFile(artifact.path, path.join(assetsDirectory, sourceMacManifestName));
+      copiedArtifacts.push(sourceMacManifestName);
       continue;
     }
     const destination = path.join(assetsDirectory, artifact.name);

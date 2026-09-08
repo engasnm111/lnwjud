@@ -1,10 +1,41 @@
-import { readFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import os from 'node:os';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..', '..');
 
 describe('MVP release verification gate', () => {
+  it('prepares verifiable Windows bridge metadata on a fresh release checkout without building packages', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-release-checkout-'));
+    try {
+      for (const file of [
+        'apps/desktop/scripts/write-capability-integrity.mjs',
+        'packages/capabilities/src/windows-capability-bridge.ps1',
+      ]) {
+        await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+        await copyFile(path.join(repositoryRoot, file), path.join(root, file));
+      }
+      const workflow = await readFile(path.join(repositoryRoot, '.github/workflows/release.yml'), 'utf8');
+      const preparation = workflow.split('- name: Verify each downloaded release evidence bundle')[0] ?? '';
+      for (const command of preparation.matchAll(/^\s+run: node ([\w/.-]+)\s*$/gm)) {
+        await promisify(execFile)(process.execPath, [path.join(root, command[1] ?? '')], { cwd: root, windowsHide: true });
+      }
+      const { verifyCapabilityBridgeArtifacts } = await import('../../apps/desktop/scripts/verify-capability-bridge-artifacts.mjs');
+      const identity = await verifyCapabilityBridgeArtifacts({
+        sourcePath: path.join(root, 'packages/capabilities/src/windows-capability-bridge.ps1'),
+        stageDirectory: path.join(root, 'apps/desktop/build/capability-bridge'),
+        generatedOutput: path.join(root, 'packages/capabilities/src/windows-capability-integrity.generated.ts'),
+      });
+      expect(identity.fileName).toBe('windows-capability-bridge.ps1');
+      expect(identity.sizeBytes).toBeGreaterThan(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('runs the required Windows verification stages in order and fails fast', async () => {
     const script = await readFile(path.join(repositoryRoot, 'scripts', 'verify-release.ps1'), 'utf8');
     const stages = [

@@ -77,6 +77,10 @@ jobs:
           done
           echo "Using successful CI run $run_id for exact commit $sha"
 
+      - name: Prepare source-bound Windows bridge verification metadata
+        # Recreate only deterministic verification inputs, never rebuild packages.
+        run: node apps/desktop/scripts/write-capability-integrity.mjs
+
       - name: Verify each downloaded release evidence bundle
         shell: bash
         env:

@@ -63,6 +63,17 @@ describe('release asset collector', () => {
       const macManifest = await readFile(path.join(assetsDirectory, 'latest-mac.yml'), 'utf8');
       expect(macManifest).toContain('lnwjud-4.56.0-arm64.zip');
       expect(macManifest).toContain('lnwjud-4.56.0-x64.zip');
+      for (const name of assetNames) {
+        if (!/^SHA256SUMS(?:-.+)?\.txt$/.test(name)) continue;
+        const sums = await readFile(path.join(assetsDirectory, name), 'utf8');
+        for (const line of sums.trim().split(/\r?\n/)) {
+          const [digest, file] = line.split('  ');
+          if (file?.startsWith('installed/')) continue; // Separate installed-runtime evidence.
+          expect(file).toBeDefined();
+          const bytes = await readFile(path.join(assetsDirectory, file ?? ''));
+          expect(createHash('sha256').update(bytes).digest('hex'), `${name}: ${file}`).toBe(digest);
+        }
+      }
       const releaseManifest = JSON.parse(await readFile(path.join(assetsDirectory, 'RELEASE_MANIFEST.json'), 'utf8')) as {
         sourceCommit?: string;
         targets?: Array<{ platform?: string; arch?: string }>;
