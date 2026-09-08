@@ -66,7 +66,7 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
           const coreIds = new Set(['os', 'database', 'executable_ripgrep', 'mcp-port']);
           const report = await window.lnwjud.runDoctor();
           return report.checks.filter((check) => coreIds.has(check.id) && (check.status === 'fail' || check.status === 'unknown'))
-            .map(({ id, status, message }) => ({ id, status, message }));
+            .map(({ id, status, message, detail, durationMs }) => ({ id, status, message, detail, durationMs }));
         });
         if (failures.length > 0) throw new Error(`Startup prerequisites failed before onboarding: ${JSON.stringify(failures)}`);
       }

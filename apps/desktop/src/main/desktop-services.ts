@@ -2150,6 +2150,11 @@ export async function checkConfiguredMcpPort(
 }
 
 async function probeLnwjudMcpIdentity(endpoint: URL): Promise<boolean> {
+  const started = Date.now();
+  const failed = (reason: string): false => {
+    console.warn(`[Doctor] MCP identity probe failed: ${reason} after ${Date.now() - started}ms`);
+    return false;
+  };
   const identityUrl = new URL(LNWJUD_MCP_IDENTITY_PATH, endpoint.origin);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 750);
@@ -2159,14 +2164,15 @@ async function probeLnwjudMcpIdentity(endpoint: URL): Promise<boolean> {
       cache: 'no-store',
       signal: controller.signal,
     });
-    if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') return false;
+    if (!response.ok || response.headers.get('x-lnwjud-service') !== 'desktop-mcp') return failed(`unexpected HTTP response (${response.status})`);
     const body: unknown = await response.json();
-    return typeof body === 'object' && body !== null
+    const matches = typeof body === 'object' && body !== null
       && 'product' in body && body.product === 'lnwjud'
       && 'service' in body && body.service === 'desktop-mcp'
       && 'protocol' in body && body.protocol === 1;
-  } catch {
-    return false;
+    return matches || failed('identity document mismatch');
+  } catch (error: unknown) {
+    return failed(controller.signal.aborted ? 'timeout' : error instanceof SyntaxError ? 'invalid JSON' : 'transport error');
   } finally {
     clearTimeout(timer);
   }

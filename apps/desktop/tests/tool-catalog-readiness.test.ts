@@ -36,6 +36,26 @@ function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'u
 }
 
 describe('tool catalog readiness aggregation', () => {
+  it('finishes shared required probes before concurrent Doctor and Catalog calls fan out optional providers', async () => {
+    const { catalog, probes } = service({});
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    probes.local_mcp_listener!.mockImplementation(async () => {
+      await gate;
+      return { status: 'pass' as const };
+    });
+    const pending = Promise.all([catalog.runDoctor(undefined, 'en'), catalog.getSnapshot('en')]);
+    await Promise.resolve();
+    const optionalCallsBeforeCoreFinished = probes.codex_runtime!.mock.calls.length;
+    release();
+    const [doctor, snapshot] = await pending;
+    expect(optionalCallsBeforeCoreFinished).toBe(0);
+    expect(probes.local_mcp_listener).toHaveBeenCalledTimes(1);
+    expect(probes.codex_runtime).toHaveBeenCalledTimes(1);
+    expect(doctor.exitCode).toBe(0);
+    expect(snapshot.items.length).toBeGreaterThan(0);
+  });
+
   it('separates setup, probe, permission, platform, delivery, and safety-policy reasons', async () => {
     const failed = service({ executable_git: 'fail' });
     const snapshot = await failed.catalog.getSnapshot('en');
