@@ -60,6 +60,7 @@ jobs:
         run: corepack pnpm@10.15.0 exec vitest run tests/integration/platform-composition.test.ts tests/release/platform-support-contract.test.ts
 
       - name: Test macOS native host protocol
+        timeout-minutes: 10
         if: matrix.name == 'macOS'
         shell: bash
         run: swift test --package-path native/macos-host
@@ -76,6 +77,7 @@ jobs:
 
   native-package-verification:
     name: Native Package Verification (${{ matrix.name }})
+    timeout-minutes: 45
     # Packaging downloads target-native runtimes and builds unsigned local
     # artifacts. Keep it on protected push/manual runs; pull requests still
     # receive the fast platform-contract matrix above.
@@ -127,13 +129,27 @@ jobs:
         shell: bash
         run: corepack pnpm@10.15.0 install --frozen-lockfile
 
+      - name: Install Linux packaging and Electron smoke prerequisites
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gnome-keyring libsecret-1-0 dbus dbus-x11 xvfb xauth ripgrep \
+            libnss3 libasound2t64 libgtk-3-0t64 libgbm1 libxss1 \
+            libatk-bridge2.0-0t64 libdrm2 libxkbcommon0 libfuse2t64
+
       - name: Build and verify target-native package
         shell: bash
         env:
           LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
           LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
           LNWJUD_COSIGN_PATH: cosign
-        run: corepack pnpm@10.15.0 verify:platform -- --package
+        run: |
+          set -euo pipefail
+          mkdir -p apps/desktop/packaged-e2e-diagnostics
+          corepack pnpm@10.15.0 verify:platform -- --package 2>&1 \
+            | tee apps/desktop/packaged-e2e-diagnostics/platform-package.log
 
       - name: Verify packaged artifact layout
         shell: bash
@@ -149,6 +165,81 @@ jobs:
             corepack pnpm@10.15.0 verify:linux-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.AppImage"
             corepack pnpm@10.15.0 verify:linux-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.deb"
           fi
+
+      - name: Run native packaged Electron E2E smoke
+        shell: bash
+        timeout-minutes: 10
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          DEBUG: pw:browser*
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          set -euo pipefail
+          # app-builder-lib PlatformPackager.computeAppOutDir + getArchSuffix:
+          # defaultArch is x64; macOS adds <productName>.app/Contents/MacOS.
+          case "$TARGET_PLATFORM/$TARGET_ARCH" in
+            linux/x64) relative='linux-unpacked/lnwjud' ;;
+            linux/arm64) relative='linux-arm64-unpacked/lnwjud' ;;
+            darwin/x64) relative='mac/lnwjud.app/Contents/MacOS/lnwjud' ;;
+            darwin/arm64) relative='mac-arm64/lnwjud.app/Contents/MacOS/lnwjud' ;;
+            *) echo 'Unsupported native smoke target' >&2; exit 1 ;;
+          esac
+          export LNWJUD_PACKAGED_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/dist/installers/$relative"
+          test -f "$LNWJUD_PACKAGED_EXECUTABLE" && test -x "$LNWJUD_PACKAGED_EXECUTABLE"
+          test "$(id -u)" -ne 0
+          cd "$GITHUB_WORKSPACE/apps/desktop"
+          mkdir -p packaged-e2e-diagnostics
+          printf '%s\n' "$LNWJUD_PACKAGED_EXECUTABLE" > packaged-e2e-diagnostics/executable.txt
+          # No build/install command here: execute the native package just built.
+          smoke=(node node_modules/@playwright/test/cli.js test --config playwright.config.ts
+            desktop-dashboard.e2e.ts desktop-mcp-client.e2e.ts tools-doctor.e2e.ts electron-security.e2e.ts
+            --trace=retain-on-failure --reporter=list,html)
+          if [[ "$TARGET_PLATFORM" == linux ]]; then
+            # Do not modify the unpacked artifact after evidence generation.
+            # Builder's DEB after-install.tpl uses 0755 with user namespaces,
+            # otherwise 4755 on the root-owned installed helper. We are not
+            # installing the DEB here, so fail if neither sandbox route works.
+            sandbox="$(dirname "$LNWJUD_PACKAGED_EXECUTABLE")/chrome-sandbox"
+            test -f "$sandbox" && test ! -L "$sandbox"
+            stat -c '%a %u:%g %n' "$sandbox" | tee packaged-e2e-diagnostics/sandbox.txt
+            if ! unshare --user true 2>> packaged-e2e-diagnostics/sandbox.txt; then
+              if [[ "$(stat -c '%u:%a' "$sandbox")" != '0:4755' ]]; then
+                echo 'No usable user namespace or root-owned 4755 sandbox helper; unpacked smoke cannot run sandboxed. DEB installation is a separate acceptance path.' \
+                  | tee -a packaged-e2e-diagnostics/sandbox.txt >&2
+                exit 1
+              fi
+            fi
+            umask 077
+            session_root="$(mktemp -d "$RUNNER_TEMP/lnwjud-keyring.XXXXXXXX")"
+            trap 'case "$session_root" in "$RUNNER_TEMP"/lnwjud-keyring.?*) rm -rf -- "$session_root" ;; esac' EXIT
+            export XDG_DATA_HOME="$session_root/data" XDG_CONFIG_HOME="$session_root/config"
+            export XDG_CACHE_HOME="$session_root/cache" XDG_RUNTIME_DIR="$session_root/runtime"
+            export XDG_CURRENT_DESKTOP=GNOME
+            mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
+            dbus-run-session -- xvfb-run -a bash -euo pipefail -c '
+              password="$(node -e "process.stdout.write(require(\"node:crypto\").randomBytes(32).toString(\"hex\"))")"
+              printf "%s" "$password" | gnome-keyring-daemon --unlock --components=secrets
+              unset password
+              exec "$@"
+            ' bash "${smoke[@]}" 2>&1 | tee packaged-e2e-diagnostics/run.log
+          else
+            "${smoke[@]}" 2>&1 | tee packaged-e2e-diagnostics/run.log
+          fi
+
+      - name: Upload native package and E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-e2e-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            apps/desktop/test-results/
+            apps/desktop/playwright-report/
+            apps/desktop/packaged-e2e-diagnostics/
+            apps/desktop/build/platform-verification-${{ matrix.platform }}-${{ matrix.arch }}.json
+            apps/desktop/build/packaged-runtime-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload verified native package evidence
         uses: actions/upload-artifact@v4
