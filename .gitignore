@@ -41,6 +41,7 @@ id_ed25519*
 credentials.json
 
 # Local Databases & Storage
+.lnwjud/
 *.db
 *.db-*
 *.sqlite
