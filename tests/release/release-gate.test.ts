@@ -143,6 +143,10 @@ describe('MVP release verification gate', () => {
     const authoritative = authoritativeJob.indexOf('Run authoritative release verification gate');
     expect(cosign).toBeGreaterThan(-1);
     expect(authoritativeJob).toContain("cosign-release: 'v3.1.3'");
+    expect(authoritativeJob).toContain('continue-on-error: true');
+    expect(authoritativeJob).toContain('Install checksum-pinned cosign fallback');
+    expect(authoritativeJob).toContain('9fe59be0eca1271873ce019061335eb1ac419b7059202e797828467ddabe33be');
+    expect(authoritativeJob).toContain('Verify cosign release verifier');
     expect(cosign).toBeLessThan(authoritative);
   });
 

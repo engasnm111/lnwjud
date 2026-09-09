@@ -58,8 +58,8 @@ verify_nested_signing_identity() {
     [[ "$candidate" == "$app" ]] && continue
     if /usr/bin/codesign --display --verbose=4 "$candidate" >/dev/null 2>&1; then
       if [[ "$app_is_adhoc" == "1" ]]; then
-        if ! codesign_is_adhoc "$candidate"; then
-          echo "macOS nested signature mode mismatch: app=ad-hoc nested=certificate target=$candidate" >&2
+        if ! /usr/bin/codesign --verify --strict "$candidate" >/dev/null 2>&1; then
+          echo "macOS nested signature integrity failed for ad-hoc package: $candidate" >&2
           exit 1
         fi
       else
