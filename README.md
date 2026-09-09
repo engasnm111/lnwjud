@@ -13,6 +13,12 @@
 </p>
 
 <p align="center">
+  <strong>💬 lnwjud Community</strong><br />
+  มีกลุ่มพูดคุยสำหรับ lnwjud แล้วนะครับ หากท่านใดติดปัญหา หรืออยากแชร์การใช้งาน ไอเดีย หรือประสบการณ์ต่าง ๆ สามารถเข้ามาพูดคุยและแชร์กันได้ในกลุ่มครับ<br />
+  <a href="https://url.in.th/rEZiG"><strong>เข้าร่วมกลุ่ม lnwjud Community</strong></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/engasnm111/lnwjud/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/engasnm111/lnwjud" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
