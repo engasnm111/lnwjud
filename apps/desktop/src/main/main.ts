@@ -85,7 +85,7 @@ import {
   launchPortableReplacement,
   preparePortableReplacement,
 } from './portable-update.js';
-import { platformCompatibilityProfile } from './platform-compatibility.js';
+import { platformCompatibilityProfile, supportedHostPlatform } from './platform-compatibility.js';
 import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
@@ -179,7 +179,7 @@ const emptyTunnel: TunnelStatus = {
   persistent: null,
 };
 const emptyRemoteMcp: RemoteMcpStatus = {
-  state: 'stopped', provider: 'ngrok', installed: false, hasAuthtoken: false, ngrokPath: null,
+  state: 'stopped', provider: 'ngrok', installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
   localMcpUrl: null, localGatewayUrl: null, publicMcpUrl: null, pairingCode: null, pairingCodeExpiresAt: null,
   oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
 };
@@ -259,6 +259,8 @@ const defaultDesktopServices: DesktopIpcServices = {
     tunnel: emptyTunnel,
     remoteMcp: emptyRemoteMcp,
     settings: defaultUserSettings,
+    hostPlatform: supportedHostPlatform(process.platform),
+    hostArch: process.arch === 'arm64' ? 'arm64' : 'x64',
     appVersion: APP_VERSION,
   }),
   setPermissionProfile: async (request): Promise<{ readonly profile: PermissionProfileName }> => ({ profile: request.profile }),

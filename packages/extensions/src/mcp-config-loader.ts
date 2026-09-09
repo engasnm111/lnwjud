@@ -20,7 +20,11 @@ export class McpConfigLoader {
     const home = this.options.homeDir ?? os.homedir();
     const platform = this.options.platform ?? process.platform;
     const pathApi = platform === 'win32' ? path.win32 : path.posix;
-    const appData = this.options.appDataDir ?? defaultApplicationDataDirectory(platform, home, this.options.env ?? process.env);
+    const environment = this.options.env ?? process.env;
+    const configuredAppData = this.options.appDataDir?.trim();
+    const appData = configuredAppData !== undefined && configuredAppData.length > 0 && pathApi.isAbsolute(configuredAppData)
+      ? configuredAppData
+      : defaultApplicationDataDirectory(platform, home, environment);
     const discovered: DiscoveredMcpServer[] = [];
 
     await this.loadFile(
@@ -60,10 +64,11 @@ export class McpConfigLoader {
   }
 
   private toServer(name: string, source: string, config: McpServerLaunchConfig): DiscoveredMcpServer {
-    const exclusion = exclusionReason(name, config);
-    const enabled = exclusion === undefined && isServerEnabled(name, this.options.settings);
+    const normalizedName = name.trim();
+    const exclusion = exclusionReason(normalizedName, config);
+    const enabled = exclusion === undefined && isServerEnabled(normalizedName, this.options.settings);
     return {
-      name,
+      name: normalizedName,
       source,
       enabled,
       excluded: exclusion !== undefined,
@@ -73,10 +78,18 @@ export class McpConfigLoader {
   }
 }
 
-function defaultApplicationDataDirectory(platform: NodeJS.Platform, home: string, environment: NodeJS.ProcessEnv): string {
-  if (platform === 'win32') return environment.APPDATA ?? path.win32.join(home, 'AppData', 'Roaming');
+export function defaultApplicationDataDirectory(platform: NodeJS.Platform, home: string, environment: NodeJS.ProcessEnv): string {
+  if (platform === 'win32') {
+    const appData = environment.APPDATA?.trim();
+    return appData !== undefined && path.win32.isAbsolute(appData)
+      ? appData
+      : path.win32.join(home, 'AppData', 'Roaming');
+  }
   if (platform === 'darwin') return path.posix.join(home, 'Library', 'Application Support');
-  return environment.XDG_CONFIG_HOME?.trim() || path.posix.join(home, '.config');
+  const xdgConfigHome = environment.XDG_CONFIG_HOME?.trim();
+  return xdgConfigHome !== undefined && path.posix.isAbsolute(xdgConfigHome)
+    ? xdgConfigHome
+    : path.posix.join(home, '.config');
 }
 
 export function normalizeLaunchConfig(

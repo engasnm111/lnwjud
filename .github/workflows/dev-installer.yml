@@ -51,6 +51,25 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 
+      - name: Run packaged Windows Electron MCP and security smoke
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          LNWJUD_PACKAGED_EXECUTABLE: ${{ github.workspace }}/apps/desktop/dist/installers/win-unpacked/lnwjud.exe
+          PLAYWRIGHT_HTML_OPEN: never
+        run: corepack pnpm@10.15.0 --filter @lnwjud/desktop exec playwright test --config playwright.config.ts desktop-dashboard.e2e.ts desktop-mcp-client.e2e.ts tools-doctor.e2e.ts electron-security.e2e.ts --trace=retain-on-failure --reporter=list,html
+
+      - name: Upload Windows packaged E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-windows-e2e-${{ github.sha }}
+          path: |
+            apps/desktop/test-results/
+            apps/desktop/playwright-report/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload dev installer artifacts
         uses: actions/upload-artifact@v4
         with:

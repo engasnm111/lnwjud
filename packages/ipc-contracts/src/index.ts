@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.56.2';
+export const APP_VERSION = '4.60.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -431,6 +431,8 @@ export interface RemoteMcpStatus {
   readonly state: RemoteMcpRunState;
   readonly provider: 'ngrok';
   readonly installed: boolean;
+  readonly automaticInstallAvailable: boolean;
+  readonly automaticInstallMethod: 'windows_store' | 'homebrew' | null;
   readonly hasAuthtoken: boolean;
   readonly ngrokPath: string | null;
   readonly localMcpUrl: string | null;
@@ -684,8 +686,9 @@ export interface DashboardSnapshot {
   readonly tunnel: TunnelStatus;
   readonly remoteMcp: RemoteMcpStatus;
   readonly settings: UserSettings;
-  /** Host platform used to keep platform-specific settings and copy truthful. */
-  readonly hostPlatform?: 'win32' | 'darwin' | 'linux';
+  /** Authoritative host identity used to gate platform/architecture-specific controls. */
+  readonly hostPlatform: 'win32' | 'darwin' | 'linux';
+  readonly hostArch: 'x64' | 'arm64';
   readonly appVersion: string;
 }
 
@@ -850,13 +853,14 @@ export interface ConfigureTunnelProfileRequest {
   readonly tunnelId: string;
 }
 
-export type ExternalSetupTarget = 'openai_tunnels' | 'openai_api_keys' | 'chatgpt_plugins' | 'ngrok_authtoken';
+export type ExternalSetupTarget = 'openai_tunnels' | 'openai_api_keys' | 'chatgpt_plugins' | 'ngrok_authtoken' | 'ngrok_download';
 
 export const EXTERNAL_SETUP_URLS: Readonly<Record<ExternalSetupTarget, string>> = Object.freeze({
   openai_tunnels: 'https://platform.openai.com/settings/organization/tunnels',
   openai_api_keys: 'https://platform.openai.com/api-keys',
   chatgpt_plugins: 'https://chatgpt.com/plugins',
   ngrok_authtoken: 'https://dashboard.ngrok.com/get-started/your-authtoken',
+  ngrok_download: 'https://ngrok.com/download',
 });
 
 export interface OpenExternalSetupPageRequest {

@@ -49,16 +49,19 @@ type DestructiveApprovalKey = keyof DestructiveDeletePolicy['approvals'];
 
 export function SettingsPage(props: SettingsPageProps): ReactElement {
   const t = createTranslator(props.locale);
-  const hostPlatform = props.dashboard.hostPlatform ?? 'win32';
+  const hostPlatform = props.dashboard.hostPlatform;
+  const hostArch = props.dashboard.hostArch;
+  const secureStorageLabel = hostPlatform === 'darwin' ? 'macOS Keychain' : hostPlatform === 'linux' ? 'system keyring' : 'Windows DPAPI';
   const guidedTunnelRunning = isTunnelRunning(props.dashboard.tunnel);
   const guidedTunnelConfigured = tunnelRuntimeCredentialAvailable(props.dashboard.tunnel) && props.dashboard.tunnel.profileExists;
   const tunnelPresentation = tunnelAuthPresentation(props.dashboard.tunnel);
   const remoteMcp = props.dashboard.remoteMcp ?? {
-    state: 'stopped' as const, provider: 'ngrok' as const, installed: false, hasAuthtoken: false, ngrokPath: null,
+    state: 'stopped' as const, provider: 'ngrok' as const, installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
     localMcpUrl: props.dashboard.mcp.url, localGatewayUrl: null, publicMcpUrl: null, pairingCode: null, pairingCodeExpiresAt: null,
     oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
   };
   const ngrokReady = remoteMcp.installed && remoteMcp.ngrokPath !== null;
+  const ngrokAutoInstallAvailable = remoteMcp.automaticInstallAvailable;
   const remoteMcpOnline = remoteMcp.state === 'running';
   const secureTunnelOnline = props.dashboard.tunnel.state === 'running';
   const activeRemoteConnections = Number(remoteMcpOnline) + Number(secureTunnelOnline);
@@ -476,6 +479,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <UserConfigPanel
                 locale={props.locale}
                 hostPlatform={hostPlatform}
+                hostArch={hostArch}
                 permissionProfile={props.dashboard.permissionProfile}
                 stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
                 settings={props.dashboard.settings}
@@ -559,6 +563,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
             <UserConfigPanel
               locale={props.locale}
               hostPlatform={hostPlatform}
+              hostArch={hostArch}
               permissionProfile={props.dashboard.permissionProfile}
               stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
               settings={props.dashboard.settings}
@@ -626,20 +631,25 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     {ngrokReady && remoteMcp.ngrokPath !== null ? <code className="ngrok-ready-path">{remoteMcp.ngrokPath}</code> : null}
                   </div>
                   <div className="inline-actions">
-                    <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcp.state === 'running' || ngrokReady} onClick={() => { void runRemoteMcpAction('install'); }}>
-                      {ngrokReady
-                        ? (props.locale === 'th' ? '✓ ngrok พร้อมใช้งาน' : '✓ ngrok ready')
-                        : remoteMcp.state === 'installing'
-                          ? (props.locale === 'th' ? 'กำลังติดตั้ง/ซ่อม…' : 'Installing/repairing…')
-                          : remoteMcp.state === 'error'
-                            ? (props.locale === 'th' ? 'ติดตั้ง/ซ่อม ngrok อัตโนมัติ' : 'Install/repair ngrok automatically')
-                            : (props.locale === 'th' ? 'ติดตั้ง ngrok อัตโนมัติ' : 'Install ngrok automatically')}
-                    </button>
+                    {ngrokAutoInstallAvailable ? (
+                      <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcp.state === 'running' || ngrokReady} onClick={() => { void runRemoteMcpAction('install'); }}>
+                        {ngrokReady
+                          ? (props.locale === 'th' ? '✓ ngrok พร้อมใช้งาน' : '✓ ngrok ready')
+                          : remoteMcp.state === 'installing'
+                            ? (props.locale === 'th' ? 'กำลังติดตั้ง/ซ่อม…' : 'Installing/repairing…')
+                            : remoteMcp.automaticInstallMethod === 'homebrew'
+                              ? (props.locale === 'th' ? 'ติดตั้ง ngrok ผ่าน Homebrew' : 'Install ngrok with Homebrew')
+                              : remoteMcp.state === 'error'
+                                ? (props.locale === 'th' ? 'ติดตั้ง/ซ่อม ngrok อัตโนมัติ' : 'Install/repair ngrok automatically')
+                                : (props.locale === 'th' ? 'ติดตั้ง ngrok อัตโนมัติ' : 'Install ngrok automatically')}
+                      </button>
+                    ) : null}
+                    {!ngrokReady && !ngrokAutoInstallAvailable ? <button type="button" disabled={remoteMcpBusy} onClick={() => { void props.onOpenExternalSetupPage('ngrok_download'); }}>{props.locale === 'th' ? 'เปิดหน้าดาวน์โหลด ngrok ทางการ' : 'Open official ngrok download'}</button> : null}
                     <button type="button" disabled={remoteMcpBusy} onClick={() => { void openNgrokAuthtokenPage(); }}>{props.locale === 'th' ? 'เปิดหน้า ngrok Authtoken' : 'Open ngrok authtoken'}</button>
                   </div>
                   <label className="field-label" htmlFor="remote-mcp-authtoken">{props.locale === 'th' ? 'ngrok Authtoken (ใส่ครั้งเดียว)' : 'ngrok authtoken (one time)'}</label>
                   <div className="form-row"><input id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /><button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcpAuthtoken.trim().length === 0} onClick={() => { void runRemoteMcpAction('save'); }}>{props.locale === 'th' ? 'บันทึกอย่างปลอดภัย' : 'Save securely'}</button></div>
-                  <p className="hint">{remoteMcp.hasAuthtoken ? (props.locale === 'th' ? '✓ เก็บด้วย Windows DPAPI แล้ว' : '✓ Stored with Windows DPAPI') : (props.locale === 'th' ? 'Authtoken ไม่ถูกส่งผ่าน command line หรือบันทึกลง config แบบ plaintext' : 'The authtoken is not passed on the command line or stored in plaintext config.')}</p>
+                  <p className="hint">{remoteMcp.hasAuthtoken ? (props.locale === 'th' ? `✓ เก็บด้วย ${secureStorageLabel} แล้ว` : `✓ Stored with ${secureStorageLabel}`) : (props.locale === 'th' ? 'Authtoken ไม่ถูกส่งผ่าน command line หรือบันทึกลง config แบบ plaintext' : 'The authtoken is not passed on the command line or stored in plaintext config.')}</p>
                 </div>
                 <div className="tunnel-setup-box">
                   <div className="settings-mini-heading"><strong>{props.locale === 'th' ? '2. เปิด Remote MCP' : '2. Start Remote MCP'}</strong><span>{remoteMcp.oauthConnected ? 'CHATGPT LINKED' : remoteMcp.pairingRequired ? 'PAIR ONCE' : remoteMcp.oauthProtected ? 'OAUTH PROTECTED' : 'AUTH REQUIRED'}</span></div>
@@ -763,8 +773,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-client-path">{props.locale === 'th' ? 'tunnel-client (รวมมากับโปรแกรมแล้ว)' : 'tunnel-client (bundled)'}</label>
-                  <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.13 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.13 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
-                  <p className="hint">{props.locale === 'th' ? 'ช่องว่าง = ใช้ OpenAI tunnel-client v0.0.13 แบบ native ตาม target ที่มากับโปรแกรม หากบันทึก custom override แล้ว path นั้นจะเป็นตัวเลือกหลัก: ถ้าไฟล์หาย lnwjud จะแจ้ง error และจะไม่สลับกลับ bundled เอง การเปลี่ยน client ขณะ runtime ทำงานจะหยุด/ยืนยัน owner เดิมก่อนจึงค่อยสลับ' : 'Blank = use the bundled target-native OpenAI tunnel-client v0.0.13. A saved custom override is authoritative: if it is missing, lnwjud reports an error and never silently falls back to bundled. Switching clients while running stops and verifies the recorded owner before committing the new selection.'}</p>
+                  <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.14 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.14 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
+                  <p className="hint">{props.locale === 'th' ? 'ช่องว่าง = ใช้ OpenAI tunnel-client v0.0.14 แบบ native ตาม target ที่มากับโปรแกรม หากบันทึก custom override แล้ว path นั้นจะเป็นตัวเลือกหลัก: ถ้าไฟล์หาย lnwjud จะแจ้ง error และจะไม่สลับกลับ bundled เอง การเปลี่ยน client ขณะ runtime ทำงานจะหยุด/ยืนยัน owner เดิมก่อนจึงค่อยสลับ' : 'Blank = use the bundled target-native OpenAI tunnel-client v0.0.14. A saved custom override is authoritative: if it is missing, lnwjud reports an error and never silently falls back to bundled. Switching clients while running stops and verifies the recorded owner before committing the new selection.'}</p>
                 </div>
               </div>
               <div className="tunnel-setup-box">

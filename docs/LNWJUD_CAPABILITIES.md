@@ -1,14 +1,14 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.56.2 (มีทั้งหมด 232 definitions; advertise 225 tools โดยปริยายก่อนใช้ per-tool override และครบ 232 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.60.0 (มีทั้งหมด 232 definitions; advertise 225 tools โดยปริยายก่อนใช้ per-tool override และครบ 232 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
 ## สรุปสั้น
 
-lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggregator แต่เป็น Windows-first local development gateway ที่เปิดความสามารถของเครื่องและ workspace ให้ AI host ที่พูดภาษา Model Context Protocol (MCP) ได้
+lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggregator แต่เป็น cross-platform local development gateway ที่เปิดความสามารถของเครื่องและ workspace บน Windows, macOS และ Linux ให้ AI host ที่พูดภาษา Model Context Protocol (MCP) ได้ โดย capability ที่เป็น OS-specific จะเปิดเฉพาะเมื่อ host รองรับจริง
 
-ความสามารถหลักใน v4.56.2 คือ:
+ความสามารถหลักใน v4.60.0 คือ:
 
 - เปิด workspace และ machine roots ให้ AI อ่าน ค้นหา วิเคราะห์ และแก้ไขไฟล์ได้
 - ใช้ Context Economy Engine ลด I/O/token จากการค้นหาอัตโนมัติ โดยยังอ่าน .env, .git, dist และ node_modules ได้เมื่อร้องขอแบบ explicit และอยู่ในขอบเขตที่ workspace/path policy อนุญาต
@@ -28,7 +28,7 @@ lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggr
 - เปิด/ปิด first-party tool รายตัวได้แบบ persisted โดยแยก `userPreference`, `systemEligible`, `effectiveExposed` ออกจาก readiness/permission; state เดียวกันบังคับทั้ง `tools/list`, `tools/call`, batch และ discovery/ranking โดย per-tool override ไม่สามารถข้าม Settings/runtime prerequisite ได้ เช่น `codex_*` และ `agent_swarm_run` จะยังไม่ถูก expose จนกว่า Codex Delegation จะเปิดและ runtime ที่จำเป็นพร้อม
 - MCP connection ที่ค้างอยู่รับการเปลี่ยน tool list ผ่าน SDK `notifications/tools/list_changed`; stdio process เห็น state จาก SQLite ร่วมด้วย bounded watcher โดยไม่ต้อง restart
 
-ทุกการทำงานวิ่งบน Windows เครื่องเดียวกับ lnwjud ยกเว้นชั้นเชื่อมต่อที่ส่ง MCP ผ่าน tunnel หรือ transport ที่ client ใช้
+ทุกการทำงานหลักวิ่งบน host เครื่องเดียวกับ lnwjud ตาม platform support ของ Windows, macOS หรือ Linux ยกเว้นชั้นเชื่อมต่อที่ส่ง MCP ผ่าน tunnel หรือ transport ที่ client ใช้
 
 ## สถาปัตยกรรมและทางเชื่อมต่อ
 

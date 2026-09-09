@@ -29,9 +29,12 @@ describe('tool catalog security boundaries', () => {
     const browser = registry.resolve('th', ['configure_browser_cdp'])[0]!;
     expect(browser.actions).toContainEqual({ kind: 'launch_managed_browser' });
 
-    const pdf = registry.resolve('th', ['configure_pdf_provider'], 'win32')[0]!;
+    const pdf = registry.resolve('th', ['configure_pdf_provider'], 'win32', 'x64')[0]!;
     expect(pdf.actions).toContainEqual({ kind: 'install_pdf_provider' });
     expect(pdf.explanation).toContain('SHA-256');
+    expect(registry.resolve('th', ['configure_pdf_provider'], 'darwin', 'arm64')[0]!.actions).not.toContainEqual({ kind: 'install_pdf_provider' });
+    expect(registry.resolve('th', ['configure_pdf_provider'], 'linux', 'x64')[0]!.actions).not.toContainEqual({ kind: 'install_pdf_provider' });
+    expect(registry.resolve('th', ['configure_pdf_provider'], 'win32', 'arm64')[0]!.actions).not.toContainEqual({ kind: 'install_pdf_provider' });
 
     const codex = registry.resolve('th', ['configure_codex'])[0]!;
     expect(codex.actions).toContainEqual({ kind: 'set_user_setting', setting: 'codexToolsEnabled', value: true });

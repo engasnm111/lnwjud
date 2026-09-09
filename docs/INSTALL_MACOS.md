@@ -1,6 +1,6 @@
 # Install lnwjud on macOS
 
-This guide covers the v4.56.0 native macOS target. macOS 13 or newer is
+This guide covers the v4.60.0 native macOS target. macOS 13 or newer is
 supported on both Apple silicon (`arm64`) and Intel (`x64`). The package is
 built on macOS for the matching architecture; there is no universal build
 claim until every native helper and runtime has been verified as universal.

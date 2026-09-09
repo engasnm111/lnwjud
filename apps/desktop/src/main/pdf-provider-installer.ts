@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import extractZip from 'extract-zip';
+import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 
 export interface PdfProviderPackage {
   readonly version: string;
@@ -33,10 +34,10 @@ export interface PdfProviderInstallerOptions {
 }
 
 export const DEFAULT_PDF_PROVIDER_PACKAGE: PdfProviderPackage = Object.freeze({
-  version: '26.02.0-0',
-  popplerVersion: '26.02.0',
-  sourceUrl: 'https://github.com/oschwartz10612/poppler-windows/releases/download/v26.02.0-0/Release-26.02.0-0.zip',
-  archiveSha256: '993e4a94376ed712fafc7058d724ea0b943d118bbd2305cd9ed55174eb85cda5',
+  version: runtimeDependencies.pdfProvider.version,
+  popplerVersion: runtimeDependencies.pdfProvider.popplerVersion,
+  sourceUrl: runtimeDependencies.pdfProvider.sourceUrl,
+  archiveSha256: runtimeDependencies.pdfProvider.archiveSha256,
 });
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;

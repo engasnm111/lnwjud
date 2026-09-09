@@ -294,10 +294,14 @@ function remoteMcpStatus(value: unknown): RemoteMcpStatus {
   const state = value.state;
   if (state !== 'stopped' && state !== 'installing' && state !== 'starting' && state !== 'running' && state !== 'error') throw new Error('Invalid IPC response');
   if (value.provider !== 'ngrok') throw new Error('Invalid IPC response');
+  const automaticInstallMethod = value.automaticInstallMethod;
+  if (automaticInstallMethod !== 'windows_store' && automaticInstallMethod !== 'homebrew' && automaticInstallMethod !== null) throw new Error('Invalid IPC response');
   return {
     state,
     provider: 'ngrok',
     installed: booleanField(value, 'installed'),
+    automaticInstallAvailable: booleanField(value, 'automaticInstallAvailable'),
+    automaticInstallMethod,
     hasAuthtoken: booleanField(value, 'hasAuthtoken'),
     ngrokPath: nullableString(value.ngrokPath),
     localMcpUrl: nullableString(value.localMcpUrl),
@@ -400,6 +404,10 @@ function dashboard(value: unknown): DashboardSnapshot {
   if ((url !== null && typeof url !== 'string') || (version !== null && typeof version !== 'string')) {
     throw new Error('Invalid IPC response');
   }
+  const hostPlatform = value.hostPlatform;
+  const hostArch = value.hostArch;
+  if ((hostPlatform !== 'win32' && hostPlatform !== 'darwin' && hostPlatform !== 'linux')
+    || (hostArch !== 'x64' && hostArch !== 'arm64')) throw new Error('Invalid IPC response');
   return {
     selectedWorkspace,
     activeWorkspaces: workspaceList(value.activeWorkspaces),
@@ -437,6 +445,8 @@ function dashboard(value: unknown): DashboardSnapshot {
     tunnel: tunnelStatus(value.tunnel),
     remoteMcp: remoteMcpStatus(value.remoteMcp),
     settings: userSettings(value.settings),
+    hostPlatform,
+    hostArch,
     appVersion: stringField(value, 'appVersion'),
   };
 }
@@ -1048,7 +1058,7 @@ function configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise
 function openExternalSetupPage(request: OpenExternalSetupPageRequest): Promise<{ readonly opened: true }> {
   if (
     !isRecord(request) ||
-    (request.target !== 'openai_tunnels' && request.target !== 'openai_api_keys' && request.target !== 'chatgpt_plugins' && request.target !== 'ngrok_authtoken')
+    (request.target !== 'openai_tunnels' && request.target !== 'openai_api_keys' && request.target !== 'chatgpt_plugins' && request.target !== 'ngrok_authtoken' && request.target !== 'ngrok_download')
   ) {
     return Promise.reject(new Error('Invalid IPC request'));
   }

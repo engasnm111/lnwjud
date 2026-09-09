@@ -227,7 +227,13 @@ export function selectRelevantProcesses(entries: readonly IncidentProcess[], roo
 export async function collectRelevantListeners(pids: readonly number[], platform: NodeJS.Platform = process.platform): Promise<readonly IncidentListener[]> {
   const roots = trustedPids(pids);
   if (roots.length === 0) return [];
-  if (platform !== 'win32') {
+  if (platform === 'linux') {
+    const { stdout } = await execFileAsync('ss', ['-ltnpH'], {
+      encoding: 'utf8', timeout: 3_000, maxBuffer: 256 * 1024,
+    });
+    return parseLinuxSsListeners(stdout, roots);
+  }
+  if (platform === 'darwin') {
     const { stdout } = await execFileAsync('lsof', ['-nP', '-a', '-p', roots.join(','), '-iTCP', '-sTCP:LISTEN'], {
       encoding: 'utf8', timeout: 3_000, maxBuffer: 256 * 1024,
     });
@@ -243,9 +249,38 @@ export async function collectRelevantListeners(pids: readonly number[], platform
     }
     return listeners.slice(0, MAX_ENTRIES);
   }
+  if (platform !== 'win32') return [];
   const clause = roots.map((pid) => `$_.OwningProcess -eq ${pid}`).join(' -or ');
   const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { ${clause} } | Select-Object OwningProcess,LocalAddress,LocalPort | ConvertTo-Json -Compress`], { windowsHide: true, timeout: 3_000, encoding: 'utf8' });
   return parseRows(stdout).map((row) => ({ pid: number(row.OwningProcess), address: safe(typeof row.LocalAddress === 'string' ? row.LocalAddress : 'unknown'), port: number(row.LocalPort) }));
+}
+
+export function parseLinuxSsListeners(raw: string, rootPids: readonly number[]): readonly IncidentListener[] {
+  const roots = new Set(trustedPids(rootPids));
+  if (roots.size === 0) return [];
+  const listeners: IncidentListener[] = [];
+  const seen = new Set<string>();
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const columns = trimmed.split(/\s+/);
+    const localEndpoint = columns[3];
+    if (localEndpoint === undefined) continue;
+    const endpoint = /^(.*):(\d+)$/.exec(localEndpoint);
+    if (endpoint === null) continue;
+    const port = Number(endpoint[2]);
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) continue;
+    const pids = [...trimmed.matchAll(/pid=(\d+)/g)].map((match) => Number(match[1])).filter((pid) => roots.has(pid));
+    for (const pid of pids) {
+      const address = (endpoint[1] ?? 'unknown').replace(/^\[(.*)\]$/u, '$1');
+      const key = `${pid}|${address}|${port}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      listeners.push({ pid, address: safe(address), port });
+      if (listeners.length >= MAX_ENTRIES) return listeners;
+    }
+  }
+  return listeners;
 }
 async function collectProcesses(collector: IncidentEvidence['collectProcessTree'], pids: readonly number[], noPidReason: string): Promise<IncidentReport['processTree']> {
   if (pids.length === 0) return { available: false, entries: [], error: safe(noPidReason) };

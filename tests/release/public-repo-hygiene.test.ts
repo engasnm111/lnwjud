@@ -66,16 +66,22 @@ describe('public repository hygiene', () => {
   }, 15_000);
 
   it('documents the package version as the current v4 runtime rather than a stale release', async () => {
-    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+    const [readme, expandedReadme, packagingWindows] = await Promise.all([
+      readFile(path.join(repositoryRoot, 'README.md'), 'utf8'),
+      readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8'),
+      readFile(path.join(repositoryRoot, 'docs', 'development', 'PACKAGING_WINDOWS.md'), 'utf8'),
+    ]);
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     expect(typeof rootPackage.version).toBe('string');
     const version = rootPackage.version as string;
 
     expect(readme).toContain(`## Current version: v${version}`);
-    expect(readme).toContain(`The v${version} release target and runtime contract`);
-    expect(readme).toContain(`Current Windows 10/11 x64 artifacts are \`lnwjud-Setup-${version}.exe\` (recommended installer) and \`lnwjud-Portable-${version}.exe\``);
-    expect(readme).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
-    expect(readme).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
+    expect(readme).toContain(`\`v${version}\` is the current source/release-candidate version.`);
+    expect(expandedReadme).toContain(`## Current version: v${version}`);
+    expect(packagingWindows).toContain(`lnwjud-Setup-${version}.exe`);
+    expect(packagingWindows).toContain(`lnwjud-Portable-${version}.exe`);
+    expect(packagingWindows).toContain(`apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`);
+    expect(packagingWindows).toContain(`apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`);
     expect(readme).not.toContain('current source/release candidate is');
     expect(readme).not.toContain('pending publication');
     const actor = { clientId: 'public-repo-hygiene', clientName: 'public-repo-hygiene' };
@@ -85,7 +91,7 @@ describe('public repository hygiene', () => {
     const defaultAdvertised = defaultRegistry.list().length;
     const fullAdvertised = fullRegistry.list().length;
     expect(readme).toContain(`${totalDefinitions} total tool definitions`);
-    expect(readme).toContain(`${defaultAdvertised} advertised by default`);
+    expect(readme).toContain(`${defaultAdvertised} are advertised by default`);
     expect(readme).toContain(`all ${fullAdvertised} when Codex delegation plus Agent Swarm is enabled`);
     expect(readme).not.toContain(['Verify the ', '184-tool catalog'].join(''));
     expect(readme).not.toContain(['current v3.0.0 catalog contains ', '184 tools'].join(''));
@@ -124,13 +130,13 @@ describe('public repository hygiene', () => {
       path.join(repositoryRoot, 'apps', 'desktop', 'src', 'renderer', 'features', 'settings', 'SettingsPage.tsx'),
       'utf8',
     );
-    expect(settingsPage).toContain('Bundled v0.0.13 is used automatically');
+    expect(settingsPage).toContain('Bundled v0.0.14 is used automatically');
     expect(settingsPage).toContain('Use bundled');
     expect(settingsPage).not.toContain('placeholder="C:\\tools\\tunnel-client.exe"');
   });
 
   it('does not retain stale permission examples in the detailed README guide', async () => {
-    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+    const readme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
     expect(readme).not.toMatch(/^\| (?:\d+ \| `)?workspace_list`? \| (?:EXECUTE|DANGEROUS) \|/m);
     expect(readme).toMatch(/^\| 1 \| `workspace_list` \| READ \|/m);
     expect(readme).toContain('| workspace_list | READ |');

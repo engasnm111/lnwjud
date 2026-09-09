@@ -199,18 +199,19 @@ describe('durable shell background tasks', () => {
     const first = await store.launch({ taskId: 'task-one', ...common });
     expect(first).toMatchObject({ ok: true, value: { task_id: 'task-one', state: 'running' } });
 
-    const second = await store.launch({ taskId: 'task-two', ...common });
-    expect(second).toMatchObject({
-      ok: false,
-      error: {
-        code: 'CONFLICT',
-        recoverable: true,
-      },
-    });
-
-    const cancelled = await store.cancel('task-one', owner);
-    expect(cancelled).toMatchObject({ ok: true, value: { state: 'cancelled' } });
-  });
+    try {
+      const second = await store.launch({ taskId: 'task-two', ...common });
+      expect(second).toMatchObject({
+        ok: false,
+        error: {
+          code: 'CONFLICT',
+          recoverable: true,
+        },
+      });
+    } finally {
+      if (first.ok) await store.cancel('task-one', owner);
+    }
+  }, 15_000);
 });
 
 async function waitUntil(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {

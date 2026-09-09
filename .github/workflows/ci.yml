@@ -57,10 +57,9 @@ jobs:
 
       - name: Run native platform contract tests
         shell: bash
-        run: corepack pnpm@10.15.0 exec vitest run tests/integration/platform-composition.test.ts tests/release/platform-support-contract.test.ts packages/mcp-server/src/tool-runtime-contract.test.ts
+        run: corepack pnpm@10.15.0 exec vitest run tests/integration/platform-composition.test.ts tests/integration/cross-platform-release-scenarios.test.ts tests/release/platform-support-contract.test.ts packages/mcp-server/src/tool-runtime-contract.test.ts
 
       - name: Run complete native unit and service acceptance suites
-        if: matrix.name != 'Windows'
         shell: bash
         run: corepack pnpm@10.15.0 test
 
@@ -187,6 +186,18 @@ jobs:
             corepack pnpm@10.15.0 verify:linux-release "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.deb"
           fi
 
+      - name: Stage and launch the real macOS DMG package
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          installed_app="$RUNNER_TEMP/lnwjud-installed-${{ matrix.arch }}/lnwjud.app"
+          bash scripts/stage-macos-smoke-app.sh \
+            "apps/desktop/dist/installers/lnwjud-${version}-${{ matrix.arch }}.dmg" \
+            "$installed_app"
+          echo "LNWJUD_STAGED_MACOS_EXECUTABLE=$installed_app/Contents/MacOS/lnwjud" >> "$GITHUB_ENV"
+
       - name: Run native packaged Electron E2E smoke
         shell: bash
         timeout-minutes: 10
@@ -197,16 +208,17 @@ jobs:
           PLAYWRIGHT_HTML_OPEN: never
         run: |
           set -euo pipefail
-          # app-builder-lib PlatformPackager.computeAppOutDir + getArchSuffix:
-          # defaultArch is x64; macOS adds <productName>.app/Contents/MacOS.
-          case "$TARGET_PLATFORM/$TARGET_ARCH" in
-            linux/x64) relative='linux-unpacked/lnwjud' ;;
-            linux/arm64) relative='linux-arm64-unpacked/lnwjud' ;;
-            darwin/x64) relative='mac/lnwjud.app/Contents/MacOS/lnwjud' ;;
-            darwin/arm64) relative='mac-arm64/lnwjud.app/Contents/MacOS/lnwjud' ;;
-            *) echo 'Unsupported native smoke target' >&2; exit 1 ;;
-          esac
-          export LNWJUD_PACKAGED_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/dist/installers/$relative"
+          if [[ "$TARGET_PLATFORM" == darwin ]]; then
+            test -n "${LNWJUD_STAGED_MACOS_EXECUTABLE:-}"
+            export LNWJUD_PACKAGED_EXECUTABLE="$LNWJUD_STAGED_MACOS_EXECUTABLE"
+          else
+            case "$TARGET_PLATFORM/$TARGET_ARCH" in
+              linux/x64) relative='linux-unpacked/lnwjud' ;;
+              linux/arm64) relative='linux-arm64-unpacked/lnwjud' ;;
+              *) echo 'Unsupported native smoke target' >&2; exit 1 ;;
+            esac
+            export LNWJUD_PACKAGED_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/dist/installers/$relative"
+          fi
           if [[ "$TARGET_PLATFORM" == linux ]]; then
             # Install the real DEB on this disposable runner. Its post-install
             # hook configures the supported AppArmor/userns or SUID sandbox.

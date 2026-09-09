@@ -103,11 +103,12 @@ async function syncAllVersions() {
     // skip if missing
   }
 
-  // 8. Update README.md current-version references without rewriting release history.
-  const readmePath = path.join(rootDir, 'README.md');
-  try {
-    let readmeContent = await readFile(readmePath, 'utf8');
-    readmeContent = readmeContent
+  // 8. Update concise and expanded README current-version references without rewriting release history.
+  const readmePaths = [path.join(rootDir, 'README.md'), path.join(rootDir, 'FULL_README.md')];
+  for (const readmePath of readmePaths) {
+    try {
+      let readmeContent = await readFile(readmePath, 'utf8');
+      readmeContent = readmeContent
       .replace(/## Current (?:version|source \/ release candidate|release): v[0-9.]+/g, `## Current version: v${version}`)
       .replace(/The v[0-9.]+ release target and runtime contract/g, 'The v' + version + ' release target and runtime contract')
       .replace(/current source\/release candidate is `v[0-9.]+`/g, 'current version is `v' + version + '`')
@@ -124,10 +125,11 @@ async function syncAllVersions() {
       .replace(/current v[0-9.]+ `ToolRegistry`/g, 'current v' + version + ' `ToolRegistry`')
       .replace(/## v[0-9.]+ release status/g, `## v${version} release status`)
       .replace(/Release `v[0-9.]+`/g, `Release \`v${version}\``);
-    await writeFile(readmePath, readmeContent, 'utf8');
-    console.log(`Updated README.md -> v${version}`);
-  } catch {
-    // skip if missing
+      await writeFile(readmePath, readmeContent, 'utf8');
+      console.log(`Updated ${path.basename(readmePath)} -> v${version}`);
+    } catch {
+      // skip if missing
+    }
   }
 
   // 9. Update current-version Markdown references without rewriting release history.

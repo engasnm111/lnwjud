@@ -47,6 +47,8 @@ const dashboard: DashboardSnapshot = {
     closeBehavior: 'tray', launchAtStartup: false, startMinimized: false, tunnelAutoReconnect: true, tunnelMaxAutoRestarts: 5, recoveryRetentionDays: 0,
     extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
   },
+  hostPlatform: 'win32',
+  hostArch: 'x64',
   appVersion: APP_VERSION,
 };
 
@@ -99,13 +101,13 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 4.56.2 application version', () => {
-    expect(APP_VERSION).toBe('4.56.2');
+  it('renders the actual 4.60.0 application version', () => {
+    expect(APP_VERSION).toBe('4.60.0');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v4.56.2');
+    expect(markup).toContain('v4.60.0');
   });
 
   it('keeps Desktop and STDIO Full Bypass independently visible in the application header', () => {
@@ -143,6 +145,16 @@ describe('mutation safety UI contract', () => {
     expect(destructiveSection).toContain('Recovery Trash — always on for delete_file');
     expect(destructiveSection.match(/role="switch"/g)).toHaveLength(11);
     expect(destructiveSection.match(/role="switch"[^>]*disabled/g)).toHaveLength(2);
+  });
+
+  it('hides Windows-only WSL destructive controls on macOS and Linux', () => {
+    for (const hostPlatform of ['darwin', 'linux'] as const) {
+      const markup = settingsMarkup('en', { hostPlatform, hostArch: hostPlatform === 'darwin' ? 'arm64' : 'x64' });
+      const destructiveSection = markup.slice(markup.indexOf('Delete &amp; Data-Loss Safety'), markup.indexOf('STDIO Security Policy'));
+      expect(destructiveSection).not.toContain('<strong>wsl_rm_unlink</strong>');
+      expect(destructiveSection).not.toContain('<strong>wsl_rmdir</strong>');
+      expect(destructiveSection.match(/role="switch"/g)).toHaveLength(9);
+    }
   });
 
   it('displays the absolute host-provided Recovery Trash path without inventing a renderer path', () => {

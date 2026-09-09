@@ -6,7 +6,7 @@ The packaged MCP stdio launcher is self-contained: `lnwjud-mcp-stdio.cmd` launch
 
 Core text/file search is also self-contained. Packaging downloads the pinned official Windows x64 ripgrep archive, verifies its SHA-256, preserves its license notices, and ships `resources/runtime-tools/ripgrep/rg.exe` in both Setup and Portable builds. Desktop and `lnwjud-mcp-stdio.cmd` prepend that private directory to the child runtime PATH, so users do not need to install ripgrep themselves.
 
-OpenAI Secure MCP Tunnel is self-contained as well. Packaging pins official `tunnel-client v0.0.13` for Windows amd64 and verifies the archive SHA-256 before extraction. The target-native payload is preserved under `resources/tunnel-client/` with the executable, license/notice inventory, SPDX metadata, and Sigstore provenance; lnwjud also records the archive/runtime hashes used for provenance. The bundled client is selected only when the override is empty, and a missing or invalid custom override fails closed instead of silently falling back.
+OpenAI Secure MCP Tunnel is self-contained as well. Packaging pins official `tunnel-client v0.0.14` for Windows amd64 and verifies the archive SHA-256 before extraction. The target-native payload is preserved under `resources/tunnel-client/` with the executable, license/notice inventory, SPDX metadata, and Sigstore provenance; lnwjud also records the archive/runtime hashes used for provenance. The bundled client is selected only when the override is empty, and a missing or invalid custom override fails closed instead of silently falling back.
 
 On the first launch of each lnwjud version, Desktop runs the core Doctor checks automatically before tunnel onboarding. Only core failures (supported Windows x64, database, bundled ripgrep, workspace initialization, and local MCP readiness) interrupt startup and keep navigation on Doctor. Git and optional capabilities such as Codex, WSL, Python, FFmpeg, and Windows OCR may report warnings or feature-specific unavailable states but do not block first-run.
 
@@ -29,7 +29,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v4.56.2 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v4.60.0 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
@@ -72,12 +72,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v4.56.2:
+For v4.60.0:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.56.2.exe
-apps/desktop/dist/installers/lnwjud-Setup-4.56.2.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-4.56.2.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.60.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.60.0.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-4.60.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt

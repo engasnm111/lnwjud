@@ -15,7 +15,7 @@ export class PathExecutableResolver implements ExecutableResolver {
   public async resolve(executable: string): Promise<Result<string>> {
     if (executable.trim().length === 0) return err({ code: 'INVALID_INPUT', message: 'Executable is required', recoverable: false });
     const pathApi = this.platform === 'win32' ? path.win32 : path.posix;
-    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? '').split(this.platform === 'win32' ? ';' : path.delimiter).filter(Boolean);
+    const pathEntries = (this.environment.Path ?? this.environment.PATH ?? '').split(this.platform === 'win32' ? ';' : ':').filter(Boolean);
     const hasPath = pathApi.isAbsolute(executable) || executable.includes(this.platform === 'win32' ? '\\' : '/');
     const candidates = hasPath
       ? this.withWindowsExtensions(executable)

@@ -1,6 +1,6 @@
 # Contributing to lnwjud
 
-Thanks for helping improve lnwjud. The project is a Windows-first local AI-agent runtime and MCP gateway, so changes should preserve local-first behavior, explicit trust boundaries, and deterministic release verification.
+Thanks for helping improve lnwjud. The project is a cross-platform local AI-agent runtime and MCP gateway for Windows, macOS, and Linux, so changes should preserve local-first behavior, explicit trust boundaries, platform-specific capability gates, and deterministic release verification.
 
 ## Before you start
 
@@ -11,7 +11,7 @@ Thanks for helping improve lnwjud. The project is a Windows-first local AI-agent
 
 ## Development environment
 
-The repository is developed and release-tested on Windows x64.
+Day-to-day development may happen on Windows x64, but release verification is cross-platform: native Windows, macOS and Linux CI runners must validate the host-specific runtime/package paths before a public release is considered complete.
 
 Required for source development:
 

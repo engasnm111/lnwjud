@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
+import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
   CheckpointService,
@@ -166,6 +167,7 @@ import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
 import { installPdfProvider, type InstalledPdfProvider } from './pdf-provider-installer.js';
 import { RemoteMcpController } from './remote-mcp-controller.js';
+import { supportedHostPlatform } from './platform-compatibility.js';
 import { CLIENT_PATH_SETTING, TunnelController } from './tunnel-controller.js';
 import { legacyTunnelSecretPath, oauthTunnelSessionPath, LegacyApiKeyCredentialProvider } from './tunnel-auth.js';
 import { TunnelAuthCoordinator } from './tunnel-auth-coordinator.js';
@@ -175,7 +177,7 @@ import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
-const BUNDLED_TUNNEL_CLIENT_VERSION = '0.0.13';
+const BUNDLED_TUNNEL_CLIENT_VERSION = runtimeDependencies.tunnelClient.version;
 const permissionSettingKey = 'permission_profile';
 const selectedWorkspaceSettingKey = 'selected_workspace_id';
 const activeWorkspaceIdsSettingKey = 'active_workspace_ids';
@@ -1047,7 +1049,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         tunnel,
         remoteMcp,
         settings: readSettings(),
-        hostPlatform: process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : 'win32',
+        hostPlatform: supportedHostPlatform(process.platform),
+        hostArch: supportedHostArchitecture(process.arch),
         appVersion: APP_VERSION,
       };
     },
@@ -1176,7 +1179,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     getRemoteMcpStatus: () => remoteMcpController.status(),
     installRemoteMcpProvider: async () => { const status = await remoteMcpController.installProvider(); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
-    saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with Windows DPAPI'); return status; },
+    saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with the host secure-storage provider'); return status; },
     startRemoteMcp: async () => { const status = await remoteMcpController.start(); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
     regenerateRemoteMcpPairingCode: async () => { const status = await remoteMcpController.regeneratePairingCode(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth pairing code regenerated'); return status; },
@@ -1217,7 +1220,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
     installPdfProvider: async (): Promise<PdfProviderInstallResult> => {
-      if (process.platform !== 'win32') throw new Error('The bundled PDF provider installer is available only on Windows; configure a native pdftotext provider on this host.');
+      const pdfTarget = runtimeDependencies.pdfProvider;
+      if (process.platform !== pdfTarget.platform || process.arch !== pdfTarget.arch) {
+        throw new Error(`The bundled PDF provider installer supports only ${pdfTarget.platform}/${pdfTarget.arch}; configure a native pdftotext provider on this host.`);
+      }
       const installed = await (options.pdfProviderInstaller ?? installPdfProvider)(dataPath);
       const previous = readSettings();
       settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, installed.providerPath);
@@ -1384,6 +1390,11 @@ function resolveTestCheckpointEncryptionKey(): Buffer | undefined {
 function bundledTunnelClientPath(): string | null {
   const resourcesPath = (process as NodeJS.Process & { readonly resourcesPath?: string }).resourcesPath;
   return resolveBundledTunnelClientPath({ resourcesPath });
+}
+
+function supportedHostArchitecture(architecture: string): 'x64' | 'arm64' {
+  if (architecture === 'x64' || architecture === 'arm64') return architecture;
+  throw new Error(`Unsupported host architecture: ${architecture}`);
 }
 
 export function resolveBundledTunnelClientPath(options: {

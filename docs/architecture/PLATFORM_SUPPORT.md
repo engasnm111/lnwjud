@@ -1,6 +1,6 @@
 # Native platform support contract
 
-Status: v4.56.0 target-native release contract. Windows remains a supported
+Status: v4.60.0 cross-platform release-candidate contract. Windows remains a supported
 release target; macOS and Linux packages are built and verified on their target
 hosts under the same exact-commit CI release sequence. This document is the
 source of truth for what is shipped, dependency-gated, preview, or deliberately
@@ -29,7 +29,7 @@ removed on a host platform.
 
 | Host | Architecture | Tier | Release baseline | Desktop/session gate |
 | --- | --- | --- | --- | --- |
-| Windows 10/11 | x64 | supported | v4.56.0 Setup and Portable | Interactive Windows desktop |
+| Windows 10/11 | x64 | supported | v4.60.0 Setup and Portable | Interactive Windows desktop |
 | macOS 13+ | arm64 | supported target | Target-native DMG and ZIP; signing is release-gated when configured | Accessibility/Screen Recording as needed |
 | macOS 13+ | x64 | supported target | Target-native DMG and ZIP; signing is release-gated when configured | Accessibility/Screen Recording as needed |
 | Ubuntu 24.04 LTS | x64 | supported target | Target-native AppImage and DEB | GNOME Wayland and X11 smoke |

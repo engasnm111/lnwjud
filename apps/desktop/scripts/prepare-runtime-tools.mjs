@@ -10,65 +10,38 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const extractZip = require('@electron-internal/extract-zip');
 
-const RIPGREP_VERSION = '15.2.0';
-const RIPGREP_RELEASE_BASE = `https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}`;
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
+const ripgrepDependency = runtimeDependencies?.ripgrep;
+if (runtimeDependencies?.schemaVersion !== 1 || typeof ripgrepDependency?.version !== 'string' || ripgrepDependency.version.length === 0) {
+  throw new Error('Bundled ripgrep dependency manifest is invalid');
+}
+const RIPGREP_VERSION = ripgrepDependency.version;
+const RIPGREP_RELEASE_BASE = `https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}`;
 const buildRoot = path.join(desktopRoot, 'build');
 const vendorRoot = path.join(buildRoot, 'vendor', `runtime-tools-v${RIPGREP_VERSION}`);
 
-// These are the exact release archives used by the package. Linux uses the
-// static musl builds so the same artifact works on glibc and musl hosts.
-const TARGETS = Object.freeze({
-  win32: Object.freeze({
-    name: 'windows',
-    ripgrep: Object.freeze({
-      x64: Object.freeze({ archive: `ripgrep-${RIPGREP_VERSION}-x86_64-pc-windows-msvc.zip`, sha256: '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5' }),
-      arm64: Object.freeze({ archive: `ripgrep-${RIPGREP_VERSION}-aarch64-pc-windows-msvc.zip`, sha256: 'e4abca10c3a64ebea742667dd7009449d49403db5460dd6873e389fa2945360f' }),
-      executable: 'rg.exe',
-      kind: 'zip',
-    }),
-    arch: Object.freeze({ x64: 'x86_64-pc-windows-msvc', arm64: 'aarch64-pc-windows-msvc' }),
-  }),
-  darwin: Object.freeze({
-    name: 'darwin',
-    ripgrep: Object.freeze({
-      x64: Object.freeze({ archive: `ripgrep-${RIPGREP_VERSION}-x86_64-apple-darwin.tar.gz`, sha256: 'af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1' }),
-      arm64: Object.freeze({ archive: `ripgrep-${RIPGREP_VERSION}-aarch64-apple-darwin.tar.gz`, sha256: '3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4' }),
-      executable: 'rg',
-      kind: 'tar.gz',
-    }),
-    arch: Object.freeze({ x64: 'x86_64-apple-darwin', arm64: 'aarch64-apple-darwin' }),
-  }),
-  linux: Object.freeze({
-    name: 'linux',
-    ripgrep: Object.freeze({
-      x64: Object.freeze({ archive: `ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz`, sha256: '33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c' }),
-      arm64: Object.freeze({ archive: `ripgrep-${RIPGREP_VERSION}-aarch64-unknown-linux-musl.tar.gz`, sha256: '800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915' }),
-      executable: 'rg',
-      kind: 'tar.gz',
-    }),
-    arch: Object.freeze({ x64: 'x86_64-unknown-linux-musl', arm64: 'aarch64-unknown-linux-musl' }),
-  }),
-});
-
+// Exact release archives are declared in one manifest. Linux intentionally
+// uses static musl builds. No platform or architecture fallback is allowed.
 const platform = process.env.LNWJUD_RUNTIME_TARGET ?? process.platform;
 const rawArch = process.env.LNWJUD_RUNTIME_ARCH ?? process.arch;
-const target = TARGETS[platform];
-if (target === undefined) throw new Error(`Runtime tools do not support host platform ${platform}`);
-const targetArch = target.arch[rawArch];
-if (targetArch === undefined) throw new Error(`Runtime tools do not support ${platform}/${rawArch}`);
-const ripgrep = normalizeRipgrepTarget(target.ripgrep, targetArch);
+const targetKey = `${platform}-${rawArch}`;
+const ripgrep = ripgrepDependency.targets?.[targetKey];
+if (ripgrep === undefined) throw new Error(`Runtime tools do not support ${platform}/${rawArch}`);
+if (!['win32', 'darwin', 'linux'].includes(platform)
+  || !['x64', 'arm64'].includes(rawArch)
+  || typeof ripgrep.archive !== 'string'
+  || typeof ripgrep.executable !== 'string'
+  || !['zip', 'tar.gz'].includes(ripgrep.kind)
+  || typeof ripgrep.targetTriple !== 'string'
+  || !/^[0-9a-f]{64}$/iu.test(ripgrep.sha256 ?? '')) {
+  throw new Error(`Bundled ripgrep target declaration is invalid for ${targetKey}`);
+}
+const target = { name: platform === 'win32' ? 'windows' : platform };
 
 await stageRipgrep({ platform, rawArch, target, ripgrep });
 await runTunnelStager(platform, rawArch);
 process.stdout.write(`Prepared target-native runtime tools for ${platform}/${rawArch}\n`);
-
-function normalizeRipgrepTarget(value, targetArch) {
-  if (value.archive !== undefined) return { ...value, targetArch };
-  const selected = value[Object.keys(value).find((key) => key === rawArch) ?? ''];
-  if (selected === undefined) throw new Error(`ripgrep archive is not declared for ${targetArch}`);
-  return { ...selected, executable: value.executable, kind: value.kind, targetArch };
-}
 
 async function stageRipgrep({ platform, rawArch, target, ripgrep }) {
   const archivePath = path.join(vendorRoot, ripgrep.archive);
@@ -92,7 +65,7 @@ async function stageRipgrep({ platform, rawArch, target, ripgrep }) {
   const destination = path.join(bundleRoot, ripgrep.executable);
   await copyFile(executable, destination);
   if (platform !== 'win32') await chmod(destination, 0o755);
-  await verifyExecutableVersion(destination, 'ripgrep');
+  await verifyExecutableVersion(destination, 'ripgrep', RIPGREP_VERSION);
 
   for (const notice of await findNotices(extractRoot)) {
     const destinationNotice = path.join(bundleRoot, path.basename(notice));
@@ -106,7 +79,7 @@ async function stageRipgrep({ platform, rawArch, target, ripgrep }) {
     version: RIPGREP_VERSION,
     platform,
     arch: rawArch,
-    target: ripgrep.targetArch,
+    target: ripgrep.targetTriple,
     asset: ripgrep.archive,
     source: `${RIPGREP_RELEASE_BASE}/${ripgrep.archive}`,
     assetSha256: ripgrep.sha256,
@@ -221,7 +194,7 @@ function runProcess(command, args, environment) {
   });
 }
 
-function verifyExecutableVersion(executable, label) {
+function verifyExecutableVersion(executable, label, expectedVersion) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ['--version'], { env: sanitizedEnvironment(), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
@@ -235,7 +208,9 @@ function verifyExecutableVersion(executable, label) {
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
     child.once('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0 || output.trim().length === 0) reject(new Error(`Official ${label} --version check failed`));
+      const escapedVersion = expectedVersion.replaceAll('.', '\\.');
+      const exactVersion = new RegExp(`(?:^|[^0-9])v?${escapedVersion}(?:$|[^0-9])`).test(output);
+      if (code !== 0 || !exactVersion) reject(new Error(`Official ${label} --version does not match ${expectedVersion}`));
       else resolve();
     });
   });

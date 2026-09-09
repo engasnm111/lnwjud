@@ -8,7 +8,8 @@ import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-arti
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputPath = path.join(desktopRoot, 'build', 'packaged-runtime-evidence.json');
-const BUNDLED_TUNNEL_CLIENT_VERSION = '0.0.13';
+const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
+const BUNDLED_TUNNEL_CLIENT_VERSION = runtimeDependencies.tunnelClient.version;
 
 const TARGETS = Object.freeze({
   win32: Object.freeze({

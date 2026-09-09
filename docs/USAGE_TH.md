@@ -1,8 +1,8 @@
-# คู่มือใช้งาน lnwjud v4.56.2 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v4.60.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-> สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.13` ที่ตรงกับ target ไว้ให้แล้ว
+> สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.14` ที่ตรงกับ OS และ architecture ของ target ไว้ให้แล้ว
 
 คู่มือ target ใหม่:
 
@@ -27,7 +27,7 @@ Outlook/COM ยังคงเป็น Windows-only และจะรายง
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- `lnwjud-Setup-4.56.2.exe` หรือ `lnwjud-Portable-4.56.2.exe`
+- `lnwjud-Setup-4.60.0.exe` หรือ `lnwjud-Portable-4.60.0.exe`
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -47,7 +47,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด `lnwjud-Setup-4.56.2.exe` จาก GitHub Releases
+1. ดาวน์โหลด `lnwjud-Setup-4.60.0.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -55,7 +55,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด `lnwjud-Portable-4.56.2.exe`
+1. ดาวน์โหลด `lnwjud-Portable-4.60.0.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
@@ -86,8 +86,8 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 ขั้นตอนใช้งานปกติ:
 
 1. เปิด **Settings → Remote MCP & Tunnel**
-2. ดูสถานะ ngrok ก่อน: ถ้าขึ้น **READY / ✓ ngrok พร้อมใช้งาน** แปลว่า lnwjud ตรวจด้วย `ngrok version` แล้วและปุ่มติดตั้งจะถูกปิดไว้ ไม่ต้องติดตั้งซ้ำ; ถ้ายังเป็น **NOT READY** จึงค่อยกด **ติดตั้ง ngrok อัตโนมัติ** — lnwjud ใช้คำสั่ง WinGet ทางการ `winget install ngrok -s msstore` จึงไม่ต้องดาวน์โหลด `ngrok.exe` เองและไม่ bundle binary ของ ngrok มากับ installer
-3. เปิดหน้า ngrok Authtoken จากปุ่มใน lnwjud แล้ววาง token ครั้งเดียว; lnwjud เก็บ token ด้วย Windows DPAPI และส่งให้ process ผ่าน `NGROK_AUTHTOKEN` เท่านั้น ไม่ใส่ใน command line หรือ config plaintext
+2. ดูสถานะ ngrok ก่อน: ถ้าขึ้น **READY / ✓ ngrok พร้อมใช้งาน** แปลว่า lnwjud ตรวจ binary ด้วย `ngrok version` แล้ว ไม่ต้องติดตั้งซ้ำ. ถ้ายังเป็น **NOT READY** หน้า Settings จะแสดงวิธีติดตั้งที่รองรับตาม host เท่านั้น: Windows ใช้ช่องทาง Microsoft Store/WinGet, macOS สามารถใช้ Homebrew เมื่อ Homebrew พร้อม, ส่วน Linux หรือ host ที่ lnwjud ไม่มีวิธีติดตั้งอัตโนมัติที่พิสูจน์แล้วจะซ่อนปุ่ม auto-install และเปิดลิงก์ดาวน์โหลด ngrok ทางการแทน. lnwjud ไม่เอา binary ของ OS/architecture อื่นมาติดตั้งข้ามระบบและไม่แอบใช้ `sudo`/แก้ package repository ให้เอง
+3. เปิดหน้า ngrok Authtoken จากปุ่มใน lnwjud แล้ววาง token ครั้งเดียว; lnwjud เก็บ token ผ่าน secure storage ของ host (Windows DPAPI / macOS Keychain / system keyring ที่รองรับบน Linux) และส่งให้ process ผ่าน `NGROK_AUTHTOKEN` เท่านั้น ไม่ใส่ใน command line หรือ config plaintext. ถ้า secure storage ของ host ใช้งานไม่ได้ ระบบจะ fail closed แทนการลดระดับไปเก็บ plaintext
 4. กด **Start Remote MCP**
 5. เมื่อสถานะเป็น RUNNING ให้กด **Copy MCP URL** แล้วนำ URL `https://...ngrok.app/mcp` ไปใส่ใน ChatGPT App/Connector แบบ Server URL
 6. เลือก **OAuth** ใน ChatGPT; เมื่อ browser เปิดหน้าอนุมัติแบบธีม lnwjud ให้ใส่ **OAuth Pairing Code 6 หลัก** ที่แสดงใน lnwjud แล้วกด **Authorize ChatGPT**. เมื่อสำเร็จ browser จะ redirect กลับ ChatGPT อัตโนมัติ. Pairing code มีอายุสั้นและถูกใช้ได้ครั้งเดียวต่อการอนุมัติ; หากหมดอายุให้กดสร้างใหม่
@@ -119,7 +119,7 @@ OAuth จะเปิดให้กด Sign in เฉพาะเมื่อ p
 
 1. ใส่ Runtime API key แล้วกด **Save key**
 2. ช่อง **tunnel-client (รวมมากับโปรแกรมแล้ว)** ให้ปล่อยว่างไว้
-   - lnwjud จะใช้ official OpenAI `tunnel-client v0.0.13` ที่ bundle ตาม target อัตโนมัติ
+   - lnwjud จะใช้ official OpenAI `tunnel-client v0.0.14` ที่ bundle ตาม OS/architecture target อัตโนมัติ และจะ fail closed ถ้า packaged runtime ไม่ตรง target หรือหลักฐานตรวจสอบไม่ผ่าน
    - ปุ่ม Browse / Save override ใช้เฉพาะกรณี troubleshoot หรือต้องการทดสอบ client อื่น
    - เมื่อบันทึก custom override แล้ว path นั้นเป็นตัวเลือกหลัก ถ้าไฟล์หาย lnwjud จะแจ้ง error และ **จะไม่ fallback ไป bundled เองแบบเงียบ ๆ**
    - ถ้าเคยตั้ง override แล้วอยากกลับไปใช้ตัวที่มากับโปรแกรม ให้ล้างช่องแล้วกด **ใช้ตัวที่มากับโปรแกรม / Use bundled** โดยชัดเจน
@@ -327,13 +327,13 @@ corepack pnpm@10.15.0 build
 corepack pnpm@10.15.0 package:windows
 ```
 
-`package:windows`, `package:macos` และ `package:linux` จะดาวน์โหลด official OpenAI tunnel-client v0.0.13 สำหรับ **ขั้นตอน build ของ target นั้น** เท่านั้น ตรวจ SHA-256/provenance ที่ pin ไว้ แล้ว bundle binary เข้า package อัตโนมัติ End user ที่ใช้ release ไม่ต้องทำขั้นตอนนี้
+`package:windows`, `package:macos` และ `package:linux` จะเลือกและดาวน์โหลด official OpenAI tunnel-client v0.0.14 สำหรับ **OS/architecture target นั้น** เท่านั้น ตรวจ SHA-256/provenance/version ที่ pin ไว้ แล้ว bundle binary เข้า package อัตโนมัติ ถ้า target tuple ไม่ตรงหรือหลักฐานไม่ผ่าน build จะหยุดทันที End user ที่ใช้ release ไม่ต้องทำขั้นตอนนี้
 
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.56.2.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.56.2.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.60.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.60.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

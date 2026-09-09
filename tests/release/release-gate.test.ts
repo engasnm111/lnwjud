@@ -234,7 +234,7 @@ describe('MVP release verification gate', () => {
   it('keeps Secure Tunnel on the Desktop HTTP runtime instead of headless stdio', async () => {
     const controller = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'src', 'main', 'tunnel-controller.ts'), 'utf8');
     const services = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'src', 'main', 'desktop-services.ts'), 'utf8');
-    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+    const readme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
 
     expect(controller).toContain("'--sample', 'sample_mcp_remote_no_auth'");
     expect(controller).toContain("'--mcp-server-url'");

@@ -9,6 +9,7 @@ const externalSetupTargets = new Set<ExternalSetupTarget>([
   'openai_api_keys',
   'chatgpt_plugins',
   'ngrok_authtoken',
+  'ngrok_download',
 ]);
 
 export function parseOpenExternalSetupPageRequest(payload: unknown): OpenExternalSetupPageRequest {

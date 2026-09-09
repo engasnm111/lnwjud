@@ -1,6 +1,6 @@
 {
   "name": "lnwjud",
-  "version": "4.56.2",
+  "version": "4.60.0",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "engines": {
@@ -9,6 +9,8 @@
   "type": "module",
   "scripts": {
     "set-version": "node scripts/set-version.mjs",
+    "runtime:check": "node scripts/update-runtime-dependencies.mjs",
+    "runtime:update": "node scripts/update-runtime-dependencies.mjs --write",
     "lint": "eslint .",
     "typecheck": "tsc --build",
     "test": "corepack pnpm@10.15.0 -r --if-present test",

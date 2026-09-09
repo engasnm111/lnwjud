@@ -32,7 +32,9 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
     this.port = options.port ?? readPort(process.env.LNWJUD_BROWSER_CDP_PORT);
     this.profileDir = options.profileDir ?? process.env.LNWJUD_BROWSER_PROFILE ?? path.join(os.tmpdir(), 'lnwjud-browser-profile');
     this.chromeExecutable = options.chromeExecutable ?? process.env.LNWJUD_BROWSER_EXECUTABLE;
-    this.terminator = options.terminator ?? createProcessTreeTerminator();
+    this.terminator = options.terminator ?? (isSupportedBrowserPlatform(this.platform)
+      ? createProcessTreeTerminator(this.platform)
+      : unsupportedBrowserTerminator());
     this.terminationRetryMs = Math.max(1, options.terminationRetryMs ?? 250);
     this.executableExists = options.executableExists ?? existsSync;
   }
@@ -85,6 +87,7 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
   }
 
   public async launch(url: string | undefined, signal?: AbortSignal): Promise<Result<unknown>> {
+    if (!isSupportedBrowserPlatform(this.platform)) return err(appError('UNSUPPORTED_PLATFORM', `Browser launch is unsupported on ${this.platform}`, true));
     if (isAborted(signal)) return cancelledBrowserLaunch();
     const existing = await this.status(signal);
     if (isAborted(signal)) return cancelledBrowserLaunch();
@@ -101,7 +104,7 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
         '--no-default-browser-check',
         ...(url === undefined ? [] : [url]),
       ];
-      const child = spawn(executable, args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: 'ignore' });
+      const child = spawn(executable, args, { shell: false, windowsHide: true, detached: this.platform !== 'win32', stdio: 'ignore' });
       return this.waitForLaunch(child, signal);
     } catch {
       return err(appError('INTERNAL_ERROR', 'Chrome could not be started', true));
@@ -146,8 +149,8 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
       const candidates = [
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-        path.join(process.env.HOME ?? '', 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
-        path.join(process.env.HOME ?? '', 'Applications', 'Microsoft Edge.app', 'Contents', 'MacOS', 'Microsoft Edge'),
+        path.posix.join(process.env.HOME ?? '', 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+        path.posix.join(process.env.HOME ?? '', 'Applications', 'Microsoft Edge.app', 'Contents', 'MacOS', 'Microsoft Edge'),
       ];
       return candidates.find((candidate) => candidate.length > 0 && this.executableExists(candidate));
     }
@@ -155,7 +158,7 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
       const candidates = [
         '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium',
         '/usr/bin/chromium-browser', '/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable',
-        path.join(process.env.HOME ?? '', '.local', 'bin', 'google-chrome'),
+        path.posix.join(process.env.HOME ?? '', '.local', 'bin', 'google-chrome'),
       ];
       return candidates.find((candidate) => candidate.length > 0 && this.executableExists(candidate));
     }
@@ -164,12 +167,12 @@ export class NodeBrowserCdpProtocol implements BrowserCdpProtocol {
     const programFiles = process.env.ProgramFiles;
     const programFilesX86 = process.env['ProgramFiles(x86)'];
     const candidates = [
-      localAppData === undefined ? undefined : path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-      programFiles === undefined ? undefined : path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-      programFilesX86 === undefined ? undefined : path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-      localAppData === undefined ? undefined : path.join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-      programFiles === undefined ? undefined : path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-      programFilesX86 === undefined ? undefined : path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      localAppData === undefined ? undefined : path.win32.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      programFiles === undefined ? undefined : path.win32.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      programFilesX86 === undefined ? undefined : path.win32.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      localAppData === undefined ? undefined : path.win32.join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      programFiles === undefined ? undefined : path.win32.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      programFilesX86 === undefined ? undefined : path.win32.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     ];
     return candidates.find((candidate): candidate is string => candidate !== undefined && this.executableExists(candidate));
   }
@@ -246,6 +249,18 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
     }
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+}
+
+function isSupportedBrowserPlatform(platform: NodeJS.Platform): platform is 'win32' | 'darwin' | 'linux' {
+  return platform === 'win32' || platform === 'darwin' || platform === 'linux';
+}
+
+function unsupportedBrowserTerminator(): ProcessTreeTerminator {
+  return {
+    async stop(): Promise<void> {
+      throw new Error('Browser process termination is unsupported on this platform');
+    },
+  };
 }
 
 function cancelledBrowserLaunch(): Result<never> {

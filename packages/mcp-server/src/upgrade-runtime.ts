@@ -1409,10 +1409,7 @@ export class UpgradeRuntimeService {
     const script = ['benchmark:baseline', 'benchmark', 'bench'].find((candidate) => typeof scripts[candidate] === 'string' && String(scripts[candidate]).trim().length > 0);
     if (script === undefined) return err(appError('INVALID_INPUT', 'No benchmark:baseline, benchmark, or bench package script was detected'));
     const packageManager = typeof parsed.packageManager === 'string' ? parsed.packageManager.trim() : '';
-    if (packageManager.startsWith('pnpm@')) return ok({ executable: 'corepack', args: [packageManager, 'run', script], script });
-    if (packageManager.startsWith('yarn@')) return ok({ executable: 'corepack', args: [packageManager, 'run', script], script });
-    if (packageManager.startsWith('npm@')) return ok({ executable: 'npm.cmd', args: ['run', script], script });
-    return ok({ executable: 'npm.cmd', args: ['run', script], script });
+    return ok(benchmarkPackageCommand(packageManager, script, this.diagnostics.platform));
   }
 
   private async regressionReport(input: Record<string, unknown>): Promise<Result<unknown>> {
@@ -1802,7 +1799,7 @@ export class UpgradeRuntimeService {
     }
     if (name === 'path_context') {
       const pathValue = process.env.Path ?? process.env.PATH ?? '';
-      const entries = pathValue.split(path.delimiter).filter((entry) => entry.length > 0);
+      const entries = pathValue.split(this.diagnostics.platform === 'win32' ? ';' : ':').filter((entry) => entry.length > 0);
       const executable = readString(input, 'executable');
       if (executable === undefined) return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, entries });
       if (!/^[A-Za-z0-9_.-]+$/.test(executable)) return err(appError('INVALID_INPUT', 'path_context executable must be a simple executable name'));
@@ -2003,6 +2000,14 @@ function runBoundedProcess(
     });
     child.stdin?.end();
   });
+}
+
+export function benchmarkPackageCommand(packageManager: string, script: string, platform: NodeJS.Platform): { readonly executable: string; readonly args: readonly string[]; readonly script: string } {
+  const normalized = packageManager.trim();
+  if (normalized.startsWith('pnpm@') || normalized.startsWith('yarn@')) {
+    return { executable: 'corepack', args: [normalized, 'run', script], script };
+  }
+  return { executable: platform === 'win32' ? 'npm.cmd' : 'npm', args: ['run', script], script };
 }
 
 interface DiagnosticInvocation {

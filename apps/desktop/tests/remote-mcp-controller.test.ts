@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
+import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildNgrokHttpArgs, extractNgrokDiagnostic, formatNgrokExitMessage, RemoteMcpController, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
+import { buildNgrokHttpArgs, extractNgrokDiagnostic, formatNgrokExitMessage, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
 interface RemoteMcpTestAccess {
   gatewayUrl: string | null;
@@ -33,6 +36,41 @@ describe('Remote MCP ngrok runtime', () => {
     const args = buildNgrokHttpArgs('http://127.0.0.1:32123');
     expect(args).toEqual(['http', 'http://127.0.0.1:32123', '--log=stdout', '--log-format=json']);
     expect(args.some((value) => value.startsWith('--web-addr'))).toBe(false);
+  });
+
+  it('parses POSIX PATH with POSIX semantics even when the test host is Windows', () => {
+    expect(posixExecutableCandidates('ngrok', 'linux', { PATH: '/custom/bin:relative:/opt/tools' })).toEqual([
+      '/custom/bin/ngrok',
+      '/opt/tools/ngrok',
+      '/usr/local/bin/ngrok',
+      '/usr/bin/ngrok',
+      '/snap/bin/ngrok',
+    ]);
+    expect(posixExecutableCandidates('brew', 'darwin', { PATH: '/custom/bin;/wrong/windows-style:/usr/local/bin' })).toEqual([
+      '/custom/bin;/wrong/windows-style/brew',
+      '/usr/local/bin/brew',
+      '/opt/homebrew/bin/brew',
+    ]);
+  });
+
+  it.each(['darwin', 'linux'] as const)('resolves a validated ngrok executable from the %s PATH without Windows tools on a POSIX host', async (platform) => {
+    if (process.platform === 'win32') return;
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-ngrok-path-'));
+    try {
+      const executable = path.join(root, 'ngrok');
+      await writeFile(executable, 'fixture', 'utf8');
+      await chmod(executable, 0o755).catch(() => undefined);
+      const canonical = await realpath(executable);
+      const runner = vi.fn(async (command: string, args: readonly string[]): Promise<string> => {
+        expect(command).toBe(canonical);
+        expect(args).toEqual(['version']);
+        return 'ngrok version 3.30.0';
+      });
+      await expect(resolveNgrokExecutable(platform, { PATH: root }, runner)).resolves.toBe(canonical);
+      expect(runner).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps the actionable ngrok diagnostic instead of replacing it with exit 1', () => {
@@ -67,6 +105,8 @@ describe('Remote MCP ngrok runtime', () => {
     expect(selectRecoverableStaleNgrokProcess([{ ...orphan, commandLine: `ngrok.exe http ${target}` }], target)).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan], 'http://127.0.0.1:60000')).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan, { ...orphan, processId: 13165 }], target)).toBeNull();
+    const posixOrphan = { ...orphan, processId: 20101, commandLine: `/opt/homebrew/bin/ngrok http ${target} --log=stdout --log-format=json` };
+    expect(selectRecoverableStaleNgrokProcess([posixOrphan], target)).toEqual(posixOrphan);
   });
 });
 

@@ -37,6 +37,7 @@ export function DashboardPage(props: DashboardPageProps): ReactElement {
       <WorkspacePanel
         selectedWorkspace={dashboard.selectedWorkspace}
         workspaces={props.workspaces}
+        hostPlatform={dashboard.hostPlatform}
         onAddWorkspace={props.onAddWorkspace}
       />
       <McpPanel

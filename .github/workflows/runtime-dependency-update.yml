@@ -1,0 +1,81 @@
+name: Runtime Dependency Update
+
+on:
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: runtime-dependency-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Check verified runtime releases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack & Setup pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Update verified runtime dependency manifest
+        run: node scripts/update-runtime-dependencies.mjs --write
+
+      - name: Stop when pins are already current
+        id: diff
+        shell: bash
+        run: |
+          if git diff --quiet -- apps/desktop/src/main/runtime-dependencies.json; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            git diff -- apps/desktop/src/main/runtime-dependencies.json
+          fi
+
+      - name: Install dependencies
+        if: steps.diff.outputs.changed == 'true'
+        run: corepack pnpm@10.15.0 install --frozen-lockfile
+
+      - name: Verify dependency contract before opening PR
+        if: steps.diff.outputs.changed == 'true'
+        shell: bash
+        run: |
+          corepack pnpm@10.15.0 --filter @lnwjud/desktop typecheck
+          corepack pnpm@10.15.0 test:packaging
+
+      - name: Open update PR against dev
+        if: steps.diff.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch="automation/runtime-dependencies-${GITHUB_RUN_ID}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add apps/desktop/src/main/runtime-dependencies.json
+          git commit -m 'chore: update verified runtime dependencies'
+          git push origin "$branch"
+          gh pr create \
+            --base dev \
+            --head "$branch" \
+            --title 'chore: update verified runtime dependencies' \
+            --body 'Automated runtime update. The updater selects exact OS/architecture assets, requires GitHub SHA-256 digests, cross-checks tunnel-client SHA256SUMS/provenance assets, and runs the packaging contract before opening this PR. Normal CI must still pass before merge.'

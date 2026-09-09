@@ -14,14 +14,18 @@ export function defaultTunnelProfileDirectory(
   platform: NodeJS.Platform = process.platform,
 ): string {
   if (platform === 'win32') {
-    return path.join(environment.APPDATA ?? path.join(homeDirectory, 'AppData', 'Roaming'), 'tunnel-client');
+    const appData = environment.APPDATA?.trim();
+    const base = appData !== undefined && path.win32.isAbsolute(appData)
+      ? appData
+      : path.win32.join(homeDirectory, 'AppData', 'Roaming');
+    return path.win32.join(base, 'tunnel-client');
   }
   const dataHome = platform === 'darwin'
-    ? path.join(homeDirectory, 'Library', 'Application Support')
-    : (environment.XDG_DATA_HOME?.trim() && path.isAbsolute(environment.XDG_DATA_HOME.trim())
+    ? path.posix.join(homeDirectory, 'Library', 'Application Support')
+    : (environment.XDG_DATA_HOME?.trim() && path.posix.isAbsolute(environment.XDG_DATA_HOME.trim())
       ? environment.XDG_DATA_HOME.trim()
-      : path.join(homeDirectory, '.local', 'share'));
-  return path.join(dataHome, 'lnwjud', 'tunnel-client');
+      : path.posix.join(homeDirectory, '.local', 'share'));
+  return path.posix.join(dataHome, 'lnwjud', 'tunnel-client');
 }
 
 export function legacyTunnelSecretPath(
@@ -29,7 +33,8 @@ export function legacyTunnelSecretPath(
   homeDirectory: string = os.homedir(),
   platform: NodeJS.Platform = process.platform,
 ): string {
-  return path.join(defaultTunnelProfileDirectory(environment, homeDirectory, platform), LEGACY_TUNNEL_SECRET_FILE);
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  return pathApi.join(defaultTunnelProfileDirectory(environment, homeDirectory, platform), LEGACY_TUNNEL_SECRET_FILE);
 }
 
 export function oauthTunnelSessionPath(
@@ -37,7 +42,8 @@ export function oauthTunnelSessionPath(
   homeDirectory: string = os.homedir(),
   platform: NodeJS.Platform = process.platform,
 ): string {
-  return path.join(defaultTunnelProfileDirectory(environment, homeDirectory, platform), OAUTH_TUNNEL_SESSION_FILE);
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  return pathApi.join(defaultTunnelProfileDirectory(environment, homeDirectory, platform), OAUTH_TUNNEL_SESSION_FILE);
 }
 
 export interface TunnelRuntimeCredential {

@@ -31,4 +31,20 @@ describe('resolveLnwjudDataPath', () => {
     expect(resolveLnwjudDataPath({ HOME: '/home/alice', XDG_DATA_HOME: '/mnt/data' }, undefined, 'linux')).toBe('/mnt/data/lnwjud');
     expect(resolveLnwjudDataPath({ HOME: '/home/alice', XDG_DATA_HOME: 'relative' }, undefined, 'linux')).toBe('/home/alice/.local/share/lnwjud');
   });
+
+  it('ignores relative explicit data-path overrides instead of resolving them against the process cwd', () => {
+    expect(resolveLnwjudDataPath({ LNWJUD_DATA_PATH: 'relative-data', APPDATA: 'C:\\Users\\u\\AppData\\Roaming' }, undefined, 'win32'))
+      .toBe('C:\\Users\\u\\AppData\\Roaming\\lnwjud');
+    expect(resolveLnwjudDataPath({ LNWJUD_DATA_PATH: 'relative-data', HOME: '/home/alice' }, undefined, 'linux'))
+      .toBe('/home/alice/.local/share/lnwjud');
+  });
+
+  it('ignores relative Electron appData values on every platform', () => {
+    expect(resolveLnwjudDataPath({ APPDATA: 'C:\\Users\\u\\AppData\\Roaming' }, 'relative-appdata', 'win32'))
+      .toBe('C:\\Users\\u\\AppData\\Roaming\\lnwjud');
+    expect(resolveLnwjudDataPath({ HOME: '/Users/alice' }, 'relative-appdata', 'darwin'))
+      .toBe('/Users/alice/Library/Application Support/lnwjud');
+    expect(resolveLnwjudDataPath({ HOME: '/home/alice' }, 'relative-appdata', 'linux'))
+      .toBe('/home/alice/.local/share/lnwjud');
+  });
 });

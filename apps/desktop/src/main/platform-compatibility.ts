@@ -19,6 +19,11 @@ export interface PlatformCompatibilityProfile extends PlatformProfile {
 export const WINDOWS_10_MIN_BUILD = 10_240;
 export const WINDOWS_11_MIN_BUILD = 22_000;
 
+export function supportedHostPlatform(platform: NodeJS.Platform): 'win32' | 'darwin' | 'linux' {
+  if (platform === 'win32' || platform === 'darwin' || platform === 'linux') return platform;
+  throw new Error(`Unsupported host platform: ${platform}`);
+}
+
 export function windowsBuildFromRelease(release: string): number | null {
   const parts = release.trim().split('.');
   if (parts.length < 3) return null;
