@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import type {
   ExtraMcpServerSettings,
   PermissionDecisionSetting,
@@ -55,9 +55,11 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
 
 export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider }: UserConfigPanelProps): ReactElement {
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
+  const persistedSettingsFingerprint = JSON.stringify(effectiveSettings);
   const isWindowsHost = hostPlatform === 'win32';
   const canAutoInstallPdfProvider = isWindowsHost && hostArch === 'x64';
   const [draft, setDraft] = useState<UserSettings>(effectiveSettings);
+  const lastPersistedSettingsFingerprint = useRef(persistedSettingsFingerprint);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -68,8 +70,10 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
   const [unrestrictedMessage, setUnrestrictedMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!dirty) setDraft(effectiveSettings);
-  }, [effectiveSettings, dirty]);
+    if (dirty || persistedSettingsFingerprint === lastPersistedSettingsFingerprint.current) return;
+    lastPersistedSettingsFingerprint.current = persistedSettingsFingerprint;
+    setDraft(effectiveSettings);
+  }, [dirty, effectiveSettings, persistedSettingsFingerprint]);
 
   function patch(next: Partial<UserSettings>): void {
     setDraft((previous) => ({ ...previous, ...next }));

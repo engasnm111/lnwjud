@@ -202,6 +202,53 @@ describe('LocalExtensionsService MCP bridge', () => {
     await service.close();
   });
 
+  it('applies live MCP settings and reconnects when launch configuration changes without recreating the service', async () => {
+    let liveSettings = DEFAULT_EXTENSIONS_SETTINGS;
+    let connects = 0;
+    let closes = 0;
+    const observedArgs: string[][] = [];
+    const factory: McpClientFactory = {
+      connect: async (config): Promise<McpClientSession> => {
+        connects += 1;
+        observedArgs.push([...(config.args ?? [])]);
+        return {
+          listTools: async (): Promise<readonly { name: string; description: string }[]> => [{ name: 'ping', description: 'Ping tool' }],
+          listResources: async (): Promise<readonly []> => [],
+          callTool: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'pong' }] }),
+          close: async (): Promise<void> => { closes += 1; },
+        };
+      },
+    };
+    const service = new LocalExtensionsService({
+      settings: liveSettings,
+      settingsProvider: (): typeof DEFAULT_EXTENSIONS_SETTINGS => liveSettings,
+      homeDir: process.cwd(),
+      appDataDir: process.cwd(),
+      clientFactory: factory,
+    });
+
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT' },
+    });
+    liveSettings = settingsWithMockServer();
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({
+      ok: true,
+      value: { connected: true, tools: [expect.objectContaining({ name: 'ping' })] },
+    });
+    expect(connects).toBe(1);
+
+    liveSettings = {
+      ...settingsWithMockServer(),
+      extraMcpServers: { mock: { command: 'node', args: ['mock-server-v2.js'] } },
+    };
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: true, value: { connected: true } });
+    expect(connects).toBe(2);
+    expect(closes).toBe(1);
+    expect(observedArgs).toEqual([['mock-server.js'], ['mock-server-v2.js']]);
+    await service.close();
+  });
+
   it('does not connect a child MCP server when the request is already cancelled', async () => {
     let connects = 0;
     const factory: McpClientFactory = {

@@ -450,6 +450,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
+    settingsJsonProvider: () => settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     workspaceRootProvider: async (): Promise<string | undefined> => {
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       return selected?.realRootPath;
@@ -1930,8 +1931,7 @@ function runtimeRestartRequired(previous: UserSettings, next: UserSettings): boo
     || previous.codexToolsEnabled !== next.codexToolsEnabled
     || previous.ponytailMode !== next.ponytailMode
     || JSON.stringify(previous.lspCommands) !== JSON.stringify(next.lspCommands)
-    || JSON.stringify(previous.customPermission) !== JSON.stringify(next.customPermission)
-    || JSON.stringify(previous.extensions) !== JSON.stringify(next.extensions);
+    || JSON.stringify(previous.customPermission) !== JSON.stringify(next.customPermission);
 }
 
 function readPermissionProfile(value: string | null): PermissionProfileName {

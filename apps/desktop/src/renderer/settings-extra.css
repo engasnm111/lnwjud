@@ -1163,6 +1163,7 @@
 
 .guided-tunnel-advanced {
   min-width: 0;
+  margin-top: 14px;
   border: 1px solid var(--settings-soft-border);
   border-radius: 13px;
   background: rgba(255, 255, 255, .018);
