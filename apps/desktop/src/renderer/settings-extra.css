@@ -541,6 +541,32 @@
   background: rgba(255, 255, 255, .025);
 }
 
+.ponytail-goal-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  align-items: start;
+}
+
+.ponytail-goal-copy {
+  min-width: 0;
+}
+
+.ponytail-goal-copy strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.ponytail-goal-select {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .ponytail-goal-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .settings-path-display {
   display: block;
   overflow-wrap: anywhere;

@@ -612,17 +612,17 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   {props.ponytailPolicyContext.activeGoals.length === 0 ? (
                     <div className="empty-setting-state">{props.locale === 'th' ? 'ไม่มี durable goal ที่ active ในโปรเจกต์นี้' : 'No active durable goals in this project.'}</div>
                   ) : (
-                    <div className="backup-list settings-backup-list">
+                    <div className="backup-list settings-backup-list ponytail-goal-list">
                       {props.ponytailPolicyContext.activeGoals.map((goal) => (
-                        <div className="backup-item" key={goal.goalId}>
-                          <div>
+                        <div className="backup-item ponytail-goal-item" key={goal.goalId}>
+                          <div className="ponytail-goal-copy">
                             <strong>{goal.goalKey}</strong>
                             <p className="hint">Effective: {goal.effectiveMode.toUpperCase()} · {ponytailPolicySourceLabel(props.locale, goal.effectiveSource)} · rev {goal.revision}</p>
                             {goal.editBlockedReason === null ? null : <p className="hint">{ponytailGoalEditBlockedLabel(props.locale, goal.editBlockedReason)}</p>}
                           </div>
                           <select
                             aria-label={`${goal.goalKey} Ponytail mode`}
-                            className="settings-select"
+                            className="settings-select ponytail-goal-select"
                             disabled={props.ponytailPolicyBusy || !goal.editable}
                             value={goal.mode}
                             onChange={(event) => { void props.onGoalPonytailModeChange(goal.goalId, goal.revision, event.target.value as PonytailModeOverride).catch(() => undefined); }}

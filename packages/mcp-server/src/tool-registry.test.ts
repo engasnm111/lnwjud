@@ -429,7 +429,7 @@ describe('MCP tool registry', () => {
     const services: McpApplicationServices = { search: {
       async searchText(_actor, _workspaceId, _request, signal) {
         return await new Promise<ReturnType<typeof ok>>((resolve) => {
-          settleBackend = () => { backendSettled = true; resolve(ok({ matches: [], truncated: false })); };
+          settleBackend = (): void => { backendSettled = true; resolve(ok({ matches: [], truncated: false })); };
           signal?.addEventListener('abort', () => { abortObserved = true; }, { once: true });
         });
       },
