@@ -26,6 +26,11 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Install cosign for tunnel provenance verification
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: 'v3.1.3'
+
       - name: Enable Corepack & Setup pnpm
         shell: pwsh
         run: |
@@ -49,6 +54,8 @@ jobs:
 
       - name: Build Windows Setup and Portable
         shell: pwsh
+        env:
+          LNWJUD_COSIGN_PATH: cosign
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 
       - name: Run packaged Windows Electron MCP and security smoke
