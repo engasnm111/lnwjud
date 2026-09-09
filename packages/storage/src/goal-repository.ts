@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   GoalStateError,
@@ -16,6 +16,7 @@ import {
   type GoalEvidence,
   type GoalPlan,
   type GoalPlanStep,
+  type GoalPonytailMode,
   type GoalRecord,
   type GoalLeaseRecoveryEvidence,
   type GoalRepository,
@@ -61,6 +62,7 @@ interface GoalRow {
   readonly blockers_json: string;
   readonly active_task_ids_json: string;
   readonly tracked_tasks_json: string | null;
+  readonly ponytail_mode: string | null;
   readonly lease_owner_client_id: string | null;
   readonly lease_owner_session_id: string | null;
   readonly lease_token_hash: string | null;
@@ -156,10 +158,10 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         this.database.connection.prepare(`
           INSERT INTO goals (
             id, workspace_id, goal_key, owner_client_id, objective, plan_json, status, revision,
-            current_phase, next_action, blockers_json, active_task_ids_json, tracked_tasks_json,
+            current_phase, next_action, blockers_json, active_task_ids_json, tracked_tasks_json, ponytail_mode,
             lease_owner_client_id, lease_owner_session_id, lease_token_hash, lease_duration_seconds, lease_generation, lease_activity_seq, lease_heartbeat_at, lease_expires_at,
             created_at, updated_at, terminal_summary, terminal_evidence_json, terminal_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, 'created', '', '[]', '[]', '[]', ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, NULL, NULL, NULL)
+          ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, 'created', '', '[]', '[]', '[]', ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, NULL, NULL, NULL)
         `).run(
           request.goalId,
           request.workspaceId,
@@ -167,6 +169,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           request.ownerClientId,
           request.objective,
           JSON.stringify(request.plan),
+          request.ponytailMode ?? null,
           request.ownerClientId,
           request.ownerSessionId,
           request.leaseTokenHash,
@@ -266,6 +269,74 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     return rows.map((row) => this.toGoalRecord(this.requireGoalRow(row)));
   }
 
+  /** Desktop-host administration view. MCP callers must continue to use owner-scoped list(). */
+  public async listWorkspaceGoalsForHost(workspaceId: string, limit = 20): Promise<readonly GoalRecord[]> {
+    const boundedLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
+    const rows = this.database.connection.prepare(`
+      SELECT * FROM goals WHERE workspace_id = ? AND status = 'active'
+      ORDER BY updated_at DESC, id DESC LIMIT ?
+    `).all(workspaceId, boundedLimit);
+    return rows.map((row) => this.toGoalRecord(this.requireGoalRow(row)));
+  }
+
+  /**
+   * Changes only the Ponytail override of an idle durable goal. A live lease,
+   * scheduled continuation, or fenced mutation wins over Desktop Settings.
+   * The policy change is a real goal revision/checkpoint so stale workers lose CAS.
+   */
+  public async setIdleGoalPonytailModeForHost(request: {
+    readonly goalId: string;
+    readonly expectedRevision: number;
+    readonly ponytailMode: GoalPonytailMode | null;
+    readonly now: string;
+  }): Promise<GoalRecord> {
+    return this.transaction(() => {
+      const current = this.requireById(request.goalId);
+      if (current.status !== 'active') throw new GoalStateError('terminal', 'Goal is already terminal');
+      if (current.revision !== request.expectedRevision) throw new GoalStateError('conflict', 'Goal revision is stale');
+      const nowMs = parseIso(request.now, 'request time');
+      if (current.leaseExpiresAt !== undefined && parseIso(current.leaseExpiresAt, 'lease expiry') > nowMs) {
+        throw new GoalStateError('conflict', 'Goal policy cannot be changed from Desktop while a live worker lease exists');
+      }
+      if (this.selectLiveScheduledContinuation(current.id) !== undefined) {
+        throw new GoalStateError('conflict', 'Goal policy cannot be changed from Desktop while a scheduled continuation is live');
+      }
+      const liveCall = this.database.connection.prepare(`
+        SELECT 1 AS present FROM goal_fenced_mutation_calls
+        WHERE goal_id = ? AND lease_generation = ? AND completed_at IS NULL AND expires_at > ?
+        LIMIT 1
+      `).get(current.id, current.leaseGeneration, request.now);
+      if (liveCall !== undefined) {
+        throw new GoalStateError('conflict', 'Goal policy cannot be changed from Desktop while a fenced mutation is live');
+      }
+      const currentMode = current.ponytailMode ?? null;
+      if (currentMode === request.ponytailMode) return current;
+
+      const revision = current.revision + 1;
+      const changed = this.database.connection.prepare(`
+        UPDATE goals
+        SET ponytail_mode = ?, revision = ?, updated_at = ?
+        WHERE id = ? AND status = 'active' AND revision = ?
+      `).run(request.ponytailMode, revision, request.now, current.id, current.revision);
+      if (Number(changed.changes) !== 1) throw new GoalStateError('conflict', 'Goal policy update lost the compare-and-swap race');
+      this.insertCheckpoint({
+        id: randomUUID(),
+        goalId: current.id,
+        revision,
+        currentPhase: current.currentPhase,
+        summary: `Desktop changed Ponytail goal policy to ${request.ponytailMode ?? 'inherit'}`,
+        stepUpdates: [],
+        nextAction: current.nextAction,
+        blockers: current.blockers,
+        evidence: [{ kind: 'note', value: `lnwjud:desktop-ponytail-policy:${request.ponytailMode ?? 'inherit'}` }],
+        activeTaskIds: current.activeTaskIds,
+        trackedTasks: current.trackedTasks ?? [],
+        createdAt: request.now,
+      });
+      return this.requireById(current.id);
+    });
+  }
+
   public async checkpoint(request: CheckpointGoalRecordRequest): Promise<GoalRecord> {
     return this.transaction(() => {
       const current = this.requireById(request.goalId);
@@ -285,7 +356,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           : minIso(normalLeaseExpiresAt, liveContinuation.pending_due_at ?? liveContinuation.due_at);
       const changed = this.database.connection.prepare(`
         UPDATE goals
-        SET plan_json = ?, revision = ?, current_phase = ?, next_action = ?, blockers_json = ?, active_task_ids_json = ?, tracked_tasks_json = ?,
+        SET plan_json = ?, revision = ?, current_phase = ?, next_action = ?, blockers_json = ?, active_task_ids_json = ?, tracked_tasks_json = ?, ponytail_mode = ?,
             lease_owner_client_id = ?, lease_owner_session_id = ?, lease_token_hash = ?, lease_duration_seconds = ?, lease_heartbeat_at = ?, lease_expires_at = ?,
             lease_activity_seq = lease_activity_seq + 1, updated_at = ?
         WHERE id = ? AND revision = ? AND lease_token_hash = ? AND status = 'active'
@@ -297,6 +368,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         JSON.stringify(request.blockers),
         JSON.stringify(activeTaskIds),
         JSON.stringify(trackedTasks),
+        request.ponytailMode ?? null,
         request.releaseLease ? null : request.ownerClientId,
         request.releaseLease ? null : request.ownerSessionId,
         request.releaseLease ? null : request.leaseTokenHash,
@@ -2086,6 +2158,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       blockers,
       activeTaskIds,
       trackedTasks,
+      ...(row.ponytail_mode === null ? {} : { ponytailMode: parseGoalPonytailMode(row.ponytail_mode) }),
       ...(row.lease_owner_client_id === null ? {} : { leaseOwnerClientId: row.lease_owner_client_id }),
       ...(row.lease_owner_session_id === null ? {} : { leaseOwnerSessionId: row.lease_owner_session_id }),
       ...(row.lease_token_hash === null ? {} : { leaseTokenHash: row.lease_token_hash }),
@@ -2126,7 +2199,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     if (!isRecord(value)) throw corrupt('Goal row is invalid');
     const requiredStrings = ['id','workspace_id','goal_key','owner_client_id','objective','plan_json','status','current_phase','next_action','blockers_json','active_task_ids_json','created_at','updated_at'];
     if (!requiredStrings.every((key) => typeof value[key] === 'string') || typeof value.revision !== 'number') throw corrupt('Goal row fields are invalid');
-    const nullableStrings = ['tracked_tasks_json','lease_owner_client_id','lease_owner_session_id','lease_token_hash','lease_heartbeat_at','lease_expires_at','terminal_summary','terminal_evidence_json','terminal_at'];
+    const nullableStrings = ['tracked_tasks_json','ponytail_mode','lease_owner_client_id','lease_owner_session_id','lease_token_hash','lease_heartbeat_at','lease_expires_at','terminal_summary','terminal_evidence_json','terminal_at'];
     if (!nullableStrings.every((key) => value[key] === null || typeof value[key] === 'string')) throw corrupt('Goal nullable fields are invalid');
     if (value.lease_duration_seconds !== null && typeof value.lease_duration_seconds !== 'number') throw corrupt('Goal lease duration is invalid');
     if (typeof value.lease_generation !== 'number' || !Number.isInteger(value.lease_generation) || value.lease_generation < 0) throw corrupt('Goal lease generation is invalid');
@@ -2479,6 +2552,11 @@ function parseGoalStatus(value: string): GoalStatus {
   throw corrupt('Goal status is invalid');
 }
 
+function parseGoalPonytailMode(value: string): GoalPonytailMode {
+  if (value === 'off' || value === 'lite' || value === 'full' || value === 'ultra') return value;
+  throw corrupt('Goal Ponytail mode is invalid');
+}
+
 function assertCompletionReady(goal: GoalRecord, status: FinishGoalRecordRequest['status']): void {
   if (status !== 'completed') return;
   const unfinishedSteps = goal.plan.steps.filter((step) => step.status !== 'completed');
@@ -2561,7 +2639,7 @@ function assessStaleGoalLeaseRecovery(
   now: string,
   hasLiveScheduledContinuation: boolean,
 ): { readonly recover: boolean; readonly retryAfterSeconds?: number } {
-  if (!hasLiveScheduledContinuation || evidence === undefined || !evidence.trustworthy) return { recover: false };
+  if (evidence === undefined || !evidence.trustworthy) return { recover: false };
   if (evidence.leaseGeneration !== goal.leaseGeneration || evidence.leaseActivitySeq !== goal.leaseActivitySeq) return { recover: false };
   if (evidence.liveFencedCallCount !== 0) return { recover: false };
   const nowMs = parseIso(now, 'request time');
@@ -2577,6 +2655,13 @@ function assessStaleGoalLeaseRecovery(
   });
   if (!allBlockingInactive) return { recover: false };
 
+  // A lease without a live scheduled continuation has no rolling watchdog to
+  // protect. Trustworthy zero-worker evidence is enough to reclaim it now,
+  // rather than making the next real worker wait for an arbitrary lease TTL.
+  if (!hasLiveScheduledContinuation) return { recover: true };
+
+  // A live rolling watchdog may legitimately be between tool calls. Preserve
+  // the existing inactivity grace before rotating that worker's generation.
   const heartbeatAgeSeconds = Math.floor((nowMs - parseIso(goal.leaseHeartbeatAt, 'goal lease heartbeat')) / 1000);
   if (heartbeatAgeSeconds < RUN_GOAL_STALE_RECOVERY_GRACE_SECONDS) {
     return { recover: false, retryAfterSeconds: RUN_GOAL_STALE_RECOVERY_GRACE_SECONDS - heartbeatAgeSeconds };

@@ -113,6 +113,8 @@ export interface McpToolContext {
   readonly contextEconomy: ContextEconomyRuntime;
   /** Dynamic registry exposure predicate used by discovery/ranking helpers. */
   readonly isToolExposed?: (name: string) => boolean;
+  /** Session-scoped Ponytail suppression owned by the current ToolRegistry/transport ledger. */
+  readonly setPonytailSessionSuppressed?: (workspaceId: string, goalId: string | undefined, suppressed: boolean) => Promise<boolean>;
 }
 
 export interface ToolConfig<T extends z.ZodType> {

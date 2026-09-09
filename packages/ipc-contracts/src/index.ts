@@ -42,6 +42,9 @@ export const ipcChannels = {
   setTunnelClientPath: 'lnwjud:set-tunnel-client-path',
   setLocale: 'lnwjud:set-locale',
   setUserSettings: 'lnwjud:set-user-settings',
+  getPonytailPolicyContext: 'lnwjud:get-ponytail-policy-context',
+  setWorkspacePonytailMode: 'lnwjud:set-workspace-ponytail-mode',
+  setGoalPonytailMode: 'lnwjud:set-goal-ponytail-mode',
   chooseTunnelClientPath: 'lnwjud:choose-tunnel-client-path',
   configureTunnelProfile: 'lnwjud:configure-tunnel-profile',
   openExternalSetupPage: 'lnwjud:open-external-setup-page',
@@ -90,6 +93,29 @@ export interface DestructiveDeletePolicy {
   readonly approvals: Readonly<Record<DestructiveApprovalKey, boolean>>;
 }
 export type UiLocale = 'th' | 'en';
+export type PonytailMode = 'off' | 'lite' | 'full' | 'ultra';
+export type PonytailModeOverride = PonytailMode | 'inherit';
+export type PonytailPolicySource = 'goal' | 'workspace' | 'global' | 'default';
+
+export interface PonytailGoalPolicySummary {
+  readonly goalId: string;
+  readonly goalKey: string;
+  readonly mode: PonytailModeOverride;
+  readonly revision: number;
+  readonly effectiveMode: PonytailMode;
+  readonly effectiveSource: PonytailPolicySource;
+  readonly editable: boolean;
+  readonly editBlockedReason: 'live_lease' | 'live_continuation' | 'live_mutation' | null;
+}
+
+export interface PonytailPolicyContext {
+  readonly workspaceId: string;
+  readonly globalMode: PonytailMode;
+  readonly workspaceMode: PonytailModeOverride;
+  readonly effectiveWorkspaceMode: PonytailMode;
+  readonly effectiveWorkspaceSource: PonytailPolicySource;
+  readonly activeGoals: readonly PonytailGoalPolicySummary[];
+}
 
 export type ToolOrigin = 'lnwjud' | 'external_mcp';
 export type ToolCategory =
@@ -259,6 +285,7 @@ export interface UserSettings {
   readonly lspCommands: Readonly<Record<string, string>>;
   readonly mcpHttpPort: number;
   readonly codexToolsEnabled: boolean;
+  readonly ponytailMode: 'off' | 'lite' | 'full' | 'ultra';
   readonly updateAutoCheck: boolean;
   readonly updateCheckOnStartup: boolean;
   readonly updateIntervalMinutes: number;
@@ -849,6 +876,22 @@ export interface SetUserSettingsRequest {
   readonly settings: UserSettings;
 }
 
+export interface GetPonytailPolicyContextRequest {
+  readonly workspaceId: string;
+}
+
+export interface SetWorkspacePonytailModeRequest {
+  readonly workspaceId: string;
+  readonly mode: PonytailModeOverride;
+}
+
+export interface SetGoalPonytailModeRequest {
+  readonly workspaceId: string;
+  readonly goalId: string;
+  readonly expectedRevision: number;
+  readonly mode: PonytailModeOverride;
+}
+
 export interface ConfigureTunnelProfileRequest {
   readonly tunnelId: string;
 }
@@ -930,6 +973,9 @@ export interface IpcRequestMap {
   readonly [ipcChannels.setTunnelClientPath]: SetTunnelClientPathRequest;
   readonly [ipcChannels.setLocale]: SetLocaleRequest;
   readonly [ipcChannels.setUserSettings]: SetUserSettingsRequest;
+  readonly [ipcChannels.getPonytailPolicyContext]: GetPonytailPolicyContextRequest;
+  readonly [ipcChannels.setWorkspacePonytailMode]: SetWorkspacePonytailModeRequest;
+  readonly [ipcChannels.setGoalPonytailMode]: SetGoalPonytailModeRequest;
   readonly [ipcChannels.chooseTunnelClientPath]: undefined;
   readonly [ipcChannels.configureTunnelProfile]: ConfigureTunnelProfileRequest;
   readonly [ipcChannels.openExternalSetupPage]: OpenExternalSetupPageRequest;
@@ -994,6 +1040,9 @@ export interface IpcResponseMap {
   readonly [ipcChannels.setTunnelClientPath]: { readonly clientPath: string };
   readonly [ipcChannels.setLocale]: { readonly locale: UiLocale };
   readonly [ipcChannels.setUserSettings]: { readonly settings: UserSettings; readonly restartRequired: boolean };
+  readonly [ipcChannels.getPonytailPolicyContext]: PonytailPolicyContext;
+  readonly [ipcChannels.setWorkspacePonytailMode]: PonytailPolicyContext;
+  readonly [ipcChannels.setGoalPonytailMode]: PonytailPolicyContext;
   readonly [ipcChannels.chooseTunnelClientPath]: { readonly clientPath: string | null };
   readonly [ipcChannels.configureTunnelProfile]: { readonly configured: boolean; readonly profilePath: string };
   readonly [ipcChannels.openExternalSetupPage]: { readonly opened: true };
@@ -1060,6 +1109,9 @@ export interface LnwjudApi {
   setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<IpcResponseMap[typeof ipcChannels.setTunnelClientPath]>;
   setLocale(request: SetLocaleRequest): Promise<IpcResponseMap[typeof ipcChannels.setLocale]>;
   setUserSettings(request: SetUserSettingsRequest): Promise<IpcResponseMap[typeof ipcChannels.setUserSettings]>;
+  getPonytailPolicyContext(request: GetPonytailPolicyContextRequest): Promise<IpcResponseMap[typeof ipcChannels.getPonytailPolicyContext]>;
+  setWorkspacePonytailMode(request: SetWorkspacePonytailModeRequest): Promise<IpcResponseMap[typeof ipcChannels.setWorkspacePonytailMode]>;
+  setGoalPonytailMode(request: SetGoalPonytailModeRequest): Promise<IpcResponseMap[typeof ipcChannels.setGoalPonytailMode]>;
   chooseTunnelClientPath(): Promise<IpcResponseMap[typeof ipcChannels.chooseTunnelClientPath]>;
   configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise<IpcResponseMap[typeof ipcChannels.configureTunnelProfile]>;
   openExternalSetupPage(request: OpenExternalSetupPageRequest): Promise<IpcResponseMap[typeof ipcChannels.openExternalSetupPage]>;

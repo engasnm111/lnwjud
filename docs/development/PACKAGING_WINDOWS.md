@@ -48,7 +48,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 - The Windows capability bridge is copied as an extra resource.
 - The generated `lnwjud-mcp-stdio.cmd` has one canonical packaged copy beside `lnwjud.exe` for local stdio use. POSIX packages use the matching executable shell launcher. The package also includes the hash-bound native Windows secret migrator for one-time legacy data migration; no PowerShell secret runtime is shipped.
 - Pinned ripgrep is shipped under `resources/runtime-tools/ripgrep`; both Desktop and the stdio launcher resolve this private `rg.exe` before any system PATH copy.
-- The repository's `lnwjud-scheduled-continuation` skill is shipped under `resources/agent-skills` in both Setup/NSIS and Portable. The runtime adds that bundled root to `skills_list` without replacing machine-global or active-workspace Cursor, Claude, Agents, Codex, Codex-plugin, GitHub workspace, or configured skill roots.
+- The repository's `lnwjud-scheduled-continuation` skill plus the six pinned Ponytail skills (`ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`) are shipped as sibling directories under `resources/agent-skills` in both Setup/NSIS and Portable. Their source-qualified bundled identities remain distinct from same-name machine-global or active-workspace Cursor, Claude, Agents, Codex, Codex-plugin, GitHub workspace, or configured skill roots; Native Ponytail activation accepts only the exact bundled primary/review identities.
 - The launcher never falls back to a system Node runtime; a missing packaged Electron executable fails closed.
 - Generated stdio runtime files are ignored by Git and must be regenerated from source for each build/release.
 
@@ -104,7 +104,7 @@ Use a clean Windows 10/11 x64 account or VM with no repository checkout:
 5. Confirm the loopback MCP endpoint auto-starts and the displayed endpoint is usable by a local MCP client.
 6. Run Doctor and confirm SQLite/platform dependency checks are reported truthfully.
 7. If stdio/Secure Tunnel is part of the smoke test, verify `lnwjud-mcp-stdio.cmd` works on the clean machine **without** installing system Node.js.
-8. Call `skills_list` and confirm it includes bundled `lnwjud-scheduled-continuation`, a test machine-global skill, and a test active-workspace skill; call `skills_read` with each source-qualified ID. Verify the same contract through Desktop HTTP MCP and the packaged stdio launcher.
+8. Call `skills_list` and confirm it includes bundled `lnwjud-scheduled-continuation` plus all six sibling Ponytail skills, a test machine-global skill, and a test active-workspace skill; call `skills_read` with each source-qualified ID. With Ponytail FULL enabled, also verify code mutation is blocked before exact bundled primary load, succeeds after `bundled:agent-skills/ponytail` loads even when matching returns no result, and rejects a same-name workspace skill as activation evidence. Verify the same contract through Desktop HTTP MCP and the packaged stdio launcher.
 9. Close the app, uninstall it from Windows Settings, and confirm the application binaries are removed while user data remains according to `deleteAppDataOnUninstall: false`.
 10. Launch `lnwjud-Portable-*.exe` without installing it and repeat dashboard/workspace/Doctor/tunnel/skill smoke checks.
 11. Confirm no visible CMD/PowerShell window flashes during normal internal operations. Short-lived hidden `conhost.exe` processes are acceptable; sustained high CPU is not.

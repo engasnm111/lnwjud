@@ -2,6 +2,7 @@ export type GoalStatus = 'active' | 'completed' | 'failed' | 'blocked' | 'cancel
 export type GoalTerminalStatus = 'completed' | 'failed' | 'blocked';
 export type GoalStepStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
 export type GoalEvidenceKind = 'path' | 'hash' | 'task' | 'note';
+export type GoalPonytailMode = 'off' | 'lite' | 'full' | 'ultra';
 
 export type GoalTaskProvider = 'process' | 'codex' | 'shell' | 'legacy_auto';
 export type GoalTrackedTaskRole = 'blocking_job' | 'supporting_service';
@@ -91,6 +92,7 @@ export interface GoalRecord {
   readonly blockers: readonly string[];
   readonly activeTaskIds: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly ponytailMode?: GoalPonytailMode;
   readonly leaseOwnerClientId?: string;
   readonly leaseOwnerSessionId?: string;
   readonly leaseTokenHash?: string;
@@ -143,6 +145,7 @@ export interface AcquireGoalRecordRequest {
   readonly ownerSessionId: string;
   readonly objective?: string;
   readonly plan?: GoalPlan;
+  readonly ponytailMode?: GoalPonytailMode;
   readonly leaseTokenHash: string;
   readonly leaseSeconds: number;
   readonly recoveryEvidence?: GoalLeaseRecoveryEvidence;
@@ -172,6 +175,7 @@ export interface CheckpointGoalRecordRequest {
   readonly evidence: readonly GoalEvidence[];
   readonly activeTaskIds: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly ponytailMode: GoalPonytailMode | null;
   readonly releaseLease: boolean;
   readonly now: string;
 }

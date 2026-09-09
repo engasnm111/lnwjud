@@ -26,6 +26,12 @@ describe('LocalExtensionsService MCP bridge', () => {
         [path.join(home, '.agents', 'skills', 'global-skill'), 'global-skill'],
         [path.join(workspace, '.agents', 'skills', 'workspace-skill'), 'workspace-skill'],
         [path.join(bundled, 'lnwjud-scheduled-continuation'), 'lnwjud-scheduled-continuation'],
+        [path.join(bundled, 'ponytail'), 'ponytail'],
+        [path.join(bundled, 'ponytail-review'), 'ponytail-review'],
+        [path.join(bundled, 'ponytail-audit'), 'ponytail-audit'],
+        [path.join(bundled, 'ponytail-debt'), 'ponytail-debt'],
+        [path.join(bundled, 'ponytail-gain'), 'ponytail-gain'],
+        [path.join(bundled, 'ponytail-help'), 'ponytail-help'],
       ] as const) {
         await mkdir(skillRoot, { recursive: true });
         await writeFile(path.join(skillRoot, 'SKILL.md'), `---\nname: ${name}\ndescription: Use when testing ${name}\n---\n# ${name}\n`, 'utf8');
@@ -43,8 +49,24 @@ describe('LocalExtensionsService MCP bridge', () => {
       expect(listed.value.skills.map((skill) => skill.name).sort()).toEqual([
         'global-skill',
         'lnwjud-scheduled-continuation',
+        'ponytail',
+        'ponytail-audit',
+        'ponytail-debt',
+        'ponytail-gain',
+        'ponytail-help',
+        'ponytail-review',
         'workspace-skill',
       ]);
+      for (const skillName of ['ponytail', 'ponytail-review', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help'] as const) {
+        const skill = listed.value.skills.find((entry) => entry.name === skillName);
+        expect(skill).toMatchObject({
+          id: `bundled:agent-skills/${skillName}`,
+          source: 'bundled:agent-skills',
+          trustTier: 'bundled',
+        });
+        await expect(service.readSkill({ skillId: `bundled:agent-skills/${skillName}` }))
+          .resolves.toMatchObject({ ok: true, value: { id: `bundled:agent-skills/${skillName}`, name: skillName, trustTier: 'bundled' } });
+      }
       await expect(service.readSkill({ skillId: 'lnwjud-scheduled-continuation' }))
         .resolves.toMatchObject({ ok: true, value: { name: 'lnwjud-scheduled-continuation' } });
       await service.close();

@@ -39,6 +39,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   lspCommands: {},
   mcpHttpPort: 18_765,
   codexToolsEnabled: false,
+  ponytailMode: 'off',
   updateAutoCheck: true,
   updateCheckOnStartup: true,
   updateIntervalMinutes: 30,
@@ -340,6 +341,27 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
             subtitle={locale === 'th' ? 'ตั้งค่า External MCP โดยไม่ต้องแก้ JSON เอง' : 'Configure external MCP without editing JSON'}
             action={<button type="button" className="btn-save-gold" onClick={addServer}>+ {locale === 'th' ? 'เพิ่ม MCP Server' : 'Add MCP Server'}</button>}
           />
+          <div className="setting-field" data-settings-focus="ponytail-policy" tabIndex={-1}>
+            <label className="field-label" htmlFor="ponytail-mode">{locale === 'th' ? 'Ponytail coding policy' : 'Ponytail coding policy'}</label>
+            <select
+              id="ponytail-mode"
+              className="settings-select"
+              value={draft.ponytailMode}
+              onChange={(event) => {
+                const value = event.target.value;
+                patch({ ponytailMode: value === 'lite' || value === 'full' || value === 'ultra' ? value : 'off' });
+              }}
+            >
+              <option value="off">{locale === 'th' ? 'Off — ปิด (ค่าเริ่มต้น)' : 'Off — disabled (default)'}</option>
+              <option value="lite">Lite</option>
+              <option value="full">Full</option>
+              <option value="ultra">Ultra</option>
+            </select>
+            <p className="hint">{locale === 'th'
+              ? 'เมื่อเปิด งานเขียนโค้ดต้องโหลด bundled Ponytail ของ lnwjud ก่อนแก้ source/config จริง โดยไม่ใช้ skill ชื่อซ้ำจาก workspace หรือ user แทน; Full/Ultra บังคับ Ponytail Review ให้ทัน code mutation ล่าสุดก่อนปิด durable goal เป็น completed'
+              : 'When enabled, coding mutations must load lnwjud’s bundled Ponytail before changing source/config files; same-named workspace or user skills cannot substitute it. Full/Ultra require a current Ponytail Review before a durable goal can complete.'}</p>
+            <p className="hint">{locale === 'th' ? 'ค่าใหม่นี้ใช้หลัง Restart Local MCP / Tunnel หรือเปิดโปรแกรมใหม่' : 'Restart Local MCP / Tunnel or the app after changing this setting.'}</p>
+          </div>
           <div className="setting-grid two-col">
             <div className="setting-field">
               <label className="field-label" htmlFor="extension-mode">External MCP mode</label>

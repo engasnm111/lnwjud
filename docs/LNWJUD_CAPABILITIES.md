@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.60.0 (มีทั้งหมด 232 definitions; advertise 225 tools โดยปริยายก่อนใช้ per-tool override และครบ 232 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.60.0 (มีทั้งหมด 233 definitions; advertise 226 tools โดยปริยายก่อนใช้ per-tool override และครบ 233 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
@@ -21,6 +21,7 @@ lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggr
 - ใช้ recipe, dry-run, execution plan, route intent, dev_context และ affected-test context
 - ควบคุม browser/UI/Windows/media/Office/scheduler ผ่าน capability facade
 - ต่อ child MCP servers และ local skills ผ่าน bridge
+- มี Native Ponytail coding policy แบบ `OFF / LITE / FULL / ULTRA` โดยค่าเริ่มต้นเป็น OFF, resolve ตาม `Current Goal > Workspace > Global`, บังคับ exact bundled `ponytail` ก่อน code mutation เมื่อเปิดใช้งาน และใน FULL/ULTRA ต้องมี bundled `ponytail-review` ที่สดกับ code mutation ล่าสุดก่อนปิด durable coding goal; การหา skill ด้วย `skill_match` ไม่ใช่ dependency ของเส้นทางนี้ และ Full Bypass ไม่ข้าม correctness gate
 - มี task/delegation/session/checkpoint/handoff สำหรับงานต่อเนื่องและหลาย agent
 - มี Permission v2, lifecycle hooks, audit, Live Logs v2, telemetry, Context Ledger/diff/dedupe, recovery และ capability discovery
 - รองรับ visual adapter สำหรับ screenshot, DOM/layout, Excel และ PDF

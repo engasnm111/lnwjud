@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>232 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, and extensibility; 225 are advertised by default and all 232 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>233 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, indexing, observability, and extensibility; 226 are advertised by default and all 233 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-232%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-233%20tools-6f42c1" />
 </p>
 
 ---
@@ -31,6 +31,7 @@
 
 - **External MCP compatibility:** child MCP servers auto-negotiate their protocol version, covering legacy/2025-era servers such as Serena as well as current MCP `2026-07-28`, while lnwjud's own inbound MCP contract remains unchanged.
 - **Cross-platform hardening:** Windows, macOS, and Linux now use explicit host/architecture capability gates instead of Windows-shaped fallbacks. Unsupported OS/architecture combinations fail closed.
+- **Native Ponytail coding policy:** optional `OFF / LITE / FULL / ULTRA` modes default to OFF, resolve `Current Goal > Workspace > Global`, and use exact bundled Ponytail skills rather than relying on discovery ranking. Active modes require the exact bundled primary skill before code mutation; FULL/ULTRA durable coding goals additionally require a fresh bundled Ponytail review before completion. Full Bypass does not bypass this correctness gate, while explicit session suppression remains available without changing persisted policy.
 - **macOS package verification:** release checks stage the app from the actual DMG, launch it through macOS LaunchServices, verify nested code signing, and distinguish Developer ID Team-ID requirements from development ad-hoc signing.
 - **Runtime dependencies:** target-native assets are selected by exact `(platform, architecture)` tuples. Current pins include OpenAI `tunnel-client 0.0.14`, `ripgrep 15.2.0`, and Windows Poppler `26.07.0-0`, with checksum/provenance/version checks before packaging.
 - **Remote MCP / ngrok:** ngrok discovery now works across Windows, macOS, and Linux. Automatic installation is shown only when the host has a supported installer path; unsupported installer actions are hidden instead of pretending they work.
@@ -66,7 +67,7 @@ See [Install lnwjud on Linux](docs/INSTALL_LINUX.md) for AppImage/DEB installati
 
 ## What can lnwjud do?
 
-lnwjud exposes **232 first-party tool definitions** through one local runtime and MCP gateway. The default advertised set is 225; the remaining Codex delegation and Agent Swarm definitions are opt-in.
+lnwjud exposes **233 first-party tool definitions** through one local runtime and MCP gateway. The default advertised set is 226; the remaining Codex delegation and Agent Swarm definitions are opt-in.
 
 | Area | Examples |
 | --- | --- |

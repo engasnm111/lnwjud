@@ -5,6 +5,7 @@ import { createModernTasksTransport } from './modern-tasks-transport.js';
 import { SetOfMarksObservationStore } from './set-of-marks-service.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard } from './run-budget.js';
+import { PonytailActivationLedger } from './ponytail-runtime.js';
 import { createStdioRequestScope } from './request-scope.js';
 
 export interface McpStdioOptions extends McpServerOptions {
@@ -27,11 +28,12 @@ export function startMcpStdio(options: McpStdioOptions): StdioServerHandle {
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
+  const ponytailActivationLedger = options.ponytailActivationLedger ?? new PonytailActivationLedger();
   const requestScope = options.requestScope ?? createStdioRequestScope();
   const modernTasks = new ModernTasksProtocol(options.services, { actor: options.actor });
   const transport = createModernTasksTransport(new StdioServerTransport(), modernTasks);
   return serveStdio(
-    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, legacyTasksProtocol: false, requestScope }),
+    () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, ponytailActivationLedger, legacyTasksProtocol: false, requestScope }),
     { legacy: 'reject', onerror: options.onError ?? writeStdioDiagnostic, transport },
   );
 }

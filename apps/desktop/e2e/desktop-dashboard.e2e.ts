@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
+import { settleFirstRunAndOpenHome } from './first-run-helpers.js';
 import { chromium, expect, test, type Page } from '@playwright/test';
 import { AuditService, redactActivityTargetDetail } from '@lnwjud/audit';
 import { SqliteAuditRepository, SqliteDatabase } from '@lnwjud/storage';
@@ -58,24 +59,9 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     if (page === undefined) throw new Error('Electron did not create a renderer page');
     diagnosticPage = page;
 
-    const firstRunDialog = page.getByRole('dialog', { name: /ตั้งค่า ChatGPT ให้ใช้ lnwjud|Set up ChatGPT to use lnwjud/ });
-    await expect.poll(async () => {
-      if (await firstRunDialog.isVisible()) return true;
-      if (await page.getByRole('heading', { name: 'Doctor', exact: true }).isVisible()) {
-        const failures = await page.evaluate(async () => {
-          const coreIds = new Set(['os', 'database', 'executable_ripgrep', 'mcp-port']);
-          const report = await window.lnwjud.runDoctor();
-          return report.checks.filter((check) => coreIds.has(check.id) && (check.status === 'fail' || check.status === 'unknown'))
-            .map(({ id, status, message, detail, durationMs }) => ({ id, status, message, detail, durationMs }));
-        });
-        if (failures.length > 0) throw new Error(`Startup prerequisites failed before onboarding: ${JSON.stringify(failures)}`);
-      }
-      return false;
-    }, { timeout: 30_000, intervals: [100, 250, 500] }).toBe(true);
-    await page.getByRole('button', { name: /ไว้ทีหลัง|Set up later/ }).click({ timeout: 30_000 });
-    await expect(firstRunDialog).toBeHidden();
+    await settleFirstRunAndOpenHome(page);
 
-    await expect(page.getByRole('heading', { name: 'ศูนย์ควบคุม Agent' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: /^(ศูนย์ควบคุม Agent|Agent Control Center)$/ })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('mcp-status')).toHaveText(/Agent พร้อมทำงาน|Agent ready/, { timeout: 30_000 });
     await expect(page.getByTestId('mcp-endpoint')).toContainText('http://127.0.0.1:', { timeout: 30_000 });
      await page.setViewportSize({ width: 800, height: 600 });

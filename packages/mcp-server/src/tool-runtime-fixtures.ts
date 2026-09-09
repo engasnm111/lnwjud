@@ -115,6 +115,7 @@ export const CORE_TOOL_RUNTIME_FIXTURES = {
   wsl_fs: service({ operation: 'status' }, 'capabilities.wsl_fs'),
   skills_list: service({}, 'extensions.listSkills'),
   skills_read: service({ skillId: 'skill-1' }, 'extensions.readSkill'),
+  ponytail_session: service({ workspaceId, suppressed: true }, 'file.readFile'),
   mcp_list: service({}, 'extensions.listMcpServers'),
   mcp_describe: service({ server: 'server-1' }, 'extensions.describeMcpServer'),
   mcp_call: service({ server: 'server-1', tool: 'noop', arguments: {}, userConfirmed: true }, 'extensions.callMcpTool'),

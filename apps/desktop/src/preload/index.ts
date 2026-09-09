@@ -40,6 +40,10 @@ import {
   type PdfProviderInstallResult,
   type McpConnectionStatus,
   type PermissionProfileName,
+  type PonytailPolicyContext,
+  type GetPonytailPolicyContextRequest,
+  type SetWorkspacePonytailModeRequest,
+  type SetGoalPonytailModeRequest,
   type ProcessSummary,
   type RestoreCheckpointRequest,
   type RestoreRecoveryItemRequest,
@@ -344,6 +348,7 @@ function userSettings(value: unknown): UserSettings {
     lspCommands: stringRecordResponse(value.lspCommands),
     mcpHttpPort: integerField(value, 'mcpHttpPort'),
     codexToolsEnabled: booleanField(value, 'codexToolsEnabled'),
+    ponytailMode: ponytailModeResponse(value.ponytailMode),
     updateAutoCheck: booleanField(value, 'updateAutoCheck'),
     updateCheckOnStartup: booleanField(value, 'updateCheckOnStartup'),
     updateIntervalMinutes: integerField(value, 'updateIntervalMinutes'),
@@ -378,6 +383,47 @@ function userSettings(value: unknown): UserSettings {
 function permissionDecisionResponse(value: unknown): 'ALLOW' | 'ASK' | 'DENY' {
   if (value === 'ALLOW' || value === 'ASK' || value === 'DENY') return value;
   throw new Error('Invalid IPC response');
+}
+
+function ponytailModeResponse(value: unknown): 'off' | 'lite' | 'full' | 'ultra' {
+  if (value === 'off' || value === 'lite' || value === 'full' || value === 'ultra') return value;
+  throw new Error('Invalid IPC response');
+}
+
+function ponytailModeOverrideResponse(value: unknown): 'inherit' | 'off' | 'lite' | 'full' | 'ultra' {
+  if (value === 'inherit') return value;
+  return ponytailModeResponse(value);
+}
+
+function ponytailPolicySourceResponse(value: unknown): 'goal' | 'workspace' | 'global' | 'default' {
+  if (value === 'goal' || value === 'workspace' || value === 'global' || value === 'default') return value;
+  throw new Error('Invalid IPC response');
+}
+
+function ponytailPolicyContext(value: unknown): PonytailPolicyContext {
+  if (!isRecord(value) || !Array.isArray(value.activeGoals)) throw new Error('Invalid IPC response');
+  return {
+    workspaceId: stringField(value, 'workspaceId'),
+    globalMode: ponytailModeResponse(value.globalMode),
+    workspaceMode: ponytailModeOverrideResponse(value.workspaceMode),
+    effectiveWorkspaceMode: ponytailModeResponse(value.effectiveWorkspaceMode),
+    effectiveWorkspaceSource: ponytailPolicySourceResponse(value.effectiveWorkspaceSource),
+    activeGoals: value.activeGoals.map((goal) => {
+      if (!isRecord(goal)) throw new Error('Invalid IPC response');
+      const blocked = goal.editBlockedReason;
+      if (blocked !== null && blocked !== 'live_lease' && blocked !== 'live_continuation' && blocked !== 'live_mutation') throw new Error('Invalid IPC response');
+      return {
+        goalId: stringField(goal, 'goalId'),
+        goalKey: stringField(goal, 'goalKey'),
+        mode: ponytailModeOverrideResponse(goal.mode),
+        revision: integerField(goal, 'revision'),
+        effectiveMode: ponytailModeResponse(goal.effectiveMode),
+        effectiveSource: ponytailPolicySourceResponse(goal.effectiveSource),
+        editable: booleanField(goal, 'editable'),
+        editBlockedReason: blocked,
+      };
+    }),
+  };
 }
 
 function integerField(value: Record<string, unknown>, field: string): number {
@@ -1040,6 +1086,23 @@ function setUserSettings(request: SetUserSettingsRequest): Promise<{ readonly se
   });
 }
 
+function getPonytailPolicyContext(request: GetPonytailPolicyContextRequest): Promise<PonytailPolicyContext> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.getPonytailPolicyContext, { workspaceId: request.workspaceId }).then(ponytailPolicyContext);
+}
+
+function setWorkspacePonytailMode(request: SetWorkspacePonytailModeRequest): Promise<PonytailPolicyContext> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  const mode = ponytailModeOverrideResponse(request.mode);
+  return invoke(ipcChannels.setWorkspacePonytailMode, { workspaceId: request.workspaceId, mode }).then(ponytailPolicyContext);
+}
+
+function setGoalPonytailMode(request: SetGoalPonytailModeRequest): Promise<PonytailPolicyContext> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0 || typeof request.goalId !== 'string' || request.goalId.trim().length === 0 || !Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) return Promise.reject(new Error('Invalid IPC request'));
+  const mode = ponytailModeOverrideResponse(request.mode);
+  return invoke(ipcChannels.setGoalPonytailMode, { workspaceId: request.workspaceId, goalId: request.goalId, expectedRevision: request.expectedRevision, mode }).then(ponytailPolicyContext);
+}
+
 function chooseTunnelClientPath(): Promise<{ readonly clientPath: string | null }> {
   return invoke(ipcChannels.chooseTunnelClientPath).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
@@ -1273,6 +1336,9 @@ const api: LnwjudApi = {
   setTunnelClientPath,
   setLocale,
   setUserSettings,
+  getPonytailPolicyContext,
+  setWorkspacePonytailMode,
+  setGoalPonytailMode,
   chooseTunnelClientPath,
   configureTunnelProfile,
   openExternalSetupPage,

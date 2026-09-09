@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest';
 
 const desktopRoot = path.resolve(import.meta.dirname, '..', '..', 'apps', 'desktop');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
+const ponytailSkillNames = [
+  'ponytail',
+  'ponytail-review',
+  'ponytail-audit',
+  'ponytail-debt',
+  'ponytail-gain',
+  'ponytail-help',
+] as const;
 
 describe('cross-platform desktop packaging', () => {
   it('pins the product release to v4.60.0', async () => {
@@ -49,7 +57,7 @@ describe('cross-platform desktop packaging', () => {
       repository?: { type?: unknown; url?: unknown };
     };
 
-    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 232 total tool definitions.');
+    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 233 total tool definitions.');
     expect(desktopPackage.author).toBe('Adisorn');
     expect(desktopPackage.homepage).toBe('https://github.com/engasnm111/lnwjud#readme');
     expect(desktopPackage.repository).toEqual({ type: 'git', url: 'https://github.com/engasnm111/lnwjud.git' });
@@ -113,6 +121,14 @@ describe('cross-platform desktop packaging', () => {
     expect(config).toContain('to: tunnel-client');
     expect(config).toContain('from: ../../.agents/skills/lnwjud-scheduled-continuation');
     expect(config).toContain('to: agent-skills/lnwjud-scheduled-continuation');
+    for (const skillName of ponytailSkillNames) {
+      expect(config).toContain(`from: ../../.agents/skills/${skillName}`);
+      expect(config).toContain(`to: agent-skills/${skillName}`);
+      const vendoredRoot = path.join(repositoryRoot, '.agents', 'skills', skillName);
+      await access(path.join(vendoredRoot, 'SKILL.md'));
+      await access(path.join(vendoredRoot, 'LICENSE'));
+      await access(path.join(vendoredRoot, 'SOURCE.md'));
+    }
     expect(config).toContain('from: build/native-host/macos');
     expect(config).toContain('to: native-host/macos');
     expect(config).toContain('from: build/native-host/linux');

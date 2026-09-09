@@ -105,6 +105,57 @@ describe('durable goal continuation persistence', () => {
     second.database.close();
   });
 
+  it('persists a goal Ponytail override across restart and changes it only through leased checkpoint CAS', async () => {
+    const { filename, workspace } = await fixture();
+    let now = new Date('2026-08-26T00:00:00.000Z');
+    const first = await open(filename, workspace, () => now);
+    const created = await first.service.runGoal(actor('session-a'), { ...createRequest, ponytailMode: 'full' });
+    expect(created).toMatchObject({ ok: true, value: { acquired: true, revision: 0, ponytailMode: 'full' } });
+    if (!created.ok || created.value.leaseToken === undefined) throw new Error('goal create failed');
+    const goalId = created.value.goalId;
+    first.database.close();
+
+    const second = await open(filename, workspace, () => now);
+    const persisted = await second.service.getGoal(actor('session-b'), { goalId });
+    expect(persisted).toMatchObject({ ok: true, value: { ponytailMode: 'full' } });
+    expect(second.database.connection.prepare('SELECT ponytail_mode FROM goals WHERE id = ?').get(goalId))
+      .toMatchObject({ ponytail_mode: 'full' });
+
+    const unleasedChange = await second.service.runGoal(actor('session-b'), {
+      workspaceId: workspace.id,
+      goalKey: createRequest.goalKey,
+      ponytailMode: 'ultra',
+    });
+    expect(unleasedChange).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+    now = new Date('2026-08-26T00:01:01.000Z');
+    const resumed = await second.service.runGoal(actor('session-b'), {
+      workspaceId: workspace.id,
+      goalKey: createRequest.goalKey,
+    });
+    expect(resumed).toMatchObject({ ok: true, value: { acquired: true, ponytailMode: 'full' } });
+    if (!resumed.ok || resumed.value.leaseToken === undefined) throw new Error('goal resume failed');
+
+    const inherited = await second.service.checkpointGoal(actor('session-b'), {
+      goalId,
+      leaseToken: resumed.value.leaseToken,
+      expectedRevision: resumed.value.revision,
+      currentPhase: 'policy',
+      summary: 'Return the goal to inherited Ponytail policy.',
+      stepUpdates: [],
+      nextAction: 'Continue with inherited policy.',
+      blockers: [],
+      evidence: [],
+      activeTaskIds: [],
+      ponytailMode: 'inherit',
+      releaseLease: true,
+    });
+    expect(inherited).toMatchObject({ ok: true, value: { revision: 1, ponytailMode: 'inherit' } });
+    expect(second.database.connection.prepare('SELECT ponytail_mode FROM goals WHERE id = ?').get(goalId))
+      .toMatchObject({ ponytail_mode: null });
+    second.database.close();
+  });
+
   it('uses stable client ownership across session changes and rejects a different client or workspace for an existing goal', async () => {
     const { filename, workspace, root } = await fixture();
     let now = new Date('2026-08-26T00:00:00.000Z');
@@ -256,6 +307,108 @@ describe('durable goal continuation persistence', () => {
         activeTaskIds: [],
       });
       expect(staleWorker).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    } finally {
+      runtime.database.close();
+    }
+  });
+
+  it('immediately recovers an orphaned foreground lease when trustworthy liveness proves no worker exists', async () => {
+    const { filename, workspace } = await fixture();
+    const now = new Date('2026-08-26T00:00:00.000Z');
+    const runtime = await open(filename, workspace, () => now);
+    try {
+      const created = await runtime.service.runGoal(actor('foreground-a'), { ...createRequest, leaseSeconds: 600 });
+      if (!created.ok || created.value.leaseToken === undefined) throw new Error('goal create failed');
+
+      const recoveryService = new GoalContinuationService(runtime.workspaces, runtime.repository, {
+        now: (): Date => now,
+        workerLiveness: {
+          observe: async (goalId, trackedTasks): Promise<ScheduledContinuationWorkerLiveness> => {
+            const goal = await runtime.repository.getById(goalId);
+            if (goal === null) throw new Error('goal missing during liveness probe');
+            return {
+              trustworthy: true,
+              observedAt: now.toISOString(),
+              leaseGeneration: goal.leaseGeneration,
+              leaseActivitySeq: goal.leaseActivitySeq,
+              liveFencedCallCount: 0,
+              blockingTaskStates: trackedTasks
+                .filter((task) => task.role === 'blocking_job')
+                .map((task) => ({ taskId: task.taskId, provider: task.provider, state: 'absent' as const })),
+            };
+          },
+        },
+      });
+
+      const recovered = await recoveryService.runGoal(actor('foreground-b'), {
+        workspaceId: workspace.id,
+        goalKey: createRequest.goalKey,
+        leaseSeconds: 600,
+      });
+      expect(recovered).toMatchObject({
+        ok: true,
+        value: {
+          acquired: true,
+          leaseRecovery: 'stale_worker_recovered',
+          goalId: created.value.goalId,
+          leaseGeneration: created.value.leaseGeneration + 1,
+        },
+      });
+
+      const staleWorker = await runtime.service.checkpointGoal(actor('foreground-a'), {
+        goalId: created.value.goalId,
+        leaseToken: created.value.leaseToken,
+        expectedRevision: created.value.revision,
+        currentPhase: 'stale-foreground-worker',
+        summary: 'The orphaned foreground lease must no longer be valid.',
+        stepUpdates: [],
+        nextAction: 'Must fail.',
+        blockers: [],
+        evidence: [],
+        activeTaskIds: [],
+      });
+      expect(staleWorker).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    } finally {
+      runtime.database.close();
+    }
+  });
+
+  it('does not reclaim an unexpired foreground lease while trustworthy liveness still sees a fenced worker call', async () => {
+    const { filename, workspace } = await fixture();
+    const now = new Date('2026-08-26T00:00:00.000Z');
+    const runtime = await open(filename, workspace, () => now);
+    try {
+      const created = await runtime.service.runGoal(actor('foreground-a'), { ...createRequest, leaseSeconds: 600 });
+      if (!created.ok) throw new Error('goal create failed');
+
+      const recoveryService = new GoalContinuationService(runtime.workspaces, runtime.repository, {
+        now: (): Date => now,
+        scheduledContinuations: runtime.repository,
+        workerLiveness: {
+          observe: async (goalId): Promise<ScheduledContinuationWorkerLiveness> => {
+            const goal = await runtime.repository.getById(goalId);
+            if (goal === null) throw new Error('goal missing during liveness probe');
+            return {
+              trustworthy: true,
+              observedAt: now.toISOString(),
+              leaseGeneration: goal.leaseGeneration,
+              leaseActivitySeq: goal.leaseActivitySeq,
+              liveFencedCallCount: 1,
+              blockingTaskStates: [],
+            };
+          },
+        },
+      });
+
+      const held = await recoveryService.runGoal(actor('foreground-b'), {
+        workspaceId: workspace.id,
+        goalKey: createRequest.goalKey,
+        leaseSeconds: 600,
+      });
+      expect(held).toMatchObject({
+        ok: true,
+        value: { acquired: false, goalId: created.value.goalId, retryAfterSeconds: 600 },
+      });
     } finally {
       runtime.database.close();
     }

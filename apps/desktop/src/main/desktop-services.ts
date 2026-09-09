@@ -65,6 +65,7 @@ import {
   MIN_CONFIGURABLE_WAIT_SECONDS,
   MAX_CONFIGURABLE_WAIT_SECONDS,
   DEFAULT_CODEX_TOOLS_ENABLED,
+  DEFAULT_PONYTAIL_MODE,
   DEFAULT_TUNNEL_MAX_AUTO_RESTARTS,
   DEFAULT_RECOVERY_RETENTION_DAYS,
   DEFAULT_UPDATE_INTERVAL_MINUTES,
@@ -78,6 +79,10 @@ import {
   parseCustomPermissionSettings,
   parseIntegerSetting,
   parsePathList,
+  parsePonytailMode,
+  normalizeProjectProfile,
+  resolvePonytailPolicy,
+  workspacePonytailMode,
   parseStringRecordSetting,
   parseAllowedRoots,
   parseBooleanSetting,
@@ -127,6 +132,9 @@ import {
   type PdfProviderInstallResult,
   type McpConnectionStatus,
   type PermissionProfileName as IpcPermissionProfileName,
+  type PonytailPolicyContext,
+  type SetGoalPonytailModeRequest,
+  type SetWorkspacePonytailModeRequest,
   type ProcessSummary,
   type RemoteMcpStatus,
   type RestoreCheckpointRequest,
@@ -337,6 +345,70 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot,
   });
+  const ponytailProfilePath = '.lnwjud/project-profile.json';
+  const readWorkspaceProfile = async (workspaceId: string): Promise<Record<string, unknown>> => {
+    const loaded = await fileService.readFile(actor, workspaceId, { path: ponytailProfilePath });
+    if (!loaded.ok) {
+      if (loaded.error.code === 'FILE_NOT_FOUND') return {};
+      throw new Error(loaded.error.message);
+    }
+    if (typeof loaded.value.content !== 'string') throw new Error('Project profile must be a UTF-8 JSON file');
+    let parsed: unknown;
+    try { parsed = JSON.parse(loaded.value.content); } catch { throw new Error('Project profile contains invalid JSON'); }
+    if (!isRecord(parsed)) throw new Error('Project profile must contain a JSON object');
+    return normalizeProjectProfile(parsed);
+  };
+  const writeWorkspacePonytailMode = async (workspaceId: string, mode: SetWorkspacePonytailModeRequest['mode']): Promise<void> => {
+    const profile = await readWorkspaceProfile(workspaceId);
+    const next: Record<string, unknown> = { ...profile };
+    const existingPonytail = isRecord(profile.ponytail) ? { ...profile.ponytail } : {};
+    if (mode === 'inherit') delete existingPonytail.mode;
+    else existingPonytail.mode = mode;
+    if (Object.keys(existingPonytail).length === 0) delete next.ponytail;
+    else next.ponytail = existingPonytail;
+    const content = `${JSON.stringify(next, null, 2)}\n`;
+    if (Buffer.byteLength(content, 'utf8') > 128 * 1024) throw new Error('Project profile exceeds 128 KiB');
+    const saved = await fileService.writeFile(actor, workspaceId, { path: ponytailProfilePath, content, overwriteExisting: true, userConfirmed: true });
+    if (!saved.ok) throw new Error(saved.error.message);
+  };
+  const buildPonytailPolicyContext = async (workspaceId: string): Promise<PonytailPolicyContext> => {
+    const workspace = await workspaceRepository.get(workspaceId);
+    if (workspace === null) throw new Error('Workspace was not found');
+    const rawGlobalMode = settingsRepository.get(USER_SETTING_KEYS.ponytailMode);
+    const globalMode = parsePonytailMode(rawGlobalMode, DEFAULT_PONYTAIL_MODE);
+    const globalSource = rawGlobalMode === 'off' || rawGlobalMode === 'lite' || rawGlobalMode === 'full' || rawGlobalMode === 'ultra' ? 'global' as const : 'default' as const;
+    const workspaceMode = workspacePonytailMode(await readWorkspaceProfile(workspaceId));
+    const workspacePolicy = resolvePonytailPolicy(globalMode, workspaceMode);
+    const goals = await goalRepository.listWorkspaceGoalsForHost(workspaceId, 50);
+    const now = new Date().toISOString();
+    const activeGoals = await Promise.all(goals.map(async (goal) => {
+      const liveLease = goal.leaseExpiresAt !== undefined && Date.parse(goal.leaseExpiresAt) > Date.parse(now);
+      const liveContinuation = await goalRepository.getLiveScheduledContinuation(goal.id) !== null;
+      const mutationObservation = await goalRepository.observeGoalFencedMutations(goal.id, now);
+      const liveMutation = mutationObservation.liveFencedCallCount > 0;
+      const editBlockedReason = liveLease ? 'live_lease' as const : liveContinuation ? 'live_continuation' as const : liveMutation ? 'live_mutation' as const : null;
+      const mode: SetGoalPonytailModeRequest['mode'] = goal.ponytailMode ?? 'inherit';
+      const effective = resolvePonytailPolicy(globalMode, workspaceMode, mode);
+      return {
+        goalId: goal.id,
+        goalKey: goal.goalKey,
+        mode,
+        revision: goal.revision,
+        effectiveMode: effective.mode,
+        effectiveSource: mode !== 'inherit' ? 'goal' as const : workspaceMode !== 'inherit' ? 'workspace' as const : globalSource,
+        editable: editBlockedReason === null,
+        editBlockedReason,
+      };
+    }));
+    return {
+      workspaceId,
+      globalMode,
+      workspaceMode,
+      effectiveWorkspaceMode: workspacePolicy.mode,
+      effectiveWorkspaceSource: workspaceMode !== 'inherit' ? 'workspace' : globalSource,
+      activeGoals,
+    };
+  };
   const workspaceInfoService = new WorkspaceInfoService(workspaceRepository, workspaceService, unrestricted);
   const workspaceQueryService = new WorkspaceQueryService(workspaceRepository, pathGuard);
   const searchService = new SearchService(workspaceRepository);
@@ -470,6 +542,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       ),
       ...(options.hostMutationApprovalProvider === undefined ? {} : { hostMutationApprovalProvider: options.hostMutationApprovalProvider }),
       codexToolsEnabled: readSettings().codexToolsEnabled,
+      ponytailModeProvider: () => readSettings().ponytailMode,
       toolAvailabilitySnapshotProvider: () => toolAvailabilityService.snapshot(),
       toolAvailabilitySubscribe: (listener) => toolAvailabilityService.subscribe(listener),
     }),
@@ -1207,6 +1280,22 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       }
       return { settings: next, restartRequired: runtimeRestartRequired(previous, next) };
     },
+    getPonytailPolicyContext: async (request): Promise<PonytailPolicyContext> => buildPonytailPolicyContext(request.workspaceId),
+    setWorkspacePonytailMode: async (request: SetWorkspacePonytailModeRequest): Promise<PonytailPolicyContext> => {
+      await writeWorkspacePonytailMode(request.workspaceId, request.mode);
+      return buildPonytailPolicyContext(request.workspaceId);
+    },
+    setGoalPonytailMode: async (request: SetGoalPonytailModeRequest): Promise<PonytailPolicyContext> => {
+      const goal = await goalRepository.getById(request.goalId);
+      if (goal === null || goal.workspaceId !== request.workspaceId) throw new Error('Goal does not belong to the selected workspace');
+      await goalRepository.setIdleGoalPonytailModeForHost({
+        goalId: request.goalId,
+        expectedRevision: request.expectedRevision,
+        ponytailMode: request.mode === 'inherit' ? null : request.mode,
+        now: new Date().toISOString(),
+      });
+      return buildPonytailPolicyContext(request.workspaceId);
+    },
     configureTunnelProfile: async (request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }> => {
       const profilePath = await tunnelController.configureProfile(request.tunnelId);
       if (readSettings().tunnelAutoReconnect) await tunnelController.startAutomatically();
@@ -1748,6 +1837,7 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
     lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     mcpHttpPort: readMcpPort(env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
+    ponytailMode: parsePonytailMode(settingsRepository.get(USER_SETTING_KEYS.ponytailMode), DEFAULT_PONYTAIL_MODE),
     updateAutoCheck: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateAutoCheck), true),
     updateCheckOnStartup: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateCheckOnStartup), true),
     updateIntervalMinutes: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.updateIntervalMinutes), DEFAULT_UPDATE_INTERVAL_MINUTES, 5, 24 * 60),
@@ -1776,6 +1866,7 @@ function persistUserSettings(settingsRepository: SqliteSettingsRepository, setti
   settingsRepository.set(USER_SETTING_KEYS.lspCommands, serializeStringRecordSetting(settings.lspCommands));
   settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(settings.mcpHttpPort));
   settingsRepository.set(USER_SETTING_KEYS.codexToolsEnabled, settings.codexToolsEnabled ? 'true' : 'false');
+  settingsRepository.set(USER_SETTING_KEYS.ponytailMode, settings.ponytailMode);
   settingsRepository.set(USER_SETTING_KEYS.updateAutoCheck, settings.updateAutoCheck ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.updateCheckOnStartup, settings.updateCheckOnStartup ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.updateIntervalMinutes, String(settings.updateIntervalMinutes));
@@ -1837,6 +1928,7 @@ function runtimeRestartRequired(previous: UserSettings, next: UserSettings): boo
     || previous.mcpIdleTimeoutMs !== next.mcpIdleTimeoutMs
     || previous.mcpHttpPort !== next.mcpHttpPort
     || previous.codexToolsEnabled !== next.codexToolsEnabled
+    || previous.ponytailMode !== next.ponytailMode
     || JSON.stringify(previous.lspCommands) !== JSON.stringify(next.lspCommands)
     || JSON.stringify(previous.customPermission) !== JSON.stringify(next.customPermission)
     || JSON.stringify(previous.extensions) !== JSON.stringify(next.extensions);

@@ -1,5 +1,13 @@
+import { ok } from '@lnwjud/domain';
+import { z } from 'zod';
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 import { skillsListSchema, skillsReadSchema } from './schemas.js';
+
+const ponytailSessionSchema = z.object({
+  workspaceId: z.string().min(1).max(128),
+  goalId: z.string().min(1).max(128).optional(),
+  suppressed: z.boolean(),
+}).strict();
 
 const readOnlyInspection = {
   permission: 'READ' as const,
@@ -31,6 +39,24 @@ export function skillTools(context: McpToolContext): McpToolDefinition[] {
           skillId: input.skillId,
           ...(input.relativePath === undefined ? {} : { relativePath: input.relativePath }),
         }),
+    }),
+    defineTool({
+      name: 'ponytail_session',
+      description: 'Temporarily suppress or resume the effective Ponytail coding policy for this MCP session and workspace/goal only. This does not change persisted global, workspace, or durable-goal settings. Use suppressed=true when the user explicitly asks to stop Ponytail or return to normal mode; use false to resume the effective policy.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: ponytailSessionSchema,
+      handler: async (input) => {
+        if (context.setPonytailSessionSuppressed === undefined) return missingService();
+        const applied = await context.setPonytailSessionSuppressed(input.workspaceId, input.goalId, input.suppressed);
+        return ok({
+          applied,
+          workspaceId: input.workspaceId,
+          ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
+          suppressed: input.suppressed,
+          persistence: 'session_only',
+        });
+      },
     }),
   ];
 }

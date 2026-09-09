@@ -11,6 +11,8 @@ import type {
   LogSource,
   PermissionProfileName,
   PdfProviderInstallResult,
+  PonytailModeOverride,
+  PonytailPolicyContext,
   UiLocale,
   UpdateStatus,
   UserSettings,
@@ -71,6 +73,9 @@ export function App(): ReactElement {
   const [guidedTunnelSetupOpen, setGuidedTunnelSetupOpen] = useState(false);
   const [startupDoctorReady, setStartupDoctorReady] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<{ readonly section: SettingsSection; readonly focus?: SettingsFocusTarget; readonly requestId: number } | undefined>(undefined);
+  const [ponytailPolicyContext, setPonytailPolicyContext] = useState<PonytailPolicyContext | null>(null);
+  const [ponytailPolicyBusy, setPonytailPolicyBusy] = useState(false);
+  const [ponytailPolicyError, setPonytailPolicyError] = useState<string | null>(null);
   const incidentBusyRef = useRef(false);
   const refreshBusyRef = useRef(false);
   const logIds = useRef<Set<number>>(new Set());
@@ -82,6 +87,8 @@ export function App(): ReactElement {
 
   const t = createTranslator(locale);
   const appVersion = dashboard?.appVersion ?? null;
+  const selectedWorkspaceId = dashboard?.selectedWorkspace?.id ?? null;
+  const globalPonytailMode = dashboard?.settings.ponytailMode ?? 'off';
   const projectWorkspaces = workspaces.filter((workspace) => workspace.kind !== 'machine_root' && (workspace.archivedAt === undefined || workspace.archivedAt === null));
 
   const flushPendingLogLines = useCallback((): void => {
@@ -246,6 +253,28 @@ export function App(): ReactElement {
     const interval = window.setInterval(() => { void refresh(); }, 2_000);
     return (): void => { window.clearInterval(interval); };
   }, [refresh]);
+
+  useEffect(() => {
+    if (selectedWorkspaceId === null) {
+      setPonytailPolicyContext(null);
+      setPonytailPolicyError(null);
+      return;
+    }
+    let disposed = false;
+    setPonytailPolicyBusy(true);
+    void window.lnwjud.getPonytailPolicyContext({ workspaceId: selectedWorkspaceId }).then((context) => {
+      if (disposed) return;
+      setPonytailPolicyContext(context);
+      setPonytailPolicyError(null);
+    }).catch((cause: unknown) => {
+      if (disposed) return;
+      setPonytailPolicyContext(null);
+      setPonytailPolicyError(errorMessage(cause, propsText(locale, 'โหลด Ponytail policy ของโปรเจกต์ไม่สำเร็จ', 'Could not load the project Ponytail policy')));
+    }).finally(() => {
+      if (!disposed) setPonytailPolicyBusy(false);
+    });
+    return (): void => { disposed = true; };
+  }, [selectedWorkspaceId, globalPonytailMode, locale]);
 
   useEffect(() => {
     if (dashboard === null || !startupDoctorReady) return;
@@ -598,6 +627,38 @@ export function App(): ReactElement {
     }
   }
 
+  async function setWorkspacePonytailMode(mode: PonytailModeOverride): Promise<void> {
+    if (selectedWorkspaceId === null) return;
+    setPonytailPolicyBusy(true);
+    setPonytailPolicyError(null);
+    try {
+      const context = await window.lnwjud.setWorkspacePonytailMode({ workspaceId: selectedWorkspaceId, mode });
+      setPonytailPolicyContext(context);
+    } catch (cause: unknown) {
+      const message = errorMessage(cause, propsText(locale, 'บันทึก Ponytail policy ของโปรเจกต์ไม่สำเร็จ', 'Could not save the project Ponytail policy'));
+      setPonytailPolicyError(message);
+      throw cause;
+    } finally {
+      setPonytailPolicyBusy(false);
+    }
+  }
+
+  async function setGoalPonytailMode(goalId: string, expectedRevision: number, mode: PonytailModeOverride): Promise<void> {
+    if (selectedWorkspaceId === null) return;
+    setPonytailPolicyBusy(true);
+    setPonytailPolicyError(null);
+    try {
+      const context = await window.lnwjud.setGoalPonytailMode({ workspaceId: selectedWorkspaceId, goalId, expectedRevision, mode });
+      setPonytailPolicyContext(context);
+    } catch (cause: unknown) {
+      const message = errorMessage(cause, propsText(locale, 'บันทึก Ponytail policy ของ goal ไม่สำเร็จ', 'Could not save the goal Ponytail policy'));
+      setPonytailPolicyError(message);
+      throw cause;
+    } finally {
+      setPonytailPolicyBusy(false);
+    }
+  }
+
   async function chooseTunnelClientPath(): Promise<string | null> {
     const result = await window.lnwjud.chooseTunnelClientPath();
     return result.clientPath;
@@ -877,6 +938,11 @@ export function App(): ReactElement {
           onSaveTunnelApiKey={saveTunnelApiKey}
           onSetTunnelClientPath={setTunnelClientPath}
           onUserSettingsChange={setUserSettings}
+          ponytailPolicyContext={ponytailPolicyContext}
+          ponytailPolicyBusy={ponytailPolicyBusy}
+          ponytailPolicyError={ponytailPolicyError}
+          onWorkspacePonytailModeChange={setWorkspacePonytailMode}
+          onGoalPonytailModeChange={setGoalPonytailMode}
           onInstallPdfProvider={installPdfProvider}
           onChooseTunnelClientPath={chooseTunnelClientPath}
           onConfigureTunnelProfile={configureTunnelProfile}

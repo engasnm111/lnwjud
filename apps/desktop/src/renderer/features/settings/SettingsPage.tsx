@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PdfProviderInstallResult, PermissionProfileName, TunnelOAuthLoginStatus, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
+import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PdfProviderInstallResult, PermissionProfileName, PonytailModeOverride, PonytailPolicyContext, TunnelOAuthLoginStatus, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
 import { createTranslator } from '../../i18n/index.js';
 import { tunnelRuntimeCredentialAvailable } from '../../tunnel-auth-readiness.js';
@@ -24,6 +24,11 @@ interface SettingsPageProps {
   readonly onSaveTunnelApiKey: (apiKey: string) => Promise<void>;
   readonly onSetTunnelClientPath: (clientPath: string) => Promise<void>;
   readonly onUserSettingsChange: (settings: UserSettings) => Promise<boolean>;
+  readonly ponytailPolicyContext: PonytailPolicyContext | null;
+  readonly ponytailPolicyBusy: boolean;
+  readonly ponytailPolicyError: string | null;
+  readonly onWorkspacePonytailModeChange: (mode: PonytailModeOverride) => Promise<void>;
+  readonly onGoalPonytailModeChange: (goalId: string, expectedRevision: number, mode: PonytailModeOverride) => Promise<void>;
   readonly onInstallPdfProvider: () => Promise<PdfProviderInstallResult>;
   readonly onChooseTunnelClientPath: () => Promise<string | null>;
   readonly onConfigureTunnelProfile: (tunnelId: string) => Promise<string>;
@@ -575,6 +580,66 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
             />
           )}
 
+          {activeSection === 'mcp' ? (
+            <section className="panel settings-card settings-card-polished" aria-label="Scoped Ponytail policy" data-settings-focus="ponytail-policy-scopes" tabIndex={-1}>
+              <SettingsCardHeading
+                icon="P"
+                title={props.locale === 'th' ? 'Ponytail Policy ตามขอบเขต' : 'Scoped Ponytail Policy'}
+                subtitle={props.locale === 'th' ? 'Current Goal > Workspace > Global โดยเก็บค่าจริงตามขอบเขต' : 'Current Goal > Workspace > Global with persisted scope-specific settings'}
+                badge={props.ponytailPolicyContext == null ? 'NO PROJECT' : `EFFECTIVE ${props.ponytailPolicyContext.effectiveWorkspaceMode.toUpperCase()}`}
+              />
+              {props.ponytailPolicyContext == null ? (
+                <div className="empty-setting-state">{props.locale === 'th' ? 'เลือก Active Project ก่อนตั้งค่า Workspace หรือ Current Goal' : 'Select an Active Project before configuring Workspace or Current Goal policy.'}</div>
+              ) : (
+                <>
+                  <div className="setting-field max-field-width">
+                    <label className="field-label" htmlFor="ponytail-workspace-mode">{props.locale === 'th' ? 'Workspace override' : 'Workspace override'}</label>
+                    <select
+                      id="ponytail-workspace-mode"
+                      className="settings-select"
+                      disabled={props.ponytailPolicyBusy}
+                      value={props.ponytailPolicyContext.workspaceMode}
+                      onChange={(event) => { void props.onWorkspacePonytailModeChange(event.target.value as PonytailModeOverride).catch(() => undefined); }}
+                    >
+                      <option value="inherit">{props.locale === 'th' ? 'สืบทอด Global' : 'Inherit Global'}</option>
+                      <option value="off">Off</option><option value="lite">Lite</option><option value="full">Full</option><option value="ultra">Ultra</option>
+                    </select>
+                    <p className="hint">{props.locale === 'th'
+                      ? `Effective: ${props.ponytailPolicyContext.effectiveWorkspaceMode.toUpperCase()} · ${ponytailPolicySourceLabel(props.locale, props.ponytailPolicyContext.effectiveWorkspaceSource)}`
+                      : `Effective: ${props.ponytailPolicyContext.effectiveWorkspaceMode.toUpperCase()} · ${ponytailPolicySourceLabel(props.locale, props.ponytailPolicyContext.effectiveWorkspaceSource)}`}</p>
+                  </div>
+                  <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'Current Goal overrides' : 'Current Goal overrides'}</strong><span>{props.ponytailPolicyContext.activeGoals.length}</span></div>
+                  {props.ponytailPolicyContext.activeGoals.length === 0 ? (
+                    <div className="empty-setting-state">{props.locale === 'th' ? 'ไม่มี durable goal ที่ active ในโปรเจกต์นี้' : 'No active durable goals in this project.'}</div>
+                  ) : (
+                    <div className="backup-list settings-backup-list">
+                      {props.ponytailPolicyContext.activeGoals.map((goal) => (
+                        <div className="backup-item" key={goal.goalId}>
+                          <div>
+                            <strong>{goal.goalKey}</strong>
+                            <p className="hint">Effective: {goal.effectiveMode.toUpperCase()} · {ponytailPolicySourceLabel(props.locale, goal.effectiveSource)} · rev {goal.revision}</p>
+                            {goal.editBlockedReason === null ? null : <p className="hint">{ponytailGoalEditBlockedLabel(props.locale, goal.editBlockedReason)}</p>}
+                          </div>
+                          <select
+                            aria-label={`${goal.goalKey} Ponytail mode`}
+                            className="settings-select"
+                            disabled={props.ponytailPolicyBusy || !goal.editable}
+                            value={goal.mode}
+                            onChange={(event) => { void props.onGoalPonytailModeChange(goal.goalId, goal.revision, event.target.value as PonytailModeOverride).catch(() => undefined); }}
+                          >
+                            <option value="inherit">{props.locale === 'th' ? 'สืบทอด Workspace' : 'Inherit Workspace'}</option>
+                            <option value="off">Off</option><option value="lite">Lite</option><option value="full">Full</option><option value="ultra">Ultra</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              {props.ponytailPolicyError == null ? null : <div className="alert-box-warning" role="alert">⚠️ {props.ponytailPolicyError}</div>}
+            </section>
+          ) : null}
+
           {activeSection === 'tunnel' ? (
             <>
               <div className="connection-choice-intro" role="note">
@@ -884,6 +949,27 @@ function SettingsCardHeading({ icon, title, subtitle, badge, action }: { readonl
       {action ?? (badge === undefined ? null : <span className="pill-badge gold">{badge}</span>)}
     </div>
   );
+}
+
+function ponytailPolicySourceLabel(locale: UiLocale, source: PonytailPolicyContext['effectiveWorkspaceSource']): string {
+  if (source === 'goal') return locale === 'th' ? 'Current Goal' : 'Current Goal';
+  if (source === 'workspace') return 'Workspace';
+  if (source === 'global') return 'Global';
+  return locale === 'th' ? 'ค่าเริ่มต้น' : 'Default';
+}
+
+function ponytailGoalEditBlockedLabel(locale: UiLocale, reason: 'live_lease' | 'live_continuation' | 'live_mutation'): string {
+  const th = {
+    live_lease: 'ล็อกการแก้ไข: มี worker/lease กำลังทำงาน ให้เปลี่ยน mode ผ่าน goal owner เพื่อรักษา fencing',
+    live_continuation: 'ล็อกการแก้ไข: มี scheduled continuation ที่ยัง active',
+    live_mutation: 'ล็อกการแก้ไข: มี mutation ที่กำลังทำงาน',
+  } as const;
+  const en = {
+    live_lease: 'Editing locked: a worker lease is active. Change the mode through the goal owner to preserve fencing.',
+    live_continuation: 'Editing locked: a scheduled continuation is still active.',
+    live_mutation: 'Editing locked: a mutation is still running.',
+  } as const;
+  return (locale === 'th' ? th : en)[reason];
 }
 
 function splitList(value: string): readonly string[] {
