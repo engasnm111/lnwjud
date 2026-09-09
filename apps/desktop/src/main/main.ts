@@ -63,7 +63,7 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
-import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
+import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
@@ -151,7 +151,7 @@ export interface DesktopIpcServices {
   clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }>;
   resolveActivityTargetDetail(detailRef: string): Promise<{ readonly status: 'complete' | 'unavailable'; readonly detail: ActivityTargetDetail | null }>;
   searchActivityTargetDetails(candidates: readonly ActivityTargetSearchCandidate[], query: string): Promise<readonly string[]>;
-  streamWorkLogExportRows(rowIds: readonly string[]): AsyncIterable<string>;
+  streamWorkLogExportRows(rowIds: readonly string[], locale?: UiLocale): AsyncIterable<string>;
   captureIncident(updaterEvents?: readonly string[]): Promise<IncidentReport>;
 }
 
@@ -818,6 +818,7 @@ function parseExportLogsRequest(payload: unknown): ExportLogsRequest {
   }
   const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
   const sessionId = optionalScopeId(payload.sessionId, 'sessionId');
+  const locale = optionalUiLocale(payload.locale);
   if (!Array.isArray(payload.lines) || payload.lines.length > 5_000) throw new Error('Invalid IPC payload: lines');
   const lines = payload.lines.map((line) => {
     if (!isRecord(line) || !Number.isSafeInteger(line.lineId) || Number(line.lineId) <= 0) throw new Error('Invalid IPC payload: lines');
@@ -827,6 +828,7 @@ function parseExportLogsRequest(payload: unknown): ExportLogsRequest {
   return {
     source: payload.source,
     filePath: typeof payload.filePath === 'string' ? payload.filePath : '',
+    ...(locale === undefined ? {} : { locale }),
     ...(workspaceId === undefined ? {} : { workspaceId }),
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(typeof payload.query === 'string' && payload.query.trim().length > 0 ? { query: payload.query.trim().slice(0, 512) } : {}),
@@ -838,12 +840,13 @@ function parseExportWorkLogRequest(payload: unknown): ExportWorkLogRequest {
   if (!isRecord(payload) || !Array.isArray(payload.rowIds) || payload.rowIds.length > 5_000) {
     throw new Error('Invalid IPC payload: rowIds');
   }
+  const locale = optionalUiLocale(payload.locale);
   const rowIds = payload.rowIds.map((rowId) => {
     const value = boundedNonEmptyString(rowId, 'rowId', 1_024);
     if (!/^(audit|inflight):.+$/s.test(value)) throw new Error('Invalid IPC payload: rowIds');
     return value;
   });
-  return { rowIds };
+  return { rowIds, ...(locale === undefined ? {} : { locale }) };
 }
 
 function boundedNonEmptyString(value: unknown, key: string, maximumLength: number): string {
@@ -857,6 +860,12 @@ function optionalScopeId(value: unknown, key: string): string | undefined {
   return nonEmptyString(value, key).trim();
 }
 
+function optionalUiLocale(value: unknown): UiLocale | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'th' || value === 'en') return value;
+  throw new Error('Invalid IPC payload: locale');
+}
+
 function isLogSource(value: unknown): value is 'tunnel' | 'mcp' | 'process' {
   return value === 'tunnel' || value === 'mcp' || value === 'process';
 }
@@ -867,6 +876,7 @@ async function exportLogsToFile(
   request: ExportLogsRequest,
 ): Promise<{ readonly exported: boolean }> {
   if (window === null) return { exported: false };
+  const locale = request.locale ?? desktopLocale;
   const snapshot = await services.getLogSnapshot();
   const lineById = new Map(snapshot.lines.filter((line) => line.source === request.source).map((line) => [line.id, line] as const));
   const capturedRows = request.lines.map((reference) => ({ reference, line: lineById.get(reference.lineId) ?? null }));
@@ -885,7 +895,7 @@ async function exportLogsToFile(
         yield `Live Log row unavailable [line:${reference.lineId}]: the captured identity is no longer present.`;
         continue;
       }
-      const base = `${formatExportLogTimestamp(line.timestamp)} [${line.level.toUpperCase()}] ${line.text}`;
+      const base = `${formatExportLogTimestamp(line.timestamp, locale)} [${line.level.toUpperCase()}] ${line.text}`;
       const metadata = [
         `lineId=${line.id}`,
         `source=${line.source}`,
@@ -914,7 +924,7 @@ async function exportLogsToFile(
       const requestedRef = reference.correlationRef === authoritativeRef ? reference.correlationRef : authoritativeRef;
       const detail = requestedRef === null ? null : (await services.resolveActivityTargetDetail(requestedRef)).detail;
       const detailExpected = targetDetail !== undefined && targetDetail.itemCount > targetDetail.preview.length;
-      yield formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected);
+      yield formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected, locale);
     }
   }
   await writeSerializedLogRows(result.filePath, serializedRows());
@@ -929,14 +939,12 @@ async function exportWorkLogToFile(window: BrowserWindow | null, services: Deskt
     filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
   });
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) return { exported: false };
-  await writeSerializedLogRows(result.filePath, services.streamWorkLogExportRows(request.rowIds));
+  await writeSerializedLogRows(result.filePath, services.streamWorkLogExportRows(request.rowIds, request.locale ?? desktopLocale));
   return { exported: true };
 }
 
-function formatExportLogTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+function formatExportLogTimestamp(value: string, locale: UiLocale): string {
+  return formatDisplayDateTime(value, locale, { fallback: value });
 }
 
 function broadcastToAllWindows(channel: string, payload: unknown): void {

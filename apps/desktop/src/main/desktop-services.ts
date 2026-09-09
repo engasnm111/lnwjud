@@ -88,6 +88,8 @@ import {
   serializePathList,
   serializeStringRecordSetting,
   currentPlatformProfile,
+  formatDisplayDateTime,
+  formatDisplayTimestampItem,
   type SecretProtector,
   type DestructiveAutoApprovalPolicy,
 } from '@lnwjud/shared';
@@ -1256,7 +1258,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     searchActivityTargetDetails: async (candidates, query): Promise<readonly string[]> => (
       searchActivityTargetDetails(auditRepository, candidates, query)
     ),
-    streamWorkLogExportRows: (rowIds): AsyncIterable<string> => streamWorkLogExportRows(auditRepository, rowIds),
+    streamWorkLogExportRows: (rowIds, locale): AsyncIterable<string> => streamWorkLogExportRows(auditRepository, rowIds, locale),
     captureIncident: async (updaterEvents: readonly string[] = []): Promise<IncidentReport> => {
       const tunnel = await observedTunnelStatus();
       const tunnelClientVersion = await tunnelController.clientVersion();
@@ -1900,15 +1902,17 @@ export async function searchActivityTargetDetails(
 export async function resolveWorkLogExportRows(
   repository: SqliteAuditRepository,
   identities: readonly string[],
+  locale: UiLocale = 'th',
 ): Promise<readonly string[]> {
   const rows: string[] = [];
-  for await (const row of streamWorkLogExportRows(repository, identities)) rows.push(row);
+  for await (const row of streamWorkLogExportRows(repository, identities, locale)) rows.push(row);
   return rows;
 }
 
 export async function* streamWorkLogExportRows(
   repository: Pick<SqliteAuditRepository, 'resolveActivityEvent' | 'resolveActivityTargetDetail'>,
   identities: readonly string[],
+  locale: UiLocale = 'th',
 ): AsyncIterable<string> {
   for (const identity of identities) {
     const parsed = parseWorkLogIdentity(identity);
@@ -1919,12 +1923,12 @@ export async function* streamWorkLogExportRows(
       continue;
     }
     if (event.targetDetail.legacyIncomplete && event.targetDetail.itemCount > event.targetDetail.preview.length) {
-      yield formatActivityExportRow(event, null);
+      yield formatActivityExportRow(event, null, locale);
       continue;
     }
     const detailRef = event.targetDetail.detailRef ?? event.callId ?? (parsed.kind === 'audit' ? event.id : parsed.value);
     const detail = await repository.resolveActivityTargetDetail(detailRef);
-    yield formatActivityExportRow(event, detail);
+    yield formatActivityExportRow(event, detail, locale);
   }
 }
 
@@ -1946,13 +1950,13 @@ function parseWorkLogIdentity(value: string): { readonly kind: 'audit' | 'inflig
   return { kind, value: value.slice(separator + 1) };
 }
 
-function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTargetDetail | null): string {
+function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTargetDetail | null, locale: UiLocale): string {
   const kind = classifyMcpWorkLogKind(event.toolName, event.phase, event.resultCode);
   const tag = kind === 'task' ? '[TASK]' : kind === 'error' ? '[ERROR]' : '[RESULT]';
   const duration = kind === 'task' ? '' : ` ${event.durationMs}ms`;
   const summary = event.targetSummary === undefined || event.targetSummary.trim().length === 0 ? '' : ` ${event.targetSummary}`;
   const error = event.errorMessage === undefined || event.errorMessage.trim().length === 0 ? '' : ` — ${event.errorMessage}`;
-  const base = `${formatActivityExportTimestamp(event.timestamp)} ${tag} ${event.toolName}${summary}${error}${duration}`.trim();
+  const base = `${formatActivityExportTimestamp(event.timestamp, locale)} ${tag} ${event.toolName}${summary}${error}${duration}`.trim();
   const metadata = [
     `eventId=${event.id}`,
     `callId=${event.callId ?? '<none>'}`,
@@ -1970,20 +1974,20 @@ function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTarg
     return formatIncompleteLegacyHistory(baseWithMetadata);
   }
   const detailExpected = event.targetDetail.detailRef !== null && event.targetDetail.itemCount > event.targetDetail.preview.length;
-  return formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected);
+  return formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected, locale);
 }
 
 export function formatIncompleteLegacyHistory(base: string): string {
   return `${base}\r\nIncomplete legacy history: omitted target items were not retained.`;
 }
 
-export function formatCompleteTargetDetail(base: string, detail: ActivityTargetDetail | null, detailExpected = false): string {
+export function formatCompleteTargetDetail(base: string, detail: ActivityTargetDetail | null, detailExpected = false, locale: UiLocale = 'th'): string {
   if (detail === null) {
     return detailExpected ? `${base}\r\nComplete target detail unavailable; this row may be incomplete.` : base;
   }
   if (detail.items.length === 0) return base;
   const heading = detail.kind === 'files' ? 'Files' : detail.kind === 'tools' ? 'Tools' : 'Details';
-  return `${base}\r\n${heading}:\r\n${detail.items.map((item) => `- ${item}`).join('\r\n')}`;
+  return `${base}\r\n${heading}:\r\n${detail.items.map((item) => `- ${formatDisplayTimestampItem(item, locale)}`).join('\r\n')}`;
 }
 
 function unavailableTunnelOAuthBackend(): TunnelOAuthProvisioningBackend {
@@ -2005,11 +2009,8 @@ function unavailableTunnelOAuthBackend(): TunnelOAuthProvisioningBackend {
   };
 }
 
-function formatActivityExportTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const pad = (part: number): string => String(part).padStart(2, '0');
-  return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+function formatActivityExportTimestamp(value: string, locale: UiLocale): string {
+  return formatDisplayDateTime(value, locale, { fallback: value });
 }
 
 export function buildPersistentTunnelDoctorChecks(input: {

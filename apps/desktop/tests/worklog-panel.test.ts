@@ -178,14 +178,27 @@ describe('WorkLogPanel', () => {
     expect(rows.map((row) => row.id)).toEqual(['slash', 'backslash']);
   });
 
-  it('formats copied/exported timestamps in the same local timezone used by the UI', () => {
+  it('formats copied/exported timestamps with the same locale contract used by the UI', () => {
     const rows = newestFirstWorkLogRows(mockEntries, mockInFlight);
     const row = rows[0]!;
-    const text = formatWorkLogCopyText(row);
-    const localDate = new Date(row.timestamp);
-    const expected = `${String(localDate.getDate()).padStart(2, '0')}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${localDate.getFullYear()} ${String(localDate.getHours()).padStart(2, '0')}:${String(localDate.getMinutes()).padStart(2, '0')}:${String(localDate.getSeconds()).padStart(2, '0')}`;
-    expect(text.startsWith(expected)).toBe(true);
-    expect(text).not.toContain(row.timestamp);
+    const thai = formatWorkLogCopyText(row, new Map(), null, 'th');
+    expect(thai.startsWith('19-08-2026 21:01:18')).toBe(true);
+    expect(thai).not.toContain(row.timestamp);
+    const english = formatWorkLogCopyText(row, new Map(), null, 'en');
+    expect(english).toMatch(/^\d{2}-\d{2}-2026 \d{2}:\d{2}:\d{2} (AM|PM)/);
+    expect(english).not.toContain(row.timestamp);
+  });
+
+  it('localizes exact ISO timestamps inside copied structured detail without rewriting non-time evidence', () => {
+    const row = newestFirstWorkLogRows(mockEntries, [])[0]!;
+    const copied = formatWorkLogCopyText(row, new Map(), {
+      kind: 'details',
+      items: ['started_at=2026-09-09T05:23:22.224Z', 'deadline_at=2026-09-09T05:24:22.224Z', 'status=running'],
+    }, 'th');
+    expect(copied).toContain('started_at=09-09-2026 12:23:22');
+    expect(copied).toContain('deadline_at=09-09-2026 12:24:22');
+    expect(copied).toContain('status=running');
+    expect(copied).not.toContain('2026-09-09T05:23:22.224Z');
   });
 
   it('renders and copies complete workspace/session/call identifiers without ellipsis', () => {

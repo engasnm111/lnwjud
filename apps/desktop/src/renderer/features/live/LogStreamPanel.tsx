@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactElement } from 'react';
-import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type LiveLogExportReference, type LogLevel, type LogLine, type LogSource, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type LiveLogExportReference, type LogLevel, type LogLine, type LogSource, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { formatLogExportDateTime, formatLogUiTime } from '../../log-timestamp.js';
@@ -15,6 +16,7 @@ export interface LogScopeSelection {
 }
 
 interface LogStreamPanelProps {
+  readonly locale?: UiLocale;
   readonly title: string;
   readonly source: LogSource;
   readonly lines: readonly LogLine[];
@@ -113,7 +115,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
       return;
     }
     setCopyErrorId(null);
-    if (!(await copyTextToClipboard(formatLogCopyText(line, detail)))) return;
+    if (!(await copyTextToClipboard(formatLogCopyText(line, detail, props.locale ?? 'th')))) return;
     setCopiedId(line.id);
     window.setTimeout(() => setCopiedId((current) => current === line.id ? null : current), 1_200);
   }
@@ -173,7 +175,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
           const display = logDisplayParts(line);
           return (
             <div key={line.id} className={`log-line ${line.source} ${line.level}${display.kind === null ? '' : ' has-kind'}`}>
-              <time>{formatLogUiTime(line.timestamp)}</time>
+              <time>{formatLogUiTime(line.timestamp, props.locale ?? 'th')}</time>
               <span className="tag level-tag">[{line.level.toUpperCase()}]</span>
               {display.kind === null ? null : <span className={`event-tag ${display.kind}`}>[{display.kind.toUpperCase()}]</span>}
               <span className="log-message"><ScopeBadges line={line} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={props.workspaces} />{display.detail}</span>
@@ -189,6 +191,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
               {copyErrorId === line.id ? <p className="log-detail-error row-copy-error" role="alert">{props.detailErrorLabel ?? 'Complete details are unavailable; nothing was copied.'}</p> : null}
               {line.targetDetail === undefined ? null : (
                 <ExpandableTargetDetail
+                  locale={props.locale ?? 'th'}
                   reference={line.targetDetail}
                   legacySummary={line.text}
                   showMoreLabel={props.showMoreLabel ?? 'Show more'}
@@ -305,8 +308,8 @@ export function logDisplayParts(line: LogLine): { readonly kind: LogEventKind | 
   return { kind: null, detail: line.text };
 }
 
-export function formatLogCopyText(line: LogLine, detail: ActivityTargetDetail | null = null): string {
-  const base = `${formatLogExportDateTime(line.timestamp)} [${line.level.toUpperCase()}] ${line.text}`;
+export function formatLogCopyText(line: LogLine, detail: ActivityTargetDetail | null = null, locale: UiLocale = 'th'): string {
+  const base = `${formatLogExportDateTime(line.timestamp, locale)} [${line.level.toUpperCase()}] ${line.text}`;
   const metadata = [
     `lineId=${line.id}`,
     `source=${line.source}`,
@@ -328,7 +331,7 @@ export function formatLogCopyText(line: LogLine, detail: ActivityTargetDetail | 
   const fullBase = `${base}\r\n${metadata.join('\r\n')}`;
   if (detail === null || detail.items.length === 0) return fullBase;
   const heading = detail.kind === 'files' ? 'Files' : detail.kind === 'tools' ? 'Tools' : 'Details';
-  return `${fullBase}\r\n${heading}:\r\n${detail.items.map((item) => `- ${item}`).join('\r\n')}`;
+  return `${fullBase}\r\n${heading}:\r\n${detail.items.map((item) => `- ${formatDisplayTimestampItem(item, locale)}`).join('\r\n')}`;
 }
 
 function liveLineIdentity(line: LogLine): string {

@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.56.1';
+export const APP_VERSION = '4.56.2';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -507,6 +507,7 @@ export interface ClearLogBufferRequest extends LogScopeRequest {
 }
 
 export interface ExportLogsRequest extends LogScopeRequest {
+  readonly locale?: UiLocale;
   readonly source: LogSource;
   readonly filePath: string;
   readonly query?: string;
@@ -520,6 +521,7 @@ export interface LiveLogExportReference {
 }
 
 export interface ExportWorkLogRequest {
+  readonly locale?: UiLocale;
   /** Ordered stable `audit:<eventId>` / `inflight:<callId>` identities captured at click. */
   readonly rowIds: readonly string[];
 }

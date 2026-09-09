@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, '..', '..');
-const version = '4.56.1';
+const version = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')).version as string;
 const commit = '0123456789abcdef0123456789abcdef01234567';
 
 describe('release asset collector', () => {
@@ -45,14 +45,14 @@ describe('release asset collector', () => {
 
       const assetNames = new Set(await readdir(assetsDirectory));
       for (const name of [
-        'lnwjud-Setup-4.56.1.exe',
-        'lnwjud-Portable-4.56.1.exe',
-        'lnwjud-4.56.1-arm64.dmg',
-        'lnwjud-4.56.1-arm64.zip',
-        'lnwjud-4.56.1-x64.dmg',
-        'lnwjud-4.56.1-x64.zip',
-        'lnwjud-4.56.1-x64.AppImage',
-        'lnwjud-4.56.1-arm64.AppImage',
+        `lnwjud-Setup-${version}.exe`,
+        `lnwjud-Portable-${version}.exe`,
+        `lnwjud-${version}-arm64.dmg`,
+        `lnwjud-${version}-arm64.zip`,
+        `lnwjud-${version}-x64.dmg`,
+        `lnwjud-${version}-x64.zip`,
+        `lnwjud-${version}-x64.AppImage`,
+        `lnwjud-${version}-arm64.AppImage`,
         'latest-linux.yml',
         'latest-linux-arm64.yml',
         'latest-mac.yml',
@@ -64,8 +64,8 @@ describe('release asset collector', () => {
         expect(assetNames.has(name), name).toBe(true);
       }
       const macManifest = await readFile(path.join(assetsDirectory, 'latest-mac.yml'), 'utf8');
-      expect(macManifest).toContain('lnwjud-4.56.1-arm64.zip');
-      expect(macManifest).toContain('lnwjud-4.56.1-x64.zip');
+      expect(macManifest).toContain(`lnwjud-${version}-arm64.zip`);
+      expect(macManifest).toContain(`lnwjud-${version}-x64.zip`);
       for (const name of assetNames) {
         if (!/^SHA256SUMS(?:-.+)?\.txt$/.test(name)) continue;
         const sums = await readFile(path.join(assetsDirectory, name), 'utf8');

@@ -88,12 +88,12 @@ describe('viewport-sized log and list layout', () => {
     const result = { id: 11, source: 'mcp' as const, timestamp: '2026-08-22T00:00:11.000Z', level: 'info' as const, workspaceId: 'ws-a', sessionId: 'session-a', text: '[RESULT] shell SUCCESS callId=abc — powershell -NoProfile -NonInteractive -Command Write-Output full-command' };
     expect(logDisplayParts(task)).toEqual({ kind: 'task', detail: 'shell STARTED callId=abc — powershell -NoProfile -NonInteractive -Command Write-Output full-command' });
     expect(logDisplayParts(result).kind).toBe('result');
-    const copied = formatLogCopyText(result);
+    const copied = formatLogCopyText(result, null, 'th');
     expect(copied).toContain(result.text);
-    const localDate = new Date(result.timestamp);
-    const expected = `${String(localDate.getDate()).padStart(2, '0')}-${String(localDate.getMonth() + 1).padStart(2, '0')}-${localDate.getFullYear()} ${String(localDate.getHours()).padStart(2, '0')}:${String(localDate.getMinutes()).padStart(2, '0')}:${String(localDate.getSeconds()).padStart(2, '0')}`;
-    expect(copied.startsWith(expected)).toBe(true);
+    expect(copied.startsWith('22-08-2026 07:00:11')).toBe(true);
     expect(copied).not.toContain(result.timestamp);
+    const english = formatLogCopyText(result, null, 'en');
+    expect(english).toMatch(/^\d{2}-\d{2}-2026 \d{2}:\d{2}:\d{2} (AM|PM)/);
     const markup = renderToStaticMarkup(createElement(LogStreamPanel, {
       source: 'mcp', title: 'MCP activity', lines: [task, result], tunnelLogPath: null, tunnelLogExists: false,
       filterPlaceholder: 'filter', pauseLabel: 'pause', followLabel: 'follow', clearLabel: 'clear', clearSessionLabel: 'clear session', clearWorkspaceLabel: 'clear workspace', exportLabel: 'export',

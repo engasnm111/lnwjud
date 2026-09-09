@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement } from 'react';
-import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { formatLogExportDateTime, formatLogUiTime } from '../../log-timestamp.js';
@@ -18,6 +19,7 @@ type WorkLogRow =
   | { readonly kind: 'entry'; readonly timestamp: string; readonly id: string; readonly item: WorkLogEntry };
 
 interface WorkLogPanelProps {
+  readonly locale?: UiLocale;
   readonly title: string;
   readonly emptyLabel: string;
   readonly filterAllLabel: string;
@@ -117,7 +119,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       return;
     }
     setCopyErrorId(null);
-    if (!(await copyTextToClipboard(formatWorkLogCopyText(row, resolvedTargets, detail)))) return;
+    if (!(await copyTextToClipboard(formatWorkLogCopyText(row, resolvedTargets, detail, props.locale ?? 'th')))) return;
     setCopiedId(row.id);
     window.setTimeout(() => setCopiedId((current) => current === row.id ? null : current), 1_200);
   }
@@ -177,7 +179,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
         {visible.length === 0 ? <p>{props.emptyLabel}</p> : null}
         {visible.map((row) => row.kind === 'inflight' ? (
           <div key={`inflight:${row.id}`} className="worklog-line inflight">
-            <time>{formatLogUiTime(row.item.startedAt)}</time>
+            <time>{formatLogUiTime(row.item.startedAt, props.locale ?? 'th')}</time>
             <span className="tag task-tag">[TASK]</span>
             <strong>{row.item.toolName}</strong>
             <span className="worklog-summary"><ScopeBadges item={row.item} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={props.workspaces} />{row.item.targetSummary ?? ''}</span>
@@ -188,7 +190,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
           </div>
         ) : (
           <div key={`entry:${row.item.id}`} className={`worklog-line ${row.item.kind}`}>
-            <time>{formatLogUiTime(row.item.timestamp)}</time>
+            <time>{formatLogUiTime(row.item.timestamp, props.locale ?? 'th')}</time>
             <span className={`tag ${row.item.kind}-tag`}>{tagFor(row.item.kind)}</span>
             <strong>{row.item.toolName}</strong>
             <span className="worklog-summary"><ScopeBadges item={row.item} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={props.workspaces} />{renderEntryDetail(row.item, resolvedTargets)}</span>
@@ -356,14 +358,14 @@ function entryDetailText(entry: WorkLogEntry, resolvedTargets: ReadonlyMap<strin
   return targetSummary ?? legacyEntryDetail(entry);
 }
 
-export function formatWorkLogCopyText(row: WorkLogRow, resolvedTargets: ReadonlyMap<string, string> = new Map(), detail: ActivityTargetDetail | null = null): string {
+export function formatWorkLogCopyText(row: WorkLogRow, resolvedTargets: ReadonlyMap<string, string> = new Map(), detail: ActivityTargetDetail | null = null, locale: UiLocale = 'th'): string {
   if (row.kind === 'inflight') {
-    const base = `${formatLogExportDateTime(row.item.startedAt)} [TASK] ${row.item.toolName}${row.item.targetSummary === null ? '' : ` ${row.item.targetSummary}`}`;
-    return appendCompleteTargetDetail(`${base}\r\n${workLogMetadataLines(row).join('\r\n')}`, detail);
+    const base = `${formatLogExportDateTime(row.item.startedAt, locale)} [TASK] ${row.item.toolName}${row.item.targetSummary === null ? '' : ` ${row.item.targetSummary}`}`;
+    return appendCompleteTargetDetail(`${base}\r\n${workLogMetadataLines(row).join('\r\n')}`, detail, locale);
   }
   const duration = row.item.kind === 'task' ? '' : ` ${row.item.durationMs}ms`;
-  const base = `${formatLogExportDateTime(row.item.timestamp)} ${tagFor(row.item.kind)} ${row.item.toolName} ${entryDetailText(row.item, resolvedTargets)}${duration}`.trim();
-  return appendCompleteTargetDetail(`${base}\r\n${workLogMetadataLines(row).join('\r\n')}`, detail);
+  const base = `${formatLogExportDateTime(row.item.timestamp, locale)} ${tagFor(row.item.kind)} ${row.item.toolName} ${entryDetailText(row.item, resolvedTargets)}${duration}`.trim();
+  return appendCompleteTargetDetail(`${base}\r\n${workLogMetadataLines(row).join('\r\n')}`, detail, locale);
 }
 
 function workLogMetadataLines(row: WorkLogRow): readonly string[] {
@@ -398,14 +400,15 @@ export function workLogRowIdentity(row: WorkLogRow): string {
   return row.kind === 'inflight' ? `inflight:${row.item.callId}` : `audit:${row.item.id}`;
 }
 
-function appendCompleteTargetDetail(base: string, detail: ActivityTargetDetail | null): string {
+function appendCompleteTargetDetail(base: string, detail: ActivityTargetDetail | null, locale: UiLocale): string {
   if (detail === null || detail.items.length === 0) return base;
   const heading = detail.kind === 'files' ? 'Files' : detail.kind === 'tools' ? 'Tools' : 'Details';
-  return `${base}\r\n${heading}:\r\n${detail.items.map((item) => `- ${item}`).join('\r\n')}`;
+  return `${base}\r\n${heading}:\r\n${detail.items.map((item) => `- ${formatDisplayTimestampItem(item, locale)}`).join('\r\n')}`;
 }
 
 function detailProps(props: WorkLogPanelProps): Omit<ComponentProps<typeof ExpandableTargetDetail>, 'reference' | 'legacySummary' | 'loadDetail'> {
   return {
+    locale: props.locale ?? 'th',
     showMoreLabel: props.showMoreLabel ?? 'Show more',
     showLessLabel: props.showLessLabel ?? 'Show less',
     detailHeadingLabel: props.detailHeadingLabel ?? 'Target items',

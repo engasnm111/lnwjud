@@ -22,6 +22,7 @@ export function WorkLogPage(props: WorkLogPageProps): ReactElement {
   return (
     <div className="page-content viewport-list-page worklog-page">
       <WorkLogPanel
+        locale={props.locale}
         title={t('workLog.title')}
         emptyLabel={t('workLog.empty')}
         filterAllLabel={t('workLog.filterAll')}

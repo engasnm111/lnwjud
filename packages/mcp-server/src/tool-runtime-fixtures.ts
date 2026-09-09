@@ -279,7 +279,10 @@ export const PHASE_19_TO_33_TOOL_RUNTIME_FIXTURES = {
   port_context: nativeRuntime('port_context', {}, { listening: ['fixture listener'] }),
   registry_context: windowsRuntime('registry_context', { key: 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment' }),
   event_log_context: nativeRuntime('event_log_context', { log_name: 'Application', max_events: 1 }, { eventLog: { count: 1, events: [{ message: 'fixture event' }] } }),
-  installed_runtime_context: nativeRuntime('installed_runtime_context', {}, {}),
+  installed_runtime_context: deterministic({}, {
+    expected: { tool: 'installed_runtime_context', available: true, executed: true },
+    requiredKeys: ['status', 'ready', 'runtimes'],
+  }),
   path_context: nativeRuntime('path_context', {}, {}),
   startup_context: nativeRuntime('startup_context', {}, { startup: 'fixture startup\n' }),
   mcp_discover: service({}, 'extensions.listMcpServers'),

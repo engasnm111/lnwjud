@@ -1136,6 +1136,7 @@ function exportLogs(request: ExportLogsRequest): Promise<{ readonly exported: bo
   return invoke(ipcChannels.exportLogs, {
     source: request.source,
     filePath: request.filePath ?? '',
+    ...(request.locale === undefined ? {} : { locale: uiLocale(request.locale) }),
     ...scopePayload(request),
     ...(typeof request.query === 'string' && request.query.trim().length > 0 ? { query: request.query.trim().slice(0, 512) } : {}),
     lines: request.lines.map((line) => ({ lineId: line.lineId, correlationRef: line.correlationRef })),
@@ -1149,7 +1150,7 @@ function exportWorkLog(request: ExportWorkLogRequest): Promise<{ readonly export
   if (!isRecord(request) || !Array.isArray(request.rowIds) || request.rowIds.length > 5_000 || request.rowIds.some((rowId) => typeof rowId !== 'string' || rowId.length === 0 || rowId.length > 1_024)) {
     return Promise.reject(new Error('Invalid IPC request'));
   }
-  return invoke(ipcChannels.exportWorkLog, { rowIds: [...request.rowIds] }).then((value: unknown) => {
+  return invoke(ipcChannels.exportWorkLog, { rowIds: [...request.rowIds], ...(request.locale === undefined ? {} : { locale: uiLocale(request.locale) }) }).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { exported: booleanField(value, 'exported') };
   });

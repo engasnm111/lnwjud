@@ -27,7 +27,7 @@ import { GitPage } from './features/git/GitPage.js';
 import { WorkLogPage } from './features/worklog/WorkLogPage.js';
 import { LiveLogsPage } from './features/live/LiveLogsPage.js';
 import type { LogScopeSelection } from './features/live/LogStreamPanel.js';
-import { applyLogSnapshot } from './features/live/log-buffer.js';
+import { appendLogBatch, applyLogSnapshot, rememberLogId } from './features/live/log-buffer.js';
 import { SettingsPage, type SettingsFocusTarget, type SettingsSection } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
 import { ToolsPage } from './features/tools/ToolsPage.js';
@@ -74,6 +74,8 @@ export function App(): ReactElement {
   const incidentBusyRef = useRef(false);
   const refreshBusyRef = useRef(false);
   const logIds = useRef<Set<number>>(new Set());
+  const pendingLogLines = useRef<LogLine[]>([]);
+  const logFlushTimer = useRef<number | null>(null);
   const guidedTunnelLaunchSignature = useRef<string | null>(null);
   const startupDoctorVersion = useRef<string | null>(null);
   const settingsRequestId = useRef(0);
@@ -82,11 +84,21 @@ export function App(): ReactElement {
   const appVersion = dashboard?.appVersion ?? null;
   const projectWorkspaces = workspaces.filter((workspace) => workspace.kind !== 'machine_root' && (workspace.archivedAt === undefined || workspace.archivedAt === null));
 
-  const appendLogLine = useCallback((line: LogLine): void => {
-    if (logIds.current.has(line.id)) return;
-    logIds.current.add(line.id);
-    setLogLines((previous) => [...previous.slice(-(MAX_CLIENT_LOG_LINES - 1)), line]);
+  const flushPendingLogLines = useCallback((): void => {
+    logFlushTimer.current = null;
+    if (pendingLogLines.current.length === 0) return;
+    const batch = pendingLogLines.current;
+    pendingLogLines.current = [];
+    setLogLines((previous) => appendLogBatch(previous, batch, MAX_CLIENT_LOG_LINES));
   }, []);
+
+  const appendLogLine = useCallback((line: LogLine): void => {
+    if (!rememberLogId(logIds.current, line.id, MAX_CLIENT_LOG_LINES * 2)) return;
+    pendingLogLines.current.push(line);
+    if (logFlushTimer.current === null) {
+      logFlushTimer.current = window.setTimeout(flushPendingLogLines, 40);
+    }
+  }, [flushPendingLogLines]);
 
   useEffect(() => {
     let disposed = false;
@@ -107,7 +119,7 @@ export function App(): ReactElement {
     void window.lnwjud.getLogSnapshot().then((snapshot) => {
       if (disposed) return;
       setLogLines((previous) => {
-        const merged = applyLogSnapshot(previous, logIds.current, snapshot.lines);
+        const merged = applyLogSnapshot(previous, logIds.current, snapshot.lines, MAX_CLIENT_LOG_LINES);
         logIds.current = merged.ids;
         return merged.lines;
       });
@@ -121,6 +133,11 @@ export function App(): ReactElement {
     return (): void => {
       disposed = true;
       unsubscribe();
+      if (logFlushTimer.current !== null) {
+        window.clearTimeout(logFlushTimer.current);
+        logFlushTimer.current = null;
+      }
+      pendingLogLines.current = [];
     };
   }, [appendLogLine]);
 
@@ -131,6 +148,7 @@ export function App(): ReactElement {
         ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
         ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
       });
+      pendingLogLines.current = pendingLogLines.current.filter((line) => line.source !== source || !lineMatchesScope(line, scope, workspaces));
       setLogLines((previous) => previous.filter((line) => line.source !== source || !lineMatchesScope(line, scope, workspaces)));
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logBufferClear')));
@@ -140,6 +158,11 @@ export function App(): ReactElement {
   async function clearAllLogs(): Promise<void> {
     try {
       await Promise.all((['tunnel', 'mcp', 'process'] as const).map((source) => window.lnwjud.clearLogBuffer({ source })));
+      if (logFlushTimer.current !== null) {
+        window.clearTimeout(logFlushTimer.current);
+        logFlushTimer.current = null;
+      }
+      pendingLogLines.current = [];
       logIds.current = new Set();
       setLogLines([]);
     } catch (cause: unknown) {
@@ -152,6 +175,7 @@ export function App(): ReactElement {
       await window.lnwjud.exportLogs({
         source,
         filePath: '',
+        locale,
         ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
         ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
         ...(query.trim().length === 0 ? {} : { query: query.trim() }),
@@ -461,7 +485,7 @@ export function App(): ReactElement {
 
   async function exportWorkLog(rowIds: readonly string[]): Promise<void> {
     try {
-      await window.lnwjud.exportWorkLog({ rowIds });
+      await window.lnwjud.exportWorkLog({ rowIds, locale });
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logExport')));
     }

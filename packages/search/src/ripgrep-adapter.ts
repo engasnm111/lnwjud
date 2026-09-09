@@ -12,11 +12,19 @@ export interface ProcessRunResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly timedOut?: boolean;
+  /** True when the caller intentionally stopped a streaming child after collecting enough evidence. */
+  readonly stoppedEarly?: boolean;
 }
 
 export interface ProcessRunOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+  /**
+   * Observe complete stdout lines while the child is running. Returning true
+   * requests an orderly process-tree stop without classifying the result as a timeout.
+   * This keeps high-volume tools such as ripgrep from flooding Electron's main loop.
+   */
+  readonly stopAfterStdoutLine?: (line: string) => boolean;
 }
 
 export interface ProcessRunner {
@@ -44,12 +52,26 @@ export class DirectProcessRunner implements ProcessRunner {
         detached: this.platform !== 'win32',
         ...(invocation.value.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.value.windowsVerbatimArguments }),
       });
-      let stdout = '';
-      let stderr = '';
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let stdoutLinePending = '';
       let timedOut = false;
+      let stoppedEarly = false;
       let settled = false;
       let terminationPending = false;
       let pendingExitCode: number | null = null;
+
+      const appendBounded = (chunks: Buffer[], currentBytes: number, chunk: Buffer): number => {
+        if (currentBytes >= MAX_PROCESS_LOG_BYTES) return currentBytes;
+        const remaining = MAX_PROCESS_LOG_BYTES - currentBytes;
+        const kept = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+        if (kept.length > 0) chunks.push(Buffer.from(kept));
+        return currentBytes + kept.length;
+      };
+      const stdoutText = (): string => Buffer.concat(stdoutChunks, stdoutBytes).toString('utf8');
+      const stderrText = (): string => Buffer.concat(stderrChunks, stderrBytes).toString('utf8');
       const complete = (exitCode: number): void => {
         if (terminationPending) {
           pendingExitCode = exitCode;
@@ -57,9 +79,10 @@ export class DirectProcessRunner implements ProcessRunner {
         }
         finish(exitCode);
       };
-      const abort = (): void => {
+      const requestStop = (reason: 'timeout' | 'early'): void => {
         if (terminationPending || settled) return;
-        timedOut = true;
+        if (reason === 'timeout') timedOut = true;
+        else stoppedEarly = true;
         const pid = child.pid;
         if (pid === undefined) {
           finish(-1);
@@ -71,30 +94,64 @@ export class DirectProcessRunner implements ProcessRunner {
           finish(pendingExitCode ?? -1);
         }).catch((error: unknown) => {
           terminationPending = false;
-          stderr = `${stderr}${error instanceof Error ? error.message : 'process termination could not be verified'}`;
+          const message = Buffer.from(error instanceof Error ? error.message : 'process termination could not be verified', 'utf8');
+          stderrBytes = appendBounded(stderrChunks, stderrBytes, message);
           finish(-1);
         });
       };
-      const append = (current: string, chunk: Buffer): string => Buffer.from(`${current}${chunk.toString('utf8')}`, 'utf8').subarray(-MAX_PROCESS_LOG_BYTES).toString('utf8');
+      const abort = (): void => requestStop('timeout');
+      const captureStdout = (chunk: Buffer): void => {
+        const observer = options.stopAfterStdoutLine;
+        if (observer === undefined) {
+          stdoutBytes = appendBounded(stdoutChunks, stdoutBytes, chunk);
+          return;
+        }
+        if (stoppedEarly || timedOut) return;
+        stdoutLinePending += chunk.toString('utf8');
+        if (Buffer.byteLength(stdoutLinePending, 'utf8') > MAX_PROCESS_LOG_BYTES) {
+          requestStop('early');
+          return;
+        }
+        const lines = stdoutLinePending.split(/\r?\n/);
+        stdoutLinePending = lines.pop() ?? '';
+        for (const line of lines) {
+          stdoutBytes = appendBounded(stdoutChunks, stdoutBytes, Buffer.from(`${line}\n`, 'utf8'));
+          if (observer(line)) {
+            stdoutLinePending = '';
+            requestStop('early');
+            return;
+          }
+        }
+      };
       const finish = (exitCode: number): void => {
         if (settled) return;
         settled = true;
         if (timer !== undefined) clearTimeout(timer);
         options.signal?.removeEventListener('abort', abort);
-        resolve({ exitCode, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) });
+        resolve({
+          exitCode,
+          stdout: stdoutText(),
+          stderr: stderrText(),
+          ...(timedOut ? { timedOut: true } : {}),
+          ...(stoppedEarly ? { stoppedEarly: true } : {}),
+        });
       };
       const timeoutMs = options.timeoutMs;
       const timer = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
         ? setTimeout(() => {
-          abort();
+          requestStop('timeout');
         }, timeoutMs)
         : undefined;
       if (options.signal?.aborted) abort();
       else options.signal?.addEventListener('abort', abort, { once: true });
-      child.stdout?.on('data', (chunk: Buffer) => { stdout = append(stdout, chunk); });
-      child.stderr?.on('data', (chunk: Buffer) => { stderr = append(stderr, chunk); });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        captureStdout(chunk);
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderrBytes = appendBounded(stderrChunks, stderrBytes, chunk);
+      });
       child.on('error', (error: Error) => {
-        stderr = `${stderr}${error.message}`;
+        stderrBytes = appendBounded(stderrChunks, stderrBytes, Buffer.from(error.message, 'utf8'));
         complete(-1);
       });
       child.on('close', (exitCode) => complete(exitCode ?? -1));
@@ -155,20 +212,35 @@ export class RipgrepAdapter {
     if (discovery === 'automatic') this.appendDefaultGlobs(args);
     if (request.glob !== undefined) args.push('--glob', request.glob);
     args.push('--', request.query, '.');
-    const processResult = await this.runner.run(executable.value, args, request.rootPath, { timeoutMs: SEARCH_PROCESS_TIMEOUT_MS, ...(request.signal === undefined ? {} : { signal: request.signal }) });
-    if (!processResult.timedOut && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
+    let observedMatches = 0;
+    const processResult = await this.runner.run(executable.value, args, request.rootPath, {
+      timeoutMs: SEARCH_PROCESS_TIMEOUT_MS,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      stopAfterStdoutLine: (line) => {
+        const match = this.parseMatch(line);
+        if (match === null) return false;
+        if (discovery === 'automatic' && !classifyContextPath(match.path, discovery).discoverable) return false;
+        observedMatches += 1;
+        return observedMatches > maxResults;
+      },
+    });
+    if (!processResult.timedOut && !processResult.stoppedEarly && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
       if (processResult.exitCode === 2) return err({ code: 'INVALID_INPUT', message: searchArgumentError(processResult.stderr), recoverable: false });
       return err({ code: 'INTERNAL_ERROR', message: searchProcessError(processResult.stderr), recoverable: true });
     }
     const matches: SearchMatch[] = [];
+    let hasAdditionalMatch = false;
     for (const line of processResult.stdout.split(/\r?\n/)) {
       const match = this.parseMatch(line);
       if (match === null) continue;
       if (discovery === 'automatic' && !classifyContextPath(match.path, discovery).discoverable) continue;
+      if (matches.length >= maxResults) {
+        hasAdditionalMatch = true;
+        break;
+      }
       matches.push(match);
-      if (matches.length >= maxResults) break;
     }
-    return ok({ matches, truncated: processResult.timedOut === true || matches.length >= maxResults && processResult.stdout.includes('"type":"match"') });
+    return ok({ matches, truncated: processResult.timedOut === true || processResult.stoppedEarly === true || hasAdditionalMatch });
   }
 
   public async searchFiles(request: SearchFilesRequest): Promise<Result<SearchFilesResult>> {
@@ -183,8 +255,18 @@ export class RipgrepAdapter {
     if (discovery === 'automatic') this.appendDefaultGlobs(args);
     if (request.glob !== undefined) args.push('--glob', request.glob);
     args.push('--');
-    const processResult = await this.runner.run(executable.value, args, request.rootPath, { timeoutMs: SEARCH_PROCESS_TIMEOUT_MS, ...(request.signal === undefined ? {} : { signal: request.signal }) });
-    if (!processResult.timedOut && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
+    let observedPaths = 0;
+    const processResult = await this.runner.run(executable.value, args, request.rootPath, {
+      timeoutMs: SEARCH_PROCESS_TIMEOUT_MS,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      stopAfterStdoutLine: (line) => {
+        if (line.length === 0) return false;
+        if (discovery === 'automatic' && !classifyContextPath(line, discovery).discoverable) return false;
+        observedPaths += 1;
+        return observedPaths > maxResults;
+      },
+    });
+    if (!processResult.timedOut && !processResult.stoppedEarly && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
       if (processResult.exitCode === 2) return err({ code: 'INVALID_INPUT', message: searchArgumentError(processResult.stderr), recoverable: false });
       return err({ code: 'INTERNAL_ERROR', message: searchProcessError(processResult.stderr), recoverable: true });
     }
@@ -193,7 +275,7 @@ export class RipgrepAdapter {
       .filter((entry) => entry.length > 0)
       .filter((entry) => discovery === 'explicit' || classifyContextPath(entry, discovery).discoverable);
     const paths = discoveredPaths.slice(0, maxResults);
-    return ok({ paths, truncated: processResult.timedOut === true || discoveredPaths.length > maxResults });
+    return ok({ paths, truncated: processResult.timedOut === true || processResult.stoppedEarly === true || discoveredPaths.length > maxResults });
   }
 
   private parseMatch(line: string): SearchMatch | null {

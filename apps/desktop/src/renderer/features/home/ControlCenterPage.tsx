@@ -116,7 +116,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           </button>
         </div>
       </div>
-      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p role="status" className="hint">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentLabel(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt)}`}</p>}
+      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p role="status" className="hint">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentLabel(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt, '—', props.locale)}`}</p>}
 
       <section className="panel agent-status-panel" aria-label={agentLabel}>
         <div className={`agent-orb ${dashboard.agentState}`} data-testid="agent-state" />

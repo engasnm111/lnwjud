@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v4.56.1` - Windows installer `lnwjud-Setup-4.56.1.exe` and portable executable `lnwjud-Portable-4.56.1.exe`; MCP registry **232 total definitions / 225 advertised by default / all 232 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v4.56.2` - Windows installer `lnwjud-Setup-4.56.2.exe` and portable executable `lnwjud-Portable-4.56.2.exe`; MCP registry **232 total definitions / 225 advertised by default / all 232 with Codex delegation plus Agent Swarm enabled**.
 
 Run the release verification from PowerShell at the repository root. The automated gate must fail fast on any non-zero stage and `git diff --check` must pass before packaging or publishing. Pull-request/non-main CI may pass `-SkipWindowsPackaging`; the exact `main` commit that will be tagged must run the full Windows gate plus the target-native macOS/Linux package matrix and produce all five SHA-scoped release artifacts.
 
@@ -16,6 +16,7 @@ Issue #26 / secret migration boundary: the JavaScript runtime must not ship Powe
 - Secret-file policy and log/incident redaction tests pass; release evidence must never contain credentials or tokens.
 - AV-sensitive secret-code tests pass: compiled Desktop output and packaged runtime evidence contain no legacy PowerShell secret modules, stale DPAPI imports, `lnwjud-node.exe`, or `lnwjud-mcp-stdio.cjs`.
 - MCP local HTTP and STDIO transport tests pass, including protocol-only stdout and production handshake coverage.
+- External MCP client negotiation is compatibility-driven rather than pinned to lnwjud's inbound protocol: real stdio fixtures must prove both a legacy/2025-era child and a modern `2026-07-28` child connect through the production External MCP client factory, while lnwjud's own inbound/local MCP `2026-07-28` contract remains unchanged. Release preparation also performs a local installed-Serena smoke when Serena is present; its absence is not a CI dependency.
 - Remote MCP OAuth DCR accepts ChatGPT-style metadata, validates `client_secret_post` credentials at the token endpoint, and returns explicit 4xx errors for malformed or unsupported registration metadata.
 - OpenAI Secure Tunnel targets the Desktop loopback HTTP MCP (`sample_mcp_remote_no_auth`) rather than a separate headless stdio runtime, preserving the Desktop profile and Desktop Full Bypass state. Active Project scope/native approval remain enforced when Desktop Full Bypass is OFF.
 - Persistent-tunnel acceptance preserves one saved tunnel identity across managed-runtime loss, Desktop/local-MCP rebinding, update/reinstall startup, and detached-runtime handoff; transient retry is capped but unbounded in count, while auth/operator failures do not tight-loop.
