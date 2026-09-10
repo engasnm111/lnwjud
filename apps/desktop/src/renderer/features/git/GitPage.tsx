@@ -1,6 +1,7 @@
-import type { ReactElement } from 'react';
-import type { DashboardSnapshot, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
+import { useState, type ReactElement } from 'react';
+import type { DashboardSnapshot, GitStatusEntrySummary, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
+import { SplitDiffViewer } from './SplitDiffViewer.js';
 
 interface GitPageProps {
   readonly locale: UiLocale;
@@ -23,6 +24,40 @@ export function GitPage({
   const isClean = gitSummary.changedFiles === 0 && gitSummary.stagedFiles === 0;
   const isRepo = gitSummary.isRepo ?? (gitSummary.message !== 'Not a Git repository' && gitSummary.message !== 'No workspace selected');
   const currentPath = gitSummary.repositoryPath ?? selectedWorkspace?.realRootPath ?? '—';
+
+  const [selectedFile, setSelectedFile] = useState<GitStatusEntrySummary | null>(null);
+  const [diffData, setDiffData] = useState<{
+    patch: string;
+    oldContent?: string;
+    newContent?: string;
+    loading: boolean;
+    error?: string;
+  } | null>(null);
+
+  const handleOpenFileDiff = async (entry: GitStatusEntrySummary): Promise<void> => {
+    if (!selectedWorkspace) return;
+    setSelectedFile(entry);
+    setDiffData({ patch: '', loading: true });
+    try {
+      const res = await window.lnwjud.getGitDiff({
+        workspaceId: selectedWorkspace.id,
+        path: entry.path,
+        staged: entry.indexStatus !== ' ' && entry.worktreeStatus === ' ',
+      });
+      setDiffData({
+        patch: res.patch,
+        ...(res.oldContent !== undefined ? { oldContent: res.oldContent } : {}),
+        ...(res.newContent !== undefined ? { newContent: res.newContent } : {}),
+        loading: false,
+      });
+    } catch (err: unknown) {
+      setDiffData({
+        patch: '',
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to load diff',
+      });
+    }
+  };
 
   return (
     <div className="page-content viewport-list-page git-page">
@@ -93,6 +128,35 @@ export function GitPage({
           </div>
         </div>
 
+        {selectedFile !== null ? (
+          <div className="git-diff-container-section">
+            {diffData?.loading ? (
+              <div className="diff-loading-box">
+                <span className="spinner-icon">⏳</span>
+                <span>{locale === 'th' ? 'กำลังโหลดความแตกต่างของโค้ด...' : 'Loading code diff...'}</span>
+              </div>
+            ) : diffData?.error ? (
+              <div className="diff-error-box">
+                <p>{diffData.error}</p>
+                <button type="button" onClick={() => { setSelectedFile(null); }}>
+                  {locale === 'th' ? 'ปิด' : 'Close'}
+                </button>
+              </div>
+            ) : (
+              <SplitDiffViewer
+                locale={locale}
+                filePath={selectedFile.path}
+                patch={diffData?.patch ?? ''}
+                oldContent={diffData?.oldContent}
+                newContent={diffData?.newContent}
+                additions={selectedFile.additions}
+                deletions={selectedFile.deletions}
+                onClose={() => { setSelectedFile(null); }}
+              />
+            )}
+          </div>
+        ) : null}
+
         {!isRepo ? (
           <div className="git-not-repo-notice">
             <div className="git-notice-header">
@@ -124,19 +188,51 @@ export function GitPage({
           </div>
         ) : gitSummary.entries !== undefined && gitSummary.entries.length > 0 ? (
           <div className="git-files-section">
-            <h3>{locale === 'th' ? 'รายการไฟล์ที่มีการเปลี่ยนแปลง (Changed Files)' : 'Changed Files'}</h3>
+            <div className="git-files-header">
+              <h3>{locale === 'th' ? 'รายการไฟล์ที่มีการเปลี่ยนแปลง (Changed Files)' : 'Changed Files'}</h3>
+              <span className="hint">
+                {locale === 'th' ? 'คลิกที่ไฟล์เพื่อเปิดดูแบบ 2 จอ (Old vs New)' : 'Click any file to open 2-pane split diff'}
+              </span>
+            </div>
             <div className="git-file-list">
-              {gitSummary.entries.map((entry) => (
-                <div key={entry.path} className="git-file-item">
-                  <span className={`git-file-tag ${entry.kind}`}>
-                    [{entry.kind.toUpperCase()}]
-                  </span>
-                  <span className="git-file-path">{entry.path}</span>
-                  <span className="git-file-status">
-                    {entry.indexStatus !== ' ' ? (locale === 'th' ? 'Staged' : 'Staged') : (locale === 'th' ? 'Unstaged' : 'Unstaged')}
-                  </span>
-                </div>
-              ))}
+              {gitSummary.entries.map((entry) => {
+                const isSelected = selectedFile?.path === entry.path;
+                return (
+                  <div
+                    key={entry.path}
+                    className={`git-file-item clickable-file-item ${isSelected ? 'selected' : ''}`}
+                    onClick={() => { void handleOpenFileDiff(entry); }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        void handleOpenFileDiff(entry);
+                      }
+                    }}
+                  >
+                    <span className={`git-file-tag ${entry.kind}`}>
+                      [{entry.kind.toUpperCase()}]
+                    </span>
+                    <span className="git-file-path">{entry.path}</span>
+                    <div className="git-file-stats">
+                      {typeof entry.additions === 'number' && entry.additions > 0 ? (
+                        <span className="stat-badge stat-add" title={locale === 'th' ? `เพิ่ม ${entry.additions} บรรทัด` : `+${entry.additions} lines`}>
+                          +{entry.additions}
+                        </span>
+                      ) : null}
+                      {typeof entry.deletions === 'number' && entry.deletions > 0 ? (
+                        <span className="stat-badge stat-del" title={locale === 'th' ? `ลบ ${entry.deletions} บรรทัด` : `-${entry.deletions} lines`}>
+                          -{entry.deletions}
+                        </span>
+                      ) : null}
+                    </div>
+                    <span className="git-file-status">
+                      {entry.indexStatus !== ' ' ? (locale === 'th' ? 'Staged' : 'Staged') : (locale === 'th' ? 'Unstaged' : 'Unstaged')}
+                    </span>
+                    <span className="git-view-diff-arrow">👁️ {locale === 'th' ? 'ดูโค้ด' : 'Diff'}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : isClean ? (

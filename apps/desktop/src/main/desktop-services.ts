@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
@@ -120,6 +120,8 @@ import {
   type DoctorReport,
   type ToolCatalogSnapshot,
   type GetToolCatalogRequest,
+  type GetGitDiffRequest,
+  type GetGitDiffResponse,
   type RecheckToolCatalogRequest,
   type SetToolAvailabilityRequest,
   type ResetToolAvailabilityRequest,
@@ -1414,6 +1416,57 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         collectListeners: collectRelevantListeners,
       });
     },
+    getGitDiff: async (request: GetGitDiffRequest): Promise<GetGitDiffResponse> => {
+      const workspace = await workspaceRepository.get(request.workspaceId);
+      if (workspace === null) throw new Error('Workspace not found');
+
+      const fileActor: FileActor = { clientId: 'desktop-git', clientName: 'desktop-git' };
+      const diffResult = await gitService.diff(fileActor, workspace.id, {
+        path: request.path,
+        ...(request.staged !== undefined ? { staged: request.staged } : {}),
+      });
+
+      let patch = diffResult.ok ? diffResult.value.patch : '';
+      const truncated = diffResult.ok ? diffResult.value.truncated : false;
+
+      const targetFilePath = path.resolve(workspace.realRootPath, request.path);
+      let newContent: string | undefined;
+      try {
+        if (statSync(targetFilePath).isFile()) {
+          newContent = await readFile(targetFilePath, 'utf8');
+        }
+      } catch {
+        newContent = undefined;
+      }
+
+      let oldContent: string | undefined;
+      try {
+        const normalizedRelPath = request.path.replace(/\\/g, '/');
+        const showResult = await gitService.run(fileActor, {
+          workspaceId: workspace.id,
+          args: ['show', `HEAD:${normalizedRelPath}`],
+        });
+        if (showResult.ok && showResult.value.exitCode === 0) {
+          oldContent = showResult.value.stdout;
+        }
+      } catch {
+        oldContent = undefined;
+      }
+
+      if (!patch && newContent !== undefined && oldContent === undefined) {
+        const lines = newContent.split(/\r?\n/);
+        patch = `--- /dev/null\n+++ b/${request.path.replace(/\\/g, '/')}\n@@ -0,0 +1,${lines.length} @@\n` +
+          lines.map((line) => `+${line}`).join('\n') + '\n';
+      }
+
+      return {
+        path: request.path,
+        patch,
+        truncated,
+        ...(oldContent !== undefined ? { oldContent } : {}),
+        ...(newContent !== undefined ? { newContent } : {}),
+      };
+    },
   };
 
   return {
@@ -1723,6 +1776,26 @@ async function assertWorkspaceRelinkable(workspace: Workspace): Promise<void> {
   }
 }
 
+function applyNumstat(map: Map<string, { additions: number; deletions: number }>, output: string): void {
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('\t');
+    if (parts.length >= 3) {
+      const add = parts[0] === '-' ? 0 : parseInt(parts[0]!, 10) || 0;
+      const del = parts[1] === '-' ? 0 : parseInt(parts[1]!, 10) || 0;
+      const filePath = parts.slice(2).join('\t').replace(/\\/g, '/');
+      const existing = map.get(filePath);
+      if (existing) {
+        existing.additions += add;
+        existing.deletions += del;
+      } else {
+        map.set(filePath, { additions: add, deletions: del });
+      }
+    }
+  }
+}
+
 async function buildGitSummary(
   workspace: Workspace,
   gitService: GitService,
@@ -1743,6 +1816,21 @@ async function buildGitSummary(
   const branchResult = await gitService.branch(fileActor, workspace.id);
   const branch = branchResult.ok ? branchResult.value : null;
   const stagedFiles = result.value.entries.filter((entry) => entry.indexStatus !== ' ').length;
+
+  const numstatMap = new Map<string, { additions: number; deletions: number }>();
+  try {
+    const unstaged = await gitService.run(fileActor, { workspaceId: workspace.id, args: ['diff', '--numstat'] });
+    if (unstaged.ok && unstaged.value.exitCode === 0) {
+      applyNumstat(numstatMap, unstaged.value.stdout);
+    }
+    const staged = await gitService.run(fileActor, { workspaceId: workspace.id, args: ['diff', '--cached', '--numstat'] });
+    if (staged.ok && staged.value.exitCode === 0) {
+      applyNumstat(numstatMap, staged.value.stdout);
+    }
+  } catch {
+    // numstat is best effort
+  }
+
   return {
     branch,
     changedFiles: result.value.entries.length,
@@ -1750,12 +1838,33 @@ async function buildGitSummary(
     message: result.value.entries.length === 0 ? 'Clean working tree' : `${result.value.entries.length} changed file(s)`,
     repositoryPath: workspace.realRootPath,
     isRepo: true,
-    entries: result.value.entries.map((entry) => ({
-      path: entry.path,
-      kind: entry.kind,
-      indexStatus: entry.indexStatus,
-      worktreeStatus: entry.worktreeStatus,
-    })),
+    entries: result.value.entries.map((entry) => {
+      const normalizedPath = entry.path.replace(/\\/g, '/');
+      const stats = numstatMap.get(normalizedPath);
+      let additions = stats?.additions;
+      let deletions = stats?.deletions;
+      if (additions === undefined && deletions === undefined && (entry.kind === 'untracked' || entry.worktreeStatus === '?')) {
+        try {
+          const fullPath = path.resolve(workspace.realRootPath, entry.path);
+          if (statSync(fullPath).isFile()) {
+            const content = readFileSync(fullPath, 'utf8');
+            additions = content.length === 0 ? 0 : content.split('\n').length;
+            deletions = 0;
+          }
+        } catch {
+          additions = 0;
+          deletions = 0;
+        }
+      }
+      return {
+        path: entry.path,
+        kind: entry.kind,
+        indexStatus: entry.indexStatus,
+        worktreeStatus: entry.worktreeStatus,
+        additions: additions ?? 0,
+        deletions: deletions ?? 0,
+      };
+    }),
   };
 }
 
