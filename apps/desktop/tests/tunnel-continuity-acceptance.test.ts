@@ -242,4 +242,29 @@ describe('v4.11 persistent tunnel continuity acceptance', () => {
     expect(controller.status).not.toHaveBeenCalled();
     expect(controller.startAutomatically).not.toHaveBeenCalled();
   });
+
+  it('safely catches auto-start failure and returns error status', async () => {
+    const baseStatus: TunnelStatus = {
+      state: 'stopped',
+      source: 'desktop',
+      hasApiKey: true,
+      clientPath: 'C:\\Program Files\\lnwjud\\resources\\tunnel-client\\tunnel-client.exe',
+      profileExists: true,
+      message: null,
+      logPath: 'C:\\Users\\fixture\\AppData\\Roaming\\tunnel-client\\lnwjud.log',
+      persistent: null,
+    };
+    const controller = {
+      status: vi.fn(async (): Promise<TunnelStatus> => baseStatus),
+      startAutomatically: vi.fn(async (): Promise<TunnelStatus> => {
+        throw new Error('EADDRINUSE');
+      }),
+      reconcileStoppedRuntime: vi.fn(async (): Promise<null> => null),
+    };
+
+    const result = await autoStartPersistentTunnel(controller, true);
+    expect(result.state).toBe('error');
+    expect(result.message).toBe('Tunnel automatic start failed: EADDRINUSE');
+  });
 });
+

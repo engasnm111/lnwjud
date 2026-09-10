@@ -272,7 +272,16 @@ export async function autoStartPersistentTunnel(
   const status = await tunnelController.status();
   const runtimeCredentialAvailable = status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey;
   if (!autoReconnect || !status.profileExists || !runtimeCredentialAvailable || status.clientPath === null) return status;
-  return tunnelController.startAutomatically();
+  try {
+    return await tunnelController.startAutomatically();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ...status,
+      state: 'error',
+      message: `Tunnel automatic start failed: ${message}`,
+    };
+  }
 }
 
 export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOptions = {}): DesktopRuntime {
