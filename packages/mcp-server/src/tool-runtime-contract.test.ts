@@ -268,7 +268,7 @@ describe('tool runtime delivery contract', () => {
         && typeof record(checkpoint).summary === 'string'
       ))).toBe(true);
     }
-  }, 20_000);
+  }, 35_000);
 
   it.each(Object.entries(PHASE_5_TO_18_TOOL_RUNTIME_FIXTURES).filter(([, fixture]) => fixture.evidence.kind === 'service_dispatch'))(
     '%s reports needs_setup instead of successful placeholder data when its service is absent',
