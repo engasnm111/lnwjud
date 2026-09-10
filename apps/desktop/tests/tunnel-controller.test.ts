@@ -1467,6 +1467,24 @@ describe('TunnelController lifecycle', () => {
     expect(internals.state).toBe('error');
     expect(internals.message).toContain('automatic restart paused after 2 rapid failures');
   });
+
+  it('skips expensive external process probe when no lock exists and health endpoint is inactive on Windows', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-lazy-probe-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const controller = new TunnelController({
+      platform: 'win32',
+      getClientPath: (): string | null => null,
+      setClientPath: (): void => {},
+      getDataPath: (): string => dataPath,
+    });
+    const internals = controllerInternals(controller);
+    internals.state = 'stopped';
+
+    const probe = await (controller as any).probeExternalRunning();
+    expect(probe).toBe('gone');
+    expect(internals.lastExternalProbe).toBe('gone');
+  });
 });
 
 interface FakeChild extends EventEmitter {

@@ -368,11 +368,23 @@ export class TunnelController {
 
   private async probeExternalRunning(force = false): Promise<ExternalTunnelProbe> {
     const now = Date.now();
-    if (!force && now - this.externalProbeAt < EXTERNAL_PROBE_TTL_MS) return this.lastExternalProbe;
+    const ttl = (this.state === 'stopped' || this.state === 'error') ? 15_000 : EXTERNAL_PROBE_TTL_MS;
+    if (!force && now - this.externalProbeAt < ttl) return this.lastExternalProbe;
     this.externalProbeAt = now;
     try {
+      if (await this.configuredHealthIsLive()) {
+        this.lastExternalProbe = 'live';
+        return 'live';
+      }
+      if ((this.options.platform ?? process.platform) === 'win32' && this.options.isExternalTunnelRunning === undefined) {
+        const lock = await readTunnelLock(this.profileDirectory());
+        if (lock === null) {
+          this.lastExternalProbe = 'gone';
+          return 'gone';
+        }
+      }
       const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning(this.options.platform ?? process.platform));
-      this.lastExternalProbe = result || await this.configuredHealthIsLive() ? 'live' : 'gone';
+      this.lastExternalProbe = result ? 'live' : 'gone';
     } catch {
       this.lastExternalProbe = await this.configuredHealthIsLive() ? 'live' : 'unverifiable';
     }
