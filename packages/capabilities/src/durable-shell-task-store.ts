@@ -548,15 +548,22 @@ type PortableProcessProbe =
 async function probeProcessIdentity(pid: number, platform: NodeJS.Platform): Promise<PortableProcessProbe> {
   if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 2_147_483_647) return { state: 'unverifiable', reason: 'invalid_pid' };
   try {
+    try {
+      process.kill(pid, 0);
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === 'ESRCH') {
+        return { state: 'gone' };
+      }
+    }
     if (platform === 'win32') {
       const { stdout } = await execFileAsync('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-Command',
         `$ErrorActionPreference='Stop'; try{$p=Get-Process -Id ${pid} -ErrorAction Stop}catch{if($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*'){'GONE';exit 0};throw}; 'LIVE|' + $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture)`,
-      ], { windowsHide: true, encoding: 'utf8', timeout: 1_750, maxBuffer: 16 * 1024 });
+      ], { windowsHide: true, encoding: 'utf8', timeout: 3_500, maxBuffer: 16 * 1024 });
       return parsePortableProcessProbe(stdout);
     }
     const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'stat='], {
-      encoding: 'utf8', timeout: 1_750, maxBuffer: 16 * 1024,
+      encoding: 'utf8', timeout: 3_500, maxBuffer: 16 * 1024,
     });
     return parsePosixProcessProbe(stdout);
   } catch (error: unknown) {

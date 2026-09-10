@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDesktopRuntime, type DesktopRuntime } from '../src/main/desktop-services.js';
 
 const temporaryRoots: string[] = [];
+const isWindowsGitHubActions = process.platform === 'win32' && process.env.GITHUB_ACTIONS === 'true';
+const FAST_RUNTIME_TEST_TIMEOUT_MS = isWindowsGitHubActions ? 60_000 : 15_000;
+const RUNTIME_TEST_TIMEOUT_MS = isWindowsGitHubActions ? 90_000 : 30_000;
+const LONG_RUNTIME_TEST_TIMEOUT_MS = isWindowsGitHubActions ? 120_000 : 60_000;
 
 beforeEach(() => {
   vi.stubEnv('LNWJUD_UNRESTRICTED', '1');
@@ -59,7 +63,7 @@ describe('DesktopRuntime persistence', () => {
       await runtime.activityTracker.end(callId, 'SUCCESS', 1);
       await runtime.close();
     }
-  }, 15_000);
+  }, FAST_RUNTIME_TEST_TIMEOUT_MS);
 
   it('starts with no automatically registered drive roots even when unrestricted mode is enabled', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-no-auto-drives-'));
@@ -113,7 +117,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('persists user tool availability across a Desktop runtime restart', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-restart-'));
@@ -135,7 +139,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await secondRuntime.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('applies and restores permission settings without restoring an MCP listener', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-data-'));
@@ -183,7 +187,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       if (!firstClosed) await closeRuntime(firstRuntime);
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('keeps one desktop MCP listener alive while selecting and serving different workspaces', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-multi-data-'));
@@ -232,7 +236,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
   it('persists AI delete and STDIO security policy settings and applies scoped delete dynamically', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-workspace-'));
@@ -282,7 +286,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await restarted.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('archives, restores, and deletes project registrations without deleting the project folder', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-project-lifecycle-data-'));
@@ -348,7 +352,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('restores the persisted UI locale for native tray startup', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-locale-data-'));
@@ -371,7 +375,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await restartedRuntime.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('persists user-configurable runtime settings and custom MCP server definitions', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-user-settings-'));
@@ -467,7 +471,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await restarted.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('installs and configures the PDF provider through the desktop service without requiring restart', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-pdf-provider-'));
@@ -499,7 +503,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('applies MCP poll and foreground wait settings live without requiring a runtime restart', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-live-waits-'));
@@ -518,7 +522,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  }, 30_000);
+  }, RUNTIME_TEST_TIMEOUT_MS);
 
   it('serves the local capability health tool through the desktop MCP listener', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-data-'));
@@ -597,7 +601,7 @@ describe('DesktopRuntime persistence', () => {
     } finally {
       await runtime.close();
     }
-  }, 60_000);
+  }, LONG_RUNTIME_TEST_TIMEOUT_MS);
 });
 
 async function closeRuntime(runtime: DesktopRuntime): Promise<void> {

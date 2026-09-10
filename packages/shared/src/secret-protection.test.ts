@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_SECRET_ENVELOPE_BYTES,
+  SecretEnvelopeError,
   assertSecretPlaintext,
   createExplicitKeySecretProtector,
   decodeSecretEnvelope,
@@ -14,6 +15,16 @@ describe('secret protection contract', () => {
     expect(decodeSecretEnvelope('checkpoint_master_key', envelope).toString('utf8')).toBe('ciphertext');
     expect(() => decodeSecretEnvelope('tunnel_api_key', envelope)).toThrow(/purpose/i);
     expect(Buffer.byteLength(envelope, 'utf8')).toBeLessThanOrEqual(MAX_SECRET_ENVELOPE_BYTES);
+  });
+
+  it('classifies unsupported versions separately from malformed current envelopes', () => {
+    expect(() => decodeSecretEnvelope('checkpoint_master_key', 'dpapi:v2:legacy')).toThrowError(
+      expect.objectContaining({ name: 'SecretEnvelopeError', code: 'UNSUPPORTED_ENVELOPE_VERSION' }),
+    );
+    expect(() => decodeSecretEnvelope('checkpoint_master_key', 'safe:v1:not-base64')).toThrowError(
+      expect.objectContaining({ name: 'SecretEnvelopeError', code: 'INVALID_ENVELOPE' }),
+    );
+    expect(SecretEnvelopeError).toBeDefined();
   });
 
   it('rejects malformed, non-canonical, empty, and oversized envelopes', () => {

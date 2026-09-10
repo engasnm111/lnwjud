@@ -9,6 +9,22 @@ export const SECRET_ENVELOPE_PREFIX = 'safe:v1:';
 export const MAX_SECRET_PLAINTEXT_BYTES = 16 * 1024;
 export const MAX_SECRET_ENVELOPE_BYTES = 64 * 1024;
 
+export type SecretEnvelopeErrorCode =
+  | 'INVALID_ENVELOPE'
+  | 'UNSUPPORTED_ENVELOPE_VERSION'
+  | 'PURPOSE_MISMATCH'
+  | 'DECRYPT_FAILED';
+
+export class SecretEnvelopeError extends Error {
+  public constructor(
+    public readonly code: SecretEnvelopeErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'SecretEnvelopeError';
+  }
+}
+
 export type SecretPurpose = 'checkpoint_master_key' | 'tunnel_api_key';
 
 export interface SecretProtectionStatus {
@@ -47,18 +63,21 @@ export function encodeSecretEnvelope(purpose: SecretPurpose, payload: Uint8Array
 export function decodeSecretEnvelope(purpose: SecretPurpose, envelope: string): Buffer {
   assertPurpose(purpose);
   if (typeof envelope !== 'string' || envelope.length === 0 || Buffer.byteLength(envelope, 'utf8') > MAX_SECRET_ENVELOPE_BYTES) {
-    throw new Error('Secret envelope is invalid');
+    throw new SecretEnvelopeError('INVALID_ENVELOPE', 'Secret envelope is invalid');
   }
-  if (!envelope.startsWith(SECRET_ENVELOPE_PREFIX)) throw new Error('Secret envelope version is unsupported');
+  if (!envelope.startsWith(SECRET_ENVELOPE_PREFIX)) {
+    throw new SecretEnvelopeError('UNSUPPORTED_ENVELOPE_VERSION', 'Secret envelope version is unsupported');
+  }
   const encoded = envelope.slice(SECRET_ENVELOPE_PREFIX.length);
   const bodyText = decodeBase64(encoded, 'Secret envelope encoding is invalid').toString('utf8');
   let parsed: unknown;
   try {
     parsed = JSON.parse(bodyText) as unknown;
   } catch {
-    throw new Error('Secret envelope payload is invalid');
+    throw new SecretEnvelopeError('INVALID_ENVELOPE', 'Secret envelope payload is invalid');
   }
-  if (!isSecretEnvelopeBody(parsed) || parsed.purpose !== purpose) throw new Error('Secret envelope purpose does not match');
+  if (!isSecretEnvelopeBody(parsed)) throw new SecretEnvelopeError('INVALID_ENVELOPE', 'Secret envelope payload is invalid');
+  if (parsed.purpose !== purpose) throw new SecretEnvelopeError('PURPOSE_MISMATCH', 'Secret envelope purpose does not match');
   return decodeBase64(parsed.payload, 'Secret envelope payload encoding is invalid');
 }
 
@@ -97,7 +116,7 @@ export function createExplicitKeySecretProtector(key: Uint8Array): SecretProtect
       try {
         plainText = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
       } catch {
-        throw new Error('Secret envelope could not be decrypted');
+        throw new SecretEnvelopeError('DECRYPT_FAILED', 'Secret envelope could not be decrypted');
       }
       assertSecretPlaintext(plainText);
       return { plainText, shouldReEncrypt: false };
@@ -110,9 +129,13 @@ function assertPurpose(purpose: SecretPurpose): void {
 }
 
 function decodeBase64(value: string, message: string): Buffer {
-  if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new Error(message);
+  if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    throw new SecretEnvelopeError('INVALID_ENVELOPE', message);
+  }
   const decoded = Buffer.from(value, 'base64');
-  if (decoded.byteLength === 0 || decoded.toString('base64') !== value) throw new Error(message);
+  if (decoded.byteLength === 0 || decoded.toString('base64') !== value) {
+    throw new SecretEnvelopeError('INVALID_ENVELOPE', message);
+  }
   return decoded;
 }
 

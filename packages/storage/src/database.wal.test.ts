@@ -40,4 +40,23 @@ describe('SqliteDatabase WAL', () => {
     writer.close();
     reader.close();
   });
+
+  it('automatically creates parent directory when database path does not exist yet', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dir-'));
+    temporaryRoots.push(root);
+    const filename = path.join(root, 'nested', 'deep', 'lnwjud.sqlite');
+    const database = new SqliteDatabase(filename);
+    expect(database.connection.prepare('SELECT 1 as val').get()).toEqual({ val: 1 });
+    database.close();
+  });
+
+  it('does not resurrect a database after its owner closes it', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-closed-'));
+    temporaryRoots.push(root);
+    const database = new SqliteDatabase(path.join(root, 'lnwjud.sqlite'));
+    expect(database.connection.prepare('SELECT 1 as val').get()).toEqual({ val: 1 });
+    database.close();
+    database.close();
+    expect(() => database.connection).toThrow(/closed/i);
+  });
 });

@@ -21,6 +21,8 @@ import {
   type DoctorReport,
   type ToolCatalogSnapshot,
   type GetToolCatalogRequest,
+  type GetGitDiffRequest,
+  type GetGitDiffResponse,
   type RecheckToolCatalogRequest,
   type SetToolAvailabilityRequest,
   type ResetToolAvailabilityRequest,
@@ -161,6 +163,7 @@ export interface DesktopIpcServices {
   searchActivityTargetDetails(candidates: readonly ActivityTargetSearchCandidate[], query: string): Promise<readonly string[]>;
   streamWorkLogExportRows(rowIds: readonly string[], locale?: UiLocale): AsyncIterable<string>;
   captureIncident(updaterEvents?: readonly string[]): Promise<IncidentReport>;
+  getGitDiff(request: GetGitDiffRequest): Promise<GetGitDiffResponse>;
 }
 
 export type MainWindowProvider = () => BrowserWindow | null;
@@ -343,6 +346,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   searchActivityTargetDetails: async (): Promise<readonly string[]> => [],
   streamWorkLogExportRows: (): AsyncIterable<string> => emptySerializedRows(),
   captureIncident: async (): Promise<IncidentReport> => ({ schemaVersion: 1, capturedAt: new Date().toISOString(), appVersion: APP_VERSION, tunnelClientVersion: null, tunnelClientVersionReason: 'desktop_services_unavailable', classification: 'healthy_or_inconclusive', classificationReasons: ['desktop_services_unavailable'], updaterEventTail: [], tunnel: { state: 'stopped', source: 'desktop', instanceIds: [], requestIds: [], health: { state: 'unavailable', message: 'unavailable' } }, mcpCalls: [], tunnelLogTail: [], processTree: { available: false, entries: [], error: 'unavailable' }, tcpListeners: { available: false, entries: [], error: 'unavailable' } }),
+  getGitDiff: async (request: GetGitDiffRequest): Promise<GetGitDiffResponse> => ({ path: request.path, patch: '', truncated: false }),
 };
 
 const updaterEventTail: string[] = [];
@@ -720,6 +724,21 @@ export function registerIpcHandlers(
     assertNoPayload(payload);
     return requestUpdateInstall();
   });
+  registerHandler(ipcChannels.getGitDiff, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.getGitDiff(parseGetGitDiffRequest(payload));
+  });
+}
+
+function parseGetGitDiffRequest(payload: unknown): GetGitDiffRequest {
+  if (!isRecord(payload) || typeof payload.workspaceId !== 'string' || typeof payload.path !== 'string') {
+    throw new Error('Invalid getGitDiff payload');
+  }
+  return {
+    workspaceId: payload.workspaceId,
+    path: payload.path,
+    ...(typeof payload.staged === 'boolean' ? { staged: payload.staged } : {}),
+  };
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent, mainWindow: BrowserWindow | null): void {
@@ -1813,6 +1832,7 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
   const checkpointKey = await new CheckpointKeyStore({
     filePath: path.join(dataPath, 'checkpoint-master.key'),
     secretProtector,
+    quarantineUnsupported: true,
   }).loadOrCreate();
   return { checkpointEncryptionKey: checkpointKey, secretProtector };
 }
@@ -1959,7 +1979,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     });
     initAutoUpdater(runtime);
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createDesktopWindow(true);
+      revealMainWindow();
     });
   }).catch((error: unknown) => handleDesktopStartupFailure('desktop', error));
   app.on('before-quit', handleDesktopBeforeQuit);
@@ -2053,7 +2073,9 @@ function handleDesktopBeforeQuit(event: Electron.Event): void {
   }
   event.preventDefault();
   quitRequested = true;
-  void coordinator.requestQuit(() => app.quit()).then((result) => {
+  void coordinator.requestQuit(() => {
+    app.exit(0);
+  }).then((result) => {
     if (result === 'deferred') quitRequested = false;
   });
 }
@@ -2143,7 +2165,7 @@ if (!gotInstanceLock) {
         existing.focus();
       } else if (argv.includes('--log-viewer')) {
         openLogViewerWindow();
-      } else if (mainWindow !== null) {
+      } else {
         revealMainWindow();
       }
     });

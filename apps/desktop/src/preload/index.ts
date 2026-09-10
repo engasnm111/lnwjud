@@ -19,6 +19,8 @@ import {
   type DoctorReport,
   type ToolCatalogSnapshot,
   type ToolCatalogItem,
+  type GetGitDiffRequest,
+  type GetGitDiffResponse,
   type RequirementResult,
   type ResolvedRemediation,
   type GetToolCatalogRequest,
@@ -462,6 +464,25 @@ function dashboard(value: unknown): DashboardSnapshot {
       changedFiles: numberField(value.gitSummary, 'changedFiles'),
       stagedFiles: numberField(value.gitSummary, 'stagedFiles'),
       message: stringField(value.gitSummary, 'message'),
+      ...(typeof value.gitSummary.repositoryPath === 'string' || value.gitSummary.repositoryPath === null
+        ? { repositoryPath: value.gitSummary.repositoryPath }
+        : {}),
+      ...(typeof value.gitSummary.isRepo === 'boolean'
+        ? { isRepo: value.gitSummary.isRepo }
+        : {}),
+      entries: Array.isArray(value.gitSummary.entries)
+        ? value.gitSummary.entries.map((entry: unknown) => {
+            if (!isRecord(entry)) return { path: '', kind: 'modified', indexStatus: ' ', worktreeStatus: ' ' };
+            return {
+              path: typeof entry.path === 'string' ? entry.path : '',
+              kind: typeof entry.kind === 'string' ? entry.kind : 'modified',
+              indexStatus: typeof entry.indexStatus === 'string' ? entry.indexStatus : ' ',
+              worktreeStatus: typeof entry.worktreeStatus === 'string' ? entry.worktreeStatus : ' ',
+              ...(typeof entry.additions === 'number' ? { additions: entry.additions } : {}),
+              ...(typeof entry.deletions === 'number' ? { deletions: entry.deletions } : {}),
+            };
+          })
+        : [],
     },
     mcp: mcpStatus(value.mcp),
     codex: { installed: booleanField(value.codex, 'installed'), version },
@@ -1368,6 +1389,19 @@ const api: LnwjudApi = {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { accepted: booleanField(value, 'accepted'), status: updateStatus(value.status) };
   }),
+  getGitDiff: (request: GetGitDiffRequest): Promise<GetGitDiffResponse> =>
+    invoke(ipcChannels.getGitDiff, request).then((value: unknown) => {
+      if (!isRecord(value)) throw new Error('Invalid IPC response');
+      return {
+        path: stringField(value, 'path'),
+        patch: stringField(value, 'patch'),
+        truncated: booleanField(value, 'truncated'),
+        ...(typeof value.oldContent === 'string' ? { oldContent: value.oldContent } : {}),
+        ...(typeof value.newContent === 'string' ? { newContent: value.newContent } : {}),
+        ...(typeof value.additions === 'number' ? { additions: value.additions } : {}),
+        ...(typeof value.deletions === 'number' ? { deletions: value.deletions } : {}),
+      };
+    }),
   onLogEvent,
   onUpdateStatus,
 };

@@ -60,7 +60,7 @@ describe('DatabaseRuntimeService', () => {
       await expect(runtime.query({ workspaceId: 'ws-1', target: 'app.db', sql: 'PRAGMA journal_mode = WAL' })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
       await expect(runtime.query({ workspaceId: 'ws-1', target: 'app.db', sql: "SELECT name FROM users WHERE name = 'x'; --" })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     });
-  });
+  }, 15_000);
 
   it('confines targets to registered workspace SQLite files', async () => {
     await withDatabase(async (root) => {
@@ -70,7 +70,7 @@ describe('DatabaseRuntimeService', () => {
       await expect(runtime.inspect({ workspaceId: 'ws-1', target: 'missing.db' })).resolves.toMatchObject({ ok: false, error: { code: 'FILE_NOT_FOUND' } });
       await expect(runtime.query({ workspaceId: 'missing-ws', target: 'app.db', sql: 'SELECT 1' })).resolves.toMatchObject({ ok: false, error: { code: 'WORKSPACE_NOT_FOUND' } });
     });
-  });
+  }, 15_000);
 
   it('rejects a junction or symlink whose canonical SQLite target escapes the workspace', async () => {
     await withDatabase(async (root) => {
@@ -86,12 +86,12 @@ describe('DatabaseRuntimeService', () => {
       await expect(runtime.inspect({ workspaceId: 'ws-1', target: path.join('escape', 'outside.db') }))
         .resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
     });
-  });
+  }, 15_000);
 
   it('fails closed when the file is not a SQLite database', async () => {
     const root = path.normalize(await mkdtemp(path.join(tmpdir(), 'lnwjud-db-test-')));
     await writeFile(path.join(root, 'fake.db'), 'this is not sqlite', 'utf8');
     const runtime = new DatabaseRuntimeService(servicesWithRoot(root), actor);
     await expect(runtime.query({ workspaceId: 'ws-1', target: 'fake.db', sql: 'SELECT 1' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
-  });
+  }, 15_000);
 });

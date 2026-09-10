@@ -244,7 +244,11 @@ function latestCheckedAt(results: readonly RequirementResult[]): string | null {
   if (results.length === 0) return null;
   return results.map((result) => result.checkedAt).sort().at(-1) ?? null;
 }
-function localizedRequirementTitle(locale: UiLocale, id: string): string { return locale === 'th' ? `ตรวจ ${id}` : `Check ${id}`; }
+function localizedRequirementTitle(locale: UiLocale, id: string): string {
+  if (id === 'tunnel_runtime') return locale === 'th' ? 'Secure Tunnel / Cloudflare' : 'Secure Tunnel / Cloudflare';
+  if (id === 'remote_mcp_ngrok') return locale === 'th' ? 'Remote MCP ผ่าน ngrok (ทางเลือก)' : 'Remote MCP via ngrok (optional)';
+  return locale === 'th' ? `ตรวจ ${id}` : `Check ${id}`;
+}
 function localizedDeliveryDetail(locale: UiLocale, delivery: 'feature_disabled' | 'planned', requirements: readonly string[]): string {
   const missing = requirements.length === 0 ? (locale === 'th' ? 'runtime/provider ของฟีเจอร์นี้' : 'this feature runtime/provider') : requirements.join(', ');
   if (delivery === 'planned') return locale === 'th'

@@ -1404,6 +1404,95 @@ describe('TunnelController lifecycle', () => {
     const controller = new TunnelController({ getClientPath: (): string => executable, setClientPath: (): void => {}, getDataPath: (): string => dataPath, inspectFileVersion: async (): Promise<string> => '1.2.3' });
     await expect(controller.clientVersion()).resolves.toEqual({ value: '1.2.3', reason: null });
   });
+
+  it('funnels child error and exit through one per-process terminal fence', async () => {
+    const source = await readFile(new URL('../src/main/tunnel-controller.ts', import.meta.url), 'utf8');
+    expect(source).toContain('if (terminalHandled) return;');
+    expect(source).toContain("child.on('error', (error) => { handleTerminal(null, error.message); });");
+    expect(source).toContain("child.on('exit', (code) => { handleTerminal(code); });");
+    expect(source).not.toContain('restartWindowStartedAt');
+  });
+
+  it('pauses automatic reconnect after maxAutoRestarts rapid exits instead of looping forever', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-rapid-restarts-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => {},
+      getDataPath: (): string => dataPath,
+      maxAutoRestarts: (): number => 3,
+      autoReconnect: (): boolean => true,
+      isExternalTunnelRunning: async (): Promise<boolean> => false,
+    });
+    const internals = controllerInternals(controller);
+    internals.state = 'running';
+
+    await internals.applyUnexpectedExit(1, clientPath);
+    expect(internals.state).toBe('error');
+    expect(internals.restartAttempts).toBe(1);
+    expect(internals.restartTimer).not.toBeNull();
+
+    await internals.applyUnexpectedExit(1, clientPath);
+    expect(internals.restartAttempts).toBe(2);
+    expect(internals.restartTimer).not.toBeNull();
+
+    // 3rd exit reaches threshold (3) -> should pause and clear restart timer
+    await internals.applyUnexpectedExit(1, clientPath);
+    expect(internals.restartAttempts).toBe(3);
+    expect(internals.restartTimer).toBeNull();
+    expect(internals.state).toBe('error');
+    expect(internals.message).toContain('automatic restart paused after 3 rapid failures');
+  });
+
+  it('counts child spawn errors towards rapid restart threshold and pauses', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-error-restarts-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => {},
+      getDataPath: (): string => dataPath,
+      maxAutoRestarts: (): number => 2,
+      autoReconnect: (): boolean => true,
+      isExternalTunnelRunning: async (): Promise<boolean> => false,
+    });
+    const internals = controllerInternals(controller);
+    internals.state = 'running';
+
+    await internals.applyUnexpectedExit(null, clientPath, 'spawn ENOENT');
+    expect(internals.state).toBe('error');
+    expect(internals.restartAttempts).toBe(1);
+    expect(internals.restartTimer).not.toBeNull();
+
+    await internals.applyUnexpectedExit(null, clientPath, 'spawn ENOENT');
+    expect(internals.restartAttempts).toBe(2);
+    expect(internals.restartTimer).toBeNull();
+    expect(internals.state).toBe('error');
+    expect(internals.message).toContain('automatic restart paused after 2 rapid failures');
+  });
+
+  it('skips expensive external process probe when no lock exists and health endpoint is inactive on Windows', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-lazy-probe-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const controller = new TunnelController({
+      platform: 'win32',
+      getClientPath: (): string | null => null,
+      setClientPath: (): void => {},
+      getDataPath: (): string => dataPath,
+    });
+    const internals = controllerInternals(controller);
+    internals.state = 'stopped';
+
+    const probe = await internals.probeExternalRunning();
+    expect(probe).toBe('gone');
+    expect(internals.lastExternalProbe).toBe('gone');
+  });
 });
 
 interface FakeChild extends EventEmitter {
@@ -1491,20 +1580,30 @@ function controllerInternals(controller: TunnelController): {
   ownedChildStartedAt: string | null;
   tunnelLock: TunnelLockAcquisition | null;
   state: 'stopped' | 'starting' | 'running' | 'error';
+  message: string | null;
+  restartAttempts: number;
+  restartTimer: ReturnType<typeof setTimeout> | null;
+  applyUnexpectedExit: (code: number | null, clientPath: string, errorMessage?: string) => Promise<void>;
   externalProbeAt: number;
   lastExternalProbe: 'live' | 'gone' | 'unverifiable';
   runtimeConfigurationDirty: boolean;
   runtimeMode: 'native-managed' | 'profile-child' | null;
+  probeExternalRunning: (force?: boolean) => Promise<'live' | 'gone' | 'unverifiable'>;
 } {
   return controller as unknown as {
     child: ChildProcess | null;
     ownedChildStartedAt: string | null;
     tunnelLock: TunnelLockAcquisition | null;
     state: 'stopped' | 'starting' | 'running' | 'error';
+    message: string | null;
+    restartAttempts: number;
+    restartTimer: ReturnType<typeof setTimeout> | null;
+    applyUnexpectedExit: (code: number | null, clientPath: string, errorMessage?: string) => Promise<void>;
     externalProbeAt: number;
     lastExternalProbe: 'live' | 'gone' | 'unverifiable';
     runtimeConfigurationDirty: boolean;
     runtimeMode: 'native-managed' | 'profile-child' | null;
+    probeExternalRunning: (force?: boolean) => Promise<'live' | 'gone' | 'unverifiable'>;
   };
 }
 

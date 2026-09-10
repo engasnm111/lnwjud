@@ -36,6 +36,20 @@ function service(statuses: Readonly<Record<string, 'pass' | 'warn' | 'fail' | 'u
 }
 
 describe('tool catalog readiness aggregation', () => {
+  it('labels alternative remote connectivity checks as optional instead of raw internal ids', async () => {
+    const registry = new RequirementRegistry([
+      { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', probe: async (): Promise<{ status: 'pass'; detail: string }> => ({ status: 'pass', detail: 'Secure Tunnel is active' }) },
+      { id: 'remote_mcp_ngrok', required: false, summaryKey: 'requirement.remote_mcp_ngrok', probe: async (): Promise<{ status: 'pass'; detail: string }> => ({ status: 'pass', detail: 'Not required: Secure Tunnel is the active remote connection' }) },
+    ]);
+    const catalog = new ToolCatalogService(registry);
+    const report = await catalog.runDoctor(['tunnel_runtime', 'remote_mcp_ngrok'], 'th');
+    expect(report.checks.find((check) => check.id === 'tunnel_runtime')?.title).toBe('Secure Tunnel / Cloudflare');
+    expect(report.checks.find((check) => check.id === 'remote_mcp_ngrok')).toMatchObject({
+      status: 'pass',
+      title: 'Remote MCP ผ่าน ngrok (ทางเลือก)',
+    });
+  });
+
   it('finishes shared required probes before concurrent Doctor and Catalog calls fan out optional providers', async () => {
     const { catalog, probes } = service({});
     let release!: () => void;

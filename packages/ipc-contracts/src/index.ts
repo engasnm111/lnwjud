@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.60.0';
+export const APP_VERSION = '4.61.0';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -68,6 +68,7 @@ export const ipcChannels = {
   getUpdateStatus: 'lnwjud:get-update-status',
   checkForUpdates: 'lnwjud:check-for-updates',
   installUpdate: 'lnwjud:install-update',
+  getGitDiff: 'lnwjud:get-git-diff',
 } as const;
 
 export const pushChannels = {
@@ -605,6 +606,24 @@ export interface GitStatusEntrySummary {
   readonly kind: string;
   readonly indexStatus: string;
   readonly worktreeStatus: string;
+  readonly additions?: number;
+  readonly deletions?: number;
+}
+
+export interface GetGitDiffRequest {
+  readonly workspaceId: string;
+  readonly path: string;
+  readonly staged?: boolean;
+}
+
+export interface GetGitDiffResponse {
+  readonly path: string;
+  readonly patch: string;
+  readonly oldContent?: string;
+  readonly newContent?: string;
+  readonly truncated: boolean;
+  readonly additions?: number;
+  readonly deletions?: number;
 }
 
 export interface DashboardGitSummary {
@@ -997,6 +1016,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.getUpdateStatus]: undefined;
   readonly [ipcChannels.checkForUpdates]: undefined;
   readonly [ipcChannels.installUpdate]: undefined;
+  readonly [ipcChannels.getGitDiff]: GetGitDiffRequest;
 }
 
 export interface IpcResponseMap {
@@ -1066,6 +1086,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.getUpdateStatus]: UpdateStatus;
   readonly [ipcChannels.checkForUpdates]: UpdateStatus;
   readonly [ipcChannels.installUpdate]: { readonly accepted: boolean; readonly status: UpdateStatus };
+  readonly [ipcChannels.getGitDiff]: GetGitDiffResponse;
 }
 
 export interface LnwjudApi {
@@ -1135,6 +1156,7 @@ export interface LnwjudApi {
   getUpdateStatus(): Promise<IpcResponseMap[typeof ipcChannels.getUpdateStatus]>;
   checkForUpdates(): Promise<IpcResponseMap[typeof ipcChannels.checkForUpdates]>;
   installUpdate(): Promise<IpcResponseMap[typeof ipcChannels.installUpdate]>;
+  getGitDiff(request: GetGitDiffRequest): Promise<IpcResponseMap[typeof ipcChannels.getGitDiff]>;
   onLogEvent(callback: (line: LogLine) => void): () => void;
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }

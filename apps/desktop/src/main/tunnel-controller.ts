@@ -105,7 +105,6 @@ export class TunnelController {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private stableTimer: ReturnType<typeof setTimeout> | null = null;
   private restartAttempts = 0;
-  private restartWindowStartedAt = 0;
   private lastApiKey: string | null = null;
   private tunnelLock: TunnelLockAcquisition | null = null;
   private lifecycleTail: Promise<void> = Promise.resolve();
@@ -368,11 +367,23 @@ export class TunnelController {
 
   private async probeExternalRunning(force = false): Promise<ExternalTunnelProbe> {
     const now = Date.now();
-    if (!force && now - this.externalProbeAt < EXTERNAL_PROBE_TTL_MS) return this.lastExternalProbe;
+    const ttl = (this.state === 'stopped' || this.state === 'error') ? 15_000 : EXTERNAL_PROBE_TTL_MS;
+    if (!force && now - this.externalProbeAt < ttl) return this.lastExternalProbe;
     this.externalProbeAt = now;
     try {
+      if (await this.configuredHealthIsLive()) {
+        this.lastExternalProbe = 'live';
+        return 'live';
+      }
+      if ((this.options.platform ?? process.platform) === 'win32' && this.options.isExternalTunnelRunning === undefined) {
+        const lock = await readTunnelLock(this.profileDirectory());
+        if (lock === null) {
+          this.lastExternalProbe = 'gone';
+          return 'gone';
+        }
+      }
       const result = await (this.options.isExternalTunnelRunning?.() ?? isLnwjudTunnelProcessRunning(this.options.platform ?? process.platform));
-      this.lastExternalProbe = result || await this.configuredHealthIsLive() ? 'live' : 'gone';
+      this.lastExternalProbe = result ? 'live' : 'gone';
     } catch {
       this.lastExternalProbe = await this.configuredHealthIsLive() ? 'live' : 'unverifiable';
     }
@@ -431,7 +442,6 @@ export class TunnelController {
     this.clearRestartTimer();
     this.clearStableTimer();
     this.restartAttempts = 0;
-    this.restartWindowStartedAt = 0;
     try {
       throwIfStartCancelled(signal);
       if (this.runtimeMode === 'native-managed' && this.runtimeSupervisor !== null) {
@@ -803,14 +813,10 @@ export class TunnelController {
         if (this.child === child && probe.state === 'live') this.ownedChildStartedAt = probe.processStartedAt;
       }).catch(() => undefined);
     }
-    child.on('error', (error) => {
-      if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
-      this.options.setRuntimeOwnerPath?.('');
-      this.state = 'error';
-      this.message = error.message;
-      this.scheduleRestart(clientPath);
-    });
-    child.on('exit', (code) => {
+    let terminalHandled = false;
+    const handleTerminal = (code: number | null, errorMessage?: string): void => {
+      if (terminalHandled) return;
+      terminalHandled = true;
       if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
       if (this.intentionalStop) {
         // Keep the durable owner until stopOnce has reconciled native state
@@ -820,27 +826,27 @@ export class TunnelController {
         this.message = null;
         return;
       }
-      void this.applyUnexpectedExit(code, clientPath);
-    });
+      void this.applyUnexpectedExit(code, clientPath, errorMessage);
+    };
+    child.on('error', (error) => { handleTerminal(null, error.message); });
+    child.on('exit', (code) => { handleTerminal(code); });
   }
 
-  private async applyUnexpectedExit(code: number | null, clientPath: string): Promise<void> {
+  private async applyUnexpectedExit(code: number | null, clientPath: string, errorMessage?: string): Promise<void> {
     const hint = await this.readExitHint();
     this.state = 'error';
-    this.message = formatTunnelExitMessage(code, hint);
-    const now = Date.now();
-    if (this.restartWindowStartedAt === 0 || now - this.restartWindowStartedAt > RESTART_WINDOW_MS) {
-      this.restartWindowStartedAt = now;
-      this.restartAttempts = 0;
-    }
+    this.message = errorMessage ?? formatTunnelExitMessage(code, hint);
     this.restartAttempts += 1;
     if (!this.autoReconnectEnabled() || this.runtimeDesiredState() === 'stopped') {
       this.options.setRuntimeOwnerPath?.('');
       return;
     }
     const rapidThreshold = this.maxAutoRestarts();
-    if (rapidThreshold > 0 && this.restartAttempts > rapidThreshold) {
-      this.message = `${this.message} — reconnect continues with capped backoff after ${rapidThreshold} rapid exits`;
+    if (rapidThreshold > 0 && this.restartAttempts >= rapidThreshold) {
+      this.clearRestartTimer();
+      this.message = `${this.message} — automatic restart paused after ${this.restartAttempts} rapid failures. Fix the tunnel configuration and press Start Tunnel to retry.`;
+      this.options.setRuntimeOwnerPath?.('');
+      return;
     }
     this.scheduleRestart(clientPath);
   }
@@ -856,7 +862,8 @@ export class TunnelController {
   }
 
   private scheduleRestart(clientPath: string): void {
-    if (this.intentionalStop || this.runtimeDesiredState() === 'stopped' || !this.autoReconnectEnabled()) return;
+    const rapidThreshold = this.maxAutoRestarts();
+    if (this.intentionalStop || this.runtimeDesiredState() === 'stopped' || !this.autoReconnectEnabled() || (rapidThreshold > 0 && this.restartAttempts >= rapidThreshold)) return;
     this.clearRestartTimer();
     const delay = Math.min(RESTART_DELAY_MS * (2 ** Math.max(0, this.restartAttempts - 1)), 30_000);
     this.restartTimer = setTimeout(() => {
@@ -904,7 +911,6 @@ export class TunnelController {
     this.stableTimer = setTimeout(() => {
       this.stableTimer = null;
       this.restartAttempts = 0;
-      this.restartWindowStartedAt = 0;
     }, RESTART_WINDOW_MS);
   }
 

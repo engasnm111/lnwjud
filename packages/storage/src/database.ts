@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createPreMigrationBackupSync } from './backup-service.js';
 import { AUDIT_MIGRATION_SQL } from './migrations/audit-migration.js';
@@ -45,17 +46,17 @@ CREATE TABLE IF NOT EXISTS settings (
 `;
 
 export class SqliteDatabase {
-  public readonly connection: DatabaseSync;
+  private _connection: DatabaseSync;
   private readonly existedBeforeOpen: boolean;
   private preMigrationBackupCreated = false;
+  private isClosed = false;
 
   public constructor(private readonly filename: string, private readonly options: SqliteDatabaseOptions = {}) {
+    this.ensureDirectory();
     this.existedBeforeOpen = existsSync(filename);
-    this.connection = new DatabaseSync(filename, { timeout: 5_000 });
-    this.connection.exec('PRAGMA journal_mode = WAL;');
-    this.connection.exec('PRAGMA busy_timeout = 5000;');
-    this.connection.exec('PRAGMA foreign_keys = ON;');
-    this.connection.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY NOT NULL);');
+    this._connection = this.createConnection();
+    this.initPragmas(this._connection);
+    this._connection.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY NOT NULL);');
     this.applyMigration({ id: '001_initial', sql: INITIAL_MIGRATION_SQL });
     this.applyMigration({ id: '002_audit', sql: AUDIT_MIGRATION_SQL });
     this.applyMigration({ id: '003_checkpoints', sql: CHECKPOINT_MIGRATION_SQL });
@@ -73,6 +74,28 @@ export class SqliteDatabase {
     this.applyMigration({ id: '015_agent_swarm', sql: AGENT_SWARM_MIGRATION_SQL });
     this.applyMigration({ id: '016_recurring_scheduled_continuation', sql: RECURRING_SCHEDULED_CONTINUATION_MIGRATION_SQL });
     this.applyMigration({ id: '017_goal_ponytail_mode', sql: GOAL_PONYTAIL_MODE_MIGRATION_SQL });
+  }
+
+  private ensureDirectory(): void {
+    if (this.filename !== ':memory:') {
+      mkdirSync(path.dirname(this.filename), { recursive: true });
+    }
+  }
+
+  private createConnection(): DatabaseSync {
+    this.ensureDirectory();
+    return new DatabaseSync(this.filename, { timeout: 5_000 });
+  }
+
+  private initPragmas(conn: DatabaseSync): void {
+    conn.exec('PRAGMA journal_mode = WAL;');
+    conn.exec('PRAGMA busy_timeout = 5000;');
+    conn.exec('PRAGMA foreign_keys = ON;');
+  }
+
+  public get connection(): DatabaseSync {
+    if (this.isClosed) throw new Error('SqliteDatabase is closed');
+    return this._connection;
   }
 
   public applyMigration(migration: Migration): void {
@@ -98,7 +121,14 @@ export class SqliteDatabase {
   }
 
   public close(): void {
-    this.connection.close();
+    if (!this.isClosed) {
+      this.isClosed = true;
+      try {
+        this._connection.close();
+      } catch {
+        // Ignored if already closed
+      }
+    }
   }
 
   private hasMigrationId(value: unknown, expectedId: string): boolean {

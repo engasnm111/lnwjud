@@ -49,9 +49,41 @@ One user request owns one durable goal and at most one live Native ChatGPT watch
 - A transient tool, status, log, result, or safety/polling error is not a handoff signal. Re-read authoritative durable state and retry or re-resolve the bounded observation in the same turn before considering a handoff.
 - When a tracked `blocking_job` is running, do useful non-conflicting work first. If no useful parallel work exists, use bounded waits/observations in the same turn. One failed poll never justifies abandoning the task to the next hourly tick.
 - As soon as a tracked task is terminal, inspect its terminal result in the same turn and handle success or failure before yielding.
-- If the current worker loses or expires its lease during useful work, read the latest goal and safely reacquire the same `goalKey` with `run_goal` when no newer live owner blocks takeover, then continue in the same turn. Never deliberately wait for lease expiry as a continuation strategy.
+- If the current worker loses or expires its lease during useful work, read the latest goal and safely reacquire the same `goalKey` with `run_goal` when no newer live owner blocks takeover. If `run_goal` returns `acquired: false` with `retryAfterSeconds <= 60` (or `nextRequiredAction: 'retry_run_goal_after_stale_grace_window'`), the prior worker is inactive and only the brief stale-recovery grace remains: wait that brief duration and invoke `run_goal` again to complete takeover, instead of yielding and reporting that an inactive worker blocks continuation. Never deliberately wait for lease expiry as a continuation strategy.
 - Yield only when the goal is terminal, a real external blocker/user decision leaves no safe useful work, the host forces the turn boundary, or a genuinely long blocking job has no useful parallel work left and durable continuation coverage is confirmed.
 - Do not promise or target a fixed 22/25-minute runtime. Consume as much useful host turn as is available while respecting the stop conditions above.
+
+## Authoritative CI watcher policy
+
+When work includes waiting for GitHub Actions, the CI watcher is part of the active worker's durable work, not a reason to yield to the next scheduled tick.
+
+- Resolve the exact GitHub Actions run ID first and watch that exact run. Never switch to "latest branch run" after monitoring begins.
+- Prefer one long-running background/durable watcher: `gh run watch <RUN_ID> -i 20 --exit-status`.
+- Before spawning it, inspect existing authoritative tasks/processes. Reuse a live watcher for the same exact run ID instead of creating a duplicate.
+- Track the watcher as the authoritative `blocking_job` for that CI run when a durable goal is active.
+- Wait for the watcher to become terminal and confirm the workflow conclusion before reporting success.
+- If it fails, inspect logs from that exact run before making code changes. Never diagnose from a different run.
+- Never merge, tag, publish, or release a SHA whose required CI is failed or non-terminal.
+- Multiple exact run IDs may share one durable watcher process if their exit codes are preserved and any required failure makes the watcher fail.
+- Windows wrappers may use PowerShell. macOS/Linux wrappers must use a shell actually available on those platforms such as `sh` or `bash`; do not call a PowerShell-only watcher cross-platform.
+- This watcher is not a Native ChatGPT Scheduled Task. If scheduled continuation is disabled, do not create or re-enable a schedule merely to monitor CI.
+
+Windows-only wrapper example:
+
+```powershell
+powershell -NoProfile -NonInteractive -Command "
+Write-Host 'Watching CI run 123456...';
+gh run watch 123456 -i 20 --exit-status;
+$ciExit = $LASTEXITCODE;
+exit $ciExit
+"
+```
+
+POSIX example:
+
+```sh
+gh run watch 123456 -i 20 --exit-status
+```
 
 ## Recurring scheduled wake
 
@@ -60,7 +92,7 @@ One user request owns one durable goal and at most one live Native ChatGPT watch
 Handle the result exactly:
 
 - `recurring_acquired`: continue work with the returned `leaseToken`/`leaseGeneration`. Keep the same recurring native task. Do **not** create, update, consume, or replace it.
-- `worker_busy_noop`: another worker is live or blocking work is still running. Do not mutate the workspace, do not steal the lease, do not touch the native task, and return naturally. A later hourly firing will try again.
+- `worker_busy_noop`: another worker is live or blocking work is still running. If `retryAfterSeconds <= 60` is returned, no live worker was observed and the lease is simply within the bounded stale-heartbeat grace window: wait that brief duration and retry `claim_scheduled_continuation` or `run_goal` in the same turn to complete takeover. If `retryAfterSeconds` is large, do not mutate the workspace, do not steal the lease, do not touch the native task, and return naturally. A later hourly firing will try again.
 - `orphan_probe_noop`: legacy pre-hardening compatibility only. Current v4.53 recurring mainline must not enter a two-probe wait; if this historical outcome is encountered, do not mutate or touch the native task.
 - `already_claimed`: this run/tick was already handled. Do nothing.
 - `receipt_required`: reconcile exact native host metadata before any mutation or blind create.

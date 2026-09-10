@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
@@ -120,6 +120,8 @@ import {
   type DoctorReport,
   type ToolCatalogSnapshot,
   type GetToolCatalogRequest,
+  type GetGitDiffRequest,
+  type GetGitDiffResponse,
   type RecheckToolCatalogRequest,
   type SetToolAvailabilityRequest,
   type ResetToolAvailabilityRequest,
@@ -186,6 +188,7 @@ import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
 const BUNDLED_TUNNEL_CLIENT_VERSION = runtimeDependencies.tunnelClient.version;
+const MAX_GIT_DIFF_FALLBACK_BYTES = 2 * 1024 * 1024;
 const permissionSettingKey = 'permission_profile';
 const selectedWorkspaceSettingKey = 'selected_workspace_id';
 const activeWorkspaceIdsSettingKey = 'active_workspace_ids';
@@ -272,7 +275,16 @@ export async function autoStartPersistentTunnel(
   const status = await tunnelController.status();
   const runtimeCredentialAvailable = status.runtimeCredentialAvailable ?? status.authReady ?? status.hasApiKey;
   if (!autoReconnect || !status.profileExists || !runtimeCredentialAvailable || status.clientPath === null) return status;
-  return tunnelController.startAutomatically();
+  try {
+    return await tunnelController.startAutomatically();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ...status,
+      state: 'error',
+      message: `Tunnel automatic start failed: ${message}`,
+    };
+  }
 }
 
 export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOptions = {}): DesktopRuntime {
@@ -917,8 +929,47 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', probe: () => capabilityRequirement('office') },
     { id: 'network_access', required: false, summaryKey: 'requirement.network_access', probe: () => capabilityRequirement('web_fetch') },
     { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
-    { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
-    { id: 'remote_mcp_ngrok', required: false, summaryKey: 'requirement.remote_mcp_ngrok', probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => { const status = await remoteMcpController.status(); return status.state === 'running' && status.publicMcpUrl !== null ? { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` } : { status: 'warn', detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed') }; } },
+    {
+      id: 'tunnel_runtime',
+      required: false,
+      summaryKey: 'requirement.tunnel_runtime',
+      remediationId: 'configure_tunnel',
+      probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => {
+        const [tunnel, remote] = await Promise.all([tunnelController.diagnosticStatus(), remoteMcpController.status()]);
+        if (tunnel.state === 'running') return { status: 'pass', detail: tunnel.message ?? 'Secure Tunnel is active' };
+        if (remote.state === 'running' && remote.publicMcpUrl !== null) {
+          return { status: 'pass', detail: 'Not required: OAuth-protected Remote MCP is the active remote connection' };
+        }
+        return { status: 'fail', detail: tunnel.message ?? `Tunnel is ${tunnel.state}` };
+      },
+    },
+    {
+      id: 'remote_mcp_ngrok',
+      required: false,
+      summaryKey: 'requirement.remote_mcp_ngrok',
+      probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => {
+        const [status, tunnel] = await Promise.all([
+          remoteMcpController.status(),
+          tunnelController.diagnosticStatus(),
+        ]);
+        if (status.state === 'running' && status.publicMcpUrl !== null) {
+          return { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` };
+        }
+        if (tunnel.state === 'running') {
+          return { status: 'pass', detail: 'Not required: Secure Tunnel is the active remote connection' };
+        }
+        if (status.state === 'error') {
+          return { status: 'warn', detail: status.message ?? 'Remote MCP encountered an error' };
+        }
+        if (status.autoStartEnabled && status.state === 'stopped') {
+          return { status: 'warn', detail: status.message ?? 'Remote MCP auto-start is enabled but currently stopped' };
+        }
+        return {
+          status: 'pass',
+          detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed'),
+        };
+      },
+    },
     { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); if (!listed.ok) return { status: 'unknown', detail: listed.error.message }; const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded); const connected = enabled.filter((server) => server.connected); return { status: connected.length > 0 ? 'pass' : 'warn', detail: lastExternalMcpProbeDetail ?? `${enabled.length} enabled external MCP server(s); ${connected.length} connected` }; } },
     { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
     { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
@@ -1087,7 +1138,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       }
       const gitSummary = selectedWorkspace === null
         ? { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' }
-        : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor));
+        : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor, pathGuard));
       const codex = await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery));
       const recentAuditEvents = await buildAuditSummary(auditRepository, settingsRepository);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
@@ -1405,6 +1456,48 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         collectListeners: collectRelevantListeners,
       });
     },
+    getGitDiff: async (request: GetGitDiffRequest): Promise<GetGitDiffResponse> => {
+      const workspace = await workspaceRepository.get(request.workspaceId);
+      if (workspace === null) throw new Error('Workspace not found');
+
+      const guarded = await pathGuard.resolveForWrite(workspace, request.path);
+      const resolved = unwrap(guarded, 'Git diff path is invalid');
+      const relativePath = resolved.relativePath.replace(/\\/g, '/');
+      const fileActor: FileActor = { clientId: 'desktop-git', clientName: 'desktop-git' };
+      const diffResult = await gitService.diff(fileActor, workspace.id, {
+        path: relativePath,
+        ...(request.staged !== undefined ? { staged: request.staged } : {}),
+      });
+      if (!diffResult.ok) throw new Error(diffResult.error.message);
+
+      let patch = diffResult.value.patch;
+      const truncated = diffResult.value.truncated;
+      const numstat = new Map<string, { additions: number; deletions: number }>();
+      const statResult = await gitService.run(fileActor, {
+        workspaceId: workspace.id,
+        args: ['diff', ...(request.staged === true ? ['--cached'] : []), '--numstat', '--', relativePath],
+      });
+      if (statResult.ok && statResult.value.exitCode === 0) applyNumstat(numstat, statResult.value.stdout);
+      const stats = numstat.get(relativePath);
+
+      let newContent: string | undefined;
+      if (!patch && resolved.exists && resolved.realPath !== undefined) {
+        const bounded = await readBoundedGitTextFile(resolved.realPath);
+        if (bounded !== null) {
+          newContent = bounded;
+          const lines = bounded.split(/\r?\n/);
+          patch = `--- /dev/null\n+++ b/${relativePath}\n@@ -0,0 +1,${lines.length} @@\n` + lines.map((line) => `+${line}`).join('\n') + '\n';
+        }
+      }
+
+      return {
+        path: relativePath,
+        patch,
+        truncated,
+        ...(newContent !== undefined ? { newContent } : {}),
+        ...(stats === undefined ? {} : { additions: stats.additions, deletions: stats.deletions }),
+      };
+    },
   };
 
   return {
@@ -1714,10 +1807,43 @@ async function assertWorkspaceRelinkable(workspace: Workspace): Promise<void> {
   }
 }
 
+async function readBoundedGitTextFile(filePath: string): Promise<string | null> {
+  try {
+    const metadata = statSync(filePath);
+    if (!metadata.isFile() || metadata.size > MAX_GIT_DIFF_FALLBACK_BYTES) return null;
+    const contents = await readFile(filePath);
+    if (contents.includes(0)) return null;
+    return contents.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function applyNumstat(map: Map<string, { additions: number; deletions: number }>, output: string): void {
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('\t');
+    if (parts.length >= 3) {
+      const add = parts[0] === '-' ? 0 : parseInt(parts[0]!, 10) || 0;
+      const del = parts[1] === '-' ? 0 : parseInt(parts[1]!, 10) || 0;
+      const filePath = parts.slice(2).join('\t').replace(/\\/g, '/');
+      const existing = map.get(filePath);
+      if (existing) {
+        existing.additions += add;
+        existing.deletions += del;
+      } else {
+        map.set(filePath, { additions: add, deletions: del });
+      }
+    }
+  }
+}
+
 async function buildGitSummary(
   workspace: Workspace,
   gitService: GitService,
   fileActor: FileActor,
+  pathGuard: WorkspacePathGuard,
 ): Promise<DashboardSnapshot['gitSummary']> {
   const result = await gitService.status(fileActor, workspace.id);
   if (!result.ok) {
@@ -1734,6 +1860,21 @@ async function buildGitSummary(
   const branchResult = await gitService.branch(fileActor, workspace.id);
   const branch = branchResult.ok ? branchResult.value : null;
   const stagedFiles = result.value.entries.filter((entry) => entry.indexStatus !== ' ').length;
+
+  const numstatMap = new Map<string, { additions: number; deletions: number }>();
+  try {
+    const unstaged = await gitService.run(fileActor, { workspaceId: workspace.id, args: ['diff', '--numstat'] });
+    if (unstaged.ok && unstaged.value.exitCode === 0) {
+      applyNumstat(numstatMap, unstaged.value.stdout);
+    }
+    const staged = await gitService.run(fileActor, { workspaceId: workspace.id, args: ['diff', '--cached', '--numstat'] });
+    if (staged.ok && staged.value.exitCode === 0) {
+      applyNumstat(numstatMap, staged.value.stdout);
+    }
+  } catch {
+    // numstat is best effort
+  }
+
   return {
     branch,
     changedFiles: result.value.entries.length,
@@ -1741,11 +1882,27 @@ async function buildGitSummary(
     message: result.value.entries.length === 0 ? 'Clean working tree' : `${result.value.entries.length} changed file(s)`,
     repositoryPath: workspace.realRootPath,
     isRepo: true,
-    entries: result.value.entries.map((entry) => ({
-      path: entry.path,
-      kind: entry.kind,
-      indexStatus: entry.indexStatus,
-      worktreeStatus: entry.worktreeStatus,
+    entries: await Promise.all(result.value.entries.map(async (entry) => {
+      const normalizedPath = entry.path.replace(/\\/g, '/');
+      const stats = numstatMap.get(normalizedPath);
+      let additions = stats?.additions;
+      let deletions = stats?.deletions;
+      if (additions === undefined && deletions === undefined && (entry.kind === 'untracked' || entry.worktreeStatus === '?')) {
+        const guarded = await pathGuard.resolveForRead(workspace, entry.path);
+        const content = guarded.ok && guarded.value.realPath !== undefined
+          ? await readBoundedGitTextFile(guarded.value.realPath)
+          : null;
+        additions = content === null ? 0 : (content.length === 0 ? 0 : content.split('\n').length);
+        deletions = 0;
+      }
+      return {
+        path: entry.path,
+        kind: entry.kind,
+        indexStatus: entry.indexStatus,
+        worktreeStatus: entry.worktreeStatus,
+        additions: additions ?? 0,
+        deletions: deletions ?? 0,
+      };
     })),
   };
 }

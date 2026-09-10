@@ -158,9 +158,15 @@ try {
     throw 'Tunnel profile is not configured for lnwjud Desktop HTTP MCP. Open lnwjud Desktop and run Configure Tunnel again.'
   }
   if (-not (Test-Path -LiteralPath $LnwjudPath -PathType Leaf)) { throw "Missing lnwjud Desktop executable: $LnwjudPath" }
+  $desktopWasStarted = $false
   if ($null -eq (Get-Process -Name 'lnwjud' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
     Write-Host 'lnwjud tunnel: starting Desktop host required for HTTP MCP and native approvals ...'
-    Start-Process -FilePath $LnwjudPath
+    if (-not $NoViewer -and -not $OpenDashboard) {
+      Start-Process -FilePath $LnwjudPath -ArgumentList @('--log-viewer')
+    } else {
+      Start-Process -FilePath $LnwjudPath
+    }
+    $desktopWasStarted = $true
     Start-Sleep -Seconds 2
   }
 
@@ -172,7 +178,7 @@ try {
   Write-Host 'lnwjud tunnel: MCP target = Desktop loopback HTTP; Desktop Settings own Active Project and approvals.'
   Write-Host 'lnwjud tunnel: auto-restart is ON (TTL/exit 0 still restarts). Ctrl+C or LNWJUD_TUNNEL_STOP=1 to stop.'
 
-  if (-not $NoViewer -and (Test-Path $LnwjudPath)) {
+  if (-not $desktopWasStarted -and -not $NoViewer -and (Test-Path $LnwjudPath)) {
     if ($OpenDashboard) {
       Start-Process -FilePath $LnwjudPath
     } else {
