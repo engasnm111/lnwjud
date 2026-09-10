@@ -148,6 +148,11 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
                   : 'not_confirmed';
         return ok({
           ...result.value,
+          ...(!result.value.acquired && result.value.retryAfterSeconds !== undefined && result.value.retryAfterSeconds <= 60
+            ? {
+                leaseGuidance: `Previous worker appears inactive. The bounded stale-recovery grace expires in ${result.value.retryAfterSeconds}s. Wait ${result.value.retryAfterSeconds}s and call run_goal again to take over the lease; do not yield or treat as occupied.`,
+              }
+            : {}),
           continuationDirective: {
             mode: scheduledContinuation,
             skillId: 'workspace-agents-skills/lnwjud-scheduled-continuation',
@@ -160,7 +165,9 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
               : !auto
                 ? 'continue_current_run_without_successor'
                 : !result.value.acquired
-                  ? 'do_not_mutate_retry_or_use_existing_successor'
+                  ? (result.value.retryAfterSeconds !== undefined && result.value.retryAfterSeconds <= 60
+                    ? 'retry_run_goal_after_stale_grace_window'
+                    : 'do_not_mutate_retry_or_use_existing_successor')
                   : result.value.lastCheckpoint === null
                     ? 'checkpoint_then_ensure_one_cloud_successor'
                     : successorConfirmed

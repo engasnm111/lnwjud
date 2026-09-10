@@ -1260,13 +1260,14 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     if (continuation.nativeTaskId === undefined || !isConfirmedNativeHostRunMode(continuation.confirmedRunsOn)) {
       return { outcome: 'receipt_required', reason: 'native_task_unconfirmed', continuation, goal };
     }
+    if (continuation.occurrence !== 'interval') throw corrupt('Recurring continuation claim requires occurrence=interval');
     if (!['scheduled', 'create_uncertain'].includes(continuation.status)) {
       throw new GoalStateError('conflict', `Recurring continuation cannot be claimed from status ${continuation.status}`);
     }
 
-    const nowMs = parseIso(request.now, 'request time');
-    const dueMs = parseIso(continuation.dueAt, 'recurring continuation due_at');
-    const earlyToleranceSeconds = request.earlyToleranceSeconds ?? 0;
+    const dueMs = parseIso(continuation.dueAt, 'continuation due date');
+    const nowMs = parseIso(request.now, 'request date');
+    const earlyToleranceSeconds = Math.max(0, request.earlyToleranceSeconds ?? 0);
     if (nowMs + earlyToleranceSeconds * 1000 < dueMs) {
       return {
         outcome: 'not_due',
@@ -1349,6 +1350,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       return this.claimRecurringContinuationLease(request, continuation, goal, 'orphan_recovered', runKey);
     }
 
+    const retryAfterSeconds = staleRecovery.retryAfterSeconds ?? secondsUntilNextRecurringTick(continuation, request.now);
     this.recordRecurringRun(
       continuation,
       runKey,
@@ -1362,7 +1364,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       continuation,
       goal,
       runKey,
-      retryAfterSeconds: secondsUntilNextRecurringTick(continuation, request.now),
+      retryAfterSeconds,
     };
   }
 
@@ -1455,7 +1457,12 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         id, continuation_id, run_key, native_task_id, observed_at, outcome,
         lease_generation, detail, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(continuation_id, run_key) DO NOTHING
+      ON CONFLICT(continuation_id, run_key) DO UPDATE SET
+        observed_at = excluded.observed_at,
+        outcome = excluded.outcome,
+        lease_generation = excluded.lease_generation,
+        detail = excluded.detail,
+        updated_at = excluded.updated_at
     `).run(
       `run-${createHash('sha256').update(`${continuation.continuationId}\0${runKey}`).digest('hex').slice(0, 48)}`,
       continuation.continuationId,
