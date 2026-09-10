@@ -19,6 +19,34 @@ describe('RipgrepAdapter', () => {
     expect(result.timedOut).toBe(true);
   });
 
+  it('stops a high-volume child after enough stdout lines without retaining the full stream', async () => {
+    const runner = new DirectProcessRunner();
+    let observed = 0;
+    const startedAt = Date.now();
+    const script = [
+      "let i = 0;",
+      "const write = () => {",
+      "  while (i < 200000 && process.stdout.write(`line-${i++}\\n`)) {}",
+      "  if (i < 200000) process.stdout.once('drain', write); else setTimeout(() => {}, 2000);",
+      "};",
+      "write();",
+    ].join(' ');
+
+    const result = await runner.run(process.execPath, ['-e', script], process.cwd(), {
+      timeoutMs: 5_000,
+      stopAfterStdoutLine: () => {
+        observed += 1;
+        return observed > 100;
+      },
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(result.stoppedEarly).toBe(true);
+    expect(result.timedOut).not.toBe(true);
+    expect(observed).toBeGreaterThan(100);
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThan(1024 * 1024);
+  });
+
   it('terminates a ripgrep child when the MCP invocation is aborted', async () => {
     const runner = new DirectProcessRunner();
     const controller = new AbortController();
@@ -91,6 +119,41 @@ describe('RipgrepAdapter', () => {
     const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
     const adapter = new RipgrepAdapter(resolver, runner);
     await expect(adapter.searchText({ rootPath: 'C:\\workspace', query: 'broken(' })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('unclosed group') } });
+  });
+
+  it('asks the process runner to stop after maxResults plus one visible match', async () => {
+    let stoppedByObserver = false;
+    const lines = [
+      JSON.stringify({ type: 'match', data: { path: { text: 'src\\a.ts' }, line_number: 1, lines: { text: 'needle a\\n' } } }),
+      JSON.stringify({ type: 'match', data: { path: { text: 'src\\b.ts' }, line_number: 2, lines: { text: 'needle b\\n' } } }),
+      JSON.stringify({ type: 'match', data: { path: { text: 'src\\c.ts' }, line_number: 3, lines: { text: 'needle c\\n' } } }),
+    ];
+    const runner: ProcessRunner = {
+      async run(_command, _args, _cwd, options): Promise<ProcessRunResult> {
+        const captured: string[] = [];
+        for (const line of lines) {
+          captured.push(line);
+          if (options?.stopAfterStdoutLine?.(line) === true) {
+            stoppedByObserver = true;
+            break;
+          }
+        }
+        return { exitCode: -1, stdout: captured.join('\n'), stderr: '', ...(stoppedByObserver ? { stoppedEarly: true } : {}) };
+      },
+    };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+
+    const result = await adapter.searchText({ rootPath: 'C:\\workspace', query: 'needle', maxResults: 1 });
+
+    expect(stoppedByObserver).toBe(true);
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        matches: [{ path: 'src\\a.ts', line: 1, text: 'needle a\\n' }],
+        truncated: true,
+      },
+    });
   });
 
   it('parses bounded JSON match records and reports truncation', async () => {

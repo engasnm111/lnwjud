@@ -6,7 +6,7 @@
     "rootDir": "src",
     "types": ["node"]
   },
-  "include": ["src/main/**/*.ts", "src/preload/**/*.ts"],
+  "include": ["src/main/**/*.ts", "src/main/**/*.json", "src/preload/**/*.ts"],
   "references": [
     { "path": "../../packages/ipc-contracts" },
     { "path": "../../packages/mcp-server" },

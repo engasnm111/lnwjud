@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-artifacts.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
+const BUNDLED_TUNNEL_CLIENT_VERSION = runtimeDependencies.tunnelClient.version;
 const configuredInstallerDirectory = process.env.LNWJUD_RELEASE_INSTALLER_DIRECTORY?.trim();
 const installerDirectory = configuredInstallerDirectory
   ? path.resolve(configuredInstallerDirectory)
@@ -130,7 +132,7 @@ function normalizeArtifactArch(value) {
 function requiredRuntimePaths(platform, arch) {
   const releaseTarget = platform === 'win32' ? 'windows' : platform;
   const releaseArch = normalizeTunnelArch(arch);
-  const tunnelPrefix = `tunnel-client-v0.0.13-${releaseTarget}-${releaseArch}`;
+  const tunnelPrefix = `tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-${releaseTarget}-${releaseArch}`;
   const paths = platform === 'win32'
     ? [
       'lnwjud.exe',
@@ -146,11 +148,11 @@ function requiredRuntimePaths(platform, arch) {
       'resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json',
       `resources/tunnel-client/${tunnelPrefix}-licenses.txt`,
       `resources/tunnel-client/${tunnelPrefix}.spdx.json`,
-      'resources/tunnel-client/tunnel-client-v0.0.13-provenance.sigstore.json',
+      `resources/tunnel-client/tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`,
     ]
     : platform === 'darwin'
-      ? ['Contents/MacOS/lnwjud', 'Contents/Resources/lnwjud-mcp-stdio', 'Contents/Resources/runtime-tools/ripgrep/rg', 'Contents/Resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'Contents/Resources/tunnel-client/tunnel-client', 'Contents/Resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `Contents/Resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `Contents/Resources/tunnel-client/${tunnelPrefix}.spdx.json`, 'Contents/Resources/tunnel-client/tunnel-client-v0.0.13-provenance.sigstore.json', `Contents/Resources/native-host/macos/${provenance.arch}/lnwjud-macos-host`, `Contents/Resources/native-host/macos/${provenance.arch}/NATIVE_HOST.json`]
-      : ['lnwjud', 'lnwjud-mcp-stdio', 'resources/runtime-tools/ripgrep/rg', 'resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'resources/tunnel-client/tunnel-client', 'resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `resources/tunnel-client/${tunnelPrefix}.spdx.json`, 'resources/tunnel-client/tunnel-client-v0.0.13-provenance.sigstore.json', `resources/native-host/linux/${provenance.arch}/lnwjud-linux-host`, `resources/native-host/linux/${provenance.arch}/NATIVE_HOST.json`];
+      ? ['Contents/MacOS/lnwjud', 'Contents/Resources/lnwjud-mcp-stdio', 'Contents/Resources/runtime-tools/ripgrep/rg', 'Contents/Resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'Contents/Resources/tunnel-client/tunnel-client', 'Contents/Resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `Contents/Resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `Contents/Resources/tunnel-client/${tunnelPrefix}.spdx.json`, `Contents/Resources/tunnel-client/tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`, `Contents/Resources/native-host/macos/${provenance.arch}/lnwjud-macos-host`, `Contents/Resources/native-host/macos/${provenance.arch}/NATIVE_HOST.json`]
+      : ['lnwjud', 'lnwjud-mcp-stdio', 'resources/runtime-tools/ripgrep/rg', 'resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'resources/tunnel-client/tunnel-client', 'resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `resources/tunnel-client/${tunnelPrefix}.spdx.json`, `resources/tunnel-client/tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`, `resources/native-host/linux/${provenance.arch}/lnwjud-linux-host`, `resources/native-host/linux/${provenance.arch}/NATIVE_HOST.json`];
   return new Set(paths);
 }
 

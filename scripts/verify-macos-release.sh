@@ -24,6 +24,62 @@ require_regular_file() {
     exit 1
   fi
 }
+
+codesign_details() {
+  local target="$1"
+  /usr/bin/codesign --display --verbose=4 "$target" 2>&1
+}
+
+codesign_team_id() {
+  local target="$1"
+  codesign_details "$target" | awk -F= '/^TeamIdentifier=/{print $2; exit}'
+}
+
+codesign_is_adhoc() {
+  local target="$1"
+  codesign_details "$target" | grep -Eq '^Signature=adhoc$'
+}
+
+verify_nested_signing_identity() {
+  local app="$1"
+  local app_is_adhoc=0
+  local expected=''
+  if codesign_is_adhoc "$app"; then
+    app_is_adhoc=1
+  else
+    expected="$(codesign_team_id "$app")"
+    if [[ -z "$expected" ]]; then
+      echo "certificate-signed macOS app does not expose a TeamIdentifier: $app" >&2
+      exit 1
+    fi
+  fi
+
+  while IFS= read -r candidate; do
+    [[ "$candidate" == "$app" ]] && continue
+    if /usr/bin/codesign --display --verbose=4 "$candidate" >/dev/null 2>&1; then
+      if [[ "$app_is_adhoc" == "1" ]]; then
+        if ! /usr/bin/codesign --verify --strict "$candidate" >/dev/null 2>&1; then
+          echo "macOS nested signature integrity failed for ad-hoc package: $candidate" >&2
+          exit 1
+        fi
+      else
+        local actual
+        actual="$(codesign_team_id "$candidate")"
+        if [[ "$actual" != "$expected" ]]; then
+          echo "macOS TeamIdentifier mismatch: app=$expected nested=${actual:-<missing>} target=$candidate" >&2
+          exit 1
+        fi
+      fi
+    fi
+  done < <(find "$app/Contents/Frameworks" -type d \( -name '*.app' -o -name '*.framework' \) -print -o -type f \( -name '*.dylib' -o -perm -111 \) -print 2>/dev/null)
+
+  if [[ "$app_is_adhoc" == "1" ]]; then
+    echo "macOS nested ad-hoc signatures verified"
+  else
+    echo "macOS nested TeamIdentifier verified: $expected"
+  fi
+}
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS release verification must run on macOS" >&2
   exit 2
@@ -66,14 +122,20 @@ esac
 require_regular_executable "$app_path/Contents/Resources/native-host/macos/$runtime_arch/lnwjud-macos-host"
 require_regular_file "$app_path/Contents/Resources/native-host/macos/$runtime_arch/NATIVE_HOST.json"
 
+signature_verified=0
 if [[ "${LNWJUD_REQUIRE_CODESIGN:-0}" == "1" ]]; then
   codesign --verify --deep --strict --test-requirement '=anchor apple generic' "$app_path"
+  signature_verified=1
 else
   if codesign --verify --deep --strict "$app_path" >/dev/null 2>&1; then
+    signature_verified=1
     echo "macOS signature integrity verified (may be ad-hoc; not Developer ID proof): $app_path"
   else
     echo "macOS artifact is unsigned; continuing with layout verification (set LNWJUD_REQUIRE_CODESIGN=1 for a release gate)" >&2
   fi
+fi
+if [[ "$signature_verified" == "1" ]]; then
+  verify_nested_signing_identity "$app_path"
 fi
 if [[ "${LNWJUD_REQUIRE_NOTARIZATION:-0}" == "1" ]]; then
   spctl --assess --type execute "$app_path"

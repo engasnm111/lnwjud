@@ -5,6 +5,7 @@ import {
   WINDOWS_10_MIN_BUILD,
   WINDOWS_11_MIN_BUILD,
   platformCompatibilityProfile,
+  supportedHostPlatform,
   windowsBuildFromRelease,
   windowsCompatibilityProfile,
 } from '../src/main/platform-compatibility.js';
@@ -47,6 +48,13 @@ describe('platform compatibility profile', () => {
         disableHardwareAcceleration: false,
       });
     }
+  });
+
+  it('maps only the three supported host families and fails closed for unknown platforms', () => {
+    expect(supportedHostPlatform('win32')).toBe('win32');
+    expect(supportedHostPlatform('darwin')).toBe('darwin');
+    expect(supportedHostPlatform('linux')).toBe('linux');
+    expect(() => supportedHostPlatform('freebsd')).toThrow('Unsupported host platform: freebsd');
   });
 
   it('fails closed for unsupported Windows hosts while admitting supported non-Windows targets', () => {

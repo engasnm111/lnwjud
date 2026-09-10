@@ -29,6 +29,18 @@ describe('NodeBrowserCdpProtocol readiness', () => {
     });
   });
 
+  it('fails closed on an unsupported host before launching a configured browser', async (): Promise<void> => {
+    const browser = new NodeBrowserCdpProtocol({
+      platform: 'freebsd',
+      chromeExecutable: '/opt/chromium',
+      executableExists: (): boolean => true,
+    });
+    await expect(browser.launch(undefined)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'UNSUPPORTED_PLATFORM' },
+    });
+  });
+
   it('reports a ready local CDP endpoint separately from installation state', async (): Promise<void> => {
     vi.stubGlobal('fetch', vi.fn(async (): Promise<Response> => new Response('{}', { status: 200 })));
     const browser = new NodeBrowserCdpProtocol({

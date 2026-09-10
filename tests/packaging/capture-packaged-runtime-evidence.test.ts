@@ -76,10 +76,10 @@ async function fixture(platform: 'linux' | 'darwin', arch = 'x64'): Promise<{
     verified: { archiveSha256: true, executableVersion: true, executableBit: true },
   };
   await put(`${resources}/runtime-tools/ripgrep/BUNDLED_RIPGREP.json`, JSON.stringify({ ...manifest, executable: 'rg' }));
-  const prefix = `tunnel-client-v0.0.13-${platform}-${arch === 'x64' ? 'amd64' : 'arm64'}`;
-  const evidence = [`${prefix}-licenses.txt`, `${prefix}.spdx.json`, 'tunnel-client-v0.0.13-provenance.sigstore.json'];
+  const prefix = `tunnel-client-v0.0.14-${platform}-${arch === 'x64' ? 'amd64' : 'arm64'}`;
+  const evidence = [`${prefix}-licenses.txt`, `${prefix}.spdx.json`, 'tunnel-client-v0.0.14-provenance.sigstore.json'];
   await put(`${resources}/tunnel-client/BUNDLED_TUNNEL_CLIENT.json`, JSON.stringify({
-    ...manifest, version: '0.0.13', executable: 'tunnel-client', asset: `${prefix}.zip`,
+    ...manifest, version: '0.0.14', executable: 'tunnel-client', asset: `${prefix}.zip`,
     licenseAsset: evidence[0], spdxAsset: evidence[1], provenanceAsset: evidence[2],
   }));
   for (const name of evidence) await put(`${resources}/tunnel-client/${name}`, '{}');

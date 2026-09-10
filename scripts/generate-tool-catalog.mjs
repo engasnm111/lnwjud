@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const contractPath = path.join(repositoryRoot, 'docs', 'architecture', 'TOOL_CONTRACT.md');
-const readmePath = path.join(repositoryRoot, 'README.md');
+const readmePath = path.join(repositoryRoot, 'FULL_README.md');
 const registryModulePath = path.join(repositoryRoot, 'packages', 'mcp-server', 'dist', 'tool-registry.js');
 const upgradeCatalogModulePath = path.join(repositoryRoot, 'packages', 'mcp-server', 'dist', 'upgrade-catalog.js');
 const runtimeFixturesModulePath = path.join(repositoryRoot, 'packages', 'mcp-server', 'dist', 'tool-runtime-fixtures.js');

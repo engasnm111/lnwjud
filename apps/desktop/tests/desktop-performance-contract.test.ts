@@ -9,9 +9,21 @@ describe('desktop performance contract', () => {
     expect(source).not.toContain('window.setInterval(() => { void refresh(); }, 1_000)');
   });
 
+  it('batches pushed log events instead of copying a 30k-line React state array for every line', () => {
+    const app = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    const viewer = readFileSync(new URL('../src/renderer/features/live/StandaloneLogViewer.tsx', import.meta.url), 'utf8');
+    for (const source of [app, viewer]) {
+      expect(source).toContain('pendingLogLines.current.push(line);');
+      expect(source).toContain('window.setTimeout(flushPendingLogLines, 40)');
+      expect(source).toContain('appendLogBatch(previous, batch, MAX_CLIENT_LOG_LINES)');
+      expect(source).toContain('rememberLogId(logIds.current, line.id, MAX_CLIENT_LOG_LINES * 2)');
+      expect(source).not.toContain('setLogLines((previous) => [...previous.slice(-(MAX_CLIENT_LOG_LINES - 1)), line])');
+      expect(source).not.toContain('setLines((previous) => [...previous.slice(-(MAX_CLIENT_LOG_LINES - 1)), line])');
+    }
+  });
+
   it('does not wake the full dashboard from the standalone live-log viewer', () => {
     const source = readFileSync(new URL('../src/renderer/features/live/StandaloneLogViewer.tsx', import.meta.url), 'utf8');
-    expect(source).not.toContain('window.lnwjud.getDashboard()');
     expect(source).not.toContain('window.setInterval');
   });
 

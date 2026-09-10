@@ -210,9 +210,13 @@ describe('ShellCapabilityBackend', () => {
       cwd: root, execution: 'foreground', timeout_seconds: 5, userConfirmed: true,
     });
     expect(first).toMatchObject({ ok: true, value: { state: 'running', task_id: expect.any(String) } });
-    if (first.ok) await backend.execute({ operation: 'cancel', task_id: first.value.task_id, userConfirmed: true });
 
     waitSeconds = 1;
+    if (first.ok) {
+      const finished = await backend.execute({ operation: 'wait', task_id: first.value.task_id, timeout_seconds: 1 });
+      expect(finished).toMatchObject({ ok: true, value: { state: 'completed', stdout: 'late' } });
+    }
+
     const second = await backend.execute({
       operation: 'run', executable: process.execPath, arguments: ['-e', "setTimeout(() => process.stdout.write('done'), 80)"],
       cwd: root, execution: 'foreground', timeout_seconds: 5, userConfirmed: true,

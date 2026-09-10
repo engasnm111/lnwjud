@@ -49,7 +49,7 @@ export function LiveLogsPage(props: LiveLogsPageProps): ReactElement {
           <button type="button" onClick={() => { void props.onPopOut(); }}>{t('live.popOut')}</button>
         </div>
       </div>
-      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p className="hint" role="status">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentSummary(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt)}`}</p>}
+      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p className="hint" role="status">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentSummary(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt, '—', props.locale)}`}</p>}
       <div className="log-tabs" role="tablist" aria-label={t('live.title')}>
         {sources.map((source) => (
           <button
@@ -68,6 +68,7 @@ export function LiveLogsPage(props: LiveLogsPageProps): ReactElement {
         tab === source ? (
           <LogStreamPanel
             key={source}
+            locale={props.locale}
             title={source === 'tunnel' ? t(tunnelPresentation.logTabKey) : source === 'mcp' ? t('live.tabMcp') : t('live.tabProcess')}
             source={source}
             lines={props.lines.filter((line) => line.source === source)}

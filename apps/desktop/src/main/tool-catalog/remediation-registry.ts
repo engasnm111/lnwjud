@@ -72,12 +72,12 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
     ['เปิด MCP & Extensions', 'เพิ่มหรือเปิด MCP Server ที่ต้องการแล้วบันทึก', 'Reconnect/Restart หากจำเป็น แล้วตรวจใหม่'],
   ),
   remediation(
-    'configure_pdf_provider', 'Install the PDF provider', 'ติดตั้งตัวอ่าน PDF',
-    'PDF extraction needs pdftotext.exe. lnwjud can download a pinned Poppler for Windows package, verify its SHA-256, install it inside the lnwjud data directory, and configure the provider path automatically.',
-    'การอ่านข้อความ PDF ต้องมี pdftotext.exe โดย lnwjud สามารถดาวน์โหลด Poppler for Windows เวอร์ชันที่กำหนดไว้ ตรวจ SHA-256 ติดตั้งไว้ในโฟลเดอร์ข้อมูลของ lnwjud และตั้งค่าพาธให้อัตโนมัติ',
-    [{ kind: 'install_pdf_provider' }, { kind: 'open_settings', target: 'tools_local_providers' }, { kind: 'recheck', requirementIds: ['local_pdf_provider'] }],
-    ['Click Download & install PDF Provider on Windows.', 'lnwjud verifies the pinned archive before extraction and configures pdftotext.exe automatically.', 'On macOS/Linux, install a native pdftotext provider yourself and configure Local Providers, then recheck.'],
-    ['กด ดาวน์โหลดและติดตั้ง PDF Provider', 'lnwjud จะตรวจ SHA-256 ของไฟล์ที่กำหนดไว้ก่อนแตกไฟล์ และตั้งค่า pdftotext.exe ให้อัตโนมัติ', 'ใช้ Local Providers เฉพาะกรณีต้องการเลือก pdftotext.exe ที่ติดตั้งเอง แล้วกดตรวจใหม่'],
+    'configure_pdf_provider', 'Configure the PDF provider', 'ตั้งค่าตัวอ่าน PDF',
+    'PDF extraction needs a native pdftotext provider. Windows x64 can use the pinned Poppler auto-installer, which verifies the archive SHA-256 before extraction; other supported hosts must install native pdftotext and configure its path.',
+    'การอ่านข้อความ PDF ต้องมี pdftotext แบบ native โดย Windows x64 ใช้ตัวติดตั้ง Poppler ที่ lnwjud กำหนดไว้และตรวจ SHA-256 ของ archive ก่อนแตกไฟล์ ส่วน host อื่นให้ติดตั้ง pdftotext ของระบบแล้วระบุพาธ',
+    [{ kind: 'open_settings', target: 'tools_local_providers' }, { kind: 'recheck', requirementIds: ['local_pdf_provider'] }],
+    ['Open Tools → Local Providers.', 'On Windows x64, use the verified automatic Poppler installer if desired. On other hosts, install native pdftotext and enter its path.', 'Recheck the PDF provider.'],
+    ['เปิด Tools → Local Providers', 'บน Windows x64 ใช้ตัวติดตั้ง Poppler อัตโนมัติที่ตรวจสอบแล้วได้ ส่วน host อื่นให้ติดตั้ง pdftotext แบบ native และระบุพาธ', 'กดตรวจ PDF Provider ใหม่'],
   ),
   remediation(
     'configure_lsp', 'Configure a Language Server', 'ตั้งค่า Language Server',
@@ -202,7 +202,7 @@ const DEFINITIONS: readonly RemediationDefinition[] = [
 ];
 
 const WINDOWS_ONLY_REMEDIATION_IDS = new Set([
-  'configure_pdf_provider', 'configure_windows_sandbox', 'configure_wsl',
+  'configure_windows_sandbox', 'configure_wsl',
   'repair_windows_ui_automation', 'repair_windows_input', 'repair_windows_window', 'repair_windows_ocr',
 ]);
 
@@ -223,17 +223,25 @@ export class RemediationRegistry {
 
   public has(id: string): boolean { return this.#definitions.has(id); }
   public ids(): readonly string[] { return [...this.#definitions.keys()]; }
-  public resolve(locale: UiLocale, ids: readonly string[] = this.ids(), platform: NodeJS.Platform = process.platform): readonly ResolvedRemediation[] {
+  public resolve(
+    locale: UiLocale,
+    ids: readonly string[] = this.ids(),
+    platform: NodeJS.Platform = process.platform,
+    architecture: string = process.arch,
+  ): readonly ResolvedRemediation[] {
     return [...new Set(ids)].map((id) => {
       const definition = this.#definitions.get(id);
       if (definition === undefined) throw new Error(`Unknown remediation id: ${id}`);
       if ((definition.windowsOnly === true || WINDOWS_ONLY_REMEDIATION_IDS.has(id)) && platform !== 'win32') return null;
+      const actions = id === 'configure_pdf_provider' && platform === 'win32' && architecture === 'x64'
+        ? [{ kind: 'install_pdf_provider' as const }, ...definition.actions]
+        : definition.actions;
       return {
         id,
         title: definition.title[locale],
         explanation: definition.explanation[locale],
         steps: definition.steps[locale],
-        actions: definition.actions,
+        actions,
       };
     }).filter((value): value is ResolvedRemediation => value !== null);
   }

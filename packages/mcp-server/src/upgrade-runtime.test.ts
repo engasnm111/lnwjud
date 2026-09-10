@@ -356,6 +356,26 @@ describe('upgrade runtime', () => {
     })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
   });
 
+  it('validates Ponytail workspace overrides before project profile persistence', async () => {
+    const runtime = new UpgradeRuntimeService({
+      file: {
+        async writeFile(): Promise<ReturnType<typeof ok>> { return ok({ path: '.lnwjud/project-profile.json' }); },
+      } as McpApplicationServices['file'],
+    }, actor);
+
+    await expect(runtime.execute('project_profile_set', {
+      workspaceId: 'workspace-1', profile: { language: 'typescript', ponytail: { mode: 'full' } },
+    })).resolves.toMatchObject({
+      ok: true, value: { dryRun: true, executed: false, profile: { ponytail: { mode: 'full' } } },
+    });
+    await expect(runtime.execute('project_profile_set', {
+      workspaceId: 'workspace-1', profile: { ponytail: { mode: 'inherit' } },
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    await expect(runtime.execute('project_profile_set', {
+      workspaceId: 'workspace-1', profile: { ponytail: 'full' },
+    })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+  });
+
   it('uses trusted Full Bypass for inner always-confirm upgrade mutations', async () => {
     const runtime = new UpgradeRuntimeService({}, actor);
     await runtime.execute('hook_register', { name: 'audit', event: 'beforeTool' });

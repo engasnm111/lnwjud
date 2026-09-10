@@ -6,6 +6,7 @@ import {
   exportIncidentReport,
   pairMcpCalls,
   parseTunnelCorrelations,
+  parseLinuxSsListeners,
   type IncidentEvidence,
 } from '../src/main/incident-report.js';
 
@@ -339,6 +340,19 @@ describe('incident correlation and privacy', () => {
     const rootPid = 9001;
     const selected = selectRelevantProcesses([...unrelated, { pid: rootPid, parentPid: null, executable: 'tunnel-client.exe' }, { pid: 9002, parentPid: rootPid, executable: 'node.exe' }], [rootPid]);
     expect(selected).toEqual([{ pid: rootPid, parentPid: null, executable: 'tunnel-client.exe' }, { pid: 9002, parentPid: rootPid, executable: 'node.exe' }]);
+  });
+
+  it('parses Linux ss listeners only for trusted process ids, including IPv6 loopback', () => {
+    const raw = [
+      'LISTEN 0 511 127.0.0.1:18765 0.0.0.0:* users:(("node",pid=321,fd=19))',
+      'LISTEN 0 511 [::1]:18766 [::]:* users:(("node",pid=321,fd=20))',
+      'LISTEN 0 511 127.0.0.1:9999 0.0.0.0:* users:(("other",pid=999,fd=3))',
+      'LISTEN 0 511 127.0.0.1:notaport 0.0.0.0:* users:(("node",pid=321,fd=21))',
+    ].join('\n');
+    expect(parseLinuxSsListeners(raw, [321])).toEqual([
+      { pid: 321, address: '127.0.0.1', port: 18765 },
+      { pid: 321, address: '::1', port: 18766 },
+    ]);
   });
 
   it('uses only explicitly trusted PIDs and reports a reason when none are available', async () => {

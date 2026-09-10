@@ -38,6 +38,27 @@ describe('platform capability composition', () => {
     expect(scheduler).toHaveBeenCalled();
   });
 
+  it('composes macOS without leaking Windows providers and reports missing native-host dependencies truthfully', async () => {
+    const runtime = createPlatformCapabilitySet({
+      platform: 'darwin',
+      dataPath: '/Users/test/Library/Application Support/lnwjud',
+      workspaceRootsProvider: async () => ['/Users/test/project'],
+    });
+
+    await expect(runtime.service.execute('wsl_exec', { operation: 'status' })).resolves.toMatchObject({
+      ok: true,
+      value: { available: false, ready: false, reason: 'unsupported_platform', deliveryState: 'unsupported' },
+    });
+    await expect(runtime.service.execute('input_event', { action: 'status' })).resolves.toMatchObject({
+      ok: true,
+      value: { available: false, ready: false, reason: 'native_host_missing' },
+    });
+    await expect(runtime.service.execute('system_info', { action: 'status' })).resolves.toMatchObject({
+      ok: true,
+      value: { available: true, ready: true, backend: 'node-system-info', platform: 'darwin' },
+    });
+  });
+
   it('keeps Windows bridge composition explicit and injectable', () => {
     expect(() => createPlatformCapabilitySet({
       platform: 'win32',

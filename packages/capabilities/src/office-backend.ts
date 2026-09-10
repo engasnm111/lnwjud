@@ -155,5 +155,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function executableInPath(name: string): boolean {
   const pathValue = process.env.PATH ?? '';
-  return pathValue.split(path.delimiter).filter(Boolean).some((entry) => existsSync(path.join(entry, name)));
+  return pathValue.split(':').filter(Boolean).some((entry) => existsSync(path.posix.join(entry, name)));
 }

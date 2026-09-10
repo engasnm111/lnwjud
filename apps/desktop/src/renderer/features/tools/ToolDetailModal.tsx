@@ -77,20 +77,21 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
           <p className="tool-modal-description">{item.longDescription}</p>
           <dl className="tool-facts">
             <div><dt>{locale === 'th' ? 'สถานะ' : 'Status'}</dt><dd><span className={`tool-readiness-badge tool-readiness-${item.readiness}`}>{toolReadinessLabel(locale, item)}</span></dd></div>
-            {item.deliveryState === undefined ? null : <div><dt>{locale === 'th' ? 'สถานะการส่งมอบ' : 'Delivery state'}</dt><dd>{item.deliveryState}</dd></div>}
+            {item.deliveryState === undefined ? null : <div><dt>{locale === 'th' ? 'สถานะการส่งมอบ' : 'Delivery state'}</dt><dd>{deliveryStateLabel(locale, item)}</dd></div>}
             {item.available === undefined ? null : <div><dt>{locale === 'th' ? 'มี runtime แล้ว' : 'Runtime available'}</dt><dd>{booleanLabel(locale, item.available)}</dd></div>}
             {item.origin === 'lnwjud' ? <div><dt>{locale === 'th' ? 'สถานะเปิด/ปิดของผู้ใช้' : 'User availability'}</dt><dd>{toolAvailabilityLabel(locale, item)}</dd></div> : null}
             {item.origin === 'lnwjud' ? <div><dt>{locale === 'th' ? 'การแสดงผล MCP' : 'MCP exposure'}</dt><dd>{effectiveExposureLabel(locale, item)}</dd></div> : null}
-            <div><dt>{locale === 'th' ? 'สิทธิ์ที่ประกาศ' : 'Declared permission'}</dt><dd>{item.declaredPermission}</dd></div>
-            <div><dt>{locale === 'th' ? 'ผลจากโปรไฟล์' : 'Profile decision'}</dt><dd>{item.profileDecision}</dd></div>
-            <div><dt>{locale === 'th' ? 'ความเสี่ยง' : 'Risk mode'}</dt><dd>{item.riskMode}</dd></div>
-            <div><dt>{locale === 'th' ? 'ตรวจล่าสุด' : 'Checked at'}</dt><dd>{formatDateTime(item.checkedAt, notChecked)}</dd></div>
+            <div><dt>{locale === 'th' ? 'สิทธิ์ที่ประกาศ' : 'Declared permission'}</dt><dd>{declaredPermissionLabel(locale, item)}</dd></div>
+            <div><dt>{locale === 'th' ? 'ผลจากโปรไฟล์' : 'Profile decision'}</dt><dd>{profileDecisionLabel(locale, item)}</dd></div>
+            <div><dt>{locale === 'th' ? 'ความเสี่ยง' : 'Risk mode'}</dt><dd>{riskModeLabel(locale, item)}</dd></div>
+            <div><dt>{locale === 'th' ? 'ตรวจล่าสุด' : 'Checked at'}</dt><dd>{formatDateTime(item.checkedAt, notChecked, locale)}</dd></div>
             <div><dt>{locale === 'th' ? 'ข้อมูลเก่า' : 'Stale'}</dt><dd>{booleanLabel(locale, item.stale)}</dd></div>
-            <div><dt>{locale === 'th' ? 'ยกเลิกได้' : 'Cancelable'}</dt><dd>{nullableBooleanLabel(locale, item.supportsCancel)}</dd></div>
-            <div><dt>Dry run</dt><dd>{nullableBooleanLabel(locale, item.supportsDryRun)}</dd></div>
+            <div><dt>{locale === 'th' ? 'ยกเลิกได้' : 'Cancelable'}</dt><dd>{nullableBooleanLabel(locale, item.supportsCancel, item.origin === 'external_mcp')}</dd></div>
+            <div><dt>Dry run</dt><dd>{nullableBooleanLabel(locale, item.supportsDryRun, item.origin === 'external_mcp')}</dd></div>
           </dl>
           {item.origin === 'lnwjud' ? <section className="tool-availability-panel"><div><strong>{toolAvailabilityLabel(locale, item)}</strong><small>{effectiveExposureLabel(locale, item)}</small></div><ToolAvailabilitySwitch locale={locale} checked={toolControlEnabled(item)} busy={availabilityBusy} disabled={onSetAvailability === undefined || (!toolControlEnabled(item) && !toolControlCanEnable(item))} blockedLabel={!toolControlEnabled(item) && !toolControlCanEnable(item) ? (locale === 'th' ? 'ตั้งค่าก่อน' : 'Setup first') : undefined} label={item.title} onChange={(enabled) => { void onSetAvailability?.(enabled); }} />{item.userPreference === 'default' ? null : <button type="button" disabled={availabilityBusy || onResetAvailability === undefined} onClick={() => { void onResetAvailability?.(); }}>{locale === 'th' ? 'ใช้ค่าเริ่มต้น' : 'Use default'}</button>}</section> : null}
           {item.riskMode === 'input_dependent' ? <p role="note" className="tool-risk-caveat">{locale === 'th' ? 'ระดับความเสี่ยงและการขออนุมัติอาจเปลี่ยนตาม operation และ arguments ที่ระบุ ไม่ได้หมายความว่าทุก operation มีระดับเดียวกัน' : 'Risk and approval requirements can change with the selected operation and arguments; not every operation has the same risk level.'}</p> : null}
+          {item.origin === 'external_mcp' && item.readiness === 'ready' ? <p role="note" className="tool-risk-caveat">{locale === 'th' ? 'เชื่อมต่อ External MCP และอ่านรายการเครื่องมือนี้สำเร็จแล้ว ส่วนสิทธิ์ การยกเลิก และ Dry run ด้านล่างจะแสดงตามข้อมูลที่ Server ประกาศเท่านั้น' : 'External MCP discovery succeeded. Permission, cancellation, and dry-run details below are shown only when the server declares them.'}</p> : null}
           {item.stale ? <p role="status" className="tool-stale-caveat">{locale === 'th' ? 'ผล readiness นี้เกินอายุ cache แล้ว ควรตรวจใหม่ก่อนพึ่งพาสถานะ' : 'This readiness result is stale; recheck before relying on it.'}</p> : null}
           {item.requirements.length > 0 ? <section className="tool-modal-section"><h3>{locale === 'th' ? 'ข้อกำหนด' : 'Requirements'}</h3><ul className="tool-requirement-list">{item.requirements.map((requirement) => <li key={requirement.id}><div><strong>{requirement.id}</strong><span className={`doctor-status-badge doctor-status-${requirement.status}`}>{requirement.status}</span></div>{requirement.detail ? <p>{requirement.detail}</p> : null}</li>)}</ul></section> : null}
           {item.inputSchema !== null ? <details className="tool-schema-details"><summary>{locale === 'th' ? 'Input schema' : 'Input schema'}</summary><pre>{JSON.stringify(item.inputSchema, null, 2)}</pre></details> : null}
@@ -108,8 +109,30 @@ function booleanLabel(locale: UiLocale, value: boolean): string {
   return value ? (locale === 'th' ? 'ใช่' : 'Yes') : (locale === 'th' ? 'ไม่' : 'No');
 }
 
-function nullableBooleanLabel(locale: UiLocale, value: boolean | null): string {
-  return value === null ? (locale === 'th' ? 'ไม่ทราบ' : 'Unknown') : booleanLabel(locale, value);
+function nullableBooleanLabel(locale: UiLocale, value: boolean | null, external = false): string {
+  if (value !== null) return booleanLabel(locale, value);
+  if (external) return locale === 'th' ? 'Server ไม่ได้ประกาศ' : 'Not declared by server';
+  return locale === 'th' ? 'ไม่ทราบ' : 'Unknown';
+}
+
+function declaredPermissionLabel(locale: UiLocale, item: ToolCatalogItem): string {
+  if (item.origin === 'external_mcp' && item.declaredPermission === 'UNKNOWN') return locale === 'th' ? 'Server ไม่ได้ระบุ' : 'Not declared by server';
+  return item.declaredPermission;
+}
+
+function profileDecisionLabel(locale: UiLocale, item: ToolCatalogItem): string {
+  if (item.origin === 'external_mcp' && item.profileDecision === 'UNKNOWN') return locale === 'th' ? 'lnwjud ไม่ได้จัดประเภท' : 'Not classified by lnwjud';
+  return item.profileDecision;
+}
+
+function riskModeLabel(locale: UiLocale, item: ToolCatalogItem): string {
+  if (item.riskMode === 'external_unknown') return locale === 'th' ? 'ขอบเขต External MCP' : 'External MCP boundary';
+  return item.riskMode;
+}
+
+function deliveryStateLabel(locale: UiLocale, item: ToolCatalogItem): string {
+  if (item.deliveryState === 'external_unknown') return locale === 'th' ? 'จัดการโดย External MCP' : 'Managed by External MCP';
+  return item.deliveryState ?? '';
 }
 
 function busyActionLabel(locale: UiLocale, action: ResolvedRemediation['actions'][number]): string {

@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/storage",
-  "version": "4.56.1",
+  "version": "4.60.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -19,7 +19,7 @@
     "@lnwjud/workspace": "workspace:*"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "typecheck": "tsc --noEmit",
     "build": "node ../../scripts/clean-ts-output.mjs dist && tsc --outDir dist"
   },

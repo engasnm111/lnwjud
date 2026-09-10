@@ -44,6 +44,30 @@ afterEach(async () => {
 });
 
 describe('stdio MCP runtime', () => {
+  it('defaults Ponytail to OFF and loads a persisted mode for direct STDIO', async () => {
+    const defaultDataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-ponytail-default-'));
+    const persistedDataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-ponytail-persisted-'));
+    temporaryRoots.push(defaultDataPath, persistedDataPath);
+
+    const defaultRuntime = createStdioMcpRuntime(defaultDataPath, workspace);
+    try {
+      expect(defaultRuntime.ponytailMode).toBe('off');
+    } finally {
+      await defaultRuntime.close();
+    }
+
+    const database = new SqliteDatabase(path.join(persistedDataPath, 'lnwjud.sqlite'));
+    new SqliteSettingsRepository(database).set(USER_SETTING_KEYS.ponytailMode, 'ultra');
+    database.close();
+
+    const persistedRuntime = createStdioMcpRuntime(persistedDataPath, workspace);
+    try {
+      expect(persistedRuntime.ponytailMode).toBe('ultra');
+    } finally {
+      await persistedRuntime.close();
+    }
+  });
+
   it('wires durable goals and scheduled continuation orchestration from the same SQLite repository', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-continuation-'));
     temporaryRoots.push(dataPath);

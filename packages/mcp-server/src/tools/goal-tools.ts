@@ -10,6 +10,8 @@ import { defineTool, missingService, type McpToolContext, type McpToolDefinition
 const goalKey = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const goalId = z.string().min(1).max(128);
 const leaseToken = z.string().min(1).max(256);
+const ponytailMode = z.enum(['off', 'lite', 'full', 'ultra']);
+const ponytailModeOverride = z.enum(['inherit', 'off', 'lite', 'full', 'ultra']);
 const stepStatus = z.enum(['pending', 'in_progress', 'completed', 'blocked']);
 const evidence = z.object({
   kind: z.enum(['path', 'hash', 'task', 'note']),
@@ -38,6 +40,7 @@ const runGoalSchema = z.object({
   goalKey,
   objective: z.string().min(1).max(4096).optional(),
   plan: plan.optional(),
+  ponytailMode: ponytailMode.optional(),
   leaseSeconds: z.number().int().min(MIN_GOAL_LEASE_SECONDS).max(MAX_GOAL_LEASE_SECONDS).default(DEFAULT_GOAL_LEASE_SECONDS),
   scheduledContinuation: z.enum(['auto', 'off']).default('auto'),
 }).strict();
@@ -59,6 +62,7 @@ const checkpointGoalSchema = z.object({
   evidence: z.array(evidence).max(20),
   activeTaskIds: z.array(z.string().min(1).max(256)).max(50).optional(),
   trackedTasks: z.array(trackedTask).max(50).optional(),
+  ponytailMode: ponytailModeOverride.optional(),
   releaseLease: z.boolean().optional(),
 }).strict().refine((value) => value.activeTaskIds !== undefined || value.trackedTasks !== undefined, {
   message: 'activeTaskIds or trackedTasks is required',
@@ -118,6 +122,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
           leaseSeconds: input.leaseSeconds,
           ...(input.objective === undefined ? {} : { objective: input.objective }),
           ...(input.plan === undefined ? {} : { plan: input.plan }),
+          ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         });
         if (!result.ok) return result;
         const active = result.value.status === 'active';
@@ -204,6 +209,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
         evidence: input.evidence,
         ...(input.activeTaskIds === undefined ? {} : { activeTaskIds: input.activeTaskIds }),
         ...(input.trackedTasks === undefined ? {} : { trackedTasks: input.trackedTasks }),
+        ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         ...(input.releaseLease === undefined ? {} : { releaseLease: input.releaseLease }),
       }) ?? missingService(),
     }),

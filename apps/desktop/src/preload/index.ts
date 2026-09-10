@@ -40,6 +40,10 @@ import {
   type PdfProviderInstallResult,
   type McpConnectionStatus,
   type PermissionProfileName,
+  type PonytailPolicyContext,
+  type GetPonytailPolicyContextRequest,
+  type SetWorkspacePonytailModeRequest,
+  type SetGoalPonytailModeRequest,
   type ProcessSummary,
   type RestoreCheckpointRequest,
   type RestoreRecoveryItemRequest,
@@ -294,10 +298,14 @@ function remoteMcpStatus(value: unknown): RemoteMcpStatus {
   const state = value.state;
   if (state !== 'stopped' && state !== 'installing' && state !== 'starting' && state !== 'running' && state !== 'error') throw new Error('Invalid IPC response');
   if (value.provider !== 'ngrok') throw new Error('Invalid IPC response');
+  const automaticInstallMethod = value.automaticInstallMethod;
+  if (automaticInstallMethod !== 'windows_store' && automaticInstallMethod !== 'homebrew' && automaticInstallMethod !== null) throw new Error('Invalid IPC response');
   return {
     state,
     provider: 'ngrok',
     installed: booleanField(value, 'installed'),
+    automaticInstallAvailable: booleanField(value, 'automaticInstallAvailable'),
+    automaticInstallMethod,
     hasAuthtoken: booleanField(value, 'hasAuthtoken'),
     ngrokPath: nullableString(value.ngrokPath),
     localMcpUrl: nullableString(value.localMcpUrl),
@@ -340,6 +348,7 @@ function userSettings(value: unknown): UserSettings {
     lspCommands: stringRecordResponse(value.lspCommands),
     mcpHttpPort: integerField(value, 'mcpHttpPort'),
     codexToolsEnabled: booleanField(value, 'codexToolsEnabled'),
+    ponytailMode: ponytailModeResponse(value.ponytailMode),
     updateAutoCheck: booleanField(value, 'updateAutoCheck'),
     updateCheckOnStartup: booleanField(value, 'updateCheckOnStartup'),
     updateIntervalMinutes: integerField(value, 'updateIntervalMinutes'),
@@ -376,6 +385,47 @@ function permissionDecisionResponse(value: unknown): 'ALLOW' | 'ASK' | 'DENY' {
   throw new Error('Invalid IPC response');
 }
 
+function ponytailModeResponse(value: unknown): 'off' | 'lite' | 'full' | 'ultra' {
+  if (value === 'off' || value === 'lite' || value === 'full' || value === 'ultra') return value;
+  throw new Error('Invalid IPC response');
+}
+
+function ponytailModeOverrideResponse(value: unknown): 'inherit' | 'off' | 'lite' | 'full' | 'ultra' {
+  if (value === 'inherit') return value;
+  return ponytailModeResponse(value);
+}
+
+function ponytailPolicySourceResponse(value: unknown): 'goal' | 'workspace' | 'global' | 'default' {
+  if (value === 'goal' || value === 'workspace' || value === 'global' || value === 'default') return value;
+  throw new Error('Invalid IPC response');
+}
+
+function ponytailPolicyContext(value: unknown): PonytailPolicyContext {
+  if (!isRecord(value) || !Array.isArray(value.activeGoals)) throw new Error('Invalid IPC response');
+  return {
+    workspaceId: stringField(value, 'workspaceId'),
+    globalMode: ponytailModeResponse(value.globalMode),
+    workspaceMode: ponytailModeOverrideResponse(value.workspaceMode),
+    effectiveWorkspaceMode: ponytailModeResponse(value.effectiveWorkspaceMode),
+    effectiveWorkspaceSource: ponytailPolicySourceResponse(value.effectiveWorkspaceSource),
+    activeGoals: value.activeGoals.map((goal) => {
+      if (!isRecord(goal)) throw new Error('Invalid IPC response');
+      const blocked = goal.editBlockedReason;
+      if (blocked !== null && blocked !== 'live_lease' && blocked !== 'live_continuation' && blocked !== 'live_mutation') throw new Error('Invalid IPC response');
+      return {
+        goalId: stringField(goal, 'goalId'),
+        goalKey: stringField(goal, 'goalKey'),
+        mode: ponytailModeOverrideResponse(goal.mode),
+        revision: integerField(goal, 'revision'),
+        effectiveMode: ponytailModeResponse(goal.effectiveMode),
+        effectiveSource: ponytailPolicySourceResponse(goal.effectiveSource),
+        editable: booleanField(goal, 'editable'),
+        editBlockedReason: blocked,
+      };
+    }),
+  };
+}
+
 function integerField(value: Record<string, unknown>, field: string): number {
   const result = numberField(value, field);
   if (!Number.isInteger(result)) throw new Error('Invalid IPC response');
@@ -400,6 +450,10 @@ function dashboard(value: unknown): DashboardSnapshot {
   if ((url !== null && typeof url !== 'string') || (version !== null && typeof version !== 'string')) {
     throw new Error('Invalid IPC response');
   }
+  const hostPlatform = value.hostPlatform;
+  const hostArch = value.hostArch;
+  if ((hostPlatform !== 'win32' && hostPlatform !== 'darwin' && hostPlatform !== 'linux')
+    || (hostArch !== 'x64' && hostArch !== 'arm64')) throw new Error('Invalid IPC response');
   return {
     selectedWorkspace,
     activeWorkspaces: workspaceList(value.activeWorkspaces),
@@ -437,6 +491,8 @@ function dashboard(value: unknown): DashboardSnapshot {
     tunnel: tunnelStatus(value.tunnel),
     remoteMcp: remoteMcpStatus(value.remoteMcp),
     settings: userSettings(value.settings),
+    hostPlatform,
+    hostArch,
     appVersion: stringField(value, 'appVersion'),
   };
 }
@@ -1030,6 +1086,23 @@ function setUserSettings(request: SetUserSettingsRequest): Promise<{ readonly se
   });
 }
 
+function getPonytailPolicyContext(request: GetPonytailPolicyContextRequest): Promise<PonytailPolicyContext> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  return invoke(ipcChannels.getPonytailPolicyContext, { workspaceId: request.workspaceId }).then(ponytailPolicyContext);
+}
+
+function setWorkspacePonytailMode(request: SetWorkspacePonytailModeRequest): Promise<PonytailPolicyContext> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0) return Promise.reject(new Error('Invalid IPC request'));
+  const mode = ponytailModeOverrideResponse(request.mode);
+  return invoke(ipcChannels.setWorkspacePonytailMode, { workspaceId: request.workspaceId, mode }).then(ponytailPolicyContext);
+}
+
+function setGoalPonytailMode(request: SetGoalPonytailModeRequest): Promise<PonytailPolicyContext> {
+  if (!isRecord(request) || typeof request.workspaceId !== 'string' || request.workspaceId.trim().length === 0 || typeof request.goalId !== 'string' || request.goalId.trim().length === 0 || !Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) return Promise.reject(new Error('Invalid IPC request'));
+  const mode = ponytailModeOverrideResponse(request.mode);
+  return invoke(ipcChannels.setGoalPonytailMode, { workspaceId: request.workspaceId, goalId: request.goalId, expectedRevision: request.expectedRevision, mode }).then(ponytailPolicyContext);
+}
+
 function chooseTunnelClientPath(): Promise<{ readonly clientPath: string | null }> {
   return invoke(ipcChannels.chooseTunnelClientPath).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
@@ -1048,7 +1121,7 @@ function configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise
 function openExternalSetupPage(request: OpenExternalSetupPageRequest): Promise<{ readonly opened: true }> {
   if (
     !isRecord(request) ||
-    (request.target !== 'openai_tunnels' && request.target !== 'openai_api_keys' && request.target !== 'chatgpt_plugins' && request.target !== 'ngrok_authtoken')
+    (request.target !== 'openai_tunnels' && request.target !== 'openai_api_keys' && request.target !== 'chatgpt_plugins' && request.target !== 'ngrok_authtoken' && request.target !== 'ngrok_download')
   ) {
     return Promise.reject(new Error('Invalid IPC request'));
   }
@@ -1136,6 +1209,7 @@ function exportLogs(request: ExportLogsRequest): Promise<{ readonly exported: bo
   return invoke(ipcChannels.exportLogs, {
     source: request.source,
     filePath: request.filePath ?? '',
+    ...(request.locale === undefined ? {} : { locale: uiLocale(request.locale) }),
     ...scopePayload(request),
     ...(typeof request.query === 'string' && request.query.trim().length > 0 ? { query: request.query.trim().slice(0, 512) } : {}),
     lines: request.lines.map((line) => ({ lineId: line.lineId, correlationRef: line.correlationRef })),
@@ -1149,7 +1223,7 @@ function exportWorkLog(request: ExportWorkLogRequest): Promise<{ readonly export
   if (!isRecord(request) || !Array.isArray(request.rowIds) || request.rowIds.length > 5_000 || request.rowIds.some((rowId) => typeof rowId !== 'string' || rowId.length === 0 || rowId.length > 1_024)) {
     return Promise.reject(new Error('Invalid IPC request'));
   }
-  return invoke(ipcChannels.exportWorkLog, { rowIds: [...request.rowIds] }).then((value: unknown) => {
+  return invoke(ipcChannels.exportWorkLog, { rowIds: [...request.rowIds], ...(request.locale === undefined ? {} : { locale: uiLocale(request.locale) }) }).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     return { exported: booleanField(value, 'exported') };
   });
@@ -1262,6 +1336,9 @@ const api: LnwjudApi = {
   setTunnelClientPath,
   setLocale,
   setUserSettings,
+  getPonytailPolicyContext,
+  setWorkspacePonytailMode,
+  setGoalPonytailMode,
   chooseTunnelClientPath,
   configureTunnelProfile,
   openExternalSetupPage,

@@ -26,6 +26,18 @@ extraResources:
     to: runtime-tools
   - from: ../../.agents/skills/lnwjud-scheduled-continuation
     to: agent-skills/lnwjud-scheduled-continuation
+  - from: ../../.agents/skills/ponytail
+    to: agent-skills/ponytail
+  - from: ../../.agents/skills/ponytail-review
+    to: agent-skills/ponytail-review
+  - from: ../../.agents/skills/ponytail-audit
+    to: agent-skills/ponytail-audit
+  - from: ../../.agents/skills/ponytail-debt
+    to: agent-skills/ponytail-debt
+  - from: ../../.agents/skills/ponytail-gain
+    to: agent-skills/ponytail-gain
+  - from: ../../.agents/skills/ponytail-help
+    to: agent-skills/ponytail-help
 # Target-native STDIO launchers invoke the packaged Electron host. No private
 # Node runtime or duplicated CJS entry is shipped.
 win:

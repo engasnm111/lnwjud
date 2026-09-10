@@ -144,6 +144,38 @@ describe('Tools and Doctor UX', () => {
     expect(thai).toContain('ต้องตั้งค่า');
   });
 
+  it('shows a successfully discovered External MCP tool as ready without inventing child-server policy metadata', () => {
+    const externalTool: ToolCatalogItem = {
+      ...tool,
+      name: 'create_text_file',
+      title: 'create_text_file',
+      origin: 'external_mcp',
+      serverName: 'serena',
+      declaredPermission: 'UNKNOWN',
+      profileDecision: 'UNKNOWN',
+      riskMode: 'external_unknown',
+      readiness: 'ready',
+      deliveryState: 'external_unknown',
+      available: true,
+      supportsCancel: null,
+      supportsDryRun: null,
+      remediationIds: [],
+      inputSchema: { type: 'object', required: ['relative_path', 'content'] },
+    };
+    const modalMarkup = renderToStaticMarkup(createElement(ToolDetailModal, {
+      locale: 'th', item: externalTool, remediations: [], onClose: () => undefined, onRemediation: async () => undefined,
+    }));
+
+    expect(modalMarkup).toContain('พร้อม');
+    expect(modalMarkup).not.toContain('สถานะ External ยังไม่ยืนยัน');
+    expect(modalMarkup).toContain('เชื่อมต่อ External MCP และอ่านรายการเครื่องมือนี้สำเร็จแล้ว');
+    expect(modalMarkup).toContain('Server ไม่ได้ระบุ');
+    expect(modalMarkup).toContain('Server ไม่ได้ประกาศ');
+    expect(modalMarkup).toContain('ขอบเขต External MCP');
+    expect(modalMarkup).toContain('จัดการโดย External MCP');
+    expect(modalMarkup).not.toContain('รายการนี้ยังไม่มีปุ่มแก้อัตโนมัติ');
+  });
+
   it('shows the failed composite subrequirement details without claiming Chrome is required', () => {
     const composite: ToolCatalogItem = {
       ...tool,

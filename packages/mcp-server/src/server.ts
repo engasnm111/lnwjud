@@ -1,7 +1,7 @@
 import { McpServer, type CallToolResult, type RegisteredTool } from '@modelcontextprotocol/server';
 import type { DiagnosticLogger, FileActor } from '@lnwjud/application';
 import type { PermissionProfile } from '@lnwjud/permissions';
-import { APP_NAME, APP_VERSION, type DestructiveAutoApprovalPolicy, type ToolAvailabilitySnapshot } from '@lnwjud/shared';
+import { APP_NAME, APP_VERSION, DEFAULT_PONYTAIL_MODE, parsePonytailMode, type DestructiveAutoApprovalPolicy, type PonytailMode, type ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { readTraceContext, type ActivitySink, type ActivityTracker } from './activity-tracker.js';
 import { withProgressHeartbeat, type ProgressNotifyContext } from './progress-heartbeat.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
@@ -11,6 +11,7 @@ import { MODERN_TASKS_EXTENSION_ID } from './modern-tasks-protocol.js';
 import { registerModernTasksProtocol } from './modern-tasks-wire.js';
 import { ToolRegistry, type ActiveProjectScope, type AuthorizationMode, type HostMutationApprovalRequest, type McpApplicationServices, type WorkspaceScope } from './tool-registry.js';
 import type { SetOfMarksObservationStore } from './set-of-marks-service.js';
+import { BUNDLED_PONYTAIL_SKILL_ID, PonytailActivationLedger } from './ponytail-runtime.js';
 import { actorForRequestScope, type McpRequestScope } from './request-scope.js';
 
 export const MCP_OUTCOME_DRIVEN_INSTRUCTIONS = [
@@ -20,6 +21,11 @@ export const MCP_OUTCOME_DRIVEN_INSTRUCTIONS = [
   'Before the first mutation of any multi-step change that includes verification, build, package, push, release preparation, or is likely to outlive the current turn, call run_goal with scheduledContinuation=auto and follow the bundled lnwjud-scheduled-continuation skill; if such work is already in progress without an active durable goal, enroll it before the next mutation.',
   'Use durable background tasks for naturally long-running commands, then keep checking them and continue the work while the current run remains active.',
 ].join(' ');
+
+export function buildMcpInstructions(ponytailMode: PonytailMode = DEFAULT_PONYTAIL_MODE): string {
+  if (ponytailMode === 'off') return MCP_OUTCOME_DRIVEN_INSTRUCTIONS;
+  return `${MCP_OUTCOME_DRIVEN_INSTRUCTIONS} For coding tasks, the global lnwjud Ponytail policy is ${ponytailMode.toUpperCase()}. Load the exact bundled skill ${BUNDLED_PONYTAIL_SKILL_ID} before the first code mutation and follow it at the selected intensity. Workspace or durable-goal overrides are resolved at execution time and may change the effective mode. Do not substitute workspace/user copies. If the user explicitly asks to stop Ponytail or return to normal mode, call ponytail_session with suppressed=true for the active workspace/goal; use suppressed=false to resume without changing persisted settings. Ponytail is subordinate to lnwjud security, approvals, durable goals, recovery, compatibility, observability, required tests, release verification, project rules, and explicit user instructions.`;
+}
 
 export interface McpServerOptions {
   readonly services: McpApplicationServices;
@@ -42,6 +48,10 @@ export interface McpServerOptions {
   readonly activeProjectProvider?: () => ActiveProjectScope | null;
   /** Exposes quota-consuming Codex delegation tools. Disabled unless explicitly enabled. */
   readonly codexToolsEnabled?: boolean;
+  /** Current persisted global Ponytail mode. Workspace/goal overrides are resolved by ToolRegistry at execution time. */
+  readonly ponytailModeProvider?: () => PonytailMode;
+  /** Shared activation/review state for transport factories that recreate MCP servers per request. */
+  readonly ponytailActivationLedger?: PonytailActivationLedger;
   /** Current persisted per-tool availability snapshot. */
   readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
   /** Subscribes to persisted per-tool availability changes for live SDK handle toggling. */
@@ -78,11 +88,19 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     ...(options.workspaceScopeResolver === undefined ? {} : { workspaceScopeResolver: options.workspaceScopeResolver }),
     ...(options.activeProjectProvider === undefined ? {} : { activeProjectProvider: options.activeProjectProvider }),
     ...(options.codexToolsEnabled === undefined ? {} : { codexToolsEnabled: options.codexToolsEnabled }),
+    ...(options.ponytailModeProvider === undefined ? {} : { ponytailModeProvider: options.ponytailModeProvider }),
+    ...(options.ponytailActivationLedger === undefined ? {} : { ponytailActivationLedger: options.ponytailActivationLedger }),
     ...(options.toolAvailabilitySnapshotProvider === undefined ? {} : { toolAvailabilitySnapshotProvider: options.toolAvailabilitySnapshotProvider }),
     ...(options.incrementalVerifier === undefined ? {} : { incrementalVerifier: options.incrementalVerifier }),
     ...(options.setOfMarksStore === undefined ? {} : { setOfMarksStore: options.setOfMarksStore }),
   });
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
+  let configuredPonytailMode = DEFAULT_PONYTAIL_MODE;
+  try {
+    configuredPonytailMode = parsePonytailMode(options.ponytailModeProvider?.(), DEFAULT_PONYTAIL_MODE);
+  } catch {
+    configuredPonytailMode = DEFAULT_PONYTAIL_MODE;
+  }
   // The core `tasks` capability belongs only to MCP 2025-11-25 legacy
   // negotiation. Modern MCP moved Tasks to the io.modelcontextprotocol/tasks
   // extension, so advertising the old core capability to a modern host is a
@@ -93,7 +111,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     capabilities: legacyTasksProtocol
       ? { tools: {}, tasks: { list: {}, cancel: {} } }
       : { tools: {}, extensions: { [MODERN_TASKS_EXTENSION_ID]: {} } },
-    instructions: MCP_OUTCOME_DRIVEN_INSTRUCTIONS,
+    instructions: buildMcpInstructions(configuredPonytailMode),
     debouncedNotificationMethods: ['notifications/tools/list_changed'],
   });
   if (legacyTasksProtocol) registerTasksProtocol(server, options.services, { actor });

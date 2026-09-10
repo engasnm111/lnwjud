@@ -40,7 +40,7 @@ export class PlatformDiagnosticsCapabilityBackend implements CapabilityBackend {
   private readonly uid: () => number;
 
   public constructor(private readonly platform: PortablePlatform, options: PlatformDiagnosticsBackendOptions = {}) {
-    this.executableExists = options.executableExists ?? ((executable: string): boolean => commandInPath(executable));
+    this.executableExists = options.executableExists ?? ((executable: string): boolean => commandInPosixPath(executable));
     this.runImpl = options.runImpl ?? defaultRunner(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     this.timeoutMs = Math.min(60_000, Math.max(1_000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS));
     this.uid = options.uid ?? ((): number => typeof process.getuid === 'function' ? process.getuid() : 0);
@@ -265,9 +265,9 @@ function defaultRunner(timeoutMs: number): NonNullable<PlatformDiagnosticsBacken
   };
 }
 
-function commandInPath(executable: string): boolean {
-  if (path.isAbsolute(executable)) return existsSync(executable);
-  return (process.env.PATH ?? '').split(path.delimiter).filter(Boolean).some((directory) => existsSync(path.join(directory, executable)));
+function commandInPosixPath(executable: string): boolean {
+  if (path.posix.isAbsolute(executable)) return existsSync(executable);
+  return (process.env.PATH ?? '').split(':').filter(Boolean).some((directory) => existsSync(path.posix.join(directory, executable)));
 }
 
 function isNotFound(error: unknown): boolean {

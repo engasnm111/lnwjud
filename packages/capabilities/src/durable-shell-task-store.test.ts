@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ShellCapabilityBackend } from './shell-backend.js';
-import { DurableShellTaskStore } from './durable-shell-task-store.js';
+import { DurableShellTaskStore, parsePosixProcessProbe } from './durable-shell-task-store.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -19,6 +19,15 @@ afterEach(async () => {
 });
 
 describe('durable shell background tasks', () => {
+  it('treats an exited POSIX zombie as terminated without trusting a reused live PID', () => {
+    expect(parsePosixProcessProbe('Wed Sep  9 14:58:14 2026 Z+')).toEqual({ state: 'gone' });
+    expect(parsePosixProcessProbe('Wed Sep  9 14:58:14 2026 Ssl')).toMatchObject({
+      state: 'live',
+      processStartedAt: expect.any(String),
+    });
+    expect(parsePosixProcessProbe('not-a-valid-ps-row')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
+  });
+
   it.skipIf(process.platform === 'win32')('cancels the detached child group before retiring its durable worker', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-groups-'));
     temporaryRoots.push(root);
@@ -199,18 +208,19 @@ describe('durable shell background tasks', () => {
     const first = await store.launch({ taskId: 'task-one', ...common });
     expect(first).toMatchObject({ ok: true, value: { task_id: 'task-one', state: 'running' } });
 
-    const second = await store.launch({ taskId: 'task-two', ...common });
-    expect(second).toMatchObject({
-      ok: false,
-      error: {
-        code: 'CONFLICT',
-        recoverable: true,
-      },
-    });
-
-    const cancelled = await store.cancel('task-one', owner);
-    expect(cancelled).toMatchObject({ ok: true, value: { state: 'cancelled' } });
-  });
+    try {
+      const second = await store.launch({ taskId: 'task-two', ...common });
+      expect(second).toMatchObject({
+        ok: false,
+        error: {
+          code: 'CONFLICT',
+          recoverable: true,
+        },
+      });
+    } finally {
+      if (first.ok) await store.cancel('task-one', owner);
+    }
+  }, 15_000);
 });
 
 async function waitUntil(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {

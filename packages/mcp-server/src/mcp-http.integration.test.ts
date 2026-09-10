@@ -2,7 +2,8 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { ok } from '@lnwjud/domain';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ActivityTracker } from './activity-tracker.js';
-import { ToolRegistry } from './tool-registry.js';
+import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
+import { BUNDLED_PONYTAIL_SKILL_ID } from './ponytail-runtime.js';
 import { LNWJUD_MCP_IDENTITY_PATH, startMcpHttp, type McpHttpServerHandle } from './http.js';
 
 const expectedAdvertisedToolCount = new ToolRegistry({}, { clientId: 'count-test', clientName: 'count-test' }).list().length;
@@ -77,6 +78,67 @@ describe('MCP localhost HTTP transport', () => {
       expect(instructions).not.toMatch(/\b(?:22|25|60)\s*minutes?\b/i);
     } finally {
       await client.close();
+    }
+  });
+
+  it('preserves exact Ponytail activation across modern HTTP server recreation', async () => {
+    const writes: string[] = [];
+    const ponytailHandle = await startMcpHttp({
+      port: 0,
+      services: {
+        file: {
+          async readFile(_actor, _workspaceId, request) {
+            return ok({ path: request.path, content: '{}', startLine: 1, endLine: 1 });
+          },
+          async writeFile(_actor, _workspaceId, request) {
+            writes.push(request.path);
+            return ok({ path: request.path, replacedExisting: false });
+          },
+        },
+        extensions: {
+          async readSkill(input) {
+            return ok({
+              id: input.skillId,
+              name: 'ponytail',
+              description: 'bundled primary',
+              source: 'bundled:agent-skills',
+              trustTier: 'bundled',
+              path: 'resources/agent-skills/ponytail/SKILL.md',
+              content: '# Ponytail',
+            });
+          },
+        },
+      } as unknown as McpApplicationServices,
+      actor: { clientId: 'ponytail-http-test', clientName: 'ponytail-http-test' },
+      ponytailModeProvider: () => 'full',
+    });
+    const client = new Client(
+      { name: 'ponytail-http-client', version: '0.1.0' },
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+    );
+    const transport = new StreamableHTTPClientTransport(ponytailHandle.endpoint);
+    try {
+      await client.connect(transport);
+      const blocked = await client.callTool({
+        name: 'write_file', arguments: { workspaceId: 'workspace-1', path: 'src/http.ts', content: 'export const x = 1;\n' },
+      });
+      expect(blocked.isError).toBe(true);
+      expect(JSON.stringify(blocked.structuredContent)).toContain(BUNDLED_PONYTAIL_SKILL_ID);
+      expect(writes).toEqual([]);
+
+      const loaded = await client.callTool({
+        name: 'skill_load', arguments: { skillId: BUNDLED_PONYTAIL_SKILL_ID, workspaceId: 'workspace-1' },
+      });
+      expect(loaded.isError).not.toBe(true);
+
+      const allowed = await client.callTool({
+        name: 'write_file', arguments: { workspaceId: 'workspace-1', path: 'src/http.ts', content: 'export const x = 2;\n' },
+      });
+      expect(allowed.isError).not.toBe(true);
+      expect(writes).toEqual(['src/http.ts']);
+    } finally {
+      await client.close().catch(() => undefined);
+      await ponytailHandle.close();
     }
   });
 

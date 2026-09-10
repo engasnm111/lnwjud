@@ -32,7 +32,7 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     const app = await launchDesktop({ legacyCheckpoint: true });
     try {
       await openTools(app.page);
-      await expect(app.page.locator('.tool-card')).toHaveCount(232);
+      await expect(app.page.locator('.tool-card')).toHaveCount(233);
       expect(await readFile(path.join(app.dataRoot, 'checkpoint-master.key'), 'utf8')).toMatch(/^safe:v1:/);
       expect(await readFile(path.join(app.dataRoot, 'checkpoint-master.key.legacy-backup'), 'utf8')).toMatch(/^dpapi:v2:/);
       expect(JSON.parse(await readFile(path.join(app.dataRoot, 'checkpoint-master.key.migration.json'), 'utf8'))).toMatchObject({ operation: 'dpapi_v2' });
@@ -43,8 +43,8 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     const app = await launchDesktop();
     try {
       await openTools(app.page);
-      await expect(app.page.getByRole('tab', { name: /lnwjud \(232\)/ })).toBeVisible();
-      await expect(app.page.locator('.tool-card')).toHaveCount(232);
+      await expect(app.page.getByRole('tab', { name: /lnwjud \(233\)/ })).toBeVisible();
+      await expect(app.page.locator('.tool-card')).toHaveCount(233);
       await expect(app.page.locator('.tool-status-strip')).toContainText(/พร้อม|ต้องดำเนินการ|ready|needs_setup/i);
     } finally { await closeDesktop(app); }
   });
@@ -125,9 +125,25 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     try {
       await openTools(second.page, true);
       await second.page.getByRole('tab', { name: /External MCP \(\d+\)/ }).click();
+      const external = await second.page.evaluate(async () => {
+        const snapshot = await window.lnwjud.getToolCatalog({ locale: 'th' });
+        const item = snapshot.items.find((candidate) => candidate.origin === 'external_mcp' && candidate.name === '@offline-fixture');
+        return item === undefined ? null : {
+          readiness: item.readiness,
+          declaredPermission: item.declaredPermission,
+          profileDecision: item.profileDecision,
+        };
+      });
+      expect(external).toEqual({
+        readiness: 'needs_setup',
+        declaredPermission: 'UNKNOWN',
+        profileDecision: 'UNKNOWN',
+      });
       const card = toolCard(second.page, '@offline-fixture');
       await expect(card).toHaveClass(/tool-needs_setup/);
-      await expect(card).toContainText('UNKNOWN');
+      await expect(card).toContainText('สถานะ External ยังไม่ยืนยัน');
+      await expect(card).toContainText('Server ไม่ได้ระบุสิทธิ์');
+      await expect(card).toContainText('lnwjud ไม่ได้จัดประเภท');
     } finally { await closeDesktop(second); }
   });
 
@@ -249,7 +265,7 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
 
 async function openTools(page: Page, bypassStartupDoctor = false): Promise<void> {
   await dismissFirstRunTip(page, bypassStartupDoctor);
-  await page.getByRole('button', { name: /เครื่องมือ|Tools/, exact: true }).click();
+  await page.getByRole('button', { name: /^(เครื่องมือ|Tools)$/ }).click();
   await expect(page.getByRole('heading', { name: /เครื่องมือ|Tools/, exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.tool-card').first()).toBeVisible({ timeout: 30_000 });
 }

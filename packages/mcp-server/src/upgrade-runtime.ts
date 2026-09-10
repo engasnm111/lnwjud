@@ -15,6 +15,7 @@ import {
 import type { FileActor } from '@lnwjud/application';
 import { capabilityDescriptors, EventLogCapabilityBackend, type CapabilityDescriptor } from '@lnwjud/capabilities';
 import { createProcessTreeTerminator } from '@lnwjud/process';
+import { normalizeProjectProfile } from '@lnwjud/shared';
 import { hostPathApi, isAbsoluteHostPath, normalizeHostPath } from '@lnwjud/workspace';
 import type { McpApplicationServices } from './tools/tool-types.js';
 import { ContextEngine } from './context-engine.js';
@@ -1409,10 +1410,7 @@ export class UpgradeRuntimeService {
     const script = ['benchmark:baseline', 'benchmark', 'bench'].find((candidate) => typeof scripts[candidate] === 'string' && String(scripts[candidate]).trim().length > 0);
     if (script === undefined) return err(appError('INVALID_INPUT', 'No benchmark:baseline, benchmark, or bench package script was detected'));
     const packageManager = typeof parsed.packageManager === 'string' ? parsed.packageManager.trim() : '';
-    if (packageManager.startsWith('pnpm@')) return ok({ executable: 'corepack', args: [packageManager, 'run', script], script });
-    if (packageManager.startsWith('yarn@')) return ok({ executable: 'corepack', args: [packageManager, 'run', script], script });
-    if (packageManager.startsWith('npm@')) return ok({ executable: 'npm.cmd', args: ['run', script], script });
-    return ok({ executable: 'npm.cmd', args: ['run', script], script });
+    return ok(benchmarkPackageCommand(packageManager, script, this.diagnostics.platform));
   }
 
   private async regressionReport(input: Record<string, unknown>): Promise<Result<unknown>> {
@@ -1802,7 +1800,7 @@ export class UpgradeRuntimeService {
     }
     if (name === 'path_context') {
       const pathValue = process.env.Path ?? process.env.PATH ?? '';
-      const entries = pathValue.split(path.delimiter).filter((entry) => entry.length > 0);
+      const entries = pathValue.split(this.diagnostics.platform === 'win32' ? ';' : ':').filter((entry) => entry.length > 0);
       const executable = readString(input, 'executable');
       if (executable === undefined) return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, entries });
       if (!/^[A-Za-z0-9_.-]+$/.test(executable)) return err(appError('INVALID_INPUT', 'path_context executable must be a simple executable name'));
@@ -2005,6 +2003,14 @@ function runBoundedProcess(
   });
 }
 
+export function benchmarkPackageCommand(packageManager: string, script: string, platform: NodeJS.Platform): { readonly executable: string; readonly args: readonly string[]; readonly script: string } {
+  const normalized = packageManager.trim();
+  if (normalized.startsWith('pnpm@') || normalized.startsWith('yarn@')) {
+    return { executable: 'corepack', args: [normalized, 'run', script], script };
+  }
+  return { executable: platform === 'win32' ? 'npm.cmd' : 'npm', args: ['run', script], script };
+}
+
 interface DiagnosticInvocation {
   readonly executable: string;
   readonly args: readonly string[];
@@ -2205,39 +2211,10 @@ function normalizePermission(value: string | undefined): UpgradeToolCatalogEntry
 
 function validateProjectProfile(profile: Record<string, unknown>): Result<Record<string, unknown>> {
   try {
-    const normalized = normalizeProjectProfileValue(profile, 0) as Record<string, unknown>;
-    return ok(normalized);
+    return ok(normalizeProjectProfile(profile));
   } catch (error: unknown) {
     return err(appError('INVALID_INPUT', error instanceof Error ? error.message : 'Project profile is invalid'));
   }
-}
-
-function normalizeProjectProfileValue(value: unknown, depth: number): unknown {
-  if (depth > 8) throw new Error('Project profile nesting exceeds 8 levels');
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
-    if (typeof value === 'string' && value.length > 16_384) throw new Error('Project profile string values are too large');
-    return value;
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('Project profile numbers must be finite');
-    return value;
-  }
-  if (Array.isArray(value)) {
-    if (value.length > 256) throw new Error('Project profile arrays may contain at most 256 items');
-    return value.map((entry) => normalizeProjectProfileValue(entry, depth + 1));
-  }
-  if (!isRecord(value)) throw new Error('Project profile values must be JSON-compatible');
-  const entries = Object.entries(value);
-  if (entries.length > 256) throw new Error('Project profile objects may contain at most 256 keys');
-  const result: Record<string, unknown> = {};
-  for (const [key, entry] of entries) {
-    if (key.length === 0 || key.length > 128) throw new Error('Project profile keys must be 1-128 characters');
-    if (/(token|secret|password|api[_-]?key|private[_-]?key|authorization|credential)/i.test(key)) {
-      throw new Error(`Project profile must not persist secret-bearing field: ${key}`);
-    }
-    result[key] = normalizeProjectProfileValue(entry, depth + 1);
-  }
-  return result;
 }
 
 function requireBrowserTabId(toolName: string, input: Record<string, unknown>): Result<string> {

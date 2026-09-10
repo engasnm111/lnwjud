@@ -140,7 +140,7 @@ export class PowerShellWindowsCapabilityBridge implements WindowsCapabilityBridg
       const info = await lstat(this.scriptPath);
       if (!info.isFile() || info.isSymbolicLink()) return err(appError('INTERNAL_ERROR', 'Windows bridge script is not a trusted regular file'));
       const canonical = await realpath(this.scriptPath);
-      if (process.platform === 'win32'
+      if (this.platform === 'win32'
         ? canonical.toLowerCase() !== this.scriptPath.toLowerCase()
         : canonical !== this.scriptPath) {
         return err(appError('INTERNAL_ERROR', 'Windows bridge script path resolves through a link or reparse point'));

@@ -84,13 +84,13 @@ describe('external Tool Catalog projection', () => {
       expect.objectContaining({
         name: 'remote_read',
         serverName: 'connected-fixture',
-        readiness: 'unknown',
-        readinessReason: 'external_unknown',
+        readiness: 'ready',
         deliveryState: 'external_unknown',
         available: true,
         declaredPermission: 'UNKNOWN',
       }),
     ]);
+    expect(items[0]?.readinessReason).toBeUndefined();
   });
 
   it('bounds connected external discovery so a hung server cannot block the catalog', async () => {

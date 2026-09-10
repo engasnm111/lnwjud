@@ -255,7 +255,7 @@ export const defaultMcpClientFactory: McpClientFactory = {
     });
     const client = new Client(
       { name: 'lnwjud-mcp-bridge', version: '1.0.0' },
-      { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+      { versionNegotiation: { mode: 'auto' } },
     );
     await client.connect(transport, signal === undefined ? undefined : { signal });
     return {

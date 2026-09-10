@@ -52,6 +52,10 @@ import {
   type SetTunnelClientPathRequest,
   type SetUnrestrictedModeRequest,
   type SetUserSettingsRequest,
+  type GetPonytailPolicyContextRequest,
+  type SetWorkspacePonytailModeRequest,
+  type SetGoalPonytailModeRequest,
+  type PonytailPolicyContext,
   type StartMcpRequest,
   type StartProcessRequest,
   type StopProcessRequest,
@@ -63,13 +67,14 @@ import {
   type WorkspaceSummary,
 } from '@lnwjud/ipc-contracts';
 import { readSharedActivitySnapshot, startMcpStdio, type HostMutationApprovalRequest } from '@lnwjud/mcp-server';
-import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, resolveLnwjudDataPath } from '@lnwjud/shared';
+import { DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, resolveLnwjudDataPath } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
 import { migrateLegacyWindowsSecrets } from './legacy-secret-migration.js';
 import { installPdfProvider } from './pdf-provider-installer.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
+import { DesktopIpcDrainBarrier } from './desktop-ipc-drain.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, getRendererEntryPath, getWindowIconPath, isAllowedRendererUrl } from './window.js';
@@ -85,7 +90,7 @@ import {
   launchPortableReplacement,
   preparePortableReplacement,
 } from './portable-update.js';
-import { platformCompatibilityProfile } from './platform-compatibility.js';
+import { platformCompatibilityProfile, supportedHostPlatform } from './platform-compatibility.js';
 import { atomicWrite, type IncidentReport } from './incident-report.js';
 import { IncidentSaveCoordinator } from './incident-save.js';
 import { localizedUpdateStatusMessage, nativeMessages } from './native-i18n.js';
@@ -139,6 +144,9 @@ export interface DesktopIpcServices {
   setTunnelClientPath(request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }>;
   setLocale(request: SetLocaleRequest): Promise<{ readonly locale: UiLocale }>;
   setUserSettings(request: SetUserSettingsRequest): Promise<{ readonly settings: UserSettings; readonly restartRequired: boolean }>;
+  getPonytailPolicyContext(request: GetPonytailPolicyContextRequest): Promise<PonytailPolicyContext>;
+  setWorkspacePonytailMode(request: SetWorkspacePonytailModeRequest): Promise<PonytailPolicyContext>;
+  setGoalPonytailMode(request: SetGoalPonytailModeRequest): Promise<PonytailPolicyContext>;
   configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }>;
   launchManagedBrowser(): Promise<ManagedBrowserStatus>;
   installPdfProvider(): Promise<PdfProviderInstallResult>;
@@ -151,7 +159,7 @@ export interface DesktopIpcServices {
   clearLogBuffer(request: ClearLogBufferRequest): Promise<{ readonly cleared: boolean }>;
   resolveActivityTargetDetail(detailRef: string): Promise<{ readonly status: 'complete' | 'unavailable'; readonly detail: ActivityTargetDetail | null }>;
   searchActivityTargetDetails(candidates: readonly ActivityTargetSearchCandidate[], query: string): Promise<readonly string[]>;
-  streamWorkLogExportRows(rowIds: readonly string[]): AsyncIterable<string>;
+  streamWorkLogExportRows(rowIds: readonly string[], locale?: UiLocale): AsyncIterable<string>;
   captureIncident(updaterEvents?: readonly string[]): Promise<IncidentReport>;
 }
 
@@ -160,6 +168,7 @@ export type MainWindowProvider = () => BrowserWindow | null;
 export interface DesktopIpcHooks {
   readonly onLocaleChanged?: (locale: UiLocale) => void;
   readonly onUserSettingsChanged?: (settings: UserSettings) => void;
+  readonly ipcDrainBarrier?: DesktopIpcDrainBarrier;
 }
 
 const defaultDestructiveDeletePolicy: DestructiveDeletePolicy = {
@@ -179,7 +188,7 @@ const emptyTunnel: TunnelStatus = {
   persistent: null,
 };
 const emptyRemoteMcp: RemoteMcpStatus = {
-  state: 'stopped', provider: 'ngrok', installed: false, hasAuthtoken: false, ngrokPath: null,
+  state: 'stopped', provider: 'ngrok', installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
   localMcpUrl: null, localGatewayUrl: null, publicMcpUrl: null, pairingCode: null, pairingCodeExpiresAt: null,
   oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
 };
@@ -197,6 +206,7 @@ const defaultUserSettings: UserSettings = {
   lspCommands: {},
   mcpHttpPort: 18_765,
   codexToolsEnabled: false,
+  ponytailMode: 'off',
   updateAutoCheck: true,
   updateCheckOnStartup: true,
   updateIntervalMinutes: 30,
@@ -259,6 +269,8 @@ const defaultDesktopServices: DesktopIpcServices = {
     tunnel: emptyTunnel,
     remoteMcp: emptyRemoteMcp,
     settings: defaultUserSettings,
+    hostPlatform: supportedHostPlatform(process.platform),
+    hostArch: process.arch === 'arm64' ? 'arm64' : 'x64',
     appVersion: APP_VERSION,
   }),
   setPermissionProfile: async (request): Promise<{ readonly profile: PermissionProfileName }> => ({ profile: request.profile }),
@@ -304,6 +316,9 @@ const defaultDesktopServices: DesktopIpcServices = {
   setTunnelClientPath: async (request): Promise<{ readonly clientPath: string }> => ({ clientPath: request.clientPath }),
   setLocale: async (request): Promise<{ readonly locale: UiLocale }> => ({ locale: request.locale }),
   setUserSettings: async (request): Promise<{ readonly settings: UserSettings; readonly restartRequired: boolean }> => ({ settings: request.settings, restartRequired: false }),
+  getPonytailPolicyContext: async (request): Promise<PonytailPolicyContext> => ({ workspaceId: request.workspaceId, globalMode: 'off', workspaceMode: 'inherit', effectiveWorkspaceMode: 'off', effectiveWorkspaceSource: 'default', activeGoals: [] }),
+  setWorkspacePonytailMode: async (request): Promise<PonytailPolicyContext> => ({ workspaceId: request.workspaceId, globalMode: 'off', workspaceMode: request.mode, effectiveWorkspaceMode: request.mode === 'inherit' ? 'off' : request.mode, effectiveWorkspaceSource: request.mode === 'inherit' ? 'default' : 'workspace', activeGoals: [] }),
+  setGoalPonytailMode: async (request): Promise<PonytailPolicyContext> => ({ workspaceId: request.workspaceId, globalMode: 'off', workspaceMode: 'inherit', effectiveWorkspaceMode: 'off', effectiveWorkspaceSource: 'default', activeGoals: [] }),
   configureTunnelProfile: async (): Promise<{ readonly configured: boolean; readonly profilePath: string }> => ({ configured: false, profilePath: '' }),
   launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => ({ ready: false, port: 9222, launched: false }),
   installPdfProvider: async (): Promise<PdfProviderInstallResult> => { throw new Error('PDF provider installer is not configured'); },
@@ -350,6 +365,16 @@ export function registerIpcHandlers(
   services: DesktopIpcServices = defaultDesktopServices,
   hooks: DesktopIpcHooks = {},
 ): void {
+  const registerHandler = (
+    channel: string,
+    handler: (event: IpcMainInvokeEvent, payload: unknown) => unknown | Promise<unknown>,
+  ): void => {
+    ipcMain.handle(channel, async (event, payload: unknown) => {
+      const invoke = (): unknown | Promise<unknown> => handler(event, payload);
+      return hooks.ipcDrainBarrier === undefined ? invoke() : hooks.ipcDrainBarrier.run(invoke);
+    });
+  };
+
   const incidentSaver = new IncidentSaveCoordinator({
     capture: (): Promise<IncidentReport> => services.captureIncident(updaterEventTail),
     choosePath: async (): Promise<string | null> => {
@@ -360,120 +385,120 @@ export function registerIpcHandlers(
     },
     write: atomicWrite,
   });
-  ipcMain.handle(ipcChannels.listWorkspaces, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.listWorkspaces, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.listWorkspaces();
   });
-  ipcMain.handle(ipcChannels.addWorkspace, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.addWorkspace, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.addWorkspace(parseAddWorkspaceRequest(payload));
   });
-  ipcMain.handle(ipcChannels.selectWorkspace, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.selectWorkspace, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.selectWorkspace(parseSelectWorkspaceRequest(payload));
   });
-  ipcMain.handle(ipcChannels.setWorkspaceActive, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setWorkspaceActive, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setWorkspaceActive(parseSetWorkspaceActiveRequest(payload));
   });
-  ipcMain.handle(ipcChannels.setWorkspaceArchived, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setWorkspaceArchived, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setWorkspaceArchived(parseSetWorkspaceArchivedRequest(payload));
   });
-  ipcMain.handle(ipcChannels.deleteWorkspace, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.deleteWorkspace, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.deleteWorkspace(parseDeleteWorkspaceRequest(payload));
   });
-  ipcMain.handle(ipcChannels.getDashboard, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getDashboard, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.getDashboard();
   });
-  ipcMain.handle(ipcChannels.setPermissionProfile, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setPermissionProfile, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setPermissionProfile(parseSetPermissionProfileRequest(payload));
   });
-  ipcMain.handle(ipcChannels.setUnrestrictedMode, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setUnrestrictedMode, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setUnrestrictedMode(parseSetUnrestrictedModeRequest(payload));
   });
-  ipcMain.handle(ipcChannels.setAiDeletePolicy, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setAiDeletePolicy, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setAiDeletePolicy(parseSetAiDeletePolicyRequest(payload));
   });
-  ipcMain.handle(ipcChannels.setStdioPolicy, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setStdioPolicy, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setStdioPolicy(parseSetStdioPolicyRequest(payload));
   });
-  ipcMain.handle(ipcChannels.createBackup, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.createBackup, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.createBackup();
   });
-  ipcMain.handle(ipcChannels.scheduleRestoreBackup, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.scheduleRestoreBackup, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.scheduleRestoreBackup(parseScheduleRestoreBackupRequest(payload));
   });
-  ipcMain.handle(ipcChannels.restoreRecoveryItem, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.restoreRecoveryItem, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.restoreRecoveryItem(parseRestoreRecoveryItemRequest(payload));
   });
-  ipcMain.handle(ipcChannels.restoreCheckpoint, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.restoreCheckpoint, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.restoreCheckpoint(parseRestoreCheckpointRequest(payload));
   });
-  ipcMain.handle(ipcChannels.listProcesses, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.listProcesses, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.listProcesses();
   });
-  ipcMain.handle(ipcChannels.startProcess, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.startProcess, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.startProcess(parseStartProcessRequest(payload));
   });
-  ipcMain.handle(ipcChannels.stopProcess, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.stopProcess, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.stopProcess(parseStopProcessRequest(payload));
   });
-  ipcMain.handle(ipcChannels.startMcp, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.startMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.startMcp(parseStartMcpRequest(payload));
   });
-  ipcMain.handle(ipcChannels.stopMcp, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.stopMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.stopMcp();
   });
-  ipcMain.handle(ipcChannels.restartMcp, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.restartMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.restartMcp();
   });
-  ipcMain.handle(ipcChannels.clearWorkLog, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.clearWorkLog, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.clearWorkLog(parseClearWorkLogRequest(payload));
   });
-  ipcMain.handle(ipcChannels.saveTunnelApiKey, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.saveTunnelApiKey, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.saveTunnelApiKey(parseSaveTunnelApiKeyRequest(payload));
   });
-  ipcMain.handle(ipcChannels.startTunnel, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.startTunnel, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.startTunnel();
   });
-  ipcMain.handle(ipcChannels.stopTunnel, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.stopTunnel, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.stopTunnel();
   });
-  ipcMain.handle(ipcChannels.getTunnelStatus, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getTunnelStatus, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.getTunnelStatus();
   });
-  ipcMain.handle(ipcChannels.beginTunnelOAuthLogin, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.beginTunnelOAuthLogin, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     const status = await services.beginTunnelOAuthLogin();
@@ -487,72 +512,84 @@ export function registerIpcHandlers(
     }
     return status;
   });
-  ipcMain.handle(ipcChannels.getTunnelOAuthLoginStatus, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getTunnelOAuthLoginStatus, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.getTunnelOAuthLoginStatus();
   });
-  ipcMain.handle(ipcChannels.cancelTunnelOAuthLogin, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.cancelTunnelOAuthLogin, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.cancelTunnelOAuthLogin();
   });
-  ipcMain.handle(ipcChannels.switchTunnelAuthToLegacy, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.switchTunnelAuthToLegacy, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.switchTunnelAuthToLegacy();
   });
-  ipcMain.handle(ipcChannels.logoutTunnelOAuth, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.logoutTunnelOAuth, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.logoutTunnelOAuth();
   });
-  ipcMain.handle(ipcChannels.getRemoteMcpStatus, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getRemoteMcpStatus, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.getRemoteMcpStatus();
   });
-  ipcMain.handle(ipcChannels.installRemoteMcpProvider, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.installRemoteMcpProvider, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.installRemoteMcpProvider();
   });
-  ipcMain.handle(ipcChannels.saveRemoteMcpAuthtoken, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.saveRemoteMcpAuthtoken, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.saveRemoteMcpAuthtoken(parseSaveRemoteMcpAuthtokenRequest(payload));
   });
-  ipcMain.handle(ipcChannels.startRemoteMcp, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.startRemoteMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.startRemoteMcp();
   });
-  ipcMain.handle(ipcChannels.stopRemoteMcp, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.stopRemoteMcp, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.stopRemoteMcp();
   });
-  ipcMain.handle(ipcChannels.regenerateRemoteMcpPairingCode, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.regenerateRemoteMcpPairingCode, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.regenerateRemoteMcpPairingCode();
   });
-  ipcMain.handle(ipcChannels.setTunnelClientPath, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setTunnelClientPath, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setTunnelClientPath(parseSetTunnelClientPathRequest(payload));
   });
-  ipcMain.handle(ipcChannels.setLocale, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setLocale, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const result = await services.setLocale(parseSetLocaleRequest(payload));
     hooks.onLocaleChanged?.(result.locale);
     return result;
   });
-  ipcMain.handle(ipcChannels.setUserSettings, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setUserSettings, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const result = await services.setUserSettings(parseSetUserSettingsRequest(payload));
     hooks.onUserSettingsChanged?.(result.settings);
     return result;
   });
-  ipcMain.handle(ipcChannels.chooseTunnelClientPath, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getPonytailPolicyContext, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.getPonytailPolicyContext(parseGetPonytailPolicyContextRequest(payload));
+  });
+  registerHandler(ipcChannels.setWorkspacePonytailMode, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setWorkspacePonytailMode(parseSetWorkspacePonytailModeRequest(payload));
+  });
+  registerHandler(ipcChannels.setGoalPonytailMode, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.setGoalPonytailMode(parseSetGoalPonytailModeRequest(payload));
+  });
+  registerHandler(ipcChannels.chooseTunnelClientPath, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     const window = getMainWindow();
@@ -565,48 +602,48 @@ export function registerIpcHandlers(
     });
     return { clientPath: result.canceled ? null : (result.filePaths[0] ?? null) };
   });
-  ipcMain.handle(ipcChannels.configureTunnelProfile, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.configureTunnelProfile, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.configureTunnelProfile(parseConfigureTunnelProfileRequest(payload));
   });
-  ipcMain.handle(ipcChannels.openExternalSetupPage, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.openExternalSetupPage, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const request = parseOpenExternalSetupPageRequest(payload);
     await shell.openExternal(resolveExternalSetupUrl(request.target));
     return { opened: true as const };
   });
-  ipcMain.handle(ipcChannels.launchManagedBrowser, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.launchManagedBrowser, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.launchManagedBrowser();
   });
-  ipcMain.handle(ipcChannels.installPdfProvider, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.installPdfProvider, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.installPdfProvider();
   });
-  ipcMain.handle(ipcChannels.runDoctor, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.runDoctor, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.runDoctor();
   });
-  ipcMain.handle(ipcChannels.getToolCatalog, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getToolCatalog, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.getToolCatalog(parseGetToolCatalogRequest(payload));
   });
-  ipcMain.handle(ipcChannels.recheckToolCatalog, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.recheckToolCatalog, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.recheckToolCatalog(parseRecheckToolCatalogRequest(payload));
   });
-  ipcMain.handle(ipcChannels.setToolAvailability, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.setToolAvailability, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.setToolAvailability(parseSetToolAvailabilityRequest(payload));
   });
-  ipcMain.handle(ipcChannels.resetToolAvailability, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.resetToolAvailability, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.resetToolAvailability(parseResetToolAvailabilityRequest(payload));
   });
-  ipcMain.handle(ipcChannels.openToolSetupTarget, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.openToolSetupTarget, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const request = parseOpenToolSetupTargetRequest(payload);
     if (request.target === 'windows_optional_features') {
@@ -621,7 +658,7 @@ export function registerIpcHandlers(
     await shell.openExternal(url);
     return { opened: true as const };
   });
-  ipcMain.handle(ipcChannels.copyToolCommand, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.copyToolCommand, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const request = parseCopyToolCommandRequest(payload);
     if (request.commandId === 'enable_windows_sandbox' && process.platform !== 'win32') {
@@ -632,53 +669,53 @@ export function registerIpcHandlers(
     clipboard.writeText(command);
     return { copied: true as const };
   });
-  ipcMain.handle(ipcChannels.getLogSnapshot, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getLogSnapshot, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.getLogSnapshot();
   });
-  ipcMain.handle(ipcChannels.clearLogBuffer, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.clearLogBuffer, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.clearLogBuffer(parseClearLogBufferRequest(payload));
   });
-  ipcMain.handle(ipcChannels.resolveActivityTargetDetail, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.resolveActivityTargetDetail, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.resolveActivityTargetDetail(parseResolveActivityTargetDetailRequest(payload));
   });
-  ipcMain.handle(ipcChannels.searchActivityTargetDetails, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.searchActivityTargetDetails, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     const request = parseSearchActivityTargetDetailsRequest(payload);
     return { matchingIds: await services.searchActivityTargetDetails(request.candidates, request.query) };
   });
-  ipcMain.handle(ipcChannels.exportLogs, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.exportLogs, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return exportLogsToFile(getMainWindow(), services, parseExportLogsRequest(payload));
   });
-  ipcMain.handle(ipcChannels.exportWorkLog, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.exportWorkLog, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return exportWorkLogToFile(getMainWindow(), services, parseExportWorkLogRequest(payload));
   });
-  ipcMain.handle(ipcChannels.captureIncident, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.captureIncident, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return incidentSaver.captureAndSave();
   });
-  ipcMain.handle(ipcChannels.openLogViewer, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.openLogViewer, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return { opened: openLogViewerWindow() !== null };
   });
-  ipcMain.handle(ipcChannels.getUpdateStatus, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.getUpdateStatus, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return currentUpdateStatus;
   });
-  ipcMain.handle(ipcChannels.checkForUpdates, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.checkForUpdates, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return requestUpdateCheck('renderer');
   });
-  ipcMain.handle(ipcChannels.installUpdate, async (event, payload: unknown) => {
+  registerHandler(ipcChannels.installUpdate, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return requestUpdateInstall();
@@ -818,6 +855,7 @@ function parseExportLogsRequest(payload: unknown): ExportLogsRequest {
   }
   const workspaceId = optionalScopeId(payload.workspaceId, 'workspaceId');
   const sessionId = optionalScopeId(payload.sessionId, 'sessionId');
+  const locale = optionalUiLocale(payload.locale);
   if (!Array.isArray(payload.lines) || payload.lines.length > 5_000) throw new Error('Invalid IPC payload: lines');
   const lines = payload.lines.map((line) => {
     if (!isRecord(line) || !Number.isSafeInteger(line.lineId) || Number(line.lineId) <= 0) throw new Error('Invalid IPC payload: lines');
@@ -827,6 +865,7 @@ function parseExportLogsRequest(payload: unknown): ExportLogsRequest {
   return {
     source: payload.source,
     filePath: typeof payload.filePath === 'string' ? payload.filePath : '',
+    ...(locale === undefined ? {} : { locale }),
     ...(workspaceId === undefined ? {} : { workspaceId }),
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(typeof payload.query === 'string' && payload.query.trim().length > 0 ? { query: payload.query.trim().slice(0, 512) } : {}),
@@ -838,12 +877,13 @@ function parseExportWorkLogRequest(payload: unknown): ExportWorkLogRequest {
   if (!isRecord(payload) || !Array.isArray(payload.rowIds) || payload.rowIds.length > 5_000) {
     throw new Error('Invalid IPC payload: rowIds');
   }
+  const locale = optionalUiLocale(payload.locale);
   const rowIds = payload.rowIds.map((rowId) => {
     const value = boundedNonEmptyString(rowId, 'rowId', 1_024);
     if (!/^(audit|inflight):.+$/s.test(value)) throw new Error('Invalid IPC payload: rowIds');
     return value;
   });
-  return { rowIds };
+  return { rowIds, ...(locale === undefined ? {} : { locale }) };
 }
 
 function boundedNonEmptyString(value: unknown, key: string, maximumLength: number): string {
@@ -857,6 +897,12 @@ function optionalScopeId(value: unknown, key: string): string | undefined {
   return nonEmptyString(value, key).trim();
 }
 
+function optionalUiLocale(value: unknown): UiLocale | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'th' || value === 'en') return value;
+  throw new Error('Invalid IPC payload: locale');
+}
+
 function isLogSource(value: unknown): value is 'tunnel' | 'mcp' | 'process' {
   return value === 'tunnel' || value === 'mcp' || value === 'process';
 }
@@ -867,6 +913,7 @@ async function exportLogsToFile(
   request: ExportLogsRequest,
 ): Promise<{ readonly exported: boolean }> {
   if (window === null) return { exported: false };
+  const locale = request.locale ?? desktopLocale;
   const snapshot = await services.getLogSnapshot();
   const lineById = new Map(snapshot.lines.filter((line) => line.source === request.source).map((line) => [line.id, line] as const));
   const capturedRows = request.lines.map((reference) => ({ reference, line: lineById.get(reference.lineId) ?? null }));
@@ -885,7 +932,7 @@ async function exportLogsToFile(
         yield `Live Log row unavailable [line:${reference.lineId}]: the captured identity is no longer present.`;
         continue;
       }
-      const base = `${formatExportLogTimestamp(line.timestamp)} [${line.level.toUpperCase()}] ${line.text}`;
+      const base = `${formatExportLogTimestamp(line.timestamp, locale)} [${line.level.toUpperCase()}] ${line.text}`;
       const metadata = [
         `lineId=${line.id}`,
         `source=${line.source}`,
@@ -914,7 +961,7 @@ async function exportLogsToFile(
       const requestedRef = reference.correlationRef === authoritativeRef ? reference.correlationRef : authoritativeRef;
       const detail = requestedRef === null ? null : (await services.resolveActivityTargetDetail(requestedRef)).detail;
       const detailExpected = targetDetail !== undefined && targetDetail.itemCount > targetDetail.preview.length;
-      yield formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected);
+      yield formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected, locale);
     }
   }
   await writeSerializedLogRows(result.filePath, serializedRows());
@@ -929,14 +976,12 @@ async function exportWorkLogToFile(window: BrowserWindow | null, services: Deskt
     filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
   });
   if (result.canceled || result.filePath === undefined || result.filePath.length === 0) return { exported: false };
-  await writeSerializedLogRows(result.filePath, services.streamWorkLogExportRows(request.rowIds));
+  await writeSerializedLogRows(result.filePath, services.streamWorkLogExportRows(request.rowIds, request.locale ?? desktopLocale));
   return { exported: true };
 }
 
-function formatExportLogTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+function formatExportLogTimestamp(value: string, locale: UiLocale): string {
+  return formatDisplayDateTime(value, locale, { fallback: value });
 }
 
 function broadcastToAllWindows(channel: string, payload: unknown): void {
@@ -1018,6 +1063,26 @@ function parseSetUserSettingsRequest(payload: unknown): SetUserSettingsRequest {
   return { settings: parseUserSettings(payload.settings) };
 }
 
+function parseGetPonytailPolicyContextRequest(payload: unknown): GetPonytailPolicyContextRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'workspaceId')) throw new Error('Invalid IPC payload: Ponytail policy context');
+  return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId').trim() };
+}
+
+function parseSetWorkspacePonytailModeRequest(payload: unknown): SetWorkspacePonytailModeRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'workspaceId' && key !== 'mode')) throw new Error('Invalid IPC payload: Workspace Ponytail mode');
+  return { workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId').trim(), mode: ponytailModeOverrideField(payload.mode) };
+}
+
+function parseSetGoalPonytailModeRequest(payload: unknown): SetGoalPonytailModeRequest {
+  if (!isRecord(payload) || Object.keys(payload).some((key) => key !== 'workspaceId' && key !== 'goalId' && key !== 'expectedRevision' && key !== 'mode')) throw new Error('Invalid IPC payload: Goal Ponytail mode');
+  return {
+    workspaceId: nonEmptyString(payload.workspaceId, 'workspaceId').trim(),
+    goalId: nonEmptyString(payload.goalId, 'goalId').trim(),
+    expectedRevision: boundedInteger(payload.expectedRevision, 'expectedRevision', 0, Number.MAX_SAFE_INTEGER),
+    mode: ponytailModeOverrideField(payload.mode),
+  };
+}
+
 function parseUserSettings(record: Record<string, unknown>): UserSettings {
   if (!isRecord(record.customPermission) || !isRecord(record.extensions)) throw new Error('Invalid IPC payload: settings');
   const customPermission = record.customPermission;
@@ -1044,6 +1109,7 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
     lspCommands: stringRecord(record.lspCommands, 'lspCommands', 32),
     mcpHttpPort: boundedInteger(record.mcpHttpPort, 'mcpHttpPort', 0, 65_535),
     codexToolsEnabled: booleanField(record.codexToolsEnabled, 'codexToolsEnabled'),
+    ponytailMode: ponytailModeField(record.ponytailMode),
     updateAutoCheck: booleanField(record.updateAutoCheck, 'updateAutoCheck'),
     updateCheckOnStartup: booleanField(record.updateCheckOnStartup, 'updateCheckOnStartup'),
     updateIntervalMinutes: boundedInteger(record.updateIntervalMinutes, 'updateIntervalMinutes', 5, 24 * 60),
@@ -1095,6 +1161,16 @@ function permissionDecision(value: unknown, field: string): 'ALLOW' | 'ASK' | 'D
   throw new Error(`Invalid IPC payload: ${field}`);
 }
 
+function ponytailModeField(value: unknown): 'off' | 'lite' | 'full' | 'ultra' {
+  if (value === 'off' || value === 'lite' || value === 'full' || value === 'ultra') return value;
+  throw new Error('Invalid IPC payload: ponytailMode');
+}
+
+function ponytailModeOverrideField(value: unknown): 'inherit' | 'off' | 'lite' | 'full' | 'ultra' {
+  if (value === 'inherit' || value === 'off' || value === 'lite' || value === 'full' || value === 'ultra') return value;
+  throw new Error('Invalid IPC payload: scoped Ponytail mode');
+}
+
 function stringArray(value: unknown, field: string, maxItems: number): readonly string[] {
   if (!Array.isArray(value) || value.length > maxItems || !value.every((entry) => typeof entry === 'string' && entry.length <= 4096)) {
     throw new Error(`Invalid IPC payload: ${field}`);
@@ -1141,6 +1217,7 @@ let desktopLocale: UiLocale = 'th';
 let desktopUserSettings: UserSettings = defaultUserSettings;
 let autoUpdaterInitialized = false;
 let quitRequested = false;
+const desktopIpcDrainBarrier = new DesktopIpcDrainBarrier();
 let desktopShutdownCoordinator: DesktopShutdownCoordinator | null = null;
 let updateInstallCoordinator: UpdateInstallCoordinator | null = null;
 let updateInstallConfirmationPending = false;
@@ -1451,6 +1528,7 @@ function bootstrapMcpStdio(): void {
       activeWorkspaceScopesProvider: () => runtime.getActiveWorkspaceScopes(),
       hostMutationApprovalProvider: requestNativeMutationApproval,
       codexToolsEnabled: runtime.getUserSettings().codexToolsEnabled,
+      ponytailModeProvider: () => runtime.getUserSettings().ponytailMode,
       toolAvailabilitySnapshotProvider: () => runtime.toolAvailabilityService.snapshot(),
       toolAvailabilitySubscribe: (listener) => runtime.toolAvailabilityService.subscribe(listener),
       onError: (error): void => {
@@ -1863,7 +1941,11 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
     runtime.logHub.start();
-    registerIpcHandlers(() => mainWindow, runtime.services, { onLocaleChanged: setDesktopLocale, onUserSettingsChanged: applyDesktopUserSettings });
+    registerIpcHandlers(() => mainWindow, runtime.services, {
+      onLocaleChanged: setDesktopLocale,
+      onUserSettingsChanged: applyDesktopUserSettings,
+      ipcDrainBarrier: desktopIpcDrainBarrier,
+    });
     createDesktopWindow();
     createDesktopTray();
     void runtime.autoStartMcp().catch((error: unknown) => {
@@ -1898,7 +1980,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
     configureDesktopShutdown(runtime);
     runtime.logHub.setOnLine((line) => broadcastToAllWindows(pushChannels.logEvent, line));
     runtime.logHub.start();
-    registerIpcHandlers(() => mainWindow, runtime.services);
+    registerIpcHandlers(() => mainWindow, runtime.services, { ipcDrainBarrier: desktopIpcDrainBarrier });
     const viewer = openLogViewerWindow();
     if (viewer !== null) {
       mainWindow = viewer;
@@ -1933,10 +2015,12 @@ function assertSupportedPlatform(): void {
 function configureDesktopShutdown(runtime: DesktopRuntime): void {
   desktopShutdownCoordinator = new DesktopShutdownCoordinator({
     closeRuntime: async (): Promise<void> => {
+      await desktopIpcDrainBarrier.beginDrain();
       await runtime.close();
       if (desktopRuntime === runtime) desktopRuntime = null;
     },
     onDeferred: (error): void => {
+      desktopIpcDrainBarrier.resume();
       quitRequested = false;
       console.error(`Desktop shutdown deferred: ${error.message}`);
       broadcastToAllWindows(pushChannels.logEvent, {

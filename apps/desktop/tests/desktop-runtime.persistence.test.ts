@@ -485,7 +485,7 @@ describe('DesktopRuntime persistence', () => {
     });
     try {
       if (process.platform !== 'win32') {
-        await expect(runtime.services.installPdfProvider()).rejects.toThrow('available only on Windows');
+        await expect(runtime.services.installPdfProvider()).rejects.toThrow('supports only win32/x64');
         expect(runtime.getUserSettings().pdfProviderPath).not.toBe(providerPath);
         return;
       }

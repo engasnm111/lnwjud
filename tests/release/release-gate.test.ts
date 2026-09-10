@@ -143,6 +143,10 @@ describe('MVP release verification gate', () => {
     const authoritative = authoritativeJob.indexOf('Run authoritative release verification gate');
     expect(cosign).toBeGreaterThan(-1);
     expect(authoritativeJob).toContain("cosign-release: 'v3.1.3'");
+    expect(authoritativeJob).toContain('continue-on-error: true');
+    expect(authoritativeJob).toContain('Install checksum-pinned cosign fallback');
+    expect(authoritativeJob).toContain('9fe59be0eca1271873ce019061335eb1ac419b7059202e797828467ddabe33be');
+    expect(authoritativeJob).toContain('Verify cosign release verifier');
     expect(cosign).toBeLessThan(authoritative);
   });
 
@@ -234,7 +238,7 @@ describe('MVP release verification gate', () => {
   it('keeps Secure Tunnel on the Desktop HTTP runtime instead of headless stdio', async () => {
     const controller = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'src', 'main', 'tunnel-controller.ts'), 'utf8');
     const services = await readFile(path.join(repositoryRoot, 'apps', 'desktop', 'src', 'main', 'desktop-services.ts'), 'utf8');
-    const readme = await readFile(path.join(repositoryRoot, 'README.md'), 'utf8');
+    const readme = await readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8');
 
     expect(controller).toContain("'--sample', 'sample_mcp_remote_no_auth'");
     expect(controller).toContain("'--mcp-server-url'");

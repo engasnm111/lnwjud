@@ -1,11 +1,16 @@
 $ErrorActionPreference = 'Stop'
 
-$version = '15.2.0'
-$assetName = "ripgrep-$version-x86_64-pc-windows-msvc.zip"
-$assetUrl = "https://github.com/BurntSushi/ripgrep/releases/download/$version/$assetName"
-$expectedSha256 = '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'
-
 $desktopRoot = Split-Path -Parent $PSScriptRoot
+$dependencyManifestPath = Join-Path $desktopRoot 'src\main\runtime-dependencies.json'
+$dependencies = Get-Content -LiteralPath $dependencyManifestPath -Raw | ConvertFrom-Json
+$target = $dependencies.ripgrep.targets.'win32-x64'
+if ($dependencies.schemaVersion -ne 1 -or -not $target -or $target.executable -ne 'rg.exe' -or $target.kind -ne 'zip') {
+    throw 'Bundled ripgrep dependency manifest does not declare a valid win32-x64 target'
+}
+$version = [string]$dependencies.ripgrep.version
+$assetName = [string]$target.archive
+$assetUrl = "https://github.com/BurntSushi/ripgrep/releases/download/$version/$assetName"
+$expectedSha256 = [string]$target.sha256
 $buildRoot = Join-Path $desktopRoot 'build'
 $vendorRoot = Join-Path $buildRoot 'vendor'
 $zipPath = Join-Path $vendorRoot $assetName

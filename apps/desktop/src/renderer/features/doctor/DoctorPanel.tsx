@@ -60,7 +60,7 @@ export function DoctorPanel({
         )}
         <div className="doctor-check-footer">
           {onRecheck === undefined ? null : <button type="button" className="doctor-recheck" onClick={() => { void onRecheck([check.id]); }}>{locale === 'th' ? 'ตรวจรายการนี้ใหม่' : 'Recheck this issue'}</button>}
-          <small>{locale === 'th' ? 'ตรวจเมื่อ' : 'Checked'} {formatDateTime(check.checkedAt, check.checkedAt)} · {check.durationMs} ms</small>
+          <small>{locale === 'th' ? 'ตรวจเมื่อ' : 'Checked'} {formatDateTime(check.checkedAt, check.checkedAt, locale)} · {check.durationMs} ms</small>
         </div>
       </article>
     );

@@ -26,6 +26,12 @@ describe('LocalExtensionsService MCP bridge', () => {
         [path.join(home, '.agents', 'skills', 'global-skill'), 'global-skill'],
         [path.join(workspace, '.agents', 'skills', 'workspace-skill'), 'workspace-skill'],
         [path.join(bundled, 'lnwjud-scheduled-continuation'), 'lnwjud-scheduled-continuation'],
+        [path.join(bundled, 'ponytail'), 'ponytail'],
+        [path.join(bundled, 'ponytail-review'), 'ponytail-review'],
+        [path.join(bundled, 'ponytail-audit'), 'ponytail-audit'],
+        [path.join(bundled, 'ponytail-debt'), 'ponytail-debt'],
+        [path.join(bundled, 'ponytail-gain'), 'ponytail-gain'],
+        [path.join(bundled, 'ponytail-help'), 'ponytail-help'],
       ] as const) {
         await mkdir(skillRoot, { recursive: true });
         await writeFile(path.join(skillRoot, 'SKILL.md'), `---\nname: ${name}\ndescription: Use when testing ${name}\n---\n# ${name}\n`, 'utf8');
@@ -43,8 +49,24 @@ describe('LocalExtensionsService MCP bridge', () => {
       expect(listed.value.skills.map((skill) => skill.name).sort()).toEqual([
         'global-skill',
         'lnwjud-scheduled-continuation',
+        'ponytail',
+        'ponytail-audit',
+        'ponytail-debt',
+        'ponytail-gain',
+        'ponytail-help',
+        'ponytail-review',
         'workspace-skill',
       ]);
+      for (const skillName of ['ponytail', 'ponytail-review', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help'] as const) {
+        const skill = listed.value.skills.find((entry) => entry.name === skillName);
+        expect(skill).toMatchObject({
+          id: `bundled:agent-skills/${skillName}`,
+          source: 'bundled:agent-skills',
+          trustTier: 'bundled',
+        });
+        await expect(service.readSkill({ skillId: `bundled:agent-skills/${skillName}` }))
+          .resolves.toMatchObject({ ok: true, value: { id: `bundled:agent-skills/${skillName}`, name: skillName, trustTier: 'bundled' } });
+      }
       await expect(service.readSkill({ skillId: 'lnwjud-scheduled-continuation' }))
         .resolves.toMatchObject({ ok: true, value: { name: 'lnwjud-scheduled-continuation' } });
       await service.close();
@@ -177,6 +199,53 @@ describe('LocalExtensionsService MCP bridge', () => {
       ok: false,
       error: { code: 'INVALID_INPUT', message: expect.stringContaining('output schema mismatch') },
     });
+    await service.close();
+  });
+
+  it('applies live MCP settings and reconnects when launch configuration changes without recreating the service', async () => {
+    let liveSettings = DEFAULT_EXTENSIONS_SETTINGS;
+    let connects = 0;
+    let closes = 0;
+    const observedArgs: string[][] = [];
+    const factory: McpClientFactory = {
+      connect: async (config): Promise<McpClientSession> => {
+        connects += 1;
+        observedArgs.push([...(config.args ?? [])]);
+        return {
+          listTools: async (): Promise<readonly { name: string; description: string }[]> => [{ name: 'ping', description: 'Ping tool' }],
+          listResources: async (): Promise<readonly []> => [],
+          callTool: async (): Promise<unknown> => ({ content: [{ type: 'text', text: 'pong' }] }),
+          close: async (): Promise<void> => { closes += 1; },
+        };
+      },
+    };
+    const service = new LocalExtensionsService({
+      settings: liveSettings,
+      settingsProvider: (): typeof DEFAULT_EXTENSIONS_SETTINGS => liveSettings,
+      homeDir: process.cwd(),
+      appDataDir: process.cwd(),
+      clientFactory: factory,
+    });
+
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_INPUT' },
+    });
+    liveSettings = settingsWithMockServer();
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({
+      ok: true,
+      value: { connected: true, tools: [expect.objectContaining({ name: 'ping' })] },
+    });
+    expect(connects).toBe(1);
+
+    liveSettings = {
+      ...settingsWithMockServer(),
+      extraMcpServers: { mock: { command: 'node', args: ['mock-server-v2.js'] } },
+    };
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: true, value: { connected: true } });
+    expect(connects).toBe(2);
+    expect(closes).toBe(1);
+    expect(observedArgs).toEqual([['mock-server.js'], ['mock-server-v2.js']]);
     await service.close();
   });
 

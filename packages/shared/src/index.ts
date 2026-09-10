@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '4.56.1';
+export const APP_VERSION = '4.60.0';
 export { isUnrestricted, unrestrictedFromEnv, unrestrictedFromSetting, UNRESTRICTED_SETTING_KEY, type ProcessEnvLike } from './unrestricted.js';
 
 export { resolveLnwjudDataPath, type DataPathEnvironment } from './data-path.js';
@@ -13,6 +13,7 @@ export {
   type SupportedHostPlatform,
 } from './platform-profile.js';
 export { detectLinuxSessionProfile, type LinuxSessionProfile, type LinuxSessionProfileInput, type LinuxSessionType } from './linux-session-profile.js';
+export { formatDisplayDateTime, formatDisplayTimestampItem, displayTimeZone, type DisplayDateTimeLocale, type DisplayDateTimeOptions } from './date-time-display.js';
 
 export {
   ALLOW_AI_DELETE_SETTING_KEY,
@@ -50,4 +51,5 @@ export {
 } from './secret-protection.js';
 
 export { USER_SETTING_KEYS, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOUT_MS, DEFAULT_PROCESS_TIMEOUT_MS, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, DEFAULT_CODEX_TOOLS_ENABLED, DEFAULT_UPDATE_INTERVAL_MINUTES, DEFAULT_TUNNEL_MAX_AUTO_RESTARTS, DEFAULT_RECOVERY_RETENTION_DAYS, DEFAULT_CUSTOM_PERMISSION_SETTINGS, parseIntegerSetting, parseCloseBehavior, parsePathList, serializePathList, parseStringRecordSetting, serializeStringRecordSetting, parseCustomPermissionSettings, serializeCustomPermissionSettings, type CloseBehavior, type PermissionDecisionSetting, type CustomPermissionSettings } from './user-settings.js';
+export { DEFAULT_PONYTAIL_MODE, parsePonytailMode, parsePonytailModeOverride, workspacePonytailMode, normalizeProjectProfile, resolvePonytailPolicy, type PonytailMode, type PonytailModeOverride, type PonytailPolicySource, type ResolvedPonytailPolicy } from './ponytail-policy.js';
 export { DEFAULT_TOOL_AVAILABILITY_SNAPSHOT, parseToolAvailabilitySnapshot, serializeToolAvailabilitySnapshot, toolUserPreference, resolveEffectiveToolAvailability, type ToolAvailabilitySnapshot, type ToolAvailabilityOverride, type ToolAvailabilityReason, type ToolUserPreference, type EffectiveToolAvailability } from './tool-availability.js';

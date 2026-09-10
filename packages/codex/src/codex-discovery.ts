@@ -33,7 +33,7 @@ export class PathCodexExecutableResolver implements CodexExecutableResolver {
   public async resolve(): Promise<Result<string>> {
     const pathValue = this.environment.Path ?? this.environment.PATH ?? '';
     const pathApi = this.platform === 'win32' ? path.win32 : path.posix;
-    const entries = pathValue.split(this.platform === 'win32' ? ';' : path.delimiter).filter(Boolean);
+    const entries = pathValue.split(this.platform === 'win32' ? ';' : ':').filter(Boolean);
     const candidates = entries.flatMap((entry) => this.withWindowsExtensions(pathApi.join(entry, 'codex')));
     for (const candidate of candidates) {
       try {

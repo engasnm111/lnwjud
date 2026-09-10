@@ -199,6 +199,50 @@ Alias content.
       .toEqual(['new', 'old']);
   });
 
+  it('keeps native Ponytail bound to the exact bundled source when a workspace skill uses the same name', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-ponytail-collision-'));
+    temporaryRoots.push(root);
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    const bundled = path.join(root, 'agent-skills');
+    const bundledSkillRoot = path.join(bundled, 'ponytail');
+    const workspaceSkillRoot = path.join(workspace, '.agents', 'skills', 'ponytail');
+    await mkdir(home, { recursive: true });
+    await mkdir(bundledSkillRoot, { recursive: true });
+    await mkdir(workspaceSkillRoot, { recursive: true });
+    await writeFile(path.join(bundledSkillRoot, 'SKILL.md'), '---\nname: ponytail\ndescription: Bundled native Ponytail\n---\nBUNDLED_NATIVE\n', 'utf8');
+    await writeFile(path.join(workspaceSkillRoot, 'SKILL.md'), '---\nname: ponytail\ndescription: Workspace collision\n---\nWORKSPACE_FAKE\n', 'utf8');
+
+    const catalog = new SkillCatalog({
+      homeDir: home,
+      workspaceRoot: workspace,
+      bundledRoots: [bundled],
+      settings: DEFAULT_EXTENSIONS_SETTINGS,
+    });
+    const listed = await catalog.list({ query: 'ponytail' });
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value.skills.map((skill) => skill.id).sort()).toEqual([
+      'bundled:agent-skills/ponytail',
+      'workspace-agents-skills/ponytail',
+    ]);
+
+    const exactBundled = await catalog.read({ skillId: 'bundled:agent-skills/ponytail' });
+    expect(exactBundled).toMatchObject({
+      ok: true,
+      value: { id: 'bundled:agent-skills/ponytail', source: 'bundled:agent-skills', trustTier: 'bundled' },
+    });
+    if (exactBundled.ok) expect(exactBundled.value.content).toContain('BUNDLED_NATIVE');
+
+    const bare = await catalog.read({ skillId: 'ponytail' });
+    expect(bare.ok).toBe(false);
+    if (!bare.ok) {
+      expect(bare.error.code).toBe('INVALID_INPUT');
+      expect(bare.error.message).toContain('bundled:agent-skills/ponytail');
+      expect(bare.error.message).toContain('workspace-agents-skills/ponytail');
+    }
+  });
+
   it('rejects ambiguous unqualified skill names with source-qualified candidates', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-ambiguous-skills-'));
     temporaryRoots.push(root);

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { electronExecutablePath, terminateProcessTree } from './electron-runtime.js';
+import { settleFirstRunAndOpenHome } from './first-run-helpers.js';
 import { promisify } from 'node:util';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { isAdvertisedDeliveryState, UPGRADE_TOOL_CATALOG } from '@lnwjud/mcp-server';
@@ -59,11 +60,9 @@ test('desktop serves the real MCP client development workflow', async () => {
     page = context.pages()[0];
     if (page === undefined) throw new Error('Electron did not create a renderer page');
 
-    const firstRunDialog = page.getByRole('dialog', { name: /ตั้งค่า ChatGPT ให้ใช้ lnwjud|Set up ChatGPT to use lnwjud/ });
-    await page.getByRole('button', { name: /ไว้ทีหลัง|Set up later/ }).click({ timeout: 30_000 });
-    await expect(firstRunDialog).toBeHidden();
+    await settleFirstRunAndOpenHome(page);
 
-    await expect(page.getByRole('heading', { name: 'ศูนย์ควบคุม Agent' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: /^(ศูนย์ควบคุม Agent|Agent Control Center)$/ })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('workspace-real-root')).toHaveText(fixtureRealRoot, { timeout: 30_000 });
     const workspaceId = (await page.getByTestId('workspace-id').textContent())?.trim();
     if (workspaceId === undefined || workspaceId.length === 0) throw new Error('Desktop did not expose the registered workspace ID');
@@ -90,7 +89,7 @@ test('desktop serves the real MCP client development workflow', async () => {
       'shell', 'dom_cdp', 'computer_use', 'accessibility', 'input_event', 'vision', 'vision_annotated_capture', 'ui_target_action', 'window', 'health',
       'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
       'audio', 'screen_record', 'office', 'scheduler', 'wsl_exec', 'wsl_fs',
-      'skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call',
+      'skills_list', 'skills_read', 'ponytail_session', 'mcp_list', 'mcp_describe', 'mcp_call',
       'workspace_context', 'workspace_context_continue', 'workspace_full_scan', 'workspace_full_scan_continue',
       'workspace_snapshot', 'search_all', 'read_many_files', 'read_file_page', 'read_file_page_continue',
       'workspace_index', 'workspace_index_status', 'workspace_index_watch', 'workspace_index_stop',

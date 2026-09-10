@@ -9,7 +9,7 @@ export interface LinuxOfficeBackendOptions {
 
 export class LinuxOfficeCapabilityBackend extends PlatformOfficeCapabilityBackend {
   public constructor(options: LinuxOfficeBackendOptions = {}) {
-    const executableExists = options.executableExists ?? ((executable: string): boolean => executable.includes(path.sep) ? existsSync(executable) : executableInPath(executable));
+    const executableExists = options.executableExists ?? ((executable: string): boolean => executable.includes(path.posix.sep) ? existsSync(executable) : executableInPath(executable));
     const configuration: PlatformOfficeBackendOptions = {
       platform: 'linux',
       backend: 'libreoffice-uno',

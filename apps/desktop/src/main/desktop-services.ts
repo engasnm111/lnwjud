@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
+import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
   CheckpointService,
@@ -64,6 +65,7 @@ import {
   MIN_CONFIGURABLE_WAIT_SECONDS,
   MAX_CONFIGURABLE_WAIT_SECONDS,
   DEFAULT_CODEX_TOOLS_ENABLED,
+  DEFAULT_PONYTAIL_MODE,
   DEFAULT_TUNNEL_MAX_AUTO_RESTARTS,
   DEFAULT_RECOVERY_RETENTION_DAYS,
   DEFAULT_UPDATE_INTERVAL_MINUTES,
@@ -77,6 +79,10 @@ import {
   parseCustomPermissionSettings,
   parseIntegerSetting,
   parsePathList,
+  parsePonytailMode,
+  normalizeProjectProfile,
+  resolvePonytailPolicy,
+  workspacePonytailMode,
   parseStringRecordSetting,
   parseAllowedRoots,
   parseBooleanSetting,
@@ -88,6 +94,8 @@ import {
   serializePathList,
   serializeStringRecordSetting,
   currentPlatformProfile,
+  formatDisplayDateTime,
+  formatDisplayTimestampItem,
   type SecretProtector,
   type DestructiveAutoApprovalPolicy,
 } from '@lnwjud/shared';
@@ -124,6 +132,9 @@ import {
   type PdfProviderInstallResult,
   type McpConnectionStatus,
   type PermissionProfileName as IpcPermissionProfileName,
+  type PonytailPolicyContext,
+  type SetGoalPonytailModeRequest,
+  type SetWorkspacePonytailModeRequest,
   type ProcessSummary,
   type RemoteMcpStatus,
   type RestoreCheckpointRequest,
@@ -164,6 +175,7 @@ import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
 import { installPdfProvider, type InstalledPdfProvider } from './pdf-provider-installer.js';
 import { RemoteMcpController } from './remote-mcp-controller.js';
+import { supportedHostPlatform } from './platform-compatibility.js';
 import { CLIENT_PATH_SETTING, TunnelController } from './tunnel-controller.js';
 import { legacyTunnelSecretPath, oauthTunnelSessionPath, LegacyApiKeyCredentialProvider } from './tunnel-auth.js';
 import { TunnelAuthCoordinator } from './tunnel-auth-coordinator.js';
@@ -173,7 +185,7 @@ import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
-const BUNDLED_TUNNEL_CLIENT_VERSION = '0.0.13';
+const BUNDLED_TUNNEL_CLIENT_VERSION = runtimeDependencies.tunnelClient.version;
 const permissionSettingKey = 'permission_profile';
 const selectedWorkspaceSettingKey = 'selected_workspace_id';
 const activeWorkspaceIdsSettingKey = 'active_workspace_ids';
@@ -333,6 +345,70 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot,
   });
+  const ponytailProfilePath = '.lnwjud/project-profile.json';
+  const readWorkspaceProfile = async (workspaceId: string): Promise<Record<string, unknown>> => {
+    const loaded = await fileService.readFile(actor, workspaceId, { path: ponytailProfilePath });
+    if (!loaded.ok) {
+      if (loaded.error.code === 'FILE_NOT_FOUND') return {};
+      throw new Error(loaded.error.message);
+    }
+    if (typeof loaded.value.content !== 'string') throw new Error('Project profile must be a UTF-8 JSON file');
+    let parsed: unknown;
+    try { parsed = JSON.parse(loaded.value.content); } catch { throw new Error('Project profile contains invalid JSON'); }
+    if (!isRecord(parsed)) throw new Error('Project profile must contain a JSON object');
+    return normalizeProjectProfile(parsed);
+  };
+  const writeWorkspacePonytailMode = async (workspaceId: string, mode: SetWorkspacePonytailModeRequest['mode']): Promise<void> => {
+    const profile = await readWorkspaceProfile(workspaceId);
+    const next: Record<string, unknown> = { ...profile };
+    const existingPonytail = isRecord(profile.ponytail) ? { ...profile.ponytail } : {};
+    if (mode === 'inherit') delete existingPonytail.mode;
+    else existingPonytail.mode = mode;
+    if (Object.keys(existingPonytail).length === 0) delete next.ponytail;
+    else next.ponytail = existingPonytail;
+    const content = `${JSON.stringify(next, null, 2)}\n`;
+    if (Buffer.byteLength(content, 'utf8') > 128 * 1024) throw new Error('Project profile exceeds 128 KiB');
+    const saved = await fileService.writeFile(actor, workspaceId, { path: ponytailProfilePath, content, overwriteExisting: true, userConfirmed: true });
+    if (!saved.ok) throw new Error(saved.error.message);
+  };
+  const buildPonytailPolicyContext = async (workspaceId: string): Promise<PonytailPolicyContext> => {
+    const workspace = await workspaceRepository.get(workspaceId);
+    if (workspace === null) throw new Error('Workspace was not found');
+    const rawGlobalMode = settingsRepository.get(USER_SETTING_KEYS.ponytailMode);
+    const globalMode = parsePonytailMode(rawGlobalMode, DEFAULT_PONYTAIL_MODE);
+    const globalSource = rawGlobalMode === 'off' || rawGlobalMode === 'lite' || rawGlobalMode === 'full' || rawGlobalMode === 'ultra' ? 'global' as const : 'default' as const;
+    const workspaceMode = workspacePonytailMode(await readWorkspaceProfile(workspaceId));
+    const workspacePolicy = resolvePonytailPolicy(globalMode, workspaceMode);
+    const goals = await goalRepository.listWorkspaceGoalsForHost(workspaceId, 50);
+    const now = new Date().toISOString();
+    const activeGoals = await Promise.all(goals.map(async (goal) => {
+      const liveLease = goal.leaseExpiresAt !== undefined && Date.parse(goal.leaseExpiresAt) > Date.parse(now);
+      const liveContinuation = await goalRepository.getLiveScheduledContinuation(goal.id) !== null;
+      const mutationObservation = await goalRepository.observeGoalFencedMutations(goal.id, now);
+      const liveMutation = mutationObservation.liveFencedCallCount > 0;
+      const editBlockedReason = liveLease ? 'live_lease' as const : liveContinuation ? 'live_continuation' as const : liveMutation ? 'live_mutation' as const : null;
+      const mode: SetGoalPonytailModeRequest['mode'] = goal.ponytailMode ?? 'inherit';
+      const effective = resolvePonytailPolicy(globalMode, workspaceMode, mode);
+      return {
+        goalId: goal.id,
+        goalKey: goal.goalKey,
+        mode,
+        revision: goal.revision,
+        effectiveMode: effective.mode,
+        effectiveSource: mode !== 'inherit' ? 'goal' as const : workspaceMode !== 'inherit' ? 'workspace' as const : globalSource,
+        editable: editBlockedReason === null,
+        editBlockedReason,
+      };
+    }));
+    return {
+      workspaceId,
+      globalMode,
+      workspaceMode,
+      effectiveWorkspaceMode: workspacePolicy.mode,
+      effectiveWorkspaceSource: workspaceMode !== 'inherit' ? 'workspace' : globalSource,
+      activeGoals,
+    };
+  };
   const workspaceInfoService = new WorkspaceInfoService(workspaceRepository, workspaceService, unrestricted);
   const workspaceQueryService = new WorkspaceQueryService(workspaceRepository, pathGuard);
   const searchService = new SearchService(workspaceRepository);
@@ -374,6 +450,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
+    settingsJsonProvider: () => settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     workspaceRootProvider: async (): Promise<string | undefined> => {
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       return selected?.realRootPath;
@@ -466,6 +543,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       ),
       ...(options.hostMutationApprovalProvider === undefined ? {} : { hostMutationApprovalProvider: options.hostMutationApprovalProvider }),
       codexToolsEnabled: readSettings().codexToolsEnabled,
+      ponytailModeProvider: () => readSettings().ponytailMode,
       toolAvailabilitySnapshotProvider: () => toolAvailabilityService.snapshot(),
       toolAvailabilitySubscribe: (listener) => toolAvailabilityService.subscribe(listener),
     }),
@@ -772,6 +850,35 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       ? { status: 'pass', detail: 'WindowsSandbox.exe is available' }
       : { status: 'warn', detail: 'Windows Sandbox feature is not installed or enabled' };
   };
+  let lastExternalMcpProbeDetail: string | null = null;
+  const probeEnabledExternalMcpServers = async (): Promise<void> => {
+    const listed = await extensionsService.listMcpServers();
+    if (!listed.ok) {
+      lastExternalMcpProbeDetail = listed.error.message;
+      return;
+    }
+    const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded);
+    if (enabled.length === 0) {
+      lastExternalMcpProbeDetail = 'No enabled external MCP servers are configured';
+      return;
+    }
+
+    const observations = await Promise.all(enabled.map(async (server) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error(`Timed out connecting ${server.name}`)), 15_000);
+      try {
+        const described = await extensionsService.describeMcpServer({ server: server.name }, controller.signal);
+        return described.ok
+          ? `${server.name}: connected (${described.value.tools.length} tool(s))`
+          : `${server.name}: ${described.error.message}`;
+      } catch (cause: unknown) {
+        return `${server.name}: ${cause instanceof Error ? cause.message : 'connection failed'}`;
+      } finally {
+        clearTimeout(timer);
+      }
+    }));
+    lastExternalMcpProbeDetail = observations.join(' · ');
+  };
   const requirementDefinitions: readonly RequirementDefinition[] = [
     { id: 'os', required: true, summaryKey: 'requirement.os', probe: async (): Promise<RequirementProbeResult> => { const profile = currentPlatformProfile(); return { status: profile.supportTier === 'unsupported' ? 'fail' : 'pass', detail: `${profile.family} ${profile.arch} (${profile.supportTier})` }; } },
     {
@@ -812,7 +919,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
     { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
     { id: 'remote_mcp_ngrok', required: false, summaryKey: 'requirement.remote_mcp_ngrok', probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => { const status = await remoteMcpController.status(); return status.state === 'running' && status.publicMcpUrl !== null ? { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` } : { status: 'warn', detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed') }; } },
-    { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); return !listed.ok ? { status: 'unknown', detail: listed.error.message } : { status: listed.value.servers.some((server) => server.enabled && server.connected) ? 'pass' : 'warn', detail: `${listed.value.servers.length} external MCP server(s) discovered` }; } },
+    { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); if (!listed.ok) return { status: 'unknown', detail: listed.error.message }; const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded); const connected = enabled.filter((server) => server.connected); return { status: connected.length > 0 ? 'pass' : 'warn', detail: lastExternalMcpProbeDetail ?? `${enabled.length} enabled external MCP server(s); ${connected.length} connected` }; } },
     { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
     { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
     { id: 'database_target', required: false, summaryKey: 'requirement.database_target', remediationId: 'configure_database_target', probe: async () => ({ status: 'pass', detail: 'Input-dependent: provide a read-only SQLite target inside a registered workspace for each call' }) },
@@ -847,7 +954,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const recheckCatalogAndDoctor = async (request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }> => {
     const unknown = request.requirementIds.filter((id) => !requirementIdSet.has(id) && !tunnelDoctorCheckIds.has(id));
     if (unknown.length > 0) throw new Error(`Unknown Doctor check id: ${unknown.join(', ')}`);
-    const canonicalIds = request.requirementIds.filter((id) => requirementIdSet.has(id));
+    const canonicalIds = request.requirementIds.length === 0
+      ? [...requirementIdSet]
+      : request.requirementIds.filter((id) => requirementIdSet.has(id));
+    if (canonicalIds.includes('external_mcp_connection')) await probeEnabledExternalMcpServers();
     const catalog = canonicalIds.length > 0
       ? (await toolCatalogService.recheck(canonicalIds, request.locale)).catalog
       : await toolCatalogService.getSnapshot(request.locale);
@@ -1045,7 +1155,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         tunnel,
         remoteMcp,
         settings: readSettings(),
-        hostPlatform: process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : 'win32',
+        hostPlatform: supportedHostPlatform(process.platform),
+        hostArch: supportedHostArchitecture(process.arch),
         appVersion: APP_VERSION,
       };
     },
@@ -1174,7 +1285,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
     getRemoteMcpStatus: () => remoteMcpController.status(),
     installRemoteMcpProvider: async () => { const status = await remoteMcpController.installProvider(); logHub.feed('mcp', 'info', `[REMOTE MCP] ngrok provider: ${status.message ?? status.state}`); return status; },
-    saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with Windows DPAPI'); return status; },
+    saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with the host secure-storage provider'); return status; },
     startRemoteMcp: async () => { const status = await remoteMcpController.start(); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
     regenerateRemoteMcpPairingCode: async () => { const status = await remoteMcpController.regeneratePairingCode(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth pairing code regenerated'); return status; },
@@ -1202,6 +1313,22 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       }
       return { settings: next, restartRequired: runtimeRestartRequired(previous, next) };
     },
+    getPonytailPolicyContext: async (request): Promise<PonytailPolicyContext> => buildPonytailPolicyContext(request.workspaceId),
+    setWorkspacePonytailMode: async (request: SetWorkspacePonytailModeRequest): Promise<PonytailPolicyContext> => {
+      await writeWorkspacePonytailMode(request.workspaceId, request.mode);
+      return buildPonytailPolicyContext(request.workspaceId);
+    },
+    setGoalPonytailMode: async (request: SetGoalPonytailModeRequest): Promise<PonytailPolicyContext> => {
+      const goal = await goalRepository.getById(request.goalId);
+      if (goal === null || goal.workspaceId !== request.workspaceId) throw new Error('Goal does not belong to the selected workspace');
+      await goalRepository.setIdleGoalPonytailModeForHost({
+        goalId: request.goalId,
+        expectedRevision: request.expectedRevision,
+        ponytailMode: request.mode === 'inherit' ? null : request.mode,
+        now: new Date().toISOString(),
+      });
+      return buildPonytailPolicyContext(request.workspaceId);
+    },
     configureTunnelProfile: async (request: ConfigureTunnelProfileRequest): Promise<{ readonly configured: boolean; readonly profilePath: string }> => {
       const profilePath = await tunnelController.configureProfile(request.tunnelId);
       if (readSettings().tunnelAutoReconnect) await tunnelController.startAutomatically();
@@ -1215,7 +1342,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return toManagedBrowserStatus(unwrap(result, 'Managed Chrome could not be started'));
     },
     installPdfProvider: async (): Promise<PdfProviderInstallResult> => {
-      if (process.platform !== 'win32') throw new Error('The bundled PDF provider installer is available only on Windows; configure a native pdftotext provider on this host.');
+      const pdfTarget = runtimeDependencies.pdfProvider;
+      if (process.platform !== pdfTarget.platform || process.arch !== pdfTarget.arch) {
+        throw new Error(`The bundled PDF provider installer supports only ${pdfTarget.platform}/${pdfTarget.arch}; configure a native pdftotext provider on this host.`);
+      }
       const installed = await (options.pdfProviderInstaller ?? installPdfProvider)(dataPath);
       const previous = readSettings();
       settingsRepository.set(USER_SETTING_KEYS.pdfProviderPath, installed.providerPath);
@@ -1256,7 +1386,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     searchActivityTargetDetails: async (candidates, query): Promise<readonly string[]> => (
       searchActivityTargetDetails(auditRepository, candidates, query)
     ),
-    streamWorkLogExportRows: (rowIds): AsyncIterable<string> => streamWorkLogExportRows(auditRepository, rowIds),
+    streamWorkLogExportRows: (rowIds, locale): AsyncIterable<string> => streamWorkLogExportRows(auditRepository, rowIds, locale),
     captureIncident: async (updaterEvents: readonly string[] = []): Promise<IncidentReport> => {
       const tunnel = await observedTunnelStatus();
       const tunnelClientVersion = await tunnelController.clientVersion();
@@ -1382,6 +1512,11 @@ function resolveTestCheckpointEncryptionKey(): Buffer | undefined {
 function bundledTunnelClientPath(): string | null {
   const resourcesPath = (process as NodeJS.Process & { readonly resourcesPath?: string }).resourcesPath;
   return resolveBundledTunnelClientPath({ resourcesPath });
+}
+
+function supportedHostArchitecture(architecture: string): 'x64' | 'arm64' {
+  if (architecture === 'x64' || architecture === 'arm64') return architecture;
+  throw new Error(`Unsupported host architecture: ${architecture}`);
 }
 
 export function resolveBundledTunnelClientPath(options: {
@@ -1735,6 +1870,7 @@ function readUserSettings(settingsRepository: SqliteSettingsRepository, env: Nod
     lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     mcpHttpPort: readMcpPort(env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
+    ponytailMode: parsePonytailMode(settingsRepository.get(USER_SETTING_KEYS.ponytailMode), DEFAULT_PONYTAIL_MODE),
     updateAutoCheck: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateAutoCheck), true),
     updateCheckOnStartup: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.updateCheckOnStartup), true),
     updateIntervalMinutes: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.updateIntervalMinutes), DEFAULT_UPDATE_INTERVAL_MINUTES, 5, 24 * 60),
@@ -1763,6 +1899,7 @@ function persistUserSettings(settingsRepository: SqliteSettingsRepository, setti
   settingsRepository.set(USER_SETTING_KEYS.lspCommands, serializeStringRecordSetting(settings.lspCommands));
   settingsRepository.set(USER_SETTING_KEYS.mcpHttpPort, String(settings.mcpHttpPort));
   settingsRepository.set(USER_SETTING_KEYS.codexToolsEnabled, settings.codexToolsEnabled ? 'true' : 'false');
+  settingsRepository.set(USER_SETTING_KEYS.ponytailMode, settings.ponytailMode);
   settingsRepository.set(USER_SETTING_KEYS.updateAutoCheck, settings.updateAutoCheck ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.updateCheckOnStartup, settings.updateCheckOnStartup ? 'true' : 'false');
   settingsRepository.set(USER_SETTING_KEYS.updateIntervalMinutes, String(settings.updateIntervalMinutes));
@@ -1824,9 +1961,9 @@ function runtimeRestartRequired(previous: UserSettings, next: UserSettings): boo
     || previous.mcpIdleTimeoutMs !== next.mcpIdleTimeoutMs
     || previous.mcpHttpPort !== next.mcpHttpPort
     || previous.codexToolsEnabled !== next.codexToolsEnabled
+    || previous.ponytailMode !== next.ponytailMode
     || JSON.stringify(previous.lspCommands) !== JSON.stringify(next.lspCommands)
-    || JSON.stringify(previous.customPermission) !== JSON.stringify(next.customPermission)
-    || JSON.stringify(previous.extensions) !== JSON.stringify(next.extensions);
+    || JSON.stringify(previous.customPermission) !== JSON.stringify(next.customPermission);
 }
 
 function readPermissionProfile(value: string | null): PermissionProfileName {
@@ -1900,15 +2037,17 @@ export async function searchActivityTargetDetails(
 export async function resolveWorkLogExportRows(
   repository: SqliteAuditRepository,
   identities: readonly string[],
+  locale: UiLocale = 'th',
 ): Promise<readonly string[]> {
   const rows: string[] = [];
-  for await (const row of streamWorkLogExportRows(repository, identities)) rows.push(row);
+  for await (const row of streamWorkLogExportRows(repository, identities, locale)) rows.push(row);
   return rows;
 }
 
 export async function* streamWorkLogExportRows(
   repository: Pick<SqliteAuditRepository, 'resolveActivityEvent' | 'resolveActivityTargetDetail'>,
   identities: readonly string[],
+  locale: UiLocale = 'th',
 ): AsyncIterable<string> {
   for (const identity of identities) {
     const parsed = parseWorkLogIdentity(identity);
@@ -1919,12 +2058,12 @@ export async function* streamWorkLogExportRows(
       continue;
     }
     if (event.targetDetail.legacyIncomplete && event.targetDetail.itemCount > event.targetDetail.preview.length) {
-      yield formatActivityExportRow(event, null);
+      yield formatActivityExportRow(event, null, locale);
       continue;
     }
     const detailRef = event.targetDetail.detailRef ?? event.callId ?? (parsed.kind === 'audit' ? event.id : parsed.value);
     const detail = await repository.resolveActivityTargetDetail(detailRef);
-    yield formatActivityExportRow(event, detail);
+    yield formatActivityExportRow(event, detail, locale);
   }
 }
 
@@ -1946,13 +2085,13 @@ function parseWorkLogIdentity(value: string): { readonly kind: 'audit' | 'inflig
   return { kind, value: value.slice(separator + 1) };
 }
 
-function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTargetDetail | null): string {
+function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTargetDetail | null, locale: UiLocale): string {
   const kind = classifyMcpWorkLogKind(event.toolName, event.phase, event.resultCode);
   const tag = kind === 'task' ? '[TASK]' : kind === 'error' ? '[ERROR]' : '[RESULT]';
   const duration = kind === 'task' ? '' : ` ${event.durationMs}ms`;
   const summary = event.targetSummary === undefined || event.targetSummary.trim().length === 0 ? '' : ` ${event.targetSummary}`;
   const error = event.errorMessage === undefined || event.errorMessage.trim().length === 0 ? '' : ` — ${event.errorMessage}`;
-  const base = `${formatActivityExportTimestamp(event.timestamp)} ${tag} ${event.toolName}${summary}${error}${duration}`.trim();
+  const base = `${formatActivityExportTimestamp(event.timestamp, locale)} ${tag} ${event.toolName}${summary}${error}${duration}`.trim();
   const metadata = [
     `eventId=${event.id}`,
     `callId=${event.callId ?? '<none>'}`,
@@ -1970,20 +2109,20 @@ function formatActivityExportRow(event: ActivityAuditEvent, detail: ActivityTarg
     return formatIncompleteLegacyHistory(baseWithMetadata);
   }
   const detailExpected = event.targetDetail.detailRef !== null && event.targetDetail.itemCount > event.targetDetail.preview.length;
-  return formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected);
+  return formatCompleteTargetDetail(baseWithMetadata, detail, detailExpected, locale);
 }
 
 export function formatIncompleteLegacyHistory(base: string): string {
   return `${base}\r\nIncomplete legacy history: omitted target items were not retained.`;
 }
 
-export function formatCompleteTargetDetail(base: string, detail: ActivityTargetDetail | null, detailExpected = false): string {
+export function formatCompleteTargetDetail(base: string, detail: ActivityTargetDetail | null, detailExpected = false, locale: UiLocale = 'th'): string {
   if (detail === null) {
     return detailExpected ? `${base}\r\nComplete target detail unavailable; this row may be incomplete.` : base;
   }
   if (detail.items.length === 0) return base;
   const heading = detail.kind === 'files' ? 'Files' : detail.kind === 'tools' ? 'Tools' : 'Details';
-  return `${base}\r\n${heading}:\r\n${detail.items.map((item) => `- ${item}`).join('\r\n')}`;
+  return `${base}\r\n${heading}:\r\n${detail.items.map((item) => `- ${formatDisplayTimestampItem(item, locale)}`).join('\r\n')}`;
 }
 
 function unavailableTunnelOAuthBackend(): TunnelOAuthProvisioningBackend {
@@ -2005,11 +2144,8 @@ function unavailableTunnelOAuthBackend(): TunnelOAuthProvisioningBackend {
   };
 }
 
-function formatActivityExportTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const pad = (part: number): string => String(part).padStart(2, '0');
-  return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+function formatActivityExportTimestamp(value: string, locale: UiLocale): string {
+  return formatDisplayDateTime(value, locale, { fallback: value });
 }
 
 export function buildPersistentTunnelDoctorChecks(input: {

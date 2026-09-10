@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
+import { defaultTunnelProfileDirectory, legacyTunnelSecretPath, oauthTunnelSessionPath } from '../src/main/tunnel-auth.js';
 import { buildTunnelInitArgs, resolveTunnelProfileDirectory, tunnelClientEnv } from '../src/main/tunnel-controller.js';
 
 describe('Secure Tunnel Desktop HTTP wiring', () => {
@@ -55,5 +56,26 @@ describe('Secure Tunnel Desktop HTTP wiring', () => {
 
   it('ignores a relative Windows APPDATA override', () => {
     expect(resolveTunnelProfileDirectory({ APPDATA: 'relative-data' }, 'C:\\Users\\alice', 'win32')).toBe('C:\\Users\\alice\\AppData\\Roaming\\tunnel-client');
+  });
+
+  it.each([
+    { platform: 'win32' as const, env: { APPDATA: 'D:\\Roaming' }, home: 'C:\\Users\\alice' },
+    { platform: 'darwin' as const, env: {}, home: '/Users/alice' },
+    { platform: 'linux' as const, env: { XDG_DATA_HOME: '/srv/alice-data' }, home: '/home/alice' },
+  ])('keeps tunnel auth and runtime profile directories identical on $platform', ({ platform, env, home }) => {
+    expect(defaultTunnelProfileDirectory(env, home, platform)).toBe(resolveTunnelProfileDirectory(env, home, platform));
+  });
+
+  it('keeps Windows secret paths in Windows syntax even when tested from another host', () => {
+    const env = { APPDATA: 'D:\\Roaming' };
+    expect(legacyTunnelSecretPath(env, 'C:\\Users\\alice', 'win32')).toBe('D:\\Roaming\\tunnel-client\\lnwjud.runtime.secret');
+    expect(oauthTunnelSessionPath(env, 'C:\\Users\\alice', 'win32')).toBe('D:\\Roaming\\tunnel-client\\lnwjud.oauth.session.secret');
+  });
+
+  it('keeps POSIX secret paths in POSIX syntax and rejects relative XDG placement', () => {
+    expect(legacyTunnelSecretPath({ XDG_DATA_HOME: 'relative-data' }, '/home/alice', 'linux'))
+      .toBe('/home/alice/.local/share/lnwjud/tunnel-client/lnwjud.runtime.secret');
+    expect(oauthTunnelSessionPath({}, '/Users/alice', 'darwin'))
+      .toBe('/Users/alice/Library/Application Support/lnwjud/tunnel-client/lnwjud.oauth.session.secret');
   });
 });

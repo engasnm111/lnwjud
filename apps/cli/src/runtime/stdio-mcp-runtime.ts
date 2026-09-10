@@ -32,7 +32,7 @@ import {
   WINDOWS_CAPABILITY_BRIDGE_SHA256,
   WINDOWS_CAPABILITY_BRIDGE_SIZE_BYTES,
 } from '@lnwjud/capabilities';
-import { ALLOW_AI_DELETE_SETTING_KEY, DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY, DEFAULT_CODEX_TOOLS_ENABLED, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOUT_MS, DEFAULT_PROCESS_TIMEOUT_MS, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, USER_SETTING_KEYS, parseBooleanSetting, parseCustomPermissionSettings, parseDestructiveAutoApprovalPolicy, parseIntegerSetting, parsePathList, parseStringRecordSetting, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
+import { ALLOW_AI_DELETE_SETTING_KEY, DESTRUCTIVE_AUTO_APPROVAL_SETTING_KEY, DEFAULT_CODEX_TOOLS_ENABLED, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOUT_MS, DEFAULT_PROCESS_TIMEOUT_MS, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_PONYTAIL_MODE, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, USER_SETTING_KEYS, parseBooleanSetting, parseCustomPermissionSettings, parseDestructiveAutoApprovalPolicy, parseIntegerSetting, parsePathList, parsePonytailMode, parseStringRecordSetting, type DestructiveAutoApprovalPolicy, type PonytailMode } from '@lnwjud/shared';
 import {
   EXTENSIONS_SETTINGS_KEY,
   createLocalExtensionsService,
@@ -64,6 +64,7 @@ export interface StdioMcpRuntime {
   readonly destructivePolicyProvider: () => DestructiveAutoApprovalPolicy;
   readonly activeWorkspaceScopeProvider: () => Promise<WorkspaceScope>;
   readonly codexToolsEnabled: boolean;
+  readonly ponytailMode: PonytailMode;
   readonly toolAvailabilityService: ToolAvailabilityService;
   close(): Promise<void>;
 }
@@ -262,6 +263,7 @@ export function createStdioMcpRuntime(
     destructivePolicyProvider,
     activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: workspace.id, rootPath: workspace.realRootPath }),
     codexToolsEnabled: parseBooleanSetting(settingsRepository.get(USER_SETTING_KEYS.codexToolsEnabled), DEFAULT_CODEX_TOOLS_ENABLED),
+    ponytailMode: parsePonytailMode(settingsRepository.get(USER_SETTING_KEYS.ponytailMode), DEFAULT_PONYTAIL_MODE),
     toolAvailabilityService,
     close: async (): Promise<void> => {
       stopToolAvailabilityWatch();

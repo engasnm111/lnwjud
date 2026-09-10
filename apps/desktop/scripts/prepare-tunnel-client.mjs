@@ -12,9 +12,14 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const extractZip = require('@electron-internal/extract-zip');
 const execFileAsync = promisify(execFile);
-const VERSION = '0.0.13';
-const RELEASE_BASE = `https://github.com/openai/tunnel-client/releases/download/v${VERSION}`;
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
+const tunnelDependency = runtimeDependencies?.tunnelClient;
+if (runtimeDependencies?.schemaVersion !== 1 || typeof tunnelDependency?.version !== 'string' || tunnelDependency.version.length === 0) {
+  throw new Error('Bundled tunnel-client dependency manifest is invalid');
+}
+const VERSION = tunnelDependency.version;
+const RELEASE_BASE = `https://github.com/openai/tunnel-client/releases/download/v${VERSION}`;
 const buildRoot = path.join(desktopRoot, 'build');
 const vendorRoot = path.join(buildRoot, 'vendor', `tunnel-client-v${VERSION}`);
 const bundleRoot = path.join(buildRoot, 'tunnel-client');
@@ -23,36 +28,28 @@ const PROVENANCE_CERTIFICATE_IDENTITY = `https://github.com/openai/tunnel-client
 const PROVENANCE_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 const MINIMUM_COSIGN_VERSION = Object.freeze([3, 1, 3]);
 
-// The release checksum file is fetched for independent verification, but the
-// package still pins the exact archive bytes expected for every supported
-// target. A changed or removed upstream checksum therefore fails closed.
-const PINNED_ARCHIVE_SHA256 = Object.freeze({
-  'tunnel-client-v0.0.13-darwin-amd64.zip': 'c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c',
-  'tunnel-client-v0.0.13-darwin-arm64.zip': '15abf165f06050af642c948ba6bd6c905191dc5420a9422dadde2b49d892e2c6',
-  'tunnel-client-v0.0.13-linux-amd64.zip': 'e71f37b424126513173d5e3590687c0b5ccf6e8ef3fba900104d1f8c60dad906',
-  'tunnel-client-v0.0.13-linux-arm64.zip': '9d214a805bec213a3a156dc2a4460a6dfe2f35b0c00ba20609d002bf5e6469f8',
-  'tunnel-client-v0.0.13-windows-amd64.zip': '17113162b353906bbb884c3ed7620facba5cc72b5fdc94fd54fd7208c7166edb',
-  'tunnel-client-v0.0.13-windows-arm64.zip': 'ec7c33cb06fabbbc04aa4803304b647f8542922b8b1489c961b3ebfc283ddcb0',
-});
-
-const TARGETS = Object.freeze({
-  win32: { name: 'windows', executable: 'tunnel-client.exe', arch: { x64: 'amd64', arm64: 'arm64' } },
-  darwin: { name: 'darwin', executable: 'tunnel-client', arch: { x64: 'amd64', arm64: 'arm64' } },
-  linux: { name: 'linux', executable: 'tunnel-client', arch: { x64: 'amd64', arm64: 'arm64' } },
-});
-
+// The release checksum file is fetched for independent verification, while the
+// dependency manifest pins exact bytes for every supported OS/architecture.
+// Unknown or mismatched tuples fail closed instead of falling back to a foreign binary.
 const platform = process.env.LNWJUD_TUNNEL_TARGET ?? process.platform;
-const target = TARGETS[platform];
-if (target === undefined) throw new Error(`Bundled tunnel-client does not support host platform ${platform}`);
 const rawArch = process.env.LNWJUD_TUNNEL_ARCH ?? process.arch;
-const arch = target.arch[rawArch];
-if (arch === undefined) throw new Error(`Bundled tunnel-client does not support ${platform}/${rawArch}`);
+const targetKey = `${platform}-${rawArch}`;
+const target = tunnelDependency.targets?.[targetKey];
+if (target === undefined) throw new Error(`Bundled tunnel-client does not support ${platform}/${rawArch}`);
+if (!['win32', 'darwin', 'linux'].includes(platform)
+  || !['x64', 'arm64'].includes(rawArch)
+  || !['windows', 'darwin', 'linux'].includes(target.releaseTarget)
+  || !['amd64', 'arm64'].includes(target.releaseArch)
+  || typeof target.executable !== 'string'
+  || !/^[0-9a-f]{64}$/iu.test(target.archiveSha256 ?? '')) {
+  throw new Error(`Bundled tunnel-client target declaration is invalid for ${targetKey}`);
+}
 
-const archiveName = `tunnel-client-v${VERSION}-${target.name}-${arch}.zip`;
-const licenseName = `tunnel-client-v${VERSION}-${target.name}-${arch}-licenses.txt`;
-const spdxName = `tunnel-client-v${VERSION}-${target.name}-${arch}.spdx.json`;
+const archiveName = `tunnel-client-v${VERSION}-${target.releaseTarget}-${target.releaseArch}.zip`;
+const licenseName = `tunnel-client-v${VERSION}-${target.releaseTarget}-${target.releaseArch}-licenses.txt`;
+const spdxName = `tunnel-client-v${VERSION}-${target.releaseTarget}-${target.releaseArch}.spdx.json`;
 const archivePath = path.join(vendorRoot, archiveName);
-const extractRoot = path.join(vendorRoot, `${target.name}-${arch}`);
+const extractRoot = path.join(vendorRoot, `${target.releaseTarget}-${target.releaseArch}`);
 const executableName = target.executable;
 
 await mkdir(vendorRoot, { recursive: true });
@@ -60,8 +57,7 @@ await assertCanonicalDirectory(vendorRoot);
 const checksumsText = await fetchText(checksumsUrl);
 const checksums = parseChecksums(checksumsText);
 await writeAtomic(path.join(vendorRoot, 'SHA256SUMS.txt'), checksumsText);
-const pinnedArchiveSha256 = PINNED_ARCHIVE_SHA256[archiveName];
-if (pinnedArchiveSha256 === undefined) throw new Error(`Official tunnel-client archive is not pinned for ${archiveName}`);
+const pinnedArchiveSha256 = target.archiveSha256.toLowerCase();
 const expectedArchiveSha256 = checksums.get(archiveName);
 if (expectedArchiveSha256 === undefined) throw new Error(`Official tunnel-client checksum is missing for ${archiveName}`);
 if (expectedArchiveSha256 !== pinnedArchiveSha256) throw new Error(`Official tunnel-client checksum changed for ${archiveName}`);
@@ -91,7 +87,8 @@ for (const assetName of [licenseName, spdxName]) {
   await downloadIfNeeded(`${RELEASE_BASE}/${assetName}`, destination, expectedSha256);
 }
 
-const provenanceName = `tunnel-client-v${VERSION}-provenance.sigstore.json`;
+const provenanceName = tunnelDependency.provenanceAsset;
+if (provenanceName !== `tunnel-client-v${VERSION}-provenance.sigstore.json`) throw new Error('Bundled tunnel-client provenance declaration is invalid');
 const provenancePath = path.join(bundleRoot, provenanceName);
 await downloadText(`${RELEASE_BASE}/${provenanceName}`, provenancePath);
 await assertCanonicalFile(provenancePath);
@@ -204,7 +201,9 @@ function verifyVersion(executable) {
     child.once('error', () => { clearTimeout(timer); reject(new Error('Official tunnel-client --version could not run')); });
     child.once('exit', (code) => {
       clearTimeout(timer);
-      if (code !== 0 || output.trim().length === 0) reject(new Error('Official tunnel-client --version check failed'));
+      const escapedVersion = VERSION.replaceAll('.', '\\.');
+      const exactVersion = new RegExp(`(?:^|[^0-9])v?${escapedVersion}(?:$|[^0-9])`).test(output);
+      if (code !== 0 || !exactVersion) reject(new Error(`Official tunnel-client --version does not match ${VERSION}`));
       else resolve();
     });
   });

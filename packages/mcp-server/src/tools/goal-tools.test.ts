@@ -43,6 +43,8 @@ describe('durable goal MCP tools', () => {
 
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key' })).toMatchObject({ ok: true, value: { scheduledContinuation: 'auto' } });
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key', scheduledContinuation: 'off' })).toMatchObject({ ok: true, value: { scheduledContinuation: 'off' } });
+    expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key', ponytailMode: 'full' })).toMatchObject({ ok: true, value: { ponytailMode: 'full' } });
+    expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key', ponytailMode: 'inherit' })).toMatchObject({ ok: false });
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key', leaseSeconds: 5 })).toMatchObject({ ok: false });
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key', leaseSeconds: 600 })).toMatchObject({ ok: true });
     expect(byName.get('run_goal')?.parse({ workspaceId: 'workspace-1', goalKey: 'stable-key', leaseSeconds: 601 })).toMatchObject({ ok: false });
@@ -51,8 +53,8 @@ describe('durable goal MCP tools', () => {
     expect(byName.get('checkpoint_goal')?.parse({
       goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
       stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [],
-      trackedTasks: [{ taskId: 'job-1', provider: 'shell', role: 'blocking_job', cancelWithGoal: true }],
-    })).toMatchObject({ ok: true });
+      trackedTasks: [{ taskId: 'job-1', provider: 'shell', role: 'blocking_job', cancelWithGoal: true }], ponytailMode: 'inherit',
+    })).toMatchObject({ ok: true, value: { ponytailMode: 'inherit' } });
     expect(byName.get('checkpoint_goal')?.parse({
       goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
       stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [], activeTaskIds: ['job-1'],
@@ -66,6 +68,7 @@ describe('durable goal MCP tools', () => {
 
   it('run_goal returns immediately and never invokes process/capability execution', async () => {
     let runs = 0;
+    let runRequest: unknown;
     let processStarts = 0;
     let capabilityRuns = 0;
     const context = {
@@ -73,8 +76,9 @@ describe('durable goal MCP tools', () => {
       contextEconomy: new ContextEconomyRuntime(),
       services: {
         goals: {
-          async runGoal() {
+          async runGoal(_actor: unknown, request: unknown) {
             runs += 1;
+            runRequest = request;
             return ok({
               goalId: 'goal-1', goalKey: 'stable-key', status: 'active', revision: 0, acquired: true,
               leaseToken: 'lease-secret', leaseExpiresAt: '2026-08-26T00:10:00.000Z', currentPhase: 'created',
@@ -92,7 +96,7 @@ describe('durable goal MCP tools', () => {
     } as unknown as McpToolContext;
 
     const startedAt = performance.now();
-    const result = await tool(context, 'run_goal').execute({ workspaceId: 'workspace-1', goalKey: 'stable-key', objective: 'Do work' }, new AbortController().signal);
+    const result = await tool(context, 'run_goal').execute({ workspaceId: 'workspace-1', goalKey: 'stable-key', objective: 'Do work', ponytailMode: 'full' }, new AbortController().signal);
     const elapsedMs = performance.now() - startedAt;
     expect(result).toMatchObject({
       ok: true,
@@ -109,6 +113,7 @@ describe('durable goal MCP tools', () => {
       },
     });
     expect(runs).toBe(1);
+    expect(runRequest).toMatchObject({ workspaceId: 'workspace-1', goalKey: 'stable-key', objective: 'Do work', ponytailMode: 'full' });
     expect(processStarts).toBe(0);
     expect(capabilityRuns).toBe(0);
     expect(elapsedMs).toBeLessThan(100);

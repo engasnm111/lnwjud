@@ -1,6 +1,6 @@
 # lnwjud upgrade architecture contract
 
-Status: God-Tier local-first implementation checkpoint synchronized for `v4.56.1`.
+Status: God-Tier local-first implementation checkpoint synchronized for `v4.60.0`.
 
 This document is the architectural boundary for the upgrade roadmap. It describes
 the existing runtime before Phase 01 and the invariants every later phase must
@@ -42,7 +42,7 @@ MCP clients (ChatGPT / Codex / Claude / other agents)
              MCP stdio or loopback Streamable HTTP
                          |
                          v
-                  ToolRegistry (232 total definitions; 225 default; all 232 with Codex + Agent Swarm)
+                  ToolRegistry (233 total definitions; 226 default; all 233 with Codex + Agent Swarm)
                          |
        +-----------------+------------------+
        |                 |                  |
@@ -111,8 +111,8 @@ builds the high-impact slices on top of it:
 Long-running operations use the existing task handles where a concrete backend
 exists. Activity events now carry bounded `traceId`/`traceParent` values into
 NDJSON and SQLite audit metadata. The 184-tool snapshot remains a historical
-compatibility baseline. The complete inventory contains 232 tool definitions.
-Current transports advertise 225 by default or all 232 when the six Codex delegation tools plus Agent Swarm
+compatibility baseline. The complete inventory contains 233 tool definitions.
+Current transports advertise 226 by default or all 233 when the six Codex delegation tools plus Agent Swarm
 are enabled; planned and feature-disabled definitions remain inventory-only,
 and registry additions remain append-only.
 

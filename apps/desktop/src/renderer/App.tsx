@@ -11,6 +11,8 @@ import type {
   LogSource,
   PermissionProfileName,
   PdfProviderInstallResult,
+  PonytailModeOverride,
+  PonytailPolicyContext,
   UiLocale,
   UpdateStatus,
   UserSettings,
@@ -27,7 +29,7 @@ import { GitPage } from './features/git/GitPage.js';
 import { WorkLogPage } from './features/worklog/WorkLogPage.js';
 import { LiveLogsPage } from './features/live/LiveLogsPage.js';
 import type { LogScopeSelection } from './features/live/LogStreamPanel.js';
-import { applyLogSnapshot } from './features/live/log-buffer.js';
+import { appendLogBatch, applyLogSnapshot, rememberLogId } from './features/live/log-buffer.js';
 import { SettingsPage, type SettingsFocusTarget, type SettingsSection } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
 import { ToolsPage } from './features/tools/ToolsPage.js';
@@ -71,22 +73,39 @@ export function App(): ReactElement {
   const [guidedTunnelSetupOpen, setGuidedTunnelSetupOpen] = useState(false);
   const [startupDoctorReady, setStartupDoctorReady] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<{ readonly section: SettingsSection; readonly focus?: SettingsFocusTarget; readonly requestId: number } | undefined>(undefined);
+  const [ponytailPolicyContext, setPonytailPolicyContext] = useState<PonytailPolicyContext | null>(null);
+  const [ponytailPolicyBusy, setPonytailPolicyBusy] = useState(false);
+  const [ponytailPolicyError, setPonytailPolicyError] = useState<string | null>(null);
   const incidentBusyRef = useRef(false);
   const refreshBusyRef = useRef(false);
   const logIds = useRef<Set<number>>(new Set());
+  const pendingLogLines = useRef<LogLine[]>([]);
+  const logFlushTimer = useRef<number | null>(null);
   const guidedTunnelLaunchSignature = useRef<string | null>(null);
   const startupDoctorVersion = useRef<string | null>(null);
   const settingsRequestId = useRef(0);
 
   const t = createTranslator(locale);
   const appVersion = dashboard?.appVersion ?? null;
+  const selectedWorkspaceId = dashboard?.selectedWorkspace?.id ?? null;
+  const globalPonytailMode = dashboard?.settings.ponytailMode ?? 'off';
   const projectWorkspaces = workspaces.filter((workspace) => workspace.kind !== 'machine_root' && (workspace.archivedAt === undefined || workspace.archivedAt === null));
 
-  const appendLogLine = useCallback((line: LogLine): void => {
-    if (logIds.current.has(line.id)) return;
-    logIds.current.add(line.id);
-    setLogLines((previous) => [...previous.slice(-(MAX_CLIENT_LOG_LINES - 1)), line]);
+  const flushPendingLogLines = useCallback((): void => {
+    logFlushTimer.current = null;
+    if (pendingLogLines.current.length === 0) return;
+    const batch = pendingLogLines.current;
+    pendingLogLines.current = [];
+    setLogLines((previous) => appendLogBatch(previous, batch, MAX_CLIENT_LOG_LINES));
   }, []);
+
+  const appendLogLine = useCallback((line: LogLine): void => {
+    if (!rememberLogId(logIds.current, line.id, MAX_CLIENT_LOG_LINES * 2)) return;
+    pendingLogLines.current.push(line);
+    if (logFlushTimer.current === null) {
+      logFlushTimer.current = window.setTimeout(flushPendingLogLines, 40);
+    }
+  }, [flushPendingLogLines]);
 
   useEffect(() => {
     let disposed = false;
@@ -107,7 +126,7 @@ export function App(): ReactElement {
     void window.lnwjud.getLogSnapshot().then((snapshot) => {
       if (disposed) return;
       setLogLines((previous) => {
-        const merged = applyLogSnapshot(previous, logIds.current, snapshot.lines);
+        const merged = applyLogSnapshot(previous, logIds.current, snapshot.lines, MAX_CLIENT_LOG_LINES);
         logIds.current = merged.ids;
         return merged.lines;
       });
@@ -121,6 +140,11 @@ export function App(): ReactElement {
     return (): void => {
       disposed = true;
       unsubscribe();
+      if (logFlushTimer.current !== null) {
+        window.clearTimeout(logFlushTimer.current);
+        logFlushTimer.current = null;
+      }
+      pendingLogLines.current = [];
     };
   }, [appendLogLine]);
 
@@ -131,6 +155,7 @@ export function App(): ReactElement {
         ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
         ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
       });
+      pendingLogLines.current = pendingLogLines.current.filter((line) => line.source !== source || !lineMatchesScope(line, scope, workspaces));
       setLogLines((previous) => previous.filter((line) => line.source !== source || !lineMatchesScope(line, scope, workspaces)));
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logBufferClear')));
@@ -140,6 +165,11 @@ export function App(): ReactElement {
   async function clearAllLogs(): Promise<void> {
     try {
       await Promise.all((['tunnel', 'mcp', 'process'] as const).map((source) => window.lnwjud.clearLogBuffer({ source })));
+      if (logFlushTimer.current !== null) {
+        window.clearTimeout(logFlushTimer.current);
+        logFlushTimer.current = null;
+      }
+      pendingLogLines.current = [];
       logIds.current = new Set();
       setLogLines([]);
     } catch (cause: unknown) {
@@ -152,6 +182,7 @@ export function App(): ReactElement {
       await window.lnwjud.exportLogs({
         source,
         filePath: '',
+        locale,
         ...(scope.workspaceId === null ? {} : { workspaceId: scope.workspaceId }),
         ...(scope.sessionId === null ? {} : { sessionId: scope.sessionId }),
         ...(query.trim().length === 0 ? {} : { query: query.trim() }),
@@ -222,6 +253,28 @@ export function App(): ReactElement {
     const interval = window.setInterval(() => { void refresh(); }, 2_000);
     return (): void => { window.clearInterval(interval); };
   }, [refresh]);
+
+  useEffect(() => {
+    if (selectedWorkspaceId === null) {
+      setPonytailPolicyContext(null);
+      setPonytailPolicyError(null);
+      return;
+    }
+    let disposed = false;
+    setPonytailPolicyBusy(true);
+    void window.lnwjud.getPonytailPolicyContext({ workspaceId: selectedWorkspaceId }).then((context) => {
+      if (disposed) return;
+      setPonytailPolicyContext(context);
+      setPonytailPolicyError(null);
+    }).catch((cause: unknown) => {
+      if (disposed) return;
+      setPonytailPolicyContext(null);
+      setPonytailPolicyError(errorMessage(cause, propsText(locale, 'โหลด Ponytail policy ของโปรเจกต์ไม่สำเร็จ', 'Could not load the project Ponytail policy')));
+    }).finally(() => {
+      if (!disposed) setPonytailPolicyBusy(false);
+    });
+    return (): void => { disposed = true; };
+  }, [selectedWorkspaceId, globalPonytailMode, locale]);
 
   useEffect(() => {
     if (dashboard === null || !startupDoctorReady) return;
@@ -461,7 +514,7 @@ export function App(): ReactElement {
 
   async function exportWorkLog(rowIds: readonly string[]): Promise<void> {
     try {
-      await window.lnwjud.exportWorkLog({ rowIds });
+      await window.lnwjud.exportWorkLog({ rowIds, locale });
     } catch (cause: unknown) {
       setError(errorMessage(cause, t('error.logExport')));
     }
@@ -571,6 +624,38 @@ export function App(): ReactElement {
     } catch (cause: unknown) {
       setError(errorMessage(cause, propsText(locale, 'ไม่สามารถบันทึกการตั้งค่าได้', 'Could not save settings')));
       throw cause;
+    }
+  }
+
+  async function setWorkspacePonytailMode(mode: PonytailModeOverride): Promise<void> {
+    if (selectedWorkspaceId === null) return;
+    setPonytailPolicyBusy(true);
+    setPonytailPolicyError(null);
+    try {
+      const context = await window.lnwjud.setWorkspacePonytailMode({ workspaceId: selectedWorkspaceId, mode });
+      setPonytailPolicyContext(context);
+    } catch (cause: unknown) {
+      const message = errorMessage(cause, propsText(locale, 'บันทึก Ponytail policy ของโปรเจกต์ไม่สำเร็จ', 'Could not save the project Ponytail policy'));
+      setPonytailPolicyError(message);
+      throw cause;
+    } finally {
+      setPonytailPolicyBusy(false);
+    }
+  }
+
+  async function setGoalPonytailMode(goalId: string, expectedRevision: number, mode: PonytailModeOverride): Promise<void> {
+    if (selectedWorkspaceId === null) return;
+    setPonytailPolicyBusy(true);
+    setPonytailPolicyError(null);
+    try {
+      const context = await window.lnwjud.setGoalPonytailMode({ workspaceId: selectedWorkspaceId, goalId, expectedRevision, mode });
+      setPonytailPolicyContext(context);
+    } catch (cause: unknown) {
+      const message = errorMessage(cause, propsText(locale, 'บันทึก Ponytail policy ของ goal ไม่สำเร็จ', 'Could not save the goal Ponytail policy'));
+      setPonytailPolicyError(message);
+      throw cause;
+    } finally {
+      setPonytailPolicyBusy(false);
     }
   }
 
@@ -745,7 +830,7 @@ export function App(): ReactElement {
         setError(null);
         const target = startupDoctorNavigationTarget(startupDoctorReady, nextScreen);
         setScreen(target);
-        if (target === 'tools') void loadToolCatalog();
+        if (target === 'tools') void loadToolCatalog(['external_mcp_connection']);
       }}
       onLocaleChange={(next) => { void changeLocale(next); }}
       onUpdateAction={() => { void handleUpdateAction(); }}
@@ -799,7 +884,7 @@ export function App(): ReactElement {
           snapshot={toolCatalog}
           loading={toolCatalogLoading}
           hostSyncNotice={toolHostSyncNotice}
-          onRefresh={() => loadToolCatalog()}
+          onRefresh={() => loadToolCatalog([])}
           onRemediation={handleToolRemediation}
           onSetAvailability={setToolAvailability}
           onResetAvailability={resetToolAvailability}
@@ -853,6 +938,11 @@ export function App(): ReactElement {
           onSaveTunnelApiKey={saveTunnelApiKey}
           onSetTunnelClientPath={setTunnelClientPath}
           onUserSettingsChange={setUserSettings}
+          ponytailPolicyContext={ponytailPolicyContext}
+          ponytailPolicyBusy={ponytailPolicyBusy}
+          ponytailPolicyError={ponytailPolicyError}
+          onWorkspacePonytailModeChange={setWorkspacePonytailMode}
+          onGoalPonytailModeChange={setGoalPonytailMode}
           onInstallPdfProvider={installPdfProvider}
           onChooseTunnelClientPath={chooseTunnelClientPath}
           onConfigureTunnelProfile={configureTunnelProfile}

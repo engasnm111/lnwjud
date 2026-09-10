@@ -16,44 +16,53 @@ export function resolveLnwjudDataPath(
   platform: NodeJS.Platform = process.platform,
 ): string {
   const pathApi = platform === 'win32' ? path.win32 : path.posix;
-  const configured = environment.LNWJUD_DATA_PATH?.trim();
-  if (configured) return pathApi.resolve(configured);
+  const configured = absolutePathOrUndefined(environment.LNWJUD_DATA_PATH, pathApi);
+  if (configured !== undefined) return configured;
 
-  const home = firstNonEmpty(environment.HOME, os.homedir());
+  const home = absolutePathOrUndefined(environment.HOME, pathApi)
+    ?? absolutePathOrUndefined(os.homedir(), pathApi);
   if (platform === 'win32') {
-    const appData = firstNonEmpty(
+    const appData = firstAbsolutePath(
+      pathApi,
       environment.APPDATA,
       electronAppData,
       environment.USERPROFILE ? pathApi.join(environment.USERPROFILE, 'AppData', 'Roaming') : undefined,
       home ? pathApi.join(home, 'AppData', 'Roaming') : undefined,
       pathApi.join(os.homedir(), 'AppData', 'Roaming'),
     );
-    return pathApi.resolve(appData, 'lnwjud');
+    return pathApi.join(appData, 'lnwjud');
   }
 
   if (platform === 'darwin') {
-    const appData = firstNonEmpty(
+    const appData = firstAbsolutePath(
+      pathApi,
       electronAppData,
       home ? pathApi.join(home, 'Library', 'Application Support') : undefined,
       pathApi.join(os.homedir(), 'Library', 'Application Support'),
     );
-    return pathApi.resolve(appData, 'lnwjud');
+    return pathApi.join(appData, 'lnwjud');
   }
 
-  const xdgDataHome = environment.XDG_DATA_HOME?.trim();
-  const appData = firstNonEmpty(
+  const appData = firstAbsolutePath(
+    pathApi,
     electronAppData,
-    xdgDataHome && pathApi.isAbsolute(xdgDataHome) ? xdgDataHome : undefined,
+    environment.XDG_DATA_HOME,
     home ? pathApi.join(home, '.local', 'share') : undefined,
     pathApi.join(os.homedir(), '.local', 'share'),
   );
-  return pathApi.resolve(appData, 'lnwjud');
+  return pathApi.join(appData, 'lnwjud');
 }
 
-function firstNonEmpty(...values: readonly (string | undefined)[]): string {
+function absolutePathOrUndefined(value: string | undefined, pathApi: typeof path.win32 | typeof path.posix): string | undefined {
+  const trimmed = value?.trim();
+  if (trimmed === undefined || trimmed.length === 0 || !pathApi.isAbsolute(trimmed)) return undefined;
+  return pathApi.normalize(trimmed);
+}
+
+function firstAbsolutePath(pathApi: typeof path.win32 | typeof path.posix, ...values: readonly (string | undefined)[]): string {
   for (const value of values) {
-    const trimmed = value?.trim();
-    if (trimmed) return trimmed;
+    const absolute = absolutePathOrUndefined(value, pathApi);
+    if (absolute !== undefined) return absolute;
   }
-  return path.join(os.homedir(), 'AppData', 'Roaming');
+  throw new Error('Unable to resolve an absolute lnwjud data directory');
 }

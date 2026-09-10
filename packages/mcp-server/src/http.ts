@@ -20,6 +20,7 @@ import { ModernTasksProtocol } from './modern-tasks-protocol.js';
 import { maybeHandleModernTasksWireRequest, maybeTransformModernTasksWireResponse } from './modern-tasks-wire.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
 import { RunBudgetGuard } from './run-budget.js';
+import { PonytailActivationLedger } from './ponytail-runtime.js';
 import { createOriginPolicy, type OriginPolicy } from './origin-policy.js';
 import { APP_NAME, APP_VERSION } from '@lnwjud/shared';
 
@@ -198,12 +199,14 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
   const runBudgetGuard = options.runBudgetGuard ?? new RunBudgetGuard();
   const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
+  const ponytailActivationLedger = options.ponytailActivationLedger ?? new PonytailActivationLedger();
   const endpointFallbackSessionId = randomUUID();
   const factory = (request?: Request): McpServer => createMcpServer({
     ...options,
     runBudgetGuard,
     incrementalVerifier,
     setOfMarksStore,
+    ponytailActivationLedger,
     legacyTasksProtocol: false,
     requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
   });
@@ -225,6 +228,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       runBudgetGuard,
       incrementalVerifier,
       setOfMarksStore,
+      ponytailActivationLedger,
       legacyTasksProtocol: true,
       requestScope: createProtocolHttpRequestScope(protocolSessionId),
     });

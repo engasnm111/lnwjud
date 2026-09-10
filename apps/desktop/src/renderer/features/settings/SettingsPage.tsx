@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PdfProviderInstallResult, PermissionProfileName, TunnelOAuthLoginStatus, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
+import type { DashboardSnapshot, DestructiveDeletePolicy, ExternalSetupTarget, PdfProviderInstallResult, PermissionProfileName, PonytailModeOverride, PonytailPolicyContext, TunnelOAuthLoginStatus, TunnelStatus, UiLocale, UserSettings } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
 import { createTranslator } from '../../i18n/index.js';
 import { tunnelRuntimeCredentialAvailable } from '../../tunnel-auth-readiness.js';
@@ -24,6 +24,11 @@ interface SettingsPageProps {
   readonly onSaveTunnelApiKey: (apiKey: string) => Promise<void>;
   readonly onSetTunnelClientPath: (clientPath: string) => Promise<void>;
   readonly onUserSettingsChange: (settings: UserSettings) => Promise<boolean>;
+  readonly ponytailPolicyContext: PonytailPolicyContext | null;
+  readonly ponytailPolicyBusy: boolean;
+  readonly ponytailPolicyError: string | null;
+  readonly onWorkspacePonytailModeChange: (mode: PonytailModeOverride) => Promise<void>;
+  readonly onGoalPonytailModeChange: (goalId: string, expectedRevision: number, mode: PonytailModeOverride) => Promise<void>;
   readonly onInstallPdfProvider: () => Promise<PdfProviderInstallResult>;
   readonly onChooseTunnelClientPath: () => Promise<string | null>;
   readonly onConfigureTunnelProfile: (tunnelId: string) => Promise<string>;
@@ -49,16 +54,19 @@ type DestructiveApprovalKey = keyof DestructiveDeletePolicy['approvals'];
 
 export function SettingsPage(props: SettingsPageProps): ReactElement {
   const t = createTranslator(props.locale);
-  const hostPlatform = props.dashboard.hostPlatform ?? 'win32';
+  const hostPlatform = props.dashboard.hostPlatform;
+  const hostArch = props.dashboard.hostArch;
+  const secureStorageLabel = hostPlatform === 'darwin' ? 'macOS Keychain' : hostPlatform === 'linux' ? 'system keyring' : 'Windows DPAPI';
   const guidedTunnelRunning = isTunnelRunning(props.dashboard.tunnel);
   const guidedTunnelConfigured = tunnelRuntimeCredentialAvailable(props.dashboard.tunnel) && props.dashboard.tunnel.profileExists;
   const tunnelPresentation = tunnelAuthPresentation(props.dashboard.tunnel);
   const remoteMcp = props.dashboard.remoteMcp ?? {
-    state: 'stopped' as const, provider: 'ngrok' as const, installed: false, hasAuthtoken: false, ngrokPath: null,
+    state: 'stopped' as const, provider: 'ngrok' as const, installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
     localMcpUrl: props.dashboard.mcp.url, localGatewayUrl: null, publicMcpUrl: null, pairingCode: null, pairingCodeExpiresAt: null,
     oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
   };
   const ngrokReady = remoteMcp.installed && remoteMcp.ngrokPath !== null;
+  const ngrokAutoInstallAvailable = remoteMcp.automaticInstallAvailable;
   const remoteMcpOnline = remoteMcp.state === 'running';
   const secureTunnelOnline = props.dashboard.tunnel.state === 'running';
   const activeRemoteConnections = Number(remoteMcpOnline) + Number(secureTunnelOnline);
@@ -476,6 +484,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <UserConfigPanel
                 locale={props.locale}
                 hostPlatform={hostPlatform}
+                hostArch={hostArch}
                 permissionProfile={props.dashboard.permissionProfile}
                 stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
                 settings={props.dashboard.settings}
@@ -559,6 +568,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
             <UserConfigPanel
               locale={props.locale}
               hostPlatform={hostPlatform}
+              hostArch={hostArch}
               permissionProfile={props.dashboard.permissionProfile}
               stdioPermissionProfile={props.dashboard.stdioPermissionProfile}
               settings={props.dashboard.settings}
@@ -569,6 +579,66 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               onInstallPdfProvider={props.onInstallPdfProvider}
             />
           )}
+
+          {activeSection === 'mcp' ? (
+            <section className="panel settings-card settings-card-polished" aria-label="Scoped Ponytail policy" data-settings-focus="ponytail-policy-scopes" tabIndex={-1}>
+              <SettingsCardHeading
+                icon="P"
+                title={props.locale === 'th' ? 'Ponytail Policy ตามขอบเขต' : 'Scoped Ponytail Policy'}
+                subtitle={props.locale === 'th' ? 'Current Goal > Workspace > Global โดยเก็บค่าจริงตามขอบเขต' : 'Current Goal > Workspace > Global with persisted scope-specific settings'}
+                badge={props.ponytailPolicyContext == null ? 'NO PROJECT' : `EFFECTIVE ${props.ponytailPolicyContext.effectiveWorkspaceMode.toUpperCase()}`}
+              />
+              {props.ponytailPolicyContext == null ? (
+                <div className="empty-setting-state">{props.locale === 'th' ? 'เลือก Active Project ก่อนตั้งค่า Workspace หรือ Current Goal' : 'Select an Active Project before configuring Workspace or Current Goal policy.'}</div>
+              ) : (
+                <>
+                  <div className="setting-field max-field-width">
+                    <label className="field-label" htmlFor="ponytail-workspace-mode">{props.locale === 'th' ? 'Workspace override' : 'Workspace override'}</label>
+                    <select
+                      id="ponytail-workspace-mode"
+                      className="settings-select"
+                      disabled={props.ponytailPolicyBusy}
+                      value={props.ponytailPolicyContext.workspaceMode}
+                      onChange={(event) => { void props.onWorkspacePonytailModeChange(event.target.value as PonytailModeOverride).catch(() => undefined); }}
+                    >
+                      <option value="inherit">{props.locale === 'th' ? 'สืบทอด Global' : 'Inherit Global'}</option>
+                      <option value="off">Off</option><option value="lite">Lite</option><option value="full">Full</option><option value="ultra">Ultra</option>
+                    </select>
+                    <p className="hint">{props.locale === 'th'
+                      ? `Effective: ${props.ponytailPolicyContext.effectiveWorkspaceMode.toUpperCase()} · ${ponytailPolicySourceLabel(props.locale, props.ponytailPolicyContext.effectiveWorkspaceSource)}`
+                      : `Effective: ${props.ponytailPolicyContext.effectiveWorkspaceMode.toUpperCase()} · ${ponytailPolicySourceLabel(props.locale, props.ponytailPolicyContext.effectiveWorkspaceSource)}`}</p>
+                  </div>
+                  <div className="settings-mini-heading"><strong>{props.locale === 'th' ? 'Current Goal overrides' : 'Current Goal overrides'}</strong><span>{props.ponytailPolicyContext.activeGoals.length}</span></div>
+                  {props.ponytailPolicyContext.activeGoals.length === 0 ? (
+                    <div className="empty-setting-state">{props.locale === 'th' ? 'ไม่มี durable goal ที่ active ในโปรเจกต์นี้' : 'No active durable goals in this project.'}</div>
+                  ) : (
+                    <div className="backup-list settings-backup-list ponytail-goal-list">
+                      {props.ponytailPolicyContext.activeGoals.map((goal) => (
+                        <div className="backup-item ponytail-goal-item" key={goal.goalId}>
+                          <div className="ponytail-goal-copy">
+                            <strong>{goal.goalKey}</strong>
+                            <p className="hint">Effective: {goal.effectiveMode.toUpperCase()} · {ponytailPolicySourceLabel(props.locale, goal.effectiveSource)} · rev {goal.revision}</p>
+                            {goal.editBlockedReason === null ? null : <p className="hint">{ponytailGoalEditBlockedLabel(props.locale, goal.editBlockedReason)}</p>}
+                          </div>
+                          <select
+                            aria-label={`${goal.goalKey} Ponytail mode`}
+                            className="settings-select ponytail-goal-select"
+                            disabled={props.ponytailPolicyBusy || !goal.editable}
+                            value={goal.mode}
+                            onChange={(event) => { void props.onGoalPonytailModeChange(goal.goalId, goal.revision, event.target.value as PonytailModeOverride).catch(() => undefined); }}
+                          >
+                            <option value="inherit">{props.locale === 'th' ? 'สืบทอด Workspace' : 'Inherit Workspace'}</option>
+                            <option value="off">Off</option><option value="lite">Lite</option><option value="full">Full</option><option value="ultra">Ultra</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              {props.ponytailPolicyError == null ? null : <div className="alert-box-warning" role="alert">⚠️ {props.ponytailPolicyError}</div>}
+            </section>
+          ) : null}
 
           {activeSection === 'tunnel' ? (
             <>
@@ -626,20 +696,25 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     {ngrokReady && remoteMcp.ngrokPath !== null ? <code className="ngrok-ready-path">{remoteMcp.ngrokPath}</code> : null}
                   </div>
                   <div className="inline-actions">
-                    <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcp.state === 'running' || ngrokReady} onClick={() => { void runRemoteMcpAction('install'); }}>
-                      {ngrokReady
-                        ? (props.locale === 'th' ? '✓ ngrok พร้อมใช้งาน' : '✓ ngrok ready')
-                        : remoteMcp.state === 'installing'
-                          ? (props.locale === 'th' ? 'กำลังติดตั้ง/ซ่อม…' : 'Installing/repairing…')
-                          : remoteMcp.state === 'error'
-                            ? (props.locale === 'th' ? 'ติดตั้ง/ซ่อม ngrok อัตโนมัติ' : 'Install/repair ngrok automatically')
-                            : (props.locale === 'th' ? 'ติดตั้ง ngrok อัตโนมัติ' : 'Install ngrok automatically')}
-                    </button>
+                    {ngrokAutoInstallAvailable ? (
+                      <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcp.state === 'running' || ngrokReady} onClick={() => { void runRemoteMcpAction('install'); }}>
+                        {ngrokReady
+                          ? (props.locale === 'th' ? '✓ ngrok พร้อมใช้งาน' : '✓ ngrok ready')
+                          : remoteMcp.state === 'installing'
+                            ? (props.locale === 'th' ? 'กำลังติดตั้ง/ซ่อม…' : 'Installing/repairing…')
+                            : remoteMcp.automaticInstallMethod === 'homebrew'
+                              ? (props.locale === 'th' ? 'ติดตั้ง ngrok ผ่าน Homebrew' : 'Install ngrok with Homebrew')
+                              : remoteMcp.state === 'error'
+                                ? (props.locale === 'th' ? 'ติดตั้ง/ซ่อม ngrok อัตโนมัติ' : 'Install/repair ngrok automatically')
+                                : (props.locale === 'th' ? 'ติดตั้ง ngrok อัตโนมัติ' : 'Install ngrok automatically')}
+                      </button>
+                    ) : null}
+                    {!ngrokReady && !ngrokAutoInstallAvailable ? <button type="button" disabled={remoteMcpBusy} onClick={() => { void props.onOpenExternalSetupPage('ngrok_download'); }}>{props.locale === 'th' ? 'เปิดหน้าดาวน์โหลด ngrok ทางการ' : 'Open official ngrok download'}</button> : null}
                     <button type="button" disabled={remoteMcpBusy} onClick={() => { void openNgrokAuthtokenPage(); }}>{props.locale === 'th' ? 'เปิดหน้า ngrok Authtoken' : 'Open ngrok authtoken'}</button>
                   </div>
                   <label className="field-label" htmlFor="remote-mcp-authtoken">{props.locale === 'th' ? 'ngrok Authtoken (ใส่ครั้งเดียว)' : 'ngrok authtoken (one time)'}</label>
                   <div className="form-row"><input id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /><button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcpAuthtoken.trim().length === 0} onClick={() => { void runRemoteMcpAction('save'); }}>{props.locale === 'th' ? 'บันทึกอย่างปลอดภัย' : 'Save securely'}</button></div>
-                  <p className="hint">{remoteMcp.hasAuthtoken ? (props.locale === 'th' ? '✓ เก็บด้วย Windows DPAPI แล้ว' : '✓ Stored with Windows DPAPI') : (props.locale === 'th' ? 'Authtoken ไม่ถูกส่งผ่าน command line หรือบันทึกลง config แบบ plaintext' : 'The authtoken is not passed on the command line or stored in plaintext config.')}</p>
+                  <p className="hint">{remoteMcp.hasAuthtoken ? (props.locale === 'th' ? `✓ เก็บด้วย ${secureStorageLabel} แล้ว` : `✓ Stored with ${secureStorageLabel}`) : (props.locale === 'th' ? 'Authtoken ไม่ถูกส่งผ่าน command line หรือบันทึกลง config แบบ plaintext' : 'The authtoken is not passed on the command line or stored in plaintext config.')}</p>
                 </div>
                 <div className="tunnel-setup-box">
                   <div className="settings-mini-heading"><strong>{props.locale === 'th' ? '2. เปิด Remote MCP' : '2. Start Remote MCP'}</strong><span>{remoteMcp.oauthConnected ? 'CHATGPT LINKED' : remoteMcp.pairingRequired ? 'PAIR ONCE' : remoteMcp.oauthProtected ? 'OAUTH PROTECTED' : 'AUTH REQUIRED'}</span></div>
@@ -650,7 +725,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <button type="button" disabled={remoteMcpBusy || !remoteMcp.oauthConnected} onClick={() => { void runRemoteMcpAction('regenerate'); }}>{props.locale === 'th' ? 'เชื่อม ChatGPT ใหม่' : 'Reconnect ChatGPT'}</button>
                   </div>
                   {remoteMcp.oauthConnected ? <div className="toast-success-banner remote-mcp-auth-banner" role="status"><strong>{props.locale === 'th' ? '✓ ChatGPT เชื่อมแล้ว' : '✓ ChatGPT connected'}</strong><span>{remoteMcp.autoStartEnabled ? (props.locale === 'th' ? 'จำ OAuth ไว้แล้ว · เปิด lnwjud ครั้งถัดไป Remote MCP จะ Start อัตโนมัติ' : 'OAuth trust is remembered · Remote MCP will auto-start on the next lnwjud launch.') : (props.locale === 'th' ? 'จำ OAuth ไว้แล้ว · Auto-start ปิดอยู่เพราะ Remote MCP ถูกหยุดด้วยผู้ใช้' : 'OAuth trust is remembered · auto-start is off because Remote MCP was stopped manually.')}</span></div> : null}
-                  {remoteMcp.pairingCode === null ? null : <div className="alert-box-warning remote-mcp-auth-banner" role="status"><strong className="remote-mcp-pairing-line"><span>{props.locale === 'th' ? 'Pairing ครั้งแรก' : 'First-time pairing'}:</span><span className="remote-mcp-pairing-pin" aria-label={`${props.locale === 'th' ? 'Pairing PIN' : 'Pairing PIN'} ${remoteMcp.pairingCode}`}>{remoteMcp.pairingCode}</span></strong><span>{remoteMcp.pairingCodeExpiresAt === null ? (props.locale === 'th' ? 'ใช้ PIN นี้เพื่ออนุญาต ChatGPT ครั้งเดียว' : 'Use this PIN to authorize ChatGPT once.') : `${props.locale === 'th' ? 'หมดอายุ' : 'expires'} ${formatDateTime(remoteMcp.pairingCodeExpiresAt)}`}</span></div>}
+                  {remoteMcp.pairingCode === null ? null : <div className="alert-box-warning remote-mcp-auth-banner" role="status"><strong className="remote-mcp-pairing-line"><span>{props.locale === 'th' ? 'Pairing ครั้งแรก' : 'First-time pairing'}:</span><span className="remote-mcp-pairing-pin" aria-label={`${props.locale === 'th' ? 'Pairing PIN' : 'Pairing PIN'} ${remoteMcp.pairingCode}`}>{remoteMcp.pairingCode}</span></strong><span>{remoteMcp.pairingCodeExpiresAt === null ? (props.locale === 'th' ? 'ใช้ PIN นี้เพื่ออนุญาต ChatGPT ครั้งเดียว' : 'Use this PIN to authorize ChatGPT once.') : `${props.locale === 'th' ? 'หมดอายุ' : 'expires'} ${formatDateTime(remoteMcp.pairingCodeExpiresAt, '—', props.locale)}`}</span></div>}
                   <p className="hint">{props.locale === 'th' ? 'ครั้งแรก: กด Start → นำ Public MCP URL ไปเพิ่มใน ChatGPT แบบ OAuth → ใส่ Pairing Code ครั้งเดียวเพื่อยืนยันว่าเป็นเครื่องของคุณ หลังจากนั้น lnwjud จะเก็บ OAuth trust/refresh grant แบบเข้ารหัสและไม่ถาม Pairing ซ้ำตอน Start หรือเปิดโปรแกรมใหม่ หากต้องการเปลี่ยนบัญชี/เชื่อมใหม่ ให้กด “เชื่อม ChatGPT ใหม่” เท่านั้น' : 'First time: Start → add the Public MCP URL in ChatGPT with OAuth → enter the pairing code once to confirm this machine. lnwjud then stores the OAuth trust/refresh grant encrypted, so Start and later app launches do not ask for pairing again. Use “Reconnect ChatGPT” only when you deliberately want to re-authorize.'}</p>
                   {remoteMcp.message === null ? null : <div className={remoteMcp.state === 'error' ? 'alert-box-warning' : 'hint'} role="status">{remoteMcp.message}{remoteMcp.ngrokPath === null ? '' : ` · ngrok: ${remoteMcp.ngrokPath}`}</div>}
                   {remoteMcpMessage === null ? null : <div className={remoteMcp.state === 'error' || /failed|error|exit|stopped unexpectedly/i.test(remoteMcpMessage) ? 'alert-box-warning' : 'toast-success-banner'} role="status">{remoteMcpMessage}</div>}
@@ -718,7 +793,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               </section>
 
               {tunnelPresentation.isOAuth ? (
-                <section className="panel settings-card settings-card-polished guided-tunnel-launch-card" aria-label="OAuth connection status">
+                <section className="panel settings-card settings-card-polished guided-tunnel-launch-card connection-method-followup-card" aria-label="OAuth connection status">
                   <SettingsCardHeading icon="◎" title={props.locale === 'th' ? 'การเชื่อมต่อด้วย OAuth' : 'OAuth connection'} subtitle={props.locale === 'th' ? 'โหมดนี้ใช้ OAuth เป็นวิธียืนยันตัวตน ส่วนการขนส่งยังเป็น Secure MCP Tunnel' : 'OAuth is the active authentication method; transport still uses Secure MCP Tunnel.'} badge={guidedTunnelRunning ? 'RUNNING' : guidedTunnelConfigured ? 'READY' : 'OAUTH'} />
                   <p className="hint">{props.dashboard.tunnel.auth?.accountLabel ?? (props.dashboard.tunnel.auth?.authReady ? (props.locale === 'th' ? 'OAuth พร้อมใช้งาน' : 'OAuth is ready') : (props.locale === 'th' ? 'OAuth ต้องการให้ผู้ใช้ดำเนินการ' : 'OAuth requires user action'))}</p>
                   {props.dashboard.tunnel.auth?.message === null || props.dashboard.tunnel.auth?.message === undefined ? null : <p className="hint">{props.dashboard.tunnel.auth.message}</p>}
@@ -730,7 +805,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 </section>
               ) : (
                 <>
-                  <section className="panel settings-card settings-card-polished guided-tunnel-launch-card" aria-label={t('guidedTunnel.openGuide')}>
+                  <section className="panel settings-card settings-card-polished guided-tunnel-launch-card connection-method-followup-card" aria-label={t('guidedTunnel.openGuide')}>
                     <SettingsCardHeading icon="↗" title={t('guidedTunnel.openGuide')} subtitle={t('guidedTunnel.privacy')} badge={guidedTunnelRunning ? 'RUNNING' : guidedTunnelConfigured ? 'READY' : 'SETUP'} />
                     <p className="hint">{guidedTunnelRunning ? t('guidedTunnel.localComplete') : guidedTunnelConfigured ? t('guidedTunnel.configured') : t('guidedTunnel.dismissedHint')}</p>
                     <button type="button" className="btn-save-gold" onClick={() => props.onGuidedTunnelSetupOpenChange(true)}>{t('guidedTunnel.openGuide')}</button>
@@ -763,8 +838,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-client-path">{props.locale === 'th' ? 'tunnel-client (รวมมากับโปรแกรมแล้ว)' : 'tunnel-client (bundled)'}</label>
-                  <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.13 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.13 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
-                  <p className="hint">{props.locale === 'th' ? 'ช่องว่าง = ใช้ OpenAI tunnel-client v0.0.13 แบบ native ตาม target ที่มากับโปรแกรม หากบันทึก custom override แล้ว path นั้นจะเป็นตัวเลือกหลัก: ถ้าไฟล์หาย lnwjud จะแจ้ง error และจะไม่สลับกลับ bundled เอง การเปลี่ยน client ขณะ runtime ทำงานจะหยุด/ยืนยัน owner เดิมก่อนจึงค่อยสลับ' : 'Blank = use the bundled target-native OpenAI tunnel-client v0.0.13. A saved custom override is authoritative: if it is missing, lnwjud reports an error and never silently falls back to bundled. Switching clients while running stops and verifies the recorded owner before committing the new selection.'}</p>
+                  <div className="form-row"><input id="tunnel-client-path" placeholder={props.locale === 'th' ? 'ใช้ v0.0.14 ที่มากับ lnwjud อัตโนมัติ' : 'Bundled v0.0.14 is used automatically'} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…'}</button><button type="button" className="btn-save-gold" onClick={() => { void props.onSetTunnelClientPath(clientPath).then(() => setSavedMessage(clientPath.trim().length === 0 ? (props.locale === 'th' ? 'กลับมาใช้ tunnel-client ที่มากับโปรแกรมแล้ว' : 'Using the bundled tunnel-client again.') : t('settings.saved'))); }}>{clientPath.trim().length === 0 ? (props.locale === 'th' ? 'ใช้ตัวที่มากับโปรแกรม' : 'Use bundled') : (props.locale === 'th' ? 'บันทึก Override' : 'Save override')}</button></div>
+                  <p className="hint">{props.locale === 'th' ? 'ช่องว่าง = ใช้ OpenAI tunnel-client v0.0.14 แบบ native ตาม target ที่มากับโปรแกรม หากบันทึก custom override แล้ว path นั้นจะเป็นตัวเลือกหลัก: ถ้าไฟล์หาย lnwjud จะแจ้ง error และจะไม่สลับกลับ bundled เอง การเปลี่ยน client ขณะ runtime ทำงานจะหยุด/ยืนยัน owner เดิมก่อนจึงค่อยสลับ' : 'Blank = use the bundled target-native OpenAI tunnel-client v0.0.14. A saved custom override is authoritative: if it is missing, lnwjud reports an error and never silently falls back to bundled. Switching clients while running stops and verifies the recorded owner before committing the new selection.'}</p>
                 </div>
               </div>
               <div className="tunnel-setup-box">
@@ -827,7 +902,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 {props.dashboard.recovery.trashItems.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'Recovery Trash ยังว่าง' : 'Recovery Trash is empty'}</div> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.trashItems.map((item) => (
                     <div key={item.recoveryId} className="backup-item">
-                      <div><strong>{item.relativePath}</strong><p className="hint">{formatDateTime(item.deletedAt)} · {item.kind === 'replacement_backup' ? (props.locale === 'th' ? 'สำเนาก่อนเขียนทับ' : 'pre-replacement') : item.isDirectory ? 'folder' : 'file'} · {item.payloadAvailable ? (props.locale === 'th' ? 'พร้อมกู้คืน' : 'ready') : (props.locale === 'th' ? 'payload ไม่ครบ' : 'payload missing')}</p></div>
+                      <div><strong>{item.relativePath}</strong><p className="hint">{formatDateTime(item.deletedAt, '—', props.locale)} · {item.kind === 'replacement_backup' ? (props.locale === 'th' ? 'สำเนาก่อนเขียนทับ' : 'pre-replacement') : item.isDirectory ? 'folder' : 'file'} · {item.payloadAvailable ? (props.locale === 'th' ? 'พร้อมกู้คืน' : 'ready') : (props.locale === 'th' ? 'payload ไม่ครบ' : 'payload missing')}</p></div>
                       <button type="button" disabled={!item.payloadAvailable || recoveryBusyId !== null} onClick={() => { void restoreTrashItem(item.workspaceId, item.recoveryId, item.relativePath, item.kind); }}>{recoveryBusyId === item.recoveryId ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'กู้คืน' : 'Restore')}</button>
                     </div>
                   ))}</div>
@@ -836,7 +911,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 {props.dashboard.recovery.checkpoints.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี checkpoint' : 'No checkpoints yet'}</div> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list">{props.dashboard.recovery.checkpoints.map((checkpoint) => {
                     const paths = checkpoint.files.map((file) => file.path);
-                    return <div key={checkpoint.id} className="backup-item"><div><strong>{formatDateTime(checkpoint.createdAt)}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><button type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'ย้อนกลับจุดนี้' : 'Restore point')}</button></div>;
+                    return <div key={checkpoint.id} className="backup-item"><div><strong>{formatDateTime(checkpoint.createdAt, '—', props.locale)}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><button type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? (props.locale === 'th' ? 'กำลังกู้…' : 'Restoring…') : (props.locale === 'th' ? 'ย้อนกลับจุดนี้' : 'Restore point')}</button></div>;
                   })}</div>
                 )}
                 {recoveryError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {recoveryError}</div>}
@@ -852,7 +927,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <SettingsCardHeading icon="▣" title={props.locale === 'th' ? 'สำรองฐานข้อมูลโปรแกรม' : 'Application Database Backup'} subtitle="SQLite consistent snapshots" action={<button type="button" className="btn-save-gold" disabled={backupBusy} onClick={() => { void createBackupNow(); }}>{backupBusy ? (props.locale === 'th' ? 'กำลังทำงาน…' : 'Working…') : (props.locale === 'th' ? 'Backup ตอนนี้' : 'Backup Now')}</button>} />
                 {props.dashboard.backups.length === 0 ? <div className="empty-setting-state">{props.locale === 'th' ? 'ยังไม่มี Backup' : 'No backups yet'}</div> : (
                   <div className="backup-list settings-backup-list">{props.dashboard.backups.slice(0, 5).map((backup) => (
-                    <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}{backup.hostCompatibility === 'cross_host' ? ` · ${t('backup.crossHostLabel')}` : ''}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
+                    <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt, '—', props.locale)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}{backup.hostCompatibility === 'cross_host' ? ` · ${t('backup.crossHostLabel')}` : ''}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{props.locale === 'th' ? 'Restore ชุดนี้' : 'Restore'}</button></div>
                   ))}</div>
                 )}
                 {(props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running) ? <div className="alert-box-warning">⚠️ {props.locale === 'th' ? 'หยุด Tunnel และ Local MCP ก่อน Restore ฐานข้อมูล' : 'Stop Tunnel and local MCP before scheduling a database restore.'}</div> : null}
@@ -874,6 +949,27 @@ function SettingsCardHeading({ icon, title, subtitle, badge, action }: { readonl
       {action ?? (badge === undefined ? null : <span className="pill-badge gold">{badge}</span>)}
     </div>
   );
+}
+
+function ponytailPolicySourceLabel(locale: UiLocale, source: PonytailPolicyContext['effectiveWorkspaceSource']): string {
+  if (source === 'goal') return locale === 'th' ? 'Current Goal' : 'Current Goal';
+  if (source === 'workspace') return 'Workspace';
+  if (source === 'global') return 'Global';
+  return locale === 'th' ? 'ค่าเริ่มต้น' : 'Default';
+}
+
+function ponytailGoalEditBlockedLabel(locale: UiLocale, reason: 'live_lease' | 'live_continuation' | 'live_mutation'): string {
+  const th = {
+    live_lease: 'ล็อกการแก้ไข: มี worker/lease กำลังทำงาน ให้เปลี่ยน mode ผ่าน goal owner เพื่อรักษา fencing',
+    live_continuation: 'ล็อกการแก้ไข: มี scheduled continuation ที่ยัง active',
+    live_mutation: 'ล็อกการแก้ไข: มี mutation ที่กำลังทำงาน',
+  } as const;
+  const en = {
+    live_lease: 'Editing locked: a worker lease is active. Change the mode through the goal owner to preserve fencing.',
+    live_continuation: 'Editing locked: a scheduled continuation is still active.',
+    live_mutation: 'Editing locked: a mutation is still running.',
+  } as const;
+  return (locale === 'th' ? th : en)[reason];
 }
 
 function splitList(value: string): readonly string[] {

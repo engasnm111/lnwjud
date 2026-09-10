@@ -19,7 +19,7 @@ export function fileTools(context: McpToolContext): McpToolDefinition[] {
   return [
     defineTool({
       name: 'read_file',
-      description: 'Read a workspace file as UTF-8 text or as an image/binary payload. Absolute paths (C:\\...) do not require workspaceId. For large files or an unknown location, prefer search_text first and then read_file_page for the relevant range instead of reading the whole file.',
+      description: 'Read a workspace file as UTF-8 text or as an image/binary payload. Absolute host paths do not require workspaceId. For large files or an unknown location, prefer search_text first and then read_file_page for the relevant range instead of reading the whole file.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: readFileSchema,

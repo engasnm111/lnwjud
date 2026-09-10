@@ -15,11 +15,18 @@ import { CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY } from '@lnwjud/capabilit
 import { DefaultPermissionEngine, permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
 import {
   DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY,
+  DEFAULT_PONYTAIL_MODE,
   DEFAULT_TOOL_AVAILABILITY_SNAPSHOT,
+  parsePonytailMode,
+  parsePonytailModeOverride,
   prohibitedAgentCommandReason,
   prohibitedAgentGitInvocationReason,
   resolveEffectiveToolAvailability,
+  resolvePonytailPolicy,
+  workspacePonytailMode,
   type DestructiveAutoApprovalPolicy,
+  type PonytailMode,
+  type ResolvedPonytailPolicy,
   type ToolAvailabilitySnapshot,
 } from '@lnwjud/shared';
 import { ActivityTracker, describeStructuredResultDetail, summarizeStructuredResultTarget, summarizeToolTarget, type ActivitySink, type TraceContext } from './activity-tracker.js';
@@ -29,6 +36,13 @@ import { hasExplicitUserConfirmation } from './destructive-policy.js';
 import { isScopedAutoApprovalAllowed, type WorkspaceScope } from './destructive-scope.js';
 import { FilePageEngine } from './file-page-engine.js';
 import { IncrementalVerifier } from './incremental-verifier.js';
+import {
+  BUNDLED_PONYTAIL_REVIEW_SKILL_ID,
+  BUNDLED_PONYTAIL_SKILL_ID,
+  PonytailActivationLedger,
+  isCodingMutation,
+  type PonytailActivationContext,
+} from './ponytail-runtime.js';
 import { inspectMutationOperation, permissionLevelForMutationDecision, requiresMutationConfirmation, type MutationPolicyDecision } from './mutation-policy.js';
 import { mapError, mapResult, type McpToolResponse } from './result-mapper.js';
 import { agentSwarmTools } from './tools/agent-swarm-tools.js';
@@ -83,6 +97,10 @@ export interface ToolRegistryOptions {
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
   /** Exposes quota-consuming Codex delegation tools. Disabled unless explicitly enabled. */
   readonly codexToolsEnabled?: boolean;
+  /** Current persisted global Ponytail coding policy. Missing or invalid values fail safely to OFF. */
+  readonly ponytailModeProvider?: () => PonytailMode;
+  /** Shared by transport-scoped server factories so exact skill activation survives per-request registry recreation. */
+  readonly ponytailActivationLedger?: PonytailActivationLedger;
   /** Current persisted per-tool user availability snapshot. Read dynamically so one registry instance observes live changes. */
   readonly toolAvailabilitySnapshotProvider?: () => ToolAvailabilitySnapshot;
   readonly incrementalVerifier?: IncrementalVerifier;
@@ -115,6 +133,11 @@ type ApprovalPreparation =
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly response: McpToolResponse; readonly code: string; readonly message: string };
 
+interface ResolvedPonytailInvocation {
+  readonly context: PonytailActivationContext;
+  readonly policy: ResolvedPonytailPolicy;
+}
+
 export class ToolRegistry {
   private readonly allTools: readonly McpToolDefinition[];
   private readonly systemEligibleToolNames: ReadonlySet<string>;
@@ -130,6 +153,8 @@ export class ToolRegistry {
   private readonly profileProvider: () => PermissionProfile;
   private readonly authorizationModeProvider: () => AuthorizationMode;
   private readonly destructivePolicyProvider: () => DestructiveAutoApprovalPolicy;
+  private readonly ponytailModeProvider: () => PonytailMode;
+  private readonly ponytailActivation: PonytailActivationLedger;
   private readonly activeWorkspaceScopeProvider: () => Promise<WorkspaceScope | null>;
   private readonly activeWorkspaceScopesProvider: (() => Promise<readonly WorkspaceScope[]>) | undefined;
   private readonly enforceActiveWorkspaceScope: boolean;
@@ -150,6 +175,8 @@ export class ToolRegistry {
     this.profileProvider = options.profileProvider ?? ((): PermissionProfile => permissionProfiles.full);
     this.authorizationModeProvider = options.authorizationModeProvider ?? ((): AuthorizationMode => 'standard');
     this.destructivePolicyProvider = options.destructivePolicyProvider ?? ((): DestructiveAutoApprovalPolicy => legacyDeletePolicy(options.allowAiDeleteProvider?.() === true));
+    this.ponytailModeProvider = options.ponytailModeProvider ?? ((): PonytailMode => DEFAULT_PONYTAIL_MODE);
+    this.ponytailActivation = options.ponytailActivationLedger ?? new PonytailActivationLedger();
     this.activeWorkspaceScopeProvider = normalizeActiveWorkspaceScopeProvider(options);
     this.activeWorkspaceScopesProvider = normalizeActiveWorkspaceScopesProvider(options);
     this.enforceActiveWorkspaceScope = options.activeWorkspaceScopesProvider !== undefined || options.activeWorkspaceScopeProvider !== undefined || options.activeProjectProvider !== undefined;
@@ -157,7 +184,13 @@ export class ToolRegistry {
     this.activityWorkspaceResolver = normalizeActivityWorkspaceResolver(services, actor);
     this.maxToolDurationMs = normalizeToolResponseBudget(options.maxToolDurationMs);
     const contextEconomy = new ContextEconomyRuntime();
-    const context: McpToolContext = { services, actor, contextEconomy, isToolExposed: (name) => this.isEffectivelyExposed(name) };
+    const context: McpToolContext = {
+      services,
+      actor,
+      contextEconomy,
+      isToolExposed: (name) => this.isEffectivelyExposed(name),
+      setPonytailSessionSuppressed: (workspaceId, goalId, suppressed) => this.setPonytailSessionSuppressed(workspaceId, goalId, suppressed),
+    };
     const contextEngine = new ContextEngine(services, actor, contextEconomy);
     const filePageEngine = new FilePageEngine(services, actor);
     const incrementalVerifier = options.incrementalVerifier ?? new IncrementalVerifier();
@@ -361,6 +394,34 @@ export class ToolRegistry {
         await this.activity.end(callId, code, Date.now() - started, message);
         return response;
       }
+      if (tool.name === 'finish_goal' && isRecord(activeRoutedInput) && activeRoutedInput.status === 'completed') {
+        const finishGoalId = readTrimmedString(activeRoutedInput.goalId);
+        const finishInvocation = finishGoalId === undefined ? undefined : await this.resolvePonytailInvocation(undefined, finishGoalId);
+        if (finishInvocation !== undefined && (finishInvocation.policy.mode === 'full' || finishInvocation.policy.mode === 'ultra')) {
+          const reviewState = this.ponytailActivation.state(finishInvocation.context, finishInvocation.policy);
+          if (!reviewState.sessionSuppressed
+            && reviewState.codeMutationGeneration > 0
+            && reviewState.reviewGeneration !== reviewState.codeMutationGeneration) {
+            const message = `Ponytail ${finishInvocation.policy.mode.toUpperCase()} review is stale for the latest code mutation. Load ${BUNDLED_PONYTAIL_REVIEW_SKILL_ID}, run review_changes for this workspace/goal, then retry finish_goal.`;
+            const response = mapError(appError('CONFLICT', message, true));
+            await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
+            return response;
+          }
+        }
+      }
+      const codingMutation = mutationDecision.kind !== 'read' && isCodingMutation(tool.name, activeRoutedInput);
+      const ponytailInvocation = codingMutation
+        ? await this.resolvePonytailInvocation(mutationFenceWorkspaceId ?? activeWorkspaceScope?.workspaceId, goalLease?.goalId)
+        : undefined;
+      if (ponytailInvocation !== undefined && ponytailInvocation.policy.mode !== 'off') {
+        const activation = this.ponytailActivation.state(ponytailInvocation.context, ponytailInvocation.policy);
+        if (!activation.primarySkillLoaded && !activation.sessionSuppressed) {
+          const message = `Ponytail ${ponytailInvocation.policy.mode.toUpperCase()} is active. Load ${BUNDLED_PONYTAIL_SKILL_ID} for this workspace/goal, then retry this code mutation.`;
+          const response = mapError(appError('CONFLICT', message, true));
+          await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
+          return response;
+        }
+      }
       const scopedExecutionInput = fullBypass
         ? { ok: true as const, value: activeRoutedInput }
         : bindCommandExecutionToActiveWorkspace(tool.name, activeRoutedInput, activeWorkspaceScope);
@@ -452,6 +513,7 @@ export class ToolRegistry {
         : fullBypass ? `FULL BYPASS ON — ${rawResultTargetSummary}` : rawResultTargetSummary;
       if (resultTargetSummary !== undefined) this.activity.updateTarget(callId, resultTargetSummary);
       this.rememberActivityContext(name, response, activityWorkspaceId, resultTargetSummary ?? resolvedTargetSummary);
+      await this.recordPonytailOutcome(name, activeRoutedInput, response, activityWorkspaceId, ponytailInvocation);
 
       const resultCode = response.isError === true ? readErrorCode(response) ?? 'ERROR' : 'SUCCESS';
       const resultMessage = readErrorMessage(response);
@@ -475,6 +537,118 @@ export class ToolRegistry {
       const response = mapError(sanitizeException(error, this.diagnostic));
       await this.activity.end(callId, 'INTERNAL_ERROR', Date.now() - started, 'Operation failed');
       return response;
+    }
+  }
+
+  public async setPonytailSessionSuppressed(workspaceId: string, goalId: string | undefined, suppressed: boolean): Promise<boolean> {
+    const resolved = await this.resolvePonytailInvocation(workspaceId, goalId);
+    if (resolved === undefined) return false;
+    this.ponytailActivation.setSessionSuppressed(resolved.context, resolved.policy, suppressed);
+    return true;
+  }
+
+  private async resolvePonytailInvocation(workspaceId: string | undefined, goalId: string | undefined): Promise<ResolvedPonytailInvocation | undefined> {
+    let resolvedWorkspaceId = workspaceId;
+    let goalMode = parsePonytailModeOverride(undefined);
+    if (goalId !== undefined && this.services.goals !== undefined) {
+      try {
+        const goal = await this.services.goals.getGoal(this.actor, { goalId });
+        if (goal.ok) {
+          goalMode = parsePonytailModeOverride(goal.value.ponytailMode);
+          if (resolvedWorkspaceId === undefined && typeof goal.value.workspaceId === 'string' && goal.value.workspaceId.length > 0) {
+            resolvedWorkspaceId = goal.value.workspaceId;
+          }
+        }
+      } catch {
+        goalMode = parsePonytailModeOverride(undefined);
+      }
+    }
+    if (resolvedWorkspaceId === undefined) {
+      try {
+        const scopes = await this.activeWorkspaceScopesProvider?.();
+        resolvedWorkspaceId = scopes?.[0]?.workspaceId;
+      } catch {
+        resolvedWorkspaceId = undefined;
+      }
+    }
+    if (resolvedWorkspaceId === undefined) {
+      try {
+        resolvedWorkspaceId = (await this.activeWorkspaceScopeProvider())?.workspaceId;
+      } catch {
+        resolvedWorkspaceId = undefined;
+      }
+    }
+    if (resolvedWorkspaceId === undefined) return undefined;
+
+    let workspaceMode = parsePonytailModeOverride(undefined);
+    if (this.services.file?.readFile !== undefined) {
+      try {
+        const loaded = await this.services.file.readFile(this.actor, resolvedWorkspaceId, { path: '.lnwjud/project-profile.json' });
+        if (loaded.ok && typeof loaded.value.content === 'string') {
+          try {
+            workspaceMode = workspacePonytailMode(JSON.parse(loaded.value.content));
+          } catch {
+            workspaceMode = parsePonytailModeOverride(undefined);
+          }
+        }
+      } catch {
+        workspaceMode = parsePonytailModeOverride(undefined);
+      }
+    }
+
+    let globalMode = DEFAULT_PONYTAIL_MODE;
+    try {
+      globalMode = parsePonytailMode(this.ponytailModeProvider(), DEFAULT_PONYTAIL_MODE);
+    } catch {
+      globalMode = DEFAULT_PONYTAIL_MODE;
+    }
+    return {
+      context: {
+        sessionId: this.sessionId ?? this.actor.sessionId ?? this.actor.clientId,
+        workspaceId: resolvedWorkspaceId,
+        ...(goalId === undefined ? {} : { goalId }),
+      },
+      policy: resolvePonytailPolicy(globalMode, workspaceMode, goalMode),
+    };
+  }
+
+  private async recordPonytailOutcome(
+    toolName: string,
+    input: unknown,
+    response: McpToolResponse,
+    activityWorkspaceId: string | undefined,
+    codingInvocation: ResolvedPonytailInvocation | undefined,
+  ): Promise<void> {
+    if (response.isError === true) return;
+    if (codingInvocation !== undefined && codingInvocation.policy.mode !== 'off') {
+      const state = this.ponytailActivation.state(codingInvocation.context, codingInvocation.policy);
+      if (!state.sessionSuppressed) this.ponytailActivation.recordCodeMutation(codingInvocation.context, codingInvocation.policy);
+    }
+    if (!isRecord(input)) return;
+    if (toolName === 'skill_load') {
+      if (readTrimmedString(input.relativePath) !== undefined || readTrimmedString(input.path) !== undefined) return;
+      const requestedSkillId = readTrimmedString(input.skillId) ?? readTrimmedString(input.id) ?? readTrimmedString(input.name);
+      if (requestedSkillId !== BUNDLED_PONYTAIL_SKILL_ID && requestedSkillId !== BUNDLED_PONYTAIL_REVIEW_SKILL_ID) return;
+      const skill = isRecord(response.structuredContent?.skill) ? response.structuredContent.skill : undefined;
+      if (skill === undefined || readTrimmedString(skill.id) !== requestedSkillId || readTrimmedString(skill.trustTier) !== 'bundled') return;
+      const resolved = await this.resolvePonytailInvocation(
+        readExplicitWorkspaceId(input) ?? activityWorkspaceId,
+        readTrimmedString(input.goalId),
+      );
+      if (resolved === undefined) return;
+      if (requestedSkillId === BUNDLED_PONYTAIL_SKILL_ID) {
+        this.ponytailActivation.markPrimaryLoaded(resolved.context, resolved.policy, requestedSkillId);
+      } else {
+        this.ponytailActivation.markReviewSkillLoaded(resolved.context, resolved.policy, requestedSkillId);
+      }
+      return;
+    }
+    if (toolName === 'review_changes') {
+      const resolved = await this.resolvePonytailInvocation(
+        readExplicitWorkspaceId(input) ?? activityWorkspaceId,
+        readTrimmedString(input.goalId),
+      );
+      if (resolved !== undefined) this.ponytailActivation.markReviewComplete(resolved.context, resolved.policy);
     }
   }
 
@@ -992,7 +1166,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.56.1 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v4.60.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

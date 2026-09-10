@@ -4,13 +4,21 @@ import { describe, expect, it } from 'vitest';
 
 const desktopRoot = path.resolve(import.meta.dirname, '..', '..', 'apps', 'desktop');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
+const ponytailSkillNames = [
+  'ponytail',
+  'ponytail-review',
+  'ponytail-audit',
+  'ponytail-debt',
+  'ponytail-gain',
+  'ponytail-help',
+] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('pins the product release to v4.56.1', async () => {
+  it('pins the product release to v4.60.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('4.56.1');
-    expect(desktopPackage.version).toBe('4.56.1');
+    expect(rootPackage.version).toBe('4.60.0');
+    expect(desktopPackage.version).toBe('4.60.0');
   });
 
   it('keeps every workspace package and runtime version aligned', async () => {
@@ -33,12 +41,12 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('4.56.1');
+      expect(packageJson.version, packagePath).toBe('4.60.0');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '4.56.1'");
-    expect(shared).toContain("APP_VERSION = '4.56.1'");
+    expect(ipcContracts).toContain("APP_VERSION = '4.60.0'");
+    expect(shared).toContain("APP_VERSION = '4.60.0'");
   });
 
   it('publishes complete desktop application metadata', async () => {
@@ -49,7 +57,7 @@ describe('cross-platform desktop packaging', () => {
       repository?: { type?: unknown; url?: unknown };
     };
 
-    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 232 total tool definitions.');
+    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 233 total tool definitions.');
     expect(desktopPackage.author).toBe('Adisorn');
     expect(desktopPackage.homepage).toBe('https://github.com/engasnm111/lnwjud#readme');
     expect(desktopPackage.repository).toEqual({ type: 'git', url: 'https://github.com/engasnm111/lnwjud.git' });
@@ -113,6 +121,14 @@ describe('cross-platform desktop packaging', () => {
     expect(config).toContain('to: tunnel-client');
     expect(config).toContain('from: ../../.agents/skills/lnwjud-scheduled-continuation');
     expect(config).toContain('to: agent-skills/lnwjud-scheduled-continuation');
+    for (const skillName of ponytailSkillNames) {
+      expect(config).toContain(`from: ../../.agents/skills/${skillName}`);
+      expect(config).toContain(`to: agent-skills/${skillName}`);
+      const vendoredRoot = path.join(repositoryRoot, '.agents', 'skills', skillName);
+      await access(path.join(vendoredRoot, 'SKILL.md'));
+      await access(path.join(vendoredRoot, 'LICENSE'));
+      await access(path.join(vendoredRoot, 'SOURCE.md'));
+    }
     expect(config).toContain('from: build/native-host/macos');
     expect(config).toContain('to: native-host/macos');
     expect(config).toContain('from: build/native-host/linux');
@@ -176,34 +192,39 @@ describe('cross-platform desktop packaging', () => {
     const prepareRipgrep = await readFile(path.join(desktopRoot, 'scripts', 'prepare-ripgrep.ps1'), 'utf8');
     const prepareRuntimeTools = await readFile(path.join(desktopRoot, 'scripts', 'prepare-runtime-tools.mjs'), 'utf8');
     const prepareTunnel = await readFile(path.join(desktopRoot, 'scripts', 'prepare-tunnel-client.mjs'), 'utf8');
+    const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
     const captureRuntimeEvidence = await readFile(path.join(desktopRoot, 'scripts', 'capture-packaged-runtime-evidence.mjs'), 'utf8');
     const verifyReleaseEvidence = await readFile(path.join(desktopRoot, 'scripts', 'verify-release-evidence.mjs'), 'utf8');
     const config = await readFile(path.join(desktopRoot, 'electron-builder.yml'), 'utf8');
-    expect(prepareRipgrep).toContain("$version = '15.2.0'");
-    expect(prepareRipgrep).toContain('ripgrep-$version-x86_64-pc-windows-msvc.zip');
-    expect(prepareRipgrep).toContain("$expectedSha256 = '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'");
-    expect(prepareRipgrep).toContain("'runtime-tools\\ripgrep'");
-    expect(prepareRipgrep).toContain("'BUNDLED_RIPGREP.txt'");
-    expect(prepareRipgrep).toContain("-Filter 'rg.exe'");
-    expect(prepareRuntimeTools).toContain("const RIPGREP_VERSION = '15.2.0'");
-    expect(prepareRuntimeTools).toContain('x86_64-apple-darwin.tar.gz');
-    expect(prepareRuntimeTools).toContain('aarch64-apple-darwin.tar.gz');
-    expect(prepareRuntimeTools).toContain('x86_64-unknown-linux-musl.tar.gz');
-    expect(prepareRuntimeTools).toContain('aarch64-unknown-linux-musl.tar.gz');
+    const supportedTuples = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-arm64', 'win32-x64'];
+    expect(runtimeDependencies.schemaVersion).toBe(1);
+    expect(runtimeDependencies.tunnelClient.version).toBe('0.0.14');
+    expect(runtimeDependencies.ripgrep.version).toBe('15.2.0');
+    expect(runtimeDependencies.pdfProvider).toMatchObject({ version: '26.07.0-0', platform: 'win32', arch: 'x64' });
+    expect(Object.keys(runtimeDependencies.tunnelClient.targets).sort()).toEqual(supportedTuples);
+    expect(Object.keys(runtimeDependencies.ripgrep.targets).sort()).toEqual(supportedTuples);
+    for (const target of Object.values(runtimeDependencies.tunnelClient.targets) as Array<{ archiveSha256: string }>) {
+      expect(target.archiveSha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+    for (const target of Object.values(runtimeDependencies.ripgrep.targets) as Array<{ sha256: string }>) {
+      expect(target.sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(prepareRipgrep).toContain('runtime-dependencies.json');
+    expect(prepareRipgrep).toContain(".'win32-x64'");
+    expect(prepareRuntimeTools).toContain('runtime-dependencies.json');
+    expect(prepareRuntimeTools).toContain('targetKey = `${platform}-${rawArch}`');
+    expect(prepareRuntimeTools).toContain('Runtime tools do not support ${platform}/${rawArch}');
     expect(prepareRuntimeTools).toContain('assetSha256');
     expect(prepareRuntimeTools).toContain("await chmod(destination, 0o755)");
     expect(prepareRuntimeTools).toContain('assertCanonicalFile');
     expect(prepareRuntimeTools).toContain("flag: 'wx'");
-    expect(prepareTunnel).toContain('PINNED_ARCHIVE_SHA256');
-    expect(prepareTunnel).toContain("const VERSION = '0.0.13'");
+    expect(prepareTunnel).toContain('runtime-dependencies.json');
+    expect(prepareTunnel).toContain('targetKey = `${platform}-${rawArch}`');
+    expect(prepareTunnel).toContain('Official tunnel-client checksum changed');
     expect(prepareTunnel).toContain('https://github.com/openai/tunnel-client/releases/download');
     expect(prepareTunnel).toContain('SHA256SUMS.txt');
-    expect(prepareTunnel).toContain("name: 'darwin'");
-    expect(prepareTunnel).toContain("name: 'linux'");
-    expect(prepareTunnel).toContain("x64: 'amd64'");
-    expect(prepareTunnel).toContain("arm64: 'arm64'");
-    expect(prepareTunnel).toContain("name: 'windows'");
-    expect(prepareTunnel).toContain("verifyVersion(executable)");
+    expect(prepareTunnel).toContain('verifyVersion(executable)');
+    expect(prepareTunnel).toContain('--version does not match');
     expect(prepareTunnel).toContain('verify-blob-attestation');
     expect(prepareTunnel).toContain('certificate-oidc-issuer');
     expect(prepareTunnel).toContain('token.actions.githubusercontent.com');
@@ -211,13 +232,12 @@ describe('cross-platform desktop packaging', () => {
     expect(prepareTunnel).not.toContain('--new-bundle-format=false');
     expect(prepareTunnel).toContain('assertCanonicalFile');
     expect(prepareTunnel).toContain("flag: 'wx'");
-    expect(prepareTunnel).not.toContain('0.0.12');
     expect(prepareTunnel).not.toContain('powershell');
     expect(prepareTunnel).not.toContain('Get-FileHash');
     expect(captureRuntimeEvidence).toContain('tunnel-client-license');
     expect(captureRuntimeEvidence).toContain('tunnel-client-provenance');
     expect(captureRuntimeEvidence).toContain('Packaged tunnel-client evidence identity mismatch');
-    expect(verifyReleaseEvidence).toContain('tunnel-client-v0.0.13-provenance.sigstore.json');
+    expect(verifyReleaseEvidence).toContain('BUNDLED_TUNNEL_CLIENT_VERSION');
     expect(await readFile(path.join(repositoryRoot, 'native', 'macos-host', 'Package.swift'), 'utf8')).toContain('LnwjudMacHost');
     expect(await readFile(path.join(repositoryRoot, 'native', 'linux-host', 'Cargo.toml'), 'utf8')).toContain('lnwjud-linux-host');
     expect(config).toContain('from: ../../native/windows-secret-migrator/bin/win-x64');

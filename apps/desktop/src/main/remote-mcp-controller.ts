@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RemoteMcpStatus } from '@lnwjud/ipc-contracts';
 import type { SecretProtector } from '@lnwjud/shared';
@@ -122,6 +122,7 @@ export class RemoteMcpController {
       this.ngrokProbeAt = probeNow;
     }
     const executable = this.ngrokPath;
+    const automaticInstaller = await resolveNgrokAutomaticInstaller();
     const hasAuthtoken = await this.hasAuthtoken();
     if (this.pairingCode !== null && this.now() >= this.pairingExpiresAt) {
       this.pairingCode = null;
@@ -131,6 +132,8 @@ export class RemoteMcpController {
       state: this.runState,
       provider: 'ngrok',
       installed: executable !== null,
+      automaticInstallAvailable: automaticInstaller !== null,
+      automaticInstallMethod: automaticInstaller?.method ?? null,
       hasAuthtoken,
       ngrokPath: executable,
       localMcpUrl,
@@ -153,16 +156,27 @@ export class RemoteMcpController {
       this.message = 'ngrok is already installed';
       return this.status();
     }
-    if (process.platform !== 'win32') throw new Error('Automatic ngrok installation is currently available on Windows only');
+    const installer = await resolveNgrokAutomaticInstaller();
+    if (installer === null) {
+      throw new Error(process.platform === 'linux'
+        ? 'Automatic ngrok installation is disabled on Linux because the official Apt/Snap methods may require elevated system package changes. Install ngrok from the official ngrok Linux page, then retry.'
+        : process.platform === 'darwin'
+          ? 'Automatic ngrok installation requires Homebrew on macOS. Install ngrok from the official ngrok macOS page, then retry.'
+          : 'Automatic ngrok installation is unavailable on this host. Install ngrok from the official ngrok download page, then retry.');
+    }
     this.runState = 'installing';
-    this.message = 'Installing ngrok from Microsoft Store via WinGet…';
+    this.message = installer.method === 'windows_store'
+      ? 'Installing ngrok from Microsoft Store via WinGet…'
+      : 'Installing ngrok with Homebrew…';
     try {
-      await runCommand('winget.exe', ['install', 'ngrok', '-s', 'msstore', '--accept-package-agreements', '--accept-source-agreements', '--silent'], 180_000);
+      await runCommand(installer.executable, installer.args, 180_000);
       const installed = await resolveNgrokExecutable();
-      if (installed === null) throw new Error('ngrok installation completed but ngrok.exe could not be resolved. Sign out/in or restart Windows if App Execution Aliases were just installed.');
+      if (installed === null) throw new Error('ngrok installation completed but no runnable target-native ngrok executable could be resolved');
       this.ngrokPath = installed;
       this.runState = 'stopped';
-      this.message = 'ngrok installed from the official Microsoft Store package';
+      this.message = installer.method === 'windows_store'
+        ? 'ngrok installed from the official Microsoft Store package'
+        : 'ngrok installed with the official Homebrew formula';
       return this.status();
     } catch (error) {
       this.runState = 'error';
@@ -692,20 +706,83 @@ export function buildNgrokHttpArgs(gatewayUrl: string): string[] {
   return ['http', gatewayUrl, '--log=stdout', '--log-format=json'];
 }
 
-export async function resolveNgrokExecutable(): Promise<string | null> {
-  if (process.platform !== 'win32') return null;
-  let output: string;
-  try {
-    output = await runCommand('where.exe', ['ngrok.exe'], 5_000);
-  } catch { return null; }
-  const candidates = [...new Set(output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0))];
+type NgrokInstaller = Readonly<{
+  method: 'windows_store' | 'homebrew';
+  executable: string;
+  args: readonly string[];
+}>;
+
+export async function resolveNgrokExecutable(
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  runner: typeof runCommand = runCommand,
+): Promise<string | null> {
+  if (platform === 'win32') {
+    let output: string;
+    try {
+      output = await runner('where.exe', ['ngrok.exe'], 5_000);
+    } catch { return null; }
+    const candidates = [...new Set(output.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0))];
+    for (const candidate of candidates) {
+      try {
+        const version = await runner(candidate, ['version'], 5_000);
+        if (/\bngrok\s+version\b/i.test(version)) return candidate;
+      } catch { /* Ignore stale App Execution Aliases and try the next candidate. */ }
+    }
+    return null;
+  }
+  if (platform !== 'darwin' && platform !== 'linux') return null;
+
+  const candidates = posixExecutableCandidates('ngrok', platform, environment);
   for (const candidate of candidates) {
     try {
-      const version = await runCommand(candidate, ['version'], 5_000);
-      if (/\bngrok\s+version\b/i.test(version)) return candidate;
-    } catch { /* Ignore stale App Execution Aliases and try the next candidate. */ }
+      const canonical = await realpath(candidate);
+      const metadata = await stat(canonical);
+      if (!metadata.isFile() || (metadata.mode & 0o111) === 0) continue;
+      const version = await runner(canonical, ['version'], 5_000);
+      if (/\bngrok\s+version\b/i.test(version)) return canonical;
+    } catch { /* Ignore missing/stale package-manager links and try the next candidate. */ }
   }
   return null;
+}
+
+async function resolveNgrokAutomaticInstaller(
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  runner: typeof runCommand = runCommand,
+): Promise<NgrokInstaller | null> {
+  if (platform === 'win32') {
+    try {
+      const output = await runner('where.exe', ['winget.exe'], 5_000);
+      const winget = output.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0);
+      return winget === undefined ? null : {
+        method: 'windows_store', executable: winget,
+        args: ['install', 'ngrok', '-s', 'msstore', '--accept-package-agreements', '--accept-source-agreements', '--silent'],
+      };
+    } catch { return null; }
+  }
+  if (platform !== 'darwin') return null;
+  for (const candidate of posixExecutableCandidates('brew', 'darwin', environment)) {
+    try {
+      const canonical = await realpath(candidate);
+      const metadata = await stat(canonical);
+      if (!metadata.isFile() || (metadata.mode & 0o111) === 0) continue;
+      await runner(canonical, ['--version'], 5_000);
+      return { method: 'homebrew', executable: canonical, args: ['install', 'ngrok'] };
+    } catch { /* Try the next standard Homebrew location. */ }
+  }
+  return null;
+}
+
+export function posixExecutableCandidates(name: string, platform: 'darwin' | 'linux', environment: NodeJS.ProcessEnv): string[] {
+  const fromPath = (environment.PATH ?? '').split(':')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && path.posix.isAbsolute(entry))
+    .map((entry) => path.posix.join(entry, name));
+  const standard = platform === 'darwin'
+    ? [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`]
+    : [`/usr/local/bin/${name}`, `/usr/bin/${name}`, `/snap/bin/${name}`];
+  return [...new Set([...fromPath, ...standard])];
 }
 
 export function selectRecoverableStaleNgrokProcess(processes: readonly NgrokProcessSnapshot[], target: string): NgrokProcessSnapshot | null {
@@ -713,7 +790,7 @@ export function selectRecoverableStaleNgrokProcess(processes: readonly NgrokProc
   const matches = processes.filter((entry) => {
     if (entry.parentAlive || entry.processId <= 0) return false;
     const commandLine = entry.commandLine.trim().toLowerCase().replace(/\s+/g, ' ');
-    return commandLine.includes('ngrok.exe')
+    return /(?:^|[\\/\s])ngrok(?:\.exe)?(?:\s|$)/i.test(commandLine)
       && commandLine.includes(` http ${normalizedTarget} `)
       && commandLine.includes('--log=stdout')
       && commandLine.includes('--log-format=json');
@@ -722,7 +799,6 @@ export function selectRecoverableStaleNgrokProcess(processes: readonly NgrokProc
 }
 
 async function recoverStaleLnwjudNgrokRuntime(): Promise<boolean> {
-  if (process.platform !== 'win32') return false;
   const tunnels = await readNgrokTunnelSnapshots();
   if (tunnels.length === 0) return false;
   const processes = await readNgrokProcessSnapshots();
@@ -753,6 +829,7 @@ async function readNgrokTunnelSnapshots(): Promise<NgrokTunnelSnapshot[]> {
 }
 
 async function readNgrokProcessSnapshots(): Promise<NgrokProcessSnapshot[]> {
+  if (process.platform !== 'win32') return readPosixNgrokProcessSnapshots();
   const systemRoot = process.env.SystemRoot?.trim() || 'C:\\Windows';
   const powershell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const script = '$items = @(Get-CimInstance Win32_Process -Filter "Name=\'ngrok.exe\'" | ForEach-Object { [pscustomobject]@{ ProcessId=[int]$_.ProcessId; ParentProcessId=[int]$_.ParentProcessId; ParentAlive=[bool](Get-Process -Id ([int]$_.ParentProcessId) -ErrorAction SilentlyContinue); CommandLine=[string]$_.CommandLine } }); ConvertTo-Json -Compress -InputObject $items';
@@ -773,6 +850,22 @@ async function readNgrokProcessSnapshots(): Promise<NgrokProcessSnapshot[]> {
         parentAlive: record.ParentAlive === true,
         commandLine: typeof record.CommandLine === 'string' ? record.CommandLine : '',
       }];
+    });
+  } catch { return []; }
+}
+
+async function readPosixNgrokProcessSnapshots(): Promise<NgrokProcessSnapshot[]> {
+  try {
+    const output = await runCommand('/bin/ps', ['-axo', 'pid=,ppid=,command='], 5_000);
+    return output.split(/\r?\n/).flatMap((line): NgrokProcessSnapshot[] => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+      if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return [];
+      const processId = Number(match[1]);
+      const parentProcessId = Number(match[2]);
+      const commandLine = match[3];
+      if (!Number.isInteger(processId) || !Number.isInteger(parentProcessId)
+        || !/(?:^|[\\/\s])ngrok(?:\s|$)/i.test(commandLine)) return [];
+      return [{ processId, parentProcessId, parentAlive: isProcessAlive(parentProcessId), commandLine }];
     });
   } catch { return []; }
 }

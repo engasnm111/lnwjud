@@ -335,7 +335,7 @@ describe('session resilience acceptance', () => {
     const [testSource, packageJson, readme, tunnelController, powerShellHelper, tunnelLauncher] = await Promise.all([
       readFile(import.meta.filename, 'utf8'),
       readFile(path.join(repositoryRoot, 'package.json'), 'utf8'),
-      readFile(path.join(repositoryRoot, 'README.md'), 'utf8'),
+      readFile(path.join(repositoryRoot, 'FULL_README.md'), 'utf8'),
       readFile(path.join(repositoryRoot, 'apps', 'desktop', 'src', 'main', 'tunnel-controller.ts'), 'utf8'),
       readFile(lockHelper, 'utf8'),
       readFile(tunnelStarter, 'utf8'),

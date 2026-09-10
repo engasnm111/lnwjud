@@ -21,9 +21,11 @@ describe('tool catalog renderer model', () => {
     expect(filterAndSortTools(items, baseFilters).map((entry) => entry.name)).toEqual(['blocked-one', 'setup-one', 'ready-one']);
     expect(catalogStatusCounts(items)).toMatchObject({ ready: 1, blocked: 1, needs_setup: 1 });
   });
-  it('keeps external MCP tools separate and searchable', () => {
-    const items = [item('read_file', 'ready'), item('remote_search', 'unknown', 'external_mcp')];
-    expect(filterAndSortTools(items, { ...baseFilters, origin: 'external_mcp', query: 'remote' }).map((entry) => entry.name)).toEqual(['remote_search']);
+  it('keeps external MCP tools separate and counts successfully discovered tools as ready', () => {
+    const items = [item('read_file', 'ready'), item('remote_search', 'ready', 'external_mcp')];
+    const external = filterAndSortTools(items, { ...baseFilters, origin: 'external_mcp', query: 'remote' });
+    expect(external.map((entry) => entry.name)).toEqual(['remote_search']);
+    expect(catalogStatusCounts(external)).toMatchObject({ ready: 1, unknown: 0 });
     expect(filterAndSortTools(items, { ...baseFilters, origin: 'lnwjud' }).map((entry) => entry.name)).toEqual(['read_file']);
   });
   it('filters user availability independently from runtime readiness', () => {

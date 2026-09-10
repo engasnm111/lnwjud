@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import type {
   ExtraMcpServerSettings,
   PermissionDecisionSetting,
@@ -13,7 +13,8 @@ export type UserConfigSection = 'general' | 'security' | 'tools' | 'mcp' | 'tunn
 
 interface UserConfigPanelProps {
   readonly locale: UiLocale;
-  readonly hostPlatform?: 'win32' | 'darwin' | 'linux';
+  readonly hostPlatform: 'win32' | 'darwin' | 'linux';
+  readonly hostArch: 'x64' | 'arm64';
   readonly permissionProfile: PermissionProfileName;
   readonly stdioPermissionProfile: PermissionProfileName;
   readonly settings?: UserSettings;
@@ -38,6 +39,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   lspCommands: {},
   mcpHttpPort: 18_765,
   codexToolsEnabled: false,
+  ponytailMode: 'off',
   updateAutoCheck: true,
   updateCheckOnStartup: true,
   updateIntervalMinutes: 30,
@@ -51,13 +53,13 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
-export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider }: UserConfigPanelProps): ReactElement {
+export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider }: UserConfigPanelProps): ReactElement {
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
-  // Older dashboard fixtures omit hostPlatform; keep their Windows-shaped
-  // rendering while production dashboards always provide the authoritative
-  // startup platform.
-  const isWindowsHost = (hostPlatform ?? 'win32') === 'win32';
+  const persistedSettingsFingerprint = JSON.stringify(effectiveSettings);
+  const isWindowsHost = hostPlatform === 'win32';
+  const canAutoInstallPdfProvider = isWindowsHost && hostArch === 'x64';
   const [draft, setDraft] = useState<UserSettings>(effectiveSettings);
+  const lastPersistedSettingsFingerprint = useRef(persistedSettingsFingerprint);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -68,8 +70,10 @@ export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdio
   const [unrestrictedMessage, setUnrestrictedMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!dirty) setDraft(effectiveSettings);
-  }, [effectiveSettings, dirty]);
+    if (dirty || persistedSettingsFingerprint === lastPersistedSettingsFingerprint.current) return;
+    lastPersistedSettingsFingerprint.current = persistedSettingsFingerprint;
+    setDraft(effectiveSettings);
+  }, [dirty, effectiveSettings, persistedSettingsFingerprint]);
 
   function patch(next: Partial<UserSettings>): void {
     setDraft((previous) => ({ ...previous, ...next }));
@@ -95,8 +99,8 @@ export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdio
   function changeFullBypass(target: 'desktop' | 'stdio', enabled: boolean): void {
     if (enabled) {
       const confirmed = window.confirm(locale === 'th'
-        ? 'ยืนยันเปิด FULL BYPASS ON? lnwjud จะไม่ถามยืนยันอีก รวม tool ที่กำหนดว่าต้องยืนยันเสมอ คำสั่งอันตราย ขอบเขต Active Project, goalLease และ absolute path นอกโปรเจกต์ การแก้ไขหรือลบอาจกู้คืนไม่ได้ แต่การตรวจรูปแบบข้อมูล, Windows ACL/UAC และสิทธิ์บริการภายนอกยังคงมีผล'
-        : 'Enable FULL BYPASS ON? lnwjud will stop asking for approval, including always-confirm tools, risky commands, Active Project scope, goalLease, and absolute paths outside projects. Changes or deletes may not be recoverable. Input validation, Windows ACL/UAC, and remote-service authorization still apply.');
+        ? 'ยืนยันเปิด FULL BYPASS ON? lnwjud จะไม่ถามยืนยันอีก รวม tool ที่กำหนดว่าต้องยืนยันเสมอ คำสั่งอันตราย ขอบเขต Active Project, goalLease และ absolute path นอกโปรเจกต์ การแก้ไขหรือลบอาจกู้คืนไม่ได้ แต่การตรวจรูปแบบข้อมูล, สิทธิ์/การยกระดับของระบบปฏิบัติการ และสิทธิ์บริการภายนอกยังคงมีผล'
+        : 'Enable FULL BYPASS ON? lnwjud will stop asking for approval, including always-confirm tools, risky commands, Active Project scope, goalLease, and absolute paths outside projects. Changes or deletes may not be recoverable. Input validation, OS permissions/elevation, and remote-service authorization still apply.');
       if (!confirmed) return;
     }
     patch(target === 'desktop' ? { desktopFullBypassAll: enabled } : { stdioFullBypassAll: enabled });
@@ -234,7 +238,7 @@ export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdio
             <p className="hint">{locale === 'th'
               ? 'เครื่องมือไฟล์แบบมีโครงสร้างใช้ Active Project แบบ canonical และ Recovery Trash / checkpoint. เมื่อ Full Bypass ปิด งานปกติของ Full Access จะไม่ถาม แต่ tool ที่ต้องยืนยันเสมอ งานลบ/ทำข้อมูลหาย และงานนอกขอบเขตยังถาม ส่วนคำสั่งระดับเครื่องอันตรายยังถูกบล็อก'
               : 'Structured file tools use canonical Active Project paths and Recovery Trash / checkpoints. With Full Bypass OFF, ordinary Full Access work does not prompt; always-confirm, destructive, and out-of-scope actions still ask, while dangerous machine-level commands remain blocked.'}</p>
-            <p className="hint">{locale === 'th' ? 'FULL BYPASS ข้ามเฉพาะ authorization/policy ของ lnwjud การตรวจ input, path ที่ต้องมีอยู่, Windows ACL/UAC และสิทธิ์บริการภายนอกยังทำงานตามจริง' : 'FULL BYPASS skips lnwjud authorization policy only. Input validation, required path existence, Windows ACL/UAC, and remote-service authorization still apply.'}</p>
+            <p className="hint">{locale === 'th' ? 'FULL BYPASS ข้ามเฉพาะ authorization/policy ของ lnwjud การตรวจ input, path ที่ต้องมีอยู่, สิทธิ์/การยกระดับของระบบปฏิบัติการ และสิทธิ์บริการภายนอกยังทำงานตามจริง' : 'FULL BYPASS skips lnwjud authorization policy only. Input validation, required path existence, OS permissions/elevation, and remote-service authorization still apply.'}</p>
           </section>
 
           <section className="panel settings-card settings-card-polished custom-permission-card" aria-label="Custom Permission Profile">
@@ -247,7 +251,7 @@ export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdio
             </div>
             <div className="setting-field">
               <label className="field-label" htmlFor="custom-executables">{locale === 'th' ? 'Allowed Executables เพิ่มเติม — หนึ่งรายการต่อบรรทัด' : 'Additional allowed executables — one per line'}</label>
-              <textarea id="custom-executables" className="settings-textarea" rows={4} value={draft.customPermission.allowedExecutables.join('\n')} placeholder={'python.exe\ndocker.exe\ndotnet.exe'} onChange={(event) => patchCustom({ allowedExecutables: splitList(event.target.value) })} />
+              <textarea id="custom-executables" className="settings-textarea" rows={4} value={draft.customPermission.allowedExecutables.join('\n')} placeholder={isWindowsHost ? 'python.exe\ndocker.exe\ndotnet.exe' : 'python\ndocker\ndotnet'} onChange={(event) => patchCustom({ allowedExecutables: splitList(event.target.value) })} />
             </div>
           </section>
         </>
@@ -294,14 +298,14 @@ export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdio
           <section className="panel settings-card settings-card-polished" aria-label="Local providers" data-settings-focus="tools-local-providers" tabIndex={-1}>
             <CardHeading icon="◫" title={locale === 'th' ? 'Local Providers' : 'Local Providers'} subtitle={locale === 'th' ? 'ตั้งค่า Language Server และ provider ที่ระบบรองรับ' : 'Configure language servers and host-supported providers'} badge="ADVANCED" />
             <div className="setting-grid two-col">
-              {isWindowsHost ? (
-                <div className="pdf-provider-install-control">
-                  <Field
-                    label={locale === 'th' ? 'PDF Provider (pdftotext.exe)' : 'PDF Provider (pdftotext.exe)'}
-                    value={draft.pdfProviderPath}
-                    placeholder={locale === 'th' ? 'พาธไปยัง pdftotext.exe (ถ้ามี)' : 'Path to pdftotext.exe (optional)'}
-                    onChange={(value) => patch({ pdfProviderPath: value })}
-                  />
+              <div className="pdf-provider-install-control">
+                <Field
+                  label={locale === 'th' ? `PDF Provider (${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'})` : `PDF Provider (${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'})`}
+                  value={draft.pdfProviderPath}
+                  placeholder={locale === 'th' ? `พาธไปยัง ${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'} (ถ้ามี)` : `Path to ${isWindowsHost ? 'pdftotext.exe' : 'pdftotext'} (optional)`}
+                  onChange={(value) => patch({ pdfProviderPath: value })}
+                />
+                {canAutoInstallPdfProvider ? (
                   <div className="inline-actions">
                     <button type="button" className="btn-save-gold" disabled={pdfInstallBusy} onClick={() => { void installPdf(); }}>
                       {pdfInstallBusy
@@ -309,20 +313,17 @@ export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdio
                         : (locale === 'th' ? 'ดาวน์โหลดและติดตั้งอัตโนมัติ' : 'Download & install automatically')}
                     </button>
                   </div>
-                  <p className="hint">{locale === 'th'
-                    ? 'ดาวน์โหลด Poppler for Windows รุ่นที่ lnwjud กำหนดไว้จาก GitHub Release ตรวจ SHA-256 ก่อนแตกไฟล์ แล้วเก็บไว้ในโฟลเดอร์ข้อมูลของ lnwjud โดยไม่ต้องเพิ่ม PATH หรือใช้สิทธิ์ Administrator'
-                    : 'Downloads the lnwjud-pinned Poppler for Windows release from GitHub, verifies SHA-256 before extraction, and installs it in the lnwjud data directory without changing PATH or requiring Administrator rights.'}</p>
-                  {pdfInstallError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {pdfInstallError}</div>}
-                  {pdfInstallMessage === null ? null : <div className="toast-success-banner" role="status">✓ {pdfInstallMessage}</div>}
-                </div>
-              ) : (
-                <div className="setting-field">
-                  <span className="field-label">PDF Provider</span>
-                  <p className="hint">{locale === 'th'
-                    ? 'ตัวติดตั้ง PDF แบบฝังของ Windows ถูกตัดออกบน host นี้ ให้ติดตั้ง pdftotext ของระบบเองแล้วตั้งค่าใน configuration หากต้องการใช้ PDF tools'
-                    : 'The bundled Windows PDF installer is disabled on this host. Install a native pdftotext provider yourself and configure it only if you need PDF tools.'}</p>
-                </div>
-              )}
+                ) : null}
+                <p className="hint">{canAutoInstallPdfProvider
+                  ? (locale === 'th'
+                    ? 'ดาวน์โหลด Poppler for Windows x64 รุ่นที่ lnwjud กำหนดไว้จาก GitHub Release ตรวจ SHA-256 ก่อนแตกไฟล์ แล้วเก็บไว้ในโฟลเดอร์ข้อมูลของ lnwjud โดยไม่ต้องเพิ่ม PATH หรือใช้สิทธิ์ Administrator'
+                    : 'Downloads the lnwjud-pinned Poppler for Windows x64 release from GitHub, verifies SHA-256 before extraction, and installs it in the lnwjud data directory without changing PATH or requiring Administrator rights.')
+                  : (locale === 'th'
+                    ? `ไม่มีตัวติดตั้ง PDF อัตโนมัติสำหรับ ${hostPlatform}/${hostArch} ให้ติดตั้ง pdftotext แบบ native ของระบบ แล้วระบุพาธด้านบน`
+                    : `No automatic PDF provider installer is available for ${hostPlatform}/${hostArch}. Install a native pdftotext provider and configure its path above.`)}</p>
+                {pdfInstallError === null ? null : <div className="alert-box-warning" role="alert">⚠️ {pdfInstallError}</div>}
+                {pdfInstallMessage === null ? null : <div className="toast-success-banner" role="status">✓ {pdfInstallMessage}</div>}
+              </div>
               <TextArea
                 label={locale === 'th' ? 'LSP Commands — LANGUAGE=COMMAND' : 'LSP Commands — LANGUAGE=COMMAND'}
                 value={stringMapToText(draft.lspCommands)}
@@ -344,6 +345,27 @@ export function UserConfigPanel({ locale, hostPlatform, permissionProfile, stdio
             subtitle={locale === 'th' ? 'ตั้งค่า External MCP โดยไม่ต้องแก้ JSON เอง' : 'Configure external MCP without editing JSON'}
             action={<button type="button" className="btn-save-gold" onClick={addServer}>+ {locale === 'th' ? 'เพิ่ม MCP Server' : 'Add MCP Server'}</button>}
           />
+          <div className="setting-field" data-settings-focus="ponytail-policy" tabIndex={-1}>
+            <label className="field-label" htmlFor="ponytail-mode">{locale === 'th' ? 'Ponytail coding policy' : 'Ponytail coding policy'}</label>
+            <select
+              id="ponytail-mode"
+              className="settings-select"
+              value={draft.ponytailMode}
+              onChange={(event) => {
+                const value = event.target.value;
+                patch({ ponytailMode: value === 'lite' || value === 'full' || value === 'ultra' ? value : 'off' });
+              }}
+            >
+              <option value="off">{locale === 'th' ? 'Off — ปิด (ค่าเริ่มต้น)' : 'Off — disabled (default)'}</option>
+              <option value="lite">Lite</option>
+              <option value="full">Full</option>
+              <option value="ultra">Ultra</option>
+            </select>
+            <p className="hint">{locale === 'th'
+              ? 'เมื่อเปิด งานเขียนโค้ดต้องโหลด bundled Ponytail ของ lnwjud ก่อนแก้ source/config จริง โดยไม่ใช้ skill ชื่อซ้ำจาก workspace หรือ user แทน; Full/Ultra บังคับ Ponytail Review ให้ทัน code mutation ล่าสุดก่อนปิด durable goal เป็น completed'
+              : 'When enabled, coding mutations must load lnwjud’s bundled Ponytail before changing source/config files; same-named workspace or user skills cannot substitute it. Full/Ultra require a current Ponytail Review before a durable goal can complete.'}</p>
+            <p className="hint">{locale === 'th' ? 'ค่าใหม่นี้ใช้หลัง Restart Local MCP / Tunnel หรือเปิดโปรแกรมใหม่' : 'Restart Local MCP / Tunnel or the app after changing this setting.'}</p>
+          </div>
           <div className="setting-grid two-col">
             <div className="setting-field">
               <label className="field-label" htmlFor="extension-mode">External MCP mode</label>

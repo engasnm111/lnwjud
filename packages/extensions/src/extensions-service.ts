@@ -12,6 +12,7 @@ import type {
 
 export interface LocalExtensionsServiceOptions {
   readonly settings: ExtensionsSettings;
+  readonly settingsProvider?: () => ExtensionsSettings;
   readonly homeDir?: string;
   readonly appDataDir?: string;
   readonly workspaceRootProvider?: () => Promise<string | undefined>;
@@ -22,7 +23,7 @@ export interface LocalExtensionsServiceOptions {
 }
 
 export class LocalExtensionsService implements ExtensionsService {
-  private readonly settings: ExtensionsSettings;
+  private readonly settingsProvider: () => ExtensionsSettings;
   private readonly homeDir: string | undefined;
   private readonly appDataDir: string | undefined;
   private readonly workspaceRootProvider: () => Promise<string | undefined>;
@@ -30,7 +31,7 @@ export class LocalExtensionsService implements ExtensionsService {
   private readonly sessions: McpSessionManager;
 
   public constructor(options: LocalExtensionsServiceOptions) {
-    this.settings = options.settings;
+    this.settingsProvider = options.settingsProvider ?? ((): ExtensionsSettings => options.settings);
     this.homeDir = options.homeDir;
     this.appDataDir = options.appDataDir;
     this.workspaceRootProvider = options.workspaceRootProvider ?? (async (): Promise<undefined> => undefined);
@@ -157,7 +158,7 @@ export class LocalExtensionsService implements ExtensionsService {
   private async skillCatalog(): Promise<SkillCatalog> {
     const workspaceRoot = await this.workspaceRootProvider();
     return new SkillCatalog({
-      settings: this.settings,
+      settings: this.settingsProvider(),
       ...(this.homeDir === undefined ? {} : { homeDir: this.homeDir }),
       ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
       bundledRoots: this.bundledSkillRoots,
@@ -167,7 +168,7 @@ export class LocalExtensionsService implements ExtensionsService {
   private async loader(): Promise<McpConfigLoader> {
     const workspaceRoot = await this.workspaceRootProvider();
     return new McpConfigLoader({
-      settings: this.settings,
+      settings: this.settingsProvider(),
       ...(this.homeDir === undefined ? {} : { homeDir: this.homeDir }),
       ...(this.appDataDir === undefined ? {} : { appDataDir: this.appDataDir }),
       ...(workspaceRoot === undefined ? {} : { workspaceRoot }),

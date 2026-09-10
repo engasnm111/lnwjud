@@ -1,7 +1,9 @@
 import { useId, useState, type ReactElement } from 'react';
-import type { ActivityTargetDetail, ActivityTargetReference } from '@lnwjud/ipc-contracts';
+import type { ActivityTargetDetail, ActivityTargetReference, UiLocale } from '@lnwjud/ipc-contracts';
+import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 
 interface ExpandableTargetDetailProps {
+  readonly locale?: UiLocale;
   readonly reference: ActivityTargetReference;
   readonly legacySummary?: string | null;
   readonly showMoreLabel: string;
@@ -72,7 +74,7 @@ export function ExpandableTargetDetail(props: ExpandableTargetDetailProps): Reac
           {detailState.status === 'complete' && detailState.detail.items.length === 0 ? <p>{props.emptyLabel}</p> : null}
           {detailState.status === 'complete' && detailState.detail.items.length > 0 ? (
             <ul className="log-detail-items">
-              {detailState.detail.items.map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}
+              {detailState.detail.items.map((item, index) => <li key={`${index}:${item}`}>{formatDisplayTimestampItem(item, props.locale ?? 'th')}</li>)}
             </ul>
           ) : null}
         </div>

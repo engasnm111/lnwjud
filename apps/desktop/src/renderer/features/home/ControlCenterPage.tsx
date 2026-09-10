@@ -40,7 +40,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
   const tunnelCredentialAvailable = tunnelRuntimeCredentialAvailable(dashboard.tunnel);
   const tunnelPresentation = tunnelAuthPresentation(dashboard.tunnel);
   const remoteMcp = dashboard.remoteMcp ?? {
-    state: 'stopped' as const, provider: 'ngrok' as const, installed: false, hasAuthtoken: false, ngrokPath: null,
+    state: 'stopped' as const, provider: 'ngrok' as const, installed: false, automaticInstallAvailable: false, automaticInstallMethod: null, hasAuthtoken: false, ngrokPath: null,
     localMcpUrl: dashboard.mcp.url, localGatewayUrl: null, publicMcpUrl: null, pairingCode: null, pairingCodeExpiresAt: null,
     oauthProtected: true, oauthConnected: false, pairingRequired: false, autoStartEnabled: false, message: null,
   };
@@ -116,7 +116,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           </button>
         </div>
       </div>
-      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p role="status" className="hint">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentLabel(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt)}`}</p>}
+      {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p role="status" className="hint">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentLabel(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt, '—', props.locale)}`}</p>}
 
       <section className="panel agent-status-panel" aria-label={agentLabel}>
         <div className={`agent-orb ${dashboard.agentState}`} data-testid="agent-state" />

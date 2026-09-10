@@ -99,7 +99,7 @@ describe('MCP tool registry', () => {
       'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
       'audio', 'screen_record', 'office', 'scheduler',
       'wsl_exec', 'wsl_fs',
-      'skills_list', 'skills_read', 'mcp_list', 'mcp_describe', 'mcp_call',
+      'skills_list', 'skills_read', 'ponytail_session', 'mcp_list', 'mcp_describe', 'mcp_call',
       'workspace_context', 'workspace_context_continue', 'workspace_full_scan', 'workspace_full_scan_continue',
       'workspace_snapshot', 'search_all', 'read_many_files',
       'read_file_page', 'read_file_page_continue',
@@ -423,15 +423,26 @@ describe('MCP tool registry', () => {
   });
 
   it('returns a recoverable timeout before a slow tool can outlive the MCP response budget', async () => {
+    let backendSettled = false;
+    let abortObserved = false;
+    let settleBackend: (() => void) | undefined;
     const services: McpApplicationServices = { search: {
-      async searchText() { await new Promise((resolve) => setTimeout(resolve, 80)); return ok({ matches: [], truncated: false }); },
+      async searchText(_actor, _workspaceId, _request, signal) {
+        return await new Promise<ReturnType<typeof ok>>((resolve) => {
+          settleBackend = (): void => { backendSettled = true; resolve(ok({ matches: [], truncated: false })); };
+          signal?.addEventListener('abort', () => { abortObserved = true; }, { once: true });
+        });
+      },
       async searchFiles() { return ok({ paths: [], truncated: false }); },
     } };
     const registry = new ToolRegistry(services, actor, { maxToolDurationMs: 10 });
-    const started = Date.now();
     const response = await registry.invoke('search_text', { workspaceId: 'workspace-1', query: 'slow' });
-    expect(Date.now() - started).toBeLessThan(70);
     expect(response).toMatchObject({ isError: true, structuredContent: { error: { code: 'PROCESS_TIMEOUT', recoverable: true } } });
+    expect(abortObserved).toBe(true);
+    expect(backendSettled).toBe(false);
+    settleBackend?.();
+    await Promise.resolve();
+    expect(backendSettled).toBe(true);
   });
 
   it('aborts a timed-out invocation before allowing the next MCP call to succeed', async () => {

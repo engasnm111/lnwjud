@@ -8,6 +8,7 @@ export const EXTENSIONS_SETTINGS_KEY = 'extensions';
 
 export interface CreateLocalExtensionsOptions {
   readonly settingsJson?: string | null;
+  readonly settingsJsonProvider?: () => string | null | undefined;
   readonly homeDir?: string;
   readonly appDataDir?: string;
   readonly workspaceRootProvider?: () => Promise<string | undefined>;
@@ -20,6 +21,9 @@ export interface CreateLocalExtensionsOptions {
 export function createLocalExtensionsService(options: CreateLocalExtensionsOptions = {}): ExtensionsService {
   return new LocalExtensionsService({
     settings: parseExtensionsSettings(options.settingsJson),
+    ...(options.settingsJsonProvider === undefined ? {} : {
+      settingsProvider: (): ReturnType<typeof parseExtensionsSettings> => parseExtensionsSettings(options.settingsJsonProvider?.()),
+    }),
     ...(options.homeDir === undefined ? {} : { homeDir: options.homeDir }),
     ...(options.appDataDir === undefined ? {} : { appDataDir: options.appDataDir }),
     ...(options.workspaceRootProvider === undefined ? {} : { workspaceRootProvider: options.workspaceRootProvider }),

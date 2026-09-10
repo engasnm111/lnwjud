@@ -555,13 +555,10 @@ async function probeProcessIdentity(pid: number, platform: NodeJS.Platform): Pro
       ], { windowsHide: true, encoding: 'utf8', timeout: 1_750, maxBuffer: 16 * 1024 });
       return parsePortableProcessProbe(stdout);
     }
-    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], {
+    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'stat='], {
       encoding: 'utf8', timeout: 1_750, maxBuffer: 16 * 1024,
     });
-    const value = stdout.trim();
-    if (value.length === 0) return { state: 'gone' };
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? { state: 'live', processStartedAt: new Date(parsed).toISOString() } : { state: 'unverifiable', reason: 'invalid_start_time' };
+    return parsePosixProcessProbe(stdout);
   } catch (error: unknown) {
     if (isProcessProbeNotFound(error)) return { state: 'gone' };
     return { state: 'unverifiable', reason: isProcessProbeTimeout(error) ? 'probe_timeout' : 'probe_failed' };
@@ -574,6 +571,20 @@ function parsePortableProcessProbe(value: string): PortableProcessProbe {
   if (!trimmed.startsWith('LIVE|')) return { state: 'unverifiable', reason: 'invalid_probe_response' };
   const startedAt = trimmed.slice(5);
   const parsed = Date.parse(startedAt);
+  return Number.isFinite(parsed) ? { state: 'live', processStartedAt: new Date(parsed).toISOString() } : { state: 'unverifiable', reason: 'invalid_start_time' };
+}
+
+export function parsePosixProcessProbe(value: string): PortableProcessProbe {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return { state: 'gone' };
+  const fields = trimmed.split(/\s+/);
+  const status = fields.pop();
+  if (status === undefined || fields.length === 0) return { state: 'unverifiable', reason: 'invalid_probe_response' };
+  // A POSIX zombie has already exited and cannot execute further work. kill(pid, 0)
+  // still succeeds until its parent reaps the process, so treating Z as live
+  // makes verified cancellation falsely time out on Linux/macOS.
+  if (status.startsWith('Z')) return { state: 'gone' };
+  const parsed = Date.parse(fields.join(' '));
   return Number.isFinite(parsed) ? { state: 'live', processStartedAt: new Date(parsed).toISOString() } : { state: 'unverifiable', reason: 'invalid_start_time' };
 }
 
@@ -630,7 +641,7 @@ async function stopProcessTree(
     const probe = await probeProcessIdentity(trackedPid, platform);
     if (probe.state === 'unverifiable' || (probe.state === 'live' && (expectedStartedAt === undefined || probe.processStartedAt !== expectedStartedAt))) return false;
   }
-  if (!trackedPids.some(isProcessRunning)) {
+  if (await trackedProcessesExited(trackedPids, platform, identities)) {
     await delay(PROCESS_HANDLE_RELEASE_GRACE_MS);
     return true;
   }
@@ -640,38 +651,63 @@ async function stopProcessTree(
       killer.once('error', () => resolve(null));
       killer.once('close', resolve);
     });
-    if (exitCode !== 0 && trackedPids.some(isProcessRunning)) return false;
+    if (exitCode !== 0 && !(await trackedProcessesExited(trackedPids, platform, identities))) return false;
   } else {
     try { process.kill(-pid, 'SIGTERM'); } catch (error: unknown) {
       // A missing group is safe only when every tracked identity is already
       // gone. Never fall back to killing a possibly reused naked PID.
-      if (!isNoSuchProcess(error) || trackedPids.some(isProcessRunning)) return false;
+      if (!isNoSuchProcess(error) || !(await trackedProcessesExited(trackedPids, platform, identities))) return false;
       return true;
     }
   }
   const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
-    if (!trackedPids.some(isProcessRunning)) {
+    if (await trackedProcessesExited(trackedPids, platform, identities)) {
       // Windows can report the PIDs gone slightly before their final CWD/file
-      // handles become deletable. Do not publish "cancelled" until that
-      // cleanup window has elapsed.
+      // handles become deletable. POSIX can retain a zombie PID briefly after
+      // exit, which the identity probe correctly treats as non-executing.
       await delay(PROCESS_HANDLE_RELEASE_GRACE_MS);
-      return !trackedPids.some(isProcessRunning);
+      return trackedProcessesExited(trackedPids, platform, identities);
     }
     await delay(50);
   }
-  if (!trackedPids.some(isProcessRunning)) return true;
+  if (await trackedProcessesExited(trackedPids, platform, identities)) return true;
   if (platform !== 'win32') {
-    try { process.kill(-pid, 'SIGKILL'); } catch (error: unknown) {
-      if (!isNoSuchProcess(error)) return false;
+    // Revalidate the exact group leader before escalating. A reused PID must
+    // never receive a signal merely because it inherited the same number.
+    const targetProbe = await probeProcessIdentity(pid, platform);
+    const expectedStartedAt = identities.get(pid);
+    if (targetProbe.state === 'unverifiable'
+      || (targetProbe.state === 'live' && (expectedStartedAt === undefined || targetProbe.processStartedAt !== expectedStartedAt))) return false;
+    if (targetProbe.state === 'live') {
+      try { process.kill(-pid, 'SIGKILL'); } catch (error: unknown) {
+        if (!isNoSuchProcess(error)) return false;
+      }
     }
     const killDeadline = Date.now() + 1_500;
     while (Date.now() < killDeadline) {
-      if (!trackedPids.some(isProcessRunning)) return true;
+      if (await trackedProcessesExited(trackedPids, platform, identities)) return true;
       await delay(50);
     }
   }
-  return !trackedPids.some(isProcessRunning);
+  return trackedProcessesExited(trackedPids, platform, identities);
+}
+
+async function trackedProcessesExited(
+  trackedPids: readonly number[],
+  platform: NodeJS.Platform,
+  identities: ReadonlyMap<number, string>,
+): Promise<boolean> {
+  for (const trackedPid of trackedPids) {
+    if (platform === 'win32' && !isProcessRunning(trackedPid)) continue;
+    const probe = await probeProcessIdentity(trackedPid, platform);
+    if (probe.state === 'gone') continue;
+    if (probe.state === 'unverifiable') return false;
+    const expectedStartedAt = identities.get(trackedPid);
+    if (expectedStartedAt === undefined || probe.processStartedAt !== expectedStartedAt) return false;
+    return false;
+  }
+  return true;
 }
 
 function isProcessRunning(pid: number): boolean {

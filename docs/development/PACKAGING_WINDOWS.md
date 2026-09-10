@@ -6,7 +6,7 @@ The packaged MCP stdio launcher is self-contained: `lnwjud-mcp-stdio.cmd` launch
 
 Core text/file search is also self-contained. Packaging downloads the pinned official Windows x64 ripgrep archive, verifies its SHA-256, preserves its license notices, and ships `resources/runtime-tools/ripgrep/rg.exe` in both Setup and Portable builds. Desktop and `lnwjud-mcp-stdio.cmd` prepend that private directory to the child runtime PATH, so users do not need to install ripgrep themselves.
 
-OpenAI Secure MCP Tunnel is self-contained as well. Packaging pins official `tunnel-client v0.0.13` for Windows amd64 and verifies the archive SHA-256 before extraction. The target-native payload is preserved under `resources/tunnel-client/` with the executable, license/notice inventory, SPDX metadata, and Sigstore provenance; lnwjud also records the archive/runtime hashes used for provenance. The bundled client is selected only when the override is empty, and a missing or invalid custom override fails closed instead of silently falling back.
+OpenAI Secure MCP Tunnel is self-contained as well. Packaging pins official `tunnel-client v0.0.14` for Windows amd64 and verifies the archive SHA-256 before extraction. The target-native payload is preserved under `resources/tunnel-client/` with the executable, license/notice inventory, SPDX metadata, and Sigstore provenance; lnwjud also records the archive/runtime hashes used for provenance. The bundled client is selected only when the override is empty, and a missing or invalid custom override fails closed instead of silently falling back.
 
 On the first launch of each lnwjud version, Desktop runs the core Doctor checks automatically before tunnel onboarding. Only core failures (supported Windows x64, database, bundled ripgrep, workspace initialization, and local MCP readiness) interrupt startup and keep navigation on Doctor. Git and optional capabilities such as Codex, WSL, Python, FFmpeg, and Windows OCR may report warnings or feature-specific unavailable states but do not block first-run.
 
@@ -29,7 +29,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v4.56.1 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v4.60.0 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
@@ -48,7 +48,7 @@ The package script rebuilds the workspace, generates the current MCP stdio bundl
 - The Windows capability bridge is copied as an extra resource.
 - The generated `lnwjud-mcp-stdio.cmd` has one canonical packaged copy beside `lnwjud.exe` for local stdio use. POSIX packages use the matching executable shell launcher. The package also includes the hash-bound native Windows secret migrator for one-time legacy data migration; no PowerShell secret runtime is shipped.
 - Pinned ripgrep is shipped under `resources/runtime-tools/ripgrep`; both Desktop and the stdio launcher resolve this private `rg.exe` before any system PATH copy.
-- The repository's `lnwjud-scheduled-continuation` skill is shipped under `resources/agent-skills` in both Setup/NSIS and Portable. The runtime adds that bundled root to `skills_list` without replacing machine-global or active-workspace Cursor, Claude, Agents, Codex, Codex-plugin, GitHub workspace, or configured skill roots.
+- The repository's `lnwjud-scheduled-continuation` skill plus the six pinned Ponytail skills (`ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`) are shipped as sibling directories under `resources/agent-skills` in both Setup/NSIS and Portable. Their source-qualified bundled identities remain distinct from same-name machine-global or active-workspace Cursor, Claude, Agents, Codex, Codex-plugin, GitHub workspace, or configured skill roots; Native Ponytail activation accepts only the exact bundled primary/review identities.
 - The launcher never falls back to a system Node runtime; a missing packaged Electron executable fails closed.
 - Generated stdio runtime files are ignored by Git and must be regenerated from source for each build/release.
 
@@ -72,12 +72,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v4.56.1:
+For v4.60.0:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.56.1.exe
-apps/desktop/dist/installers/lnwjud-Setup-4.56.1.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-4.56.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.60.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.60.0.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-4.60.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt
@@ -104,7 +104,7 @@ Use a clean Windows 10/11 x64 account or VM with no repository checkout:
 5. Confirm the loopback MCP endpoint auto-starts and the displayed endpoint is usable by a local MCP client.
 6. Run Doctor and confirm SQLite/platform dependency checks are reported truthfully.
 7. If stdio/Secure Tunnel is part of the smoke test, verify `lnwjud-mcp-stdio.cmd` works on the clean machine **without** installing system Node.js.
-8. Call `skills_list` and confirm it includes bundled `lnwjud-scheduled-continuation`, a test machine-global skill, and a test active-workspace skill; call `skills_read` with each source-qualified ID. Verify the same contract through Desktop HTTP MCP and the packaged stdio launcher.
+8. Call `skills_list` and confirm it includes bundled `lnwjud-scheduled-continuation` plus all six sibling Ponytail skills, a test machine-global skill, and a test active-workspace skill; call `skills_read` with each source-qualified ID. With Ponytail FULL enabled, also verify code mutation is blocked before exact bundled primary load, succeeds after `bundled:agent-skills/ponytail` loads even when matching returns no result, and rejects a same-name workspace skill as activation evidence. Verify the same contract through Desktop HTTP MCP and the packaged stdio launcher.
 9. Close the app, uninstall it from Windows Settings, and confirm the application binaries are removed while user data remains according to `deleteAppDataOnUninstall: false`.
 10. Launch `lnwjud-Portable-*.exe` without installing it and repeat dashboard/workspace/Doctor/tunnel/skill smoke checks.
 11. Confirm no visible CMD/PowerShell window flashes during normal internal operations. Short-lived hidden `conhost.exe` processes are acceptable; sustained high CPU is not.

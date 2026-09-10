@@ -10,6 +10,7 @@ import {
   type GoalReconciliationReason,
   type GoalPlan,
   type GoalPlanStep,
+  type GoalPonytailMode,
   type GoalRecord,
   type GoalRepository,
   type GoalStatus,
@@ -64,11 +65,14 @@ export interface GoalPlanInput {
   readonly steps: readonly GoalPlanInputStep[];
 }
 
+export type GoalPonytailModeOverride = 'inherit' | GoalPonytailMode;
+
 export interface RunGoalRequest {
   readonly workspaceId: string;
   readonly goalKey: string;
   readonly objective?: string;
   readonly plan?: GoalPlanInput;
+  readonly ponytailMode?: GoalPonytailModeOverride;
   readonly leaseSeconds?: number;
 }
 
@@ -90,6 +94,7 @@ export interface CheckpointGoalRequest {
   readonly evidence: readonly GoalEvidence[];
   readonly activeTaskIds?: readonly string[];
   readonly trackedTasks?: readonly GoalTrackedTask[];
+  readonly ponytailMode?: GoalPonytailModeOverride;
   readonly releaseLease?: boolean;
 }
 
@@ -175,6 +180,7 @@ export interface GoalSnapshot {
   readonly blockers: readonly string[];
   readonly activeTaskIds: readonly string[];
   readonly trackedTasks: readonly GoalTrackedTask[];
+  readonly ponytailMode: GoalPonytailModeOverride;
   readonly lastCheckpoint: GoalCheckpointRecord | null;
   readonly leaseGeneration: number;
   readonly leaseActivitySeq: number;
@@ -256,32 +262,37 @@ export class GoalContinuationService {
       const plan = request.plan === undefined
         ? (existing === null ? { steps: [] } : undefined)
         : normalizePlan(request.plan);
+      const ponytailMode = request.ponytailMode === undefined ? undefined : normalizeGoalPonytailModeOverride(request.ponytailMode);
+      if (existing !== null && ponytailMode !== undefined && ponytailMode !== (existing.ponytailMode ?? 'inherit')) {
+        return err(appError('INVALID_INPUT', 'ponytailMode can only change through a leased goal checkpoint'));
+      }
       const leaseSeconds = normalizeLeaseSeconds(request.leaseSeconds);
       let recoveryEvidence: GoalLeaseRecoveryEvidence | undefined;
-      if (existing?.status === 'active' && existing.leaseExpiresAt !== undefined && this.workerLiveness !== undefined && this.scheduledContinuations !== undefined) {
+      if (existing?.status === 'active' && existing.leaseExpiresAt !== undefined && this.workerLiveness !== undefined) {
         const expiresAtMs = Date.parse(existing.leaseExpiresAt);
         if (Number.isFinite(expiresAtMs) && expiresAtMs > this.now().getTime()) {
           try {
-            const liveContinuation = await this.scheduledContinuations.getLiveScheduledContinuation(existing.id);
-            if (liveContinuation !== null) {
-              const trackedTasks = existing.trackedTasks ?? existing.activeTaskIds.map((taskId) => ({
-                taskId,
-                provider: 'legacy_auto' as const,
-                role: 'blocking_job' as const,
-                cancelWithGoal: true as const,
-              }));
-              const observed = await this.workerLiveness.observe(existing.id, trackedTasks);
-              recoveryEvidence = {
-                trustworthy: observed.trustworthy,
-                observedAt: observed.observedAt,
-                leaseGeneration: observed.leaseGeneration,
-                leaseActivitySeq: observed.leaseActivitySeq,
-                liveFencedCallCount: observed.liveFencedCallCount,
-                blockingTaskStates: observed.blockingTaskStates
-                  ?? observed.activeTaskStates?.map((entry) => ({ ...entry, provider: 'legacy_auto' as const }))
-                  ?? [],
-              };
-            }
+            // Observe real fenced worker/task liveness even when this goal has no
+            // scheduled continuation. A foreground worker can disappear while
+            // leaving a long lease behind; requiring a watchdog here made that
+            // lease impossible to recover until its TTL expired.
+            const trackedTasks = existing.trackedTasks ?? existing.activeTaskIds.map((taskId) => ({
+              taskId,
+              provider: 'legacy_auto' as const,
+              role: 'blocking_job' as const,
+              cancelWithGoal: true as const,
+            }));
+            const observed = await this.workerLiveness.observe(existing.id, trackedTasks);
+            recoveryEvidence = {
+              trustworthy: observed.trustworthy,
+              observedAt: observed.observedAt,
+              leaseGeneration: observed.leaseGeneration,
+              leaseActivitySeq: observed.leaseActivitySeq,
+              liveFencedCallCount: observed.liveFencedCallCount,
+              blockingTaskStates: observed.blockingTaskStates
+                ?? observed.activeTaskStates?.map((entry) => ({ ...entry, provider: 'legacy_auto' as const }))
+                ?? [],
+            };
           } catch {
             recoveryEvidence = undefined;
           }
@@ -297,6 +308,7 @@ export class GoalContinuationService {
         ownerSessionId: stableOwnerSessionId(actor),
         ...(objective === undefined ? {} : { objective }),
         ...(plan === undefined ? {} : { plan }),
+        ...(ponytailMode === undefined || ponytailMode === 'inherit' ? {} : { ponytailMode }),
         leaseTokenHash: hashLeaseToken(leaseToken),
         leaseSeconds,
         ...(recoveryEvidence === undefined ? {} : { recoveryEvidence }),
@@ -356,6 +368,10 @@ export class GoalContinuationService {
       const stepUpdates = normalizeStepUpdates(request.stepUpdates, current.plan);
       const updatedPlan = applyStepUpdates(current.plan, stepUpdates);
       const trackedTasks = normalizeTrackedTasks(request.trackedTasks, request.activeTaskIds);
+      const requestedPonytailMode = request.ponytailMode === undefined ? undefined : normalizeGoalPonytailModeOverride(request.ponytailMode);
+      const ponytailMode = requestedPonytailMode === undefined
+        ? current.ponytailMode ?? null
+        : requestedPonytailMode === 'inherit' ? null : requestedPonytailMode;
       const goal = await this.goals.checkpoint({
         checkpointId: randomUUID(),
         goalId,
@@ -372,6 +388,7 @@ export class GoalContinuationService {
         evidence: normalizeEvidence(request.evidence),
         activeTaskIds: blockingTaskIds(trackedTasks),
         trackedTasks,
+        ponytailMode,
         releaseLease: request.releaseLease === true,
         now: this.now().toISOString(),
       });
@@ -761,6 +778,7 @@ function toRunSnapshot(goal: GoalRecord): Omit<RunGoalResult, 'acquired' | 'leas
     blockers: snapshot.blockers,
     activeTaskIds: snapshot.activeTaskIds,
     trackedTasks: snapshot.trackedTasks,
+    ponytailMode: snapshot.ponytailMode,
     lastCheckpoint: snapshot.lastCheckpoint,
     leaseGeneration: snapshot.leaseGeneration,
     leaseActivitySeq: snapshot.leaseActivitySeq,
@@ -784,6 +802,7 @@ function toSnapshot(goal: GoalRecord): GoalSnapshot {
     blockers: goal.blockers,
     activeTaskIds: goal.activeTaskIds,
     trackedTasks: goal.trackedTasks ?? legacyTrackedTasks(goal.activeTaskIds),
+    ponytailMode: goal.ponytailMode ?? 'inherit',
     lastCheckpoint: goal.checkpoints.at(-1) ?? null,
     leaseGeneration: goal.leaseGeneration,
     leaseActivitySeq: goal.leaseActivitySeq,
@@ -912,6 +931,11 @@ function normalizeLeaseSeconds(value: number | undefined): number {
   if (value === undefined) return DEFAULT_GOAL_LEASE_SECONDS;
   if (!Number.isInteger(value) || value < MIN_GOAL_LEASE_SECONDS || value > MAX_GOAL_LEASE_SECONDS) throw new Error('leaseSeconds is out of range');
   return value;
+}
+
+function normalizeGoalPonytailModeOverride(value: unknown): GoalPonytailModeOverride {
+  if (value === 'inherit' || value === 'off' || value === 'lite' || value === 'full' || value === 'ultra') return value;
+  throw new Error('ponytailMode is invalid');
 }
 
 function nextActionFromPlan(plan: GoalPlan): string {

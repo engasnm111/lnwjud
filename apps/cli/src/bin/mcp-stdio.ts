@@ -197,6 +197,7 @@ async function main(): Promise<void> {
     actor: runtime.actor,
     activityTracker: runtime.activityTracker,
     codexToolsEnabled: runtime.codexToolsEnabled,
+    ponytailModeProvider: () => runtime.ponytailMode,
     profileProvider: runtime.profileProvider,
     authorizationModeProvider: (): 'standard' | 'full_bypass' => stdioFullBypassAll ? 'full_bypass' : 'standard',
     allowAiDeleteProvider: runtime.allowAiDeleteProvider,
