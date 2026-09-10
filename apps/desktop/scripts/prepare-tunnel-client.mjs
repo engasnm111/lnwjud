@@ -1,4 +1,4 @@
-/* global AbortSignal, Buffer, clearTimeout, fetch, setTimeout */
+/* global Buffer, clearTimeout, setTimeout */
 
 import { createHash } from 'node:crypto';
 import { copyFile, chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -8,6 +8,7 @@ import process from 'node:process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { fetchWithRetry } from './fetch-with-retry.mjs';
 
 const require = createRequire(import.meta.url);
 const extractZip = require('@electron-internal/extract-zip');
@@ -126,7 +127,7 @@ async function downloadIfNeeded(url, destination, expectedSha256) {
 }
 
 async function downloadText(url, destination) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+  const response = await fetchWithRetry(url, 120_000);
   if (!response.ok) throw new Error(`Could not download official tunnel-client asset (${response.status})`);
   const bytes = Buffer.from(await response.arrayBuffer());
   await writeAtomic(destination, bytes);
@@ -158,7 +159,7 @@ async function assertCanonicalFile(filePath) {
 }
 
 async function fetchText(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  const response = await fetchWithRetry(url, 30_000);
   if (!response.ok) throw new Error(`Could not download tunnel-client checksums (${response.status})`);
   return response.text();
 }
