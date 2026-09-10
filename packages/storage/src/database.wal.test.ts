@@ -50,15 +50,13 @@ describe('SqliteDatabase WAL', () => {
     database.close();
   });
 
-  it('self-heals and reopens connection if accessed after close()', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-reopen-'));
+  it('does not resurrect a database after its owner closes it', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-closed-'));
     temporaryRoots.push(root);
-    const filename = path.join(root, 'lnwjud.sqlite');
-    const database = new SqliteDatabase(filename);
+    const database = new SqliteDatabase(path.join(root, 'lnwjud.sqlite'));
     expect(database.connection.prepare('SELECT 1 as val').get()).toEqual({ val: 1 });
     database.close();
-    // After close, accessing .connection must re-open rather than throwing 'database is not open'
-    expect(database.connection.prepare('SELECT 2 as val').get()).toEqual({ val: 2 });
     database.close();
+    expect(() => database.connection).toThrow(/closed/i);
   });
 });

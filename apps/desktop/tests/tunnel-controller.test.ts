@@ -1405,6 +1405,14 @@ describe('TunnelController lifecycle', () => {
     await expect(controller.clientVersion()).resolves.toEqual({ value: '1.2.3', reason: null });
   });
 
+  it('funnels child error and exit through one per-process terminal fence', async () => {
+    const source = await readFile(new URL('../src/main/tunnel-controller.ts', import.meta.url), 'utf8');
+    expect(source).toContain('if (terminalHandled) return;');
+    expect(source).toContain("child.on('error', (error) => { handleTerminal(null, error.message); });");
+    expect(source).toContain("child.on('exit', (code) => { handleTerminal(code); });");
+    expect(source).not.toContain('restartWindowStartedAt');
+  });
+
   it('pauses automatic reconnect after maxAutoRestarts rapid exits instead of looping forever', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-rapid-restarts-'));
     temporaryRoots.push(dataPath);

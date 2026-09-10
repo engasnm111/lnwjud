@@ -26,28 +26,37 @@ export function GitPage({
   const currentPath = gitSummary.repositoryPath ?? selectedWorkspace?.realRootPath ?? '—';
 
   const [selectedFile, setSelectedFile] = useState<GitStatusEntrySummary | null>(null);
+  const [selectedStaged, setSelectedStaged] = useState(false);
   const [diffData, setDiffData] = useState<{
     patch: string;
     oldContent?: string;
     newContent?: string;
+    additions?: number;
+    deletions?: number;
     loading: boolean;
     error?: string;
   } | null>(null);
 
-  const handleOpenFileDiff = async (entry: GitStatusEntrySummary): Promise<void> => {
+  const handleOpenFileDiff = async (
+    entry: GitStatusEntrySummary,
+    staged = entry.indexStatus !== ' ' && entry.worktreeStatus === ' ',
+  ): Promise<void> => {
     if (!selectedWorkspace) return;
     setSelectedFile(entry);
+    setSelectedStaged(staged);
     setDiffData({ patch: '', loading: true });
     try {
       const res = await window.lnwjud.getGitDiff({
         workspaceId: selectedWorkspace.id,
         path: entry.path,
-        staged: entry.indexStatus !== ' ' && entry.worktreeStatus === ' ',
+        staged,
       });
       setDiffData({
         patch: res.patch,
         ...(res.oldContent !== undefined ? { oldContent: res.oldContent } : {}),
         ...(res.newContent !== undefined ? { newContent: res.newContent } : {}),
+        ...(res.additions !== undefined ? { additions: res.additions } : {}),
+        ...(res.deletions !== undefined ? { deletions: res.deletions } : {}),
         loading: false,
       });
     } catch (err: unknown) {
@@ -143,16 +152,38 @@ export function GitPage({
                 </button>
               </div>
             ) : (
-              <SplitDiffViewer
-                locale={locale}
-                filePath={selectedFile.path}
-                patch={diffData?.patch ?? ''}
-                oldContent={diffData?.oldContent}
-                newContent={diffData?.newContent}
-                additions={selectedFile.additions}
-                deletions={selectedFile.deletions}
-                onClose={() => { setSelectedFile(null); }}
-              />
+              <>
+                {selectedFile.indexStatus !== ' ' && selectedFile.indexStatus !== '?' && selectedFile.worktreeStatus !== ' ' ? (
+                  <div className="diff-view-toggle" aria-label={locale === 'th' ? 'เลือกชุดความแตกต่าง' : 'Select diff scope'}>
+                    <button
+                      type="button"
+                      className={`toggle-btn ${selectedStaged ? 'active' : ''}`}
+                      onClick={() => { void handleOpenFileDiff(selectedFile, true); }}
+                    >
+                      HEAD → Index (Staged)
+                    </button>
+                    <button
+                      type="button"
+                      className={`toggle-btn ${selectedStaged ? '' : 'active'}`}
+                      onClick={() => { void handleOpenFileDiff(selectedFile, false); }}
+                    >
+                      Index → Working Tree (Unstaged)
+                    </button>
+                  </div>
+                ) : null}
+                <SplitDiffViewer
+                  locale={locale}
+                  filePath={selectedFile.path}
+                  patch={diffData?.patch ?? ''}
+                  oldContent={diffData?.oldContent}
+                  newContent={diffData?.newContent}
+                  additions={diffData?.additions}
+                  deletions={diffData?.deletions}
+                  oldLabel={selectedStaged ? 'HEAD' : 'Index'}
+                  newLabel={selectedStaged ? 'Index (Staged)' : 'Working Tree'}
+                  onClose={() => { setSelectedFile(null); }}
+                />
+              </>
             )}
           </div>
         ) : null}
@@ -227,7 +258,9 @@ export function GitPage({
                       ) : null}
                     </div>
                     <span className="git-file-status">
-                      {entry.indexStatus !== ' ' ? (locale === 'th' ? 'Staged' : 'Staged') : (locale === 'th' ? 'Unstaged' : 'Unstaged')}
+                      {entry.indexStatus !== ' ' && entry.indexStatus !== '?' && entry.worktreeStatus !== ' '
+                        ? 'Staged + Unstaged'
+                        : entry.indexStatus !== ' ' && entry.indexStatus !== '?' ? 'Staged' : 'Unstaged'}
                     </span>
                     <span className="git-view-diff-arrow">👁️ {locale === 'th' ? 'ดูโค้ด' : 'Diff'}</span>
                   </div>

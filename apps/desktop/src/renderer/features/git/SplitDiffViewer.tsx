@@ -165,6 +165,8 @@ interface SplitDiffViewerProps {
   readonly newContent?: string | undefined;
   readonly additions?: number | undefined;
   readonly deletions?: number | undefined;
+  readonly oldLabel?: string | undefined;
+  readonly newLabel?: string | undefined;
   readonly onClose: () => void;
 }
 
@@ -176,6 +178,8 @@ export function SplitDiffViewer({
   newContent,
   additions: propAdditions,
   deletions: propDeletions,
+  oldLabel = 'HEAD',
+  newLabel = 'Working Tree',
   onClose,
 }: SplitDiffViewerProps): ReactElement {
   const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
@@ -277,11 +281,11 @@ export function SplitDiffViewer({
           <div className="diff-pane-titles">
             <div className="diff-pane-title old-title">
               <span className="dot red-dot" />
-              <span>{isTh ? 'ต้นฉบับ / ก่อนแก้ไข (Old)' : 'Original (Old / HEAD)'}</span>
+              <span>{isTh ? `ก่อนแก้ไข (${oldLabel})` : `Original (${oldLabel})`}</span>
             </div>
             <div className="diff-pane-title new-title">
               <span className="dot green-dot" />
-              <span>{isTh ? 'แก้ไขล่าสุด / ใหม่ (New)' : 'Modified (New / Working Tree)'}</span>
+              <span>{isTh ? `หลังแก้ไข (${newLabel})` : `Modified (${newLabel})`}</span>
             </div>
           </div>
 

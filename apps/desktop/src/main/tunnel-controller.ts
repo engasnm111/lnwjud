@@ -105,7 +105,6 @@ export class TunnelController {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private stableTimer: ReturnType<typeof setTimeout> | null = null;
   private restartAttempts = 0;
-  private restartWindowStartedAt = 0;
   private lastApiKey: string | null = null;
   private tunnelLock: TunnelLockAcquisition | null = null;
   private lifecycleTail: Promise<void> = Promise.resolve();
@@ -443,7 +442,6 @@ export class TunnelController {
     this.clearRestartTimer();
     this.clearStableTimer();
     this.restartAttempts = 0;
-    this.restartWindowStartedAt = 0;
     try {
       throwIfStartCancelled(signal);
       if (this.runtimeMode === 'native-managed' && this.runtimeSupervisor !== null) {
@@ -815,16 +813,10 @@ export class TunnelController {
         if (this.child === child && probe.state === 'live') this.ownedChildStartedAt = probe.processStartedAt;
       }).catch(() => undefined);
     }
-    child.on('error', (error) => {
-      if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
-      if (this.intentionalStop) {
-        this.state = 'stopped';
-        this.message = null;
-        return;
-      }
-      void this.applyUnexpectedExit(null, clientPath, error.message);
-    });
-    child.on('exit', (code) => {
+    let terminalHandled = false;
+    const handleTerminal = (code: number | null, errorMessage?: string): void => {
+      if (terminalHandled) return;
+      terminalHandled = true;
       if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
       if (this.intentionalStop) {
         // Keep the durable owner until stopOnce has reconciled native state
@@ -834,8 +826,10 @@ export class TunnelController {
         this.message = null;
         return;
       }
-      void this.applyUnexpectedExit(code, clientPath);
-    });
+      void this.applyUnexpectedExit(code, clientPath, errorMessage);
+    };
+    child.on('error', (error) => { handleTerminal(null, error.message); });
+    child.on('exit', (code) => { handleTerminal(code); });
   }
 
   private async applyUnexpectedExit(code: number | null, clientPath: string, errorMessage?: string): Promise<void> {
@@ -917,7 +911,6 @@ export class TunnelController {
     this.stableTimer = setTimeout(() => {
       this.stableTimer = null;
       this.restartAttempts = 0;
-      this.restartWindowStartedAt = 0;
     }, RESTART_WINDOW_MS);
   }
 

@@ -188,6 +188,7 @@ import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
 const mcpActor: FileActor = { clientId: 'desktop-mcp-http', clientName: `${APP_NAME} desktop MCP` };
 const BUNDLED_TUNNEL_CLIENT_VERSION = runtimeDependencies.tunnelClient.version;
+const MAX_GIT_DIFF_FALLBACK_BYTES = 2 * 1024 * 1024;
 const permissionSettingKey = 'permission_profile';
 const selectedWorkspaceSettingKey = 'selected_workspace_id';
 const activeWorkspaceIdsSettingKey = 'active_workspace_ids';
@@ -928,7 +929,20 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'office_desktop', required: false, summaryKey: 'requirement.office_desktop', probe: () => capabilityRequirement('office') },
     { id: 'network_access', required: false, summaryKey: 'requirement.network_access', probe: () => capabilityRequirement('web_fetch') },
     { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
-    { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
+    {
+      id: 'tunnel_runtime',
+      required: false,
+      summaryKey: 'requirement.tunnel_runtime',
+      remediationId: 'configure_tunnel',
+      probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => {
+        const [tunnel, remote] = await Promise.all([tunnelController.diagnosticStatus(), remoteMcpController.status()]);
+        if (tunnel.state === 'running') return { status: 'pass', detail: tunnel.message ?? 'Secure Tunnel is active' };
+        if (remote.state === 'running' && remote.publicMcpUrl !== null) {
+          return { status: 'pass', detail: 'Not required: OAuth-protected Remote MCP is the active remote connection' };
+        }
+        return { status: 'fail', detail: tunnel.message ?? `Tunnel is ${tunnel.state}` };
+      },
+    },
     {
       id: 'remote_mcp_ngrok',
       required: false,
@@ -942,7 +956,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           return { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` };
         }
         if (tunnel.state === 'running') {
-          return { status: 'pass', detail: 'Cloudflare tunnel is active (Remote MCP is optional)' };
+          return { status: 'pass', detail: 'Not required: Secure Tunnel is the active remote connection' };
         }
         if (status.state === 'error') {
           return { status: 'warn', detail: status.message ?? 'Remote MCP encountered an error' };
@@ -1124,7 +1138,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       }
       const gitSummary = selectedWorkspace === null
         ? { branch: null, changedFiles: 0, stagedFiles: 0, message: 'No workspace selected' }
-        : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor));
+        : await gitSummaryCache.get(() => buildGitSummary(selectedWorkspace, gitService, actor, pathGuard));
       const codex = await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery));
       const recentAuditEvents = await buildAuditSummary(auditRepository, settingsRepository);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
@@ -1446,51 +1460,42 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const workspace = await workspaceRepository.get(request.workspaceId);
       if (workspace === null) throw new Error('Workspace not found');
 
+      const guarded = await pathGuard.resolveForWrite(workspace, request.path);
+      const resolved = unwrap(guarded, 'Git diff path is invalid');
+      const relativePath = resolved.relativePath.replace(/\\/g, '/');
       const fileActor: FileActor = { clientId: 'desktop-git', clientName: 'desktop-git' };
       const diffResult = await gitService.diff(fileActor, workspace.id, {
-        path: request.path,
+        path: relativePath,
         ...(request.staged !== undefined ? { staged: request.staged } : {}),
       });
+      if (!diffResult.ok) throw new Error(diffResult.error.message);
 
-      let patch = diffResult.ok ? diffResult.value.patch : '';
-      const truncated = diffResult.ok ? diffResult.value.truncated : false;
+      let patch = diffResult.value.patch;
+      const truncated = diffResult.value.truncated;
+      const numstat = new Map<string, { additions: number; deletions: number }>();
+      const statResult = await gitService.run(fileActor, {
+        workspaceId: workspace.id,
+        args: ['diff', ...(request.staged === true ? ['--cached'] : []), '--numstat', '--', relativePath],
+      });
+      if (statResult.ok && statResult.value.exitCode === 0) applyNumstat(numstat, statResult.value.stdout);
+      const stats = numstat.get(relativePath);
 
-      const targetFilePath = path.resolve(workspace.realRootPath, request.path);
       let newContent: string | undefined;
-      try {
-        if (statSync(targetFilePath).isFile()) {
-          newContent = await readFile(targetFilePath, 'utf8');
+      if (!patch && resolved.exists && resolved.realPath !== undefined) {
+        const bounded = await readBoundedGitTextFile(resolved.realPath);
+        if (bounded !== null) {
+          newContent = bounded;
+          const lines = bounded.split(/\r?\n/);
+          patch = `--- /dev/null\n+++ b/${relativePath}\n@@ -0,0 +1,${lines.length} @@\n` + lines.map((line) => `+${line}`).join('\n') + '\n';
         }
-      } catch {
-        newContent = undefined;
-      }
-
-      let oldContent: string | undefined;
-      try {
-        const normalizedRelPath = request.path.replace(/\\/g, '/');
-        const showResult = await gitService.run(fileActor, {
-          workspaceId: workspace.id,
-          args: ['show', `HEAD:${normalizedRelPath}`],
-        });
-        if (showResult.ok && showResult.value.exitCode === 0) {
-          oldContent = showResult.value.stdout;
-        }
-      } catch {
-        oldContent = undefined;
-      }
-
-      if (!patch && newContent !== undefined && oldContent === undefined) {
-        const lines = newContent.split(/\r?\n/);
-        patch = `--- /dev/null\n+++ b/${request.path.replace(/\\/g, '/')}\n@@ -0,0 +1,${lines.length} @@\n` +
-          lines.map((line) => `+${line}`).join('\n') + '\n';
       }
 
       return {
-        path: request.path,
+        path: relativePath,
         patch,
         truncated,
-        ...(oldContent !== undefined ? { oldContent } : {}),
         ...(newContent !== undefined ? { newContent } : {}),
+        ...(stats === undefined ? {} : { additions: stats.additions, deletions: stats.deletions }),
       };
     },
   };
@@ -1802,6 +1807,18 @@ async function assertWorkspaceRelinkable(workspace: Workspace): Promise<void> {
   }
 }
 
+async function readBoundedGitTextFile(filePath: string): Promise<string | null> {
+  try {
+    const metadata = statSync(filePath);
+    if (!metadata.isFile() || metadata.size > MAX_GIT_DIFF_FALLBACK_BYTES) return null;
+    const contents = await readFile(filePath);
+    if (contents.includes(0)) return null;
+    return contents.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 function applyNumstat(map: Map<string, { additions: number; deletions: number }>, output: string): void {
   for (const line of output.split('\n')) {
     const trimmed = line.trim();
@@ -1826,6 +1843,7 @@ async function buildGitSummary(
   workspace: Workspace,
   gitService: GitService,
   fileActor: FileActor,
+  pathGuard: WorkspacePathGuard,
 ): Promise<DashboardSnapshot['gitSummary']> {
   const result = await gitService.status(fileActor, workspace.id);
   if (!result.ok) {
@@ -1864,23 +1882,18 @@ async function buildGitSummary(
     message: result.value.entries.length === 0 ? 'Clean working tree' : `${result.value.entries.length} changed file(s)`,
     repositoryPath: workspace.realRootPath,
     isRepo: true,
-    entries: result.value.entries.map((entry) => {
+    entries: await Promise.all(result.value.entries.map(async (entry) => {
       const normalizedPath = entry.path.replace(/\\/g, '/');
       const stats = numstatMap.get(normalizedPath);
       let additions = stats?.additions;
       let deletions = stats?.deletions;
       if (additions === undefined && deletions === undefined && (entry.kind === 'untracked' || entry.worktreeStatus === '?')) {
-        try {
-          const fullPath = path.resolve(workspace.realRootPath, entry.path);
-          if (statSync(fullPath).isFile()) {
-            const content = readFileSync(fullPath, 'utf8');
-            additions = content.length === 0 ? 0 : content.split('\n').length;
-            deletions = 0;
-          }
-        } catch {
-          additions = 0;
-          deletions = 0;
-        }
+        const guarded = await pathGuard.resolveForRead(workspace, entry.path);
+        const content = guarded.ok && guarded.value.realPath !== undefined
+          ? await readBoundedGitTextFile(guarded.value.realPath)
+          : null;
+        additions = content === null ? 0 : (content.length === 0 ? 0 : content.split('\n').length);
+        deletions = 0;
       }
       return {
         path: entry.path,
@@ -1890,7 +1903,7 @@ async function buildGitSummary(
         additions: additions ?? 0,
         deletions: deletions ?? 0,
       };
-    }),
+    })),
   };
 }
 

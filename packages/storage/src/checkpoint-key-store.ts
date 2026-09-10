@@ -66,9 +66,9 @@ export class CheckpointKeyStore {
       }
       return key;
     } catch (error: unknown) {
-      if (this.options.quarantineUnsupported === true && isQuarantinableSecretError(error)) {
+      if (this.options.quarantineUnsupported === true && isUnsupportedEnvelopeVersion(error)) {
         const quarantinePath = `${this.options.filePath}.unsupported-${Date.now()}`;
-        await rename(this.options.filePath, quarantinePath).catch(() => undefined);
+        await rename(this.options.filePath, quarantinePath);
         return null;
       }
       throw error;
@@ -76,13 +76,9 @@ export class CheckpointKeyStore {
   }
 }
 
-function isQuarantinableSecretError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const message = error.message.toLowerCase();
-  if (message.includes('basic_text') || message.includes('temporarily unavailable') || message.includes('unsupported platform')) {
-    return false;
-  }
-  return true;
+
+function isUnsupportedEnvelopeVersion(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'UNSUPPORTED_ENVELOPE_VERSION';
 }
 
 async function writeExclusive(filePath: string, contents: string): Promise<void> {

@@ -1,5 +1,7 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { parseUnifiedDiff } from '../src/renderer/features/git/SplitDiffViewer';
+import { SplitDiffViewer, parseUnifiedDiff } from '../src/renderer/features/git/SplitDiffViewer';
 
 describe('parseUnifiedDiff', () => {
   it('parses standard git unified diff patch into aligned rows', () => {
@@ -80,5 +82,18 @@ describe('parseUnifiedDiff', () => {
     expect(result.hunks).toEqual([]);
     expect(result.additions).toBe(0);
     expect(result.deletions).toBe(0);
+  });
+
+  it('renders the actual Git source labels supplied by the caller', () => {
+    const markup = renderToStaticMarkup(createElement(SplitDiffViewer, {
+      locale: 'en',
+      filePath: 'src/app.ts',
+      patch: '@@ -1 +1 @@\n-old\n+new',
+      oldLabel: 'HEAD',
+      newLabel: 'Index (Staged)',
+      onClose: () => undefined,
+    }));
+    expect(markup).toContain('Original (HEAD)');
+    expect(markup).toContain('Modified (Index (Staged))');
   });
 });

@@ -94,11 +94,7 @@ export class SqliteDatabase {
   }
 
   public get connection(): DatabaseSync {
-    if (this.isClosed) {
-      this._connection = this.createConnection();
-      this.initPragmas(this._connection);
-      this.isClosed = false;
-    }
+    if (this.isClosed) throw new Error('SqliteDatabase is closed');
     return this._connection;
   }
 
