@@ -14,6 +14,6 @@ The local authoritative release gate remains:
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1
 ```
 
-Pull-request/non-main CI may use the same gate with `-SkipWindowsPackaging` so expensive NSIS/Portable packaging is not performed twice. A push to `main` must run the full gate, produce the SHA-scoped Windows artifact, and succeed before the version tag is created.
+Pull-request/non-main CI may use the same gate with `-SkipWindowsPackaging` so expensive NSIS/Portable packaging is not performed twice. The exact `main` SHA must run the full gate, produce the SHA-scoped Windows artifact, and succeed before the version tag is created. Normally that run is the protected `main` push; when a merge credential suppresses the downstream push event, explicitly dispatch `ci.yml` on `main` and require the same exact-SHA artifacts.
 
 Historical verification records in old planning/handoff documents are evidence only. They do not override the canonical release process above.

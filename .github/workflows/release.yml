@@ -52,13 +52,26 @@ jobs:
             --repo "$repository" \
             --workflow ci.yml \
             --commit "$sha" \
+            --branch main \
             --event push \
             --status success \
             --limit 20 \
             --json databaseId,headSha,conclusion \
             --jq ".[] | select(.headSha == \"$sha\" and .conclusion == \"success\") | .databaseId" | sed -n '1p')"
           if [[ -z "$run_id" ]]; then
-            echo "Release requires a successful CI push run for exact commit $sha before tagging." >&2
+            run_id="$(gh run list \
+              --repo "$repository" \
+              --workflow ci.yml \
+              --commit "$sha" \
+              --branch main \
+              --event workflow_dispatch \
+              --status success \
+              --limit 20 \
+              --json databaseId,headSha,conclusion \
+              --jq ".[] | select(.headSha == \"$sha\" and .conclusion == \"success\") | .databaseId" | sed -n '1p')"
+          fi
+          if [[ -z "$run_id" ]]; then
+            echo "Release requires a successful CI push or workflow_dispatch run for exact commit $sha before tagging." >&2
             exit 1
           fi
 

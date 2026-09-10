@@ -381,12 +381,12 @@ jobs:
           }
 
       - name: Run pull-request verification gate
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
         shell: powershell
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1 -SkipWindowsPackaging
 
       - name: Run authoritative release verification gate
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         shell: powershell
         env:
           # electron-builder signs only when both real production certificate secrets exist.
@@ -396,7 +396,7 @@ jobs:
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/verify-release.ps1
 
       - name: Verify packaged Windows legacy-profile startup
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         env:
           LNWJUD_PACKAGED_EXECUTABLE: ${{ github.workspace }}/apps/desktop/dist/installers/win-unpacked/lnwjud.exe
         run: corepack pnpm@10.15.0 --filter @lnwjud/desktop exec playwright test --config playwright.config.ts --grep "Windows upgrade opens"
@@ -413,7 +413,7 @@ jobs:
           retention-days: 14
 
       - name: Upload verified Windows release artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: windows-release-${{ github.sha }}
