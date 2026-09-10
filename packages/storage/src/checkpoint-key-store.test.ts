@@ -73,4 +73,29 @@ describe('CheckpointKeyStore', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('quarantines unsupported envelope versions and generates a fresh key when quarantineUnsupported is true', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-checkpoint-key-quarantine-'));
+    try {
+      const filePath = path.join(root, 'checkpoint-master.key');
+      const { writeFile, readdir } = await import('node:fs/promises');
+      // Simulate foreign host envelope (e.g. from Windows or older build)
+      await writeFile(filePath, 'dpapi:v2:legacy-foreign-ciphertext', 'utf8');
+
+      const protector = createExplicitKeySecretProtector(Buffer.alloc(32, 9));
+      const store = new CheckpointKeyStore({ filePath, secretProtector: protector, quarantineUnsupported: true });
+      const key = await store.loadOrCreate();
+
+      expect(key.byteLength).toBe(32);
+      const newContents = await readFile(filePath, 'utf8');
+      expect(newContents).toMatch(/^safe:v1:/);
+
+      const files = await readdir(root);
+      const quarantined = files.find((f) => f.startsWith('checkpoint-master.key.unsupported-'));
+      expect(quarantined).toBeDefined();
+      expect(await readFile(path.join(root, quarantined!), 'utf8')).toBe('dpapi:v2:legacy-foreign-ciphertext');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

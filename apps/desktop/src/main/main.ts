@@ -1832,6 +1832,7 @@ async function resolveDesktopRuntimeSecrets(dataPath: string): Promise<{
   const checkpointKey = await new CheckpointKeyStore({
     filePath: path.join(dataPath, 'checkpoint-master.key'),
     secretProtector,
+    quarantineUnsupported: true,
   }).loadOrCreate();
   return { checkpointEncryptionKey: checkpointKey, secretProtector };
 }

@@ -7,6 +7,7 @@ export interface CheckpointKeyStoreOptions {
   readonly filePath: string;
   readonly secretProtector: SecretProtector;
   readonly byteLength?: number;
+  readonly quarantineUnsupported?: boolean;
 }
 
 /**
@@ -51,18 +52,37 @@ export class CheckpointKeyStore {
       if (isMissingFile(error)) return null;
       throw error;
     }
-    const result = await this.options.secretProtector.decrypt('checkpoint_master_key', encrypted.trim());
-    assertSecretPlaintext(result.plainText);
-    const key = Buffer.from(result.plainText, 'base64');
-    if (key.byteLength !== this.byteLength || key.toString('base64') !== result.plainText) {
-      throw new Error('Protected checkpoint key has an invalid key length');
+    const trimmed = encrypted.trim();
+    try {
+      const result = await this.options.secretProtector.decrypt('checkpoint_master_key', trimmed);
+      assertSecretPlaintext(result.plainText);
+      const key = Buffer.from(result.plainText, 'base64');
+      if (key.byteLength !== this.byteLength || key.toString('base64') !== result.plainText) {
+        throw new Error('Protected checkpoint key has an invalid key length');
+      }
+      if (result.shouldReEncrypt) {
+        const next = await this.options.secretProtector.encrypt('checkpoint_master_key', result.plainText);
+        await writeAtomic(this.options.filePath, next);
+      }
+      return key;
+    } catch (error: unknown) {
+      if (this.options.quarantineUnsupported === true && isQuarantinableSecretError(error)) {
+        const quarantinePath = `${this.options.filePath}.unsupported-${Date.now()}`;
+        await rename(this.options.filePath, quarantinePath).catch(() => undefined);
+        return null;
+      }
+      throw error;
     }
-    if (result.shouldReEncrypt) {
-      const next = await this.options.secretProtector.encrypt('checkpoint_master_key', result.plainText);
-      await writeAtomic(this.options.filePath, next);
-    }
-    return key;
   }
+}
+
+function isQuarantinableSecretError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  if (message.includes('basic_text') || message.includes('temporarily unavailable') || message.includes('unsupported platform')) {
+    return false;
+  }
+  return true;
 }
 
 async function writeExclusive(filePath: string, contents: string): Promise<void> {
