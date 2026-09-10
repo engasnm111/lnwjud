@@ -1978,7 +1978,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     });
     initAutoUpdater(runtime);
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createDesktopWindow(true);
+      revealMainWindow();
     });
   }).catch((error: unknown) => handleDesktopStartupFailure('desktop', error));
   app.on('before-quit', handleDesktopBeforeQuit);
@@ -2072,7 +2072,9 @@ function handleDesktopBeforeQuit(event: Electron.Event): void {
   }
   event.preventDefault();
   quitRequested = true;
-  void coordinator.requestQuit(() => app.quit()).then((result) => {
+  void coordinator.requestQuit(() => {
+    app.exit(0);
+  }).then((result) => {
     if (result === 'deferred') quitRequested = false;
   });
 }
@@ -2162,7 +2164,7 @@ if (!gotInstanceLock) {
         existing.focus();
       } else if (argv.includes('--log-viewer')) {
         openLogViewerWindow();
-      } else if (mainWindow !== null) {
+      } else {
         revealMainWindow();
       }
     });

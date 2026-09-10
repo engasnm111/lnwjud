@@ -40,4 +40,25 @@ describe('SqliteDatabase WAL', () => {
     writer.close();
     reader.close();
   });
+
+  it('automatically creates parent directory when database path does not exist yet', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-dir-'));
+    temporaryRoots.push(root);
+    const filename = path.join(root, 'nested', 'deep', 'lnwjud.sqlite');
+    const database = new SqliteDatabase(filename);
+    expect(database.connection.prepare('SELECT 1 as val').get()).toEqual({ val: 1 });
+    database.close();
+  });
+
+  it('self-heals and reopens connection if accessed after close()', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-reopen-'));
+    temporaryRoots.push(root);
+    const filename = path.join(root, 'lnwjud.sqlite');
+    const database = new SqliteDatabase(filename);
+    expect(database.connection.prepare('SELECT 1 as val').get()).toEqual({ val: 1 });
+    database.close();
+    // After close, accessing .connection must re-open rather than throwing 'database is not open'
+    expect(database.connection.prepare('SELECT 2 as val').get()).toEqual({ val: 2 });
+    database.close();
+  });
 });

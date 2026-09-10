@@ -929,7 +929,33 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'network_access', required: false, summaryKey: 'requirement.network_access', probe: () => capabilityRequirement('web_fetch') },
     { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
     { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
-    { id: 'remote_mcp_ngrok', required: false, summaryKey: 'requirement.remote_mcp_ngrok', probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => { const status = await remoteMcpController.status(); return status.state === 'running' && status.publicMcpUrl !== null ? { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` } : { status: 'warn', detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed') }; } },
+    {
+      id: 'remote_mcp_ngrok',
+      required: false,
+      summaryKey: 'requirement.remote_mcp_ngrok',
+      probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => {
+        const [status, tunnel] = await Promise.all([
+          remoteMcpController.status(),
+          tunnelController.diagnosticStatus(),
+        ]);
+        if (status.state === 'running' && status.publicMcpUrl !== null) {
+          return { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` };
+        }
+        if (tunnel.state === 'running') {
+          return { status: 'pass', detail: 'Cloudflare tunnel is active (Remote MCP is optional)' };
+        }
+        if (status.state === 'error') {
+          return { status: 'warn', detail: status.message ?? 'Remote MCP encountered an error' };
+        }
+        if (status.autoStartEnabled && status.state === 'stopped') {
+          return { status: 'warn', detail: status.message ?? 'Remote MCP auto-start is enabled but currently stopped' };
+        }
+        return {
+          status: 'pass',
+          detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed'),
+        };
+      },
+    },
     { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); if (!listed.ok) return { status: 'unknown', detail: listed.error.message }; const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded); const connected = enabled.filter((server) => server.connected); return { status: connected.length > 0 ? 'pass' : 'warn', detail: lastExternalMcpProbeDetail ?? `${enabled.length} enabled external MCP server(s); ${connected.length} connected` }; } },
     { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
     { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
