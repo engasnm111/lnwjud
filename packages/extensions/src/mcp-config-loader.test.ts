@@ -151,6 +151,44 @@ describe('McpConfigLoader', () => {
     ]);
   });
 
+  it('repairs legacy Serena boolean flags that were persisted without a value', () => {
+    const settings = parseExtensionsSettings(JSON.stringify({
+      extraMcpServers: {
+        serena: {
+          command: 'C:\\Users\\User\\.local\\bin\\serena.exe',
+          args: [
+            'start-mcp-server',
+            '--context', 'chatgpt',
+            '--open-web-dashboard', 'false',
+            '--enable-gui-log-window',
+            '--trace-lsp-communication', 'true',
+          ],
+        },
+      },
+    }));
+
+    expect(settings.extraMcpServers.serena?.args).toEqual([
+      'start-mcp-server',
+      '--context', 'chatgpt',
+      '--open-web-dashboard', 'false',
+      '--enable-gui-log-window', 'false',
+      '--trace-lsp-communication', 'true',
+    ]);
+  });
+
+  it('does not rewrite similarly named flags for non-Serena MCP servers', () => {
+    const settings = parseExtensionsSettings(JSON.stringify({
+      extraMcpServers: {
+        helper: {
+          command: 'helper.exe',
+          args: ['start-mcp-server', '--enable-gui-log-window'],
+        },
+      },
+    }));
+
+    expect(settings.extraMcpServers.helper?.args).toEqual(['start-mcp-server', '--enable-gui-log-window']);
+  });
+
   it('honors disabledServers in enable_all mode', async () => {
     const settings = parseExtensionsSettings(JSON.stringify({
       mode: 'enable_all',

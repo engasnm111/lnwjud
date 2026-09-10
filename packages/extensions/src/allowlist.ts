@@ -43,17 +43,18 @@ function mcpServerMap(value: unknown): Readonly<Record<string, McpServerLaunchCo
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
   const result: Record<string, McpServerLaunchConfig> = {};
   for (const [name, entry] of Object.entries(value)) {
-    const config = asLaunchConfig(entry);
+    const config = asLaunchConfig(name, entry);
     if (config !== undefined) result[name] = config;
   }
   return result;
 }
 
-function asLaunchConfig(value: unknown): McpServerLaunchConfig | undefined {
+function asLaunchConfig(name: string, value: unknown): McpServerLaunchConfig | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (typeof record.command !== 'string' || record.command.trim().length === 0) return undefined;
-  const args = Array.isArray(record.args) ? record.args.filter((entry): entry is string => typeof entry === 'string') : undefined;
+  const parsedArgs = Array.isArray(record.args) ? record.args.filter((entry): entry is string => typeof entry === 'string') : undefined;
+  const args = parsedArgs === undefined ? undefined : repairLegacySerenaArgs(name, record.command, parsedArgs);
   const env = typeof record.env === 'object' && record.env !== null && !Array.isArray(record.env)
     ? Object.fromEntries(Object.entries(record.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
     : undefined;
@@ -64,6 +65,29 @@ function asLaunchConfig(value: unknown): McpServerLaunchConfig | undefined {
     ...(typeof record.cwd === 'string' ? { cwd: record.cwd } : {}),
     ...(typeof record.type === 'string' ? { type: record.type } : {}),
   };
+}
+
+const SERENA_BOOLEAN_FLAGS = new Set([
+  '--enable-web-dashboard',
+  '--enable-gui-log-window',
+  '--open-web-dashboard',
+  '--trace-lsp-communication',
+]);
+
+function repairLegacySerenaArgs(name: string, command: string, args: readonly string[]): readonly string[] {
+  if (name.trim().toLowerCase() !== 'serena') return args;
+  if (!/(?:^|[\\/])serena(?:\.exe)?$/i.test(command.trim())) return args;
+  if (!args.includes('start-mcp-server')) return args;
+
+  const repaired: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    repaired.push(argument);
+    if (!SERENA_BOOLEAN_FLAGS.has(argument)) continue;
+    const next = args[index + 1];
+    if (next === undefined || next.startsWith('--')) repaired.push('false');
+  }
+  return repaired;
 }
 
 function normalizePathKey(value: string): string {

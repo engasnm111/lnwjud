@@ -125,9 +125,25 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     try {
       await openTools(second.page, true);
       await second.page.getByRole('tab', { name: /External MCP \(\d+\)/ }).click();
+      const external = await second.page.evaluate(async () => {
+        const snapshot = await window.lnwjud.getToolCatalog({ locale: 'th' });
+        const item = snapshot.items.find((candidate) => candidate.origin === 'external_mcp' && candidate.name === '@offline-fixture');
+        return item === undefined ? null : {
+          readiness: item.readiness,
+          declaredPermission: item.declaredPermission,
+          profileDecision: item.profileDecision,
+        };
+      });
+      expect(external).toEqual({
+        readiness: 'needs_setup',
+        declaredPermission: 'UNKNOWN',
+        profileDecision: 'UNKNOWN',
+      });
       const card = toolCard(second.page, '@offline-fixture');
       await expect(card).toHaveClass(/tool-needs_setup/);
-      await expect(card).toContainText('UNKNOWN');
+      await expect(card).toContainText('สถานะ External ยังไม่ยืนยัน');
+      await expect(card).toContainText('Server ไม่ได้ระบุสิทธิ์');
+      await expect(card).toContainText('lnwjud ไม่ได้จัดประเภท');
     } finally { await closeDesktop(second); }
   });
 

@@ -73,7 +73,7 @@ capabilities are additive.
 ### Historical: What's new in v4.56.2
 
 - Fixes External MCP protocol compatibility by auto-negotiating child-server protocol versions instead of requiring every external server to support MCP `2026-07-28`; legacy/2025-era servers such as Serena and modern `2026-07-28` servers are both covered by real stdio regression tests.
-- Keeps lnwjud's own inbound/local MCP `2026-07-28` contract unchanged. External MCP permission/readiness remains unverified (`UNKNOWN`), and `mcp_call` remains an opaque dangerous boundary under the existing approval policy.
+- Keeps lnwjud's own inbound/local MCP `2026-07-28` contract unchanged. A successful External MCP connection plus `tools/list` discovery is shown as ready at the transport/catalog layer, while child-server permission, profile, cancellation, and dry-run metadata remain undeclared/unverified; `mcp_call` remains an opaque dangerous boundary under the existing approval policy.
 - Standardizes user-facing timestamps across Desktop UI, copied/exported Live Logs, Work Log details, Doctor, Recovery, Settings, and related surfaces using the selected Thai/English locale while preserving raw machine timestamps internally.
 - Hardens Desktop responsiveness under heavy search/log traffic: ripgrep output capture is bounded and stops after enough results are collected, while renderer log events are de-duplicated, retained within fixed limits, and flushed in batches instead of copying the full log buffer for every event.
 - Adds regression coverage for high-volume search termination, bounded log buffering, timestamp formatting, real legacy/modern External MCP stdio negotiation, and a real installed-Serena smoke check during release preparation.
@@ -760,7 +760,7 @@ Readiness probes are read-only/owned status checks with bounded timeouts and cac
 
 **Doctor** uses the same requirement/remediation snapshot as Tools. Failed, unknown, and warning checks are shown before passed checks, affected tool names are listed, and selected **Recheck** refreshes both Doctor and Tools together. Required `fail` or `unknown` startup checks do not count as a successful startup gate; optional failures remain visible without blocking onboarding. Remediation actions are typed and allowlisted: they can navigate to the exact app setting, open Windows Optional Features, open an official URL, copy an allowlisted command, start lnwjud's managed browser, enable only the explicit Codex opt-in, or recheck selected requirements. Disabled/planned tools that are not actually enable-able say so instead of pointing at an unrelated setting; renderer/server text cannot inject an arbitrary URL or command.
 
-External MCP tools stay in their own origin/tab. When lnwjud cannot verify a child server's internal permission, cancellation, dry-run, or readiness semantics, those fields remain `UNKNOWN` instead of inheriting first-party claims.
+External MCP tools stay in their own origin/tab. Once the server connection and `tools/list` discovery succeed, those discovered tools are shown as `ready` at the transport/catalog layer. That does not invent child-server guarantees: permission/profile classification, cancellation, and dry-run support remain undeclared/unverified when the server does not publish them, and `mcp_call` still crosses the existing opaque dangerous approval boundary.
 
 Every file operation resolves the supplied path against a registered workspace,
 canonicalizes existing parents/targets, rejects traversal and reparse-point

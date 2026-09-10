@@ -850,6 +850,35 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       ? { status: 'pass', detail: 'WindowsSandbox.exe is available' }
       : { status: 'warn', detail: 'Windows Sandbox feature is not installed or enabled' };
   };
+  let lastExternalMcpProbeDetail: string | null = null;
+  const probeEnabledExternalMcpServers = async (): Promise<void> => {
+    const listed = await extensionsService.listMcpServers();
+    if (!listed.ok) {
+      lastExternalMcpProbeDetail = listed.error.message;
+      return;
+    }
+    const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded);
+    if (enabled.length === 0) {
+      lastExternalMcpProbeDetail = 'No enabled external MCP servers are configured';
+      return;
+    }
+
+    const observations = await Promise.all(enabled.map(async (server) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error(`Timed out connecting ${server.name}`)), 15_000);
+      try {
+        const described = await extensionsService.describeMcpServer({ server: server.name }, controller.signal);
+        return described.ok
+          ? `${server.name}: connected (${described.value.tools.length} tool(s))`
+          : `${server.name}: ${described.error.message}`;
+      } catch (cause: unknown) {
+        return `${server.name}: ${cause instanceof Error ? cause.message : 'connection failed'}`;
+      } finally {
+        clearTimeout(timer);
+      }
+    }));
+    lastExternalMcpProbeDetail = observations.join(' · ');
+  };
   const requirementDefinitions: readonly RequirementDefinition[] = [
     { id: 'os', required: true, summaryKey: 'requirement.os', probe: async (): Promise<RequirementProbeResult> => { const profile = currentPlatformProfile(); return { status: profile.supportTier === 'unsupported' ? 'fail' : 'pass', detail: `${profile.family} ${profile.arch} (${profile.supportTier})` }; } },
     {
@@ -890,7 +919,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     { id: 'scheduler_runtime', required: false, summaryKey: 'requirement.scheduler_runtime', probe: () => capabilityRequirement('scheduler') },
     { id: 'tunnel_runtime', required: false, summaryKey: 'requirement.tunnel_runtime', remediationId: 'configure_tunnel', probe: async (): Promise<{ status: 'pass' | 'fail'; detail: string }> => { const status = await tunnelController.diagnosticStatus(); return { status: status.state === 'running' ? 'pass' : 'fail', detail: status.message ?? `Tunnel is ${status.state}` }; } },
     { id: 'remote_mcp_ngrok', required: false, summaryKey: 'requirement.remote_mcp_ngrok', probe: async (): Promise<{ status: 'pass' | 'warn'; detail: string }> => { const status = await remoteMcpController.status(); return status.state === 'running' && status.publicMcpUrl !== null ? { status: 'pass', detail: `OAuth-protected Remote MCP online: ${status.publicMcpUrl}` } : { status: 'warn', detail: status.message ?? (status.installed ? 'Remote MCP is optional and currently stopped' : 'Remote MCP is optional; ngrok is not installed') }; } },
-    { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); return !listed.ok ? { status: 'unknown', detail: listed.error.message } : { status: listed.value.servers.some((server) => server.enabled && server.connected) ? 'pass' : 'warn', detail: `${listed.value.servers.length} external MCP server(s) discovered` }; } },
+    { id: 'external_mcp_connection', required: false, summaryKey: 'requirement.external_mcp_connection', remediationId: 'connect_external_mcp', probe: async (): Promise<{ status: 'pass' | 'warn' | 'unknown'; detail: string }> => { const listed = await extensionsService.listMcpServers(); if (!listed.ok) return { status: 'unknown', detail: listed.error.message }; const enabled = listed.value.servers.filter((server) => server.enabled && !server.excluded); const connected = enabled.filter((server) => server.connected); return { status: connected.length > 0 ? 'pass' : 'warn', detail: lastExternalMcpProbeDetail ?? `${enabled.length} enabled external MCP server(s); ${connected.length} connected` }; } },
     { id: 'local_pdf_provider', required: false, summaryKey: 'requirement.local_pdf_provider', remediationId: 'configure_pdf_provider', probe: localPdfProviderRequirement },
     { id: 'configured_lsp', required: false, summaryKey: 'requirement.configured_lsp', remediationId: 'configure_lsp', probe: configuredLspRequirement },
     { id: 'database_target', required: false, summaryKey: 'requirement.database_target', remediationId: 'configure_database_target', probe: async () => ({ status: 'pass', detail: 'Input-dependent: provide a read-only SQLite target inside a registered workspace for each call' }) },
@@ -925,7 +954,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const recheckCatalogAndDoctor = async (request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }> => {
     const unknown = request.requirementIds.filter((id) => !requirementIdSet.has(id) && !tunnelDoctorCheckIds.has(id));
     if (unknown.length > 0) throw new Error(`Unknown Doctor check id: ${unknown.join(', ')}`);
-    const canonicalIds = request.requirementIds.filter((id) => requirementIdSet.has(id));
+    const canonicalIds = request.requirementIds.length === 0
+      ? [...requirementIdSet]
+      : request.requirementIds.filter((id) => requirementIdSet.has(id));
+    if (canonicalIds.includes('external_mcp_connection')) await probeEnabledExternalMcpServers();
     const catalog = canonicalIds.length > 0
       ? (await toolCatalogService.recheck(canonicalIds, request.locale)).catalog
       : await toolCatalogService.getSnapshot(request.locale);

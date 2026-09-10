@@ -935,6 +935,10 @@
   transform: rotate(180deg);
 }
 
+.connection-method-followup-card {
+  margin-top: 10px;
+}
+
 .connection-method-panel {
   margin: 0;
 }

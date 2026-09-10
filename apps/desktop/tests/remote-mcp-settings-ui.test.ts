@@ -25,6 +25,12 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(homeSource).toContain('Remote MCP OAuth ออนไลน์แล้ว จึงพับส่วน Tunnel ไว้เพื่อลดความสับสน');
   });
 
+  it('adds an explicit 10px follow-up gap because Chromium details content does not honor the parent grid gap between sections', () => {
+    expect(settingsSource.match(/connection-method-followup-card/g)?.length).toBe(2);
+    expect(settingsCssSource).toContain('.connection-method-followup-card {');
+    expect(settingsCssSource).toContain('margin-top: 10px;');
+  });
+
   it('renders the first-time pairing PIN as a dedicated high-visibility value', () => {
     expect(settingsSource).toContain('remote-mcp-pairing-line');
     expect(settingsSource).toContain('remote-mcp-pairing-pin');

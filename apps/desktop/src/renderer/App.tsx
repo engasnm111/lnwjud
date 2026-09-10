@@ -830,7 +830,7 @@ export function App(): ReactElement {
         setError(null);
         const target = startupDoctorNavigationTarget(startupDoctorReady, nextScreen);
         setScreen(target);
-        if (target === 'tools') void loadToolCatalog();
+        if (target === 'tools') void loadToolCatalog(['external_mcp_connection']);
       }}
       onLocaleChange={(next) => { void changeLocale(next); }}
       onUpdateAction={() => { void handleUpdateAction(); }}
@@ -884,7 +884,7 @@ export function App(): ReactElement {
           snapshot={toolCatalog}
           loading={toolCatalogLoading}
           hostSyncNotice={toolHostSyncNotice}
-          onRefresh={() => loadToolCatalog()}
+          onRefresh={() => loadToolCatalog([])}
           onRemediation={handleToolRemediation}
           onSetAvailability={setToolAvailability}
           onResetAvailability={resetToolAvailability}

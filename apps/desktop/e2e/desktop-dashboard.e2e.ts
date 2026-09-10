@@ -112,6 +112,22 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
 
     await page.getByRole('button', { name: 'ตั้งค่า', exact: true }).click();
     await expectNoHorizontalOverflow(page);
+    await page.getByRole('button', { name: /Remote MCP & Tunnel/ }).click();
+    const tunnelAuthCard = page.locator('[aria-label="Tunnel authentication"]');
+    const tunnelGuideCard = page.locator('[aria-label="เปิดคู่มือตั้งค่า"], [aria-label="Open setup guide"]').first();
+    await expect(tunnelAuthCard).toBeVisible();
+    await expect(tunnelGuideCard).toBeVisible();
+    await expect.poll(async () => {
+      const authBox = await tunnelAuthCard.boundingBox();
+      const guideBox = await tunnelGuideCard.boundingBox();
+      if (authBox === null || guideBox === null) return null;
+      return Math.round(guideBox.y - (authBox.y + authBox.height));
+    }).toBeGreaterThanOrEqual(8);
+    const authBox = await tunnelAuthCard.boundingBox();
+    const guideBox = await tunnelGuideCard.boundingBox();
+    expect(authBox).not.toBeNull();
+    expect(guideBox).not.toBeNull();
+    if (authBox !== null && guideBox !== null) expect(Math.round(guideBox.y - (authBox.y + authBox.height))).toBeLessThanOrEqual(12);
     await page.getByRole('button', { name: /ความปลอดภัย|Security/ }).click();
     await page.getByLabel('Permission profile', { exact: true }).selectOption('balanced');
     await expect(page.getByLabel('Permission profile', { exact: true })).toHaveValue('balanced');
