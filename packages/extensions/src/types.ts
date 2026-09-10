@@ -57,6 +57,12 @@ export interface McpToolSummary {
   readonly description: string;
   readonly inputSchema?: unknown;
   readonly outputSchema?: unknown;
+  readonly annotations?: {
+    readonly readOnlyHint?: boolean | undefined;
+    readonly destructiveHint?: boolean | undefined;
+    readonly idempotentHint?: boolean | undefined;
+    readonly openWorldHint?: boolean | undefined;
+  };
 }
 
 export interface ExternalMcpContractDrift {

@@ -79,7 +79,7 @@ export class LocalExtensionsService implements ExtensionsService {
       readonly catalogFingerprint: string;
       readonly drift: import('./types.js').ExternalMcpContractDrift;
     };
-    readonly tools: readonly { readonly name: string; readonly qualifiedName: string; readonly description: string; readonly inputSchema?: unknown; readonly outputSchema?: unknown }[];
+    readonly tools: readonly (import('./types.js').McpToolSummary & { readonly qualifiedName: string })[];
   }>> {
     if (isAborted(signal)) return cancelledMcpCall();
     const server = await this.findServer(input.server);
