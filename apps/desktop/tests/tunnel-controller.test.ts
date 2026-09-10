@@ -1481,7 +1481,7 @@ describe('TunnelController lifecycle', () => {
     const internals = controllerInternals(controller);
     internals.state = 'stopped';
 
-    const probe = await (controller as any).probeExternalRunning();
+    const probe = await internals.probeExternalRunning();
     expect(probe).toBe('gone');
     expect(internals.lastExternalProbe).toBe('gone');
   });
@@ -1580,6 +1580,7 @@ function controllerInternals(controller: TunnelController): {
   lastExternalProbe: 'live' | 'gone' | 'unverifiable';
   runtimeConfigurationDirty: boolean;
   runtimeMode: 'native-managed' | 'profile-child' | null;
+  probeExternalRunning: (force?: boolean) => Promise<'live' | 'gone' | 'unverifiable'>;
 } {
   return controller as unknown as {
     child: ChildProcess | null;
@@ -1594,6 +1595,7 @@ function controllerInternals(controller: TunnelController): {
     lastExternalProbe: 'live' | 'gone' | 'unverifiable';
     runtimeConfigurationDirty: boolean;
     runtimeMode: 'native-managed' | 'profile-child' | null;
+    probeExternalRunning: (force?: boolean) => Promise<'live' | 'gone' | 'unverifiable'>;
   };
 }
 
