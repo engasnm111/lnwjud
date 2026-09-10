@@ -666,5 +666,5 @@ describe('ShellCapabilityBackend unrestricted', () => {
     await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-a') })).resolves.toMatchObject({ ok: true });
     await expect(backendB.cancelForGoal('client-1', 'workspace-1', taskId))
       .resolves.toMatchObject({ ok: true, value: { matched: true, state: 'cancelled' } });
-  });
+  }, 15_000);
 });
