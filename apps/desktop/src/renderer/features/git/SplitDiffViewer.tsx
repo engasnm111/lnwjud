@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactElement } from 'react';
+import { Fragment, useRef, useState, type ReactElement } from 'react';
 import type { UiLocale } from '@lnwjud/ipc-contracts';
 
 export interface DiffRow {
