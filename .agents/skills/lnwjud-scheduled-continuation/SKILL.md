@@ -53,6 +53,38 @@ One user request owns one durable goal and at most one live Native ChatGPT watch
 - Yield only when the goal is terminal, a real external blocker/user decision leaves no safe useful work, the host forces the turn boundary, or a genuinely long blocking job has no useful parallel work left and durable continuation coverage is confirmed.
 - Do not promise or target a fixed 22/25-minute runtime. Consume as much useful host turn as is available while respecting the stop conditions above.
 
+## Authoritative CI watcher policy
+
+When work includes waiting for GitHub Actions, the CI watcher is part of the active worker's durable work, not a reason to yield to the next scheduled tick.
+
+- Resolve the exact GitHub Actions run ID first and watch that exact run. Never switch to "latest branch run" after monitoring begins.
+- Prefer one long-running background/durable watcher: `gh run watch <RUN_ID> -i 20 --exit-status`.
+- Before spawning it, inspect existing authoritative tasks/processes. Reuse a live watcher for the same exact run ID instead of creating a duplicate.
+- Track the watcher as the authoritative `blocking_job` for that CI run when a durable goal is active.
+- Wait for the watcher to become terminal and confirm the workflow conclusion before reporting success.
+- If it fails, inspect logs from that exact run before making code changes. Never diagnose from a different run.
+- Never merge, tag, publish, or release a SHA whose required CI is failed or non-terminal.
+- Multiple exact run IDs may share one durable watcher process if their exit codes are preserved and any required failure makes the watcher fail.
+- Windows wrappers may use PowerShell. macOS/Linux wrappers must use a shell actually available on those platforms such as `sh` or `bash`; do not call a PowerShell-only watcher cross-platform.
+- This watcher is not a Native ChatGPT Scheduled Task. If scheduled continuation is disabled, do not create or re-enable a schedule merely to monitor CI.
+
+Windows-only wrapper example:
+
+```powershell
+powershell -NoProfile -NonInteractive -Command "
+Write-Host 'Watching CI run 123456...';
+gh run watch 123456 -i 20 --exit-status;
+$ciExit = $LASTEXITCODE;
+exit $ciExit
+"
+```
+
+POSIX example:
+
+```sh
+gh run watch 123456 -i 20 --exit-status
+```
+
 ## Recurring scheduled wake
 
 `claim_scheduled_continuation` must be the **first connected lnwjud action before any workspace mutation**.
