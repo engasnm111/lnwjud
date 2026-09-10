@@ -1,4 +1,4 @@
-/* global AbortSignal, Buffer, clearTimeout, fetch, process, setTimeout */
+/* global Buffer, clearTimeout, process, setTimeout */
 
 import { createHash } from 'node:crypto';
 import { chmod, copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { fetchWithRetry } from './fetch-with-retry.mjs';
 
 const require = createRequire(import.meta.url);
 const extractZip = require('@electron-internal/extract-zip');
@@ -145,7 +146,7 @@ async function downloadIfNeeded(url, destination, expectedSha256, label) {
   } catch {
     // Missing or invalid cache entries are downloaded below.
   }
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+  const response = await fetchWithRetry(url, 120_000);
   if (!response.ok) throw new Error(`Could not download official ${label} asset (${response.status})`);
   await writeAtomic(destination, Buffer.from(await response.arrayBuffer()));
   await assertCanonicalFile(destination);
