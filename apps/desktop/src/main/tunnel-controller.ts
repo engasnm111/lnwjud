@@ -805,10 +805,12 @@ export class TunnelController {
     }
     child.on('error', (error) => {
       if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
-      this.options.setRuntimeOwnerPath?.('');
-      this.state = 'error';
-      this.message = error.message;
-      this.scheduleRestart(clientPath);
+      if (this.intentionalStop) {
+        this.state = 'stopped';
+        this.message = null;
+        return;
+      }
+      void this.applyUnexpectedExit(null, clientPath, error.message);
     });
     child.on('exit', (code) => {
       if (this.child === child) { this.child = null; this.ownedChildStartedAt = null; }
@@ -824,23 +826,21 @@ export class TunnelController {
     });
   }
 
-  private async applyUnexpectedExit(code: number | null, clientPath: string): Promise<void> {
+  private async applyUnexpectedExit(code: number | null, clientPath: string, errorMessage?: string): Promise<void> {
     const hint = await this.readExitHint();
     this.state = 'error';
-    this.message = formatTunnelExitMessage(code, hint);
-    const now = Date.now();
-    if (this.restartWindowStartedAt === 0 || now - this.restartWindowStartedAt > RESTART_WINDOW_MS) {
-      this.restartWindowStartedAt = now;
-      this.restartAttempts = 0;
-    }
+    this.message = errorMessage ?? formatTunnelExitMessage(code, hint);
     this.restartAttempts += 1;
     if (!this.autoReconnectEnabled() || this.runtimeDesiredState() === 'stopped') {
       this.options.setRuntimeOwnerPath?.('');
       return;
     }
     const rapidThreshold = this.maxAutoRestarts();
-    if (rapidThreshold > 0 && this.restartAttempts > rapidThreshold) {
-      this.message = `${this.message} — reconnect continues with capped backoff after ${rapidThreshold} rapid exits`;
+    if (rapidThreshold > 0 && this.restartAttempts >= rapidThreshold) {
+      this.clearRestartTimer();
+      this.message = `${this.message} — automatic restart paused after ${this.restartAttempts} rapid failures. Fix the tunnel configuration and press Start Tunnel to retry.`;
+      this.options.setRuntimeOwnerPath?.('');
+      return;
     }
     this.scheduleRestart(clientPath);
   }
@@ -856,7 +856,8 @@ export class TunnelController {
   }
 
   private scheduleRestart(clientPath: string): void {
-    if (this.intentionalStop || this.runtimeDesiredState() === 'stopped' || !this.autoReconnectEnabled()) return;
+    const rapidThreshold = this.maxAutoRestarts();
+    if (this.intentionalStop || this.runtimeDesiredState() === 'stopped' || !this.autoReconnectEnabled() || (rapidThreshold > 0 && this.restartAttempts >= rapidThreshold)) return;
     this.clearRestartTimer();
     const delay = Math.min(RESTART_DELAY_MS * (2 ** Math.max(0, this.restartAttempts - 1)), 30_000);
     this.restartTimer = setTimeout(() => {

@@ -1404,6 +1404,69 @@ describe('TunnelController lifecycle', () => {
     const controller = new TunnelController({ getClientPath: (): string => executable, setClientPath: (): void => {}, getDataPath: (): string => dataPath, inspectFileVersion: async (): Promise<string> => '1.2.3' });
     await expect(controller.clientVersion()).resolves.toEqual({ value: '1.2.3', reason: null });
   });
+
+  it('pauses automatic reconnect after maxAutoRestarts rapid exits instead of looping forever', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-rapid-restarts-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => {},
+      getDataPath: (): string => dataPath,
+      maxAutoRestarts: (): number => 3,
+      autoReconnect: (): boolean => true,
+      isExternalTunnelRunning: async (): Promise<boolean> => false,
+    });
+    const internals = controllerInternals(controller);
+    internals.state = 'running';
+
+    await internals.applyUnexpectedExit(1, clientPath);
+    expect(internals.state).toBe('error');
+    expect(internals.restartAttempts).toBe(1);
+    expect(internals.restartTimer).not.toBeNull();
+
+    await internals.applyUnexpectedExit(1, clientPath);
+    expect(internals.restartAttempts).toBe(2);
+    expect(internals.restartTimer).not.toBeNull();
+
+    // 3rd exit reaches threshold (3) -> should pause and clear restart timer
+    await internals.applyUnexpectedExit(1, clientPath);
+    expect(internals.restartAttempts).toBe(3);
+    expect(internals.restartTimer).toBeNull();
+    expect(internals.state).toBe('error');
+    expect(internals.message).toContain('automatic restart paused after 3 rapid failures');
+  });
+
+  it('counts child spawn errors towards rapid restart threshold and pauses', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-error-restarts-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture', 'utf8');
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => {},
+      getDataPath: (): string => dataPath,
+      maxAutoRestarts: (): number => 2,
+      autoReconnect: (): boolean => true,
+      isExternalTunnelRunning: async (): Promise<boolean> => false,
+    });
+    const internals = controllerInternals(controller);
+    internals.state = 'running';
+
+    await internals.applyUnexpectedExit(null, clientPath, 'spawn ENOENT');
+    expect(internals.state).toBe('error');
+    expect(internals.restartAttempts).toBe(1);
+    expect(internals.restartTimer).not.toBeNull();
+
+    await internals.applyUnexpectedExit(null, clientPath, 'spawn ENOENT');
+    expect(internals.restartAttempts).toBe(2);
+    expect(internals.restartTimer).toBeNull();
+    expect(internals.state).toBe('error');
+    expect(internals.message).toContain('automatic restart paused after 2 rapid failures');
+  });
 });
 
 interface FakeChild extends EventEmitter {
@@ -1491,6 +1554,10 @@ function controllerInternals(controller: TunnelController): {
   ownedChildStartedAt: string | null;
   tunnelLock: TunnelLockAcquisition | null;
   state: 'stopped' | 'starting' | 'running' | 'error';
+  message: string | null;
+  restartAttempts: number;
+  restartTimer: ReturnType<typeof setTimeout> | null;
+  applyUnexpectedExit: (code: number | null, clientPath: string, errorMessage?: string) => Promise<void>;
   externalProbeAt: number;
   lastExternalProbe: 'live' | 'gone' | 'unverifiable';
   runtimeConfigurationDirty: boolean;
@@ -1501,6 +1568,10 @@ function controllerInternals(controller: TunnelController): {
     ownedChildStartedAt: string | null;
     tunnelLock: TunnelLockAcquisition | null;
     state: 'stopped' | 'starting' | 'running' | 'error';
+    message: string | null;
+    restartAttempts: number;
+    restartTimer: ReturnType<typeof setTimeout> | null;
+    applyUnexpectedExit: (code: number | null, clientPath: string, errorMessage?: string) => Promise<void>;
     externalProbeAt: number;
     lastExternalProbe: 'live' | 'gone' | 'unverifiable';
     runtimeConfigurationDirty: boolean;
