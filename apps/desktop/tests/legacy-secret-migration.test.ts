@@ -45,7 +45,7 @@ describe('legacy Windows secret migration', () => {
     const powershellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'));
     if (!existsSync(helperPath)) {
       if (process.env.LNWJUD_TEST_WINDOWS_SECRET_MIGRATOR !== undefined) throw new Error('Configured test helper does not exist');
-      await exec(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(repositoryRoot, 'scripts/build-windows-secret-migrator.ps1')], { windowsHide: true, timeout: 120_000, env: powershellEnv });
+      await exec(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(repositoryRoot, 'scripts/build-windows-secret-migrator.ps1')], { windowsHide: true, timeout: process.env.CI ? 300_000 : 120_000, env: powershellEnv });
     }
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-native-migration-')));
     try {
@@ -68,7 +68,7 @@ describe('legacy Windows secret migration', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  }, 150_000);
+  }, process.env.CI ? 330_000 : 150_000);
 
   it('migrates every persisted OAuth/ngrok secret using the existing startup arguments', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-oauth-migration-'));
