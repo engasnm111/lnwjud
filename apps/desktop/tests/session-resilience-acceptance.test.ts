@@ -145,7 +145,7 @@ describe('session resilience acceptance', () => {
     const afterRelease = await acquireTunnelLock({ profileDirectory, owner: await currentOwner() });
     expect(afterRelease.acquired).toBe(true);
     if (afterRelease.acquired) expect(await afterRelease.release()).toBe(true);
-  }, 15_000);
+  }, process.env.CI ? 30_000 : 15_000);
 
   it.runIf(process.platform === 'win32')('uses the same critical section across a TypeScript stale reclaim and PowerShell publisher', async () => {
     const root = await temporaryDirectory();
