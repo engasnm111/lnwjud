@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.61.0 (มีทั้งหมด 233 definitions; advertise 226 tools โดยปริยายก่อนใช้ per-tool override และครบ 233 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source และ runtime contract ปัจจุบันของ lnwjud v4.62.0 (มีทั้งหมด 233 definitions; advertise 226 tools โดยปริยายก่อนใช้ per-tool override และครบ 233 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
@@ -8,7 +8,7 @@
 
 lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggregator แต่เป็น cross-platform local development gateway ที่เปิดความสามารถของเครื่องและ workspace บน Windows, macOS และ Linux ให้ AI host ที่พูดภาษา Model Context Protocol (MCP) ได้ โดย capability ที่เป็น OS-specific จะเปิดเฉพาะเมื่อ host รองรับจริง
 
-ความสามารถหลักใน v4.61.0 คือ:
+ความสามารถหลักใน v4.62.0 คือ:
 
 - เปิด workspace และ machine roots ให้ AI อ่าน ค้นหา วิเคราะห์ และแก้ไขไฟล์ได้
 - ใช้ Context Economy Engine ลด I/O/token จากการค้นหาอัตโนมัติ โดยยังอ่าน .env, .git, dist และ node_modules ได้เมื่อร้องขอแบบ explicit และอยู่ในขอบเขตที่ workspace/path policy อนุญาต

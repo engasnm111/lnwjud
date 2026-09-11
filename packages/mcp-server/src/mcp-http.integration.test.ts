@@ -311,6 +311,24 @@ describe('MCP localhost HTTP transport', () => {
     const transport = new StreamableHTTPClientTransport(handle.endpoint);
     try {
       await client.connect(transport);
+      const directCapture = await client.callTool({
+        name: 'vision',
+        arguments: { action: 'capture_region', region: { x: 0, y: 0, width: 640, height: 480 } },
+      });
+      expect(directCapture.isError).not.toBe(true);
+      expect(directCapture.content).toEqual([
+        { type: 'image', data: 'cG5n', mimeType: 'image/png' },
+        { type: 'text', text: JSON.stringify({ format: 'png', mime_type: 'image/png', width: 640, height: 480, origin_x: 0, origin_y: 0 }) },
+      ]);
+      expect(directCapture.structuredContent).toEqual({
+        format: 'png',
+        mime_type: 'image/png',
+        width: 640,
+        height: 480,
+        origin_x: 0,
+        origin_y: 0,
+      });
+
       const captured = await client.callTool({ name: 'vision_annotated_capture', arguments: { workspaceId: 'workspace-1' } });
       expect(captured.isError).not.toBe(true);
       const observationId = captured.structuredContent?.observationId;

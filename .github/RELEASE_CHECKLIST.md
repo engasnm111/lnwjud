@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v4.61.0` - Windows installer `lnwjud-Setup-4.61.0.exe` and portable executable `lnwjud-Portable-4.61.0.exe`; MCP registry **233 total definitions / 226 advertised by default / all 233 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v4.62.0` - Windows installer `lnwjud-Setup-4.62.0.exe` and portable executable `lnwjud-Portable-4.62.0.exe`; MCP registry **233 total definitions / 226 advertised by default / all 233 with Codex delegation plus Agent Swarm enabled**.
 
 Run the release verification from PowerShell at the repository root. The automated gate must fail fast on any non-zero stage and `git diff --check` must pass before packaging or publishing. Pull-request/non-main CI may pass `-SkipWindowsPackaging`; the exact `main` commit that will be tagged must run the full Windows gate plus the target-native macOS/Linux package matrix and produce all five SHA-scoped release artifacts. The normal source is the protected `main` push; if the merge credential suppresses that downstream Actions event, an explicit `workflow_dispatch` of `ci.yml` on the exact `main` SHA is the approved fallback and must produce the same five artifacts.
 
@@ -15,7 +15,7 @@ Issue #26 / secret migration boundary: the JavaScript runtime must not ship Powe
 - Workspace traversal and junction/reparse-point tests pass without broadening the configured path boundary.
 - Secret-file policy and log/incident redaction tests pass; release evidence must never contain credentials or tokens.
 - AV-sensitive secret-code tests pass: compiled Desktop output and packaged runtime evidence contain no legacy PowerShell secret modules, stale DPAPI imports, `lnwjud-node.exe`, or `lnwjud-mcp-stdio.cjs`.
-- MCP local HTTP and STDIO transport tests pass, including protocol-only stdout and production handshake coverage.
+- MCP local HTTP and STDIO transport tests pass, including protocol-only stdout and production handshake coverage. Native Vision and External MCP screenshot results must preserve first-class MCP `image` content end-to-end without duplicating raw Base64 into text/structured metadata.
 - External MCP client negotiation is compatibility-driven rather than pinned to lnwjud's inbound protocol: real stdio fixtures must prove both a legacy/2025-era child and a modern `2026-07-28` child connect through the production External MCP client factory, while lnwjud's own inbound/local MCP `2026-07-28` contract remains unchanged. Release preparation also performs a local installed-Serena smoke when Serena is present; its absence is not a CI dependency.
 - Remote MCP OAuth DCR accepts ChatGPT-style metadata, validates `client_secret_post` credentials at the token endpoint, and returns explicit 4xx errors for malformed or unsupported registration metadata.
 - OpenAI Secure Tunnel targets the Desktop loopback HTTP MCP (`sample_mcp_remote_no_auth`) rather than a separate headless stdio runtime, preserving the Desktop profile and Desktop Full Bypass state. Active Project scope/native approval remain enforced when Desktop Full Bypass is OFF.

@@ -23,11 +23,17 @@
 
 ---
 
-## Current version: v4.61.0
+## Current version: v4.62.0
 
-`v4.61.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.62.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.61.0
+### What's new in v4.62.0
+
+- **Image payload delivery:** native Vision captures now return the screenshot as first-class MCP `image` content without duplicating the full Base64 payload into text/structured metadata, preventing successful captures from being lost behind oversized tool-result JSON.
+- **External MCP image passthrough:** `mcp_call` now preserves child MCP `image` and `text` content blocks instead of flattening the child `CallToolResult` into JSON text, so screenshots from Serena/custom MCP servers can reach the model as images.
+- **Regression coverage:** mapper, External MCP bridge, and real MCP HTTP transport tests verify image blocks survive end-to-end while redundant Base64 is removed from metadata.
+
+### Historical: What's new in v4.61.0
 
 - **Stable log search and pause:** Work Log and every Live Logs tab freeze the visible feed while a search is active, so newly arriving events cannot jump into or reorder the result list while you type or inspect matches. Clearing search resumes the current live feed. Live Logs **Pause** now freezes the feed itself, and **Follow** resumes only when no search is holding the snapshot.
 - **Durable background-task lifecycle:** shell tasks finalize from the direct command's terminal state instead of being stranded by detached descendants that keep inherited stdio handles open.
