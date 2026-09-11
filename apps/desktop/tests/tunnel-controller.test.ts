@@ -749,7 +749,11 @@ describe('TunnelController lifecycle', () => {
       getMcpServerUrl: (): string => 'http://127.0.0.1:18765/mcp',
       getTunnelId: (): string => 'tunnel_fixture012345',
       setTunnelId: (): void => undefined,
-      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      createRuntimeAdapter: (options): TunnelRuntimeReconcilerAdapter => {
+        expect(options.environment.MCP_CONNECTION_MAX_TTL).toBe('168h0m0s');
+        expect(options.environment.MCP_MAX_CONCURRENT_REQUESTS).toBe('32');
+        return adapter;
+      },
       decryptSecret: async (): Promise<string> => 'new-runtime-key',
       isExternalTunnelRunning: async (): Promise<boolean> => true,
     });

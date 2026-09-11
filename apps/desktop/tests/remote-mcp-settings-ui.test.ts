@@ -28,6 +28,11 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(homeSource).toContain('ตัวเลือกขั้นสูง');
   });
 
+  it('explains Secure Tunnel multi-chat and multi-host topology without recommending one profile per chat', () => {
+    expect(settingsSource).toContain('หลาย ChatGPT chats บน lnwjud เครื่องนี้ใช้ Tunnel ID เดียวกันได้ ไม่ต้องแยก profile ต่อแชท');
+    expect(settingsSource).toContain('use a distinct Tunnel ID per machine because replicas sharing one Tunnel ID receive work from whichever replica polls first');
+  });
+
   it('adds an explicit 10px follow-up gap because Chromium details content does not honor the parent grid gap between sections', () => {
     expect(settingsSource.match(/connection-method-followup-card/g)?.length).toBe(2);
     expect(settingsCssSource).toContain('.connection-method-followup-card {');
