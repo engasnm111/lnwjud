@@ -77,6 +77,9 @@ const PAIRING_TTL_MS = 15 * 60_000;
 const CODE_TTL_MS = 5 * 60_000;
 const ACCESS_TTL_MS = 8 * 60 * 60_000;
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60_000;
+const LOCAL_APPROVAL_TTL_MS = 60_000;
+const MAX_PENDING_LOCAL_APPROVALS = 8;
+const CHATGPT_OAUTH_CALLBACK_PATHS = new Set(['/aip/oauth/callback', '/connector_platform_oauth_redirect']);
 
 export class RemoteMcpController {
   private readonly dataPath: string;
@@ -103,6 +106,8 @@ export class RemoteMcpController {
   private readonly authCodes = new Map<string, AuthorizationCode>();
   private readonly accessTokens = new Map<string, AccessGrant>();
   private readonly refreshTokens = new Map<string, AccessGrant>();
+  private readonly localApprovalServers = new Set<Server>();
+  private authorizationGeneration = 0;
 
   public constructor(options: RemoteMcpControllerOptions) {
     this.dataPath = options.dataPath;
@@ -143,7 +148,7 @@ export class RemoteMcpController {
       pairingCodeExpiresAt: this.runState === 'running' && this.pairingExpiresAt > 0 ? new Date(this.pairingExpiresAt).toISOString() : null,
       oauthProtected: true,
       oauthConnected: this.hasTrustedClient(),
-      pairingRequired: this.runState === 'running' && !this.hasTrustedClient(),
+      pairingRequired: this.runState === 'running' && this.pairingCode !== null,
       autoStartEnabled: this.desiredRunning,
       message: this.message,
     };
@@ -198,13 +203,17 @@ export class RemoteMcpController {
 
   public async regeneratePairingCode(): Promise<RemoteMcpStatus> {
     await this.ensurePersistenceLoaded();
+    this.authorizationGeneration += 1;
+    await this.closeLocalApprovalServers();
     for (const [clientId, client] of this.clients) this.clients.set(clientId, { ...client, trusted: false });
     this.authCodes.clear();
     this.accessTokens.clear();
     this.refreshTokens.clear();
-    this.issuePairingCode();
+    this.pairingCode = null;
+    this.pairingExpiresAt = 0;
+    this.pairingFailures = 0;
     await this.persistState();
-    this.message = 'ChatGPT authorization was reset. Pair once to trust this connection again.';
+    this.message = 'ChatGPT authorization was reset. The next supported ChatGPT OAuth connection will complete automatically through the local Desktop handoff.';
     return this.status();
   }
 
@@ -236,12 +245,9 @@ export class RemoteMcpController {
       if (recoveredStaleNgrok) this.message = 'Recovered a stale lnwjud ngrok runtime from a previous Desktop session';
       await this.startGateway(localMcpUrl);
       if (this.gatewayUrl === null) throw new Error('Remote MCP gateway did not start');
-      if (this.hasTrustedClient()) {
-        this.pairingCode = null;
-        this.pairingExpiresAt = 0;
-      } else {
-        this.issuePairingCode();
-      }
+      this.pairingCode = null;
+      this.pairingExpiresAt = 0;
+      this.pairingFailures = 0;
       this.publicOrigin = null;
       let lastNgrokDiagnostic: string | null = null;
       let ngrokDiagnosticBuffer = '';
@@ -290,7 +296,7 @@ export class RemoteMcpController {
       await this.persistState();
       this.message = this.hasTrustedClient()
         ? 'Remote MCP is online. ChatGPT authorization is trusted and will reconnect automatically.'
-        : 'Remote MCP is online. Pair ChatGPT once to trust this connection.';
+        : 'Remote MCP is online. Connect the published lnwjud app from ChatGPT; supported ChatGPT OAuth clients complete through a local Desktop handoff with no PIN.';
       return this.status();
     } catch (error) {
       await this.stopOwnedRuntime();
@@ -445,14 +451,23 @@ export class RemoteMcpController {
       json(response, 400, { error: 'invalid_request' });
       return;
     }
+    if (isZeroClickChatGptClient(client)) {
+      const localApprovalUrl = await this.startChatGptLocalApproval({ clientId, redirectUri, state, challenge });
+      response.statusCode = 302;
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('Location', localApprovalUrl);
+      response.end();
+      return;
+    }
     if (!client.trusted) {
       const submitted = params.get('pairing_code');
       if (submitted === null) {
+        if (this.pairingCode === null || this.now() >= this.pairingExpiresAt) this.issuePairingCode();
         html(
           response,
           200,
           authorizePairingPage({
-            clientName: client.clientName ?? 'ChatGPT',
+            clientName: client.clientName ?? 'OAuth client',
             clientId,
             redirectUri,
             state,
@@ -469,17 +484,84 @@ export class RemoteMcpController {
       this.clients.set(clientId, { ...client, trusted: true });
       this.pairingCode = null;
       this.pairingExpiresAt = 0;
-      this.message = 'ChatGPT authorized. This OAuth connection is remembered for future starts.';
+      this.message = 'OAuth client authorized. This connection is remembered for future starts.';
       await this.persistState();
     }
+    this.redirectAuthorizationCode({ clientId, redirectUri, state, challenge }, response);
+  }
+
+  private redirectAuthorizationCode(input: { readonly clientId: string; readonly redirectUri: string; readonly state: string; readonly challenge: string }, response: ServerResponse): void {
     const code = token(32);
-    this.authCodes.set(code, { clientId, redirectUri, codeChallenge: challenge, expiresAt: this.now() + CODE_TTL_MS });
-    const destination = new URL(redirectUri);
+    this.authCodes.set(code, { clientId: input.clientId, redirectUri: input.redirectUri, codeChallenge: input.challenge, expiresAt: this.now() + CODE_TTL_MS });
+    const destination = new URL(input.redirectUri);
     destination.searchParams.set('code', code);
-    if (state.length > 0) destination.searchParams.set('state', state);
+    if (input.state.length > 0) destination.searchParams.set('state', input.state);
     response.statusCode = 302;
+    response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Location', destination.toString());
     response.end();
+  }
+
+  private async startChatGptLocalApproval(input: { readonly clientId: string; readonly redirectUri: string; readonly state: string; readonly challenge: string }): Promise<string> {
+    if (this.localApprovalServers.size >= MAX_PENDING_LOCAL_APPROVALS) {
+      const oldest = this.localApprovalServers.values().next().value as Server | undefined;
+      if (oldest?.listening === true) await new Promise<void>((resolve) => oldest.close(() => resolve()));
+    }
+    const approvalToken = token(32);
+    const approvalPath = `/oauth/chatgpt-local-approve/${approvalToken}`;
+    const generation = this.authorizationGeneration;
+    let consumed = false;
+    const server = createServer((request, response) => {
+      void (async (): Promise<void> => {
+        const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+        if (request.method !== 'GET' || url.pathname !== approvalPath) {
+          response.statusCode = 404;
+          response.end('Not found');
+          return;
+        }
+        if (consumed || generation !== this.authorizationGeneration) {
+          response.statusCode = 410;
+          response.end('Approval expired');
+          return;
+        }
+        const client = this.clients.get(input.clientId);
+        if (client === undefined || !isZeroClickChatGptClient(client) || !client.redirectUris.includes(input.redirectUri)) {
+          response.statusCode = 410;
+          response.end('Approval expired');
+          return;
+        }
+        consumed = true;
+        this.clients.set(input.clientId, { ...client, trusted: true });
+        this.pairingCode = null;
+        this.pairingExpiresAt = 0;
+        this.pairingFailures = 0;
+        this.message = 'ChatGPT authorized through local Desktop confirmation. This OAuth connection is remembered for future starts.';
+        await this.persistState();
+        this.redirectAuthorizationCode(input, response);
+        const cleanup = setTimeout(() => { if (server.listening) server.close(); }, 1_000);
+        cleanup.unref();
+      })().catch((error: unknown) => {
+        if (!response.headersSent) json(response, 500, { error: 'server_error', error_description: errorMessage(error) });
+        else response.end();
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const address = server.address();
+    if (address === null || typeof address === 'string') {
+      server.close();
+      throw new Error('ChatGPT local approval could not resolve its loopback port');
+    }
+    this.localApprovalServers.add(server);
+    const timer = setTimeout(() => server.close(), LOCAL_APPROVAL_TTL_MS);
+    timer.unref();
+    server.once('close', () => {
+      clearTimeout(timer);
+      this.localApprovalServers.delete(server);
+    });
+    return `http://127.0.0.1:${address.port}${approvalPath}`;
   }
 
   private async handleToken(params: URLSearchParams, response: ServerResponse): Promise<void> {
@@ -620,7 +702,18 @@ export class RemoteMcpController {
     } catch { return null; }
   }
 
+  private async closeLocalApprovalServers(): Promise<void> {
+    const servers = [...this.localApprovalServers];
+    this.localApprovalServers.clear();
+    await Promise.all(servers.map(async (server) => {
+      if (!server.listening) return;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }));
+  }
+
   private async stopOwnedRuntime(): Promise<void> {
+    this.authorizationGeneration += 1;
+    await this.closeLocalApprovalServers();
     const child = this.ngrok;
     this.ngrok = null;
     this.publicOrigin = null;
@@ -997,10 +1090,10 @@ function authorizePairingPage(input: { readonly clientName: string; readonly cli
     <section class="card" aria-labelledby="authorize-title">
       <div class="accent"></div>
       <div class="content">
-        <div class="eyebrow"><span class="dot"></span> Secure pairing</div>
+        <div class="eyebrow"><span class="dot"></span> Fallback pairing</div>
         <h1 id="authorize-title">Authorize <span class="client">${escaped(input.clientName)}</span></h1>
-        <p>Enter the 6-digit pairing code shown in lnwjud Desktop to approve this Remote MCP connection.</p>
-        <div class="steps"><strong>Where to find it:</strong> lnwjud Desktop → Settings → Remote MCP &amp; Tunnel → OAuth Pairing Code. The code expires automatically.</div>
+        <p>This OAuth client is not a recognized ChatGPT callback, so lnwjud requires a one-time fallback PIN.</p>
+        <div class="steps"><strong>Where to find it:</strong> lnwjud Desktop → Settings → Remote MCP &amp; Tunnel. ChatGPT connections normally skip this step.</div>
         <form method="post" action="/oauth/authorize">
           <input type="hidden" name="response_type" value="code">
           <input type="hidden" name="client_id" value="${escaped(input.clientId)}">
@@ -1008,11 +1101,11 @@ function authorizePairingPage(input: { readonly clientName: string; readonly cli
           <input type="hidden" name="state" value="${escaped(input.state)}">
           <input type="hidden" name="code_challenge" value="${escaped(input.challenge)}">
           <input type="hidden" name="code_challenge_method" value="S256">
-          <label for="pairing-code">Pairing code</label>
+          <label for="pairing-code">Fallback PIN</label>
           <input id="pairing-code" class="code" autofocus autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" name="pairing_code" required aria-describedby="pairing-help">
-          <button type="submit">Authorize ChatGPT</button>
+          <button type="submit">Authorize OAuth client</button>
         </form>
-        <div id="pairing-help" class="security"><span class="shield">◆</span><span>The pairing code is verified locally by lnwjud. A discovered ngrok URL alone is not enough to authorize a client.</span></div>
+        <div id="pairing-help" class="security"><span class="shield">◆</span><span>The fallback PIN is verified locally by lnwjud. Supported ChatGPT callbacks bypass this page and complete OAuth automatically.</span></div>
       </div>
     </section>
     <div class="foot">lnwjud Remote MCP · OAuth 2.0 + PKCE</div>
@@ -1022,7 +1115,7 @@ function authorizePairingPage(input: { readonly clientName: string; readonly cli
 }
 
 function pairingErrorPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Pairing code rejected · lnwjud</title><style>:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#eef1f6;background:#070a10}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#070a10}.card{width:min(100%,520px);padding:30px;border:1px solid rgba(221,80,80,.3);border-radius:20px;background:#10151e;box-shadow:0 24px 70px rgba(0,0,0,.45)}.mark{color:#ff7d7d;font-size:28px}h1{margin:12px 0 8px;font-size:28px}p{margin:0;color:#aeb7c7;line-height:1.65}.hint{margin-top:18px;padding:13px 14px;border-radius:12px;background:#0a0e15;border:1px solid #242d3a;color:#d5b861;font-size:13px}</style></head><body><main class="card"><div class="mark">◇</div><h1>Pairing code rejected</h1><p>The code is invalid or expired. Generate a new OAuth Pairing Code in lnwjud Desktop and start the authorization again.</p><div class="hint">Settings → Remote MCP &amp; Tunnel → สร้าง Pairing Code ใหม่</div></main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Fallback PIN rejected · lnwjud</title><style>:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#eef1f6;background:#070a10}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#070a10}.card{width:min(100%,520px);padding:30px;border:1px solid rgba(221,80,80,.3);border-radius:20px;background:#10151e;box-shadow:0 24px 70px rgba(0,0,0,.45)}.mark{color:#ff7d7d;font-size:28px}h1{margin:12px 0 8px;font-size:28px}p{margin:0;color:#aeb7c7;line-height:1.65}.hint{margin-top:18px;padding:13px 14px;border-radius:12px;background:#0a0e15;border:1px solid #242d3a;color:#d5b861;font-size:13px}</style></head><body><main class="card"><div class="mark">◇</div><h1>Fallback PIN rejected</h1><p>The PIN is invalid or expired. Restart authorization to receive a fresh fallback PIN in lnwjud Desktop.</p><div class="hint">ChatGPT callbacks normally do not need a PIN.</div></main></body></html>`;
 }
 
 function token(bytes: number): string { return randomBytes(bytes).toString('base64url'); }
@@ -1046,6 +1139,23 @@ function verifyClientAuthentication(client: RegisteredClient, providedSecret: st
   const actual = Buffer.from(providedSecret, 'utf8');
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
+function isZeroClickChatGptClient(client: RegisteredClient): boolean {
+  return client.redirectUris.length > 0 && client.redirectUris.every(isRecognizedChatGptRedirectUri);
+}
+
+function isRecognizedChatGptRedirectUri(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && url.hostname === 'chatgpt.com'
+      && url.username.length === 0
+      && url.password.length === 0
+      && url.search.length === 0
+      && url.hash.length === 0
+      && CHATGPT_OAUTH_CALLBACK_PATHS.has(url.pathname);
+  } catch { return false; }
+}
+
 function isSafeRedirectUri(value: string): boolean {
   try {
     const url = new URL(value);

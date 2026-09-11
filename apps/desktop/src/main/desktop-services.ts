@@ -1339,7 +1339,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     saveRemoteMcpAuthtoken: async (request) => { const status = await remoteMcpController.saveAuthtoken(request.authtoken); logHub.feed('mcp', 'info', '[REMOTE MCP] ngrok authtoken stored with the host secure-storage provider'); return status; },
     startRemoteMcp: async () => { const status = await remoteMcpController.start(); logHub.feed('mcp', 'info', `[REMOTE MCP] online ${status.publicMcpUrl ?? ''}`.trim()); return status; },
     stopRemoteMcp: async () => { const status = await remoteMcpController.stop(); logHub.feed('mcp', 'info', '[REMOTE MCP] stopped'); return status; },
-    regenerateRemoteMcpPairingCode: async () => { const status = await remoteMcpController.regeneratePairingCode(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth pairing code regenerated'); return status; },
+    regenerateRemoteMcpPairingCode: async () => { const status = await remoteMcpController.regeneratePairingCode(); logHub.feed('mcp', 'info', '[REMOTE MCP] OAuth authorization reset'); return status; },
     setTunnelClientPath: async (request: SetTunnelClientPathRequest): Promise<{ readonly clientPath: string }> => {
       const clientPath = await tunnelController.replaceClientPath(request.clientPath);
       if (readSettings().tunnelAutoReconnect) {

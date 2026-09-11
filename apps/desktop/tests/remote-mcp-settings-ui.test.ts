@@ -31,12 +31,14 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(settingsCssSource).toContain('margin-top: 10px;');
   });
 
-  it('renders the first-time pairing PIN as a dedicated high-visibility value', () => {
+  it('uses zero-click ChatGPT copy and keeps the high-visibility PIN only as a fallback for other OAuth clients', () => {
+    expect(settingsSource).toContain('กด Connect ได้เลย ไม่ต้องกรอก PIN สำหรับ ChatGPT');
+    expect(settingsSource).toContain("'CHATGPT READY'");
+    expect(settingsSource).toContain("'FALLBACK PIN'");
+    expect(settingsSource).toContain('ChatGPT ปกติไม่ต้องใช้ PIN นี้');
     expect(settingsSource).toContain('remote-mcp-pairing-line');
     expect(settingsSource).toContain('remote-mcp-pairing-pin');
-    expect(settingsSource).toContain('ใช้ PIN นี้เพื่ออนุญาต ChatGPT ครั้งเดียว');
-    expect(homeSource).toContain('remote-mcp-pairing-line');
-    expect(homeSource).toContain('remote-mcp-pairing-pin');
+    expect(homeSource).toContain('PIN สำรอง OAuth client อื่น');
     expect(settingsCssSource).toContain('.remote-mcp-pairing-line .remote-mcp-pairing-pin');
     expect(settingsCssSource).toContain('font-size: 1.55em');
     expect(settingsCssSource).toContain('color: #8ff0b0');

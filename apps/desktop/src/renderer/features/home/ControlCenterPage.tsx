@@ -187,7 +187,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
               <button type="button" onClick={props.onOpenTunnelSetup}>{props.locale === 'th' ? 'ตั้งค่า OAuth / ngrok' : 'Configure OAuth / ngrok'}</button>
             </div>
             {remoteMcp.oauthConnected ? <div className="home-remote-mcp-status is-connected">{props.locale === 'th' ? (remoteMcp.autoStartEnabled ? '✓ ChatGPT เชื่อมแล้ว · เปิด lnwjud ครั้งถัดไปจะ Start Remote MCP อัตโนมัติ' : '✓ ChatGPT เชื่อมแล้ว · การเชื่อมต่อยังถูกจำไว้ แต่ Auto-start ปิดอยู่') : (remoteMcp.autoStartEnabled ? '✓ ChatGPT connected · Remote MCP will auto-start with lnwjud.' : '✓ ChatGPT connected · authorization is remembered, but auto-start is off.')}</div> : null}
-            {remoteMcp.pairingCode === null ? null : <div className="home-remote-mcp-status is-pairing"><strong className="remote-mcp-pairing-line"><span>{props.locale === 'th' ? 'Pairing ครั้งแรก' : 'First-time pairing'}:</span><span className="remote-mcp-pairing-pin" aria-label={`${props.locale === 'th' ? 'Pairing PIN' : 'Pairing PIN'} ${remoteMcp.pairingCode}`}>{remoteMcp.pairingCode}</span></strong></div>}
+            {remoteMcp.pairingCode === null ? null : <div className="home-remote-mcp-status is-pairing"><strong className="remote-mcp-pairing-line"><span>{props.locale === 'th' ? 'PIN สำรอง OAuth client อื่น' : 'Fallback PIN for another OAuth client'}:</span><span className="remote-mcp-pairing-pin" aria-label={`${props.locale === 'th' ? 'Fallback pairing PIN' : 'Fallback pairing PIN'} ${remoteMcp.pairingCode}`}>{remoteMcp.pairingCode}</span></strong></div>}
           </div>
         </section>
 

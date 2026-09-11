@@ -69,6 +69,7 @@ capabilities are additive.
 - Makes Windows `vision:capture_window` resolve natural app-name selectors to a visible non-minimized HWND when an app exposes multiple helper windows, while returning explicit window-state errors instead of generic `Operation failed` failures.
 - Keeps explicit Tunnel Stop intent authoritative over Auto Reconnect: a stopped runtime no longer flips to an unrelated duplicate-start error merely because an external liveness probe is temporarily unverifiable, while a later explicit Start still refuses to launch a possible duplicate.
 - Keeps expected managed-runtime warm-up retries out of the red Home error surface: the UI remains in its normal starting state until the Tunnel is ready, while real terminal/operator errors still render as alerts.
+- Removes the manual PIN from the normal ChatGPT Business custom-app path without trusting a public callback URI by itself: exact supported `chatgpt.com` OAuth callbacks are completed through DCR + Authorization Code + PKCE plus a one-time browser handoff to an ephemeral `127.0.0.1` Desktop approval listener; a short-lived PIN is generated lazily only for non-ChatGPT OAuth clients as a fallback.
 - Adds mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge regressions for image-content delivery and window targeting.
 
 ### Historical: What's new in v4.61.0
@@ -325,7 +326,7 @@ full scans can still inspect paths allowed by the active workspace/policy.
 
 | Client / use case | Connection | What must run on the host | Notes |
 | --- | --- | --- | --- |
-| ChatGPT web developer-mode app | Remote MCP via ngrok + OAuth | lnwjud Desktop + ngrok | Recommended easy path: public HTTPS `/mcp` terminates at a separate OAuth-protected loopback gateway; 6-digit pairing is required only for the first authorization or an explicit Reconnect ChatGPT |
+| ChatGPT Business custom app | Remote MCP via ngrok + OAuth | lnwjud Desktop + ngrok | Recommended easy path: an Admin/Owner configures and publishes the public HTTPS `/mcp` once; members press Connect. Exact supported ChatGPT OAuth callbacks authorize with no PIN; non-ChatGPT OAuth clients use a short-lived fallback PIN. |
 | ChatGPT web developer-mode app | OpenAI Secure MCP Tunnel | `tunnel-client` + lnwjud Desktop | Private outbound-only path to the Desktop loopback HTTP MCP; no public MCP port |
 | Codex CLI or another local MCP host | Local stdio MCP | `lnwjud-mcp-stdio.cmd` | Lowest-overhead local MCP path |
 | Local MCP client / dashboard diagnostics | Loopback Streamable HTTP | lnwjud Desktop | Defaults to `http://127.0.0.1:18765/mcp`; actual URL is shown in the UI |
@@ -408,9 +409,9 @@ For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
 3. Save your ngrok authtoken once, then click **Start Remote MCP**. lnwjud starts the OAuth gateway and ngrok, detects the public HTTPS MCP URL, and shows a **Copy MCP URL** action.
-4. In ChatGPT, enable Developer mode when your plan/workspace allows it, add a custom MCP connection, paste the copied public `https://.../mcp` URL, and choose **OAuth** authentication.
-5. On the **first authorization only**, the browser opens the lnwjud approval page. Enter the short-lived **6-digit OAuth Pairing Code** shown in lnwjud and authorize ChatGPT. The browser then redirects back to ChatGPT.
-6. After that first approval, lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require pairing again. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to re-authorize or replace that relationship.
+4. **Business Admin/Owner setup:** in Workspace Settings → Apps → Create, add the public `https://.../mcp` URL, select **OAuth**, complete Scan Tools, create the app, then **Publish** it. Ordinary workspace members do not need Developer mode and do not paste the Server URL again.
+5. **Member connection:** open the published custom lnwjud app in ChatGPT and press **Connect**. For the exact supported ChatGPT OAuth callback paths, the browser is handed once to a random short-lived `http://127.0.0.1:<ephemeral>/...` approval listener owned by the running lnwjud Desktop, then lnwjud completes DCR + Authorization Code + PKCE and redirects back to ChatGPT — **no PIN entry and no extra approval click**. The public ngrok endpoint cannot redeem that localhost ticket.
+6. lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require another authorization. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to reset that relationship. A short-lived 6-digit PIN is generated only when an OAuth client does not match the supported ChatGPT callback contract.
 7. Confirm the connection discovers **226 tools by default** (or **233** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
 
 The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
@@ -481,9 +482,9 @@ Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Window
 2. ดูสถานะ ngrok ก่อน ถ้าขึ้น **READY** ให้ใช้ตัวที่ตรวจพบได้เลย; ถ้ายังไม่พร้อมให้กด **ติดตั้ง ngrok อัตโนมัติ** ซึ่ง lnwjud ใช้ช่องทาง Microsoft Store/WinGet ทางการ
 3. ใส่ ngrok authtoken หนึ่งครั้ง แล้วกด **Start Remote MCP**
 4. รอให้ lnwjud เปิด OAuth-protected gateway, รัน ngrok และแสดง public HTTPS MCP URL ที่ลงท้าย `/mcp` จากนั้นกด **Copy MCP URL**
-5. ใน ChatGPT เปิด Developer mode หากบัญชี/Workspace รองรับ แล้วเพิ่ม custom MCP connection โดยวาง URL ที่คัดลอกมาและเลือก **OAuth**
-6. **เฉพาะการอนุมัติครั้งแรก** browser จะเปิดหน้า lnwjud ให้กรอก **OAuth Pairing Code 6 หลัก** ที่แสดงในแอป แล้วกดอนุมัติ เมื่อสำเร็จจะ redirect กลับ ChatGPT
-7. หลังอนุมัติครั้งแรก lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย Windows DPAPI การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้อง pairing ซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้าง/อนุมัติความสัมพันธ์ใหม่จริง ๆ
+5. **ฝั่ง Admin/Owner ของ Business:** ไป Workspace Settings → Apps → Create, ใส่ URL ที่คัดลอกมา เลือก **OAuth**, Scan Tools ให้ผ่าน แล้ว Create และ **Publish** แอป lnwjud ให้ Workspace. สมาชิกทั่วไปไม่ต้องเปิด Developer mode และไม่ต้องกรอก Server URL ซ้ำ
+6. **ฝั่งสมาชิก:** เปิดแอป lnwjud ที่ถูก Publish แล้วกด **Connect**. ถ้าเป็น callback ของ ChatGPT ที่รองรับ browser จะถูกส่งผ่าน one-time URL ที่ `127.0.0.1` ของเครื่องผู้ใช้ไปหา lnwjud Desktop โดยอัตโนมัติ แล้วจึงทำ DCR + Authorization Code + PKCE และ redirect กลับ ChatGPT — **ไม่ต้องกรอก PIN และไม่ต้องกดยืนยันเพิ่ม**. public ngrok endpoint ไม่สามารถนำ localhost ticket นี้ไปแลกสิทธิ์แทนได้
+7. หลังเชื่อม lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย secure storage ของ host การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้องอนุมัติซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้างความสัมพันธ์ใหม่จริง ๆ. PIN 6 หลักจะถูกสร้างเฉพาะ fallback เมื่อ OAuth client ไม่ตรงกับ callback ChatGPT ที่รองรับ
 8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **226 tools**, หรือ **233** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
 
 public ngrok URL นี้ชี้เข้า OAuth gateway แยกต่างหาก ไม่ใช่การเปิด `http://127.0.0.1:<port>/mcp` ตรง ๆ ออกอินเทอร์เน็ต และ request ต้องผ่าน OAuth/bearer-token validation ก่อนถึง Local MCP

@@ -36,6 +36,7 @@
 - **Window capture targeting:** `vision:capture_window` now accepts natural `app.name` selectors, prefers a visible non-minimized matching HWND when apps expose several helper windows, and reports minimized/hidden-window states directly instead of collapsing them into generic `Operation failed` errors.
 - **Manual Tunnel stop precedence:** an explicit **Stop Tunnel** persists the desired stopped state and now stays visually stopped even when an external liveness probe is temporarily unverifiable; Auto Reconnect does not override that operator stop, while the next explicit Start still fails closed if duplicate-process liveness cannot be proven.
 - **Calmer Tunnel startup UX:** transient managed-runtime readiness retries stay internal while the Home card simply shows the normal starting state; only genuine Tunnel failures are surfaced as red alerts.
+- **Zero-click ChatGPT OAuth:** Business custom apps using the exact supported `chatgpt.com` OAuth callback paths complete DCR + Authorization Code + PKCE through a one-time browser handoff to an ephemeral `127.0.0.1` Desktop approval listener, so workspace members press **Connect** without copying a PIN. The public gateway never grants trust from the callback URI alone; the 6-digit PIN remains only as a fail-closed fallback for non-ChatGPT OAuth clients.
 - **Regression coverage:** mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge tests cover image delivery and reliable window targeting.
 
 ### Historical: What's new in v4.61.0
