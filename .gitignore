@@ -100,8 +100,9 @@ docs/benchmarks/*
 !docs/benchmarks/PHASE-03.md
 !docs/benchmarks/PHASE-05.md
 
-# IDE & Editor Settings
+# IDE, Editor & Local Agent Settings
 .cursor/
+.serena/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json

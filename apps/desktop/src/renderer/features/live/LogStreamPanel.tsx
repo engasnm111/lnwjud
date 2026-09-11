@@ -5,7 +5,7 @@ import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { formatLogExportDateTime, formatLogUiTime } from '../../log-timestamp.js';
 import { ExpandableTargetDetail } from '../logs/ExpandableTargetDetail.js';
-import { activeDetailMatchIds, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState } from '../logs/detail-search-state.js';
+import { activeDetailMatchIds, activeLogFeed, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState, transitionLogFeedFreeze } from '../logs/detail-search-state.js';
 
 export type LogTab = LogSource;
 export type LogEventKind = 'task' | 'result' | 'error';
@@ -62,14 +62,16 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [detailSearchState, dispatchDetailSearch] = useReducer(reduceDetailSearchState, undefined, createDetailSearchState);
   const detailSearchGeneration = useRef(0);
+  const [feedFreeze, setFeedFreeze] = useState<readonly LogLine[] | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
-  const workspaceOptions = useMemo(() => collectWorkspaceOptions(props.lines, props.workspaces), [props.lines, props.workspaces]);
-  const sessionOptions = useMemo(() => collectSessionOptions(props.lines, workspaceId, props.workspaces), [props.lines, workspaceId, props.workspaces]);
+  const feedLines = activeLogFeed(feedFreeze, props.lines);
+  const workspaceOptions = useMemo(() => collectWorkspaceOptions(feedLines, props.workspaces), [feedLines, props.workspaces]);
+  const sessionOptions = useMemo(() => collectSessionOptions(feedLines, workspaceId, props.workspaces), [feedLines, workspaceId, props.workspaces]);
   useEffect(() => {
     if (sessionId !== null && !sessionOptions.includes(sessionId)) setSessionId(null);
   }, [sessionId, sessionOptions]);
   const scope = useMemo<LogScopeSelection>(() => ({ workspaceId, sessionId }), [workspaceId, sessionId]);
-  const searchCandidates = useMemo(() => visibleLogLines(props.lines, scope, '', props.workspaces), [props.lines, scope, props.workspaces]);
+  const searchCandidates = useMemo(() => visibleLogLines(feedLines, scope, '', props.workspaces), [feedLines, scope, props.workspaces]);
   useEffect(() => {
     const query = normalizeDetailSearchQuery(filter);
     const generation = ++detailSearchGeneration.current;
@@ -97,7 +99,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
     return (): void => window.clearTimeout(timeout);
   }, [filter, props.onSearchTargetDetails, searchCandidates]);
   const hiddenMatches = activeDetailMatchIds(detailSearchState, filter);
-  const visible = useMemo(() => visibleLogLines(props.lines, scope, filter, props.workspaces, hiddenMatches), [props.lines, scope, filter, props.workspaces, hiddenMatches]);
+  const visible = useMemo(() => visibleLogLines(feedLines, scope, filter, props.workspaces, hiddenMatches), [feedLines, scope, filter, props.workspaces, hiddenMatches]);
 
   useEffect(() => {
     if (paused) return;
@@ -125,7 +127,11 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
       <div className="section-heading">
         <h2>{props.title}</h2>
         <div className="worklog-actions">
-          <button type="button" className={paused ? 'active' : undefined} onClick={() => setPaused((value) => !value)}>
+          <button type="button" className={paused ? 'active' : undefined} onClick={() => {
+            const nextPaused = !paused;
+            setFeedFreeze((state) => transitionLogFeedFreeze(state, props.lines, nextPaused || normalizeDetailSearchQuery(filter).length > 0));
+            setPaused(nextPaused);
+          }}>
             {paused ? props.followLabel : props.pauseLabel}
           </button>
           <button type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</button>
@@ -156,7 +162,11 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
         className="log-filter"
         placeholder={props.filterPlaceholder}
         value={filter}
-        onChange={(event) => setFilter(event.target.value)}
+        onChange={(event) => {
+          const nextFilter = event.target.value;
+          setFeedFreeze((state) => transitionLogFeedFreeze(state, props.lines, paused || normalizeDetailSearchQuery(nextFilter).length > 0));
+          setFilter(nextFilter);
+        }}
         aria-label={props.filterPlaceholder}
       />
       {detailSearchState.status === 'loading' ? <p className="log-detail-search-status" role="status">{props.detailLoadingLabel ?? 'Searching complete details…'}</p> : null}
@@ -343,4 +353,4 @@ function detailRefForLine(line: LogLine): string | null {
 }
 
 export type { MessageKey };
-export { activeDetailMatchIds, createDetailSearchState, reduceDetailSearchState };
+export { activeDetailMatchIds, activeLogFeed, createDetailSearchState, reduceDetailSearchState, transitionLogFeedFreeze };

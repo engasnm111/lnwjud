@@ -25,10 +25,15 @@
 
 ## Current version: v4.61.0
 
-`v4.60.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.61.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.60.0
+### What's new in v4.61.0
 
+- **Stable log search and pause:** Work Log and every Live Logs tab freeze the visible feed while a search is active, so newly arriving events cannot jump into or reorder the result list while you type or inspect matches. Clearing search resumes the current live feed. Live Logs **Pause** now freezes the feed itself, and **Follow** resumes only when no search is holding the snapshot.
+- **Durable background-task lifecycle:** shell tasks finalize from the direct command's terminal state instead of being stranded by detached descendants that keep inherited stdio handles open.
+- **External MCP lifecycle hardening:** pending child connections are fenced during shutdown, so a late Serena/custom MCP connection cannot resurrect a session after the session manager has closed.
+- **Windows and WSL correctness:** Windows Event Log runtime-contract checks use deterministic runtime evidence, while WSL translates supported Windows working directories before Linux execution.
+- **Persistence and diagnostics:** secret recovery, SQLite close ownership, tunnel restart/terminal handling, Doctor applicability, and bounded/path-guarded Git diff behavior are hardened for the release.
 - **External MCP compatibility:** child MCP servers auto-negotiate their protocol version, covering legacy/2025-era servers such as Serena as well as current MCP `2026-07-28`, while lnwjud's own inbound MCP contract remains unchanged. External MCP definitions saved in Settings are applied live, so adding or changing Serena/custom servers does not require restarting lnwjud.
 - **Cross-platform hardening:** Windows, macOS, and Linux now use explicit host/architecture capability gates instead of Windows-shaped fallbacks. Unsupported OS/architecture combinations fail closed.
 - **Native Ponytail coding policy:** optional `OFF / LITE / FULL / ULTRA` modes default to OFF, resolve `Current Goal > Workspace > Global`, and use exact bundled Ponytail skills rather than relying on discovery ranking. Active modes require the exact bundled primary skill before code mutation; FULL/ULTRA durable coding goals additionally require a fresh bundled Ponytail review before completion. Full Bypass does not bypass this correctness gate, while explicit session suppression remains available without changing persisted policy.
@@ -39,9 +44,9 @@
 - **Recovery and persistence:** MCP settings, backup/checkpoint/recovery paths, secret-storage boundaries, tunnel state, cross-host restore metadata, and data-root selection were audited for Windows/macOS/Linux semantics.
 - **Unified timestamps:** Thai UI uses Bangkok time with 24-hour display; English uses the host timezone with AM/PM presentation, while machine timestamps remain absolute internally.
 - **Responsiveness:** heavy ripgrep output and Live Log traffic are bounded/batched to reduce Electron `Not Responding` hangs and runaway memory churn.
-- **Regression coverage:** the v4.60.0 release candidate currently enforces 354 deterministic cross-platform scenarios in addition to the full workspace, packaging, release-gate, and native CI suites; the scenario floor remains 350 and may grow as new failure modes are found.
+- **Release verification:** v4.61.0 is gated by full workspace tests, Electron acceptance/E2E, packaging and release-gate suites, plus exact-commit target-native Windows/macOS/Linux CI before tagging.
 
-> Public `v4.60.0` should be tagged only after the native Windows/macOS/Linux release matrix and packaged-app smoke checks are green for the exact commit.
+> Public `v4.61.0` should be tagged only after the exact-main Windows/macOS/Linux release matrix, SHA-scoped artifacts, and packaged-app smoke checks are green for the exact commit.
 
 ## Install
 

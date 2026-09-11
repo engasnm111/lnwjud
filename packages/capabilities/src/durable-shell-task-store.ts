@@ -884,8 +884,8 @@ try {
   });
   metadata.child_started_at = child.pid ? await processStartedAt(child.pid) : null;
   if (metadata.child_started_at === null) delete metadata.child_started_at;
-  await persist();
-  timer = setTimeout(() => {
+  if (!settled) await persist();
+  if (!settled) timer = setTimeout(() => {
     void (async () => {
       if (settled || !child?.pid) return;
       stopTarget = 'timed_out';

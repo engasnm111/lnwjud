@@ -1,3 +1,11 @@
+export function transitionLogFeedFreeze<T>(snapshot: T | null, current: T, freeze: boolean): T | null {
+  return freeze ? snapshot ?? current : null;
+}
+
+export function activeLogFeed<T>(snapshot: T | null, current: T): T {
+  return snapshot ?? current;
+}
+
 export interface DetailSearchState {
   readonly generation: number;
   readonly query: string;

@@ -1500,6 +1500,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
   };
 
+  let closePromise: Promise<void> | undefined;
+
   return {
     services,
     mcpServices,
@@ -1578,16 +1580,19 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       readSettings().tunnelAutoReconnect,
     ),
     autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => remoteMcpController.autoStartIfDesired(),
-    close: async (): Promise<void> => {
-      stopToolAvailabilityWatch();
-      await remoteMcpController.close();
-      await tunnelController.shutdownForDesktopExit();
-      logHub.stop();
-      await mcpLifecycle.close();
-      await extensionsService.close().catch(() => undefined);
-      await workspaceIndex.close().catch(() => undefined);
-      await startupBackup;
-      database.close();
+    close: (): Promise<void> => {
+      closePromise ??= (async (): Promise<void> => {
+        stopToolAvailabilityWatch();
+        await remoteMcpController.close();
+        await tunnelController.shutdownForDesktopExit();
+        logHub.stop();
+        await mcpLifecycle.close();
+        await extensionsService.close().catch(() => undefined);
+        await workspaceIndex.close().catch(() => undefined);
+        await startupBackup;
+        database.close();
+      })();
+      return closePromise;
     },
   };
 }

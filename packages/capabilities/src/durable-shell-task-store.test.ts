@@ -38,16 +38,19 @@ describe('durable shell background tasks', () => {
     });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
-    const taskId = String(started.value.task_id);
+    const taskId = String((started.value as Record<string, unknown>).task_id);
     let childPid: number | undefined;
     let childStartedAt: string | undefined;
     try {
       await expect.poll(async () => {
         const status = await backend.execute({ operation: 'status', task_id: taskId });
-        if (status.ok && typeof status.value.child_pid === 'number' && typeof status.value.child_started_at === 'string') {
-          childPid = status.value.child_pid;
-          childStartedAt = status.value.child_started_at;
-          return true;
+        if (status.ok) {
+          const value = status.value as Record<string, unknown>;
+          if (typeof value.child_pid === 'number' && typeof value.child_started_at === 'string') {
+            childPid = value.child_pid;
+            childStartedAt = value.child_started_at;
+            return true;
+          }
         }
         return false;
       }, { timeout: 5000 }).toBe(true);
@@ -121,7 +124,18 @@ describe('durable shell background tasks', () => {
       ? await backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5 })
       : result;
     expect(terminal).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0, stdout: 'fast', durable: true } });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!terminal.ok) return;
+    const workerPid = Number((terminal.value as Record<string, unknown>).worker_pid);
+    expect(Number.isInteger(workerPid)).toBe(true);
+    await expect.poll(() => {
+      try {
+        process.kill(workerPid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    }, { timeout: 2000, interval: 50 }).toBe(false);
+
     await expect(backend.execute({ operation: 'status', task_id: taskId })).resolves.toMatchObject({
       ok: true,
       value: { state: 'completed', exit_code: 0, stdout: 'fast', durable: true },
@@ -138,7 +152,7 @@ describe('durable shell background tasks', () => {
     const script = [
       "const { spawn } = require('node:child_process');",
       "const os = require('node:os');",
-      "const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], {",
+      "const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], {",
       "cwd: os.tmpdir(), detached: true, stdio: ['ignore', process.stdout, process.stderr] });",
       "grandchild.unref();",
       "process.stdout.write('parent-done');",
@@ -158,18 +172,18 @@ describe('durable shell background tasks', () => {
     const taskId = String((started.value as Record<string, unknown>).task_id);
 
     try {
-      const terminal = await backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 2 });
+      const terminal = await backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5 });
       expect(terminal).toMatchObject({
         ok: true,
         value: { state: 'completed', exit_code: 0, stdout: 'parent-done', durable: true },
       });
     } finally {
       const current = await backend.execute({ operation: 'status', task_id: taskId });
-      if (current.ok && current.value.state === 'running') {
+      if (current.ok && (current.value as Record<string, unknown>).state === 'running') {
         await backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5 });
       }
     }
-  }, 10000);
+  }, 20000);
 
   it('cancels a durable task from a replacement backend', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));

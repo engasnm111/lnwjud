@@ -53,15 +53,20 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current version: v4.61.0
 
-The v4.60.0 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
+The v4.61.0 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
 with **226 advertised by default** and **all 233 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
 
-### What's new in v4.60.0
+### What's new in v4.61.0
 
+- Freezes Work Log and every Live Logs tab to a stable snapshot while search text is active so new events cannot insert themselves into or reorder the list during inspection. Clearing search resumes the newest live feed; Live Logs Pause/Follow uses the same freeze contract instead of only suppressing auto-scroll.
+- Finalizes durable shell tasks from the direct command's terminal state with bounded stdio draining, preventing detached descendants with inherited pipes from leaving completed work reported as running.
+- Fences External MCP shutdown against pending child connections so a child that finishes connecting after `McpSessionManager.close()` is closed rather than registered again.
+- Makes Windows Event Log runtime-contract verification deterministic and translates supported Windows working directories for WSL execution.
+- Hardens secret recovery, SQLite close ownership, tunnel terminal/restart deduplication, Doctor applicability, and bounded/path-guarded Git diff behavior.
 - Expands the v4.56.2 External MCP, timestamp, and responsiveness fixes into a broader Windows/macOS/Linux hardening pass.
 - Adds the native Ponytail coding policy with `OFF / LITE / FULL / ULTRA` modes (default OFF), `Current Goal > Workspace > Global` resolution, exact bundled-skill activation before code mutation, matcher-independent loading, session-only suppression, and fresh bundled review enforcement for FULL/ULTRA durable coding-goal completion. Full Bypass remains an authorization mode and does not bypass this correctness gate.
 - Selects bundled runtime dependencies by exact platform/architecture tuple, updates the official OpenAI `tunnel-client` to `0.0.14`, keeps ripgrep at `15.2.0`, and updates the Windows Poppler package to `26.07.0-0`, with pinned verification and fail-closed packaging.
