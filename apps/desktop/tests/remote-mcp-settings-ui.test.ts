@@ -14,6 +14,8 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(settingsSource).toContain('running `ngrok version`');
     expect(settingsSource).toContain('ngrok-readiness-banner');
     expect(settingsSource).toContain('ngrok-ready-path');
+    expect(settingsSource).toContain('lnwjud จะจำ URL ครั้งแรกแล้วส่ง origin เดิมให้ ngrok ในรอบถัดไป');
+    expect(settingsSource).toContain('save the authtoken again to learn the new URL');
   });
 
   it('separates recommended OAuth from the optional Secure Tunnel method', () => {

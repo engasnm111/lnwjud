@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildNgrokHttpArgs, extractNgrokDiagnostic, formatNgrokExitMessage, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
+import { createExplicitKeySecretProtector } from '@lnwjud/shared';
+import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
 interface RemoteMcpTestAccess {
   gatewayUrl: string | null;
   publicOrigin: string | null;
+  preferredPublicOrigin: string | null;
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
   pairingCode: string | null;
   startGateway(localMcpUrl: string): Promise<void>;
@@ -56,10 +58,24 @@ async function completeChatGptLocalApproval(response: Response, publicOrigin: st
 }
 
 describe('Remote MCP ngrok runtime', () => {
-  it('uses ngrok v3-compatible http arguments without the removed web-addr flag', () => {
-    const args = buildNgrokHttpArgs('http://127.0.0.1:32123');
-    expect(args).toEqual(['http', 'http://127.0.0.1:32123', '--log=stdout', '--log-format=json']);
-    expect(args.some((value) => value.startsWith('--web-addr'))).toBe(false);
+  it('starts without --url before a stable public origin has been learned', () => {
+    const gateway = 'http://127.0.0.1:32123';
+    expect(buildNgrokHttpArgs(gateway)).toEqual(['http', gateway, '--log=stdout', '--log-format=json']);
+    expect(buildNgrokHttpArgs(gateway).some((value) => value.startsWith('--web-addr') || value === '--url')).toBe(false);
+  });
+
+  it('reuses a remembered ngrok public origin with the v3 --url flag', () => {
+    const gateway = 'http://127.0.0.1:32123';
+    expect(buildNgrokHttpArgs(gateway, 'https://steady.ngrok-free.app')).toEqual([
+      'http', gateway, '--url', 'https://steady.ngrok-free.app', '--log=stdout', '--log-format=json',
+    ]);
+  });
+
+  it('accepts the remembered ngrok origin but rejects silent public URL drift', () => {
+    expect(enforceStablePublicOrigin('https://steady.ngrok-free.app/', null)).toBe('https://steady.ngrok-free.app');
+    expect(enforceStablePublicOrigin('https://steady.ngrok-free.app', 'https://steady.ngrok-free.app')).toBe('https://steady.ngrok-free.app');
+    expect(() => enforceStablePublicOrigin('https://changed.ngrok-free.app', 'https://steady.ngrok-free.app')).toThrow(/stopped instead of silently changing/i);
+    expect(() => enforceStablePublicOrigin('http://steady.ngrok-free.app', null)).toThrow(/invalid public HTTPS origin/i);
   });
 
   it('parses POSIX PATH with POSIX semantics even when the test host is Windows', () => {
@@ -129,7 +145,9 @@ describe('Remote MCP ngrok runtime', () => {
     expect(selectRecoverableStaleNgrokProcess([{ ...orphan, commandLine: `ngrok.exe http ${target}` }], target)).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan], 'http://127.0.0.1:60000')).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan, { ...orphan, processId: 13165 }], target)).toBeNull();
-    const posixOrphan = { ...orphan, processId: 20101, commandLine: `/opt/homebrew/bin/ngrok http ${target} --log=stdout --log-format=json` };
+    const pinnedOrphan = { ...orphan, processId: 20100, commandLine: `ngrok.exe http ${target} --url https://steady.ngrok-free.app --log=stdout --log-format=json` };
+    expect(selectRecoverableStaleNgrokProcess([pinnedOrphan], target)).toEqual(pinnedOrphan);
+    const posixOrphan = { ...orphan, processId: 20101, commandLine: `/opt/homebrew/bin/ngrok http ${target} --url https://steady.ngrok-free.app --log=stdout --log-format=json` };
     expect(selectRecoverableStaleNgrokProcess([posixOrphan], target)).toEqual(posixOrphan);
   });
 });
@@ -137,7 +155,7 @@ describe('Remote MCP ngrok runtime', () => {
 describe('Remote MCP OAuth gateway', () => {
   it('does not overwrite unreadable authorization and retries loading after secure storage recovers', async () => {
     const state: RemoteMcpPersistedState = {
-      schemaVersion: 1, desiredRunning: true,
+      schemaVersion: 1, desiredRunning: true, publicOrigin: 'https://steady.ngrok-free.app',
       trustedClients: [{ clientId: 'saved-client', clientName: 'Saved client', redirectUris: ['https://example.com/callback'], tokenEndpointAuthMethod: 'none', clientSecret: null }],
       refreshGrants: [{ clientId: 'saved-client', refreshToken: 'r'.repeat(40), expiresAt: Date.parse('2099-01-01') }],
     };
@@ -148,15 +166,97 @@ describe('Remote MCP OAuth gateway', () => {
     });
     const save = vi.fn(async () => undefined);
     const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
-    const internal = controller as unknown as { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
+    const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
     await internal.ensurePersistenceLoaded();
     await internal.persistState();
     expect(save).not.toHaveBeenCalled();
     locked = false;
     await Promise.all([internal.ensurePersistenceLoaded(), internal.ensurePersistenceLoaded()]);
+    expect(internal.preferredPublicOrigin).toBe('https://steady.ngrok-free.app');
     await internal.persistState();
     expect(load).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenCalledWith(state);
+  });
+
+  it('keeps schema-1 state without a remembered public origin backward compatible', async () => {
+    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 1, desiredRunning: false, trustedClients: [], refreshGrants: [] }));
+    const save = vi.fn(async () => undefined);
+    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
+    await internal.ensurePersistenceLoaded();
+    expect(internal.preferredPublicOrigin).toBeNull();
+    await internal.persistState();
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] });
+  });
+
+  it('ignores an invalid remembered public origin from encrypted schema-1 state', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-invalid-origin-'));
+    try {
+      const secretProtector = createExplicitKeySecretProtector(Buffer.alloc(32, 0x52));
+      const directory = path.join(root, 'remote-mcp');
+      await mkdir(directory, { recursive: true });
+      const encrypted = await secretProtector.encrypt('tunnel_api_key', JSON.stringify({
+        schemaVersion: 1,
+        desiredRunning: false,
+        publicOrigin: 'https://steady.ngrok-free.app/path?bad=1',
+        trustedClients: [],
+        refreshGrants: [],
+      }));
+      await writeFile(path.join(directory, 'oauth-state.secret'), encrypted, 'utf8');
+      const controller = new RemoteMcpController({ dataPath: root, getLocalMcpUrl: async (): Promise<null> => null, secretProtector });
+      const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void> };
+      await internal.ensurePersistenceLoaded();
+      expect(internal.preferredPublicOrigin).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('persists a successfully learned public origin in Remote MCP state', async () => {
+    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 1, desiredRunning: false, trustedClients: [], refreshGrants: [] }));
+    const save = vi.fn(async () => undefined);
+    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
+    await internal.ensurePersistenceLoaded();
+    internal.preferredPublicOrigin = enforceStablePublicOrigin('https://steady.ngrok-free.app/', internal.preferredPublicOrigin);
+    await internal.persistState();
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
+  });
+
+  it('does not replace the ngrok authtoken when encrypted Remote MCP state cannot be loaded', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-token-load-failure-'));
+    try {
+      const save = vi.fn(async () => undefined);
+      const controller = new RemoteMcpController({
+        dataPath: root,
+        getLocalMcpUrl: async (): Promise<null> => null,
+        persistence: { load: async (): Promise<RemoteMcpPersistedState | null> => { throw new Error('Secure storage is locked'); }, save },
+        secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x53)),
+      });
+      await expect(controller.saveAuthtoken('a'.repeat(24))).rejects.toThrow(/authtoken was not changed/i);
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('clears the remembered public origin when the ngrok authtoken is saved again', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-origin-reset-'));
+    try {
+      const state: RemoteMcpPersistedState = { schemaVersion: 1, desiredRunning: false, publicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] };
+      const load = vi.fn(async () => state);
+      const save = vi.fn(async () => undefined);
+      const controller = new RemoteMcpController({
+        dataPath: root,
+        getLocalMcpUrl: async (): Promise<null> => null,
+        persistence: { load, save },
+        secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x51)),
+      });
+      await controller.saveAuthtoken('a'.repeat(24));
+      expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps status reads side-effect-free and does not ensure-start Local MCP', async () => {

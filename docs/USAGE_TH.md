@@ -92,6 +92,8 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 5. เมื่อสถานะเป็น RUNNING ให้กด **Copy MCP URL**. สำหรับ ChatGPT Business ให้ Admin/Owner นำ URL `https://...ngrok.app/mcp` ไปตั้งค่า Workspace Settings → Apps → Create เลือก **OAuth**, Scan Tools, Create แล้ว **Publish** ให้ Workspace; สมาชิกทั่วไปไม่ต้องกรอก Server URL เอง
 6. สมาชิกเปิดแอป lnwjud ที่ Publish แล้วกด **Connect** ได้เลย. เมื่อ ChatGPT ใช้ callback ที่รองรับ browser จะถูก handoff อัตโนมัติไปยัง one-time URL แบบสุ่มบน `127.0.0.1` ของ lnwjud Desktop ก่อน จากนั้นจึงทำ OAuth DCR + Authorization Code + PKCE และ redirect กลับ ChatGPT **โดยไม่ต้องกรอก PIN และไม่ต้องกดยืนยันเพิ่ม**. public ngrok endpoint ใช้ localhost ticket นี้แทนไม่ได้; PIN 6 หลักจะถูกสร้างแบบ on-demand เฉพาะ fallback สำหรับ OAuth client อื่น
 
+ตั้งแต่ v4.62.0 **ไม่ต้องซื้อหรือจดโดเมนเองเพื่อให้ Public MCP URL คงที่**: บัญชี ngrok มี development domain ที่ระบบกำหนดให้ และเมื่อ lnwjud เปิด Remote MCP สำเร็จครั้งแรก lnwjud จะจำ HTTPS origin นั้นไว้ใน encrypted Remote MCP state. ครั้งถัดไป/หลังอัปเดต lnwjud จะส่ง origin เดิมกลับให้ ngrok ผ่าน `--url` และจะหยุดพร้อมแจ้งเตือนแทนการเปลี่ยน URL ของ ChatGPT แบบเงียบ ๆ หาก ngrok ไม่สามารถใช้ URL เดิมได้. Custom domain ยังเป็นทางเลือกเสริม ไม่ใช่ข้อบังคับ. ถ้าตั้งใจเปลี่ยนบัญชี ngrok หรือโดเมน ให้บันทึก ngrok Authtoken ใหม่หนึ่งครั้งเพื่อ reset URL ที่จำไว้ แล้ว Start Remote MCP เพื่อเรียนรู้ URL ใหม่
+
 Remote MCP gateway รองรับ OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE S256, access token และ refresh token. คำขอ `/mcp` ที่ไม่มี bearer token ที่ถูกต้องจะถูกปฏิเสธ และ Authorization header จากอินเทอร์เน็ตจะไม่ถูกส่งต่อเข้า local MCP โดยตรง.
 
 ## 3. เลือกวิธียืนยันตัวตนของ OpenAI Secure MCP Tunnel

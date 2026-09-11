@@ -685,7 +685,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <div className="setting-field">
                     <span className="field-label">Public MCP URL</span>
                     <code className="settings-path-display">{remoteMcp.publicMcpUrl ?? '—'}</code>
-                    <p className="hint">{props.locale === 'th' ? 'URL นี้ลงท้าย /mcp และเป็น URL ที่นำไปใส่ใน ChatGPT' : 'This /mcp URL is the one to add in ChatGPT.'}</p>
+                    <p className="hint">{props.locale === 'th' ? 'URL นี้ลงท้าย /mcp และเป็น URL ที่นำไปใส่ใน ChatGPT; ngrok มี development domain ที่กำหนดให้ และ lnwjud จะจำ URL ครั้งแรกแล้วส่ง origin เดิมให้ ngrok ในรอบถัดไปเพื่อให้ endpoint คงเดิม ไม่ต้องซื้อโดเมนเอง ส่วน custom domain ยังใช้ได้แบบ optional หากตั้งใจเปลี่ยนบัญชี/โดเมน ngrok ให้บันทึก Authtoken ใหม่เพื่อเรียนรู้ URL ใหม่' : 'This /mcp URL is the one to add in ChatGPT. ngrok provides an assigned development domain, and lnwjud remembers the first URL and reuses that origin on later starts so the endpoint stays stable. You do not need to buy a domain; a custom domain remains optional. If you intentionally change ngrok account/domain, save the authtoken again to learn the new URL.'}</p>
                   </div>
                 </div>
                 <div className="tunnel-setup-box">
