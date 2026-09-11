@@ -74,6 +74,7 @@ describe('Backup settings UI', () => {
     expect(markup).toContain('Application Database Backup');
     expect(markup).toContain('Backup Now');
     expect(markup).toContain('SQLite consistent snapshots');
+    expect(markup).toContain('If you have never configured this setting, the default is 30 days.');
     expect(markup).toContain('Restore</button>');
   });
 

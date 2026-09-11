@@ -892,7 +892,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="recovery-retention-row">
                   <div>
                     <strong>{props.locale === 'th' ? 'ลบข้อมูลกู้คืนอัตโนมัติ' : 'Automatic recovery cleanup'}</strong>
-                    <p className="hint">{props.locale === 'th' ? 'เลือกอายุที่ต้องการเก็บ Recovery Trash และ Checkpoint; ค่าเริ่มต้นคือไม่ลบอัตโนมัติ' : 'Choose how long to keep Recovery Trash and checkpoints. The default is never delete automatically.'}</p>
+                    <p className="hint">{props.locale === 'th' ? 'เลือกอายุที่ต้องการเก็บ Recovery Trash และ Checkpoint; ถ้ายังไม่เคยตั้งค่า ค่าเริ่มต้นคือ 30 วัน' : 'Choose how long to keep Recovery Trash and checkpoints. If you have never configured this setting, the default is 30 days.'}</p>
                   </div>
                   <select aria-label={props.locale === 'th' ? 'อายุข้อมูลกู้คืน' : 'Recovery retention'} disabled={retentionBusy} value={props.dashboard.settings.recoveryRetentionDays} onChange={(event) => { void setRecoveryRetentionDays(Number(event.target.value)); }}>
                     <option value={0}>{props.locale === 'th' ? 'ไม่ลบอัตโนมัติ' : 'Never'}</option>

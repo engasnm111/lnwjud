@@ -219,7 +219,7 @@ const defaultUserSettings: UserSettings = {
   startMinimized: false,
   tunnelAutoReconnect: true,
   tunnelMaxAutoRestarts: 5,
-  recoveryRetentionDays: 0,
+  recoveryRetentionDays: 30,
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
