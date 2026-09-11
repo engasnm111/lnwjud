@@ -81,6 +81,7 @@ const REFRESH_TTL_MS = 30 * 24 * 60 * 60_000;
 const LOCAL_APPROVAL_TTL_MS = 60_000;
 const MAX_PENDING_LOCAL_APPROVALS = 8;
 const CHATGPT_OAUTH_CALLBACK_PATHS = new Set(['/aip/oauth/callback', '/connector_platform_oauth_redirect']);
+const CHATGPT_OAUTH_DYNAMIC_CALLBACK_PATH = /^\/connector\/oauth\/[A-Za-z0-9_-]+$/;
 
 export class RemoteMcpController {
   private readonly dataPath: string;
@@ -1185,7 +1186,7 @@ function isRecognizedChatGptRedirectUri(value: string): boolean {
       && url.password.length === 0
       && url.search.length === 0
       && url.hash.length === 0
-      && CHATGPT_OAUTH_CALLBACK_PATHS.has(url.pathname);
+      && (CHATGPT_OAUTH_CALLBACK_PATHS.has(url.pathname) || CHATGPT_OAUTH_DYNAMIC_CALLBACK_PATH.test(url.pathname));
   } catch { return false; }
 }
 

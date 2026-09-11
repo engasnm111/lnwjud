@@ -301,7 +301,7 @@ describe('Remote MCP OAuth gateway', () => {
     expect(unauthorized.status).toBe(401);
     expect(unauthorized.headers.get('www-authenticate')).toContain('/.well-known/oauth-protected-resource/mcp');
 
-    const redirectUri = 'https://chatgpt.com/aip/oauth/callback';
+    const redirectUri = 'https://chatgpt.com/connector/oauth/plugin-fixture_123';
     const registration = await fetch(`${origin}/oauth/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -354,7 +354,11 @@ describe('Remote MCP OAuth gateway', () => {
     await controller.close();
   });
 
-  it('keeps the PIN fallback for clients that do not match the exact ChatGPT callback contract', async () => {
+  it.each([
+    'https://chatgpt.com.evil.example/aip/oauth/callback',
+    'https://chatgpt.com/connector/oauth/',
+    'https://chatgpt.com/connector/oauth/plugin/extra',
+  ])('keeps the PIN fallback for clients that do not match the exact ChatGPT callback contract: %s', async (redirectUri) => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-fallback-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
     const internal = controller as unknown as RemoteMcpTestAccess;
@@ -363,7 +367,6 @@ describe('Remote MCP OAuth gateway', () => {
     internal.runState = 'running';
     expect(internal.pairingCode).toBeNull();
     const origin = internal.gatewayUrl!;
-    const redirectUri = 'https://chatgpt.com.evil.example/aip/oauth/callback';
 
     const registration = await fetch(`${origin}/oauth/register`, {
       method: 'POST',
