@@ -33,6 +33,15 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
       platform: process.platform,
       sandboxExecutable: '__lnwjud_runtime_contract_missing_windows_sandbox__.exe',
     },
+    eventLogRuntimeOptions: {
+      runner: async () => ok(JSON.stringify([{
+        time: '2026-09-11T00:00:00.000Z',
+        provider: 'lnwjud-test',
+        id: 1,
+        level: 'Information',
+        message: 'fixture event',
+      }])),
+    },
     workspaceInfo: serviceProxy('workspaceInfo', calls, (method) => method === 'list'
       ? [{ id: 'workspace-1', path: process.cwd(), realRootPath: process.cwd() }]
       : { id: 'workspace-1', path: process.cwd(), realRootPath: process.cwd() }),

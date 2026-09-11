@@ -448,8 +448,10 @@ Manages Windows scheduled tasks with `schtasks.exe` (argument arrays, `shell: fa
 ## 44a. wsl_exec and wsl_fs
 
 `wsl_exec` is a scoped Windows-to-WSL runner. It requires a registered
-`workspaceId`, takes a Linux `executable` plus `arguments[]`, and maps an
-absolute Windows `cwd` only through registered roots. It delegates foreground,
+`workspaceId`, takes a Linux `executable` plus `arguments[]`, and accepts either
+an absolute Windows workspace `cwd` or an absolute WSL `cwd` such as
+`/mnt/e/project` returned by `wsl_fs`; both forms are mapped back through the
+registered Windows workspace roots before execution. It delegates foreground,
 background, wait, logs, result, and cancel to the existing bounded task runner.
 Shell interpreters with `-c`/`--command`/`-e` style string execution are
 rejected. Environment input is an explicit bounded key/value allowlist; host

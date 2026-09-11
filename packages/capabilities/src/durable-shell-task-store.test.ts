@@ -128,6 +128,49 @@ describe('durable shell background tasks', () => {
     });
   });
 
+  it('finalizes when the command exits even if a detached descendant keeps inherited stdio open', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({
+      allowedRoots: [root],
+      taskStateDirectory: path.join(root, '.tasks'),
+    });
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "const os = require('node:os');",
+      "const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], {",
+      "cwd: os.tmpdir(), detached: true, stdio: ['ignore', process.stdout, process.stderr] });",
+      "grandchild.unref();",
+      "process.stdout.write('parent-done');",
+    ].join('');
+
+    const started = await backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', script],
+      cwd: root,
+      execution: 'background',
+      timeout_seconds: 30,
+      userConfirmed: true,
+    });
+    expect(started).toMatchObject({ ok: true, value: { task_id: expect.any(String), durable: true } });
+    if (!started.ok) return;
+    const taskId = String((started.value as Record<string, unknown>).task_id);
+
+    try {
+      const terminal = await backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 2 });
+      expect(terminal).toMatchObject({
+        ok: true,
+        value: { state: 'completed', exit_code: 0, stdout: 'parent-done', durable: true },
+      });
+    } finally {
+      const current = await backend.execute({ operation: 'status', task_id: taskId });
+      if (current.ok && current.value.state === 'running') {
+        await backend.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5 });
+      }
+    }
+  }, 10000);
+
   it('cancels a durable task from a replacement backend', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
     temporaryRoots.push(root);

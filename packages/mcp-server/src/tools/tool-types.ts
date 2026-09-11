@@ -1,5 +1,5 @@
 import { err, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
-import type { CapabilityService } from '@lnwjud/capabilities';
+import type { CapabilityService, EventLogBackendOptions } from '@lnwjud/capabilities';
 import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   AgentSwarmService,
@@ -53,6 +53,8 @@ export interface McpApplicationServices {
   readonly runtimeTiming?: () => McpRuntimeTiming;
   /** Test-only deterministic override for Windows Sandbox discovery; production runtimes leave this undefined. */
   readonly sandboxRuntimeOptions?: { readonly platform?: NodeJS.Platform; readonly sandboxExecutable?: string };
+  /** Test-only deterministic override for native event-log queries; production runtimes leave this undefined. */
+  readonly eventLogRuntimeOptions?: EventLogBackendOptions;
   readonly localProviders?: () => { readonly pdfProvider?: string; readonly lspCommands?: Readonly<Record<string, string>> };
   readonly capabilities?: CapabilityService;
   readonly extensions?: ExtensionsService;

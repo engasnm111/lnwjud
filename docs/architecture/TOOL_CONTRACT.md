@@ -408,7 +408,7 @@ wsl_exec: {
   distro?: string;
   executable?: string;
   arguments?: string[];
-  cwd?: string;                 // registered absolute Windows path
+  cwd?: string;                 // registered absolute Windows path or absolute WSL path from wsl_fs
   environment?: Record<string, string>;
   operation?: 'run' | 'status' | 'wait' | 'logs' | 'result' | 'cancel';
   execution?: 'foreground' | 'background' | 'auto';
@@ -441,7 +441,10 @@ ui_target_action: {
 
 `wsl_exec` is argv-only and delegates task lifecycle to the existing bounded
 shell runner. It records workspace ownership, rejects shell-string flags, and
-does not expose arbitrary host paths. `wsl_fs` only translates paths or reads
+does not expose arbitrary host paths. An absolute WSL `cwd` is normalized back
+to its Windows workspace representation for scope checks, while the original
+normalized WSL path is retained for `wsl.exe --cd`, so `wsl_fs` translation
+output can be passed directly to `wsl_exec`. `wsl_fs` only translates paths or reads
 metadata; it never opens raw `\\wsl$`/`\\wsl.localhost` files. A WSL status
 failure is returned as `available: false`, not as a successful empty task.
 
