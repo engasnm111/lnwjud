@@ -295,8 +295,13 @@ export class TunnelController {
           this.message = `Tunnel is owned by PID ${foreignOwner.pid}; tunnel process liveness is ${externalProbe === 'unverifiable' ? 'unverifiable' : 'not yet confirmed'}`;
           source = 'external';
         } else if (externalProbe === 'unverifiable') {
-          this.state = 'error';
-          this.message = 'Tunnel process liveness is unverifiable; refusing to start a possible duplicate';
+          if (this.intentionalStop || this.runtimeDesiredState() === 'stopped') {
+            this.state = 'stopped';
+            this.message = null;
+          } else {
+            this.state = 'error';
+            this.message = 'Tunnel process liveness is unverifiable; refusing to start a possible duplicate';
+          }
         } else if (this.state !== 'error' || this.message?.startsWith('Tunnel process liveness is unverifiable') === true) {
           this.state = 'stopped';
           this.message = null;

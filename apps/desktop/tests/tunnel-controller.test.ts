@@ -204,6 +204,31 @@ describe('TunnelController lifecycle', () => {
     await expect(controller.startAutomatically()).resolves.toMatchObject({ state: 'stopped' });
   });
 
+  it('keeps an explicit operator stop stopped when external liveness cannot be verified, but still fails closed on the next explicit start', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-stop-unverifiable-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    let desiredState: 'running' | 'stopped' | null = null;
+    const controller = new TunnelController({
+      getClientPath: (): string | null => null,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getRuntimeDesiredState: (): 'running' | 'stopped' | null => desiredState,
+      setRuntimeDesiredState: (value: 'running' | 'stopped'): void => { desiredState = value; },
+      isExternalTunnelRunning: async (): Promise<boolean> => { throw new Error('probe unavailable'); },
+    });
+
+    await expect(controller.stop()).resolves.toMatchObject({ state: 'stopped', message: null });
+    await expect(controller.status()).resolves.toMatchObject({ state: 'stopped', message: null });
+    expect(desiredState).toBe('stopped');
+
+    await expect(controller.start()).resolves.toMatchObject({
+      state: 'error',
+      message: 'Tunnel process liveness is unverifiable; refusing to start a possible duplicate',
+    });
+    expect(desiredState).toBe('running');
+  });
+
   it('persists explicit operator Stop intent so a new controller stays stopped after app restart', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-durable-stop-'));
     temporaryRoots.push(dataPath);
