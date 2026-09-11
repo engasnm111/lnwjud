@@ -40,4 +40,15 @@ When a GitHub Actions workflow must be monitored until completion, use one autho
 
 This policy is cross-platform because the monitoring contract is shared while the wrapper shell is platform-native. Do not label a PowerShell-only implementation as cross-platform.
 
+## Local Windows Packaging / Signing Policy
+
+Local Windows development builds normally run **without a paid/commercial Windows code-signing certificate**. Therefore `Get-AuthenticodeSignature` may legitimately report `NotSigned`/unsigned for locally built Setup or Portable artifacts. Do **not** treat that status by itself as a local build failure.
+
+- Separate **Windows Authenticode publisher signing** from **artifact integrity/provenance verification**. They are different mechanisms.
+- For a local dev package with no Windows signing credentials configured, success is based on the package command succeeding plus the required SHA-256/provenance/release-evidence checks passing. Record the unsigned Authenticode state truthfully; do not invent or require a certificate that is not configured.
+- The canonical Sigstore verifier for this repository's Windows local/CI workflow is **cosign v3.1.3**. Prefer setting `LNWJUD_COSIGN_PATH` to a trusted cosign v3.1.3 binary; on the current Windows workstation the usual cached binary is `C:\Users\ABCz\AppData\Local\lnwjud-build-tools\cosign-v3.1.3\cosign-windows-amd64.exe` when present.
+- `cosign` verifies pinned Sigstore provenance/integrity (for example the bundled tunnel-client). It **does not** Authenticode-sign lnwjud and is not a substitute for a Windows publisher certificate.
+- Never weaken official release/CI signing gates. If Windows signing secrets/certificates are configured for an official workflow, that workflow may require Authenticode `Valid`; missing/invalid signing in that configured context is a real failure.
+- When investigating a local Windows packaging failure, first distinguish among: package/build failure, SHA/provenance/cosign verification failure, and merely `NotSigned` Authenticode status. Only the first two are automatically failures for an unsigned local dev build.
+
 `Full Bypass` is an explicit runtime exception to application approval and scope enforcement: while a Full profile has the relevant Desktop or STDIO Full Bypass toggle enabled, permission prompts, Active Project scope, and other lnwjud approval gates may be skipped. Durable-goal ownership is different: if a workspace has a live rolling scheduled-goal mutation fence, `ToolRegistry` must still require and validate the current `goalLease` before mutation, even under Full Bypass. This prevents a stale worker from mutating after handoff. Ordinary unscheduled Full Bypass calls remain lease-free when no live rolling-goal fence exists.
