@@ -66,6 +66,7 @@ capabilities are additive.
 - Preserves External MCP child `CallToolResult` image/text blocks through `mcp_call` so screenshot-producing Serena/custom MCP tools reach the calling model as actual image content rather than flattened JSON.
 - Makes Windows `vision:capture_window` resolve natural app-name selectors to a visible non-minimized HWND when an app exposes multiple helper windows, while returning explicit window-state errors instead of generic `Operation failed` failures.
 - Keeps explicit Tunnel Stop intent authoritative over Auto Reconnect: a stopped runtime no longer flips to an unrelated duplicate-start error merely because an external liveness probe is temporarily unverifiable, while a later explicit Start still refuses to launch a possible duplicate.
+- Keeps expected managed-runtime warm-up retries out of the red Home error surface: the UI remains in its normal starting state until the Tunnel is ready, while real terminal/operator errors still render as alerts.
 - Adds mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge regressions for image-content delivery and window targeting.
 
 ### Historical: What's new in v4.61.0

@@ -61,6 +61,9 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
       ? t('agent.ready')
       : t('agent.stopped');
 
+  const tunnelMessage = dashboard.tunnel.state === 'starting' ? null : dashboard.tunnel.message;
+  const tunnelMessageIsError = dashboard.tunnel.state === 'error';
+
   const tunnelLabel = dashboard.tunnel.state === 'running'
     ? dashboard.tunnel.source === 'external'
       ? (!tunnelCredentialAvailable || !dashboard.tunnel.profileExists ? t(tunnelPresentation.incompleteExternalKey) : t(tunnelPresentation.runningExternalKey))
@@ -218,7 +221,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           </div>
           <p data-testid="tunnel-status">{tunnelLabel}</p>
           {tunnelPresentation.isOAuth && dashboard.tunnel.auth?.accountLabel ? <p className="hint">{props.locale === 'th' ? 'บัญชี OAuth' : 'OAuth account'}: {dashboard.tunnel.auth.accountLabel}</p> : null}
-          {dashboard.tunnel.message ? <p className="hint error-text">{dashboard.tunnel.message}</p> : null}
+          {tunnelMessage ? <p className={tunnelMessageIsError ? 'hint error-text' : 'hint'} role={tunnelMessageIsError ? 'alert' : undefined}>{tunnelMessage}</p> : null}
           {!tunnelCredentialAvailable ? <p className="hint">{t(tunnelPresentation.needCredentialKey)}</p> : null}
           {!dashboard.tunnel.profileExists ? <p className="hint">{t('tunnel.needProfile')}</p> : null}
           {tunnelCredentialAvailable && dashboard.tunnel.profileExists ? null : (

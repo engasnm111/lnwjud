@@ -27,7 +27,7 @@ const baseDashboard: DashboardSnapshot = {
   connectionModes: { httpUrl: null, stdioCommand: 'lnwjud-mcp-stdio.cmd' },
   workLog: [],
   inFlight: [],
-  tunnel: { state: 'stopped', source: 'desktop', hasApiKey: false, clientPath: null, profileExists: false, message: null, logPath: null },
+  tunnel: { state: 'stopped', source: 'desktop', hasApiKey: false, clientPath: null, profileExists: false, message: null, logPath: null, persistent: null },
   appVersion: '4.6.1',
 };
 
@@ -43,7 +43,7 @@ function render(dashboard: DashboardSnapshot, locale: 'th' | 'en' = 'en'): strin
     onRestartMcp: async () => undefined,
     onSelectWorkspace: async () => undefined,
     onSetWorkspaceActive: async () => undefined,
-    onAddWorkspace: async () => undefined,
+    onAddWorkspace: async () => true,
     onStartTunnel: async () => undefined,
     onStopTunnel: async () => undefined,
     onOpenTunnelSetup: () => undefined,
@@ -96,6 +96,36 @@ describe('Security Overview', () => {
     });
     expect(markup).toContain('A tunnel process is still running, but lnwjud setup is incomplete.');
     expect(markup).not.toContain('Tunnel connected (from script) — Start is disabled');
+  });
+
+  it('hides transient runtime internals while Tunnel is starting, but keeps real errors visible', () => {
+    const startingMarkup = render({
+      ...baseDashboard,
+      tunnel: {
+        ...baseDashboard.tunnel,
+        state: 'starting',
+        hasApiKey: true,
+        runtimeCredentialAvailable: true,
+        profileExists: true,
+        message: 'Managed tunnel runtime did not become fully ready',
+      },
+    });
+    expect(startingMarkup).not.toContain('Managed tunnel runtime did not become fully ready');
+
+    const errorMarkup = render({
+      ...baseDashboard,
+      tunnel: {
+        ...baseDashboard.tunnel,
+        state: 'error',
+        hasApiKey: true,
+        runtimeCredentialAvailable: true,
+        profileExists: true,
+        message: 'Tunnel startup failed',
+      },
+    });
+    expect(errorMarkup).toContain('Tunnel startup failed');
+    expect(errorMarkup).toContain('role="alert"');
+    expect(errorMarkup).toContain('error-text');
   });
 
   it('renders OAuth-specific Home connection copy instead of Runtime API key wording', () => {
