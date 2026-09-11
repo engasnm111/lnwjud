@@ -64,7 +64,8 @@ capabilities are additive.
 
 - Delivers native Vision screenshots as first-class MCP image content while removing duplicate Base64 blobs from the parallel text/structured metadata representation.
 - Preserves External MCP child `CallToolResult` image/text blocks through `mcp_call` so screenshot-producing Serena/custom MCP tools reach the calling model as actual image content rather than flattened JSON.
-- Adds mapper, External MCP bridge, and MCP HTTP transport regressions for image-content delivery.
+- Makes Windows `vision:capture_window` resolve natural app-name selectors to a visible non-minimized HWND when an app exposes multiple helper windows, while returning explicit window-state errors instead of generic `Operation failed` failures.
+- Adds mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge regressions for image-content delivery and window targeting.
 
 ### Historical: What's new in v4.61.0
 

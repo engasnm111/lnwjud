@@ -31,7 +31,8 @@
 
 - **Image payload delivery:** native Vision captures now return the screenshot as first-class MCP `image` content without duplicating the full Base64 payload into text/structured metadata, preventing successful captures from being lost behind oversized tool-result JSON.
 - **External MCP image passthrough:** `mcp_call` now preserves child MCP `image` and `text` content blocks instead of flattening the child `CallToolResult` into JSON text, so screenshots from Serena/custom MCP servers can reach the model as images.
-- **Regression coverage:** mapper, External MCP bridge, and real MCP HTTP transport tests verify image blocks survive end-to-end while redundant Base64 is removed from metadata.
+- **Window capture targeting:** `vision:capture_window` now accepts natural `app.name` selectors, prefers a visible non-minimized matching HWND when apps expose several helper windows, and reports minimized/hidden-window states directly instead of collapsing them into generic `Operation failed` errors.
+- **Regression coverage:** mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge tests cover image delivery and reliable window targeting.
 
 ### Historical: What's new in v4.61.0
 

@@ -120,7 +120,9 @@ public static class LnwjudNative
 try { Add-Type -TypeDefinition $nativeSource -ErrorAction Stop | Out-Null } catch { }
 
 function Resolve-Window {
-  param([object]$Parameters)
+  param([object]$Parameters, [switch]$PreferCapturable)
+  if ($null -eq $Parameters) { return $null }
+
   $windows = @([LnwjudNative]::Windows())
   $windowIndex = Get-Field $Parameters 'window_index'
   if ($windowIndex -is [int] -or $windowIndex -is [long]) {
@@ -128,16 +130,35 @@ function Resolve-Window {
     if ($index -lt 0 -or $index -ge $windows.Count) { return $null }
     return $windows[$index]
   }
+
   $handle = Get-Field $Parameters 'hwnd'
   if ($null -ne $handle) {
-    $found = $windows | Where-Object { [int64]$_.hwnd -eq [int64]$handle } | Select-Object -First 1
-    if ($null -ne $found) { return $found }
+    return $windows | Where-Object { [int64]$_.hwnd -eq [int64]$handle } | Select-Object -First 1
   }
+
   $title = Get-Field $Parameters 'title'
+  $name = Get-Field $Parameters 'name'
+  if ((-not ($title -is [string]) -or [string]::IsNullOrWhiteSpace($title)) -and $name -is [string] -and -not [string]::IsNullOrWhiteSpace($name)) {
+    $title = $name
+  }
   $processName = Get-Field $Parameters 'process_name'
-  $matches = $windows
-  if ($title -is [string] -and $title.Length -gt 0) { $matches = $matches | Where-Object { $_.title -like "*$title*" } }
-  if ($processName -is [string] -and $processName.Length -gt 0) { $matches = $matches | Where-Object { $_.process_name -ieq $processName } }
+
+  $hasTitle = $title -is [string] -and -not [string]::IsNullOrWhiteSpace($title)
+  $hasProcessName = $processName -is [string] -and -not [string]::IsNullOrWhiteSpace($processName)
+  if (-not $hasTitle -and -not $hasProcessName) { return $null }
+
+  $matches = @($windows)
+  if ($hasTitle) { $matches = @($matches | Where-Object { $_.title -like "*$title*" }) }
+  if ($hasProcessName) { $matches = @($matches | Where-Object { $_.process_name -ieq $processName }) }
+  if ($matches.Count -eq 0) { return $null }
+
+  if ($PreferCapturable) {
+    $capturable = @($matches | Where-Object {
+      [bool]$_.visible -and -not [bool]$_.minimized -and [int]$_.bounds.width -gt 0 -and [int]$_.bounds.height -gt 0
+    } | Sort-Object @{ Expression = { [int64]$_.bounds.width * [int64]$_.bounds.height }; Descending = $true })
+    if ($capturable.Count -gt 0) { return $capturable[0] }
+  }
+
   return $matches | Select-Object -First 1
 }
 
@@ -229,7 +250,7 @@ function Invoke-UiPointerClick {
 function Test-UiWindowSelector {
   param([object]$Parameters)
   if ($null -eq $Parameters) { return $false }
-  foreach ($name in @('hwnd', 'title', 'process_name', 'window_index')) {
+  foreach ($name in @('hwnd', 'title', 'name', 'process_name', 'window_index')) {
     $value = Get-Field $Parameters $name
     if ($null -ne $value) {
       if ($value -isnot [string] -or $value.Length -gt 0) { return $true }
@@ -464,7 +485,7 @@ function Invoke-VisionAction {
       if ([int]$windowIndex -lt 0 -or [int]$windowIndex -ge $windows.Count) { throw 'Window index is out of range' }
       $window = $windows[[int]$windowIndex]
     } else {
-      $window = Resolve-Window (Get-Field $Parameters 'app')
+      $window = Resolve-Window (Get-Field $Parameters 'app') -PreferCapturable
     }
     if ($null -eq $window) { throw 'Window not found' }
     if ([bool]$window.minimized) { throw 'Window is minimized; restore it before capture' }
@@ -975,14 +996,29 @@ try {
   $result = Success $value
   Write-Output ($result | ConvertTo-Json -Compress -Depth 50)
 } catch {
+  $failureCode = 'INTERNAL_ERROR'
+  $failureRecoverable = $true
   $failureMessage = 'Windows native capability failed'
   try {
     $detail = [string]$_.Exception.Message
     if (-not [string]::IsNullOrWhiteSpace($detail)) {
       $detail = ($detail -replace '[\r\n]+', ' ').Trim()
       if ($detail.Length -gt 1000) { $detail = $detail.Substring(0, 1000) }
-      $failureMessage = $failureMessage + ': ' + $detail
+      if ($detail -eq 'Window not found') {
+        $failureCode = 'FILE_NOT_FOUND'
+        $failureMessage = $detail
+      } elseif (
+        $detail -eq 'Window index is out of range' -or
+        $detail -eq 'Window is minimized; restore it before capture' -or
+        $detail -eq 'Window is not visible; activate or restore it before capture'
+      ) {
+        $failureCode = 'INVALID_INPUT'
+        $failureRecoverable = $false
+        $failureMessage = $detail
+      } else {
+        $failureMessage = $failureMessage + ': ' + $detail
+      }
     }
   } catch { }
-  Write-Output ((Failure 'INTERNAL_ERROR' $failureMessage $true) | ConvertTo-Json -Compress -Depth 50)
+  Write-Output ((Failure $failureCode $failureMessage $failureRecoverable) | ConvertTo-Json -Compress -Depth 50)
 }
