@@ -35,6 +35,18 @@ describe('DesktopRuntime persistence', () => {
     expect(manifests).toEqual(expect.arrayContaining([expect.objectContaining({ reason: 'daily' })]));
   });
 
+  it('tolerates concurrent and repeated close() calls without an unhandled rejection', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-double-close-'));
+    temporaryRoots.push(root);
+    const runtime = createDesktopRuntime(await realpath(root));
+    // Mirrors production: stdin 'end' and 'close' (and before-quit / transport onError)
+    // all call close() independently for the same shutdown, e.g. bootstrapMcpStdio in
+    // apps/desktop/src/main/main.ts. Without memoizing the shutdown work, a later call
+    // re-closes the already-closed SQLite connection and throws "database is not open".
+    await expect(Promise.all([runtime.close(), runtime.close()])).resolves.toBeDefined();
+    await expect(runtime.close()).resolves.toBeUndefined();
+  });
+
   it('builds the production dashboard audit summary without parsing large started metadata', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-audit-summary-'));
     temporaryRoots.push(rawDataRoot);

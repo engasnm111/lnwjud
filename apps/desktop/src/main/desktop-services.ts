@@ -1277,6 +1277,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     },
   };
 
+  let closePromise: Promise<void> | null = null;
+
   return {
     services,
     mcpServices,
@@ -1355,16 +1357,24 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       readSettings().tunnelAutoReconnect,
     ),
     autoStartRemoteMcp: async (): Promise<RemoteMcpStatus> => remoteMcpController.autoStartIfDesired(),
-    close: async (): Promise<void> => {
-      stopToolAvailabilityWatch();
-      await remoteMcpController.close();
-      await tunnelController.shutdownForDesktopExit();
-      logHub.stop();
-      await mcpLifecycle.close();
-      await extensionsService.close().catch(() => undefined);
-      await workspaceIndex.close().catch(() => undefined);
-      await startupBackup;
-      database.close();
+    close: (): Promise<void> => {
+      // Multiple shutdown triggers (stdin 'end' then 'close', before-quit, transport
+      // onError) can all call close() for the same process exit. Without memoizing
+      // the shutdown promise, a second concurrent/later call re-runs database.close()
+      // on an already-closed connection, throwing "database is not open" as an
+      // unhandled rejection (the callers are fire-and-forget `void runtime.close()`).
+      closePromise ??= (async (): Promise<void> => {
+        stopToolAvailabilityWatch();
+        await remoteMcpController.close();
+        await tunnelController.shutdownForDesktopExit();
+        logHub.stop();
+        await mcpLifecycle.close();
+        await extensionsService.close().catch(() => undefined);
+        await workspaceIndex.close().catch(() => undefined);
+        await startupBackup;
+        database.close();
+      })();
+      return closePromise;
     },
   };
 }
