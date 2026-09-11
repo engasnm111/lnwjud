@@ -78,6 +78,8 @@ describe('cross-platform desktop packaging', () => {
     expect(config).toContain('artifactName: lnwjud-Portable-${version}.${ext}');
     expect(desktopPackage.scripts?.['package:windows']).toContain('--win nsis portable --x64');
     expect(desktopPackage.scripts?.['package:windows']).toContain('write-portable-update-manifest.mjs');
+    expect(desktopPackage.scripts?.build).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
+    expect(desktopPackage.scripts?.['build:main']).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
     expect(config).toContain('icon: build/icon.ico');
     expect(config).toContain('signAndEditExecutable: true');
     expect(config).not.toContain('signAndEditExecutable: false');
