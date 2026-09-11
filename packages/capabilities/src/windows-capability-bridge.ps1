@@ -501,7 +501,21 @@ function Invoke-VisionAction {
   $bytes = $stream.ToArray()
   $graphics.Dispose(); $bitmap.Dispose(); $stream.Dispose()
   if ($bytes.Length -gt 8MB) { throw 'Capture is too large' }
-  return [ordered]@{ format = 'png'; mime_type = 'image/png'; data_base64 = [Convert]::ToBase64String($bytes); width = $width; height = $height; origin_x = $x; origin_y = $y; source = $source; backend = 'Win32/System.Drawing screen capture' }
+
+  $verifyStream = [System.IO.MemoryStream]::new($bytes, $false)
+  $verifyImage = [System.Drawing.Image]::FromStream($verifyStream, $true, $true)
+  if ([int]$verifyImage.Width -ne $width -or [int]$verifyImage.Height -ne $height) {
+    $verifyImage.Dispose(); $verifyStream.Dispose()
+    throw 'Capture image validation failed'
+  }
+  $verifyImage.Dispose(); $verifyStream.Dispose()
+
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  $shaBytes = $sha.ComputeHash($bytes)
+  $sha.Dispose()
+  $sha256 = -join ($shaBytes | ForEach-Object { $_.ToString('x2') })
+
+  return [ordered]@{ format = 'png'; mime_type = 'image/png'; data_base64 = [Convert]::ToBase64String($bytes); byte_length = [int]$bytes.Length; sha256 = $sha256; width = $width; height = $height; origin_x = $x; origin_y = $y; source = $source; backend = 'Win32/System.Drawing screen capture' }
 }
 
 function Invoke-SystemInfoAction {

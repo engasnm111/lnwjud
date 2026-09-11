@@ -3,6 +3,8 @@ import { ok } from '@lnwjud/domain';
 import { ToolRegistry } from '../tool-registry.js';
 import type { ExtensionsService } from '@lnwjud/extensions';
 
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
 describe('skills and mcp bridge tools', () => {
   it('registers skill and MCP inspection as read-only while mcp_call remains opaque mutation', async () => {
     const extensions: ExtensionsService = {
@@ -55,7 +57,7 @@ describe('skills and mcp bridge tools', () => {
       describeMcpServer: async () => ok({ server: 'mock', enabled: true, connected: true, tools: [] }),
       callMcpTool: async () => ok({
         content: [
-          { type: 'image', data: 'external-png', mimeType: 'image/png' },
+          { type: 'image', data: PNG_1X1, mimeType: 'image/png' },
           { type: 'text', text: 'captured' },
         ],
       }),
@@ -72,7 +74,7 @@ describe('skills and mcp bridge tools', () => {
       userConfirmed: true,
     })).resolves.toMatchObject({
       content: [
-        { type: 'image', data: 'external-png', mimeType: 'image/png' },
+        { type: 'image', data: PNG_1X1, mimeType: 'image/png' },
         { type: 'text', text: 'captured' },
       ],
     });

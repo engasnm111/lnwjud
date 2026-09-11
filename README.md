@@ -30,6 +30,7 @@
 ### What's new in v4.62.0
 
 - **Image payload delivery:** native Vision captures now return the screenshot as first-class MCP `image` content without duplicating the full Base64 payload into text/structured metadata, preventing successful captures from being lost behind oversized tool-result JSON.
+- **Image integrity guard:** Windows Vision validates the encoded PNG before returning it and attaches byte-length/SHA-256 metadata; the MCP result mapper rejects truncated, malformed, dimension-mismatched, or checksum-mismatched image payloads instead of silently handing a corrupted image to the model.
 - **External MCP image passthrough:** `mcp_call` now preserves child MCP `image` and `text` content blocks instead of flattening the child `CallToolResult` into JSON text, so screenshots from Serena/custom MCP servers can reach the model as images.
 - **Window capture targeting:** `vision:capture_window` now accepts natural `app.name` selectors, prefers a visible non-minimized matching HWND when apps expose several helper windows, and reports minimized/hidden-window states directly instead of collapsing them into generic `Operation failed` errors.
 - **Manual Tunnel stop precedence:** an explicit **Stop Tunnel** persists the desired stopped state and now stays visually stopped even when an external liveness probe is temporarily unverifiable; Auto Reconnect does not override that operator stop, while the next explicit Start still fails closed if duplicate-process liveness cannot be proven.
