@@ -64,6 +64,7 @@ capabilities are additive.
 
 - Delivers native Vision screenshots as first-class MCP image content while removing duplicate Base64 blobs from the parallel text/structured metadata representation.
 - Validates Windows Vision PNG bytes before returning them, includes byte-length/SHA-256 integrity metadata, and fails closed in the MCP result mapper on malformed/truncated/dimension- or checksum-mismatched image payloads.
+- Keeps Work Log and Live Logs search stable while live dashboard polling continues by freezing workspace metadata together with the row/line snapshot; background refreshes no longer retrigger full-detail search or alternate the UI between results, loading, and empty states.
 - Preserves External MCP child `CallToolResult` image/text blocks through `mcp_call` so screenshot-producing Serena/custom MCP tools reach the calling model as actual image content rather than flattened JSON.
 - Makes Windows `vision:capture_window` resolve natural app-name selectors to a visible non-minimized HWND when an app exposes multiple helper windows, while returning explicit window-state errors instead of generic `Operation failed` failures.
 - Keeps explicit Tunnel Stop intent authoritative over Auto Reconnect: a stopped runtime no longer flips to an unrelated duplicate-start error merely because an external liveness probe is temporarily unverifiable, while a later explicit Start still refuses to launch a possible duplicate.

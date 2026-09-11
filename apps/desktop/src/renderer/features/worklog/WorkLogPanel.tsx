@@ -63,11 +63,14 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [detailSearchState, dispatchDetailSearch] = useReducer(reduceDetailSearchState, undefined, createDetailSearchState);
   const detailSearchGeneration = useRef(0);
-  const currentFeed = useMemo(() => ({ entries: props.entries, inFlight: props.inFlight }), [props.entries, props.inFlight]);
+  const currentFeed = useMemo(
+    () => ({ entries: props.entries, inFlight: props.inFlight, workspaces: props.workspaces }),
+    [props.entries, props.inFlight, props.workspaces],
+  );
   const [feedFreeze, setFeedFreeze] = useState<typeof currentFeed | null>(null);
   const feed = activeLogFeed(feedFreeze, currentFeed);
-  const workspaceOptions = useMemo(() => collectWorkspaceOptions(feed.entries, feed.inFlight, props.workspaces), [feed, props.workspaces]);
-  const sessionOptions = useMemo(() => collectSessionOptions(feed.entries, feed.inFlight, workspaceId, props.workspaces), [feed, workspaceId, props.workspaces]);
+  const workspaceOptions = useMemo(() => collectWorkspaceOptions(feed.entries, feed.inFlight, feed.workspaces), [feed]);
+  const sessionOptions = useMemo(() => collectSessionOptions(feed.entries, feed.inFlight, workspaceId, feed.workspaces), [feed, workspaceId]);
   useEffect(() => {
     if (workspaceId !== null && !workspaceOptions.some((option) => option.id === workspaceId)) setWorkspaceId(null);
   }, [workspaceId, workspaceOptions]);
@@ -76,8 +79,8 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   }, [sessionId, sessionOptions]);
   const scope = useMemo<LogScopeSelection>(() => ({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const candidates = useMemo(
-    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, '', scope, props.workspaces),
-    [feed, props.filter, scope, props.workspaces],
+    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, '', scope, feed.workspaces),
+    [feed, props.filter, scope],
   );
   useEffect(() => {
     const query = normalizeDetailSearchQuery(search);
@@ -107,8 +110,8 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   }, [candidates, props.onSearchTargetDetails, search]);
   const hiddenMatches = activeDetailMatchIds(detailSearchState, search);
   const rows = useMemo(
-    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, search, scope, props.workspaces, hiddenMatches),
-    [feed, props.filter, search, scope, props.workspaces, hiddenMatches],
+    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, search, scope, feed.workspaces, hiddenMatches),
+    [feed, props.filter, search, scope, hiddenMatches],
   );
   const visible = props.compact ? rows.slice(0, 40) : rows;
   const resolvedTargets = useMemo(() => completedTargetByCallId(feed.entries), [feed]);
@@ -183,13 +186,13 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       {detailSearchState.status === 'loading' ? <p className="log-detail-search-status" role="status">{props.detailLoadingLabel ?? 'Searching complete details…'}</p> : null}
       {detailSearchState.status === 'error' ? <p className="log-detail-search-status log-detail-error" role="alert">{props.detailErrorLabel ?? 'Complete details could not be searched.'}</p> : null}
       <div className="worklog-stream" data-testid="work-log">
-        {visible.length === 0 ? <p>{props.emptyLabel}</p> : null}
+        {visible.length === 0 && detailSearchState.status !== 'loading' ? <p>{props.emptyLabel}</p> : null}
         {visible.map((row) => row.kind === 'inflight' ? (
           <div key={`inflight:${row.id}`} className="worklog-line inflight">
             <time>{formatLogUiTime(row.item.startedAt, props.locale ?? 'th')}</time>
             <span className="tag task-tag">[TASK]</span>
             <strong>{row.item.toolName}</strong>
-            <span className="worklog-summary"><ScopeBadges item={row.item} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={props.workspaces} />{row.item.targetSummary ?? ''}</span>
+            <span className="worklog-summary"><ScopeBadges item={row.item} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={feed.workspaces} />{row.item.targetSummary ?? ''}</span>
             <span className="worklog-duration" />
             <CopyButton row={row} copiedId={copiedId} copyLabel={props.copyLabel} copiedLabel={props.copiedLabel} onCopy={copyRow} />
             {copyErrorId === row.id ? <p className="log-detail-error row-copy-error" role="alert">{props.detailErrorLabel ?? 'Complete details are unavailable; nothing was copied.'}</p> : null}
@@ -200,7 +203,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
             <time>{formatLogUiTime(row.item.timestamp, props.locale ?? 'th')}</time>
             <span className={`tag ${row.item.kind}-tag`}>{tagFor(row.item.kind)}</span>
             <strong>{row.item.toolName}</strong>
-            <span className="worklog-summary"><ScopeBadges item={row.item} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={props.workspaces} />{renderEntryDetail(row.item, resolvedTargets)}</span>
+            <span className="worklog-summary"><ScopeBadges item={row.item} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={feed.workspaces} />{renderEntryDetail(row.item, resolvedTargets)}</span>
             {row.item.kind !== 'task' ? <em>{row.item.durationMs}ms</em> : <span className="worklog-duration" />}
             <CopyButton row={row} copiedId={copiedId} copyLabel={props.copyLabel} copiedLabel={props.copiedLabel} onCopy={copyRow} />
             {copyErrorId === row.id ? <p className="log-detail-error row-copy-error" role="alert">{props.detailErrorLabel ?? 'Complete details are unavailable; nothing was copied.'}</p> : null}

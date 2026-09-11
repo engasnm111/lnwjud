@@ -10,18 +10,23 @@ import { StandaloneLogViewer } from '../src/renderer/features/live/StandaloneLog
 const noop = async (): Promise<void> => undefined;
 
 describe('viewport-sized log and list layout', () => {
-  it('freezes the live feed through search/pause overlap and resumes only when neither is active', () => {
+  it('freezes live lines and workspace metadata through search/pause overlap and resumes only when neither is active', () => {
     const transition = (logStreamPanelModule as unknown as { transitionLogFeedFreeze?: <T>(state: T | null, current: T, freeze: boolean) => T | null }).transitionLogFeedFreeze;
     const activeFeed = (logStreamPanelModule as unknown as { activeLogFeed?: <T>(state: T | null, current: T) => T }).activeLogFeed;
     expect(typeof transition).toBe('function');
     expect(typeof activeFeed).toBe('function');
 
-    const first = [{ id: 1, source: 'mcp' as const, timestamp: '2026-08-30T00:00:01.000Z', level: 'info' as const, text: 'serena', workspaceId: null, sessionId: null }];
-    const withNewLine = [...first, { id: 2, source: 'mcp' as const, timestamp: '2026-08-30T00:00:02.000Z', level: 'info' as const, text: 'serena result', workspaceId: null, sessionId: null }];
+    const firstLines = [{ id: 1, source: 'mcp' as const, timestamp: '2026-08-30T00:00:01.000Z', level: 'info' as const, text: 'serena', workspaceId: null, sessionId: null }];
+    const first = { lines: firstLines, workspaces: [{ id: 'workspace-1', displayName: 'Frozen' }] };
+    const withNewLine = {
+      lines: [...firstLines, { id: 2, source: 'mcp' as const, timestamp: '2026-08-30T00:00:02.000Z', level: 'info' as const, text: 'serena result', workspaceId: null, sessionId: null }],
+      workspaces: [{ id: 'workspace-1', displayName: 'Refreshed' }],
+    };
     let state: typeof first | null = null;
 
     state = transition!(state, first, true);
     expect(activeFeed!(state, withNewLine)).toBe(first);
+    expect(activeFeed!(state, withNewLine).workspaces[0]?.displayName).toBe('Frozen');
 
     state = transition!(state, withNewLine, true);
     expect(activeFeed!(state, withNewLine)).toBe(first);
