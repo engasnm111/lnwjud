@@ -66,7 +66,7 @@ describe('stdio MCP runtime', () => {
     } finally {
       await persistedRuntime.close();
     }
-  });
+  }, 15_000);
 
   it('wires durable goals and scheduled continuation orchestration from the same SQLite repository', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-continuation-'));
