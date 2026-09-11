@@ -317,6 +317,7 @@ describe('MCP tool registry', () => {
     expect(waits).toEqual([30, 5, 60]);
     const shellDescription = registry.list().find((tool) => tool.name === 'shell')?.description ?? '';
     const wslDescription = registry.list().find((tool) => tool.name === 'wsl_exec')?.description ?? '';
+    expect(wslDescription).toContain('cwd accepts either an absolute Windows workspace path or an absolute WSL path');
     for (const description of [shellDescription, wslDescription]) {
       expect(description).toContain('When the user requires babysitting until completion, keep using bounded waits');
       expect(description).toContain('do not report completion until the terminal result is inspected');

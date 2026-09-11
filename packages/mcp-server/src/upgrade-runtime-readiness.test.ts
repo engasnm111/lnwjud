@@ -20,6 +20,33 @@ describe('upgrade runtime readiness facades', () => {
     });
   });
 
+  it('honors an injected Windows event-log runner instead of querying the test host', async () => {
+    const services = {
+      platform: 'win32',
+      eventLogRuntimeOptions: {
+        runner: async () => ok(JSON.stringify([{
+          time: '2026-09-11T00:00:00.000Z',
+          provider: 'lnwjud-test',
+          id: 1,
+          level: 'Information',
+          message: 'injected-contract-event',
+        }])),
+      },
+    } as unknown as McpApplicationServices;
+    const runtime = new UpgradeRuntimeService(services, actor);
+
+    await expect(runtime.execute('event_log_context', { max_events: 1 })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        eventLog: {
+          backend: 'windows-event-log',
+          count: 1,
+          events: [{ message: 'injected-contract-event' }],
+        },
+      },
+    });
+  });
+
   it('uses the composition-root platform instead of the runner host for Windows-only diagnostics', async () => {
     const runtime = new UpgradeRuntimeService({ platform: 'linux' }, actor);
     await expect(runtime.execute('windows_environment', {})).resolves.toMatchObject({

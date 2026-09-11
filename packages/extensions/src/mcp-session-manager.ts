@@ -31,14 +31,21 @@ interface ManagedSession {
   queue: Promise<unknown>;
 }
 
+interface PendingConnection {
+  readonly launchFingerprint: string;
+  readonly promise: Promise<ManagedSession>;
+}
+
 export class McpSessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
+  private readonly pendingConnections = new Map<string, PendingConnection>();
   private readonly lastLaunchFingerprints = new Map<string, string>();
   private readonly lastCatalogFingerprints = new Map<string, string>();
   private readonly factory: McpClientFactory;
   private readonly callTimeoutMs: number;
   private readonly idleTimeoutMs: number;
   private idleTimer: NodeJS.Timeout | undefined;
+  private closed = false;
 
   public constructor(options: McpSessionManagerOptions = {}) {
     this.factory = options.clientFactory ?? defaultMcpClientFactory;
@@ -57,9 +64,10 @@ export class McpSessionManager {
     readonly catalogFingerprint: string;
     readonly drift: ExternalMcpContractDrift;
   }>> {
+    let managed: ManagedSession | undefined;
     try {
       if (isAborted(signal)) return cancelledCall();
-      const managed = await this.ensure(server, config, signal);
+      managed = await this.ensure(server, config, signal);
       if (isAborted(signal)) return cancelledCall();
       const refreshed = await this.refreshCatalog(server, managed, signal);
       return ok({
@@ -77,6 +85,7 @@ export class McpSessionManager {
         },
       });
     } catch (error: unknown) {
+      if (managed !== undefined) await this.drop(server, managed);
       if (isAborted(signal)) return cancelledCall();
       return err(appError('INTERNAL_ERROR', sanitizeError(error), true));
     }
@@ -87,21 +96,23 @@ export class McpSessionManager {
     config: McpServerLaunchConfig,
     signal?: AbortSignal,
   ): Promise<Result<{ readonly connected: boolean; readonly resources: readonly McpResourceSummary[] }>> {
+    let managed: ManagedSession | undefined;
     try {
       if (isAborted(signal)) return cancelledCall();
-      const managed = await this.ensure(server, config, signal);
+      managed = await this.ensure(server, config, signal);
+      const activeManaged = managed;
       if (isAborted(signal)) return cancelledCall();
-      const resources = await this.enqueue(managed, () => withTimeout(
-        (callSignal) => managed.session.listResources(callSignal),
+      const resources = await withTimeout(
+        (callSignal) => this.enqueue(activeManaged, () => activeManaged.session.listResources(callSignal)),
         this.callTimeoutMs,
         `Timed out listing resources for ${server}`,
         signal,
-      ));
-      managed.lastUsedAt = Date.now();
+      );
+      activeManaged.lastUsedAt = Date.now();
       this.scheduleIdleSweep();
       return ok({ connected: true, resources });
     } catch (error: unknown) {
-      await this.drop(server);
+      if (managed !== undefined) await this.drop(server, managed);
       if (isAborted(signal)) return cancelledCall();
       return err(appError('INTERNAL_ERROR', sanitizeError(error), true));
     }
@@ -114,36 +125,40 @@ export class McpSessionManager {
     args: Readonly<Record<string, unknown>>,
     signal?: AbortSignal,
   ): Promise<Result<unknown>> {
+    let managed: ManagedSession | undefined;
     try {
       if (isAborted(signal)) return cancelledCall();
-      const managed = await this.ensure(server, config, signal);
+      managed = await this.ensure(server, config, signal);
+      const activeManaged = managed;
       if (isAborted(signal)) return cancelledCall();
-      await this.refreshCatalog(server, managed, signal);
-      const declaredTool = managed.tools.find((entry) => entry.name === tool);
+      await this.refreshCatalog(server, activeManaged, signal);
+      const declaredTool = activeManaged.tools.find((entry) => entry.name === tool);
       if (declaredTool === undefined) {
         return err(appError('INVALID_INPUT', `Child MCP tool is not declared by ${server}: ${tool}`));
       }
-      const result = await this.enqueue(managed, () => withTimeout(
-        (callSignal) => managed.session.callTool(tool, args, callSignal),
+      const result = await withTimeout(
+        (callSignal) => this.enqueue(activeManaged, () => activeManaged.session.callTool(tool, args, callSignal)),
         this.callTimeoutMs,
         `Timed out calling ${server}/${tool}`,
         signal,
-      ));
+      );
       const outputError = validateDeclaredOutput(declaredTool, result);
       if (outputError !== undefined) return err(appError('INVALID_INPUT', `Child MCP output schema mismatch for ${server}/${tool}: ${outputError}`));
-      managed.lastUsedAt = Date.now();
+      activeManaged.lastUsedAt = Date.now();
       this.scheduleIdleSweep();
       return ok(result);
     } catch (error: unknown) {
-      await this.drop(server);
+      if (managed !== undefined) await this.drop(server, managed);
       if (isAborted(signal)) return cancelledCall();
       return err(appError('INTERNAL_ERROR', sanitizeError(error), true));
     }
   }
 
   public async close(): Promise<void> {
+    this.closed = true;
     if (this.idleTimer !== undefined) clearInterval(this.idleTimer);
     this.idleTimer = undefined;
+    this.pendingConnections.clear();
     const closers = [...this.sessions.entries()].map(async ([name, managed]) => {
       this.sessions.delete(name);
       await managed.session.close().catch(() => undefined);
@@ -152,6 +167,7 @@ export class McpSessionManager {
   }
 
   private async ensure(server: string, config: McpServerLaunchConfig, signal?: AbortSignal): Promise<ManagedSession> {
+    if (this.closed) throw new Error('Child MCP session manager is closed');
     if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
     const launchFingerprint = fingerprintExternalMcpValue(config);
     const existing = this.sessions.get(server);
@@ -159,12 +175,46 @@ export class McpSessionManager {
       existing.lastUsedAt = Date.now();
       return existing;
     }
-    if (existing !== undefined) await this.drop(server);
+    if (existing !== undefined) await this.drop(server, existing);
 
-    const session = await this.factory.connect(config, signal);
+    const pending = this.pendingConnections.get(server);
+    if (pending !== undefined) {
+      if (pending.launchFingerprint === launchFingerprint) return pending.promise;
+      await pending.promise.catch(() => undefined);
+      return this.ensure(server, config, signal);
+    }
+
+    const promise = this.connectManaged(server, config, launchFingerprint, signal);
+    this.pendingConnections.set(server, { launchFingerprint, promise });
     try {
+      return await promise;
+    } finally {
+      if (this.pendingConnections.get(server)?.promise === promise) this.pendingConnections.delete(server);
+    }
+  }
+
+  private async connectManaged(
+    server: string,
+    config: McpServerLaunchConfig,
+    launchFingerprint: string,
+    signal?: AbortSignal,
+  ): Promise<ManagedSession> {
+    const session = await withTimeout(
+      (connectSignal) => this.factory.connect(config, connectSignal),
+      this.callTimeoutMs,
+      `Timed out connecting to ${server}`,
+      signal,
+    );
+    try {
+      if (this.closed) throw new Error('Child MCP session manager is closed');
       if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
-      const listedTools = await session.listTools(signal);
+      const listedTools = await withTimeout(
+        (listSignal) => session.listTools(listSignal),
+        this.callTimeoutMs,
+        `Timed out listing initial tools for ${server}`,
+        signal,
+      );
+      if (this.closed) throw new Error('Child MCP session manager is closed');
       if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
       const tools = normalizeExternalToolCatalog(listedTools);
       const catalogFingerprint = fingerprintExternalMcpValue(tools);
@@ -180,6 +230,9 @@ export class McpSessionManager {
       };
       this.lastLaunchFingerprints.set(server, launchFingerprint);
       this.lastCatalogFingerprints.set(server, catalogFingerprint);
+      const replaced = this.sessions.get(server);
+      if (replaced !== undefined) await replaced.session.close().catch(() => undefined);
+      if (this.closed) throw new Error('Child MCP session manager is closed');
       this.sessions.set(server, managed);
       this.scheduleIdleSweep();
       return managed;
@@ -194,12 +247,12 @@ export class McpSessionManager {
     managed: ManagedSession,
     signal?: AbortSignal,
   ): Promise<{ readonly detected: boolean; readonly previousCatalogFingerprint?: string }> {
-    const listedTools = await this.enqueue(managed, () => withTimeout(
-      (callSignal) => managed.session.listTools(callSignal),
+    const listedTools = await withTimeout(
+      (callSignal) => this.enqueue(managed, () => managed.session.listTools(callSignal)),
       this.callTimeoutMs,
       `Timed out refreshing tool catalog for ${server}`,
       signal,
-    ));
+    );
     const tools = normalizeExternalToolCatalog(listedTools);
     const nextFingerprint = fingerprintExternalMcpValue(tools);
     const previousFingerprint = managed.catalogFingerprint;
@@ -218,9 +271,9 @@ export class McpSessionManager {
     return next;
   }
 
-  private async drop(server: string): Promise<void> {
+  private async drop(server: string, expected?: ManagedSession): Promise<void> {
     const managed = this.sessions.get(server);
-    if (managed === undefined) return;
+    if (managed === undefined || (expected !== undefined && managed !== expected)) return;
     this.sessions.delete(server);
     await managed.session.close().catch(() => undefined);
   }
@@ -253,11 +306,19 @@ export const defaultMcpClientFactory: McpClientFactory = {
       },
       stderr: 'pipe',
     });
+    const disposeStderrDrain = attachChildStderrDrain(transport.stderr);
     const client = new Client(
       { name: 'lnwjud-mcp-bridge', version: '1.0.0' },
       { versionNegotiation: { mode: 'auto' } },
     );
-    await client.connect(transport, signal === undefined ? undefined : { signal });
+    try {
+      await client.connect(transport, signal === undefined ? undefined : { signal });
+    } catch (error: unknown) {
+      await client.close().catch(() => undefined);
+      disposeStderrDrain();
+      throw error;
+    }
+    let closed = false;
     return {
       async listTools(listSignal?: AbortSignal): Promise<readonly McpToolSummary[]> {
         const listed = await client.listTools(undefined, listSignal === undefined ? undefined : { signal: listSignal });
@@ -281,11 +342,42 @@ export const defaultMcpClientFactory: McpClientFactory = {
         return client.callTool({ name, arguments: { ...args } }, callSignal === undefined ? undefined : { signal: callSignal });
       },
       async close(): Promise<void> {
-        await client.close();
+        if (closed) return;
+        closed = true;
+        try {
+          await client.close();
+        } finally {
+          disposeStderrDrain();
+        }
       },
     };
   },
 };
+
+export function attachChildStderrDrain(stderr: unknown): () => void {
+  if (!isDrainableStderr(stderr)) return () => undefined;
+  const ignorePipeError = (): void => undefined;
+  stderr.on('error', ignorePipeError);
+  stderr.resume();
+  let disposed = false;
+  return (): void => {
+    if (disposed) return;
+    disposed = true;
+    stderr.removeListener('error', ignorePipeError);
+  };
+}
+
+function isDrainableStderr(value: unknown): value is {
+  on(event: 'error', listener: () => void): unknown;
+  removeListener(event: 'error', listener: () => void): unknown;
+  resume(): unknown;
+} {
+  return typeof value === 'object'
+    && value !== null
+    && 'on' in value && typeof value.on === 'function'
+    && 'removeListener' in value && typeof value.removeListener === 'function'
+    && 'resume' in value && typeof value.resume === 'function';
+}
 
 function withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number, message: string, parentSignal?: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {

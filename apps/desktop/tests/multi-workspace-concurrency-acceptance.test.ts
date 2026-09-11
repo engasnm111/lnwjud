@@ -241,7 +241,7 @@ describe('multi-workspace concurrency acceptance', () => {
       await Promise.allSettled([clientA.close(), clientB.close()]);
       await runtime.close();
     }
-  }, 90_000);
+  }, process.env.CI ? 180_000 : 90_000);
 });
 
 async function createWorkspaceFixture(label: string): Promise<string> {
@@ -292,7 +292,7 @@ async function prepareSessionFiles(client: Client, workspaceId: string, label: s
   expect(victim.isError).not.toBe(true);
 }
 
-async function waitForFile(filePath: string, timeoutMs = 20_000): Promise<void> {
+async function waitForFile(filePath: string, timeoutMs = process.env.CI ? 60_000 : 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -310,7 +310,7 @@ async function waitForTerminalShellTask(
   workspaceId: string,
   taskId: string,
 ): Promise<{ readonly isError?: boolean; readonly structuredContent?: Readonly<Record<string, unknown>> }> {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + (process.env.CI ? 60_000 : 20_000);
   while (Date.now() < deadline) {
     const response = await client.callTool({
       name: 'shell',

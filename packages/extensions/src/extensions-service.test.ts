@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_EXTENSIONS_SETTINGS } from './types.js';
 import { LocalExtensionsService } from './extensions-service.js';
-import type { McpClientFactory, McpClientSession } from './mcp-session-manager.js';
+import { attachChildStderrDrain, McpSessionManager, type McpClientFactory, type McpClientSession } from './mcp-session-manager.js';
 
 function settingsWithMockServer(): typeof DEFAULT_EXTENSIONS_SETTINGS {
   return {
@@ -313,6 +314,163 @@ describe('LocalExtensionsService MCP bridge', () => {
     await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_TIMEOUT' } });
     expect(observedSignal?.aborted).toBe(true);
     expect(closes).toBe(1);
+    await service.close();
+  });
+
+  it('drains high-volume child stderr and removes its error listener during cleanup', async () => {
+    const stderr = new PassThrough();
+    const initialErrorListeners = stderr.listenerCount('error');
+    const dispose = attachChildStderrDrain(stderr);
+    expect(stderr.readableFlowing).toBe(true);
+    for (let index = 0; index < 64; index += 1) stderr.write(Buffer.alloc(64 * 1024, index % 255));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stderr.readableLength).toBe(0);
+    expect(stderr.listenerCount('error')).toBe(initialErrorListeners + 1);
+    dispose();
+    dispose();
+    expect(stderr.listenerCount('error')).toBe(initialErrorListeners);
+    stderr.destroy();
+  });
+
+  it('shares one child connection across concurrent calls', async () => {
+    let connects = 0;
+    const session: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
+      close: async () => undefined,
+    };
+    const manager = new McpSessionManager({
+      clientFactory: { connect: async (): Promise<McpClientSession> => { connects += 1; await Promise.resolve(); return session; } },
+      callTimeoutMs: 500,
+    });
+
+    const results = await Promise.all(Array.from({ length: 8 }, () => manager.call('mock', { command: 'node' }, 'ping', {})));
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(connects).toBe(1);
+    await manager.close();
+  });
+
+  it('closes a child connection that finishes after the session manager is closed', async () => {
+    let resolveConnect!: (session: McpClientSession) => void;
+    let connectStarted!: () => void;
+    const started = new Promise<void>((resolve) => { connectStarted = resolve; });
+    let closes = 0;
+    const session: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
+      close: async () => { closes += 1; },
+    };
+    const manager = new McpSessionManager({
+      clientFactory: {
+        connect: async (): Promise<McpClientSession> => {
+          connectStarted();
+          return new Promise<McpClientSession>((resolve) => { resolveConnect = resolve; });
+        },
+      },
+      callTimeoutMs: 500,
+    });
+
+    const pending = manager.describe('mock', { command: 'node' });
+    await started;
+    await manager.close();
+    resolveConnect(session);
+
+    await expect(pending).resolves.toMatchObject({ ok: false });
+    await expect.poll(() => closes).toBe(1);
+    expect(manager.isConnected('mock')).toBe(false);
+  });
+
+  it('times out queued calls and cleans the failed managed session', async () => {
+    let closes = 0;
+    const session: McpClientSession = {
+      listTools: async () => [{ name: 'hang', description: 'Hang tool' }],
+      listResources: async () => [],
+      callTool: async () => new Promise<never>(() => undefined),
+      close: async () => { closes += 1; },
+    };
+    const manager = new McpSessionManager({ clientFactory: { connect: async (): Promise<McpClientSession> => session }, callTimeoutMs: 25 });
+
+    const [first, second] = await Promise.all([
+      manager.call('mock', { command: 'node' }, 'hang', {}),
+      manager.call('mock', { command: 'node' }, 'hang', {}),
+    ]);
+    expect(first).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    expect(second).toMatchObject({ ok: false, error: { code: 'INTERNAL_ERROR' } });
+    expect(manager.isConnected('mock')).toBe(false);
+    expect(closes).toBe(1);
+    await manager.close();
+  });
+
+  it('does not let a stale failed call close its replacement child session', async () => {
+    let rejectOld!: (error: Error) => void;
+    let newConnects = 0;
+    const oldSession: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => new Promise<never>((_resolve, reject) => { rejectOld = reject; }),
+      close: async () => undefined,
+    };
+    const newSession: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => ({ content: [{ type: 'text', text: 'new' }] }),
+      close: async () => undefined,
+    };
+    const manager = new McpSessionManager({
+      clientFactory: {
+        connect: async (config): Promise<McpClientSession> => {
+          if (config.args?.[0] === 'new') { newConnects += 1; return newSession; }
+          return oldSession;
+        },
+      },
+      callTimeoutMs: 500,
+    });
+
+    const oldCall = manager.call('mock', { command: 'node', args: ['old'] }, 'ping', {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const replacement = await manager.call('mock', { command: 'node', args: ['new'] }, 'ping', {});
+    expect(replacement.ok).toBe(true);
+    rejectOld(new Error('old child exited'));
+    await expect(oldCall).resolves.toMatchObject({ ok: false });
+    expect(manager.isConnected('mock')).toBe(true);
+    await expect(manager.call('mock', { command: 'node', args: ['new'] }, 'ping', {})).resolves.toMatchObject({ ok: true });
+    expect(newConnects).toBe(1);
+    await manager.close();
+  });
+
+  it('drops a child session after describe fails so the next describe reconnects', async () => {
+    let connects = 0;
+    let firstList = true;
+    const factory: McpClientFactory = {
+      connect: async (): Promise<McpClientSession> => {
+        connects += 1;
+        return {
+          listTools: async (): Promise<readonly { name: string; description: string }[]> => {
+            if (connects === 1 && !firstList) throw new Error('child exited');
+            firstList = false;
+            return [{ name: 'health_check', description: 'Health' }];
+          },
+          listResources: async () => [],
+          callTool: async () => ({ content: [] }),
+          close: async () => undefined,
+        };
+      },
+    };
+    const service = new LocalExtensionsService({
+      settings: settingsWithMockServer(),
+      homeDir: process.cwd(),
+      appDataDir: process.cwd(),
+      clientFactory: factory,
+    });
+
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: false });
+    await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({
+      ok: true,
+      value: { connected: true, tools: [expect.objectContaining({ name: 'health_check' })] },
+    });
+    expect(connects).toBe(2);
     await service.close();
   });
 });

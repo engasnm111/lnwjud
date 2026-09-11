@@ -5,7 +5,7 @@ import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { formatLogExportDateTime, formatLogUiTime } from '../../log-timestamp.js';
 import { ExpandableTargetDetail } from '../logs/ExpandableTargetDetail.js';
-import { activeDetailMatchIds, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState } from '../logs/detail-search-state.js';
+import { activeDetailMatchIds, activeLogFeed, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState, transitionLogFeedFreeze } from '../logs/detail-search-state.js';
 
 export type WorkLogFilter = 'all' | 'error';
 
@@ -63,8 +63,11 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [detailSearchState, dispatchDetailSearch] = useReducer(reduceDetailSearchState, undefined, createDetailSearchState);
   const detailSearchGeneration = useRef(0);
-  const workspaceOptions = useMemo(() => collectWorkspaceOptions(props.entries, props.inFlight, props.workspaces), [props.entries, props.inFlight, props.workspaces]);
-  const sessionOptions = useMemo(() => collectSessionOptions(props.entries, props.inFlight, workspaceId, props.workspaces), [props.entries, props.inFlight, workspaceId, props.workspaces]);
+  const currentFeed = useMemo(() => ({ entries: props.entries, inFlight: props.inFlight }), [props.entries, props.inFlight]);
+  const [feedFreeze, setFeedFreeze] = useState<typeof currentFeed | null>(null);
+  const feed = activeLogFeed(feedFreeze, currentFeed);
+  const workspaceOptions = useMemo(() => collectWorkspaceOptions(feed.entries, feed.inFlight, props.workspaces), [feed, props.workspaces]);
+  const sessionOptions = useMemo(() => collectSessionOptions(feed.entries, feed.inFlight, workspaceId, props.workspaces), [feed, workspaceId, props.workspaces]);
   useEffect(() => {
     if (workspaceId !== null && !workspaceOptions.some((option) => option.id === workspaceId)) setWorkspaceId(null);
   }, [workspaceId, workspaceOptions]);
@@ -73,8 +76,8 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   }, [sessionId, sessionOptions]);
   const scope = useMemo<LogScopeSelection>(() => ({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const candidates = useMemo(
-    () => newestFirstWorkLogRows(props.entries, props.inFlight, props.filter, '', scope, props.workspaces),
-    [props.entries, props.inFlight, props.filter, scope, props.workspaces],
+    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, '', scope, props.workspaces),
+    [feed, props.filter, scope, props.workspaces],
   );
   useEffect(() => {
     const query = normalizeDetailSearchQuery(search);
@@ -104,11 +107,11 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   }, [candidates, props.onSearchTargetDetails, search]);
   const hiddenMatches = activeDetailMatchIds(detailSearchState, search);
   const rows = useMemo(
-    () => newestFirstWorkLogRows(props.entries, props.inFlight, props.filter, search, scope, props.workspaces, hiddenMatches),
-    [props.entries, props.inFlight, props.filter, search, scope, props.workspaces, hiddenMatches],
+    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, search, scope, props.workspaces, hiddenMatches),
+    [feed, props.filter, search, scope, props.workspaces, hiddenMatches],
   );
   const visible = props.compact ? rows.slice(0, 40) : rows;
-  const resolvedTargets = useMemo(() => completedTargetByCallId(props.entries), [props.entries]);
+  const resolvedTargets = useMemo(() => completedTargetByCallId(feed.entries), [feed]);
 
   async function copyRow(row: WorkLogRow): Promise<void> {
     const detailRef = row.item.targetDetail.detailRef;
@@ -171,7 +174,11 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
         placeholder={props.searchPlaceholder ?? 'Search work log...'}
         aria-label={props.searchPlaceholder ?? 'Search work log'}
         value={search}
-        onChange={(event) => setSearch(event.target.value)}
+        onChange={(event) => {
+          const nextSearch = event.target.value;
+          setFeedFreeze((state) => transitionLogFeedFreeze(state, currentFeed, normalizeDetailSearchQuery(nextSearch).length > 0));
+          setSearch(nextSearch);
+        }}
       />
       {detailSearchState.status === 'loading' ? <p className="log-detail-search-status" role="status">{props.detailLoadingLabel ?? 'Searching complete details…'}</p> : null}
       {detailSearchState.status === 'error' ? <p className="log-detail-search-status log-detail-error" role="alert">{props.detailErrorLabel ?? 'Complete details could not be searched.'}</p> : null}
@@ -449,4 +456,4 @@ function tagFor(kind: WorkLogEntry['kind']): string {
 }
 
 export type { MessageKey };
-export { activeDetailMatchIds, createDetailSearchState, reduceDetailSearchState };
+export { activeDetailMatchIds, activeLogFeed, createDetailSearchState, reduceDetailSearchState, transitionLogFeedFreeze };

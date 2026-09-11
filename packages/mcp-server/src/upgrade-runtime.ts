@@ -193,7 +193,7 @@ export class UpgradeRuntimeService {
     this.contextEconomy = contextEconomy;
     this.contextEngine = new ContextEngine(services, actor, contextEconomy);
     const platform = services.platform ?? services.sandboxRuntimeOptions?.platform ?? process.platform;
-    this.eventLog = new EventLogCapabilityBackend({ platform });
+    this.eventLog = new EventLogCapabilityBackend({ ...(services.eventLogRuntimeOptions ?? {}), platform });
     this.sandbox = new SandboxRuntimeService(services, actor, { ...(services.sandboxRuntimeOptions ?? {}), platform });
     this.database = new DatabaseRuntimeService(services, actor);
     this.lsp = new LspRuntimeService(services, actor);

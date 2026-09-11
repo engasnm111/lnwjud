@@ -133,9 +133,13 @@ export class WslCapabilityBackend implements CapabilityBackend {
       if (riskyReason !== undefined && !isApplicationAuthorized(authorization, request.userConfirmed)) return err(appError('PERMISSION_REQUIRED', riskyReason));
     }
 
-    const cwd = await this.resolveWorkspaceCwd(request.cwd, request.activeWorkspaceRoot, authorization);
+    const requestedCwd = normalizeWslExecCwd(request.cwd, request.distro);
+    if (!requestedCwd.ok) return requestedCwd;
+    const cwd = await this.resolveWorkspaceCwd(requestedCwd.value.windowsCwd, request.activeWorkspaceRoot, authorization);
     if (!cwd.ok) return cwd;
-    const linuxCwd = windowsToWslPath(cwd.value);
+    const linuxCwd = requestedCwd.value.linuxCwd === undefined
+      ? windowsToWslPath(cwd.value)
+      : ok(requestedCwd.value.linuxCwd);
     if (!linuxCwd.ok) return linuxCwd;
     if (request.dryRun) {
       return ok({
@@ -412,6 +416,18 @@ function parseEnvironment(value: unknown): Result<Readonly<Record<string, string
     parsed[key] = item;
   }
   return ok(parsed);
+}
+
+function normalizeWslExecCwd(value: string | undefined, distro: string): Result<{ windowsCwd?: string; linuxCwd?: string }> {
+  if (value === undefined) return ok({});
+  if (!value.startsWith('/')) return ok({ windowsCwd: value });
+  if (value.includes('\0')) return err(appError('INVALID_INPUT', 'WSL cwd is invalid'));
+  const segments = value.split('/').filter((segment) => segment.length > 0 && segment !== '.');
+  if (segments.some((segment) => segment === '..')) return err(appError('INVALID_INPUT', 'WSL parent traversal is not allowed'));
+  const linuxCwd = `/${segments.join('/')}`;
+  const windowsCwd = wslToWindowsPath(linuxCwd, distro);
+  if (!windowsCwd.ok) return windowsCwd;
+  return ok({ windowsCwd: windowsCwd.value, linuxCwd });
 }
 
 function buildWslArguments(request: WslRequest, linuxCwd: string): string[] {

@@ -132,6 +132,7 @@ describe('MVP release verification gate', () => {
     expect(workflow).toContain("github.ref != 'refs/heads/main'");
     expect(workflow).toContain('Run authoritative release verification gate');
     expect(workflow).toContain("github.ref == 'refs/heads/main'");
+    expect(workflow).toContain("(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'");
   });
 
   it('installs the pinned Sigstore verifier before authoritative Windows packaging', async () => {
@@ -183,13 +184,15 @@ describe('MVP release verification gate', () => {
     expect(release).toContain('gh run list');
     expect(release).toContain('--workflow ci.yml');
     expect(release).toContain('--commit "$sha"');
+    expect((release.match(/--branch main/g) ?? []).length).toBe(2);
     expect(release).toContain('gh run download');
     expect(release).toContain('windows-release-$sha');
     expect(release).toContain('native-darwin-arm64-$sha');
     expect(release).toContain('native-darwin-x64-$sha');
     expect(release).toContain('native-linux-x64-$sha');
     expect(release).toContain('native-linux-arm64-$sha');
-    expect(release).toContain('successful CI push run for exact commit');
+    expect(release).toContain('--event workflow_dispatch');
+    expect(release).toContain('successful CI push or workflow_dispatch run for exact commit');
     expect(release).toContain('LNWJUD_RELEASE_INSTALLER_DIRECTORY');
     expect(release).toContain('node scripts/collect-release-assets.mjs');
     expect(release).toContain('release-assets/*');

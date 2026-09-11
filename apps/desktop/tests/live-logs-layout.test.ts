@@ -10,6 +10,26 @@ import { StandaloneLogViewer } from '../src/renderer/features/live/StandaloneLog
 const noop = async (): Promise<void> => undefined;
 
 describe('viewport-sized log and list layout', () => {
+  it('freezes the live feed through search/pause overlap and resumes only when neither is active', () => {
+    const transition = (logStreamPanelModule as unknown as { transitionLogFeedFreeze?: <T>(state: T | null, current: T, freeze: boolean) => T | null }).transitionLogFeedFreeze;
+    const activeFeed = (logStreamPanelModule as unknown as { activeLogFeed?: <T>(state: T | null, current: T) => T }).activeLogFeed;
+    expect(typeof transition).toBe('function');
+    expect(typeof activeFeed).toBe('function');
+
+    const first = [{ id: 1, source: 'mcp' as const, timestamp: '2026-08-30T00:00:01.000Z', level: 'info' as const, text: 'serena', workspaceId: null, sessionId: null }];
+    const withNewLine = [...first, { id: 2, source: 'mcp' as const, timestamp: '2026-08-30T00:00:02.000Z', level: 'info' as const, text: 'serena result', workspaceId: null, sessionId: null }];
+    let state: typeof first | null = null;
+
+    state = transition!(state, first, true);
+    expect(activeFeed!(state, withNewLine)).toBe(first);
+
+    state = transition!(state, withNewLine, true);
+    expect(activeFeed!(state, withNewLine)).toBe(first);
+
+    state = transition!(state, withNewLine, false);
+    expect(activeFeed!(state, withNewLine)).toBe(withNewLine);
+  });
+
   it('keeps only the newest normalized hidden-detail search result during an async race', async () => {
     const createState = (logStreamPanelModule as unknown as { createDetailSearchState?: () => unknown }).createDetailSearchState;
     const reduce = (logStreamPanelModule as unknown as { reduceDetailSearchState?: (state: unknown, action: unknown) => unknown }).reduceDetailSearchState;

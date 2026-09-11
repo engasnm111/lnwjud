@@ -49,11 +49,16 @@ expensive Windows installer packaging to be skipped with
 `-SkipWindowsPackaging`. The native platform contract runs on Windows, macOS,
 and Linux. A protected push to `main` additionally runs Windows packaging and
 the target-native macOS/Linux package matrix, including macOS arm64/x64 and
-Linux x64/arm64.
+Linux x64/arm64. If the protected merge is performed by an automation credential
+that does not emit a downstream Actions `push` event, explicitly dispatch
+`ci.yml` on `main`; that exact-main `workflow_dispatch` must run the same full
+Windows and target-native package gates before tagging.
 
-The tag-triggered Release workflow is intentionally short: it finds the
-successful `ci.yml` push run for the exact tag SHA, downloads all five named
-artifacts, verifies each target's provenance and hashes, merges the two macOS
+The tag-triggered Release workflow is intentionally short: it prefers the
+successful `ci.yml` push run for the exact tag SHA and falls back to a successful
+exact-main `workflow_dispatch` run when merge automation suppressed the push
+event. It downloads all five named artifacts, verifies each target's provenance
+and hashes, merges the two macOS
 update manifests, and uploads the resulting release assets. It never runs
 `package:windows`, `package:macos`, `package:linux`, `electron-builder`, or the
 full verification gate.
@@ -123,7 +128,11 @@ branch as mergeable/up to date under the configured protection rules.
 ## 3. Merge to `main` and wait for authoritative CI
 
 Merge through the protected-branch path and record the resulting exact `main`
-SHA. A push to `main` must complete all of these target boundaries:
+SHA. The authoritative CI for that exact SHA normally comes from the `main`
+push. If no push-event run is created because the protected merge credential
+suppresses downstream Actions, manually dispatch `ci.yml` with `main` as the
+ref and verify that the run's `headSha` is still the exact SHA being prepared
+for release. In either case, the run must complete all of these target boundaries:
 
 - `Authoritative Release Verification (Windows)` completes the full Windows
   gate and uploads `windows-release-<main merge SHA>`.
@@ -155,7 +164,8 @@ does not already exist. Create the tag at that exact `main` SHA and push it.
 Never force-replace an existing public release tag.
 
 The Release workflow checks the package-version/tag match, locates the
-successful `ci.yml` push run for the exact SHA, downloads every target artifact,
+successful exact-SHA `ci.yml` push run or, when necessary, the successful
+exact-main `workflow_dispatch` fallback, downloads every target artifact,
 and invokes `apps/desktop/scripts/verify-release-evidence.mjs` with an explicit
 installer directory for each target. `scripts/collect-release-assets.mjs`
 then produces:

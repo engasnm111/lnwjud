@@ -159,6 +159,68 @@ describe('WslCapabilityBackend', () => {
     }]);
   });
 
+  it('accepts a WSL cwd returned by wsl_fs for a registered Windows workspace', async () => {
+    const calls: unknown[] = [];
+    const backend = new WslCapabilityBackend({
+      platform: 'win32',
+      runner: { execute: async (input): Promise<Result<unknown>> => { calls.push(input); return ok({}); } },
+      allowedRoots: ['E:\\lnwjud'],
+    });
+
+    await expect(backend.execute({
+      operation: 'run',
+      workspaceId: 'ws-1',
+      distro: 'Ubuntu',
+      executable: 'node',
+      arguments: ['--version'],
+      cwd: '/mnt/e/lnwjud',
+      dry_run: true,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        linux_cwd: '/mnt/e/lnwjud',
+        workspace_id: 'ws-1',
+        distro: 'Ubuntu',
+      },
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it('accepts a WSL cwd under Full Bypass without treating it as a Windows host path', async () => {
+    if (process.platform !== 'win32') return;
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-wsl-posix-cwd-'));
+    temporaryRoots.push(root);
+    const parsedRoot = path.win32.parse(root);
+    const linuxRoot = `/mnt/${parsedRoot.root[0]!.toLowerCase()}/${root.slice(parsedRoot.root.length).replaceAll('\\', '/')}`;
+    const backend = new WslCapabilityBackend({
+      platform: 'win32',
+      runner: { execute: async (): Promise<Result<unknown>> => ok({}) },
+      allowedRoots: [root],
+    });
+
+    await expect(backend.execute({
+      operation: 'run',
+      workspaceId: 'ws-1',
+      distro: 'Ubuntu',
+      executable: 'node',
+      arguments: ['--version'],
+      cwd: linuxRoot,
+      dry_run: true,
+    }, undefined, {
+      mode: 'full_bypass',
+      applicationApproved: true,
+      bypassApplicationAuthorization: true,
+      source: 'full_bypass',
+    })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        linux_cwd: linuxRoot,
+        workspace_id: 'ws-1',
+        distro: 'Ubuntu',
+      },
+    });
+  });
+
   it('rejects shell-string flags, workspace escapes, and cross-workspace task access', async () => {
     const runner: CapabilityBackend = { execute: async (): Promise<Result<unknown>> => ok({ task_id: 'task-1', state: 'running' }) };
     const backend = new WslCapabilityBackend({ platform: 'win32', runner, allowedRoots: ['C:\\workspace'] });

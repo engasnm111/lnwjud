@@ -867,11 +867,25 @@ try {
   child.stdout?.on('data', (chunk) => { appendBounded(stdoutHandle, chunk, 'stdout'); });
   child.stderr?.on('data', (chunk) => { appendBounded(stderrHandle, chunk, 'stderr'); });
   child.once('error', (error) => { void finish('failed', -1, 'Local task failed to start: ' + error.message); });
-  child.once('close', (code) => { if (!stopTarget) void finish(code === 0 ? 'completed' : 'failed', code ?? -1); });
+  child.once('exit', (code) => {
+    if (stopTarget || settled) return;
+    if (timer) clearTimeout(timer);
+    void (async () => {
+      // The direct command is the durable task boundary. A detached descendant
+      // may inherit stdout/stderr and keep Node's child close event pending
+      // indefinitely after the command itself has already exited. Give queued
+      // output one event-loop turn to drain, then sever only our read ends so
+      // task completion follows the direct child lifecycle instead of pipe EOF.
+      await new Promise((resolve) => setImmediate(resolve));
+      child?.stdout?.destroy();
+      child?.stderr?.destroy();
+      await finish(code === 0 ? 'completed' : 'failed', code ?? -1);
+    })();
+  });
   metadata.child_started_at = child.pid ? await processStartedAt(child.pid) : null;
   if (metadata.child_started_at === null) delete metadata.child_started_at;
-  await persist();
-  timer = setTimeout(() => {
+  if (!settled) await persist();
+  if (!settled) timer = setTimeout(() => {
     void (async () => {
       if (settled || !child?.pid) return;
       stopTarget = 'timed_out';

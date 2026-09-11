@@ -39,6 +39,15 @@ describe('DesktopRuntime persistence', () => {
     expect(manifests).toEqual(expect.arrayContaining([expect.objectContaining({ reason: 'daily' })]));
   });
 
+  it('tolerates concurrent and repeated close() calls without re-closing SQLite', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-double-close-'));
+    temporaryRoots.push(root);
+    const runtime = createDesktopRuntime(await realpath(root));
+
+    await expect(Promise.all([runtime.close(), runtime.close()])).resolves.toBeDefined();
+    await expect(runtime.close()).resolves.toBeUndefined();
+  });
+
   it('builds the production dashboard audit summary without parsing large started metadata', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-audit-summary-'));
     temporaryRoots.push(rawDataRoot);
