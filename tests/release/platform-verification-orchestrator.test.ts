@@ -32,11 +32,12 @@ describe('platform verification orchestrator', () => {
     expect(workflow).not.toMatch(/native-package-verification:[\s\S]*?action-gh-release/i);
   });
 
-  it('verifies nested macOS integrity without requiring dev ad-hoc packages to rewrite Electron signatures', async (): Promise<void> => {
+  it('rejects mixed signing identities that newer macOS dyld refuses to map', async (): Promise<void> => {
     const script = await readFile(path.join(repositoryRoot, 'scripts', 'verify-macos-release.sh'), 'utf8');
     expect(script).toContain('codesign --verify --strict "$candidate"');
     expect(script).toContain('macOS nested signature integrity failed for ad-hoc package');
+    expect(script).toContain('macOS nested signature mode mismatch: app=ad-hoc');
     expect(script).toContain('macOS TeamIdentifier mismatch');
-    expect(script).not.toContain('macOS nested signature mode mismatch: app=ad-hoc nested=certificate');
+    expect(script).toContain('details="$(codesign_details "$target")"');
   });
 });

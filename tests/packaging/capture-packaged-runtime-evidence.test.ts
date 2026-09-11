@@ -264,6 +264,10 @@ describe('macOS signing transaction', () => {
       expect(options.optionsForFile()).toMatchObject({ timestamp: 'none' });
     });
     await signPackagedMacosRuntime({ ...signingConfiguration(f.bundle), identity: value }, { run, signApp });
+    expect(signApp).toHaveBeenCalledTimes(2);
+    const normalized = signApp.mock.calls[0]![0] as unknown as { ignore: (file: string) => boolean };
+    expect(normalized.ignore(path.join(f.bundle, 'Contents', 'Frameworks', 'Electron Framework.framework'))).toBe(false);
+    for (const runtime of f.binaries.slice(2)) expect(normalized.ignore(path.join(f.bundle, runtime))).toBe(true);
     await capture(f.context);
     expect(JSON.parse(state.outputs.at(-1)!).signing).toEqual({ mode: 'ad-hoc' });
     const native = JSON.parse(await fs.readFile(path.join(f.bundle, f.nativeManifest), 'utf8'));

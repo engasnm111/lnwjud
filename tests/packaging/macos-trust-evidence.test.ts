@@ -16,8 +16,9 @@ describe('macOS trust evidence contract', () => {
     expect(script).toContain('verify_nested_signing_identity');
     expect(script).toContain('codesign --verify --strict "$candidate"');
     expect(script).toContain('macOS nested signature integrity failed for ad-hoc package');
-    expect(script).not.toContain('macOS nested signature mode mismatch');
+    expect(script).toContain('macOS nested signature mode mismatch: app=ad-hoc');
     expect(script).toContain('macOS TeamIdentifier mismatch');
+    expect(script).toContain('[[ "$team" == "not set" ]]');
     expect(script).toContain('-L');
     expect(script).not.toMatch(/CSC_LINK|APPLE_ID|APPLE_APP_SPECIFIC_PASSWORD/);
     await access(path.join(repositoryRoot, 'apps', 'desktop', 'build', 'entitlements.mac.plist'));

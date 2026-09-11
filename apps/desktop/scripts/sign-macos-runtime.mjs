@@ -59,7 +59,21 @@ export async function signPackagedMacosRuntime(configuration, { run, signApp, re
     runtimes.push({ executable, manifestPath, manifest, hashField, binary });
   }
 
-  const verified = new Set();
+  const previousIgnore = configuration.ignore;
+  const previousRules = previousIgnore == null ? [] : Array.isArray(previousIgnore) ? previousIgnore : [previousIgnore];
+  const runtimePaths = new Set(runtimes.map((runtime) => runtime.executable));
+  const ignore = (file) => runtimePaths.has(file) || previousRules.some((rule) =>
+    typeof rule === 'function' ? rule(file) : Boolean(file.match(rule)));
+  const signOptions = { ...configuration, identity, identityValidation: false,
+    ...(adHoc ? { preAutoEntitlements: false, preEmbedProvisioningProfile: false,
+      optionsForFile: (file) => ({ ...optionsForFile(file), timestamp: 'none' }) } : {}),
+    ignore };
+  // Community builds start from Electron binaries that may already carry the
+  // Electron project's certificate. Normalize those nested signatures to the
+  // same ad-hoc identity before our runtime manifests are rewritten; macOS 26
+  // rejects an ad-hoc outer app that maps a differently-signed framework.
+  if (adHoc) await signApp(signOptions);
+
   for (const runtime of runtimes) {
     const options = await optionsForFile?.(runtime.executable);
     // Refuse options this standalone Mach-O signing path cannot safely mirror.
@@ -70,7 +84,6 @@ export async function signPackagedMacosRuntime(configuration, { run, signApp, re
     if (keychain) args.push('--keychain', keychain);
     await run([...args, runtime.executable]);
     await verifySignature(runtime.executable, identity, run);
-    verified.add(runtime.executable);
   }
 
   // The source hashes were verified above. Preserve them separately from the
@@ -88,16 +101,9 @@ export async function signPackagedMacosRuntime(configuration, { run, signApp, re
     await writeFile(runtime.manifestPath, runtime.manifestText, 'utf8');
   }
   await collectPackagedRuntimeEvidence(context);
-  const previousIgnore = configuration.ignore;
-  const previousRules = previousIgnore == null ? [] : Array.isArray(previousIgnore) ? previousIgnore : [previousIgnore];
-  await signApp({ ...configuration, identity, identityValidation: false,
-    ...(adHoc ? { preAutoEntitlements: false, preEmbedProvisioningProfile: false,
-      optionsForFile: (file) => ({ ...optionsForFile(file), timestamp: 'none' }) } : {}),
-    // osx-sign 1.3.1 drops an array in validateOptsIgnore. A single predicate
-    // survives normalization and preserves the builder's existing exclusions.
-    ignore: (file) => verified.has(file) || previousRules.some((rule) =>
-      typeof rule === 'function' ? rule(file) : Boolean(file.match(rule))),
-  });
+  // osx-sign 1.3.1 drops an array in validateOptsIgnore. A single predicate
+  // survives normalization and preserves the builder's existing exclusions.
+  await signApp(signOptions);
   // No manifest writes after the outer app has been sealed. Detect signer
   // regressions even if somebody updates both a binary and its manifest.
   for (const runtime of runtimes) {
@@ -107,6 +113,9 @@ export async function signPackagedMacosRuntime(configuration, { run, signApp, re
   }
   await run(['--verify', '--deep', '--strict', app]);
   await verifySignature(app, identity, run);
+  if (adHoc) {
+    await verifySignature(path.join(app, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Versions', 'A', 'Electron Framework'), identity, run);
+  }
   await collectPackagedRuntimeEvidence(context);
   // electron-builder now notarizes and invokes afterSign to capture evidence.
 }

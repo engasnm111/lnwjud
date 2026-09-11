@@ -32,12 +32,18 @@ codesign_details() {
 
 codesign_team_id() {
   local target="$1"
-  codesign_details "$target" | awk -F= '/^TeamIdentifier=/{print $2; exit}'
+  local details team
+  details="$(codesign_details "$target")"
+  team="$(printf '%s\n' "$details" | awk -F= '/^TeamIdentifier=/{print $2; exit}')"
+  [[ "$team" == "not set" ]] && team=''
+  printf '%s\n' "$team"
 }
 
 codesign_is_adhoc() {
   local target="$1"
-  codesign_details "$target" | grep -Eq '^Signature=adhoc$'
+  local details
+  details="$(codesign_details "$target")"
+  grep -Eq '^Signature=adhoc$' <<<"$details"
 }
 
 verify_nested_signing_identity() {
@@ -57,13 +63,18 @@ verify_nested_signing_identity() {
   while IFS= read -r candidate; do
     [[ "$candidate" == "$app" ]] && continue
     if /usr/bin/codesign --display --verbose=4 "$candidate" >/dev/null 2>&1; then
+      local actual
       if [[ "$app_is_adhoc" == "1" ]]; then
         if ! /usr/bin/codesign --verify --strict "$candidate" >/dev/null 2>&1; then
           echo "macOS nested signature integrity failed for ad-hoc package: $candidate" >&2
           exit 1
         fi
+        if ! codesign_is_adhoc "$candidate"; then
+          actual="$(codesign_team_id "$candidate")"
+          echo "macOS nested signature mode mismatch: app=ad-hoc nested=${actual:-certificate} target=$candidate" >&2
+          exit 1
+        fi
       else
-        local actual
         actual="$(codesign_team_id "$candidate")"
         if [[ "$actual" != "$expected" ]]; then
           echo "macOS TeamIdentifier mismatch: app=$expected nested=${actual:-<missing>} target=$candidate" >&2
