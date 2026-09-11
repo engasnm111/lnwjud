@@ -22,7 +22,8 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(settingsSource).toContain("setSecureMethodOpen(false)");
     expect(settingsSource).toContain('ผู้ใช้ที่ต้องการสามารถเปิดทั้งสองพร้อมกันได้');
     expect(homeSource).toContain('setSecureTunnelExpanded(!remoteMcpOnline)');
-    expect(homeSource).toContain('Remote MCP OAuth ออนไลน์แล้ว จึงพับส่วน Tunnel ไว้เพื่อลดความสับสน');
+    expect(homeSource).toContain('Remote MCP OAuth เป็นวิธีหลักสำหรับผู้ใช้ทั่วไป');
+    expect(homeSource).toContain('ตัวเลือกขั้นสูง');
   });
 
   it('adds an explicit 10px follow-up gap because Chromium details content does not honor the parent grid gap between sections', () => {

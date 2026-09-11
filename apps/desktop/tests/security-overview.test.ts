@@ -143,11 +143,24 @@ describe('Security Overview', () => {
         },
       },
     });
+    expect(markup).toContain('ChatGPT Connection');
+    expect(markup).toContain('Remote MCP · OAuth');
+    expect(markup).toContain('Advanced option');
     expect(markup).toContain('ChatGPT Connection — OAuth');
-    expect(markup).toContain('OAuth authentication • Secure MCP Tunnel transport');
-    expect(markup).toContain('OAUTH');
     expect(markup).toContain('oauth@example.test');
     expect(markup).not.toContain('Save a Runtime API key once in Settings');
+  });
+
+  it('simplifies the Home surface around one ChatGPT connection area and removes the redundant WORK mode card', () => {
+    const markup = render(baseDashboard);
+    expect(markup).toContain('aria-label="ChatGPT Connection"');
+    expect(markup).toContain('Remote MCP · OAuth');
+    expect(markup).toContain('Secure MCP Tunnel for ChatGPT');
+    expect(markup).toContain('class="agent-actions-menu"');
+    expect(markup).toContain('Restart Desktop Agent');
+    expect(markup).toContain('Stop Desktop Agent');
+    expect(markup).not.toContain('<p>Mode</p>');
+    expect(markup).not.toContain('WORK mode');
   });
 
   it('localizes the security summary to Thai', () => {

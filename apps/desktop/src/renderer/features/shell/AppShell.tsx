@@ -32,6 +32,7 @@ const navItems: ReadonlyArray<{ readonly screen: Screen; readonly key: MessageKe
 
 export function AppShell(props: AppShellProps): ReactElement {
   const t = createTranslator(props.locale);
+  const platformLabel = desktopPlatformLabel();
   return (
     <div className="window-container">
       {/* Modern Luxury Dark Gold Titlebar */}
@@ -104,7 +105,7 @@ export function AppShell(props: AppShellProps): ReactElement {
             ))}
           </nav>
           <div className="sidebar-footer">
-            <span>Native Desktop</span>
+            <span>Desktop Agent · {platformLabel}</span>
             <strong className={props.mcpRunning ? 'status-online' : 'status-offline'}>
               {props.mcpRunning ? t('footer.connected') : t('footer.disconnected')}
             </strong>
@@ -118,6 +119,15 @@ export function AppShell(props: AppShellProps): ReactElement {
     </div>
   );
 }
+function desktopPlatformLabel(): string {
+  if (typeof navigator === 'undefined') return 'Desktop';
+  const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+  if (platform.includes('win')) return 'Windows';
+  if (platform.includes('mac')) return 'macOS';
+  if (platform.includes('linux')) return 'Linux';
+  return 'Desktop';
+}
+
 function versionBadgeText(appVersion: string, status: UpdateStatus | null, locale: UiLocale): string {
   if (status === null) return `v${appVersion}`;
   const next = status.availableVersion;

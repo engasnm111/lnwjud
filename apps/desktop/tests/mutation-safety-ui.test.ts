@@ -110,6 +110,16 @@ describe('mutation safety UI contract', () => {
     expect(markup).toContain('v4.62.0');
   });
 
+  it('labels the sidebar runtime as Desktop Agent and keeps the OS suffix cross-platform', () => {
+    const markup = renderToStaticMarkup(createElement(AppShell, {
+      locale: 'en', appVersion: APP_VERSION, mcpRunning: true, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'home',
+      onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
+    }));
+    expect(markup).toMatch(/Desktop Agent · (Windows|macOS|Linux|Desktop)/);
+    expect(markup).toContain('Connected');
+    expect(markup).not.toContain('Native Desktop');
+  });
+
   it('keeps Desktop and STDIO Full Bypass independently visible in the application header', () => {
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, mcpRunning: true, desktopFullBypassOn: true, stdioFullBypassOn: true, updateStatus: null, screen: 'home',

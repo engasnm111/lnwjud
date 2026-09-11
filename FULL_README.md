@@ -70,6 +70,7 @@ capabilities are additive.
 - Keeps explicit Tunnel Stop intent authoritative over Auto Reconnect: a stopped runtime no longer flips to an unrelated duplicate-start error merely because an external liveness probe is temporarily unverifiable, while a later explicit Start still refuses to launch a possible duplicate.
 - Keeps expected managed-runtime warm-up retries out of the red Home error surface: the UI remains in its normal starting state until the Tunnel is ready, while real terminal/operator errors still render as alerts.
 - Removes the manual PIN from the normal ChatGPT Business custom-app path without trusting a public callback URI by itself: exact supported `chatgpt.com` OAuth callbacks are completed through DCR + Authorization Code + PKCE plus a one-time browser handoff to an ephemeral `127.0.0.1` Desktop approval listener; a short-lived PIN is generated lazily only for non-ChatGPT OAuth clients as a fallback.
+- Simplifies Home around one **ChatGPT Connection** surface: Remote MCP OAuth is the primary path, Secure MCP Tunnel is nested as an advanced option, disruptive Desktop Agent actions move into an overflow menu, the sidebar reports `Desktop Agent · <OS>`, and the redundant `MODE / WORK` card is removed.
 - Adds mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge regressions for image-content delivery and window targeting.
 
 ### Historical: What's new in v4.61.0

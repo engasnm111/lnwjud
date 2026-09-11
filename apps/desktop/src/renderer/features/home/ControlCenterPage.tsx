@@ -110,13 +110,18 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
         </div>
         <div className="heading-actions">
           <button type="button" onClick={() => { void props.onRefresh(); }}>{t('action.refresh')}</button>
-          <button type="button" disabled={props.incidentBusy} onClick={() => { void props.onCaptureIncident(); }}>{t('live.captureIncident')}</button>
-          <button type="button" disabled={props.mcpBusy || !dashboard.mcp.running} onClick={() => { void props.onStopMcp(); }}>
-            {t('action.stop')}
-          </button>
-          <button type="button" disabled={props.mcpBusy || dashboard.selectedWorkspace === null} onClick={() => { void props.onRestartMcp(); }}>
-            {t('action.restart')}
-          </button>
+          <details className="agent-actions-menu">
+            <summary aria-label={props.locale === 'th' ? 'จัดการ Desktop Agent' : 'Desktop Agent actions'}>•••</summary>
+            <div className="agent-actions-popover">
+              <button type="button" disabled={props.incidentBusy} onClick={() => { void props.onCaptureIncident(); }}>{t('live.captureIncident')}</button>
+              <button type="button" disabled={props.mcpBusy || dashboard.selectedWorkspace === null} onClick={() => { void props.onRestartMcp(); }}>
+                {props.locale === 'th' ? 'รีสตาร์ท Desktop Agent' : 'Restart Desktop Agent'}
+              </button>
+              <button type="button" disabled={props.mcpBusy || !dashboard.mcp.running} onClick={() => { void props.onStopMcp(); }}>
+                {props.locale === 'th' ? 'หยุด Desktop Agent' : 'Stop Desktop Agent'}
+              </button>
+            </div>
+          </details>
         </div>
       </div>
       {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p role="status" className="hint">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentLabel(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt, '—', props.locale)}`}</p>}
@@ -179,75 +184,68 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           </div>
           <p className="hint">{t('mcp.stdioCommand')}</p>
           <code className="endpoint">{dashboard.connectionModes.stdioCommand}</code>
-          <div className="home-remote-mcp-block">
+        </section>
+
+        <section className="panel chatgpt-connection-panel" aria-label={props.locale === 'th' ? 'การเชื่อมต่อ ChatGPT' : 'ChatGPT Connection'}>
+          <div className="section-heading">
+            <div>
+              <h2>{props.locale === 'th' ? 'การเชื่อมต่อ ChatGPT' : 'ChatGPT Connection'}</h2>
+              <p className="hint">{props.locale === 'th' ? 'ใช้ Remote MCP OAuth เป็นวิธีหลักสำหรับผู้ใช้ทั่วไป ส่วน Secure MCP Tunnel อยู่ในตัวเลือกขั้นสูงด้านล่าง' : 'Remote MCP OAuth is the primary connection for most users. Secure MCP Tunnel remains available below as an advanced option.'}</p>
+            </div>
+            <span className={`connection-count-chip ${remoteMcpOnline || dashboard.tunnel.state === 'running' ? 'is-online' : ''}`}>{remoteMcpOnline || dashboard.tunnel.state === 'running' ? (props.locale === 'th' ? 'เชื่อมต่ออยู่' : 'Connected') : (props.locale === 'th' ? 'ยังไม่เชื่อมต่อ' : 'Not connected')}</span>
+          </div>
+
+          <div className="home-remote-mcp-block chatgpt-primary-connection">
             <div className="settings-mini-heading"><strong>Remote MCP · OAuth</strong><span>{remoteMcp.state === 'running' ? 'ONLINE' : remoteMcp.oauthConnected ? (remoteMcp.autoStartEnabled ? 'LINKED · AUTO' : 'LINKED') : remoteMcp.state.toUpperCase()}</span></div>
             <code className="endpoint">{remoteMcp.publicMcpUrl ?? '—'}</code>
             <div className="inline-actions">
               <button type="button" disabled={remoteMcp.publicMcpUrl === null} onClick={() => { if (remoteMcp.publicMcpUrl !== null) void copyText(remoteMcp.publicMcpUrl); }}>{props.locale === 'th' ? 'Copy Public /mcp' : 'Copy public /mcp'}</button>
-              <button type="button" onClick={props.onOpenTunnelSetup}>{props.locale === 'th' ? 'ตั้งค่า OAuth / ngrok' : 'Configure OAuth / ngrok'}</button>
+              <button type="button" onClick={props.onOpenTunnelSetup}>{props.locale === 'th' ? 'ตั้งค่า ChatGPT' : 'Configure ChatGPT'}</button>
             </div>
-            {remoteMcp.oauthConnected ? <div className="home-remote-mcp-status is-connected">{props.locale === 'th' ? (remoteMcp.autoStartEnabled ? '✓ ChatGPT เชื่อมแล้ว · เปิด lnwjud ครั้งถัดไปจะ Start Remote MCP อัตโนมัติ' : '✓ ChatGPT เชื่อมแล้ว · การเชื่อมต่อยังถูกจำไว้ แต่ Auto-start ปิดอยู่') : (remoteMcp.autoStartEnabled ? '✓ ChatGPT connected · Remote MCP will auto-start with lnwjud.' : '✓ ChatGPT connected · authorization is remembered, but auto-start is off.')}</div> : null}
+            {remoteMcp.oauthConnected ? <div className="home-remote-mcp-status is-connected">{props.locale === 'th' ? (remoteMcp.autoStartEnabled ? '✓ ChatGPT เชื่อมแล้ว · Remote MCP จะ Start อัตโนมัติเมื่อเปิด lnwjud' : '✓ ChatGPT เชื่อมแล้ว · การอนุญาตถูกจำไว้ แต่ Auto-start ปิดอยู่') : (remoteMcp.autoStartEnabled ? '✓ ChatGPT connected · Remote MCP will auto-start with lnwjud.' : '✓ ChatGPT connected · authorization is remembered, but auto-start is off.')}</div> : null}
             {remoteMcp.pairingCode === null ? null : <div className="home-remote-mcp-status is-pairing"><strong className="remote-mcp-pairing-line"><span>{props.locale === 'th' ? 'PIN สำรอง OAuth client อื่น' : 'Fallback PIN for another OAuth client'}:</span><span className="remote-mcp-pairing-pin" aria-label={`${props.locale === 'th' ? 'Fallback pairing PIN' : 'Fallback pairing PIN'} ${remoteMcp.pairingCode}`}>{remoteMcp.pairingCode}</span></strong></div>}
           </div>
-        </section>
 
-        <details
-          className={`connection-method-stack home-connection-method ${remoteMcpOnline ? 'is-secondary' : ''}`}
-          open={secureTunnelExpanded}
-          onToggle={(event) => setSecureTunnelExpanded(event.currentTarget.open)}
-        >
-          <summary className="connection-method-summary">
-            <div className="connection-method-summary-copy">
-              <span className="connection-method-kicker">{remoteMcpOnline ? (props.locale === 'th' ? 'ตัวเลือกเสริม / ขั้นสูง' : 'Optional / advanced') : (props.locale === 'th' ? 'วิธีเชื่อมต่อทางเลือก' : 'Alternative connection')}</span>
-              <strong>{t(tunnelPresentation.titleKey)}</strong>
-              <span>{remoteMcpOnline
-                ? (props.locale === 'th' ? 'Remote MCP OAuth ออนไลน์แล้ว จึงพับส่วน Tunnel ไว้เพื่อลดความสับสน — ยังเปิดใช้พร้อมกันได้' : 'Remote MCP OAuth is online, so Tunnel controls are collapsed to reduce clutter. Both may still run together.')
-                : (tunnelPresentation.transportHintKey === null ? (props.locale === 'th' ? 'เปิดเพื่อจัดการ Secure MCP Tunnel' : 'Expand to manage Secure MCP Tunnel.') : t(tunnelPresentation.transportHintKey))}</span>
+          <details
+            className={`connection-method-stack home-connection-method chatgpt-advanced-connection ${remoteMcpOnline ? 'is-secondary' : ''}`}
+            open={secureTunnelExpanded}
+            onToggle={(event) => setSecureTunnelExpanded(event.currentTarget.open)}
+          >
+            <summary className="connection-method-summary">
+              <div className="connection-method-summary-copy">
+                <span className="connection-method-kicker">{props.locale === 'th' ? 'ตัวเลือกขั้นสูง' : 'Advanced option'}</span>
+                <strong>{t(tunnelPresentation.titleKey)}</strong>
+                <span>{props.locale === 'th' ? 'ใช้เมื่อองค์กรหรือการตั้งค่าของคุณต้องการ Secure MCP Tunnel โดยเฉพาะ' : 'Use only when your organization or setup specifically requires Secure MCP Tunnel.'}</span>
+              </div>
+              <div className="connection-method-summary-status">
+                <span className={`connection-method-live-dot ${dashboard.tunnel.state === 'running' ? 'is-online' : ''}`} aria-hidden="true" />
+                <span>{tunnelLabel}</span>
+                <span className="connection-method-chevron" aria-hidden="true">⌄</span>
+              </div>
+            </summary>
+            <div className="connection-method-panel chatgpt-tunnel-panel">
+              <p data-testid="tunnel-status">{tunnelLabel}</p>
+              {tunnelPresentation.isOAuth && dashboard.tunnel.auth?.accountLabel ? <p className="hint">{props.locale === 'th' ? 'บัญชี OAuth' : 'OAuth account'}: {dashboard.tunnel.auth.accountLabel}</p> : null}
+              {tunnelMessage ? <p className={tunnelMessageIsError ? 'hint error-text' : 'hint'} role={tunnelMessageIsError ? 'alert' : undefined}>{tunnelMessage}</p> : null}
+              {!tunnelCredentialAvailable ? <p className="hint">{t(tunnelPresentation.needCredentialKey)}</p> : null}
+              {!dashboard.tunnel.profileExists ? <p className="hint">{t('tunnel.needProfile')}</p> : null}
+              {tunnelCredentialAvailable && dashboard.tunnel.profileExists ? null : (
+                <div className="guided-tunnel-home-entry">
+                  <p className="hint">{tunnelPresentation.isOAuth ? (props.locale === 'th' ? 'ตรวจ OAuth session และการเชื่อมต่อในหน้าตั้งค่า' : 'Review the OAuth session and connection in Settings.') : t('guidedTunnel.dismissedHint')}</p>
+                  <button type="button" className="btn-save-gold" onClick={props.onOpenTunnelSetup}>{tunnelPresentation.isOAuth ? (props.locale === 'th' ? 'เปิดการตั้งค่าการเชื่อมต่อ' : 'Open connection settings') : t('guidedTunnel.openGuide')}</button>
+                </div>
+              )}
+              <div className="inline-actions">
+                <button type="button" disabled={props.tunnelBusy || !tunnelCredentialAvailable || dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>
+                  {t(tunnelPresentation.startKey)}
+                </button>
+                <button type="button" disabled={props.tunnelBusy || dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>
+                  {t(tunnelPresentation.stopKey)}
+                </button>
+              </div>
             </div>
-            <div className="connection-method-summary-status">
-              <span className={`connection-method-live-dot ${dashboard.tunnel.state === 'running' ? 'is-online' : ''}`} aria-hidden="true" />
-              <span>{tunnelLabel}</span>
-              <span className="active-project-count">{tunnelPresentation.badge}</span>
-              <span className="connection-method-chevron" aria-hidden="true">⌄</span>
-            </div>
-          </summary>
-          <section className="panel connection-method-panel">
-          <div className="section-heading">
-            <div>
-              <h2>{t(tunnelPresentation.titleKey)}</h2>
-              {tunnelPresentation.transportHintKey === null ? null : <p className="hint">{t(tunnelPresentation.transportHintKey)}</p>}
-            </div>
-            <span className="active-project-count">{tunnelPresentation.badge}</span>
-          </div>
-          <p data-testid="tunnel-status">{tunnelLabel}</p>
-          {tunnelPresentation.isOAuth && dashboard.tunnel.auth?.accountLabel ? <p className="hint">{props.locale === 'th' ? 'บัญชี OAuth' : 'OAuth account'}: {dashboard.tunnel.auth.accountLabel}</p> : null}
-          {tunnelMessage ? <p className={tunnelMessageIsError ? 'hint error-text' : 'hint'} role={tunnelMessageIsError ? 'alert' : undefined}>{tunnelMessage}</p> : null}
-          {!tunnelCredentialAvailable ? <p className="hint">{t(tunnelPresentation.needCredentialKey)}</p> : null}
-          {!dashboard.tunnel.profileExists ? <p className="hint">{t('tunnel.needProfile')}</p> : null}
-          {tunnelCredentialAvailable && dashboard.tunnel.profileExists ? null : (
-            <div className="guided-tunnel-home-entry">
-              <p className="hint">{tunnelPresentation.isOAuth ? (props.locale === 'th' ? 'ตรวจ OAuth session และการเชื่อมต่อในหน้าตั้งค่า' : 'Review the OAuth session and connection in Settings.') : t('guidedTunnel.dismissedHint')}</p>
-              <button type="button" className="btn-save-gold" onClick={props.onOpenTunnelSetup}>{tunnelPresentation.isOAuth ? (props.locale === 'th' ? 'เปิดการตั้งค่าการเชื่อมต่อ' : 'Open connection settings') : t('guidedTunnel.openGuide')}</button>
-            </div>
-          )}
-          <div className="inline-actions">
-            <button
-              type="button"
-              disabled={props.tunnelBusy || !tunnelCredentialAvailable || dashboard.tunnel.state === 'running'}
-              onClick={() => { void props.onStartTunnel(); }}
-            >
-              {t(tunnelPresentation.startKey)}
-            </button>
-            <button
-              type="button"
-              disabled={props.tunnelBusy || dashboard.tunnel.state === 'stopped'}
-              onClick={() => { void props.onStopTunnel(); }}
-            >
-              {t(tunnelPresentation.stopKey)}
-            </button>
-          </div>
+          </details>
         </section>
-        </details>
       </div>
 
       <div className="home-grid">
@@ -349,10 +347,6 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
             <p>{t('info.activeProject')}</p>
             <strong>{dashboard.activeWorkspaces.length === 0 ? '—' : dashboard.activeWorkspaces.map((workspace) => workspace.displayName).join(', ')}</strong>
             <span data-testid="workspace-id" hidden>{dashboard.selectedWorkspace?.id ?? ''}</span>
-          </article>
-          <article className="info-card">
-            <p>{t('info.mode')}</p>
-            <strong>{dashboard.mode}</strong>
           </article>
         </section>
       </div>
