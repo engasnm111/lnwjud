@@ -17,6 +17,7 @@ import { ToolRegistry } from './tool-registry.js';
 const MODERN_PROTOCOL_VERSION = '2026-07-28';
 const expectedAdvertisedToolCount = new ToolRegistry({}, { clientId: 'count-test', clientName: 'count-test' }).list().length;
 const fixturePath = fileURLToPath(new URL('../tests/fixtures/stdio-server.mjs', import.meta.url));
+const relayPassthroughFixturePath = fileURLToPath(new URL('../tests/fixtures/stdio-server-relay-passthrough.mjs', import.meta.url));
 
 function modernMeta(): Record<string, unknown> {
   return {
@@ -72,10 +73,10 @@ function rawRequest(id: string, method: string, params: Record<string, unknown>)
   };
 }
 
-function createClientAndTransport(): { readonly client: Client; readonly transport: StdioClientTransport; diagnostics(): string } {
+function createClientAndTransport(scriptPath: string = fixturePath): { readonly client: Client; readonly transport: StdioClientTransport; diagnostics(): string } {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [fixturePath],
+    args: [scriptPath],
     stderr: 'pipe',
   });
   let capturedDiagnostics = '';
@@ -150,6 +151,28 @@ describe('MCP stdio transport', () => {
 
       const afterCancel = resultRecord(await sendRawRequest(transport, rawRequest('stdio-modern-get-cancelled', 'tasks/get', { taskId })));
       expect(afterCancel).toMatchObject({ resultType: 'complete', taskId, status: 'cancelled' });
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
+
+  it('serves requests when startMcpStdio is given stdin/stdout overrides instead of defaulting to process stdio', async () => {
+    // Packaged Electron STDIO on Windows cannot use the real process.stdin
+    // directly (electron/electron#21705) and instead routes bytes through an
+    // override, exactly like this fixture routes real process stdio through
+    // intermediary PassThrough streams before handing them to startMcpStdio.
+    const { client, transport, diagnostics } = createClientAndTransport(relayPassthroughFixturePath);
+
+    try {
+      try {
+        await client.connect(transport);
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${detail}; child diagnostics: ${diagnostics().trim() || '[none]'}`, { cause: error });
+      }
+      const tools = await client.listTools();
+      expect(tools.tools.length).toBeGreaterThan(0);
+      expect(diagnostics()).toContain('lnwjud-stdio-relay-passthrough-diagnostic');
     } finally {
       await client.close();
     }

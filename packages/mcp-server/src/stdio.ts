@@ -1,3 +1,4 @@
+import type { Readable, Writable } from 'node:stream';
 import { serveStdio, StdioServerTransport, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 import { createMcpServer, type McpServerOptions } from './server.js';
 import { ModernTasksProtocol } from './modern-tasks-protocol.js';
@@ -9,6 +10,14 @@ import { createStdioRequestScope } from './request-scope.js';
 
 export interface McpStdioOptions extends McpServerOptions {
   readonly onError?: (error: Error) => void;
+  /**
+   * Overrides for the transport's underlying streams. Packaged Electron STDIO on
+   * Windows supplies a byte relay here instead of the process's own stdin/stdout,
+   * because Electron's main-process `process.stdin` cannot read real pipe data on
+   * that platform (electron/electron#21705, #11680).
+   */
+  readonly stdin?: Readable;
+  readonly stdout?: Writable;
 }
 
 export function isBenignStdioPipeError(error: Error): boolean {
@@ -29,7 +38,7 @@ export function startMcpStdio(options: McpStdioOptions): StdioServerHandle {
   const setOfMarksStore = options.setOfMarksStore ?? new SetOfMarksObservationStore();
   const requestScope = options.requestScope ?? createStdioRequestScope();
   const modernTasks = new ModernTasksProtocol(options.services, { actor: options.actor });
-  const transport = createModernTasksTransport(new StdioServerTransport(), modernTasks);
+  const transport = createModernTasksTransport(new StdioServerTransport(options.stdin, options.stdout), modernTasks);
   return serveStdio(
     () => createMcpServer({ ...options, runBudgetGuard, incrementalVerifier, setOfMarksStore, legacyTasksProtocol: false, requestScope }),
     { legacy: 'reject', onerror: options.onError ?? writeStdioDiagnostic, transport },

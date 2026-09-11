@@ -2,6 +2,10 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net,
 import path from 'node:path';
 import os from 'node:os';
 import { access, lstat, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { fork, type ChildProcess } from 'node:child_process';
+import { Readable, Writable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import { autoUpdater } from 'electron-updater';
 import {
   APP_NAME,
@@ -1416,6 +1420,52 @@ function redirectConsoleToStderr(): void {
   console.error = (...args: unknown[]): void => write(process.stderr, args);
 }
 
+/**
+ * Locates the packaged byte-relay child script (see mcp-stdio-relay-child.mjs) in
+ * both dev and packaged layouts, mirroring the existing capability-bridge resolver.
+ */
+function mcpStdioRelayChildScriptPath(): string | undefined {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const candidates = [
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'mcp-stdio-relay-child.mjs'),
+    path.resolve(process.cwd(), 'apps', 'desktop', 'build', 'mcp-stdio-relay-child.mjs'),
+    resourcesPath === undefined ? undefined : path.join(resourcesPath, 'mcp-stdio-relay-child.mjs'),
+  ].filter((candidate): candidate is string => candidate !== undefined);
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+/**
+ * Electron's main-process `process.stdin` cannot read real pipe data on Windows
+ * (electron/electron#21705, #11680): it is a mock stream that reports EOF almost
+ * immediately regardless of what is actually piped in, which was silently killing
+ * every packaged --mcp-stdio session shortly after startup. Forking a plain
+ * Node.js child with the real stdio handles inherited (Electron sets
+ * ELECTRON_RUN_AS_NODE=1 automatically for fork()) works around this: the child
+ * gets a genuine working stdin and relays raw bytes back over the IPC channel.
+ */
+function createMcpStdioRelay(scriptPath: string): { readonly stdin: Readable; readonly stdout: Writable; readonly child: ChildProcess } {
+  const child = fork(scriptPath, [], { stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+  const stdin = new Readable({ read(): void {} });
+  child.on('message', (message: unknown) => {
+    if (message === null || typeof message !== 'object') return;
+    const relayMessage = message as { channel?: unknown; kind?: unknown; data?: unknown };
+    if (relayMessage.channel !== 'lnwjud-stdio-relay') return;
+    if (relayMessage.kind === 'in' && typeof relayMessage.data === 'string') stdin.push(Buffer.from(relayMessage.data, 'base64'));
+    else if (relayMessage.kind === 'end') stdin.push(null);
+  });
+  const stdout = new Writable({
+    write(chunk: Buffer, _encoding, callback): void {
+      try {
+        const sent = child.send({ channel: 'lnwjud-stdio-relay', kind: 'out', data: chunk.toString('base64') });
+        callback(sent ? undefined : new Error('lnwjud MCP stdio relay channel is closed'));
+      } catch (error: unknown) {
+        callback(error instanceof Error ? error : new Error('lnwjud MCP stdio relay channel is closed'));
+      }
+    },
+  });
+  return { stdin, stdout, child };
+}
+
 function bootstrapMcpStdio(): void {
   redirectConsoleToStderr();
   app.commandLine.appendSwitch('disable-gpu');
@@ -1442,6 +1492,12 @@ function bootstrapMcpStdio(): void {
     } catch (error: unknown) {
       process.stderr.write(`lnwjud MCP stdio workspace warning: ${error instanceof Error ? error.message : 'unknown'}\n`);
     }
+    const shutdown = (): void => { void desktopRuntime?.close().finally(() => process.exit(0)); };
+    const relayScriptPath = process.platform === 'win32' ? mcpStdioRelayChildScriptPath() : undefined;
+    const relay = relayScriptPath === undefined ? undefined : createMcpStdioRelay(relayScriptPath);
+    if (process.platform === 'win32' && relay === undefined) {
+      process.stderr.write('lnwjud MCP stdio: relay child script not found; falling back to the main process stdin, which cannot read real pipe data on Windows (electron/electron#21705)\n');
+    }
     startMcpStdio({
       services: runtime.mcpServices,
       actor: runtime.mcpActor,
@@ -1453,26 +1509,30 @@ function bootstrapMcpStdio(): void {
       codexToolsEnabled: runtime.getUserSettings().codexToolsEnabled,
       toolAvailabilitySnapshotProvider: () => runtime.toolAvailabilityService.snapshot(),
       toolAvailabilitySubscribe: (listener) => runtime.toolAvailabilityService.subscribe(listener),
+      ...(relay !== undefined ? { stdin: relay.stdin, stdout: relay.stdout } : {}),
       onError: (error): void => {
         if (/EPIPE|ECONNRESET|broken pipe/i.test(error.message)) {
           process.stderr.write(`lnwjud MCP stdio: peer closed (${error.message})\n`);
-          void desktopRuntime?.close().finally(() => process.exit(0));
+          shutdown();
           return;
         }
         process.stderr.write(`lnwjud MCP stdio error: ${error.message}\n`);
       },
     });
-    process.stdin.on('end', () => {
-      void desktopRuntime?.close().finally(() => process.exit(0));
-    });
-    process.stdin.on('close', () => {
-      void desktopRuntime?.close().finally(() => process.exit(0));
-    });
-    process.stdout.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EPIPE' || error.code === 'ECONNRESET') {
-        void desktopRuntime?.close().finally(() => process.exit(0));
-      }
-    });
+    if (relay !== undefined) {
+      relay.stdin.on('end', shutdown);
+      relay.child.on('exit', shutdown);
+      relay.child.on('error', (error: Error) => {
+        process.stderr.write(`lnwjud MCP stdio relay error: ${error.message}\n`);
+        shutdown();
+      });
+    } else {
+      process.stdin.on('end', shutdown);
+      process.stdin.on('close', shutdown);
+      process.stdout.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code === 'EPIPE' || error.code === 'ECONNRESET') shutdown();
+      });
+    }
   }).catch((error: unknown) => {
     process.stderr.write(`lnwjud MCP stdio startup failed: ${error instanceof Error ? error.message : 'unknown error'}\n`);
     app.quit();

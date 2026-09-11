@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,8 @@ const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const buildDir = path.join(desktopRoot, 'build');
 const cmdPath = path.join(buildDir, 'lnwjud-mcp-stdio.cmd');
 const shellPath = path.join(buildDir, 'lnwjud-mcp-stdio.sh');
+const relayChildSourcePath = path.join(desktopRoot, 'src', 'main', 'mcp-stdio-relay-child.mjs');
+const relayChildBuildPath = path.join(buildDir, 'mcp-stdio-relay-child.mjs');
 const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '', 10);
 
 if (nodeMajor !== 24) throw new Error(`lnwjud packaged stdio requires the build runtime to be Node.js 24.x; got ${process.versions.node}`);
@@ -47,4 +49,6 @@ mkdirSync(buildDir, { recursive: true });
 writeFileSync(cmdPath, windowsContents.replace(/\n/g, '\r\n'), 'utf8');
 writeFileSync(shellPath, shellContents, { encoding: 'utf8', mode: 0o755 });
 try { chmodSync(shellPath, 0o755); } catch { /* Windows checkout does not expose POSIX mode bits. */ }
+copyFileSync(relayChildSourcePath, relayChildBuildPath);
 process.stdout.write(`Generated packaged Electron STDIO launchers: ${cmdPath}, ${shellPath}\n`);
+process.stdout.write(`Staged packaged STDIO relay child: ${relayChildBuildPath}\n`);

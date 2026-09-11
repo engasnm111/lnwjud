@@ -44,6 +44,8 @@ win:
     - from: build/lnwjud-mcp-stdio.cmd
       to: lnwjud-mcp-stdio.cmd
   extraResources:
+    - from: build/mcp-stdio-relay-child.mjs
+      to: mcp-stdio-relay-child.mjs
     - from: build/capability-bridge/windows-capability-bridge.ps1
       to: windows-capability-bridge.ps1
     - from: build/capability-bridge/windows-capability-bridge.sha256
