@@ -148,30 +148,38 @@ export class SqliteDatabase {
     const now = Date.now();
     if (this.options.fileIdentityProvider === undefined && now - this.lastCanonicalIdentityCheckAt < CANONICAL_FILE_IDENTITY_CHECK_INTERVAL_MS) return;
     this.lastCanonicalIdentityCheckAt = now;
-    const currentIdentity = this.readCanonicalFileIdentity();
-    if (currentIdentity === null) throw new Error(`Canonical SQLite database is temporarily unavailable: ${this.filename}`);
-    if (currentIdentity === this.canonicalFileIdentity) return;
+    const observedIdentity = this.readCanonicalFileIdentity();
+    if (observedIdentity === this.canonicalFileIdentity) return;
 
-    const previous = this._connection;
-    const previousBackupState = this.preMigrationBackupCreated;
-    const replacement = this.createConnection();
-    this.initPragmas(replacement);
-    this._connection = replacement;
-    this.preMigrationBackupCreated = false;
-    this.refreshingCanonicalFile = true;
-    try {
-      this.initializeSchema();
-    } catch (error) {
-      this._connection = previous;
-      this.preMigrationBackupCreated = previousBackupState;
-      replacement.close();
-      throw error;
-    } finally {
-      this.refreshingCanonicalFile = false;
-    }
-    previous.close();
-    this.canonicalFileIdentity = currentIdentity;
-    this.options.onCanonicalFileReplaced?.(this.filename);
+    const refresh = (): void => {
+      const currentIdentity = this.readCanonicalFileIdentity();
+      if (currentIdentity === null) throw new Error(`Canonical SQLite database is temporarily unavailable: ${this.filename}`);
+      if (currentIdentity === this.canonicalFileIdentity) return;
+
+      const previous = this._connection;
+      const previousBackupState = this.preMigrationBackupCreated;
+      const replacement = this.createConnection();
+      this.initPragmas(replacement);
+      this._connection = replacement;
+      this.preMigrationBackupCreated = false;
+      this.refreshingCanonicalFile = true;
+      try {
+        this.initializeSchema();
+      } catch (error) {
+        this._connection = previous;
+        this.preMigrationBackupCreated = previousBackupState;
+        replacement.close();
+        throw error;
+      } finally {
+        this.refreshingCanonicalFile = false;
+      }
+      previous.close();
+      this.canonicalFileIdentity = currentIdentity;
+      this.options.onCanonicalFileReplaced?.(this.filename);
+    };
+
+    if (this.options.backupDirectory === undefined) refresh();
+    else withSqliteLifecycleLockSync(this.options.backupDirectory, refresh);
   }
 
   public get connection(): DatabaseSync {

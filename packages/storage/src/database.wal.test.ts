@@ -117,6 +117,53 @@ describe('SqliteDatabase WAL', () => {
     expect(stderr).toBe('');
   }, 20_000);
 
+  it('waits for the lifecycle lock before reopening a live canonical connection', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-live-restore-lock-'));
+    temporaryRoots.push(root);
+    const filename = path.join(root, 'lnwjud.sqlite');
+    const backupDirectory = path.join(root, 'backups');
+    await mkdir(backupDirectory, { recursive: true });
+    let identity: string | null = 'first';
+    let replacements = 0;
+    const database = new SqliteDatabase(filename, {
+      backupDirectory,
+      fileIdentityProvider: (): string | null => identity,
+      onCanonicalFileReplaced: (): void => { replacements += 1; },
+    });
+
+    const childScript = String.raw`
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const lockPath = path.join(process.argv[1], 'sqlite-lifecycle.lock');
+      const lock = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }));
+      process.stdout.write('locked\\n');
+      setTimeout(() => {
+        fs.closeSync(lock);
+        fs.rmSync(lockPath, { force: true });
+      }, 200);
+    `;
+    const child = spawn(process.execPath, ['-e', childScript, backupDirectory], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    const exit = new Promise<number | null>((resolve) => child.once('exit', resolve));
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject);
+      child.stdout?.on('data', (chunk: Buffer) => {
+        if (chunk.toString().includes('locked')) resolve();
+      });
+    });
+
+    identity = 'second';
+    const startedAt = Date.now();
+    expect(database.connection.prepare('SELECT 1 as value').get()).toEqual({ value: 1 });
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(150);
+    expect(replacements).toBe(1);
+    database.close();
+    expect(await exit).toBe(0);
+    expect(stderr).toBe('');
+  }, 20_000);
+
   it('reopens the canonical database when the file identity changes under a live runtime', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-replaced-'));
     temporaryRoots.push(root);
