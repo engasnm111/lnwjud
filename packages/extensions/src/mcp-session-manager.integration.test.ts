@@ -4,7 +4,7 @@ import { defaultMcpClientFactory } from './mcp-session-manager.js';
 
 const fixturePath = fileURLToPath(new URL('../tests/fixtures/external-mcp-server.mjs', import.meta.url));
 
-async function connectFixture(era: 'legacy' | 'modern'): ReturnType<typeof defaultMcpClientFactory.connect> {
+async function connectFixture(era: 'legacy' | 'modern' | 'schema-error'): ReturnType<typeof defaultMcpClientFactory.connect> {
   return defaultMcpClientFactory.connect({
     command: process.execPath,
     args: [fixturePath],
@@ -30,6 +30,28 @@ describe('default External MCP client protocol negotiation', () => {
       await expect(session.listTools()).resolves.toEqual([
         expect.objectContaining({ name: 'modern_ping' }),
       ]);
+    } finally {
+      await session.close();
+    }
+  }, 20_000);
+
+  it('preserves isError tool results before success output-schema validation in the real SDK path', async () => {
+    const session = await connectFixture('schema-error');
+    try {
+      await session.listTools();
+      await expect(session.callTool('schema_error_demo', { mode: 'error-no-structured' })).resolves.toMatchObject({
+        isError: true,
+        content: [{ text: 'Demo validation failed: invalid input' }],
+      });
+      await expect(session.callTool('schema_error_demo', { mode: 'error-invalid-structured' })).resolves.toMatchObject({
+        isError: true,
+        structuredContent: { value: 42 },
+      });
+      await expect(session.callTool('schema_error_demo', { mode: 'success-valid' })).resolves.toMatchObject({
+        structuredContent: { value: 'ok' },
+      });
+      await expect(session.callTool('schema_error_demo', { mode: 'success-invalid' })).rejects.toThrow(/structured content does not match.*output schema/i);
+      await expect(session.callTool('schema_error_demo', { mode: 'success-missing' })).rejects.toThrow(/output schema.*structured content/i);
     } finally {
       await session.close();
     }

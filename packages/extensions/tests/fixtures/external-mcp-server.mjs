@@ -1,7 +1,8 @@
 /* global process */
 import readline from 'node:readline';
 
-const era = process.env.LNWJUD_EXTERNAL_MCP_FIXTURE_ERA === 'modern' ? 'modern' : 'legacy';
+const fixtureMode = process.env.LNWJUD_EXTERNAL_MCP_FIXTURE_ERA ?? 'legacy';
+const era = fixtureMode === 'modern' ? 'modern' : 'legacy';
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 
 function send(payload) {
@@ -58,12 +59,40 @@ rl.on('line', (line) => {
       ...(era === 'modern'
         ? { resultType: 'complete', ttlMs: 0, cacheScope: 'private' }
         : {}),
-      tools: [{
-        name: era === 'modern' ? 'modern_ping' : 'legacy_ping',
-        description: `${era} external MCP fixture`,
-        inputSchema: { type: 'object', additionalProperties: false },
-      }],
+      tools: fixtureMode === 'schema-error'
+        ? [{
+          name: 'schema_error_demo',
+          description: 'output schema error fixture',
+          inputSchema: { type: 'object', additionalProperties: true },
+          outputSchema: {
+            type: 'object',
+            properties: { value: { type: 'string' } },
+            required: ['value'],
+            additionalProperties: false,
+          },
+        }]
+        : [{
+          name: era === 'modern' ? 'modern_ping' : 'legacy_ping',
+          description: `${era} external MCP fixture`,
+          inputSchema: { type: 'object', additionalProperties: false },
+        }],
     });
+    return;
+  }
+
+  if (message?.method === 'tools/call' && message.id !== undefined && fixtureMode === 'schema-error') {
+    const mode = message.params?.arguments?.mode;
+    if (mode === 'error-no-structured') {
+      result(message.id, { isError: true, content: [{ type: 'text', text: 'Demo validation failed: invalid input' }] });
+    } else if (mode === 'error-invalid-structured') {
+      result(message.id, { isError: true, structuredContent: { value: 42 }, content: [{ type: 'text', text: 'Still the child error' }] });
+    } else if (mode === 'success-valid') {
+      result(message.id, { structuredContent: { value: 'ok' }, content: [] });
+    } else if (mode === 'success-invalid') {
+      result(message.id, { structuredContent: { value: 42 }, content: [] });
+    } else {
+      result(message.id, { content: [{ type: 'text', text: 'missing structured content' }] });
+    }
     return;
   }
 
