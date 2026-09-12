@@ -6,6 +6,7 @@ import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
 import { BUNDLED_PONYTAIL_SKILL_ID } from './ponytail-runtime.js';
 import { LNWJUD_MCP_IDENTITY_PATH, startMcpHttp, type McpHttpServerHandle } from './http.js';
 
+const TEST_PNG_640X480 = 'iVBORw0KGgoAAAANSUhEUgAAAoAAAAHgCAIAAAC6s0uzAAAF9klEQVR42u3VoQEAMAjAsDGJRvP/mXwBJjmhppHVDwDY9SUAAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgADBgAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYAAwYADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAMGAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAMGAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgADBgAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYAAwYADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAAwYADBgADBgADBgAMCAAcCAAQADBgADBgAMGAAMGAAwYAAwYAAwYADAgAHAgAEAAwYAAwYADBgADBgAMGAAMGAAMGAAwIABwIABAAMGAAMGAAwYAO4Ng+cD/NAAns4AAAAASUVORK5CYII=';
 const expectedAdvertisedToolCount = new ToolRegistry({}, { clientId: 'count-test', clientName: 'count-test' }).list().length;
 
 describe('MCP localhost HTTP transport', () => {
@@ -283,7 +284,7 @@ describe('MCP localhost HTTP transport', () => {
 
   it('keeps a Set-of-Marks observation alive across modern HTTP request-scoped server instances', async () => {
     await handle.close();
-    const png = { format: 'png', mime_type: 'image/png', data_base64: 'cG5n', width: 640, height: 480, origin_x: 0, origin_y: 0 };
+    const png = { format: 'png', mime_type: 'image/png', data_base64: TEST_PNG_640X480, width: 640, height: 480, origin_x: 0, origin_y: 0 };
     handle = await startMcpHttp({
       port: 0,
       services: {
@@ -311,6 +312,24 @@ describe('MCP localhost HTTP transport', () => {
     const transport = new StreamableHTTPClientTransport(handle.endpoint);
     try {
       await client.connect(transport);
+      const directCapture = await client.callTool({
+        name: 'vision',
+        arguments: { action: 'capture_region', region: { x: 0, y: 0, width: 640, height: 480 } },
+      });
+      expect(directCapture.isError).not.toBe(true);
+      expect(directCapture.content).toEqual([
+        { type: 'image', data: TEST_PNG_640X480, mimeType: 'image/png' },
+        { type: 'text', text: JSON.stringify({ format: 'png', mime_type: 'image/png', width: 640, height: 480, origin_x: 0, origin_y: 0 }) },
+      ]);
+      expect(directCapture.structuredContent).toEqual({
+        format: 'png',
+        mime_type: 'image/png',
+        width: 640,
+        height: 480,
+        origin_x: 0,
+        origin_y: 0,
+      });
+
       const captured = await client.callTool({ name: 'vision_annotated_capture', arguments: { workspaceId: 'workspace-1' } });
       expect(captured.isError).not.toBe(true);
       const observationId = captured.structuredContent?.observationId;

@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildNgrokHttpArgs, extractNgrokDiagnostic, formatNgrokExitMessage, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
+import { createExplicitKeySecretProtector } from '@lnwjud/shared';
+import { buildNgrokHttpArgs, enforceStablePublicOrigin, extractNgrokDiagnostic, formatNgrokExitMessage, posixExecutableCandidates, RemoteMcpController, resolveNgrokExecutable, selectRecoverableStaleNgrokProcess, type RemoteMcpPersistedState } from '../src/main/remote-mcp-controller.js';
 
 interface RemoteMcpTestAccess {
   gatewayUrl: string | null;
   publicOrigin: string | null;
+  preferredPublicOrigin: string | null;
   runState: 'stopped' | 'installing' | 'starting' | 'running' | 'error';
   pairingCode: string | null;
   startGateway(localMcpUrl: string): Promise<void>;
@@ -31,11 +33,49 @@ async function listen(server: Server): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
+async function completeChatGptLocalApproval(response: Response, publicOrigin: string, redirectUri: string, state: string): Promise<string> {
+  expect(response.status).toBe(302);
+  const localApproval = new URL(response.headers.get('location')!);
+  expect(localApproval.protocol).toBe('http:');
+  expect(localApproval.hostname).toBe('127.0.0.1');
+  expect(localApproval.pathname).toMatch(/^\/oauth\/chatgpt-local-approve\/[A-Za-z0-9_-]+$/);
+  expect(localApproval.searchParams.get('code')).toBeNull();
+
+  const publicReplay = await fetch(`${publicOrigin}${localApproval.pathname}`, { redirect: 'manual' });
+  expect(publicReplay.status).toBe(404);
+
+  const approved = await fetch(localApproval, { redirect: 'manual' });
+  expect(approved.status).toBe(302);
+  const callback = new URL(approved.headers.get('location')!);
+  expect(callback.origin + callback.pathname).toBe(redirectUri);
+  expect(callback.searchParams.get('state')).toBe(state);
+  const code = callback.searchParams.get('code');
+  expect(code).toBeTruthy();
+
+  const replay = await fetch(localApproval, { redirect: 'manual' });
+  expect(replay.status).toBe(410);
+  return code!;
+}
+
 describe('Remote MCP ngrok runtime', () => {
-  it('uses ngrok v3-compatible http arguments without the removed web-addr flag', () => {
-    const args = buildNgrokHttpArgs('http://127.0.0.1:32123');
-    expect(args).toEqual(['http', 'http://127.0.0.1:32123', '--log=stdout', '--log-format=json']);
-    expect(args.some((value) => value.startsWith('--web-addr'))).toBe(false);
+  it('starts without --url before a stable public origin has been learned', () => {
+    const gateway = 'http://127.0.0.1:32123';
+    expect(buildNgrokHttpArgs(gateway)).toEqual(['http', gateway, '--log=stdout', '--log-format=json']);
+    expect(buildNgrokHttpArgs(gateway).some((value) => value.startsWith('--web-addr') || value === '--url')).toBe(false);
+  });
+
+  it('reuses a remembered ngrok public origin with the v3 --url flag', () => {
+    const gateway = 'http://127.0.0.1:32123';
+    expect(buildNgrokHttpArgs(gateway, 'https://steady.ngrok-free.app')).toEqual([
+      'http', gateway, '--url', 'https://steady.ngrok-free.app', '--log=stdout', '--log-format=json',
+    ]);
+  });
+
+  it('accepts the remembered ngrok origin but rejects silent public URL drift', () => {
+    expect(enforceStablePublicOrigin('https://steady.ngrok-free.app/', null)).toBe('https://steady.ngrok-free.app');
+    expect(enforceStablePublicOrigin('https://steady.ngrok-free.app', 'https://steady.ngrok-free.app')).toBe('https://steady.ngrok-free.app');
+    expect(() => enforceStablePublicOrigin('https://changed.ngrok-free.app', 'https://steady.ngrok-free.app')).toThrow(/stopped instead of silently changing/i);
+    expect(() => enforceStablePublicOrigin('http://steady.ngrok-free.app', null)).toThrow(/invalid public HTTPS origin/i);
   });
 
   it('parses POSIX PATH with POSIX semantics even when the test host is Windows', () => {
@@ -105,7 +145,9 @@ describe('Remote MCP ngrok runtime', () => {
     expect(selectRecoverableStaleNgrokProcess([{ ...orphan, commandLine: `ngrok.exe http ${target}` }], target)).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan], 'http://127.0.0.1:60000')).toBeNull();
     expect(selectRecoverableStaleNgrokProcess([orphan, { ...orphan, processId: 13165 }], target)).toBeNull();
-    const posixOrphan = { ...orphan, processId: 20101, commandLine: `/opt/homebrew/bin/ngrok http ${target} --log=stdout --log-format=json` };
+    const pinnedOrphan = { ...orphan, processId: 20100, commandLine: `ngrok.exe http ${target} --url https://steady.ngrok-free.app --log=stdout --log-format=json` };
+    expect(selectRecoverableStaleNgrokProcess([pinnedOrphan], target)).toEqual(pinnedOrphan);
+    const posixOrphan = { ...orphan, processId: 20101, commandLine: `/opt/homebrew/bin/ngrok http ${target} --url https://steady.ngrok-free.app --log=stdout --log-format=json` };
     expect(selectRecoverableStaleNgrokProcess([posixOrphan], target)).toEqual(posixOrphan);
   });
 });
@@ -113,7 +155,7 @@ describe('Remote MCP ngrok runtime', () => {
 describe('Remote MCP OAuth gateway', () => {
   it('does not overwrite unreadable authorization and retries loading after secure storage recovers', async () => {
     const state: RemoteMcpPersistedState = {
-      schemaVersion: 1, desiredRunning: true,
+      schemaVersion: 1, desiredRunning: true, publicOrigin: 'https://steady.ngrok-free.app',
       trustedClients: [{ clientId: 'saved-client', clientName: 'Saved client', redirectUris: ['https://example.com/callback'], tokenEndpointAuthMethod: 'none', clientSecret: null }],
       refreshGrants: [{ clientId: 'saved-client', refreshToken: 'r'.repeat(40), expiresAt: Date.parse('2099-01-01') }],
     };
@@ -124,15 +166,97 @@ describe('Remote MCP OAuth gateway', () => {
     });
     const save = vi.fn(async () => undefined);
     const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
-    const internal = controller as unknown as { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
+    const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
     await internal.ensurePersistenceLoaded();
     await internal.persistState();
     expect(save).not.toHaveBeenCalled();
     locked = false;
     await Promise.all([internal.ensurePersistenceLoaded(), internal.ensurePersistenceLoaded()]);
+    expect(internal.preferredPublicOrigin).toBe('https://steady.ngrok-free.app');
     await internal.persistState();
     expect(load).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenCalledWith(state);
+  });
+
+  it('keeps schema-1 state without a remembered public origin backward compatible', async () => {
+    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 1, desiredRunning: false, trustedClients: [], refreshGrants: [] }));
+    const save = vi.fn(async () => undefined);
+    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
+    await internal.ensurePersistenceLoaded();
+    expect(internal.preferredPublicOrigin).toBeNull();
+    await internal.persistState();
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] });
+  });
+
+  it('ignores an invalid remembered public origin from encrypted schema-1 state', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-invalid-origin-'));
+    try {
+      const secretProtector = createExplicitKeySecretProtector(Buffer.alloc(32, 0x52));
+      const directory = path.join(root, 'remote-mcp');
+      await mkdir(directory, { recursive: true });
+      const encrypted = await secretProtector.encrypt('tunnel_api_key', JSON.stringify({
+        schemaVersion: 1,
+        desiredRunning: false,
+        publicOrigin: 'https://steady.ngrok-free.app/path?bad=1',
+        trustedClients: [],
+        refreshGrants: [],
+      }));
+      await writeFile(path.join(directory, 'oauth-state.secret'), encrypted, 'utf8');
+      const controller = new RemoteMcpController({ dataPath: root, getLocalMcpUrl: async (): Promise<null> => null, secretProtector });
+      const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void> };
+      await internal.ensurePersistenceLoaded();
+      expect(internal.preferredPublicOrigin).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('persists a successfully learned public origin in Remote MCP state', async () => {
+    const load = vi.fn(async (): Promise<RemoteMcpPersistedState> => ({ schemaVersion: 1, desiredRunning: false, trustedClients: [], refreshGrants: [] }));
+    const save = vi.fn(async () => undefined);
+    const controller = new RemoteMcpController({ dataPath: 'unused', getLocalMcpUrl: async (): Promise<null> => null, persistence: { load, save } });
+    const internal = controller as unknown as RemoteMcpTestAccess & { ensurePersistenceLoaded(): Promise<void>; persistState(): Promise<void> };
+    await internal.ensurePersistenceLoaded();
+    internal.preferredPublicOrigin = enforceStablePublicOrigin('https://steady.ngrok-free.app/', internal.preferredPublicOrigin);
+    await internal.persistState();
+    expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] });
+  });
+
+  it('does not replace the ngrok authtoken when encrypted Remote MCP state cannot be loaded', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-token-load-failure-'));
+    try {
+      const save = vi.fn(async () => undefined);
+      const controller = new RemoteMcpController({
+        dataPath: root,
+        getLocalMcpUrl: async (): Promise<null> => null,
+        persistence: { load: async (): Promise<RemoteMcpPersistedState | null> => { throw new Error('Secure storage is locked'); }, save },
+        secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x53)),
+      });
+      await expect(controller.saveAuthtoken('a'.repeat(24))).rejects.toThrow(/authtoken was not changed/i);
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('clears the remembered public origin when the ngrok authtoken is saved again', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-remote-mcp-origin-reset-'));
+    try {
+      const state: RemoteMcpPersistedState = { schemaVersion: 1, desiredRunning: false, publicOrigin: 'https://steady.ngrok-free.app', trustedClients: [], refreshGrants: [] };
+      const load = vi.fn(async () => state);
+      const save = vi.fn(async () => undefined);
+      const controller = new RemoteMcpController({
+        dataPath: root,
+        getLocalMcpUrl: async (): Promise<null> => null,
+        persistence: { load, save },
+        secretProtector: createExplicitKeySecretProtector(Buffer.alloc(32, 0x51)),
+      });
+      await controller.saveAuthtoken('a'.repeat(24));
+      expect(save).toHaveBeenCalledWith({ schemaVersion: 1, desiredRunning: false, publicOrigin: null, trustedClients: [], refreshGrants: [] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps status reads side-effect-free and does not ensure-start Local MCP', async () => {
@@ -157,7 +281,7 @@ describe('Remote MCP OAuth gateway', () => {
     expect(ensureStarts).toBe(0);
   });
 
-  it('requires OAuth, supports DCR + PKCE, and proxies authorized /mcp requests', async () => {
+  it('requires OAuth, zero-click completes a recognized ChatGPT callback through local Desktop approval, and proxies authorized /mcp requests', async () => {
     let upstreamAuthorization: string | undefined;
     const upstreamOrigin = await listen(createServer((request, response) => {
       upstreamAuthorization = request.headers.authorization;
@@ -171,14 +295,13 @@ describe('Remote MCP OAuth gateway', () => {
     expect(internal.gatewayUrl).not.toBeNull();
     internal.publicOrigin = internal.gatewayUrl;
     internal.runState = 'running';
-    internal.issuePairingCode();
     const origin = internal.gatewayUrl!;
 
     const unauthorized = await fetch(`${origin}/mcp`, { method: 'POST', body: '{}' });
     expect(unauthorized.status).toBe(401);
     expect(unauthorized.headers.get('www-authenticate')).toContain('/.well-known/oauth-protected-resource/mcp');
 
-    const redirectUri = 'https://chatgpt.com/aip/oauth/callback';
+    const redirectUri = 'https://chatgpt.com/connector/oauth/plugin-fixture_123';
     const registration = await fetch(`${origin}/oauth/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -196,33 +319,15 @@ describe('Remote MCP OAuth gateway', () => {
     authorize.searchParams.set('state', 'fixture-state');
     authorize.searchParams.set('code_challenge', challenge);
     authorize.searchParams.set('code_challenge_method', 'S256');
-    const consent = await fetch(authorize, { redirect: 'manual' });
-    expect(consent.status).toBe(200);
-    expect(consent.headers.get('content-security-policy')).toContain("form-action 'self' https://chatgpt.com");
-    expect(consent.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
-    const consentHtml = await consent.text();
-    expect(consentHtml).toContain('pairing code');
-    expect(consentHtml).toContain('lnwjud');
-    expect(consentHtml).toContain('action="/oauth/authorize"');
-    expect(consentHtml).toContain('Secure pairing');
-
-    const approved = await fetch(`${origin}/oauth/authorize`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      redirect: 'manual',
-      body: new URLSearchParams({
-        response_type: 'code', client_id: registered.client_id, redirect_uri: redirectUri,
-        state: 'fixture-state', code_challenge: challenge, code_challenge_method: 'S256',
-        pairing_code: internal.pairingCode!,
-      }),
-    });
-    expect(approved.status).toBe(302);
+    const approvalRedirect = await fetch(authorize, { redirect: 'manual' });
     expect(internal.pairingCode).toBeNull();
-    const callback = new URL(approved.headers.get('location')!);
-    expect(callback.origin + callback.pathname).toBe(redirectUri);
-    expect(callback.searchParams.get('state')).toBe('fixture-state');
-    const code = callback.searchParams.get('code');
-    expect(code).toBeTruthy();
+    const code = await completeChatGptLocalApproval(approvalRedirect, origin, redirectUri, 'fixture-state');
+
+    const trustedReauthorize = await fetch(authorize, { redirect: 'manual' });
+    expect(trustedReauthorize.status).toBe(302);
+    const trustedReauthorizeLocation = new URL(trustedReauthorize.headers.get('location')!);
+    expect(trustedReauthorizeLocation.hostname).toBe('127.0.0.1');
+    expect(trustedReauthorizeLocation.searchParams.get('code')).toBeNull();
 
     const tokenResponse = await fetch(`${origin}/oauth/token`, {
       method: 'POST',
@@ -249,13 +354,64 @@ describe('Remote MCP OAuth gateway', () => {
     await controller.close();
   });
 
+  it.each([
+    'https://chatgpt.com.evil.example/aip/oauth/callback',
+    'https://chatgpt.com/connector/oauth/',
+    'https://chatgpt.com/connector/oauth/plugin/extra',
+  ])('keeps the PIN fallback for clients that do not match the exact ChatGPT callback contract: %s', async (redirectUri) => {
+    const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
+    const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-fallback-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
+    const internal = controller as unknown as RemoteMcpTestAccess;
+    await internal.startGateway(`${upstreamOrigin}/mcp`);
+    internal.publicOrigin = internal.gatewayUrl;
+    internal.runState = 'running';
+    expect(internal.pairingCode).toBeNull();
+    const origin = internal.gatewayUrl!;
+
+    const registration = await fetch(`${origin}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ client_name: 'ChatGPT', redirect_uris: [redirectUri] }),
+    });
+    const registered = await registration.json() as { client_id: string };
+    const verifier = 'f'.repeat(64);
+    const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
+    const authorize = new URL(`${origin}/oauth/authorize`);
+    authorize.searchParams.set('response_type', 'code');
+    authorize.searchParams.set('client_id', registered.client_id);
+    authorize.searchParams.set('redirect_uri', redirectUri);
+    authorize.searchParams.set('state', 'fallback-state');
+    authorize.searchParams.set('code_challenge', challenge);
+    authorize.searchParams.set('code_challenge_method', 'S256');
+
+    const consent = await fetch(authorize, { redirect: 'manual' });
+    expect(consent.status).toBe(200);
+    expect(internal.pairingCode).toMatch(/^\d{6}$/);
+    const consentHtml = await consent.text();
+    expect(consentHtml).toContain('Fallback PIN');
+    expect(consentHtml).toContain('Fallback pairing');
+
+    const approved = await fetch(`${origin}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      redirect: 'manual',
+      body: new URLSearchParams({
+        response_type: 'code', client_id: registered.client_id, redirect_uri: redirectUri,
+        state: 'fallback-state', code_challenge: challenge, code_challenge_method: 'S256',
+        pairing_code: internal.pairingCode!,
+      }),
+    });
+    expect(approved.status).toBe(302);
+    expect(internal.pairingCode).toBeNull();
+    await controller.close();
+  });
+
   it('accepts ChatGPT-style DCR metadata with client_secret_post and validates the client secret at the token endpoint', async () => {
     const upstreamOrigin = await listen(createServer((_request, response) => response.end('{}')));
     const controller = new RemoteMcpController({ dataPath: 'C:\\tmp\\lnwjud-remote-mcp-chatgpt-dcr-test', getLocalMcpUrl: async (): Promise<string> => `${upstreamOrigin}/mcp` });
     const internal = controller as unknown as RemoteMcpTestAccess;
     await internal.startGateway(`${upstreamOrigin}/mcp`);
     internal.publicOrigin = internal.gatewayUrl;
-    internal.issuePairingCode();
     const origin = internal.gatewayUrl!;
     const redirectUri = 'https://chatgpt.com/connector_platform_oauth_redirect';
 
@@ -290,19 +446,16 @@ describe('Remote MCP OAuth gateway', () => {
 
     const verifier = 's'.repeat(64);
     const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
-    const approved = await fetch(`${origin}/oauth/authorize`, {
+    const approvalRedirect = await fetch(`${origin}/oauth/authorize`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       redirect: 'manual',
       body: new URLSearchParams({
         response_type: 'code', client_id: registered.client_id, redirect_uri: redirectUri,
         state: 'chatgpt-fixture-state', code_challenge: challenge, code_challenge_method: 'S256',
-        pairing_code: internal.pairingCode!,
       }),
     });
-    expect(approved.status).toBe(302);
-    const code = new URL(approved.headers.get('location')!).searchParams.get('code');
-    expect(code).toBeTruthy();
+    const code = await completeChatGptLocalApproval(approvalRedirect, origin, redirectUri, 'chatgpt-fixture-state');
 
     const missingSecret = await fetch(`${origin}/oauth/token`, {
       method: 'POST',

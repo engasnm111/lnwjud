@@ -23,11 +23,27 @@
 
 ---
 
-## Current version: v4.61.0
+## Current version: v4.62.0
 
-`v4.61.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
+`v4.62.0` is the current source/release-candidate version. The latest public build is always available from [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/latest). Development artifacts from `dev` are for testing before the public release is published.
 
-### What's new in v4.61.0
+### What's new in v4.62.0
+
+- **Image payload delivery:** native Vision captures now return the screenshot as first-class MCP `image` content without duplicating the full Base64 payload into text/structured metadata, preventing successful captures from being lost behind oversized tool-result JSON.
+- **Image integrity guard:** Windows Vision validates the encoded PNG before returning it and attaches byte-length/SHA-256 metadata; the MCP result mapper rejects truncated, malformed, dimension-mismatched, or checksum-mismatched image payloads instead of silently handing a corrupted image to the model.
+- **Stable search during live refresh:** Work Log and Live Logs now freeze workspace metadata together with the visible log snapshot, so background dashboard polling cannot restart full-detail search or flash between results, loading, and empty states while a query is active. New activity resumes when search is cleared.
+- **External MCP image passthrough:** `mcp_call` now preserves child MCP `image` and `text` content blocks instead of flattening the child `CallToolResult` into JSON text, so screenshots from Serena/custom MCP servers can reach the model as images.
+- **Window capture targeting:** `vision:capture_window` now accepts natural `app.name` selectors, prefers a visible non-minimized matching HWND when apps expose several helper windows, and reports minimized/hidden-window states directly instead of collapsing them into generic `Operation failed` errors.
+- **Manual Tunnel stop precedence:** an explicit **Stop Tunnel** persists the desired stopped state and now stays visually stopped even when an external liveness probe is temporarily unverifiable; Auto Reconnect does not override that operator stop, while the next explicit Start still fails closed if duplicate-process liveness cannot be proven.
+- **Calmer Tunnel startup UX:** transient managed-runtime readiness retries stay internal while the Home card simply shows the normal starting state; only genuine Tunnel failures are surfaced as red alerts.
+- **Zero-click ChatGPT OAuth:** Business custom apps using supported `chatgpt.com` OAuth callbacks—including newly created Plugin/App callbacks shaped as `/connector/oauth/<redirect_id>`—complete DCR + Authorization Code + PKCE through a one-time browser handoff to an ephemeral `127.0.0.1` Desktop approval listener, so workspace members press **Connect** without copying a PIN. The public gateway never grants trust from the callback URI alone; the 6-digit PIN remains only as a fail-closed fallback for non-ChatGPT OAuth clients.
+- **Simpler Home UX:** Home now presents one **ChatGPT Connection** area with Remote MCP OAuth as the primary path and Secure MCP Tunnel as an advanced option, moves Desktop Agent stop/restart/incident actions behind an overflow menu, labels the sidebar **Desktop Agent · Windows/macOS/Linux**, and removes the redundant `MODE / WORK` status card.
+- **Stable Remote MCP public URL:** ngrok Free already provides an assigned development domain. lnwjud now remembers the first successful HTTPS origin in encrypted Remote MCP state and reuses that origin through ngrok `--url` on later starts/updates, refusing to silently switch the ChatGPT endpoint if it drifts. Users do not need to buy/register their own domain; custom domains remain optional, and re-saving the ngrok authtoken intentionally resets the remembered origin for account/domain changes.
+- **Secure Tunnel multi-chat headroom:** one lnwjud Desktop + one Secure Tunnel can serve multiple simultaneous ChatGPT chats without creating a profile per chat. v4.62.0 raises the bundled tunnel transport's active MCP-request allowance from tunnel-client's default 10 to 32 and adds a real 3-session/12-request concurrency regression. Multi-host routing is separate: Mac/Windows hosts that must be independently selectable should use distinct Tunnel IDs/ChatGPT connections because replicas sharing one Tunnel ID consume queued work from whichever host polls first.
+- **macOS 26 / Apple silicon launch fix:** community ad-hoc packages now normalize Electron's nested frameworks/helpers to the same ad-hoc signing identity before sealing the app, and target-native verification rejects any mixed ad-hoc/certificate Team ID state that newer dyld versions refuse to load.
+- **Regression coverage:** mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge tests cover image delivery and reliable window targeting.
+
+### Historical: What's new in v4.61.0
 
 - **Stable log search and pause:** Work Log and every Live Logs tab freeze the visible feed while a search is active, so newly arriving events cannot jump into or reorder the result list while you type or inspect matches. Clearing search resumes the current live feed. Live Logs **Pause** now freezes the feed itself, and **Follow** resumes only when no search is holding the snapshot.
 - **Durable background-task lifecycle:** shell tasks finalize from the direct command's terminal state instead of being stranded by detached descendants that keep inherited stdio handles open.
@@ -41,7 +57,7 @@
 - **Runtime dependencies:** target-native assets are selected by exact `(platform, architecture)` tuples. Current pins include OpenAI `tunnel-client 0.0.14`, `ripgrep 15.2.0`, and Windows Poppler `26.07.0-0`, with checksum/provenance/version checks before packaging.
 - **Remote MCP / ngrok:** ngrok discovery now works across Windows, macOS, and Linux. Automatic installation is shown only when the host has a supported installer path; unsupported installer actions are hidden instead of pretending they work.
 - **PDF providers:** PDF tooling can use a configured native `pdftotext` where supported; the bundled Poppler auto-installer remains Windows x64-only and is hidden on unsupported hosts.
-- **Recovery and persistence:** MCP settings, backup/checkpoint/recovery paths, secret-storage boundaries, tunnel state, cross-host restore metadata, and data-root selection were audited for Windows/macOS/Linux semantics.
+- **Recovery and persistence:** MCP settings, backup/checkpoint/recovery paths, secret-storage boundaries, tunnel state, cross-host restore metadata, and data-root selection were audited for Windows/macOS/Linux semantics. Recovery Trash/checkpoint retention now defaults to **30 days only when the user has never configured it**; existing explicit values, including `Never` (`0`), are preserved.
 - **Unified timestamps:** Thai UI uses Bangkok time with 24-hour display; English uses the host timezone with AM/PM presentation, while machine timestamps remain absolute internally.
 - **Responsiveness:** heavy ripgrep output and Live Log traffic are bounded/batched to reduce Electron `Not Responding` hangs and runaway memory churn.
 - **Release verification:** v4.61.0 is gated by full workspace tests, Electron acceptance/E2E, packaging and release-gate suites, plus exact-commit target-native Windows/macOS/Linux CI before tagging.
@@ -117,7 +133,7 @@ The authoritative matrix is [Native platform support contract](docs/architecture
 
 - **Local MCP clients:** use the packaged stdio launcher or Desktop loopback MCP endpoint.
 - **Remote MCP via ngrok + OAuth:** useful for a remote ChatGPT/MCP client when you want lnwjud to run the protected OAuth gateway and ngrok runtime.
-- **OpenAI Secure MCP Tunnel:** outbound-only OpenAI tunnel path using the verified target-native bundled `tunnel-client`.
+- **OpenAI Secure MCP Tunnel:** outbound-only OpenAI tunnel path using the verified target-native bundled `tunnel-client`. One lnwjud tunnel endpoint is intended to serve multiple simultaneous ChatGPT chats/workspaces; do not create one tunnel/profile per chat. v4.62.0 explicitly gives the tunnel transport 32 active MCP-request slots so normal multi-chat tool fan-out does not hit tunnel-client's lower default ceiling. If several physical lnwjud hosts (for example Mac + Windows) must be independently selectable, give each host a distinct Tunnel ID/ChatGPT connection: HTTP replicas sharing one Tunnel ID are work-sharing replicas, so a request goes to whichever replica polls it first rather than to a chat-selected host.
 - **External MCP servers:** lnwjud can discover supported Cursor/Claude Desktop/custom MCP definitions and keep child MCP servers separate from the first-party catalog.
 
 See the [Thai usage guide](docs/USAGE_TH.md) and [full expanded README](FULL_README.md) for the long-form setup and architecture notes.

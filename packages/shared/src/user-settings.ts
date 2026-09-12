@@ -36,7 +36,7 @@ export const MAX_CONFIGURABLE_WAIT_SECONDS = 60;
 export const DEFAULT_CODEX_TOOLS_ENABLED = false;
 export const DEFAULT_UPDATE_INTERVAL_MINUTES = 30;
 export const DEFAULT_TUNNEL_MAX_AUTO_RESTARTS = 5;
-export const DEFAULT_RECOVERY_RETENTION_DAYS = 0;
+export const DEFAULT_RECOVERY_RETENTION_DAYS = 30;
 
 export type CloseBehavior = 'tray' | 'quit';
 export type PermissionDecisionSetting = 'ALLOW' | 'ASK' | 'DENY';

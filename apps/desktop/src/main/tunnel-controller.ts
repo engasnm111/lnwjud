@@ -24,6 +24,7 @@ const PROFILE_NAME = 'lnwjud';
 export const TUNNEL_SECRET_FILE_NAME = 'lnwjud.runtime.secret';
 const CLIENT_PATH_SETTING = 'tunnel_client_path';
 const MCP_CONNECTION_MAX_TTL = '168h0m0s';
+const MCP_MAX_CONCURRENT_REQUESTS = '32';
 const EXTERNAL_PROBE_TTL_MS = 4_000;
 const RESTART_DELAY_MS = 3_000;
 const MAX_AUTO_RESTARTS = 5;
@@ -295,8 +296,13 @@ export class TunnelController {
           this.message = `Tunnel is owned by PID ${foreignOwner.pid}; tunnel process liveness is ${externalProbe === 'unverifiable' ? 'unverifiable' : 'not yet confirmed'}`;
           source = 'external';
         } else if (externalProbe === 'unverifiable') {
-          this.state = 'error';
-          this.message = 'Tunnel process liveness is unverifiable; refusing to start a possible duplicate';
+          if (this.intentionalStop || this.runtimeDesiredState() === 'stopped') {
+            this.state = 'stopped';
+            this.message = null;
+          } else {
+            this.state = 'error';
+            this.message = 'Tunnel process liveness is unverifiable; refusing to start a possible duplicate';
+          }
         } else if (this.state !== 'error' || this.message?.startsWith('Tunnel process liveness is unverifiable') === true) {
           this.state = 'stopped';
           this.message = null;
@@ -1249,6 +1255,11 @@ export function tunnelClientEnv(apiKey: string, profileDirectory: string, platfo
   const env: NodeJS.ProcessEnv = { ...process.env };
   env.CONTROL_PLANE_API_KEY = apiKey.trim();
   env.MCP_CONNECTION_MAX_TTL = MCP_CONNECTION_MAX_TTL;
+  // Three or more AI chats can legitimately fan out several tool calls each.
+  // tunnel-client defaults to 10 active MCP requests, which can turn a normal
+  // multi-chat burst into queueing/timeout pressure even though Desktop MCP is
+  // session-concurrent. Keep one shared tunnel and give it explicit headroom.
+  env.MCP_MAX_CONCURRENT_REQUESTS = MCP_MAX_CONCURRENT_REQUESTS;
   // Secure Tunnel forwards to the already-running Desktop HTTP MCP. Do not pass
   // headless lnwjud authorization/scope settings to the transport-only child.
   delete env.LNWJUD_DATA_PATH;

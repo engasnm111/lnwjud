@@ -142,6 +142,8 @@ export class McpSessionManager {
         `Timed out calling ${server}/${tool}`,
         signal,
       );
+      const envelopeError = validateCallToolResultEnvelope(result);
+      if (envelopeError !== undefined) return err(appError('INVALID_INPUT', `Invalid child MCP result for ${server}/${tool}: ${envelopeError}`));
       const outputError = validateDeclaredOutput(declaredTool, result);
       if (outputError !== undefined) return err(appError('INVALID_INPUT', `Child MCP output schema mismatch for ${server}/${tool}: ${outputError}`));
       activeManaged.lastUsedAt = Date.now();
@@ -467,9 +469,17 @@ function validateExternalSchema(schema: unknown, toolName: string, direction: 'i
   if (type !== undefined && type !== 'object') throw new Error(`Child MCP tool ${direction} schema root must be object: ${toolName}`);
 }
 
+function validateCallToolResultEnvelope(result: unknown): string | undefined {
+  if (!isPlainRecord(result)) return 'MCP tool result must be an object';
+  if (result.content !== undefined && !Array.isArray(result.content)) return 'MCP tool result content must be an array';
+  if (result.isError !== undefined && typeof result.isError !== 'boolean') return 'MCP tool result isError must be a boolean';
+  return undefined;
+}
+
 function validateDeclaredOutput(tool: McpToolSummary, result: unknown): string | undefined {
   if (tool.outputSchema === undefined) return undefined;
   const resultRecord = isPlainRecord(result) ? result : undefined;
+  if (resultRecord?.isError === true) return undefined;
   if (resultRecord === undefined || resultRecord.structuredContent === undefined) return 'declared outputSchema requires structuredContent';
   return validateJsonSchemaSubset(tool.outputSchema, resultRecord.structuredContent, '$');
 }

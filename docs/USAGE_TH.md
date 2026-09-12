@@ -1,4 +1,4 @@
-# คู่มือใช้งาน lnwjud v4.61.0 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v4.62.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
@@ -27,7 +27,7 @@ Outlook/COM ยังคงเป็น Windows-only และจะรายง
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- `lnwjud-Setup-4.61.0.exe` หรือ `lnwjud-Portable-4.61.0.exe`
+- `lnwjud-Setup-4.62.0.exe` หรือ `lnwjud-Portable-4.62.0.exe`
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -47,7 +47,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด `lnwjud-Setup-4.61.0.exe` จาก GitHub Releases
+1. ดาวน์โหลด `lnwjud-Setup-4.62.0.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -55,7 +55,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด `lnwjud-Portable-4.61.0.exe`
+1. ดาวน์โหลด `lnwjud-Portable-4.62.0.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
@@ -89,8 +89,10 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 2. ดูสถานะ ngrok ก่อน: ถ้าขึ้น **READY / ✓ ngrok พร้อมใช้งาน** แปลว่า lnwjud ตรวจ binary ด้วย `ngrok version` แล้ว ไม่ต้องติดตั้งซ้ำ. ถ้ายังเป็น **NOT READY** หน้า Settings จะแสดงวิธีติดตั้งที่รองรับตาม host เท่านั้น: Windows ใช้ช่องทาง Microsoft Store/WinGet, macOS สามารถใช้ Homebrew เมื่อ Homebrew พร้อม, ส่วน Linux หรือ host ที่ lnwjud ไม่มีวิธีติดตั้งอัตโนมัติที่พิสูจน์แล้วจะซ่อนปุ่ม auto-install และเปิดลิงก์ดาวน์โหลด ngrok ทางการแทน. lnwjud ไม่เอา binary ของ OS/architecture อื่นมาติดตั้งข้ามระบบและไม่แอบใช้ `sudo`/แก้ package repository ให้เอง
 3. เปิดหน้า ngrok Authtoken จากปุ่มใน lnwjud แล้ววาง token ครั้งเดียว; lnwjud เก็บ token ผ่าน secure storage ของ host (Windows DPAPI / macOS Keychain / system keyring ที่รองรับบน Linux) และส่งให้ process ผ่าน `NGROK_AUTHTOKEN` เท่านั้น ไม่ใส่ใน command line หรือ config plaintext. ถ้า secure storage ของ host ใช้งานไม่ได้ ระบบจะ fail closed แทนการลดระดับไปเก็บ plaintext
 4. กด **Start Remote MCP**
-5. เมื่อสถานะเป็น RUNNING ให้กด **Copy MCP URL** แล้วนำ URL `https://...ngrok.app/mcp` ไปใส่ใน ChatGPT App/Connector แบบ Server URL
-6. เลือก **OAuth** ใน ChatGPT; เมื่อ browser เปิดหน้าอนุมัติแบบธีม lnwjud ให้ใส่ **OAuth Pairing Code 6 หลัก** ที่แสดงใน lnwjud แล้วกด **Authorize ChatGPT**. เมื่อสำเร็จ browser จะ redirect กลับ ChatGPT อัตโนมัติ. Pairing code มีอายุสั้นและถูกใช้ได้ครั้งเดียวต่อการอนุมัติ; หากหมดอายุให้กดสร้างใหม่
+5. เมื่อสถานะเป็น RUNNING ให้กด **Copy MCP URL**. สำหรับ ChatGPT Business ให้ Admin/Owner นำ URL `https://...ngrok.app/mcp` ไปตั้งค่า Workspace Settings → Apps → Create เลือก **OAuth**, Scan Tools, Create แล้ว **Publish** ให้ Workspace; สมาชิกทั่วไปไม่ต้องกรอก Server URL เอง
+6. สมาชิกเปิดแอป lnwjud ที่ Publish แล้วกด **Connect** ได้เลย. เมื่อ ChatGPT ใช้ callback ที่รองรับ รวมถึง callback ของ Plugin/App ที่สร้างใหม่รูปแบบ `https://chatgpt.com/connector/oauth/<redirect_id>` browser จะถูก handoff อัตโนมัติไปยัง one-time URL แบบสุ่มบน `127.0.0.1` ของ lnwjud Desktop ก่อน จากนั้นจึงทำ OAuth DCR + Authorization Code + PKCE และ redirect กลับ ChatGPT **โดยไม่ต้องกรอก PIN และไม่ต้องกดยืนยันเพิ่ม**. public ngrok endpoint ใช้ localhost ticket นี้แทนไม่ได้; PIN 6 หลักจะถูกสร้างแบบ on-demand เฉพาะ fallback สำหรับ OAuth client อื่น
+
+ตั้งแต่ v4.62.0 **ไม่ต้องซื้อหรือจดโดเมนเองเพื่อให้ Public MCP URL คงที่**: บัญชี ngrok มี development domain ที่ระบบกำหนดให้ และเมื่อ lnwjud เปิด Remote MCP สำเร็จครั้งแรก lnwjud จะจำ HTTPS origin นั้นไว้ใน encrypted Remote MCP state. ครั้งถัดไป/หลังอัปเดต lnwjud จะส่ง origin เดิมกลับให้ ngrok ผ่าน `--url` และจะหยุดพร้อมแจ้งเตือนแทนการเปลี่ยน URL ของ ChatGPT แบบเงียบ ๆ หาก ngrok ไม่สามารถใช้ URL เดิมได้. Custom domain ยังเป็นทางเลือกเสริม ไม่ใช่ข้อบังคับ. ถ้าตั้งใจเปลี่ยนบัญชี ngrok หรือโดเมน ให้บันทึก ngrok Authtoken ใหม่หนึ่งครั้งเพื่อ reset URL ที่จำไว้ แล้ว Start Remote MCP เพื่อเรียนรู้ URL ใหม่
 
 Remote MCP gateway รองรับ OAuth discovery, Dynamic Client Registration, Authorization Code + PKCE S256, access token และ refresh token. คำขอ `/mcp` ที่ไม่มี bearer token ที่ถูกต้องจะถูกปฏิเสธ และ Authorization header จากอินเทอร์เน็ตจะไม่ถูกส่งต่อเข้า local MCP โดยตรง.
 
@@ -132,6 +134,8 @@ OAuth จะเปิดให้กด Sign in เฉพาะเมื่อ p
 
 ถ้าเปลี่ยน **Runtime API key**, **Tunnel ID** หรือ tunnel-client override ขณะที่ Persistent Tunnel Runtime เดิมทำงานอยู่ lnwjud จะรักษา ownership ให้ชัดเจน. สำหรับการเปลี่ยน tunnel-client โปรแกรมจะ validate path ใหม่ก่อน จากนั้นหยุดและยืนยัน runtime เดิมผ่าน executable owner ที่บันทึกไว้ **ก่อน** commit custom/bundled selection ใหม่; ถ้าหยุด owner เดิมไม่ได้ จะไม่ start client ตัวใหม่ซ้อน. สำหรับ Tunnel ID/credentials การ Start แบบ manual จะ reconcile alias `lnwjud` แบบ controlled ก่อน reconnect ด้วยค่าที่บันทึกใหม่. Auto reconnect จะไม่เปลี่ยนไปใช้ Tunnel ID อื่นเอง และการบันทึก key/path/profile จะไม่ override desired `stopped` ของผู้ใช้.
 
+**หลายแชท / หลายเครื่อง:** lnwjud หนึ่ง instance + Secure Tunnel `lnwjud` หนึ่งตัวถูกออกแบบให้ใช้ร่วมกันได้หลาย ChatGPT chats/หลาย workspace พร้อมกัน จึง **ไม่ต้องและไม่ควรสร้าง profile/tunnel แยกต่อแชท**. Desktop HTTP MCP แยก concurrent MCP sessions อยู่แล้ว และตั้งแต่ v4.62.0 lnwjud จะกำหนด `MCP_MAX_CONCURRENT_REQUESTS=32` ให้ bundled tunnel-client โดยตรง พร้อม TTL 168 ชั่วโมง เพื่อให้มี headroom เมื่อหลายแชท fan-out tool calls พร้อมกัน. แต่ถ้ารัน lnwjud หลายเครื่อง เช่น Mac + Windows และต้องการให้แชทหนึ่งไป Mac อีกแชทหนึ่งไป Windows แบบแน่นอน ให้ใช้ **Tunnel ID + ChatGPT Tunnel connection แยกต่อเครื่อง**. tunnel-client รองรับ HTTP replicas ที่แชร์ Tunnel ID ได้ในเชิง transport แต่ queued work จะถูกส่งไปยัง replica ที่ poll ได้ก่อน จึงไม่ได้ผูกแชทกับเครื่องใดเครื่องหนึ่ง. Remote MCP ผ่าน ngrok + OAuth ยังเป็นวิธี Recommended และมี transport hop น้อยกว่า จึงอาจตอบสนองเร็ว/นิ่งกว่าภายใต้ burst สูงได้.
+
 ไม่ต้องรันคำสั่ง `init`, `doctor` หรือ `run` เองในการใช้งานปกติ
 
 Runtime key ถูกเก็บด้วย secure storage ของระบบและ profile จะอ้าง key ผ่าน `env:CONTROL_PLANE_API_KEY` แทนการเขียน key จริงลง YAML Windows legacy envelope จะ migrate ผ่าน native helper ครั้งเดียว
@@ -172,7 +176,7 @@ ChatGPT → OpenAI Secure MCP Tunnel → bundled tunnel-client → lnwjud Deskto
 
 หน้า **บันทึกการทำงาน / Work Log** แสดง TASK / RESULT / ERROR พร้อม Workspace และ Session เพื่อแยกงานหลายแชท/หลายโปรเจกต์
 
-ตั้งแต่ v4.61.0 เมื่อเริ่มพิมพ์ค้นหา Work Log ระบบจะตรึงรายการเป็น snapshot ณ ตอนเริ่มค้นหา ข้อความใหม่ที่เข้ามาจะไม่แทรกหรือดันผลลัพธ์ให้กระโดดระหว่างค้นหา; เมื่อล้างคำค้นจึงกลับไปแสดง feed ล่าสุดทันที. Live Logs ทุกแท็บใช้พฤติกรรมเดียวกัน และปุ่ม **Pause** จะตรึง feed จริง ๆ; **Follow** จะกลับไปรับรายการใหม่เมื่อไม่มีคำค้นค้างอยู่
+ตั้งแต่ v4.61.0 เมื่อเริ่มพิมพ์ค้นหา Work Log ระบบจะตรึงรายการเป็น snapshot ณ ตอนเริ่มค้นหา ข้อความใหม่ที่เข้ามาจะไม่แทรกหรือดันผลลัพธ์ให้กระโดดระหว่างค้นหา; เมื่อล้างคำค้นจึงกลับไปแสดง feed ล่าสุดทันที. Live Logs ทุกแท็บใช้พฤติกรรมเดียวกัน และปุ่ม **Pause** จะตรึง feed จริง ๆ; **Follow** จะกลับไปรับรายการใหม่เมื่อไม่มีคำค้นค้างอยู่. ตั้งแต่ v4.62.0 snapshot จะตรึงข้อมูล Workspace ที่ใช้กรอง/แสดงผลไปพร้อมกันด้วย จึงไม่เกิดการโหลด full-detail search ซ้ำทุกครั้งที่ dashboard refresh ขณะกำลังค้นหา
 
 ใน v4.11.0:
 
@@ -258,7 +262,7 @@ Full Bypass ไม่ได้ทำให้ Windows ACL/UAC, antivirus, file l
 - backup ก่อน binary replacement ที่รองรับ
 - encrypted checkpoints
 
-ตารางหน้า Recovery แสดงรายการล่าสุดในพื้นที่คงที่พร้อม scrollbar ส่วน retention ผู้ใช้เลือกเอง:
+ตารางหน้า Recovery แสดงรายการล่าสุดในพื้นที่คงที่พร้อม scrollbar ส่วน retention ผู้ใช้เลือกเอง โดย **ผู้ใช้ที่ยังไม่เคยตั้งค่า retention จะเริ่มต้นที่ 30 วัน**; ถ้าเคยตั้งค่าไว้แล้ว โปรแกรมจะคงค่าของผู้ใช้เดิมไว้:
 
 - `0` วัน = ไม่ลบอัตโนมัติ เก็บจนกว่าจะจัดการเอง
 - มากกว่า `0` = ลบข้อมูล recovery ที่เก่ากว่าจำนวนวันที่ตั้งไว้
@@ -334,8 +338,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.61.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.61.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.62.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.62.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

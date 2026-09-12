@@ -362,8 +362,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   async function runRemoteMcpAction(action: 'install' | 'save' | 'start' | 'stop' | 'regenerate'): Promise<void> {
     if (action === 'regenerate') {
       const confirmed = window.confirm(props.locale === 'th'
-        ? 'เชื่อม ChatGPT ใหม่? การเชื่อมต่อ OAuth ที่จำไว้และ Refresh Token เดิมจะถูกยกเลิก แล้วต้อง Pairing อีกครั้งหนึ่ง'
-        : 'Reconnect ChatGPT? The remembered OAuth trust and existing refresh tokens will be revoked, and one new pairing will be required.');
+        ? 'เชื่อม ChatGPT ใหม่? การเชื่อมต่อ OAuth ที่จำไว้และ Refresh Token เดิมจะถูกยกเลิก จากนั้นกด Connect ใน ChatGPT ใหม่ได้เลยโดยไม่ต้องใช้ PIN สำหรับ ChatGPT callback ที่รองรับ'
+        : 'Reconnect ChatGPT? The remembered OAuth trust and existing refresh tokens will be revoked. Then press Connect in ChatGPT again; supported ChatGPT callbacks require no PIN.');
       if (!confirmed) return;
     }
     setRemoteMcpBusy(true);
@@ -661,7 +661,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <div className="connection-method-summary-copy">
                     <span className="connection-method-kicker">{props.locale === 'th' ? 'แนะนำ · OAuth' : 'Recommended · OAuth'}</span>
                     <strong>Remote MCP — ngrok + OAuth</strong>
-                    <span>{props.locale === 'th' ? 'เชื่อม ChatGPT ผ่าน HTTPS /mcp — Pairing เฉพาะครั้งแรก แล้วจำ OAuth ไว้ให้' : 'Connect ChatGPT through HTTPS /mcp — pair once, then keep the OAuth connection trusted.'}</span>
+                    <span>{props.locale === 'th' ? 'เชื่อม ChatGPT ผ่าน HTTPS /mcp — กด Connect ได้เลย ไม่ต้องกรอก PIN สำหรับ ChatGPT' : 'Connect ChatGPT through HTTPS /mcp — press Connect with no PIN for supported ChatGPT clients.'}</span>
                   </div>
                   <div className="connection-method-summary-status">
                     <span className={`connection-method-live-dot ${remoteMcpOnline ? 'is-online' : ''}`} aria-hidden="true" />
@@ -673,7 +673,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <SettingsCardHeading
                   icon="◎"
                   title={props.locale === 'th' ? 'Remote MCP — ngrok + OAuth' : 'Remote MCP — ngrok + OAuth'}
-                  subtitle={props.locale === 'th' ? 'แนะนำ: เชื่อม ChatGPT ผ่าน OAuth ครั้งแรกครั้งเดียว จากนั้น lnwjud จำสิทธิ์และเปิด Remote MCP อัตโนมัติเมื่อเปิดโปรแกรม' : 'Recommended: authorize ChatGPT once; lnwjud remembers the OAuth trust and can auto-start Remote MCP on later launches.'}
+                  subtitle={props.locale === 'th' ? 'แนะนำ: Admin Publish Custom App ครั้งเดียว จากนั้นสมาชิกกด Connect ใน ChatGPT ได้เลย; lnwjud จำ OAuth trust และ reconnect อัตโนมัติ' : 'Recommended: an admin publishes the Custom App once, then members simply press Connect in ChatGPT; lnwjud remembers OAuth trust and reconnects automatically.'}
                   badge={remoteMcp.state === 'running' ? 'RUNNING' : remoteMcp.installed && remoteMcp.hasAuthtoken ? 'READY' : 'SETUP'}
                 />
                 <div className="setting-grid two-col">
@@ -685,7 +685,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <div className="setting-field">
                     <span className="field-label">Public MCP URL</span>
                     <code className="settings-path-display">{remoteMcp.publicMcpUrl ?? '—'}</code>
-                    <p className="hint">{props.locale === 'th' ? 'URL นี้ลงท้าย /mcp และเป็น URL ที่นำไปใส่ใน ChatGPT' : 'This /mcp URL is the one to add in ChatGPT.'}</p>
+                    <p className="hint">{props.locale === 'th' ? 'URL นี้ลงท้าย /mcp และเป็น URL ที่นำไปใส่ใน ChatGPT; ngrok มี development domain ที่กำหนดให้ และ lnwjud จะจำ URL ครั้งแรกแล้วส่ง origin เดิมให้ ngrok ในรอบถัดไปเพื่อให้ endpoint คงเดิม ไม่ต้องซื้อโดเมนเอง ส่วน custom domain ยังใช้ได้แบบ optional หากตั้งใจเปลี่ยนบัญชี/โดเมน ngrok ให้บันทึก Authtoken ใหม่เพื่อเรียนรู้ URL ใหม่' : 'This /mcp URL is the one to add in ChatGPT. ngrok provides an assigned development domain, and lnwjud remembers the first URL and reuses that origin on later starts so the endpoint stays stable. You do not need to buy a domain; a custom domain remains optional. If you intentionally change ngrok account/domain, save the authtoken again to learn the new URL.'}</p>
                   </div>
                 </div>
                 <div className="tunnel-setup-box">
@@ -717,7 +717,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <p className="hint">{remoteMcp.hasAuthtoken ? (props.locale === 'th' ? `✓ เก็บด้วย ${secureStorageLabel} แล้ว` : `✓ Stored with ${secureStorageLabel}`) : (props.locale === 'th' ? 'Authtoken ไม่ถูกส่งผ่าน command line หรือบันทึกลง config แบบ plaintext' : 'The authtoken is not passed on the command line or stored in plaintext config.')}</p>
                 </div>
                 <div className="tunnel-setup-box">
-                  <div className="settings-mini-heading"><strong>{props.locale === 'th' ? '2. เปิด Remote MCP' : '2. Start Remote MCP'}</strong><span>{remoteMcp.oauthConnected ? 'CHATGPT LINKED' : remoteMcp.pairingRequired ? 'PAIR ONCE' : remoteMcp.oauthProtected ? 'OAUTH PROTECTED' : 'AUTH REQUIRED'}</span></div>
+                  <div className="settings-mini-heading"><strong>{props.locale === 'th' ? '2. เปิด Remote MCP' : '2. Start Remote MCP'}</strong><span>{remoteMcp.oauthConnected ? 'CHATGPT LINKED' : remoteMcp.pairingRequired ? 'FALLBACK PIN' : remoteMcp.oauthProtected ? 'CHATGPT READY' : 'AUTH REQUIRED'}</span></div>
                   <div className="inline-actions">
                     <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || !remoteMcp.hasAuthtoken || remoteMcp.state === 'running'} onClick={() => { void runRemoteMcpAction('start'); }}>{remoteMcpBusy && remoteMcp.state !== 'running' ? (props.locale === 'th' ? 'กำลังทำงาน…' : 'Working…') : (props.locale === 'th' ? 'Start Remote MCP' : 'Start Remote MCP')}</button>
                     <button type="button" disabled={remoteMcpBusy || remoteMcp.state !== 'running'} onClick={() => { void runRemoteMcpAction('stop'); }}>{props.locale === 'th' ? 'หยุด' : 'Stop'}</button>
@@ -725,8 +725,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <button type="button" disabled={remoteMcpBusy || !remoteMcp.oauthConnected} onClick={() => { void runRemoteMcpAction('regenerate'); }}>{props.locale === 'th' ? 'เชื่อม ChatGPT ใหม่' : 'Reconnect ChatGPT'}</button>
                   </div>
                   {remoteMcp.oauthConnected ? <div className="toast-success-banner remote-mcp-auth-banner" role="status"><strong>{props.locale === 'th' ? '✓ ChatGPT เชื่อมแล้ว' : '✓ ChatGPT connected'}</strong><span>{remoteMcp.autoStartEnabled ? (props.locale === 'th' ? 'จำ OAuth ไว้แล้ว · เปิด lnwjud ครั้งถัดไป Remote MCP จะ Start อัตโนมัติ' : 'OAuth trust is remembered · Remote MCP will auto-start on the next lnwjud launch.') : (props.locale === 'th' ? 'จำ OAuth ไว้แล้ว · Auto-start ปิดอยู่เพราะ Remote MCP ถูกหยุดด้วยผู้ใช้' : 'OAuth trust is remembered · auto-start is off because Remote MCP was stopped manually.')}</span></div> : null}
-                  {remoteMcp.pairingCode === null ? null : <div className="alert-box-warning remote-mcp-auth-banner" role="status"><strong className="remote-mcp-pairing-line"><span>{props.locale === 'th' ? 'Pairing ครั้งแรก' : 'First-time pairing'}:</span><span className="remote-mcp-pairing-pin" aria-label={`${props.locale === 'th' ? 'Pairing PIN' : 'Pairing PIN'} ${remoteMcp.pairingCode}`}>{remoteMcp.pairingCode}</span></strong><span>{remoteMcp.pairingCodeExpiresAt === null ? (props.locale === 'th' ? 'ใช้ PIN นี้เพื่ออนุญาต ChatGPT ครั้งเดียว' : 'Use this PIN to authorize ChatGPT once.') : `${props.locale === 'th' ? 'หมดอายุ' : 'expires'} ${formatDateTime(remoteMcp.pairingCodeExpiresAt, '—', props.locale)}`}</span></div>}
-                  <p className="hint">{props.locale === 'th' ? 'ครั้งแรก: กด Start → นำ Public MCP URL ไปเพิ่มใน ChatGPT แบบ OAuth → ใส่ Pairing Code ครั้งเดียวเพื่อยืนยันว่าเป็นเครื่องของคุณ หลังจากนั้น lnwjud จะเก็บ OAuth trust/refresh grant แบบเข้ารหัสและไม่ถาม Pairing ซ้ำตอน Start หรือเปิดโปรแกรมใหม่ หากต้องการเปลี่ยนบัญชี/เชื่อมใหม่ ให้กด “เชื่อม ChatGPT ใหม่” เท่านั้น' : 'First time: Start → add the Public MCP URL in ChatGPT with OAuth → enter the pairing code once to confirm this machine. lnwjud then stores the OAuth trust/refresh grant encrypted, so Start and later app launches do not ask for pairing again. Use “Reconnect ChatGPT” only when you deliberately want to re-authorize.'}</p>
+                  {remoteMcp.pairingCode === null ? null : <div className="alert-box-warning remote-mcp-auth-banner" role="status"><strong className="remote-mcp-pairing-line"><span>{props.locale === 'th' ? 'PIN สำรองสำหรับ OAuth client อื่น' : 'Fallback PIN for another OAuth client'}:</span><span className="remote-mcp-pairing-pin" aria-label={`${props.locale === 'th' ? 'Fallback pairing PIN' : 'Fallback pairing PIN'} ${remoteMcp.pairingCode}`}>{remoteMcp.pairingCode}</span></strong><span>{remoteMcp.pairingCodeExpiresAt === null ? (props.locale === 'th' ? 'ChatGPT ปกติไม่ต้องใช้ PIN นี้' : 'Normal ChatGPT connections do not need this PIN.') : `${props.locale === 'th' ? 'ChatGPT ปกติไม่ต้องใช้ · PIN หมดอายุ' : 'Not needed for ChatGPT · PIN expires'} ${formatDateTime(remoteMcp.pairingCodeExpiresAt, '—', props.locale)}`}</span></div>}
+                  <p className="hint">{props.locale === 'th' ? 'ครั้งแรก: กด Start → Admin เพิ่ม Public MCP URL เป็น Custom App แบบ OAuth และ Publish → สมาชิกกด Connect ใน ChatGPT ได้เลย ไม่ต้องกรอก PIN; browser จะ handoff อัตโนมัติผ่าน one-time 127.0.0.1 ของ lnwjud Desktop แล้วกลับ ChatGPT หลังเชื่อม lnwjud จะจำ OAuth trust/refresh grant แบบเข้ารหัสและ reconnect อัตโนมัติ PIN จะแสดงเฉพาะ fallback สำหรับ OAuth client อื่น' : 'First time: Start → an admin adds the Public MCP URL as an OAuth Custom App and publishes it → members simply press Connect in ChatGPT with no PIN. The browser automatically hands off through a one-time 127.0.0.1 lnwjud Desktop approval and returns to ChatGPT. lnwjud stores OAuth trust/refresh grants encrypted for automatic reconnect; a PIN appears only as a fallback for other OAuth clients.'}</p>
                   {remoteMcp.message === null ? null : <div className={remoteMcp.state === 'error' ? 'alert-box-warning' : 'hint'} role="status">{remoteMcp.message}{remoteMcp.ngrokPath === null ? '' : ` · ngrok: ${remoteMcp.ngrokPath}`}</div>}
                   {remoteMcpMessage === null ? null : <div className={remoteMcp.state === 'error' || /failed|error|exit|stopped unexpectedly/i.test(remoteMcpMessage) ? 'alert-box-warning' : 'toast-success-banner'} role="status">{remoteMcpMessage}</div>}
                 </div>
@@ -846,6 +846,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="settings-mini-heading"><strong>Setup Wizard</strong><span>{props.locale === 'th' ? 'ไม่ต้องเปิดคำสั่งระบบเอง' : 'No manual platform-specific init'}</span></div>
                 <label className="field-label" htmlFor="tunnel-id">OpenAI Tunnel ID</label>
                 <div className="form-row"><input id="tunnel-id" placeholder="tunnel_0123456789abcdef..." value={tunnelId} onChange={(event) => setTunnelId(event.target.value)} /><button type="button" className="btn-save-gold" disabled={tunnelBusy} onClick={() => { void configureTunnel(); }}>{tunnelBusy ? (props.locale === 'th' ? 'กำลังตั้งค่า…' : 'Configuring…') : (props.locale === 'th' ? 'Configure Tunnel' : 'Configure Tunnel')}</button></div>
+                <p className="hint">{props.locale === 'th' ? 'หลาย ChatGPT chats บน lnwjud เครื่องนี้ใช้ Tunnel ID เดียวกันได้ ไม่ต้องแยก profile ต่อแชท · ถ้ารัน lnwjud หลายเครื่อง เช่น Mac + Windows และต้องให้แต่ละแชทเลือกเครื่องได้แน่นอน ให้ใช้ Tunnel ID แยกต่อเครื่อง เพราะ replicas ที่แชร์ Tunnel ID เดียวรับงานแบบเครื่องไหน poll ได้ก่อน' : 'Multiple ChatGPT chats on this lnwjud machine can share one Tunnel ID; do not create a profile per chat. If you run lnwjud on multiple machines such as Mac + Windows and need deterministic host selection, use a distinct Tunnel ID per machine because replicas sharing one Tunnel ID receive work from whichever replica polls first.'}</p>
               </div>
               {savedMessage === null ? null : <div className="toast-success-banner" role="status">✓ {savedMessage}</div>}
               {tunnelMessage === null ? null : <div className="alert-box-warning" role="status">{tunnelMessage}</div>}
@@ -891,7 +892,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="recovery-retention-row">
                   <div>
                     <strong>{props.locale === 'th' ? 'ลบข้อมูลกู้คืนอัตโนมัติ' : 'Automatic recovery cleanup'}</strong>
-                    <p className="hint">{props.locale === 'th' ? 'เลือกอายุที่ต้องการเก็บ Recovery Trash และ Checkpoint; ค่าเริ่มต้นคือไม่ลบอัตโนมัติ' : 'Choose how long to keep Recovery Trash and checkpoints. The default is never delete automatically.'}</p>
+                    <p className="hint">{props.locale === 'th' ? 'เลือกอายุที่ต้องการเก็บ Recovery Trash และ Checkpoint; ถ้ายังไม่เคยตั้งค่า ค่าเริ่มต้นคือ 30 วัน' : 'Choose how long to keep Recovery Trash and checkpoints. If you have never configured this setting, the default is 30 days.'}</p>
                   </div>
                   <select aria-label={props.locale === 'th' ? 'อายุข้อมูลกู้คืน' : 'Recovery retention'} disabled={retentionBusy} value={props.dashboard.settings.recoveryRetentionDays} onChange={(event) => { void setRecoveryRetentionDays(Number(event.target.value)); }}>
                     <option value={0}>{props.locale === 'th' ? 'ไม่ลบอัตโนมัติ' : 'Never'}</option>

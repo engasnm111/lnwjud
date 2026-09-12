@@ -5,6 +5,7 @@ import path from 'node:path';
 import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { isForeignAbsolutePath } from '@lnwjud/workspace';
 import type { SqliteDatabase } from './database.js';
+import { withSqliteLifecycleLockSync } from './sqlite-lifecycle-lock.js';
 
 export type BackupReason = 'daily' | 'manual' | 'pre-update' | 'pre-migration';
 
@@ -217,6 +218,15 @@ export function applyPendingSqliteRestoreSync(
   databaseFilename: string,
   backupDirectory: string,
   options: SqliteRestoreOptions = {},
+): PendingRestoreResult {
+  const directory = path.resolve(backupDirectory);
+  return withSqliteLifecycleLockSync(directory, () => applyPendingSqliteRestoreUnlocked(databaseFilename, directory, options));
+}
+
+function applyPendingSqliteRestoreUnlocked(
+  databaseFilename: string,
+  backupDirectory: string,
+  options: SqliteRestoreOptions,
 ): PendingRestoreResult {
   const dbPath = path.resolve(databaseFilename);
   const directory = path.resolve(backupDirectory);

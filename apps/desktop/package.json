@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/desktop",
-  "version": "4.61.0",
+  "version": "4.62.0",
   "private": true,
   "description": "Cross-platform local AI-agent runtime and MCP gateway with 233 total tool definitions.",
   "author": "Adisorn",
@@ -12,8 +12,8 @@
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
-    "build": "node scripts/clean-desktop-build.mjs && node scripts/write-capability-integrity.mjs && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js && esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --conditions=development --external:electron --outfile=dist/preload/index.cjs && vite build --config vite.config.ts && node scripts/write-stdio-launcher.mjs",
-    "build:main": "node scripts/clean-desktop-build.mjs && node scripts/write-capability-integrity.mjs && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js",
+    "build": "node scripts/clean-desktop-build.mjs && node scripts/write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js && esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --conditions=development --external:electron --outfile=dist/preload/index.cjs && vite build --config vite.config.ts && node scripts/write-stdio-launcher.mjs",
+    "build:main": "node scripts/clean-desktop-build.mjs && node scripts/write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc -p tsconfig.main.json && esbuild src/main/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);\" --outfile=dist/main/main.js",
     "build:renderer": "vite build --config vite.config.ts",
     "package:macos": "node scripts/package-native.mjs macos",
     "package:linux": "node scripts/package-native.mjs linux",

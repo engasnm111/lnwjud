@@ -242,6 +242,42 @@ describe('multi-workspace concurrency acceptance', () => {
       await runtime.close();
     }
   }, process.env.CI ? 180_000 : 90_000);
+
+  it('serves three real MCP sessions and a 12-request burst through one Desktop listener', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-three-chat-data-'));
+    temporaryRoots.push(rawDataRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const workspaceRoot = await createWorkspaceFixture('three-chat');
+    const runtime = createDesktopRuntime(dataRoot, {
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
+    });
+    const clients = Array.from({ length: 3 }, (_, index) => new Client({ name: `three-chat-${index + 1}`, version: '1.0.0' }));
+    const transports: StreamableHTTPClientTransport[] = [];
+
+    try {
+      const workspace = await runtime.services.addWorkspace({ rootPath: workspaceRoot });
+      const connection = await runtime.services.startMcp({ workspaceId: workspace.id });
+      expect(connection.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+      if (connection.url === null) return;
+
+      for (let index = 0; index < clients.length; index += 1) {
+        transports.push(new StreamableHTTPClientTransport(new URL(connection.url)));
+      }
+      await Promise.all(clients.map((client, index) => client.connect(transports[index]!)));
+      expect(new Set(transports.map((transport) => transport.sessionId)).size).toBe(3);
+
+      const burst = clients.flatMap((client) => Array.from({ length: 4 }, () => client.callTool({
+        name: 'workspace_info',
+        arguments: { workspaceId: workspace.id },
+      })));
+      const results = await Promise.all(burst);
+      expect(results).toHaveLength(12);
+      for (const result of results) expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    } finally {
+      await Promise.allSettled(clients.map((client) => client.close()));
+      await runtime.close();
+    }
+  }, process.env.CI ? 60_000 : 30_000);
 });
 
 async function createWorkspaceFixture(label: string): Promise<string> {

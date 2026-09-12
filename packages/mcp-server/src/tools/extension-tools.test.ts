@@ -3,6 +3,8 @@ import { ok } from '@lnwjud/domain';
 import { ToolRegistry } from '../tool-registry.js';
 import type { ExtensionsService } from '@lnwjud/extensions';
 
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
 describe('skills and mcp bridge tools', () => {
   it('registers skill and MCP inspection as read-only while mcp_call remains opaque mutation', async () => {
     const extensions: ExtensionsService = {
@@ -43,7 +45,38 @@ describe('skills and mcp bridge tools', () => {
       structuredContent: { skills: [expect.objectContaining({ id: 'a/b' })] },
     });
     await expect(registry.invoke('mcp_call', { server: 'mock', tool: 'ping', arguments: {}, userConfirmed: true })).resolves.toMatchObject({
-      structuredContent: { content: [{ type: 'text', text: 'pong' }] },
+      content: [{ type: 'text', text: 'pong' }],
+    });
+  });
+
+  it('returns external MCP image blocks to the caller as first-class MCP content', async () => {
+    const extensions: ExtensionsService = {
+      listSkills: async () => ok({ skills: [] }),
+      readSkill: async () => ok({ id: 'a/b', name: 'b', description: '', source: 'a', path: '/SKILL.md', content: '' }),
+      listMcpServers: async () => ok({ servers: [] }),
+      describeMcpServer: async () => ok({ server: 'mock', enabled: true, connected: true, tools: [] }),
+      callMcpTool: async () => ok({
+        content: [
+          { type: 'image', data: PNG_1X1, mimeType: 'image/png' },
+          { type: 'text', text: 'captured' },
+        ],
+      }),
+      close: async () => undefined,
+    };
+    const registry = new ToolRegistry({ extensions }, { clientId: 'test', clientName: 'test' }, {
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
+    });
+
+    await expect(registry.invoke('mcp_call', {
+      server: 'mock',
+      tool: 'capture',
+      arguments: {},
+      userConfirmed: true,
+    })).resolves.toMatchObject({
+      content: [
+        { type: 'image', data: PNG_1X1, mimeType: 'image/png' },
+        { type: 'text', text: 'captured' },
+      ],
     });
   });
 
@@ -71,7 +104,7 @@ describe('skills and mcp bridge tools', () => {
     await expect(registry.invoke('mcp_describe', { server: 'mock' }, undefined, controller.signal))
       .resolves.toMatchObject({ structuredContent: { server: 'mock', connected: true } });
     await expect(registry.invoke('mcp_call', { server: 'mock', tool: 'ping', arguments: {}, userConfirmed: true }, undefined, controller.signal))
-      .resolves.toMatchObject({ structuredContent: { content: [] } });
+      .resolves.toMatchObject({ content: [] });
 
     expect(observed).toHaveLength(2);
     for (const signal of observed) expect(signal).toBeInstanceOf(AbortSignal);

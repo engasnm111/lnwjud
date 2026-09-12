@@ -27,7 +27,7 @@ const baseDashboard: DashboardSnapshot = {
   connectionModes: { httpUrl: null, stdioCommand: 'lnwjud-mcp-stdio.cmd' },
   workLog: [],
   inFlight: [],
-  tunnel: { state: 'stopped', source: 'desktop', hasApiKey: false, clientPath: null, profileExists: false, message: null, logPath: null },
+  tunnel: { state: 'stopped', source: 'desktop', hasApiKey: false, clientPath: null, profileExists: false, message: null, logPath: null, persistent: null },
   appVersion: '4.6.1',
 };
 
@@ -43,7 +43,7 @@ function render(dashboard: DashboardSnapshot, locale: 'th' | 'en' = 'en'): strin
     onRestartMcp: async () => undefined,
     onSelectWorkspace: async () => undefined,
     onSetWorkspaceActive: async () => undefined,
-    onAddWorkspace: async () => undefined,
+    onAddWorkspace: async () => true,
     onStartTunnel: async () => undefined,
     onStopTunnel: async () => undefined,
     onOpenTunnelSetup: () => undefined,
@@ -98,6 +98,36 @@ describe('Security Overview', () => {
     expect(markup).not.toContain('Tunnel connected (from script) — Start is disabled');
   });
 
+  it('hides transient runtime internals while Tunnel is starting, but keeps real errors visible', () => {
+    const startingMarkup = render({
+      ...baseDashboard,
+      tunnel: {
+        ...baseDashboard.tunnel,
+        state: 'starting',
+        hasApiKey: true,
+        runtimeCredentialAvailable: true,
+        profileExists: true,
+        message: 'Managed tunnel runtime did not become fully ready',
+      },
+    });
+    expect(startingMarkup).not.toContain('Managed tunnel runtime did not become fully ready');
+
+    const errorMarkup = render({
+      ...baseDashboard,
+      tunnel: {
+        ...baseDashboard.tunnel,
+        state: 'error',
+        hasApiKey: true,
+        runtimeCredentialAvailable: true,
+        profileExists: true,
+        message: 'Tunnel startup failed',
+      },
+    });
+    expect(errorMarkup).toContain('Tunnel startup failed');
+    expect(errorMarkup).toContain('role="alert"');
+    expect(errorMarkup).toContain('error-text');
+  });
+
   it('renders OAuth-specific Home connection copy instead of Runtime API key wording', () => {
     const markup = render({
       ...baseDashboard,
@@ -113,11 +143,24 @@ describe('Security Overview', () => {
         },
       },
     });
+    expect(markup).toContain('ChatGPT Connection');
+    expect(markup).toContain('Remote MCP · OAuth');
+    expect(markup).toContain('Advanced option');
     expect(markup).toContain('ChatGPT Connection — OAuth');
-    expect(markup).toContain('OAuth authentication • Secure MCP Tunnel transport');
-    expect(markup).toContain('OAUTH');
     expect(markup).toContain('oauth@example.test');
     expect(markup).not.toContain('Save a Runtime API key once in Settings');
+  });
+
+  it('simplifies the Home surface around one ChatGPT connection area and removes the redundant WORK mode card', () => {
+    const markup = render(baseDashboard);
+    expect(markup).toContain('aria-label="ChatGPT Connection"');
+    expect(markup).toContain('Remote MCP · OAuth');
+    expect(markup).toContain('Secure MCP Tunnel for ChatGPT');
+    expect(markup).toContain('class="agent-actions-menu"');
+    expect(markup).toContain('Restart Desktop Agent');
+    expect(markup).toContain('Stop Desktop Agent');
+    expect(markup).not.toContain('<p>Mode</p>');
+    expect(markup).not.toContain('WORK mode');
   });
 
   it('localizes the security summary to Thai', () => {

@@ -101,13 +101,23 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('renders the actual 4.61.0 application version', () => {
-    expect(APP_VERSION).toBe('4.61.0');
+  it('renders the actual 4.62.0 application version', () => {
+    expect(APP_VERSION).toBe('4.62.0');
     const markup = renderToStaticMarkup(createElement(AppShell, {
       locale: 'en', appVersion: APP_VERSION, mcpRunning: false, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'settings',
       onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
     }));
-    expect(markup).toContain('v4.61.0');
+    expect(markup).toContain('v4.62.0');
+  });
+
+  it('labels the sidebar runtime as Desktop Agent and keeps the OS suffix cross-platform', () => {
+    const markup = renderToStaticMarkup(createElement(AppShell, {
+      locale: 'en', appVersion: APP_VERSION, mcpRunning: true, desktopFullBypassOn: false, stdioFullBypassOn: false, updateStatus: null, screen: 'home',
+      onNavigate: () => undefined, onLocaleChange: () => undefined, onUpdateAction: () => undefined, children: createElement('div'),
+    }));
+    expect(markup).toMatch(/Desktop Agent · (Windows|macOS|Linux|Desktop)/);
+    expect(markup).toContain('Connected');
+    expect(markup).not.toContain('Native Desktop');
   });
 
   it('keeps Desktop and STDIO Full Bypass independently visible in the application header', () => {

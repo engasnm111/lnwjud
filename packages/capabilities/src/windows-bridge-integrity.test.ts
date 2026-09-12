@@ -111,6 +111,32 @@ describe('PowerShellWindowsCapabilityBridge integrity', () => {
     expect(script).toContain("$failureMessage = $failureMessage + ': ' + $detail");
   });
 
+  it('prefers a visible capturable window for ambiguous selectors and accepts app.name aliases', async () => {
+    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'windows-capability-bridge.ps1');
+    const script = await readFile(scriptPath, 'utf8');
+
+    expect(script).toContain('[switch]$PreferCapturable');
+    expect(script).toContain("$name = Get-Field $Parameters 'name'");
+    expect(script).toContain("-PreferCapturable");
+    expect(script).toContain("[bool]$_.visible -and -not [bool]$_.minimized");
+    expect(script).toContain("[int]$_.bounds.width -gt 0 -and [int]$_.bounds.height -gt 0");
+    expect(script).toContain("Sort-Object @{ Expression = { [int64]$_.bounds.width * [int64]$_.bounds.height }; Descending = $true }");
+    expect(script).toContain("$failureCode = 'INVALID_INPUT'");
+    expect(script).toContain("$failureMessage = $detail");
+  });
+
+  it('validates captured PNG bytes before returning them and includes round-trip integrity metadata', async () => {
+    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'windows-capability-bridge.ps1');
+    const script = await readFile(scriptPath, 'utf8');
+
+    expect(script).toContain('[System.IO.MemoryStream]::new($bytes, $false)');
+    expect(script).toContain('[System.Drawing.Image]::FromStream($verifyStream, $true, $true)');
+    expect(script).toContain("throw 'Capture image validation failed'");
+    expect(script).toContain('[System.Security.Cryptography.SHA256]::Create()');
+    expect(script).toContain('byte_length = [int]$bytes.Length');
+    expect(script).toContain('sha256 = $sha256');
+  });
+
   it('rejects a missing or malformed expected hash before starting PowerShell', async () => {
     const root = await temporaryRoot();
     const scriptPath = path.join(root, 'bridge.ps1');

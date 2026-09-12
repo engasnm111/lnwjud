@@ -51,16 +51,33 @@ The tunnel is outbound-only: `tunnel-client` runs beside lnwjud, reaches OpenAI
 over outbound HTTPS, forwards MCP work to lnwjud's Desktop loopback HTTP MCP,
 and returns the response without opening a public inbound port on the host.
 
-## Current version: v4.61.0
+## Current version: v4.62.0
 
-The v4.61.0 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
+The v4.62.0 source/release-candidate runtime contract contains **233 total MCP tool definitions**,
 with **226 advertised by default** and **all 233 advertised when the six `codex_*`
 delegation tools plus the bounded read-only `agent_swarm_run` tool are enabled**. The seven Codex/Agent Swarm definitions are opt-in;
 the default surface still exposes every other current first-party definition. The earlier 184-tool snapshot remains
 only as the compatibility baseline used by the v4 architecture; new v4 gateway
 capabilities are additive.
 
-### What's new in v4.61.0
+### What's new in v4.62.0
+
+- Delivers native Vision screenshots as first-class MCP image content while removing duplicate Base64 blobs from the parallel text/structured metadata representation.
+- Validates Windows Vision PNG bytes before returning them, includes byte-length/SHA-256 integrity metadata, and fails closed in the MCP result mapper on malformed/truncated/dimension- or checksum-mismatched image payloads.
+- Keeps Work Log and Live Logs search stable while live dashboard polling continues by freezing workspace metadata together with the row/line snapshot; background refreshes no longer retrigger full-detail search or alternate the UI between results, loading, and empty states.
+- Preserves External MCP child `CallToolResult` image/text blocks through `mcp_call` so screenshot-producing Serena/custom MCP tools reach the calling model as actual image content rather than flattened JSON.
+- Makes Windows `vision:capture_window` resolve natural app-name selectors to a visible non-minimized HWND when an app exposes multiple helper windows, while returning explicit window-state errors instead of generic `Operation failed` failures.
+- Keeps explicit Tunnel Stop intent authoritative over Auto Reconnect: a stopped runtime no longer flips to an unrelated duplicate-start error merely because an external liveness probe is temporarily unverifiable, while a later explicit Start still refuses to launch a possible duplicate.
+- Keeps expected managed-runtime warm-up retries out of the red Home error surface: the UI remains in its normal starting state until the Tunnel is ready, while real terminal/operator errors still render as alerts.
+- Removes the manual PIN from the normal ChatGPT Business custom-app path without trusting a public callback URI by itself: exact supported `chatgpt.com` OAuth callbacks are completed through DCR + Authorization Code + PKCE plus a one-time browser handoff to an ephemeral `127.0.0.1` Desktop approval listener; a short-lived PIN is generated lazily only for non-ChatGPT OAuth clients as a fallback.
+- Simplifies Home around one **ChatGPT Connection** surface: Remote MCP OAuth is the primary path, Secure MCP Tunnel is nested as an advanced option, disruptive Desktop Agent actions move into an overflow menu, the sidebar reports `Desktop Agent · <OS>`, and the redundant `MODE / WORK` card is removed.
+- Protects the Remote MCP public HTTPS origin across Desktop restarts and upgrades by using ngrok's assigned development domain, remembering the first observed origin in encrypted Remote MCP state, and reusing it through ngrok `--url` on later starts instead of silently changing the ChatGPT endpoint. A purchased/custom domain is not required; custom domains remain optional. Re-saving the ngrok authtoken deliberately clears the remembered origin so an intentional account/domain change can be learned safely.
+- Hardens Secure Tunnel for simultaneous chats by explicitly setting `MCP_MAX_CONCURRENT_REQUESTS=32` instead of tunnel-client's default 10 and by exercising three real MCP sessions with a 12-request concurrent burst on the shared Desktop listener. Multiple chats on one lnwjud host share the same Tunnel normally; independently targetable Mac/Windows hosts should use distinct Tunnel IDs/ChatGPT connections because HTTP replicas sharing one Tunnel ID receive queued work from whichever replica polls first.
+- Changes Recovery Trash/checkpoint automatic cleanup so users who have **never configured retention** start at 30 days, while every existing saved choice—including `Never` (`0`)—remains unchanged.
+- Fixes an Apple-silicon/macOS 26 startup failure where an ad-hoc outer app could still contain Electron Framework code with a different certificate Team ID. Community builds now perform an ad-hoc normalization pass over the standard Electron bundle before runtime manifests are finalized, then seal again after runtime receipts are written; release verification fails closed if any nested framework/helper remains certificate-signed under an ad-hoc outer app.
+- Adds mapper, External MCP bridge, MCP HTTP transport, and Windows native bridge regressions for image-content delivery and window targeting.
+
+### Historical: What's new in v4.61.0
 
 - Freezes Work Log and every Live Logs tab to a stable snapshot while search text is active so new events cannot insert themselves into or reorder the list during inspection. Clearing search resumes the newest live feed; Live Logs Pause/Follow uses the same freeze contract instead of only suppressing auto-scroll.
 - Finalizes durable shell tasks from the direct command's terminal state with bounded stdio draining, preventing detached descendants with inherited pipes from leaving completed work reported as running.
@@ -314,7 +331,7 @@ full scans can still inspect paths allowed by the active workspace/policy.
 
 | Client / use case | Connection | What must run on the host | Notes |
 | --- | --- | --- | --- |
-| ChatGPT web developer-mode app | Remote MCP via ngrok + OAuth | lnwjud Desktop + ngrok | Recommended easy path: public HTTPS `/mcp` terminates at a separate OAuth-protected loopback gateway; 6-digit pairing is required only for the first authorization or an explicit Reconnect ChatGPT |
+| ChatGPT Business custom app | Remote MCP via ngrok + OAuth | lnwjud Desktop + ngrok | Recommended easy path: an Admin/Owner configures and publishes the public HTTPS `/mcp` once; members press Connect. Supported ChatGPT callbacks—including `/connector/oauth/<redirect_id>` used by newly created Plugins/Apps—authorize with no PIN; non-ChatGPT OAuth clients use a short-lived fallback PIN. |
 | ChatGPT web developer-mode app | OpenAI Secure MCP Tunnel | `tunnel-client` + lnwjud Desktop | Private outbound-only path to the Desktop loopback HTTP MCP; no public MCP port |
 | Codex CLI or another local MCP host | Local stdio MCP | `lnwjud-mcp-stdio.cmd` | Lowest-overhead local MCP path |
 | Local MCP client / dashboard diagnostics | Loopback Streamable HTTP | lnwjud Desktop | Defaults to `http://127.0.0.1:18765/mcp`; actual URL is shown in the UI |
@@ -346,7 +363,7 @@ Choose the guide for the host you will run lnwjud on:
 4. Review **Settings** before attaching an AI client, especially Permission
    Profile and Unrestricted Mode.
 
-If you prefer not to install the app, run `lnwjud-Portable-4.61.0.exe` directly.
+If you prefer not to install the app, run `lnwjud-Portable-4.62.0.exe` directly.
 Portable mode uses the same per-user lnwjud data/settings location as the installer;
 it is a portable executable, not a keep-all-data-next-to-the-EXE mode.
 Automatic updates preserve the distribution you chose. Installer users read
@@ -397,9 +414,9 @@ For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
 3. Save your ngrok authtoken once, then click **Start Remote MCP**. lnwjud starts the OAuth gateway and ngrok, detects the public HTTPS MCP URL, and shows a **Copy MCP URL** action.
-4. In ChatGPT, enable Developer mode when your plan/workspace allows it, add a custom MCP connection, paste the copied public `https://.../mcp` URL, and choose **OAuth** authentication.
-5. On the **first authorization only**, the browser opens the lnwjud approval page. Enter the short-lived **6-digit OAuth Pairing Code** shown in lnwjud and authorize ChatGPT. The browser then redirects back to ChatGPT.
-6. After that first approval, lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require pairing again. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to re-authorize or replace that relationship.
+4. **Business Admin/Owner setup:** in Workspace Settings → Apps → Create, add the public `https://.../mcp` URL, select **OAuth**, complete Scan Tools, create the app, then **Publish** it. Ordinary workspace members do not need Developer mode and do not paste the Server URL again.
+5. **Member connection:** open the published custom lnwjud app in ChatGPT and press **Connect**. For the exact supported ChatGPT OAuth callback paths, the browser is handed once to a random short-lived `http://127.0.0.1:<ephemeral>/...` approval listener owned by the running lnwjud Desktop, then lnwjud completes DCR + Authorization Code + PKCE and redirects back to ChatGPT — **no PIN entry and no extra approval click**. The public ngrok endpoint cannot redeem that localhost ticket.
+6. lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require another authorization. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to reset that relationship. A short-lived 6-digit PIN is generated only when an OAuth client does not match the supported ChatGPT callback contract.
 7. Confirm the connection discovers **226 tools by default** (or **233** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
 
 The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
@@ -418,6 +435,8 @@ The Secure MCP Tunnel flow requires a Platform tunnel ID and a runtime API key. 
 6. In ChatGPT, add a **Tunnel** connection and select the associated `lnwjud` tunnel or enter its `tunnel_id`.
 
 The tunnel-client path field is an **override/troubleshooting** control only. Clear it and choose **Use bundled** to return to the package-supplied client. Secure Tunnel forwards to the running Desktop MCP and does not spawn a separate headless lnwjud MCP runtime, so Desktop-selected Active Projects and native exact-action approval remain authoritative.
+
+**Multi-chat / multi-host:** one lnwjud Desktop instance and one `lnwjud` Secure Tunnel are designed to serve multiple simultaneous ChatGPT chats and workspaces. Do not create a separate tunnel profile for each chat; Desktop HTTP MCP already separates concurrent protocol sessions, and v4.62.0 explicitly configures bundled tunnel-client with `MCP_MAX_CONCURRENT_REQUESTS=32` (while retaining the 168-hour transport TTL) to provide headroom when several chats fan out tool calls at the same time. This is different from running lnwjud on several physical hosts. tunnel-client's HTTP deployment model allows replicas to share a Tunnel ID, but queued work is delivered to whichever replica polls it first; it does not pin a particular ChatGPT chat to a particular Mac/Windows host. Therefore, when each host must be independently selectable, use a distinct Tunnel ID and ChatGPT Tunnel connection per host (for example `lnwjud-mac` and `lnwjud-windows`). Remote MCP via ngrok + OAuth remains the recommended connection path and removes the extra tunnel polling/dispatch hop, so it can still feel more responsive under bursty workloads.
 
 If you intentionally need to initialize the Secure Tunnel profile by hand, keep lnwjud running and copy the **Local MCP endpoint** shown by lnwjud (it is loopback-only and ends in `/mcp`):
 
@@ -455,8 +474,8 @@ Use lnwjud to list registered workspaces, report Git status for the selected pro
 
 ### 1. ติดตั้ง lnwjud หรือใช้ Portable
 
-1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.61.0.exe` แล้วติดตั้งตามปกติ
-2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.61.0.exe` แล้วเปิดได้ทันที
+1. แบบแนะนำ: ดาวน์โหลด `lnwjud-Setup-4.62.0.exe` แล้วติดตั้งตามปกติ
+2. ถ้าไม่ต้องการติดตั้ง: ดาวน์โหลด `lnwjud-Portable-4.62.0.exe` แล้วเปิดได้ทันที
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่มหรือเลือก Project/Workspace ที่ต้องการให้ ChatGPT ทำงานด้วย
 
@@ -470,9 +489,9 @@ Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Window
 2. ดูสถานะ ngrok ก่อน ถ้าขึ้น **READY** ให้ใช้ตัวที่ตรวจพบได้เลย; ถ้ายังไม่พร้อมให้กด **ติดตั้ง ngrok อัตโนมัติ** ซึ่ง lnwjud ใช้ช่องทาง Microsoft Store/WinGet ทางการ
 3. ใส่ ngrok authtoken หนึ่งครั้ง แล้วกด **Start Remote MCP**
 4. รอให้ lnwjud เปิด OAuth-protected gateway, รัน ngrok และแสดง public HTTPS MCP URL ที่ลงท้าย `/mcp` จากนั้นกด **Copy MCP URL**
-5. ใน ChatGPT เปิด Developer mode หากบัญชี/Workspace รองรับ แล้วเพิ่ม custom MCP connection โดยวาง URL ที่คัดลอกมาและเลือก **OAuth**
-6. **เฉพาะการอนุมัติครั้งแรก** browser จะเปิดหน้า lnwjud ให้กรอก **OAuth Pairing Code 6 หลัก** ที่แสดงในแอป แล้วกดอนุมัติ เมื่อสำเร็จจะ redirect กลับ ChatGPT
-7. หลังอนุมัติครั้งแรก lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย Windows DPAPI การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้อง pairing ซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้าง/อนุมัติความสัมพันธ์ใหม่จริง ๆ
+5. **ฝั่ง Admin/Owner ของ Business:** ไป Workspace Settings → Apps → Create, ใส่ URL ที่คัดลอกมา เลือก **OAuth**, Scan Tools ให้ผ่าน แล้ว Create และ **Publish** แอป lnwjud ให้ Workspace. สมาชิกทั่วไปไม่ต้องเปิด Developer mode และไม่ต้องกรอก Server URL ซ้ำ
+6. **ฝั่งสมาชิก:** เปิดแอป lnwjud ที่ถูก Publish แล้วกด **Connect**. ถ้าเป็น callback ของ ChatGPT ที่รองรับ browser จะถูกส่งผ่าน one-time URL ที่ `127.0.0.1` ของเครื่องผู้ใช้ไปหา lnwjud Desktop โดยอัตโนมัติ แล้วจึงทำ DCR + Authorization Code + PKCE และ redirect กลับ ChatGPT — **ไม่ต้องกรอก PIN และไม่ต้องกดยืนยันเพิ่ม**. public ngrok endpoint ไม่สามารถนำ localhost ticket นี้ไปแลกสิทธิ์แทนได้
+7. หลังเชื่อม lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย secure storage ของ host การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้องอนุมัติซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้างความสัมพันธ์ใหม่จริง ๆ. PIN 6 หลักจะถูกสร้างเฉพาะ fallback เมื่อ OAuth client ไม่ตรงกับ callback ChatGPT ที่รองรับ
 8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **226 tools**, หรือ **233** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
 
 public ngrok URL นี้ชี้เข้า OAuth gateway แยกต่างหาก ไม่ใช่การเปิด `http://127.0.0.1:<port>/mcp` ตรง ๆ ออกอินเทอร์เน็ต และ request ต้องผ่าน OAuth/bearer-token validation ก่อนถึง Local MCP
@@ -735,8 +754,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-4.61.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-4.61.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-4.62.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-4.62.0.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

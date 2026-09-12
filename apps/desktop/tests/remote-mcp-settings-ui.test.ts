@@ -14,6 +14,8 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(settingsSource).toContain('running `ngrok version`');
     expect(settingsSource).toContain('ngrok-readiness-banner');
     expect(settingsSource).toContain('ngrok-ready-path');
+    expect(settingsSource).toContain('lnwjud จะจำ URL ครั้งแรกแล้วส่ง origin เดิมให้ ngrok ในรอบถัดไป');
+    expect(settingsSource).toContain('save the authtoken again to learn the new URL');
   });
 
   it('separates recommended OAuth from the optional Secure Tunnel method', () => {
@@ -22,7 +24,13 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(settingsSource).toContain("setSecureMethodOpen(false)");
     expect(settingsSource).toContain('ผู้ใช้ที่ต้องการสามารถเปิดทั้งสองพร้อมกันได้');
     expect(homeSource).toContain('setSecureTunnelExpanded(!remoteMcpOnline)');
-    expect(homeSource).toContain('Remote MCP OAuth ออนไลน์แล้ว จึงพับส่วน Tunnel ไว้เพื่อลดความสับสน');
+    expect(homeSource).toContain('Remote MCP OAuth เป็นวิธีหลักสำหรับผู้ใช้ทั่วไป');
+    expect(homeSource).toContain('ตัวเลือกขั้นสูง');
+  });
+
+  it('explains Secure Tunnel multi-chat and multi-host topology without recommending one profile per chat', () => {
+    expect(settingsSource).toContain('หลาย ChatGPT chats บน lnwjud เครื่องนี้ใช้ Tunnel ID เดียวกันได้ ไม่ต้องแยก profile ต่อแชท');
+    expect(settingsSource).toContain('use a distinct Tunnel ID per machine because replicas sharing one Tunnel ID receive work from whichever replica polls first');
   });
 
   it('adds an explicit 10px follow-up gap because Chromium details content does not honor the parent grid gap between sections', () => {
@@ -31,12 +39,14 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(settingsCssSource).toContain('margin-top: 10px;');
   });
 
-  it('renders the first-time pairing PIN as a dedicated high-visibility value', () => {
+  it('uses zero-click ChatGPT copy and keeps the high-visibility PIN only as a fallback for other OAuth clients', () => {
+    expect(settingsSource).toContain('กด Connect ได้เลย ไม่ต้องกรอก PIN สำหรับ ChatGPT');
+    expect(settingsSource).toContain("'CHATGPT READY'");
+    expect(settingsSource).toContain("'FALLBACK PIN'");
+    expect(settingsSource).toContain('ChatGPT ปกติไม่ต้องใช้ PIN นี้');
     expect(settingsSource).toContain('remote-mcp-pairing-line');
     expect(settingsSource).toContain('remote-mcp-pairing-pin');
-    expect(settingsSource).toContain('ใช้ PIN นี้เพื่ออนุญาต ChatGPT ครั้งเดียว');
-    expect(homeSource).toContain('remote-mcp-pairing-line');
-    expect(homeSource).toContain('remote-mcp-pairing-pin');
+    expect(homeSource).toContain('PIN สำรอง OAuth client อื่น');
     expect(settingsCssSource).toContain('.remote-mcp-pairing-line .remote-mcp-pairing-pin');
     expect(settingsCssSource).toContain('font-size: 1.55em');
     expect(settingsCssSource).toContain('color: #8ff0b0');

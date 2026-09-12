@@ -12,6 +12,7 @@ describe('Secure Tunnel Desktop HTTP wiring', () => {
     expect(env.LNWJUD_DATA_PATH).toBeUndefined();
     expect(env.LNWJUD_UNRESTRICTED).toBeUndefined();
     expect(env.MCP_CONNECTION_MAX_TTL).toBe('168h0m0s');
+    expect(env.MCP_MAX_CONCURRENT_REQUESTS).toBe('32');
   });
 
   it('materializes a replaceable no-auth HTTP profile with a secret reference, never a stdio child', () => {

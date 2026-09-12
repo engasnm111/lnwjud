@@ -27,6 +27,28 @@ afterEach(async () => {
 });
 
 describe('DesktopRuntime persistence', () => {
+  it('defaults unset recovery retention to 30 days while preserving an explicit Never choice', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-recovery-retention-'));
+    temporaryRoots.push(rawDataRoot);
+    const dataRoot = await realpath(rawDataRoot);
+    const runtime = createDesktopRuntime(dataRoot);
+    try {
+      const initial = await runtime.services.getDashboard();
+      expect(initial.settings.recoveryRetentionDays).toBe(30);
+      await runtime.services.setUserSettings({ settings: { ...initial.settings, recoveryRetentionDays: 0 } });
+      expect((await runtime.services.getDashboard()).settings.recoveryRetentionDays).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+
+    const restarted = createDesktopRuntime(dataRoot);
+    try {
+      expect((await restarted.services.getDashboard()).settings.recoveryRetentionDays).toBe(0);
+    } finally {
+      await restarted.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
   it('finishes the startup database backup before an immediate shutdown closes SQLite', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-backup-close-'));
     temporaryRoots.push(root);
