@@ -8,6 +8,20 @@ body:
     attributes:
       value: |
         Describe the user problem first, then the proposed solution. Large architectural changes may need design discussion before implementation.
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Target platform(s)
+      description: Select every platform this request should support.
+      multiple: true
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - All platforms
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -31,7 +45,7 @@ body:
     id: safety
     attributes:
       label: Security / compatibility considerations
-      description: Note any effect on workspace boundaries, permissions, destructive actions, MCP compatibility, storage, or Windows support.
+      description: Note any effect on workspace boundaries, permissions, destructive actions, MCP compatibility, storage, or cross-platform support (Windows, macOS, Linux).
   - type: checkboxes
     id: checks
     attributes:
