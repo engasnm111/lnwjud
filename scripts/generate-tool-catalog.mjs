@@ -73,7 +73,7 @@ const readmeBlock = [
   readmeStartMarker,
   `## Complete MCP tool catalog (${tools.length} total definitions; ${defaultAdvertisedCount} advertised by default; ${codexEnabledAdvertisedCount} with Codex delegation plus Agent Swarm enabled)`,
   '',
-  'This complete index is generated from `ToolRegistry.listAll()`, not copied from an older release document. The default `tools/list` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds seven opt-in definitions to the advertised surface.',
+  `This complete index is generated from \`ToolRegistry.listAll()\`, not copied from an older release document. The default \`tools/list\` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds ${codexEnabledAdvertisedCount - defaultAdvertisedCount} opt-in definitions to the advertised surface.`,
   '',
   '| # | Tool | Permission | Advertised | Delivery | Runtime evidence | Runtime description |',
   '| ---: | --- | --- | --- | --- | --- | --- |',

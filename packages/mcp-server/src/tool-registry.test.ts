@@ -9,7 +9,7 @@ import { LocalCapabilityService, ShellCapabilityBackend } from '@lnwjud/capabili
 import { permissionProfiles, type PermissionProfile } from '@lnwjud/permissions';
 import { DEFAULT_DESTRUCTIVE_AUTO_APPROVAL_POLICY, type DestructiveAutoApprovalPolicy } from '@lnwjud/shared';
 import type { ActivitySinkEvent } from './activity-tracker.js';
-import { ToolRegistry, type McpApplicationServices, type ToolRegistryOptions, type WorkspaceScope } from './tool-registry.js';
+import { CODEX_DELEGATION_TOOL_NAMES, isCodexDelegationTool, ToolRegistry, type McpApplicationServices, type ToolRegistryOptions, type WorkspaceScope } from './tool-registry.js';
 import { GoalRequestCancellationService } from '@lnwjud/application';
 import { CODEX_TOOL_NAMES } from './tools/codex-tools.js';
 import { isAdvertisedDeliveryState } from './tool-delivery-contract.js';
@@ -110,7 +110,7 @@ describe('MCP tool registry', () => {
       'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
       'prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'cancel_scheduled_continuation',
       ...UPGRADE_TOOL_CATALOG
-        .filter((entry) => entry.name !== 'agent_swarm_run' && isAdvertisedDeliveryState(entry.deliveryState))
+        .filter((entry) => !isCodexDelegationTool(entry.name) && isAdvertisedDeliveryState(entry.deliveryState))
         .map((entry) => entry.name),
       'tool_batch',
     ]);
@@ -149,9 +149,127 @@ describe('MCP tool registry', () => {
     const enabled = new ToolRegistry(services, actor, { codexToolsEnabled: true });
     expect(hidden.list().filter((tool) => tool.name.startsWith('codex_'))).toHaveLength(0);
     expect(hidden.list().map((tool) => tool.name)).not.toContain('agent_swarm_run');
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) {
+      expect(hidden.list().map((tool) => tool.name)).not.toContain(name);
+    }
     expect(enabled.list().filter((tool) => tool.name.startsWith('codex_')).map((tool) => tool.name)).toEqual([...CODEX_TOOL_NAMES]);
     expect(enabled.list().map((tool) => tool.name)).toContain('agent_swarm_run');
-    expect(enabled.list()).toHaveLength(hidden.list().length + CODEX_TOOL_NAMES.length + 1);
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) {
+      expect(enabled.list().map((tool) => tool.name)).toContain(name);
+    }
+    expect(enabled.list()).toHaveLength(hidden.list().length + CODEX_DELEGATION_TOOL_NAMES.length);
+  });
+
+  it('strictly enforces Codex delegation hard-off: hides all delegation tools and rejects invocation even with overrides, while preserving ON behavior with backing service', async () => {
+    const swarmCalls: string[] = [];
+    const services = {
+      codex: {
+        async status(): Promise<ReturnType<typeof ok>> { return ok({ ready: true }); },
+        async run(): Promise<ReturnType<typeof ok>> { return ok({ codexTaskId: '00000000-0000-4000-8000-000000000001' }); },
+        async list(): Promise<ReturnType<typeof ok>> { return ok({ items: [] }); },
+        async taskStatus(): Promise<ReturnType<typeof ok>> { return ok({ codexTaskId: '00000000-0000-4000-8000-000000000001', state: 'running' }); },
+        async taskLogs(): Promise<ReturnType<typeof ok>> { return ok({ codexTaskId: '00000000-0000-4000-8000-000000000001', stdout: '', stderr: '' }); },
+        async stop(): Promise<ReturnType<typeof ok>> { return ok({ codexTaskId: '00000000-0000-4000-8000-000000000001', stopped: true }); },
+      },
+      agentSwarm: {
+        async start(): Promise<ReturnType<typeof ok>> {
+          swarmCalls.push('start');
+          return ok({ swarmId: '00000000-0000-4000-8000-000000000001', state: 'running', tasks: [] });
+        },
+        async status(): Promise<ReturnType<typeof ok>> {
+          swarmCalls.push('status');
+          return ok({ swarmId: '00000000-0000-4000-8000-000000000001', state: 'running', tasks: [] });
+        },
+        async result(): Promise<ReturnType<typeof ok>> {
+          swarmCalls.push('result');
+          return ok({ swarmId: '00000000-0000-4000-8000-000000000001', taskId: 'a', state: 'completed', text: '', eof: true, outputTruncated: false });
+        },
+        async cancel(): Promise<ReturnType<typeof ok>> {
+          swarmCalls.push('cancel');
+          return ok({ swarmId: '00000000-0000-4000-8000-000000000001', state: 'cancelled', tasks: [] });
+        },
+        async list(): Promise<ReturnType<typeof ok>> {
+          swarmCalls.push('list');
+          return ok({ items: [] });
+        },
+      },
+    } as unknown as McpApplicationServices;
+
+    // 1. When codexToolsEnabled is false, no Codex delegation front door is advertised or invokable
+    const offRegistry = new ToolRegistry(services, actor, { codexToolsEnabled: false });
+    const offNames = new Set(offRegistry.list().map((tool) => tool.name));
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) {
+      expect(offNames.has(name)).toBe(false);
+      const response = await offRegistry.invoke(name, { workspaceId: 'workspace-1', instruction: 'test' });
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toMatchObject({ error: { code: 'INVALID_INPUT', message: 'Unknown MCP tool' } });
+    }
+
+    // 2. Even if tool-availability override tries to enable them, they remain system-ineligible, hidden, and rejected
+    const overrideSnapshot = {
+      version: 1 as const,
+      generation: 1,
+      overrides: Object.fromEntries(CODEX_DELEGATION_TOOL_NAMES.map((name) => [name, 'enabled' as const])),
+    };
+    const overriddenRegistry = new ToolRegistry(services, actor, {
+      codexToolsEnabled: false,
+      toolAvailabilitySnapshotProvider: () => overrideSnapshot,
+    });
+    const overriddenNames = new Set(overriddenRegistry.list().map((tool) => tool.name));
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) {
+      expect(overriddenNames.has(name)).toBe(false);
+      const response = await overriddenRegistry.invoke(name, { workspaceId: 'workspace-1', instruction: 'test' });
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toMatchObject({ error: { code: 'INVALID_INPUT', message: 'Unknown MCP tool' } });
+    }
+
+    // 3. When codexToolsEnabled is true and backing service exists, all delegation tools are advertised and invokable
+    const onRegistry = new ToolRegistry(services, actor, { codexToolsEnabled: true });
+    const onNames = new Set(onRegistry.list().map((tool) => tool.name));
+    for (const name of CODEX_DELEGATION_TOOL_NAMES) {
+      expect(onNames.has(name)).toBe(true);
+    }
+
+    const delegateRes = await onRegistry.invoke('delegate', {
+      workspaceId: 'workspace-1',
+      instruction: 'review code',
+    });
+    expect(delegateRes.isError).not.toBe(true);
+    expect(swarmCalls).toContain('start');
+
+    const delegateStatusRes = await onRegistry.invoke('delegate_status', {
+      workspaceId: 'workspace-1',
+      delegateId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(delegateStatusRes.isError).not.toBe(true);
+    expect(swarmCalls).toContain('status');
+
+    const parallelRes = await onRegistry.invoke('parallel_delegate', {
+      workspaceId: 'workspace-1',
+      tasks: [{ id: 'task-1', instruction: 'check a' }],
+    });
+    expect(parallelRes.isError).not.toBe(true);
+
+    const cancelRes = await onRegistry.invoke('delegate_cancel', {
+      workspaceId: 'workspace-1',
+      delegateId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(cancelRes.isError).not.toBe(true);
+    expect(swarmCalls).toContain('cancel');
+
+    const resultRes = await onRegistry.invoke('delegate_result', {
+      workspaceId: 'workspace-1',
+      delegateId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(resultRes.isError).not.toBe(true);
+    expect(swarmCalls).toContain('result');
+
+    const swarmRunRes = await onRegistry.invoke('agent_swarm_run', {
+      operation: 'status',
+      workspaceId: 'workspace-1',
+      swarmId: '00000000-0000-4000-8000-000000000001',
+    });
+    expect(swarmRunRes.isError).not.toBe(true);
   });
 
   it('applies live per-tool availability overrides to list and invoke without rebuilding the registry', async () => {

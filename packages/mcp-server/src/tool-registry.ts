@@ -55,7 +55,7 @@ import { ToolSchemaRegistry } from './tool-schema-registry.js';
 import { isAdvertisedDeliveryState } from './tool-delivery-contract.js';
 import { upgradeCatalogEntry } from './upgrade-catalog.js';
 import type { SetOfMarksObservationStore } from './set-of-marks-service.js';
-import { codexTools } from './tools/codex-tools.js';
+import { codexTools, CODEX_TOOL_NAMES } from './tools/codex-tools.js';
 import { capabilityTools } from './tools/capability-tools.js';
 import { fileTools } from './tools/file-tools.js';
 import { gitTools } from './tools/git-tools.js';
@@ -72,6 +72,29 @@ import type { McpApplicationServices, McpToolContext, McpToolDefinition } from '
 export type { McpApplicationServices } from './tools/tool-types.js';
 export type { ActiveProjectScope, WorkspaceScope } from './destructive-scope.js';
 export type AuthorizationMode = InvocationAuthorizationMode;
+
+export const CODEX_DELEGATION_EXACT_TOOL_NAMES = new Set([
+  'agent_swarm_run',
+  'delegate',
+  'delegate_status',
+  'delegate_cancel',
+  'delegate_result',
+  'parallel_delegate',
+]);
+
+export const CODEX_DELEGATION_TOOL_NAMES = Object.freeze([
+  ...CODEX_TOOL_NAMES,
+  'agent_swarm_run',
+  'delegate',
+  'delegate_status',
+  'delegate_cancel',
+  'delegate_result',
+  'parallel_delegate',
+] as const);
+
+export function isCodexDelegationTool(name: string): boolean {
+  return name.startsWith('codex_') || CODEX_DELEGATION_EXACT_TOOL_NAMES.has(name);
+}
 
 export interface ToolRegistryOptions {
   readonly diagnostic?: DiagnosticLogger;
@@ -218,14 +241,13 @@ export class ToolRegistry {
     ];
     const exposedAllBaseTools = allBaseTools.map((tool) => withToolEnvelopes(tool));
     const systemEligibleBaseTools = exposedAllBaseTools.filter((tool) => {
-      if ((tool.name.startsWith('codex_') || tool.name === 'agent_swarm_run') && options.codexToolsEnabled !== true) return false;
+      if (isCodexDelegationTool(tool.name) && options.codexToolsEnabled !== true) return false;
       if (tool.name === 'agent_swarm_run' && services.agentSwarm === undefined) return false;
       const catalogEntry = upgradeCatalogEntry(tool.name);
       return catalogEntry === undefined || isAdvertisedDeliveryState(catalogEntry.deliveryState);
     });
     const defaultExposedBaseTools = systemEligibleBaseTools.filter((tool) => {
-      if (tool.name.startsWith('codex_')) return options.codexToolsEnabled === true;
-      if (tool.name === 'agent_swarm_run') return options.codexToolsEnabled === true;
+      if (isCodexDelegationTool(tool.name)) return options.codexToolsEnabled === true;
       return true;
     });
     const exposedBatchTools = batchTools({

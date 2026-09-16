@@ -11,7 +11,7 @@ import type {
   ToolReadinessStatus,
   UiLocale,
 } from '@lnwjud/ipc-contracts';
-import { ToolRegistry, isAdvertisedDeliveryState, upgradeCatalogEntry } from '@lnwjud/mcp-server';
+import { ToolRegistry, isAdvertisedDeliveryState, isCodexDelegationTool, upgradeCatalogEntry } from '@lnwjud/mcp-server';
 import { DEFAULT_TOOL_AVAILABILITY_SNAPSHOT, resolveEffectiveToolAvailability, type ToolAvailabilitySnapshot } from '@lnwjud/shared';
 import { catalogDefinitions } from './catalog-definitions.js';
 import { resolveCatalogCopy } from './catalog-copy.js';
@@ -117,7 +117,7 @@ export class ToolCatalogService {
         }
         return [stripDuration(result)];
       });
-      const codexFamily = definition.name.startsWith('codex_') || definition.name === 'agent_swarm_run';
+      const codexFamily = isCodexDelegationTool(definition.name);
       const codexEnabled = !codexFamily || this.#options.codexEnabled?.() === true;
       const codexDisabled = codexFamily && !codexEnabled;
       const eccAction = definition.name.startsWith('ecc_') && definition.name !== 'ecc_status';

@@ -140,6 +140,12 @@ describe('tool catalog readiness aggregation', () => {
     });
     expect(disabledSwarm?.remediationIds).toContain('configure_codex');
 
+    const disabledDelegate = (await disabled.catalog.getSnapshot('en')).items.find((item) => item.name === 'delegate_status');
+    expect(disabledDelegate).toMatchObject({
+      readiness: 'disabled', readinessReason: 'feature_disabled', deliveryState: 'feature_disabled', available: false,
+    });
+    expect(disabledDelegate?.remediationIds).toContain('configure_codex');
+
     const readySwarm = (await enabledRuntime.catalog.getSnapshot('en')).items.find((item) => item.name === 'agent_swarm_run');
     expect(readySwarm).toMatchObject({ readiness: 'ready', deliveryState: 'dependency_gated', available: true });
   });

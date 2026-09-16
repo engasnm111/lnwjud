@@ -34,7 +34,7 @@ allowed to fail later.
 <!-- BEGIN GENERATED TOOL REGISTRY -->
 ## Generated live ToolRegistry index
 
-This complete inventory is generated from `ToolRegistry.listAll()`: **253 total tool definitions**. The runtime advertises **246 tools by default** and **253 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
+This complete inventory is generated from `ToolRegistry.listAll()`: **253 total tool definitions**. The runtime advertises **241 tools by default** and **253 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
 Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm docs:tools:check` and fails on drift.
 
 | # | Tool | Permission | Advertised | Delivery | Runtime evidence | Read-only | Destructive |
@@ -222,11 +222,11 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 | 181 | `task_cancel` | EXECUTE | default | operational | service_dispatch | no | no |
 | 182 | `task_result` | READ | default | operational | service_dispatch | yes | no |
 | 183 | `task_list` | READ | default | operational | service_dispatch | yes | no |
-| 184 | `delegate` | EXECUTE | default | dependency_gated | service_dispatch | no | no |
-| 185 | `delegate_status` | READ | default | dependency_gated | service_dispatch | yes | no |
-| 186 | `delegate_cancel` | EXECUTE | default | dependency_gated | service_dispatch | no | no |
-| 187 | `delegate_result` | READ | default | dependency_gated | service_dispatch | yes | no |
-| 188 | `parallel_delegate` | EXECUTE | default | dependency_gated | service_dispatch | no | no |
+| 184 | `delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
+| 185 | `delegate_status` | READ | Codex opt-in | dependency_gated | service_dispatch | yes | no |
+| 186 | `delegate_cancel` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
+| 187 | `delegate_result` | READ | Codex opt-in | dependency_gated | service_dispatch | yes | no |
+| 188 | `parallel_delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
 | 189 | `permission_check` | READ | default | operational | deterministic_operation | yes | no |
 | 190 | `permission_profile` | READ | default | operational | deterministic_operation | yes | no |
 | 191 | `live_logs_query` | READ | default | operational | truthful_unavailable | yes | no |

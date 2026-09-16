@@ -137,6 +137,8 @@ describe('tool runtime delivery contract', () => {
     ]));
     expect(advertisedNames).not.toContain('codex_status');
     expect(advertisedNames).not.toContain('agent_swarm_run');
+    expect(advertisedNames).not.toContain('delegate');
+    expect(advertisedNames).not.toContain('parallel_delegate');
     for (const pluginName of ['plugin_install', 'plugin_list', 'plugin_enable', 'plugin_disable', 'plugin_remove']) {
       expect(advertisedNames).toContain(pluginName);
     }

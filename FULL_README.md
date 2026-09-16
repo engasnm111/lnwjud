@@ -459,7 +459,7 @@ For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** is 
 4. **Business Admin/Owner setup:** in Workspace Settings → Apps → Create, add the public `https://.../mcp` URL, select **OAuth**, complete Scan Tools, create the app, then **Publish** it. Ordinary workspace members do not need Developer mode and do not paste the Server URL again.
 5. **Member connection:** open the published custom lnwjud app in ChatGPT and press **Connect**. For the exact supported ChatGPT OAuth callback paths, the browser is handed once to a random short-lived `http://127.0.0.1:<ephemeral>/...` approval listener owned by the running lnwjud Desktop, then lnwjud completes DCR + Authorization Code + PKCE and redirects back to ChatGPT — **no PIN entry and no extra approval click**. The public ngrok endpoint cannot redeem that localhost ticket.
 6. lnwjud remembers the trusted registered ChatGPT client and valid refresh grant in the host secure-storage provider. Ordinary app restarts or **Start Remote MCP** do not require another authorization. An explicit **Stop** disables auto-start but preserves the trusted OAuth relationship; use **Reconnect ChatGPT** only when you intentionally want to reset that relationship. A short-lived 6-digit PIN is generated only when an OAuth client does not match the supported ChatGPT callback contract.
-7. Confirm the connection discovers **246 tools by default** (or **253** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
+7. Confirm the connection discovers **241 tools by default** (or **253** when Codex delegation plus Agent Swarm is explicitly enabled), then run a read-only smoke test before writes.
 
 The public ngrok URL is not the raw loopback MCP endpoint: requests must pass OAuth and bearer-token validation at the separate gateway. Do not publish `http://127.0.0.1:<port>/mcp` directly through a generic reverse proxy.
 
@@ -1115,9 +1115,9 @@ For workspace <workspace-id>, show the project snapshot, Git status, and the top
 When a first-party tool is enabled or disabled, standards-compliant MCP clients receive `notifications/tools/list_changed` and can refresh the live list without restarting lnwjud. ChatGPT app/action catalogs may additionally use a host-managed approved snapshot: use the ChatGPT action refresh/tool-scan flow that is actually available for the workspace. A browser F5 alone is **not** guaranteed to update an approved/frozen action snapshot, and lnwjud does not claim host synchronization without evidence.
 
 <!-- BEGIN GENERATED README TOOL REGISTRY -->
-## Complete MCP tool catalog (253 total definitions; 246 advertised by default; 253 with Codex delegation plus Agent Swarm enabled)
+## Complete MCP tool catalog (253 total definitions; 241 advertised by default; 253 with Codex delegation plus Agent Swarm enabled)
 
-This complete index is generated from `ToolRegistry.listAll()`, not copied from an older release document. The default `tools/list` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds seven opt-in definitions to the advertised surface.
+This complete index is generated from `ToolRegistry.listAll()`, not copied from an older release document. The default `tools/list` surface advertises only operational or dependency-gated definitions; planned and feature-disabled definitions remain visible here without being advertised. Enabling Codex delegation plus Agent Swarm adds 12 opt-in definitions to the advertised surface.
 
 | # | Tool | Permission | Advertised | Delivery | Runtime evidence | Runtime description |
 | ---: | --- | --- | --- | --- | --- | --- |
@@ -1304,11 +1304,11 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | 181 | `task_cancel` | EXECUTE | default | operational | service_dispatch | Cancel a durable managed task by taskId using the same verified process-tree termination path as shell tasks. |
 | 182 | `task_result` | READ | default | operational | service_dispatch | Read the current durable managed task result and captured output by taskId. |
 | 183 | `task_list` | READ | default | operational | service_dispatch | List durable managed tasks owned by the current client/session/workspace. |
-| 184 | `delegate` | EXECUTE | default | dependency_gated | service_dispatch | Delegate one bounded read-only task through the owned agent-swarm provider when configured. |
-| 185 | `delegate_status` | READ | default | dependency_gated | service_dispatch | Read delegated agent state from the owned agent-swarm provider. |
-| 186 | `delegate_cancel` | EXECUTE | default | dependency_gated | service_dispatch | Cancel an owned delegated agent task. |
-| 187 | `delegate_result` | READ | default | dependency_gated | service_dispatch | Read an owned delegated agent result. |
-| 188 | `parallel_delegate` | EXECUTE | default | dependency_gated | service_dispatch | Run up to four isolated read-only agent tasks through the owned swarm provider with explicit dependency/collision metadata. |
+| 184 | `delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | Delegate one bounded read-only task through the owned agent-swarm provider when configured. |
+| 185 | `delegate_status` | READ | Codex opt-in | dependency_gated | service_dispatch | Read delegated agent state from the owned agent-swarm provider. |
+| 186 | `delegate_cancel` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | Cancel an owned delegated agent task. |
+| 187 | `delegate_result` | READ | Codex opt-in | dependency_gated | service_dispatch | Read an owned delegated agent result. |
+| 188 | `parallel_delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | Run up to four isolated read-only agent tasks through the owned swarm provider with explicit dependency/collision metadata. |
 | 189 | `permission_check` | READ | default | operational | deterministic_operation | Evaluate an action class without limiting allowed context reads. |
 | 190 | `permission_profile` | READ | default | operational | deterministic_operation | Return the active Permission v2 profile. |
 | 191 | `live_logs_query` | READ | default | operational | truthful_unavailable | Query bounded structured MCP activity events with tool, workspace, phase, result, call/trace correlation filters. |
