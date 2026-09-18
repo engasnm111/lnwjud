@@ -1,4 +1,5 @@
 export * from './audit-repository.js';
+export * from './automation-repository.js';
 export * from './checkpoint-repository.js';
 export * from './database.js';
 export * from './goal-repository.js';
@@ -14,3 +15,4 @@ export * from './checkpoint-key-store.js';
 export * from './backup-service.js';
 export * from './agent-swarm-repository.js';
 export * from './migrations/agent-swarm-migration.js';
+export * from './migrations/automation-engine-migration.js';

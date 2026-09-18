@@ -1,3 +1,4 @@
+export * from './automation.js';
 export * from './command.js';
 export * from './errors.js';
 export * from './goal-continuation.js';
