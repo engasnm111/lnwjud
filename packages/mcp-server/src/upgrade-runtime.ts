@@ -30,6 +30,7 @@ import { LspRuntimeService } from './lsp-runtime.js';
 import { withReplacementRecoveryDetails } from './replacement-recovery.js';
 import { withCapabilityOwnerMetadata } from './request-scope.js';
 import { SandboxRuntimeService } from './sandbox-runtime.js';
+import { rankSkillMatches, type SkillMatchCandidate } from './skill-routing.js';
 import { truthfulUnavailable } from './tool-delivery-contract.js';
 import { UPGRADE_TOOL_CATALOG, type UpgradeToolCatalogEntry } from './upgrade-catalog.js';
 import {
@@ -1932,16 +1933,14 @@ export class UpgradeRuntimeService {
     if (name === 'skill_match') {
       const query = readString(input, 'query') ?? readString(input, 'prompt') ?? '';
       const source = readString(input, 'source')?.trim().toLowerCase();
+      const limit = boundedInteger(input.limit, 8, 1, 50);
       if (source === 'ecc' && !eccEnabled) return ok(truthfulUnavailable(name, 'disabled', ['enable ECC in host Settings']));
-      const skills: unknown[] = [];
+      const skills: SkillMatchCandidate[] = [];
       if (source !== 'ecc') {
         if (extensions === undefined) {
           if (source !== undefined) return ok(truthfulUnavailable(name, 'needs_setup', ['configured local skill catalog']));
         } else {
-          const listed = await extensions.listSkills({
-            ...(query.length === 0 ? {} : { query }),
-            ...(source === undefined ? {} : { source }),
-          });
+          const listed = await extensions.listSkills(source === undefined ? {} : { source });
           if (!listed.ok) return listed;
           skills.push(...listed.value.skills);
         }
@@ -1950,7 +1949,7 @@ export class UpgradeRuntimeService {
         const provider = await this.ecc.status();
         if (provider.ready && provider.rootPath !== null) {
           const rootPath = provider.rootPath;
-          const catalog = await this.ecc.catalog({ kind: 'skill', ...(query.length === 0 ? {} : { query }), limit: 500 });
+          const catalog = await this.ecc.catalog({ kind: 'skill', limit: 500 });
           skills.push(...catalog.artifacts.map((artifact) => ({
             id: artifact.id,
             name: artifact.title,
@@ -1968,7 +1967,10 @@ export class UpgradeRuntimeService {
       if (skills.length === 0 && extensions === undefined) {
         return ok(truthfulUnavailable(name, 'needs_setup', ['configured local skill catalog or pinned ECC provider']));
       }
-      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, query, skills });
+      const matches = query.trim().length === 0
+        ? skills.slice(0, limit)
+        : rankSkillMatches(skills, query, limit).map((match) => match.skill);
+      return ok({ tool: name, status: 'ready', available: true, ready: true, executed: true, query, skills: matches });
     }
 
     const requestedSkillId = readString(input, 'skillId') ?? readString(input, 'id') ?? readString(input, 'name');

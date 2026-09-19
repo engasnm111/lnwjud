@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { rename, unlink, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { LogLine, TunnelLifecycleCategory, TunnelStatus } from '@lnwjud/ipc-contracts';
+import type { IncidentClassification, LogLine, TunnelLifecycleCategory, TunnelStatus } from '@lnwjud/ipc-contracts';
 import { DEFAULT_DISPLAY_TIME_ZONE, formatOffsetIsoTimestamp } from '@lnwjud/shared/date-time-display';
 import type { CrashEventHistoryRecord } from './crash-recovery.js';
 import type { DesktopSessionSnapshot } from './desktop-session-diagnostics.js';
@@ -24,7 +24,6 @@ const CLI_SECRET_VALUE = /(^|\s)(--(?:api-key|token|access-token|refresh-token|i
 const KNOWN_SECRET_PREFIX = /\b(?:sk-[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]+)\b/g;
 const PREVIOUS_SESSION_RELEVANCE_MS = 10 * 60 * 1000;
 
-export type IncidentClassification = 'desktop_session_ended_uncleanly' | 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
 export type TunnelHealthState = 'live' | 'unhealthy' | 'unavailable' | 'unknown';
 export interface IncidentHealth { readonly state: TunnelHealthState; readonly message: string | null; }
 export interface IncidentDesktopMemory {

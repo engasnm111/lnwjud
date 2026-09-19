@@ -110,6 +110,7 @@ async function syncAllVersions() {
   for (const readmePath of readmePaths) {
     let readmeContent = await readFile(readmePath, 'utf8');
     readmeContent = readmeContent
+      .replace(/## Current source version: v[0-9.]+/g, `## Current source version: v${version}`)
       .replace(/## Current (?:version|source \/ release candidate|release): v[0-9.]+/g, `## Current version: v${version}`)
       .replace(/(`dev` (?:branch is )?preparing )v[0-9.]+/g, `$1v${version}`)
       .replace(/The v[0-9.]+ development runtime contract/g, `The v${version} development runtime contract`)
@@ -124,6 +125,9 @@ async function syncAllVersions() {
     console.log(`Updated ${path.basename(readmePath)} -> v${version}`);
   }
 
+  const releaseReadme = await readFile(path.join(rootDir, 'README.md'), 'utf8');
+  const publishedVersion = releaseReadme.match(/Latest published release: \*\*v([0-9.]+)\*\*/)?.[1] ?? version;
+
   // 9. Update current-version Markdown references without rewriting release history.
   const markdownTargets = [
     ['.github/RELEASE_CHECKLIST.md', (content) => content
@@ -136,6 +140,11 @@ async function syncAllVersions() {
       .replace(/lnwjud-Setup-[0-9.]+\.exe/g, `lnwjud-Setup-${version}.exe`)
       .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${version}.exe`)],
     ['docs/INSTALL_MACOS.md', (content) => content.replace(/This guide covers the v[0-9.]+ native macOS release target/g, `This guide covers the v${version} native macOS release target`)],
+    ['docs/USAGE_TH.md', (content) => content
+      .replace(/^# คู่มือใช้งาน lnwjud v[0-9.]+ \(ภาษาไทย\)/m, `# คู่มือใช้งาน lnwjud v${version} (ภาษาไทย)`)
+      .replace(/^คู่มือนี้อัปเดตตาม source[^\r\n]*$/m, `คู่มือนี้อัปเดตตาม source ` + '`v' + version + '`; public release `v' + publishedVersion + '` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v' + publishedVersion + ')')
+      .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`)
+      .replace(/apps\/desktop\/dist\/installers\/lnwjud-Portable-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`)],
     ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`).replace(/ความสามารถหลักใน v[0-9.]+ คือ:/g, `ความสามารถหลักใน v${version} คือ:`)],
     ['docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md', (content) => content.replace(/current v[0-9.]+ runtime contract/g, `current v${version} runtime contract`)],
     ['docs/architecture/TOOL_CONTRACT.md', (content) => content.replace(/snapshot synchronized for `v[0-9.]+`/g, `snapshot synchronized for ` + '`v' + version + '`')],

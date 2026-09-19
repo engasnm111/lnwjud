@@ -5,6 +5,7 @@ import {
   MIN_GOAL_LEASE_SECONDS,
 } from '@lnwjud/application';
 import { ok } from '@lnwjud/domain';
+import { rankSkillMatches, selectAutoSkillMatches } from '../skill-routing.js';
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 
 const goalKey = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
@@ -196,17 +197,79 @@ export const GOAL_TOOL_NAMES = [
   'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
 ] as const;
 
+const MAX_GOAL_SKILL_PREFLIGHT_BYTES = 48 * 1024;
+const MAX_GOAL_PROJECT_INSTRUCTIONS_BYTES = 512 * 1024;
+
+async function loadGoalSkillPreflight(context: McpToolContext, objective: string | undefined): Promise<Readonly<Record<string, unknown>> | undefined> {
+  const query = objective?.trim();
+  const extensions = context.services.extensions;
+  if (query === undefined || query.length === 0 || extensions === undefined) return undefined;
+
+  const listed = await extensions.listSkills({});
+  if (!listed.ok) return { status: 'unavailable', mode: 'auto', loadedSkills: [] };
+  const ranked = rankSkillMatches(listed.value.skills, query, 8);
+  const selected = selectAutoSkillMatches(ranked);
+  if (selected.length === 0) return { status: 'no_match', mode: 'auto', loadedSkills: [] };
+
+  const mode = selected.some((match) => match.explicit) ? 'explicit' : 'auto';
+  const loadedSkills: unknown[] = [];
+  let loadedBytes = 0;
+  for (const match of selected) {
+    const loaded = await extensions.readSkill({ skillId: match.skill.id });
+    if (!loaded.ok) continue;
+    const bytes = Buffer.byteLength(loaded.value.content, 'utf8');
+    if (bytes > MAX_GOAL_SKILL_PREFLIGHT_BYTES || loadedBytes + bytes > MAX_GOAL_SKILL_PREFLIGHT_BYTES) continue;
+    loadedSkills.push(loaded.value);
+    loadedBytes += bytes;
+  }
+  return {
+    status: loadedSkills.length > 0 ? 'loaded' : 'unavailable',
+    mode,
+    loadedSkills,
+  };
+}
+
+async function loadGoalProjectInstructions(context: McpToolContext, workspaceId: string): Promise<Readonly<Record<string, unknown>>> {
+  const file = context.services.file;
+  if (file === undefined) return { status: 'unavailable', path: 'AGENTS.md' };
+
+  const loaded = await file.readFile(context.actor, workspaceId, { path: 'AGENTS.md' });
+  if (!loaded.ok) {
+    return loaded.error.code === 'FILE_NOT_FOUND'
+      ? { status: 'not_found', path: 'AGENTS.md' }
+      : { status: 'unavailable', path: 'AGENTS.md', errorCode: loaded.error.code };
+  }
+
+  const byteLength = Buffer.byteLength(loaded.value.content, 'utf8');
+  if (byteLength > MAX_GOAL_PROJECT_INSTRUCTIONS_BYTES) {
+    return {
+      status: 'too_large',
+      path: 'AGENTS.md',
+      byteLength,
+      maxBytes: MAX_GOAL_PROJECT_INSTRUCTIONS_BYTES,
+    };
+  }
+
+  return {
+    status: 'loaded',
+    path: 'AGENTS.md',
+    byteLength,
+    content: loaded.value.content,
+  };
+}
+
 export function goalTools(context: McpToolContext): McpToolDefinition[] {
   return [
     defineTool({
       name: 'run_goal',
-      description: 'Immediate-return durable goal create/resume and lease acquisition. Invoke run_goal before the first mutation of any non-trivial multi-step change. For an active rolling goal whose prior worker died, stale-lease recovery still requires trustworthy runtime liveness and rotates the lease generation. Unfinished goals default to scheduledContinuation=auto: the client must load/follow the bundled lnwjud-scheduled-continuation skill and maintain exactly one Native ChatGPT hourly recurring watchdog with cloud execution requested. New v4.53 goals reuse the same native task ID across ordinary hourly wakes; checkpoints and collisions never imply per-wake successor creation or recurrence retiming. Historical v4.52 occurrence=once rows are migrated compatibly and must not overlap a new recurring watchdog. Continue useful work without waiting for the user to type continue/ทำต่อ. The leased worker is work-conserving: a milestone checkpoint is not a turn boundary, a transient tool/task-observation failure is not a handoff signal, and a safely reacquirable lease expiry should be recovered with the same goalKey so useful work continues in the same host turn. A truthful native create failure or Resource not found is scheduler transport degradation only: keep the durable goal active and continue the current leased worker rather than terminalizing the work, and never substitute another scheduler. Stop scheduling only when the goal is terminal or scheduling is explicitly disabled. Native ChatGPT task operations remain host-owned through the Scheduled Task surface exposed to the chat; this tool never claims that a task was created and never substitutes browser/DOM automation, Windows Task Scheduler, cron, or shell timers.',
+      description: 'Immediate-return durable goal create/resume and lease acquisition. Every invocation re-reads workspace AGENTS.md when present and returns it as projectInstructionsPreflight so repository rules are available before subsequent work; the preflight is never cached. Invoke run_goal before the first mutation of any non-trivial multi-step change. For an active rolling goal whose prior worker died, stale-lease recovery still requires trustworthy runtime liveness and rotates the lease generation. Unfinished goals default to scheduledContinuation=auto: the client must load/follow the bundled lnwjud-scheduled-continuation skill and maintain exactly one Native ChatGPT hourly recurring watchdog with cloud execution requested. New v4.53 goals reuse the same native task ID across ordinary hourly wakes; checkpoints and collisions never imply per-wake successor creation or recurrence retiming. Historical v4.52 occurrence=once rows are migrated compatibly and must not overlap a new recurring watchdog. Continue useful work without waiting for the user to type continue/ทำต่อ. The leased worker is work-conserving: a milestone checkpoint is not a turn boundary, a transient tool/task-observation failure is not a handoff signal, and a safely reacquirable lease expiry should be recovered with the same goalKey so useful work continues in the same host turn. A truthful native create failure or Resource not found is scheduler transport degradation only: keep the durable goal active and continue the current leased worker rather than terminalizing the work, and never substitute another scheduler. Stop scheduling only when the goal is terminal or scheduling is explicitly disabled. Native ChatGPT task operations remain host-owned through the Scheduled Task surface exposed to the chat; this tool never claims that a task was created and never substitutes browser/DOM automation, Windows Task Scheduler, cron, or shell timers.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: runGoalSchema,
       handler: async (input) => {
         const goals = context.services.goals;
         if (goals === undefined) return missingService();
+        const projectInstructionsPreflight = await loadGoalProjectInstructions(context, input.workspaceId);
         const result = await goals.runGoal(context.actor, {
           workspaceId: input.workspaceId,
           goalKey: input.goalKey,
@@ -224,6 +287,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
           ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         });
         if (!result.ok) return result;
+        const skillPreflight = await loadGoalSkillPreflight(context, input.objective);
         const active = result.value.status === 'active';
         const scheduledContinuation = input.scheduledContinuation ?? 'auto';
         const auto = scheduledContinuation === 'auto';
@@ -247,6 +311,8 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
                   : 'not_confirmed';
         return ok({
           ...result.value,
+          projectInstructionsPreflight,
+          ...(skillPreflight === undefined ? {} : { skillPreflight }),
           ...(!result.value.acquired && result.value.retryAfterSeconds !== undefined && result.value.retryAfterSeconds <= 60
             ? {
                 leaseGuidance: `Previous worker appears inactive. The bounded stale-recovery grace expires in ${result.value.retryAfterSeconds}s. Wait ${result.value.retryAfterSeconds}s and call run_goal again to take over the lease; do not yield or treat as occupied.`,

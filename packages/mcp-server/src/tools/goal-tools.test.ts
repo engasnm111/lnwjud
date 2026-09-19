@@ -125,6 +125,125 @@ describe('durable goal MCP tools', () => {
     expect(tool(context, 'run_goal').description).toMatch(/Immediate-return/i);
   });
 
+  it('auto-loads the most relevant local skill into run_goal preflight when the user did not name one', async () => {
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async runGoal() {
+            return ok({
+              goalId: 'goal-auto-skill', goalKey: 'auto-skill', status: 'active', revision: 0, acquired: true,
+              leaseToken: 'lease-secret', leaseExpiresAt: '2026-09-19T00:10:00.000Z', currentPhase: 'created',
+              plan: { steps: [] }, completedSteps: [], pendingSteps: [], nextAction: 'Diagnose it.', blockers: [], activeTaskIds: [], lastCheckpoint: null,
+            });
+          },
+        },
+        extensions: {
+          async listSkills() {
+            return ok({ skills: [
+              {
+                id: 'claude-skills/diagnosing-bugs',
+                name: 'diagnosing-bugs',
+                description: 'Diagnosis loop for hard bugs and performance regressions. Use when the user says diagnose or debug this.',
+                source: 'claude-skills', trustTier: 'user', rootPath: 'C:\\skills', skillPath: 'C:\\skills\\diagnosing-bugs\\SKILL.md',
+              },
+              {
+                id: 'claude-skills/frontend-design',
+                name: 'frontend-design',
+                description: 'Use for visual frontend design work.',
+                source: 'claude-skills', trustTier: 'user', rootPath: 'C:\\skills', skillPath: 'C:\\skills\\frontend-design\\SKILL.md',
+              },
+            ] });
+          },
+          async readSkill(input: { readonly skillId: string }) {
+            return ok({
+              id: input.skillId,
+              name: 'diagnosing-bugs',
+              description: 'Diagnosis loop for hard bugs and performance regressions.',
+              source: 'claude-skills',
+              trustTier: 'user',
+              path: 'C:\\skills\\diagnosing-bugs\\SKILL.md',
+              canonicalPath: 'C:\\skills\\diagnosing-bugs\\SKILL.md',
+              content: '# Diagnosing Bugs\nBuild a red-capable feedback loop first.\n',
+            });
+          },
+        },
+      },
+    } as unknown as McpToolContext;
+
+    const result = await tool(context, 'run_goal').execute({
+      workspaceId: 'workspace-1',
+      goalKey: 'auto-skill',
+      objective: 'Diagnose the hard MCP lifecycle bug and investigate the performance regression',
+      scheduledContinuation: 'off',
+    }, new AbortController().signal);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        goalId: 'goal-auto-skill',
+        skillPreflight: {
+          status: 'loaded',
+          mode: 'auto',
+          loadedSkills: [{ id: 'claude-skills/diagnosing-bugs', content: expect.stringContaining('feedback loop') }],
+        },
+      },
+    });
+  });
+
+  it('loads workspace AGENTS.md on every run_goal invocation', async () => {
+    let instructionReads = 0;
+    const context = {
+      actor,
+      contextEconomy: new ContextEconomyRuntime(),
+      services: {
+        goals: {
+          async runGoal() {
+            return ok({
+              goalId: 'goal-agents', goalKey: 'agents-preflight', status: 'active', revision: 0, acquired: true,
+              leaseToken: 'lease-secret', leaseExpiresAt: '2026-09-19T00:10:00.000Z', currentPhase: 'created',
+              plan: { steps: [] }, completedSteps: [], pendingSteps: [], nextAction: 'Follow project rules.', blockers: [], activeTaskIds: [], lastCheckpoint: null,
+            });
+          },
+        },
+        file: {
+          async readFile(_actor: unknown, workspaceId: string | undefined, request: { readonly path: string }) {
+            instructionReads += 1;
+            expect(workspaceId).toBe('workspace-1');
+            expect(request.path).toBe('AGENTS.md');
+            return ok({
+              path: 'AGENTS.md',
+              content: '# Repository agent instructions\nAlways follow the repository rules.\n',
+              startLine: 1,
+              endLine: 2,
+              encoding: 'utf8',
+              mimeType: 'text/plain',
+            });
+          },
+        },
+      },
+    } as unknown as McpToolContext;
+
+    const input = { workspaceId: 'workspace-1', goalKey: 'agents-preflight', objective: 'Update the project safely', scheduledContinuation: 'off' };
+    const first = await tool(context, 'run_goal').execute(input, new AbortController().signal);
+    const second = await tool(context, 'run_goal').execute(input, new AbortController().signal);
+
+    expect(instructionReads).toBe(2);
+    for (const result of [first, second]) {
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          projectInstructionsPreflight: {
+            status: 'loaded',
+            path: 'AGENTS.md',
+            content: expect.stringContaining('Repository agent instructions'),
+          },
+        },
+      });
+    }
+  });
+
   it('never treats a prepared reservation as a confirmed cloud successor on resume', async () => {
     const context = {
       actor,

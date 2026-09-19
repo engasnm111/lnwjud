@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.3.0';
+export const APP_VERSION = '5.3.1';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',
@@ -627,7 +627,18 @@ export function workspaceScopeMatches(workspaces: readonly WorkspaceSummary[], c
   return canonicalWorkspaceScopeId(workspaces, candidate) === canonicalWorkspaceScopeId(workspaces, selected);
 }
 
-export type IncidentClassification = 'desktop_session_ended_uncleanly' | 'local_tool_failed' | 'tunnel_disconnected' | 'remote_turn_stopped' | 'healthy_or_inconclusive';
+export const INCIDENT_CLASSIFICATIONS = [
+  'desktop_session_ended_uncleanly',
+  'local_tool_failed',
+  'tunnel_disconnected',
+  'remote_turn_stopped',
+  'healthy_or_inconclusive',
+] as const;
+export type IncidentClassification = typeof INCIDENT_CLASSIFICATIONS[number];
+
+export function isIncidentClassification(value: unknown): value is IncidentClassification {
+  return typeof value === 'string' && (INCIDENT_CLASSIFICATIONS as readonly string[]).includes(value);
+}
 export interface IncidentExportResult {
   readonly exported: boolean;
   readonly cancelled: boolean;

@@ -119,6 +119,13 @@ describe('LocalExtensionsService MCP bridge', () => {
     expect(called.ok).toBe(true);
     expect(calls).toEqual(['ping:{"n":1}']);
 
+    const missing = await service.callMcpTool({ server: 'mock', tool: 'stale_tool_name', arguments: {} });
+    expect(missing).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    if (!missing.ok) {
+      expect(missing.error.message).toContain('mcp_describe');
+      expect(missing.error.message).toContain('ping');
+    }
+
     await service.close();
   });
 
@@ -484,6 +491,47 @@ describe('LocalExtensionsService MCP bridge', () => {
         name: 'mock',
         connected: false,
         lifecycle: 'termination_unverified',
+      });
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a replacement external session as connected after an earlier close failure', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-extensions-reconnected-'));
+    const firstSession: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => ({ content: [] }),
+      close: async () => { throw new Error('old tree still alive'); },
+    };
+    const replacementSession: McpClientSession = {
+      listTools: async () => [{ name: 'ping', description: 'Ping tool' }],
+      listResources: async () => [],
+      callTool: async () => ({ content: [] }),
+      close: async () => undefined,
+    };
+    let connects = 0;
+    const service = new LocalExtensionsService({
+      settings: settingsWithMockServer(),
+      homeDir: root,
+      appDataDir: root,
+      clientFactory: {
+        connect: async (): Promise<McpClientSession> => (++connects === 1 ? firstSession : replacementSession),
+      },
+    });
+    try {
+      await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: true });
+      await service.disconnectMcpServer?.('mock');
+      await expect(service.describeMcpServer({ server: 'mock' })).resolves.toMatchObject({ ok: true });
+      const listed = await service.listMcpServers();
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      expect(listed.value.servers.find((server) => server.name === 'mock')).toMatchObject({
+        name: 'mock',
+        connected: true,
+        lifecycle: 'connected',
       });
     } finally {
       await service.close();

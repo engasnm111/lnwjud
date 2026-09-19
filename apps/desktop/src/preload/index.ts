@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   ipcChannels,
+  isIncidentClassification,
   pushChannels,
   type AddWorkspaceRequest,
   type AgentState,
@@ -1406,7 +1407,7 @@ function captureIncident(): Promise<IncidentExportResult> {
   return invoke(ipcChannels.captureIncident).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
     const classification = value.classification;
-    if (classification !== 'local_tool_failed' && classification !== 'tunnel_disconnected' && classification !== 'remote_turn_stopped' && classification !== 'healthy_or_inconclusive') throw new Error('Invalid IPC response');
+    if (!isIncidentClassification(classification)) throw new Error('Invalid IPC response');
     return { exported: booleanField(value, 'exported'), cancelled: booleanField(value, 'cancelled'), classification, capturedAt: nullableString(value.capturedAt) };
   });
 }

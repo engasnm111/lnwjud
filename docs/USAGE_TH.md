@@ -1,8 +1,8 @@
-# คู่มือใช้งาน lnwjud v5.3.0 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.3.1 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม source และ public release `v5.3.0` ปัจจุบัน ไฟล์ release ที่เผยแพร่แล้วอยู่ที่ [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.3.0)
+คู่มือนี้อัปเดตตาม source `v5.3.1`; public release `v5.3.0` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.3.0)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว release รวม official OpenAI `tunnel-client v0.0.14` ที่ตรงกับ OS และ architecture ของ target ไว้ให้แล้ว
 
@@ -344,8 +344,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.3.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.3.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.3.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.3.1.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

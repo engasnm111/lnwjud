@@ -36,10 +36,18 @@ describe('Remote MCP ngrok settings UI', () => {
     expect(messagesSource).toContain('use a distinct Tunnel ID per machine');
   });
 
+  it('adds direct setup links for both ChatGPT connection methods', () => {
+    expect(settingsSource).toContain("props.onOpenExternalSetupPage('chatgpt_plugins')");
+    expect(settingsSource).toContain("props.onOpenExternalSetupPage('openai_tunnels')");
+    expect(settingsSource).toContain("props.onOpenExternalSetupPage('openai_api_keys')");
+    expect(settingsSource).toContain("t('settingsPage.openChatgptPlugins')");
+  });
+
   it('adds an explicit 10px follow-up gap because Chromium details content does not honor the parent grid gap between sections', () => {
     expect(settingsSource.match(/connection-method-followup-card/g)?.length).toBe(2);
     expect(settingsCssSource).toContain('.connection-method-followup-card {');
     expect(settingsCssSource).toContain('margin-top: 10px;');
+    expect(settingsCssSource).toContain('margin-bottom: 10px;');
   });
 
   it('uses zero-click ChatGPT OAuth handoff and contains no legacy PIN or pairing UI', () => {

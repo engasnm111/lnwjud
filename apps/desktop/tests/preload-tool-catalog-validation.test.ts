@@ -106,6 +106,19 @@ describe('preload Tool Catalog validation', () => {
     expect(electron.invoke).toHaveBeenLastCalledWith(ipcChannels.openExternalSetupPage, { target: 'ngrok_authtoken' });
   });
 
+  it('accepts the unclean desktop-session incident classification from IPC', async () => {
+    electron.invoke.mockResolvedValueOnce({
+      exported: true,
+      cancelled: false,
+      classification: 'desktop_session_ended_uncleanly',
+      capturedAt: checkedAt,
+    });
+    await expect(electron.exposed!.captureIncident()).resolves.toMatchObject({
+      exported: true,
+      classification: 'desktop_session_ended_uncleanly',
+    });
+  });
+
   it.each([
     ['readinessReason', 'invented_reason'],
     ['deliveryState', 'invented_delivery'],

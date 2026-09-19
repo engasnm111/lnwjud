@@ -23,6 +23,25 @@ describe('context economy policy', () => {
       discoverable: false,
       tier: 0,
     });
+    for (const generatedWorkspacePath of [
+      '.codegraph/index.json',
+      '.local-artifacts/build/output.json',
+      '.pnpm-store/v10/files/index.json',
+      '.serena/cache/symbols.json',
+      '.superpowers/worktree/src.ts',
+      '.worktrees/review/src.ts',
+      'playwright-report/index.html',
+      'test-results/run/trace.zip',
+    ]) {
+      expect(classifyContextPath(generatedWorkspacePath, 'automatic'), generatedWorkspacePath).toMatchObject({
+        discoverable: false,
+        tier: 0,
+      });
+    }
+    expect(classifyContextPath('.worktrees/review/src.ts', 'explicit')).toMatchObject({
+      discoverable: true,
+      tier: 3,
+    });
     expect(classifyContextPath('node_modules/pkg/index.js', 'explicit')).toMatchObject({
       discoverable: true,
       tier: 3,
@@ -58,6 +77,9 @@ describe('context economy policy', () => {
         '!**/build/**',
         '!**/artifacts/**',
         '!**/coverage/**',
+        '!**/.worktrees/**',
+        '!**/.local-artifacts/**',
+        '!**/test-results/**',
         '!**/*.map',
       ]),
     );

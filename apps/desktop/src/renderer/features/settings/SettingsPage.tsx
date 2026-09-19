@@ -707,6 +707,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <button type="button" disabled={remoteMcpBusy || remoteMcp.state !== 'running'} onClick={() => { void runRemoteMcpAction('stop'); }}>{t('settingsPage.stop')}</button>
                     <button type="button" disabled={remoteMcp.publicMcpUrl === null} onClick={() => { void copyRemoteMcpUrl(); }}>{t('settingsPage.copyMcpUrl')}</button>
                     <button type="button" disabled={remoteMcpBusy || !remoteMcp.oauthConnected} onClick={() => { void runRemoteMcpAction('resetOauth'); }}>{t('settingsPage.reconnectChatgpt')}</button>
+                    <button type="button" onClick={() => { void props.onOpenExternalSetupPage('chatgpt_plugins'); }}>{t('settingsPage.openChatgptPlugins')}</button>
                   </div>
                   {remoteMcp.oauthConnected ? (
                     <StatusMessage tone="success" className="remote-mcp-auth-banner">
@@ -808,7 +809,11 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <section className="panel settings-card settings-card-polished guided-tunnel-launch-card connection-method-followup-card" aria-label={t('guidedTunnel.openGuide')}>
                     <SettingsCardHeading icon="↗" title={t('guidedTunnel.openGuide')} subtitle={t('guidedTunnel.privacy')} badge={guidedTunnelRunning ? t('status.running') : guidedTunnelConfigured ? t('status.ready') : t('status.setup')} />
                     <p className="hint">{guidedTunnelRunning ? t('guidedTunnel.localComplete') : guidedTunnelConfigured ? t('guidedTunnel.configured') : t('guidedTunnel.dismissedHint')}</p>
-                    <button type="button" className="btn-save-gold" onClick={() => props.onGuidedTunnelSetupOpenChange(true)}>{t('guidedTunnel.openGuide')}</button>
+                    <div className="inline-actions">
+                      <button type="button" className="btn-save-gold" onClick={() => props.onGuidedTunnelSetupOpenChange(true)}>{t('guidedTunnel.openGuide')}</button>
+                      <button type="button" onClick={() => { void props.onOpenExternalSetupPage('openai_tunnels'); }}>{t('guidedTunnel.openTunnelSettings')}</button>
+                      <button type="button" onClick={() => { void props.onOpenExternalSetupPage('openai_api_keys'); }}>{t('guidedTunnel.openApiKeys')}</button>
+                    </div>
                   </section>
 
                   <GuidedTunnelSetup

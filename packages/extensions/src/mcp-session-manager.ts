@@ -69,8 +69,8 @@ export class McpSessionManager {
   }
 
   public lifecycle(server: string): McpSessionLifecycle {
-    if (this.closeFailures.has(server)) return 'termination_unverified';
-    return this.sessions.has(server) ? 'connected' : 'disconnected';
+    if (this.sessions.has(server)) return 'connected';
+    return this.closeFailures.has(server) ? 'termination_unverified' : 'disconnected';
   }
 
   /** Reconcile settings before every discovery-backed operation. */
@@ -183,7 +183,9 @@ export class McpSessionManager {
       await this.refreshCatalog(server, activeManaged, signal);
       const declaredTool = activeManaged.tools.find((entry) => entry.name === tool);
       if (declaredTool === undefined) {
-        return err(appError('INVALID_INPUT', `Child MCP tool is not declared by ${server}: ${tool}`));
+        const availableTools = activeManaged.tools.slice(0, 20).map((entry) => entry.name).join(', ');
+        const availableHint = availableTools.length === 0 ? 'No child tools are currently declared.' : `Declared tools include: ${availableTools}.`;
+        return err(appError('INVALID_INPUT', `Child MCP tool is not declared by ${server}: ${tool}. Refresh with mcp_describe before retrying. ${availableHint}`));
       }
       const result = await withTimeout(
         (callSignal) => this.enqueue(activeManaged, () => activeManaged.session.callTool(tool, args, callSignal)),
