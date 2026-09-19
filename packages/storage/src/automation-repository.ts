@@ -260,6 +260,16 @@ export class SqliteAutomationRepository implements AutomationRepository {
     return row === undefined ? null : this.snapshotFromRunRow(row);
   }
 
+  public async listRuns(limit: number): Promise<readonly AutomationRunSnapshot[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new AutomationStateError('conflict', 'Automation run limit must be between 1 and 100');
+    }
+    const rows = this.database.connection.prepare(
+      'SELECT * FROM automation_runs ORDER BY updated_at DESC, id DESC LIMIT ?',
+    ).all(limit) as unknown as AutomationRunRow[];
+    return rows.map((row) => this.snapshotFromRunRow(row));
+  }
+
   public async listEvents(
     runId: string,
     limit: number,

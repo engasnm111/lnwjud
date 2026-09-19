@@ -489,6 +489,7 @@ function dashboard(value: unknown): DashboardSnapshot {
     managedProcessCount: numberField(value, 'managedProcessCount'),
     auditEventCount: numberField(value, 'auditEventCount'),
     recentAuditEvents: auditEventSummaries(value.recentAuditEvents),
+    ...(value.automation === undefined ? {} : { automation: automationDashboard(value.automation) }),
     permissionProfile: permissionProfile(value.permissionProfile),
     capabilities: capabilitySummaries(value.capabilities),
     agentState: agentState(value.agentState),
@@ -516,6 +517,121 @@ function dashboard(value: unknown): DashboardSnapshot {
     hostArch,
     appVersion: stringField(value, 'appVersion'),
   };
+}
+
+function automationDashboard(value: unknown): NonNullable<DashboardSnapshot['automation']> {
+  if (!isRecord(value) || !Array.isArray(value.recentRuns)) throw new Error('Invalid IPC response');
+  return {
+    generatedAt: stringField(value, 'generatedAt'),
+    activeCount: numberField(value, 'activeCount'),
+    blockedCount: numberField(value, 'blockedCount'),
+    waitingTaskCount: numberField(value, 'waitingTaskCount'),
+    completingCount: numberField(value, 'completingCount'),
+    recentRuns: value.recentRuns.map(automationRunSummary),
+  };
+}
+
+function automationRunSummary(value: unknown): NonNullable<DashboardSnapshot['automation']>['recentRuns'][number] {
+  if (!isRecord(value) || !Array.isArray(value.milestones) || !Array.isArray(value.recentEvents)) {
+    throw new Error('Invalid IPC response');
+  }
+  return {
+    runId: stringField(value, 'runId'),
+    goalId: stringField(value, 'goalId'),
+    workspaceId: stringField(value, 'workspaceId'),
+    status: stringField(value, 'status'),
+    policyProfile: stringField(value, 'policyProfile'),
+    revision: integerField(value, 'revision'),
+    goalRevision: integerField(value, 'goalRevision'),
+    userIntentRevision: integerField(value, 'userIntentRevision'),
+    currentMilestoneId: nullableString(value.currentMilestoneId),
+    currentAttemptId: nullableString(value.currentAttemptId),
+    lastRecoveryDecision: nullableString(value.lastRecoveryDecision),
+    latestTransition: nullableString(value.latestTransition),
+    latestReason: nullableString(value.latestReason),
+    latestPolicyDecision: nullableString(value.latestPolicyDecision),
+    latestRecoveryClassification: nullableString(value.latestRecoveryClassification),
+    verificationOutcome: automationVerificationOutcome(value.verificationOutcome),
+    elapsedDurationMs: numberField(value, 'elapsedDurationMs'),
+    retryCount: integerField(value, 'retryCount'),
+    createdAt: stringField(value, 'createdAt'),
+    updatedAt: stringField(value, 'updatedAt'),
+    terminalAt: nullableString(value.terminalAt),
+    milestones: value.milestones.map(automationMilestoneSummary),
+    recentEvents: value.recentEvents.map(automationEventSummary),
+  };
+}
+
+function automationMilestoneSummary(
+  value: unknown,
+): NonNullable<DashboardSnapshot['automation']>['recentRuns'][number]['milestones'][number] {
+  if (!isRecord(value) || !Array.isArray(value.tasks)) throw new Error('Invalid IPC response');
+  return {
+    id: stringField(value, 'id'),
+    title: stringField(value, 'title'),
+    status: stringField(value, 'status'),
+    currentAttemptId: nullableString(value.currentAttemptId),
+    attemptCount: integerField(value, 'attemptCount'),
+    retryCount: integerField(value, 'retryCount'),
+    verificationOutcome: automationVerificationOutcome(value.verificationOutcome),
+    tasks: value.tasks.map(automationTaskSummary),
+  };
+}
+
+function automationTaskSummary(
+  value: unknown,
+): NonNullable<DashboardSnapshot['automation']>['recentRuns'][number]['milestones'][number]['tasks'][number] {
+  if (!isRecord(value)) throw new Error('Invalid IPC response');
+  const provider = value.provider;
+  const role = value.role;
+  if (provider !== 'process' && provider !== 'codex' && provider !== 'shell') throw new Error('Invalid IPC response');
+  if (role !== 'blocking_job' && role !== 'supporting_service') throw new Error('Invalid IPC response');
+  return {
+    provider,
+    taskId: stringField(value, 'taskId'),
+    role,
+    state: nullableString(value.state),
+    deadlineAt: nullableString(value.deadlineAt),
+    lastObservedAt: nullableString(value.lastObservedAt),
+    terminalAt: nullableString(value.terminalAt),
+  };
+}
+
+function automationEventSummary(
+  value: unknown,
+): NonNullable<DashboardSnapshot['automation']>['recentRuns'][number]['recentEvents'][number] {
+  if (!isRecord(value)) throw new Error('Invalid IPC response');
+  const provider = value.taskProvider;
+  if (provider !== null && provider !== 'process' && provider !== 'codex' && provider !== 'shell') {
+    throw new Error('Invalid IPC response');
+  }
+  const leaseGeneration = value.leaseGeneration;
+  if (leaseGeneration !== null && (typeof leaseGeneration !== 'number' || !Number.isInteger(leaseGeneration) || leaseGeneration < 0)) {
+    throw new Error('Invalid IPC response');
+  }
+  return {
+    id: stringField(value, 'id'),
+    timestamp: stringField(value, 'timestamp'),
+    transition: stringField(value, 'transition'),
+    reason: stringField(value, 'reason'),
+    milestoneId: nullableString(value.milestoneId),
+    attemptId: nullableString(value.attemptId),
+    taskProvider: provider,
+    taskId: nullableString(value.taskId),
+    childCallId: nullableString(value.childCallId),
+    leaseGeneration,
+    policyDecision: nullableString(value.policyDecision),
+    recoveryClassification: nullableString(value.recoveryClassification),
+    verificationOutcome: automationVerificationOutcome(value.verificationOutcome),
+    elapsedDurationMs: numberField(value, 'elapsedDurationMs'),
+    retryCount: integerField(value, 'retryCount'),
+  };
+}
+
+function automationVerificationOutcome(value: unknown): 'passed' | 'failed' | 'pending' | null {
+  if (value === null) return null;
+  if (value === 'passed' || value === 'failed' || value === 'pending') return value;
+  throw new Error('Invalid IPC response');
 }
 
 function backupSummaries(value: unknown): readonly BackupSummary[] {

@@ -7,7 +7,9 @@ import runtimeDependencies from './runtime-dependencies.json' with { type: 'json
 import {
   AgentSwarmService,
   AutomationGoalIntegrationService,
+  AutomationObservabilityService,
   AutomationOrchestratorService,
+  ObservableAutomationRepository,
   CheckpointService,
   CodexService,
   FileService,
@@ -316,8 +318,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const goalRepository = new SqliteGoalRepository(database);
-  const automationRepository = new SqliteAutomationRepository(database);
-  const automationOrchestrator = new AutomationOrchestratorService(automationRepository);
+  const rawAutomationRepository = new SqliteAutomationRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
@@ -329,6 +330,18 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   workLogViewState.clear({});
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
+  const automationRepository = new ObservableAutomationRepository(
+    rawAutomationRepository,
+    auditService,
+    { actorId: mcpActor.clientId, actorName: mcpActor.clientName },
+    {
+      onAuditError: (error, input): void => {
+        console.error(`[automation-audit] Failed to project ${input.eventId}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      },
+    },
+  );
+  const automationObservability = new AutomationObservabilityService(automationRepository);
+  const automationOrchestrator = new AutomationOrchestratorService(automationRepository);
   const checkpointEncryptionKey = options.checkpointEncryptionKey ?? resolveTestCheckpointEncryptionKey();
   if (checkpointEncryptionKey === undefined) {
     throw new Error('Desktop runtime requires a checkpoint encryption key resolved by the Electron composition root');
@@ -533,6 +546,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     automation: {
       repository: automationRepository,
       orchestrator: automationOrchestrator,
+      observability: automationObservability,
       goalIntegration: automationGoalIntegration,
     },
   };
@@ -1194,6 +1208,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         ? await codexSummaryCache.get(() => buildCodexSummary(codexDiscovery))
         : { installed: await codexPresenceCache.get(async () => (await executableResolver.resolve('codex')).ok), version: null };
       const recentAuditEvents = await buildAuditSummary(auditRepository, settingsRepository);
+      const automation = await automationObservability.dashboard(20, 20);
       const processSummaries = await listTrackedProcesses(processService, trackedProcesses);
       const capabilities = await capabilitySummaryCache.get(() => buildCapabilitySummary(capabilityRuntime.health));
       const mcp = mcpLifecycle.status();
@@ -1232,6 +1247,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         managedProcessCount: processSummaries.length,
         auditEventCount: recentAuditEvents.length,
         recentAuditEvents,
+        automation,
         permissionProfile: profileName,
         capabilities,
         agentState: deriveAgentState(mcp.running, inFlight.length),

@@ -62,6 +62,61 @@ describe('AuditService', () => {
     expect(JSON.stringify(repository.events[0])).not.toContain('secret-123');
   });
 
+  it('projects automation journal events into bounded Live Logs metadata without lease secrets', async () => {
+    const repository = new MemoryAuditRepository();
+    await new AuditService(repository).recordAutomationEvent({
+      actorId: 'client-1',
+      actorName: 'test',
+      workspaceId: 'workspace-1',
+      sessionId: 'session-1',
+      eventId: 'event-1',
+      runId: 'run-1',
+      goalId: 'goal-1',
+      milestoneId: 'm1',
+      attemptId: 'attempt-2',
+      transition: 'task_recovery_decision',
+      reason: 'task_timeout_reconciled',
+      taskProvider: 'shell',
+      taskId: 'task-1',
+      childCallId: 'child-call-1',
+      leaseGeneration: 7,
+      policyDecision: 'allowed',
+      recoveryClassification: 'task_timed_out',
+      verificationOutcome: 'pending',
+      elapsedDurationMs: 12_345,
+      retryCount: 1,
+      resultCode: 'UNKNOWN',
+    });
+
+    expect(repository.events[0]).toMatchObject({
+      action: 'mcp_tool:automation:task_recovery_decision',
+      workspaceId: 'workspace-1',
+      sessionId: 'session-1',
+      resultCode: 'UNKNOWN',
+      durationMs: 12_345,
+      metadata: {
+        toolName: 'automation:task_recovery_decision',
+        callId: 'automation:event-1',
+        phase: 'completed',
+        automation: {
+          runId: 'run-1',
+          goalId: 'goal-1',
+          milestoneId: 'm1',
+          attemptId: 'attempt-2',
+          leaseGeneration: 7,
+          policyDecision: 'allowed',
+          recoveryClassification: 'task_timed_out',
+          verificationOutcome: 'pending',
+          retryCount: 1,
+        },
+      },
+    });
+    const serialized = JSON.stringify(repository.events[0]);
+    expect(serialized).toContain('task=shell:task-1');
+    expect(serialized).not.toContain('leaseToken');
+    expect(serialized).not.toContain('secret');
+  });
+
   it('stores Codex instruction metadata without the instruction text', async () => {
     const repository = new MemoryAuditRepository();
     await new AuditService(repository).recordCodexRun({

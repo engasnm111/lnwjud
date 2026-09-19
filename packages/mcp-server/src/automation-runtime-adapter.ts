@@ -16,6 +16,7 @@ export interface AutomationChildInvoker {
     name: string,
     input: unknown,
     signal?: AbortSignal,
+    callId?: string,
   ): Promise<McpToolResponse>;
 }
 
@@ -46,7 +47,7 @@ export class ToolRegistryAutomationRuntimeAdapter implements AutomationTaskRunti
     const tool = launchTool(request.execution.provider);
     let response: McpToolResponse;
     try {
-      response = await this.child.invoke(tool, input, this.options.signal);
+      response = await this.child.invoke(tool, input, this.options.signal, request.childCallId);
     } catch (error) {
       return {
         kind: 'uncertain',

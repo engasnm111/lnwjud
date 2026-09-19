@@ -196,6 +196,8 @@ function dispatchRequest(expectedRevision: number, deadlineMs = 60_000): {
   readonly provider: 'shell';
   readonly operationKey: string;
   readonly idempotencyKey: string;
+  readonly policyDecision: string;
+  readonly leaseGeneration: number;
   readonly deadlineMs: number;
 } {
   return {
@@ -205,13 +207,15 @@ function dispatchRequest(expectedRevision: number, deadlineMs = 60_000): {
     provider: 'shell' as const,
     operationKey: 'build',
     idempotencyKey: 'dispatch-build-attempt-1',
+    policyDecision: 'allowed',
+    leaseGeneration: 3,
     deadlineMs,
   };
 }
 
 describe('AutomationTaskSupervisorService dispatch', () => {
   it('reserves before launch, binds the durable handle, persists deadline, and replays without relaunch', async () => {
-    const { database, supervisor, runtime, dispatchRevision } = await fixture();
+    const { database, automation, supervisor, runtime, dispatchRevision } = await fixture();
     try {
       const dispatched = await supervisor.dispatchCurrentAttempt(dispatchRequest(dispatchRevision));
 
@@ -238,6 +242,21 @@ describe('AutomationTaskSupervisorService dispatch', () => {
         }),
       ]);
       expect(runtime.launchCalls).toHaveLength(1);
+      const receiptId = dispatched.dispatchReceipts[0]?.id;
+      expect(receiptId).toBeDefined();
+      expect(runtime.launchCalls[0]).toMatchObject({
+        childCallId: `automation-child:${receiptId}`,
+      });
+      const events = await automation.listEvents('run-1', 20);
+      expect(events.find((event) => event.type === 'dispatch_recorded')).toMatchObject({
+        metadata: {
+          provider: 'shell',
+          operationKey: 'build',
+          childCallId: `automation-child:${receiptId}`,
+          policyDecision: 'allowed',
+          leaseGeneration: 3,
+        },
+      });
 
       const replayed = await supervisor.dispatchCurrentAttempt(dispatchRequest(dispatched.revision));
       expect(replayed.revision).toBe(dispatched.revision);

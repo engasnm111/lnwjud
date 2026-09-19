@@ -4,6 +4,7 @@ import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   AgentSwarmService,
   AutomationGoalIntegrationService,
+  AutomationObservabilityService,
   AutomationOrchestratorService,
   ApplyPatchRequest,
   CheckpointService,
@@ -102,6 +103,7 @@ export interface McpApplicationServices {
   readonly automation?: {
     readonly repository: AutomationRepository;
     readonly orchestrator: AutomationOrchestratorService;
+    readonly observability?: AutomationObservabilityService;
     readonly goalIntegration?: AutomationGoalIntegrationService;
   };
 }

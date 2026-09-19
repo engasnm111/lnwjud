@@ -640,6 +640,17 @@ M6 — scheduled-continuation resume projection + crash-window reconciliation.
 M7 — observability, audit projection, Live Logs/dashboard read model.
 M8 — fault-injection suite, packaging isolation, migration/upgrade verification.
 
+### M7 acceptance criteria
+
+M7 is complete when:
+- committed automation journal events are projected into the existing audit/Live Logs pipeline without changing authoritative run state;
+- the read model exposes run/goal/workspace, milestone/attempt, transition/reason, child tool/task identity, lease generation, policy decision, recovery classification, verification outcome, elapsed duration, and retry count;
+- child dispatches carry a stable internal call ID derived from the durable dispatch receipt so journal events correlate to the exact child Live Log entry;
+- raw lease tokens, idempotency keys, execution payloads, raw secrets, and private reasoning are excluded from the dashboard/read model and automation audit details;
+- dashboard projection is bounded and read-only, and observability/audit failure cannot roll back committed automation work;
+- existing primitive tools, durable goals, task IDs, and scheduled continuation semantics remain unchanged;
+- targeted audit/application/storage/MCP/Desktop integration tests, typecheck, lint, build, and diff review pass.
+
 Each milestone must finish with targeted tests, diff review, and a durable checkpoint
 before advancing. A checkpoint never implies a mandatory stop if the same worker
 can continue safely.

@@ -725,6 +725,80 @@ export interface RecoveryCenterSummary {
   readonly checkpoints: readonly RecoveryCheckpointSummary[];
 }
 
+export interface AutomationDashboardTaskSummary {
+  readonly provider: 'process' | 'codex' | 'shell';
+  readonly taskId: string;
+  readonly role: 'blocking_job' | 'supporting_service';
+  readonly state: string | null;
+  readonly deadlineAt: string | null;
+  readonly lastObservedAt: string | null;
+  readonly terminalAt: string | null;
+}
+
+export interface AutomationDashboardMilestoneSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly status: string;
+  readonly currentAttemptId: string | null;
+  readonly attemptCount: number;
+  readonly retryCount: number;
+  readonly verificationOutcome: 'passed' | 'failed' | 'pending' | null;
+  readonly tasks: readonly AutomationDashboardTaskSummary[];
+}
+
+export interface AutomationDashboardEventSummary {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly transition: string;
+  readonly reason: string;
+  readonly milestoneId: string | null;
+  readonly attemptId: string | null;
+  readonly taskProvider: 'process' | 'codex' | 'shell' | null;
+  readonly taskId: string | null;
+  readonly childCallId: string | null;
+  readonly leaseGeneration: number | null;
+  readonly policyDecision: string | null;
+  readonly recoveryClassification: string | null;
+  readonly verificationOutcome: 'passed' | 'failed' | 'pending' | null;
+  readonly elapsedDurationMs: number;
+  readonly retryCount: number;
+}
+
+export interface AutomationDashboardRunSummary {
+  readonly runId: string;
+  readonly goalId: string;
+  readonly workspaceId: string;
+  readonly status: string;
+  readonly policyProfile: string;
+  readonly revision: number;
+  readonly goalRevision: number;
+  readonly userIntentRevision: number;
+  readonly currentMilestoneId: string | null;
+  readonly currentAttemptId: string | null;
+  readonly lastRecoveryDecision: string | null;
+  readonly latestTransition: string | null;
+  readonly latestReason: string | null;
+  readonly latestPolicyDecision: string | null;
+  readonly latestRecoveryClassification: string | null;
+  readonly verificationOutcome: 'passed' | 'failed' | 'pending' | null;
+  readonly elapsedDurationMs: number;
+  readonly retryCount: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly terminalAt: string | null;
+  readonly milestones: readonly AutomationDashboardMilestoneSummary[];
+  readonly recentEvents: readonly AutomationDashboardEventSummary[];
+}
+
+export interface AutomationDashboardReadModel {
+  readonly generatedAt: string;
+  readonly activeCount: number;
+  readonly blockedCount: number;
+  readonly waitingTaskCount: number;
+  readonly completingCount: number;
+  readonly recentRuns: readonly AutomationDashboardRunSummary[];
+}
+
 export interface DashboardSnapshot {
   /** Primary workspace used when a tool call omits workspaceId. */
   readonly selectedWorkspace: WorkspaceSummary | null;
@@ -744,6 +818,8 @@ export interface DashboardSnapshot {
   readonly managedProcessCount: number;
   readonly auditEventCount: number;
   readonly recentAuditEvents: readonly AuditEventSummary[];
+  /** Read-only native automation projection; absent only for older-compatible producers. */
+  readonly automation?: AutomationDashboardReadModel;
   readonly permissionProfile: PermissionProfileName;
   readonly capabilities: readonly CapabilitySummary[];
   readonly agentState: AgentState;

@@ -173,6 +173,10 @@ describe('SqliteAutomationRepository', () => {
         { id: 'm2', ordinal: 1, status: 'pending' },
       ]);
 
+      const listed = await automation.listRuns(10);
+      expect(listed).toHaveLength(1);
+      expect(listed[0]).toMatchObject({ id: 'run-1', goalId: 'goal-1', status: 'planned' });
+
       const events = await automation.listEvents('run-1', 10);
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({

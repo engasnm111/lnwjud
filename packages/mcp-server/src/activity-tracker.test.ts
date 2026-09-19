@@ -27,6 +27,36 @@ describe('ActivityTracker', () => {
     ]);
   });
 
+  it('accepts a bounded internal call id for durable child-call correlation', async () => {
+    const events: ActivitySinkEvent[] = [];
+    const tracker = new ActivityTracker({
+      async record(event): Promise<void> {
+        events.push(event);
+      },
+    });
+    const callId = await tracker.begin(
+      'shell',
+      { workspaceId: 'ws-1', executable: 'pnpm.cmd', arguments: ['build'] },
+      undefined,
+      'standard',
+      'automation-child:receipt-1',
+    );
+    expect(callId).toBe('automation-child:receipt-1');
+    expect(tracker.listInFlight()[0]?.callId).toBe('automation-child:receipt-1');
+    await expect(tracker.begin(
+      'shell',
+      { workspaceId: 'ws-1', executable: 'pnpm.cmd', arguments: ['build'] },
+      undefined,
+      'standard',
+      'automation-child:receipt-1',
+    )).rejects.toThrow(/already in flight/i);
+    await tracker.end(callId, 'SUCCESS', 4);
+    expect(events.map((event) => event.callId)).toEqual([
+      'automation-child:receipt-1',
+      'automation-child:receipt-1',
+    ]);
+  });
+
   it('reports activity sink failures without failing the tool lifecycle', async () => {
     const failures: string[] = [];
     const tracker = new ActivityTracker({

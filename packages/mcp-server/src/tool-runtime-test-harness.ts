@@ -160,6 +160,10 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
       calls.push('automation.repository.getRunByGoalId');
       return null;
     },
+    async listRuns(): Promise<readonly AutomationRunSnapshot[]> {
+      calls.push('automation.repository.listRuns');
+      return [automationSnapshot('run-dashboard')];
+    },
     async commitTransition(request: CommitAutomationTransitionRequest): Promise<AutomationRunSnapshot> {
       calls.push('automation.repository.commitTransition');
       const base = automationSnapshotFor(request.runId);

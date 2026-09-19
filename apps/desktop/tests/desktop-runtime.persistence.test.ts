@@ -133,6 +133,80 @@ describe('DesktopRuntime persistence', () => {
       await runtime.close();
     }
   });
+  it('projects native automation into dashboard and Live Logs without raw lease material', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-automation-observability-data-'));
+    const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-automation-observability-workspace-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceRoot);
+    const runtime = createDesktopRuntime(await realpath(rawDataRoot));
+    try {
+      const workspace = await runtime.services.addWorkspace({ rootPath: await realpath(rawWorkspaceRoot) });
+      const started = await runtime.mcpServices.goals?.runGoal(runtime.mcpActor, {
+        workspaceId: workspace.id,
+        goalKey: 'desktop-automation-observability-test',
+        objective: 'Exercise native automation observability safely.',
+        plan: { steps: [{ id: 'm1', title: 'Observe automation', status: 'pending' }] },
+        leaseSeconds: 600,
+      });
+      expect(started).toMatchObject({ ok: true, value: { acquired: true, goalId: expect.any(String) } });
+      if (started === undefined || !started.ok) throw new Error('test goal was not acquired');
+      const automation = runtime.mcpServices.automation;
+      if (automation === undefined) throw new Error('automation services are unavailable');
+
+      await automation.orchestrator.create({
+        runId: 'run-observability-desktop',
+        goalId: started.value.goalId,
+        workspaceId: workspace.id,
+        policyProfile: 'coding_guarded',
+        authority: {
+          goalRevision: started.value.revision,
+          userIntentRevision: started.value.userIntentRevision,
+        },
+        milestones: [{
+          id: 'm1',
+          title: 'Observe automation',
+          dependsOn: [],
+          executionIntent: 'Emit only bounded automation observability state.',
+          verificationRequirements: [{
+            id: 'evidence',
+            title: 'Dashboard projection exists',
+            kind: 'evidence',
+            specification: 'Automation run appears in the bounded dashboard projection.',
+          }],
+          retryPolicy: { classification: 'safe_read', maxAttempts: 1 },
+        }],
+      });
+
+      const dashboard = await runtime.services.getDashboard();
+      expect(dashboard.automation).toMatchObject({
+        activeCount: 1,
+        recentRuns: [expect.objectContaining({
+          runId: 'run-observability-desktop',
+          goalId: started.value.goalId,
+          workspaceId: workspace.id,
+          latestTransition: 'run_created',
+          latestReason: 'automation_run_created',
+          retryCount: 0,
+        })],
+      });
+      expect(dashboard.workLog).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          toolName: 'automation:run_created',
+          resultCode: 'SUCCESS',
+          workspaceId: workspace.id,
+        }),
+      ]));
+      const serialized = JSON.stringify({
+        automation: dashboard.automation,
+        workLog: dashboard.workLog.filter((entry) => entry.toolName.startsWith('automation:')),
+      });
+      expect(serialized).not.toContain('leaseToken');
+      expect(serialized).not.toContain('idempotencyKey');
+      expect(serialized).not.toContain('executionIntent');
+    } finally {
+      await runtime.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
   it('updates one connected Desktop MCP client immediately when in-process tool availability changes', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-tool-availability-workspace-'));

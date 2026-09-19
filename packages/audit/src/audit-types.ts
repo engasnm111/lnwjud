@@ -86,6 +86,31 @@ export interface AuditEventRepository {
   resolveActivityTargetDetail(idOrCallId: string): Promise<ActivityTargetDetail | null>;
 }
 
+export interface AutomationAuditInput {
+  readonly timestamp?: string;
+  readonly actorId: string;
+  readonly actorName: string;
+  readonly workspaceId: string;
+  readonly sessionId?: string;
+  readonly eventId: string;
+  readonly runId: string;
+  readonly goalId: string;
+  readonly milestoneId?: string;
+  readonly attemptId?: string;
+  readonly transition: string;
+  readonly reason: string;
+  readonly taskProvider?: 'process' | 'codex' | 'shell';
+  readonly taskId?: string;
+  readonly childCallId?: string;
+  readonly leaseGeneration?: number;
+  readonly policyDecision?: string;
+  readonly recoveryClassification?: string;
+  readonly verificationOutcome?: 'passed' | 'failed' | 'pending';
+  readonly elapsedDurationMs: number;
+  readonly retryCount: number;
+  readonly resultCode: string;
+}
+
 export interface CodexRunAuditInput {
   readonly timestamp?: string;
   readonly actorId: string;

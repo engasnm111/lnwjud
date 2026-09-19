@@ -166,8 +166,10 @@ export class ActivityTracker {
     input: unknown,
     traceContext?: TraceContext,
     authorizationMode?: ActivitySinkEvent['authorizationMode'],
+    internalCallId?: string,
   ): Promise<string> {
-    const callId = randomUUID();
+    const callId = internalCallId === undefined ? randomUUID() : boundedInternalCallId(internalCallId);
+    if (this.inflight.has(callId)) throw new Error('Activity call ID is already in flight');
     const timestamp = new Date().toISOString();
     const workspaceId = readWorkspaceId(input);
     const describedTarget = describeToolTarget(toolName, input);
@@ -480,6 +482,22 @@ export function readTraceContext(input: unknown): TraceContext {
     ...(traceState === undefined ? {} : { traceState }),
     ...(baggage === undefined ? {} : { baggage }),
   };
+}
+
+function boundedInternalCallId(value: string): string {
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > 512 || containsAsciiControl(normalized)) {
+    throw new Error('Internal activity call ID is invalid');
+  }
+  return normalized;
+}
+
+function containsAsciiControl(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
 }
 
 function readWorkspaceId(input: unknown): string | undefined {

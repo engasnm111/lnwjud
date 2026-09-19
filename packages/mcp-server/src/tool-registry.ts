@@ -233,7 +233,7 @@ export class ToolRegistry {
       ...agentSwarmTools(context),
       ...automationTools(context, {
         childInvoker: {
-          invoke: (name, input, signal) => this.invoke(name, input, undefined, signal),
+          invoke: (name, input, signal, callId) => this.invoke(name, input, undefined, signal, callId),
         },
       }),
       ...capabilityTools(context, options.setOfMarksStore),
@@ -328,7 +328,7 @@ export class ToolRegistry {
     }).effectiveExposed;
   }
 
-  public async invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal): Promise<McpToolResponse> {
+  public async invoke(name: string, input: unknown, traceContext?: TraceContext, parentSignal?: AbortSignal, internalCallId?: string): Promise<McpToolResponse> {
     const invocationGuardMessage = this.currentInvocationGuardMessage();
     const profile = invocationGuardMessage === null ? this.profileProvider() : permissionProfiles.safe;
     const fullBypass = invocationGuardMessage === null && profile.name === 'full' && this.authorizationModeProvider() === 'full_bypass';
@@ -341,6 +341,7 @@ export class ToolRegistry {
       activityInput,
       { ...(traceContext ?? {}), ...(this.sessionId === undefined ? {} : { sessionId: this.sessionId }) },
       authorizationMode,
+      internalCallId,
     );
     const started = Date.now();
     let fencedMutationEnd: (() => Promise<void>) | undefined;

@@ -146,18 +146,25 @@ export function automationTools(
     }),
     defineTool({
       name: 'automation_status',
-      description: 'Read the authoritative durable automation snapshot without advancing or dispatching work.',
+      description: 'Read the authoritative durable automation snapshot plus the bounded observability projection used by Live Logs/dashboard without advancing or dispatching work.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: z.object({
         workspaceId: z.string().min(1).max(256),
         runId: z.string().min(1).max(256),
+        eventLimit: z.number().int().min(1).max(200).default(50),
       }).strict(),
       handler: async (input) => withAutomationErrors(async () => {
         const services = requireAutomation(context);
         const snapshot = await services.orchestrator.get(input.runId);
         assertWorkspace(snapshot, input.workspaceId);
-        return ok(automationView(snapshot, nextAction(snapshot)));
+        const observability = services.observability === undefined
+          ? undefined
+          : await services.observability.readRun(input.runId, input.eventLimit);
+        return ok({
+          ...automationView(snapshot, nextAction(snapshot)),
+          ...(observability === undefined ? {} : { observability }),
+        });
       }),
     }),
     defineTool({
@@ -276,6 +283,8 @@ export function automationTools(
           provider: input.execution.provider,
           operationKey: input.operationKey,
           idempotencyKey: input.idempotencyKey,
+          policyDecision: policyDecision.code,
+          leaseGeneration: lease.leaseGeneration,
           execution: input.execution as AutomationTaskExecution,
           ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
         });

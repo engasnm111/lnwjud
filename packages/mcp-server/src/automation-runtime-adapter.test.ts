@@ -45,6 +45,7 @@ describe('ToolRegistryAutomationRuntimeAdapter', () => {
       provider: 'shell',
       operationKey: 'build',
       idempotencyKey: 'idempotency-1',
+      childCallId: 'automation-child:receipt-shell',
       executionIntent: 'Build project',
       execution: {
         provider: 'shell',
@@ -74,6 +75,7 @@ describe('ToolRegistryAutomationRuntimeAdapter', () => {
         goalLease: LEASE,
       }),
       undefined,
+      'automation-child:receipt-shell',
     );
   });
 
@@ -93,6 +95,7 @@ describe('ToolRegistryAutomationRuntimeAdapter', () => {
       provider: 'process',
       operationKey: 'server',
       idempotencyKey: 'idempotency-process',
+      childCallId: 'automation-child:receipt-process',
       executionIntent: 'Start server',
       execution: {
         provider: 'process',
@@ -108,6 +111,7 @@ describe('ToolRegistryAutomationRuntimeAdapter', () => {
       provider: 'codex',
       operationKey: 'codex',
       idempotencyKey: 'idempotency-codex',
+      childCallId: 'automation-child:receipt-codex',
       executionIntent: 'Delegate coding',
       execution: {
         provider: 'codex',
@@ -122,12 +126,14 @@ describe('ToolRegistryAutomationRuntimeAdapter', () => {
       'process_start',
       expect.objectContaining({ userConfirmed: true, goalLease: LEASE }),
       undefined,
+      'automation-child:receipt-process',
     );
     expect(invoke).toHaveBeenNthCalledWith(
       2,
       'codex_run',
       expect.objectContaining({ userConfirmed: true, goalLease: LEASE }),
       undefined,
+      'automation-child:receipt-codex',
     );
   });
 
@@ -144,6 +150,7 @@ describe('ToolRegistryAutomationRuntimeAdapter', () => {
       provider: 'shell',
       operationKey: 'build',
       idempotencyKey: 'idempotency-1',
+      childCallId: 'automation-child:receipt-uncertain',
       executionIntent: 'Build',
       execution: { provider: 'shell', executable: 'pnpm', arguments: ['build'] },
     })).resolves.toMatchObject({
@@ -173,6 +180,7 @@ describe('ToolRegistryAutomationRuntimeAdapter', () => {
       provider: 'shell',
       operationKey: 'build',
       idempotencyKey: 'idempotency-1',
+      childCallId: 'automation-child:receipt-rejected',
       executionIntent: 'Build',
       execution: { provider: 'shell', executable: 'pnpm', arguments: ['build'] },
     })).resolves.toMatchObject({

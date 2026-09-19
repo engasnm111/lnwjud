@@ -140,6 +140,7 @@ export class AutomationGoalIntegrationService {
 
     const synced = await this.syncRunToGoal(run, checkpoint, 'automation_task_checkpointed', {
       activeAutomationTasks: activeAutomationBindings(run).length,
+      leaseGeneration: lease.leaseGeneration,
     });
     return { run: synced, goal: checkpoint };
   }
@@ -209,6 +210,7 @@ export class AutomationGoalIntegrationService {
     const synced = await this.syncRunToGoal(run, checkpoint, 'milestone_verification_checkpointed', {
       verificationEvidenceCount: request.evidence.length,
       projectedStepUpdates: stepUpdates.length,
+      leaseGeneration: lease.leaseGeneration,
     });
     const completed = await this.orchestrator.completeCurrentMilestone({
       runId: synced.id,
@@ -340,6 +342,7 @@ export class AutomationGoalIntegrationService {
     run = await this.syncRunToGoal(run, goal, 'final_review_checkpointed', {
       finalReviewEvidenceCount: request.finalReviewEvidence.length,
       projectedStepUpdates: stepUpdates.length,
+      leaseGeneration: lease.leaseGeneration,
     });
 
     const pendingAcceptanceUpdates = acceptanceUpdates.filter((update) => {
@@ -360,6 +363,7 @@ export class AutomationGoalIntegrationService {
       );
       run = await this.syncRunToGoal(run, goal, 'final_acceptance_checkpointed', {
         acceptanceUpdates: pendingAcceptanceUpdates.length,
+        leaseGeneration: lease.leaseGeneration,
       });
     }
 

@@ -36,6 +36,7 @@ export interface AutomationTaskLaunchPortRequest {
   readonly provider: AutomationTaskProvider;
   readonly operationKey: string;
   readonly idempotencyKey: string;
+  readonly childCallId: string;
   readonly executionIntent: string;
   readonly execution?: AutomationTaskExecution;
   readonly deadlineAt?: string;
@@ -96,6 +97,8 @@ export interface AutomationDispatchTaskRequest extends AutomationMutationRequest
   readonly provider: AutomationTaskProvider;
   readonly operationKey: string;
   readonly idempotencyKey: string;
+  readonly policyDecision?: string;
+  readonly leaseGeneration?: number;
   readonly execution?: AutomationTaskExecution;
   readonly deadlineMs?: number;
 }
@@ -156,12 +159,14 @@ export class AutomationTaskSupervisorService {
 
     const reservedAt = this.now().toISOString();
     const deadlineAt = deadlineFrom(reservedAt, request.deadlineMs);
+    const receiptId = this.idFactory();
+    const childCallId = childCallIdForReceipt(receiptId);
     const reserved = await this.repository.commitTransition({
       runId: initial.id,
       expectedRevision: initial.revision,
       runPatch: authorityPatch(request.authority),
       dispatchReceipts: [{
-        id: this.idFactory(),
+        id: receiptId,
         milestoneId: milestone.id,
         attemptId,
         operationKey: request.operationKey,
@@ -179,6 +184,9 @@ export class AutomationTaskSupervisorService {
         metadata: {
           provider: request.provider,
           operationKey: request.operationKey,
+          childCallId,
+          ...(request.policyDecision === undefined ? {} : { policyDecision: request.policyDecision }),
+          ...(request.leaseGeneration === undefined ? {} : { leaseGeneration: request.leaseGeneration }),
         },
       },
       now: reservedAt,
@@ -194,6 +202,7 @@ export class AutomationTaskSupervisorService {
         provider: request.provider,
         operationKey: request.operationKey,
         idempotencyKey: request.idempotencyKey,
+        childCallId,
         executionIntent: milestone.executionIntent,
         ...(request.execution === undefined ? {} : { execution: request.execution }),
         ...(deadlineAt === undefined ? {} : { deadlineAt }),
@@ -1069,6 +1078,10 @@ function assertTaskSupervisionNotPaused(snapshot: AutomationRunSnapshot): void {
       'Automation task supervision is paused; resume the automation before observing or recovering work',
     );
   }
+}
+
+function childCallIdForReceipt(receiptId: string): string {
+  return `automation-child:${receiptId}`;
 }
 
 function currentDispatchAttempt(snapshot: AutomationRunSnapshot): {

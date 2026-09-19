@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import {
   AgentSwarmService,
   AutomationGoalIntegrationService,
+  AutomationObservabilityService,
   AutomationOrchestratorService,
+  ObservableAutomationRepository,
   CheckpointService,
   CodexService,
   FileService,
@@ -105,14 +107,26 @@ export function createStdioMcpRuntime(
     ? rawWorkspaceRepository
     : new StrictWorkspaceRepository(rawWorkspaceRepository, options.strictAllowedRoots);
   const goalRepository = new SqliteGoalRepository(database);
-  const automationRepository = new SqliteAutomationRepository(database);
-  const automationOrchestrator = new AutomationOrchestratorService(automationRepository);
+  const rawAutomationRepository = new SqliteAutomationRepository(database);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
   const stopToolAvailabilityWatch = toolAvailabilityService.watch(250);
   const auditRepository = new SqliteAuditRepository(database);
   const auditService = new AuditService(auditRepository);
+  const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
+  const automationRepository = new ObservableAutomationRepository(
+    rawAutomationRepository,
+    auditService,
+    { actorId: actor.clientId, actorName: actor.clientName },
+    {
+      onAuditError: (error, input): void => {
+        console.error(`[automation-audit] Failed to project ${input.eventId}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      },
+    },
+  );
+  const automationObservability = new AutomationObservabilityService(automationRepository);
+  const automationOrchestrator = new AutomationOrchestratorService(automationRepository);
   const checkpointRepository = new SqliteCheckpointRepository(database, new AesGcmCheckpointCipher(checkpointKey));
   const workspaceService = new WorkspaceService(workspaceRepository);
   const persistedSecurityPolicyProvider = (): PersistedStdioSecurityPolicy => {
@@ -210,7 +224,6 @@ export function createStdioMcpRuntime(
     goalService,
   );
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
-  const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
   const sharedActivityLease = createSharedActivityLease(process.env.TUNNEL_CLIENT_PROFILE_DIR);
   const activityReady = sharedActivityLease.then(async (lease) => lease?.initialize());
   const sharedActivitySink: ActivitySink = {
@@ -286,6 +299,7 @@ export function createStdioMcpRuntime(
     automation: {
       repository: automationRepository,
       orchestrator: automationOrchestrator,
+      observability: automationObservability,
       goalIntegration: automationGoalIntegration,
     },
   };

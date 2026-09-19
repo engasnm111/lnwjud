@@ -335,6 +335,7 @@ export interface AutomationRepository {
   createRun(request: CreateAutomationRunRecordRequest): Promise<AutomationRunSnapshot>;
   getRunById(runId: string): Promise<AutomationRunSnapshot | null>;
   getRunByGoalId(goalId: string): Promise<AutomationRunSnapshot | null>;
+  listRuns(limit: number): Promise<readonly AutomationRunSnapshot[]>;
   commitTransition(request: CommitAutomationTransitionRequest): Promise<AutomationRunSnapshot>;
   listEvents(runId: string, limit: number): Promise<readonly AutomationEventRecord[]>;
 }
