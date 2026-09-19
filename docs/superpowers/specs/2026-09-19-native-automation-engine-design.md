@@ -651,6 +651,18 @@ M7 is complete when:
 - existing primitive tools, durable goals, task IDs, and scheduled continuation semantics remain unchanged;
 - targeted audit/application/storage/MCP/Desktop integration tests, typecheck, lint, build, and diff review pass.
 
+### M8 acceptance criteria
+
+M8 is complete when:
+- a dedicated fault-injection suite covers both dispatch crash windows, task-terminal-before-checkpoint recovery, checkpoint storage failure, duplicate scheduled wake, stale worker takeover fencing, long-task observation transport loss, verification failure after mutation, and ambiguous external mutation outcomes;
+- no injected ambiguity causes blind child relaunch or treats unknown state as success;
+- a v018-style database upgrades additively through migrations 019 and 020 while preserving existing settings, workspaces, and durable goals, and a pre-migration backup remains restorable at schema version 18;
+- reopening an already-upgraded database is idempotent and does not create a second migration backup;
+- Desktop packaging contains compiled native-automation code and migrations but excludes mutable SQLite state, backups, and automation runtime state from installation resources;
+- Desktop and direct STDIO automation persistence remain rooted in their runtime data path rather than package resources or the source checkout;
+- the packaging verification command includes the native-automation isolation contract;
+- targeted M8 tests, full affected-package tests, lint, typecheck, build, packaging verification, and diff review pass.
+
 Each milestone must finish with targeted tests, diff review, and a durable checkpoint
 before advancing. A checkpoint never implies a mandatory stop if the same worker
 can continue safely.
