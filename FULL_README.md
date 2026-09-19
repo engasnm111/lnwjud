@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 241 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>263 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native automation, context capsules, indexing, observability, ECC integration, and extensibility; 251 are advertised by default and all 263 when Codex delegation plus Agent Swarm is enabled.</em>
 
   <em>อ่านที่เหลือใน Readme ได้เลยครับ ติดปัญหาทักมาได้ใน FB: Adisorn NM ได้ตลอดครับ / กำลังพัฒนาให้เรื่อยๆครับ ท่านที่ถามหาช่องสนับสนุนค่ากาแฟ แปะลิงค์ ไว้ให้แล้วครับ ขอบคุณครับ</em>
  https://easydonate.app/abcz
@@ -25,7 +25,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-253%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-263%20tools-6f42c1" />
 </p>
 
 ---
@@ -367,7 +367,7 @@ Authoritative in-repository references:
   helper protocol, target-host build rules, integrity evidence, and readiness
   boundaries.
 - [Tool contract](docs/architecture/TOOL_CONTRACT.md) — core primitive schemas,
-  policy classes, and compatibility rules; the 253-definition complete index below comes from the live runtime registry.
+  policy classes, and compatibility rules; the 263-definition complete index below comes from the live runtime registry.
 - [Upgrade architecture](docs/architecture/UPGRADE_ARCHITECTURE.md) — v4 runtime
   architecture and additive gateway design.
 - [Release process](docs/development/RELEASE_PROCESS.md) — canonical `dev -> PR -> main CI -> tag -> Release -> dev sync` sequence, exact-SHA artifact rule, and failure handling.
@@ -576,7 +576,7 @@ Portable ใช้ Settings/ข้อมูลต่อผู้ใช้ Window
 5. **ฝั่ง Admin/Owner ของ Business:** ไป Workspace Settings → Apps → Create, ใส่ URL ที่คัดลอกมา เลือก **OAuth**, Scan Tools ให้ผ่าน แล้ว Create และ **Publish** แอป lnwjud ให้ Workspace. สมาชิกทั่วไปไม่ต้องเปิด Developer mode และไม่ต้องกรอก Server URL ซ้ำ
 6. **ฝั่งสมาชิก:** เปิดแอป lnwjud ที่ถูก Publish แล้วกด **Connect**. ถ้าเป็น callback ของ ChatGPT ที่รองรับ browser จะถูกส่งผ่าน one-time URL ที่ `127.0.0.1` ของเครื่องผู้ใช้ไปหา lnwjud Desktop โดยอัตโนมัติ แล้วจึงทำ DCR + Authorization Code + PKCE และ redirect กลับ ChatGPT — **ไม่ต้องกรอกรหัสและไม่ต้องกดยืนยันเพิ่ม**. public ngrok endpoint ไม่สามารถนำ localhost ticket นี้ไปแลกสิทธิ์แทนได้ และ OAuth client ที่ไม่ตรง callback ที่รองรับจะถูกปฏิเสธด้วย `403 access_denied`
 7. หลังเชื่อม lnwjud จะจำ trusted ChatGPT client และ refresh grant แบบเข้ารหัสด้วย secure storage ของ host การเปิดโปรแกรมใหม่หรือกด Start ตามปกติจึงไม่ต้องอนุมัติซ้ำ. การกด **Stop** จะหยุด auto-start แต่ยังจำความสัมพันธ์ OAuth เดิมไว้; ใช้ **Reconnect ChatGPT** เฉพาะเมื่อต้องการล้างความสัมพันธ์ใหม่จริง ๆ
-8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **241 tools**, หรือ **253** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
+8. ตรวจว่า ChatGPT เห็น tools ของ lnwjud — ปกติ **251 tools**, หรือ **263** เมื่อเปิด Codex delegation + Agent Swarm — แล้วค่อยเริ่มจากงาน read-only
 
 public ngrok URL นี้ชี้เข้า OAuth gateway แยกต่างหาก ไม่ใช่การเปิด `http://127.0.0.1:<port>/mcp` ตรง ๆ ออกอินเทอร์เน็ต และ request ต้องผ่าน OAuth/bearer-token validation ก่อนถึง Local MCP
 

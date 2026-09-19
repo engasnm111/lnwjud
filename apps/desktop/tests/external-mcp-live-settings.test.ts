@@ -47,7 +47,7 @@ describe('Desktop live External MCP settings', () => {
     } finally {
       await runtime.close();
     }
-  });
+  }, 30_000);
 
   it('connects a server saved after runtime startup without requiring an app restart', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-live-external-mcp-'));

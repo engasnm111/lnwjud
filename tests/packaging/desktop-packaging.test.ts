@@ -101,7 +101,7 @@ describe('cross-platform desktop packaging', () => {
       repository?: { type?: unknown; url?: unknown };
     };
 
-    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 253 total tool definitions.');
+    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 263 total tool definitions.');
     expect(desktopPackage.author).toBe('Adisorn');
     expect(desktopPackage.homepage).toBe('https://github.com/engasnm111/lnwjud#readme');
     expect(desktopPackage.repository).toEqual({ type: 'git', url: 'https://github.com/engasnm111/lnwjud.git' });

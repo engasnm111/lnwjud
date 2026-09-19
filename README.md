@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>253 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, context capsules, indexing, observability, ECC integration, and extensibility; 241 are advertised by default and all 253 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>263 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, native automation, context capsules, indexing, observability, ECC integration, and extensibility; 251 are advertised by default and all 263 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-253%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-263%20tools-6f42c1" />
 </p>
 
 <h2 align="center">Download lnwjud</h2>
@@ -105,7 +105,7 @@ Installed lnwjud keeps per-user runtime data outside your source repository: `%A
 
 ## What can lnwjud do?
 
-lnwjud exposes **253 tool definitions** through one local runtime and MCP gateway. The default advertised set is 241; all 253 are available when Codex delegation plus Agent Swarm is enabled.
+lnwjud exposes **263 tool definitions** through one local runtime and MCP gateway. The default advertised set is 251; all 263 are available when Codex delegation plus Agent Swarm is enabled.
 
 | Area | Examples |
 | --- | --- |
