@@ -35,6 +35,44 @@ export type AutomationAttemptStatus =
 
 export type AutomationTaskProvider = 'process' | 'codex' | 'shell';
 
+export type AutomationTaskObservedState =
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out'
+  | 'termination_unverified'
+  | 'not_found'
+  | 'unreachable';
+
+export type AutomationRecoveryClass =
+  | 'observation_timeout'
+  | 'transport_interrupted'
+  | 'dispatch_uncertain'
+  | 'dispatch_absent'
+  | 'task_deadline_exceeded'
+  | 'task_failed'
+  | 'task_cancelled'
+  | 'task_timed_out'
+  | 'task_missing'
+  | 'termination_unverified';
+
+export type AutomationRecoveryAction =
+  | 'continue_observing'
+  | 'enter_verification'
+  | 'retry_attempt'
+  | 'fail_attempt'
+  | 'block_reconciliation'
+  | 'cancel_and_reobserve';
+
+export interface AutomationRecoveryDecision {
+  readonly classification: AutomationRecoveryClass;
+  readonly action: AutomationRecoveryAction;
+  readonly retryable: boolean;
+  readonly reason: string;
+}
+
 export type AutomationDispatchState =
   | 'reserved'
   | 'dispatched_unresolved'
@@ -94,6 +132,9 @@ export type AutomationEventType =
   | 'attempt_failed'
   | 'milestone_blocked'
   | 'run_completing'
+  | 'dispatch_unresolved'
+  | 'task_deadline_exceeded'
+  | 'task_recovery_decision'
   | 'run_terminal';
 
 export interface AutomationRunRecord {
@@ -146,6 +187,11 @@ export interface AutomationTaskBindingRecord {
   readonly role: GoalTrackedTaskRole;
   readonly cancelWithGoal: boolean;
   readonly boundAt: string;
+  readonly deadlineAt?: string;
+  readonly lastObservedAt?: string;
+  readonly lastState?: AutomationTaskObservedState;
+  readonly lastDetail?: string;
+  readonly terminalAt?: string;
 }
 export interface AutomationDispatchReceiptRecord {
   readonly id: string;
@@ -154,8 +200,10 @@ export interface AutomationDispatchReceiptRecord {
   readonly attemptId: string;
   readonly operationKey: string;
   readonly state: AutomationDispatchState;
+  readonly provider?: AutomationTaskProvider;
   readonly idempotencyKey?: string;
   readonly externalId?: string;
+  readonly deadlineAt?: string;
   readonly detail?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -233,6 +281,17 @@ export interface AutomationTaskBindingWrite {
   readonly role: GoalTrackedTaskRole;
   readonly cancelWithGoal: boolean;
   readonly boundAt: string;
+  readonly deadlineAt?: string | null;
+}
+
+export interface AutomationTaskObservationUpdate {
+  readonly attemptId: string;
+  readonly provider: AutomationTaskProvider;
+  readonly taskId: string;
+  readonly state: AutomationTaskObservedState;
+  readonly observedAt: string;
+  readonly detail?: string | null;
+  readonly terminalAt?: string | null;
 }
 
 export interface AutomationDispatchReceiptWrite {
@@ -241,8 +300,10 @@ export interface AutomationDispatchReceiptWrite {
   readonly attemptId: string;
   readonly operationKey: string;
   readonly state: AutomationDispatchState;
+  readonly provider?: AutomationTaskProvider;
   readonly idempotencyKey?: string | null;
   readonly externalId?: string | null;
+  readonly deadlineAt?: string;
   readonly detail?: string | null;
 }
 
@@ -263,6 +324,7 @@ export interface CommitAutomationTransitionRequest {
   readonly createAttempt?: AutomationAttemptCreate;
   readonly attemptUpdates?: readonly AutomationAttemptUpdate[];
   readonly taskBindings?: readonly AutomationTaskBindingWrite[];
+  readonly taskObservationUpdates?: readonly AutomationTaskObservationUpdate[];
   readonly dispatchReceipts?: readonly AutomationDispatchReceiptWrite[];
   readonly event: AutomationEventWrite;
   readonly additionalEvents?: readonly AutomationEventWrite[];

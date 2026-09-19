@@ -19,6 +19,8 @@ import {
   type AutomationRunStatus,
   type AutomationTaskBindingRecord,
   type AutomationTaskBindingWrite,
+  type AutomationTaskObservationUpdate,
+  type AutomationTaskObservedState,
   type AutomationTaskProvider,
   type AutomationVerificationRequirement,
   type CommitAutomationTransitionRequest,
@@ -83,6 +85,11 @@ interface AutomationTaskBindingRow {
   readonly role: string;
   readonly cancel_with_goal: number;
   readonly bound_at: string;
+  readonly deadline_at: string | null;
+  readonly last_observed_at: string | null;
+  readonly last_state: string | null;
+  readonly last_detail: string | null;
+  readonly terminal_at: string | null;
 }
 
 interface AutomationDispatchReceiptRow {
@@ -92,8 +99,10 @@ interface AutomationDispatchReceiptRow {
   readonly attempt_id: string;
   readonly operation_key: string;
   readonly state: string;
+  readonly provider: string | null;
   readonly idempotency_key: string | null;
   readonly external_id: string | null;
+  readonly deadline_at: string | null;
   readonly detail: string | null;
   readonly created_at: string;
   readonly updated_at: string;
@@ -292,6 +301,9 @@ export class SqliteAutomationRepository implements AutomationRepository {
       }
       for (const binding of request.taskBindings ?? []) {
         this.insertTaskBinding(request.runId, binding);
+      }
+      for (const observation of request.taskObservationUpdates ?? []) {
+        this.updateTaskObservation(request.runId, observation);
       }
       for (const receipt of request.dispatchReceipts ?? []) {
         this.upsertDispatchReceipt(request.runId, receipt, request.now);
@@ -533,6 +545,7 @@ export class SqliteAutomationRepository implements AutomationRepository {
       if (
         existing.role !== binding.role
         || existing.cancel_with_goal !== (binding.cancelWithGoal ? 1 : 0)
+        || existing.deadline_at !== (binding.deadlineAt ?? null)
       ) {
         throw new AutomationStateError('conflict', 'Automation task binding identity was reused with different ownership');
       }
@@ -541,8 +554,9 @@ export class SqliteAutomationRepository implements AutomationRepository {
 
     this.database.connection.prepare(`
       INSERT INTO automation_task_bindings (
-        attempt_id, provider, task_id, role, cancel_with_goal, bound_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        attempt_id, provider, task_id, role, cancel_with_goal, bound_at,
+        deadline_at, last_observed_at, last_state, last_detail, terminal_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
     `).run(
       binding.attemptId,
       binding.provider,
@@ -550,6 +564,78 @@ export class SqliteAutomationRepository implements AutomationRepository {
       binding.role,
       binding.cancelWithGoal ? 1 : 0,
       binding.boundAt,
+      binding.deadlineAt ?? null,
+    );
+  }
+
+  private updateTaskObservation(
+    runId: string,
+    observation: AutomationTaskObservationUpdate,
+  ): void {
+    validateTaskObservationUpdate(observation);
+    const attempt = this.requireAttemptRow(runId, observation.attemptId);
+    const binding = this.database.connection.prepare(`
+      SELECT binding.*
+      FROM automation_task_bindings binding
+      INNER JOIN automation_attempts attempt_row ON attempt_row.id = binding.attempt_id
+      WHERE binding.attempt_id = ?
+        AND binding.provider = ?
+        AND binding.task_id = ?
+        AND attempt_row.run_id = ?
+    `).get(
+      observation.attemptId,
+      observation.provider,
+      observation.taskId,
+      runId,
+    ) as AutomationTaskBindingRow | undefined;
+    if (binding === undefined || attempt.id !== observation.attemptId) {
+      throw new AutomationStateError('not_found', 'Automation task binding was not found in this run');
+    }
+    const observedMs = Date.parse(observation.observedAt);
+    if (observedMs < Date.parse(binding.bound_at)) {
+      throw new AutomationStateError('conflict', 'Automation task observation predates the durable task binding');
+    }
+    if (binding.last_observed_at !== null && observedMs < Date.parse(binding.last_observed_at)) {
+      throw new AutomationStateError('conflict', 'Automation task observations must be monotonic');
+    }
+    const nextTerminalAt = observation.terminalAt === undefined
+      ? binding.terminal_at
+      : observation.terminalAt;
+    if (nextTerminalAt !== null && Date.parse(nextTerminalAt) < Date.parse(binding.bound_at)) {
+      throw new AutomationStateError('conflict', 'Automation task terminal time predates the durable task binding');
+    }
+    if (binding.terminal_at !== null) {
+      if (!isTerminalTaskObservedState(observation.state)) {
+        throw new AutomationStateError('conflict', 'A terminal automation task observation cannot become non-terminal');
+      }
+      if (
+        binding.last_state !== null
+        && isTerminalTaskObservedState(binding.last_state as AutomationTaskObservedState)
+        && binding.last_state !== observation.state
+      ) {
+        throw new AutomationStateError('conflict', 'Automation task terminal state is immutable');
+      }
+      if (
+        observation.terminalAt !== undefined
+        && observation.terminalAt !== null
+        && binding.terminal_at !== observation.terminalAt
+      ) {
+        throw new AutomationStateError('conflict', 'Automation task terminal time is immutable');
+      }
+    }
+
+    this.database.connection.prepare(`
+      UPDATE automation_task_bindings
+      SET last_observed_at = ?, last_state = ?, last_detail = ?, terminal_at = ?
+      WHERE attempt_id = ? AND provider = ? AND task_id = ?
+    `).run(
+      observation.observedAt,
+      observation.state,
+      observation.detail === undefined ? binding.last_detail : observation.detail,
+      observation.terminalAt === undefined ? binding.terminal_at : observation.terminalAt,
+      observation.attemptId,
+      observation.provider,
+      observation.taskId,
     );
   }
 
@@ -579,8 +665,9 @@ export class SqliteAutomationRepository implements AutomationRepository {
       this.database.connection.prepare(`
         INSERT INTO automation_dispatch_receipts (
           id, run_id, milestone_id, attempt_id, operation_key, state,
-          idempotency_key, external_id, detail, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          provider, idempotency_key, external_id, deadline_at, detail,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         receipt.id,
         runId,
@@ -588,8 +675,10 @@ export class SqliteAutomationRepository implements AutomationRepository {
         receipt.attemptId,
         receipt.operationKey,
         receipt.state,
+        receipt.provider ?? null,
         receipt.idempotencyKey ?? null,
         receipt.externalId ?? null,
+        receipt.deadlineAt ?? null,
         receipt.detail ?? null,
         now,
         now,
@@ -601,18 +690,26 @@ export class SqliteAutomationRepository implements AutomationRepository {
       || byId.milestone_id !== receipt.milestoneId
       || byId.attempt_id !== receipt.attemptId
       || byId.operation_key !== receipt.operationKey
+      || (byId.provider !== null && receipt.provider !== undefined && byId.provider !== receipt.provider)
+      || (byId.idempotency_key !== null && receipt.idempotencyKey !== undefined && byId.idempotency_key !== receipt.idempotencyKey)
+      || (byId.external_id !== null && receipt.externalId !== undefined && byId.external_id !== receipt.externalId)
+      || (byId.deadline_at !== null && receipt.deadlineAt !== undefined && byId.deadline_at !== receipt.deadlineAt)
     ) {
       throw new AutomationStateError('conflict', 'Automation dispatch receipt identity is immutable');
     }
+    assertDispatchStateTransition(byId.state, receipt.state);
 
     this.database.connection.prepare(`
       UPDATE automation_dispatch_receipts
-      SET state = ?, idempotency_key = ?, external_id = ?, detail = ?, updated_at = ?
+      SET state = ?, provider = ?, idempotency_key = ?, external_id = ?,
+          deadline_at = ?, detail = ?, updated_at = ?
       WHERE id = ?
     `).run(
       receipt.state,
+      receipt.provider === undefined ? byId.provider : receipt.provider,
       receipt.idempotencyKey === undefined ? byId.idempotency_key : receipt.idempotencyKey,
       receipt.externalId === undefined ? byId.external_id : receipt.externalId,
+      receipt.deadlineAt === undefined ? byId.deadline_at : receipt.deadlineAt,
       receipt.detail === undefined ? byId.detail : receipt.detail,
       now,
       receipt.id,
@@ -825,6 +922,14 @@ export class SqliteAutomationRepository implements AutomationRepository {
     assertTaskRole(row.role, 'corrupt');
     if (row.cancel_with_goal !== 0 && row.cancel_with_goal !== 1) throw corrupt('Automation task cancellation flag is invalid');
     assertIso(row.bound_at, 'automation task boundAt', 'corrupt');
+    if (row.deadline_at !== null) {
+      assertIso(row.deadline_at, 'automation task deadlineAt', 'corrupt');
+      if (Date.parse(row.deadline_at) < Date.parse(row.bound_at)) throw corrupt('Automation task deadline precedes binding time');
+    }
+    if (row.last_observed_at !== null) assertIso(row.last_observed_at, 'automation task lastObservedAt', 'corrupt');
+    if (row.last_state !== null) assertTaskObservedState(row.last_state, 'corrupt');
+    if (row.last_detail !== null) assertBoundedString(row.last_detail, 'automation task last detail', MAX_FAILURE_TEXT, 'corrupt');
+    if (row.terminal_at !== null) assertIso(row.terminal_at, 'automation task terminalAt', 'corrupt');
     return {
       attemptId: row.attempt_id,
       provider: row.provider as AutomationTaskProvider,
@@ -832,6 +937,11 @@ export class SqliteAutomationRepository implements AutomationRepository {
       role: row.role as GoalTrackedTaskRole,
       cancelWithGoal: row.cancel_with_goal === 1,
       boundAt: row.bound_at,
+      ...(row.deadline_at === null ? {} : { deadlineAt: row.deadline_at }),
+      ...(row.last_observed_at === null ? {} : { lastObservedAt: row.last_observed_at }),
+      ...(row.last_state === null ? {} : { lastState: row.last_state as AutomationTaskObservedState }),
+      ...(row.last_detail === null ? {} : { lastDetail: row.last_detail }),
+      ...(row.terminal_at === null ? {} : { terminalAt: row.terminal_at }),
     };
   }
   private dispatchReceiptFromRow(row: AutomationDispatchReceiptRow): AutomationDispatchReceiptRecord {
@@ -841,8 +951,10 @@ export class SqliteAutomationRepository implements AutomationRepository {
     assertBoundedString(row.attempt_id, 'automation receipt attempt id', MAX_ID, 'corrupt');
     assertBoundedString(row.operation_key, 'automation operation key', MAX_ID, 'corrupt');
     assertDispatchState(row.state, 'corrupt');
+    if (row.provider !== null) assertTaskProvider(row.provider, 'corrupt');
     if (row.idempotency_key !== null) assertBoundedString(row.idempotency_key, 'automation receipt idempotency key', MAX_FAILURE_TEXT, 'corrupt');
     if (row.external_id !== null) assertBoundedString(row.external_id, 'automation receipt external id', MAX_FAILURE_TEXT, 'corrupt');
+    if (row.deadline_at !== null) assertIso(row.deadline_at, 'automation receipt deadlineAt', 'corrupt');
     if (row.detail !== null) assertBoundedString(row.detail, 'automation receipt detail', MAX_FAILURE_TEXT, 'corrupt');
     assertIso(row.created_at, 'automation receipt createdAt', 'corrupt');
     assertIso(row.updated_at, 'automation receipt updatedAt', 'corrupt');
@@ -853,8 +965,10 @@ export class SqliteAutomationRepository implements AutomationRepository {
       attemptId: row.attempt_id,
       operationKey: row.operation_key,
       state: row.state as AutomationDispatchState,
+      ...(row.provider === null ? {} : { provider: row.provider as AutomationTaskProvider }),
       ...(row.idempotency_key === null ? {} : { idempotencyKey: row.idempotency_key }),
       ...(row.external_id === null ? {} : { externalId: row.external_id }),
+      ...(row.deadline_at === null ? {} : { deadlineAt: row.deadline_at }),
       ...(row.detail === null ? {} : { detail: row.detail }),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -961,6 +1075,7 @@ function validateTransitionRequest(request: CommitAutomationTransitionRequest): 
   if ((request.milestoneUpdates?.length ?? 0) > MAX_MILESTONES) throw conflict('Too many automation milestone updates');
   if ((request.attemptUpdates?.length ?? 0) > MAX_MILESTONES) throw conflict('Too many automation attempt updates');
   if ((request.taskBindings?.length ?? 0) > MAX_MILESTONES) throw conflict('Too many automation task bindings');
+  if ((request.taskObservationUpdates?.length ?? 0) > MAX_MILESTONES * 2) throw conflict('Too many automation task observations');
   if ((request.dispatchReceipts?.length ?? 0) > MAX_MILESTONES) throw conflict('Too many automation dispatch receipts');
 }
 
@@ -970,6 +1085,36 @@ function validateTaskBinding(binding: AutomationTaskBindingWrite): void {
   assertBoundedString(binding.taskId, 'task binding taskId', MAX_ID);
   assertTaskRole(binding.role);
   assertIso(binding.boundAt, 'task binding boundAt');
+  if (binding.deadlineAt !== undefined && binding.deadlineAt !== null) {
+    assertIso(binding.deadlineAt, 'task binding deadlineAt');
+    if (Date.parse(binding.deadlineAt) < Date.parse(binding.boundAt)) {
+      throw conflict('Automation task deadline cannot precede binding time');
+    }
+  }
+}
+
+function validateTaskObservationUpdate(observation: AutomationTaskObservationUpdate): void {
+  assertBoundedString(observation.attemptId, 'task observation attemptId', MAX_ID);
+  assertTaskProvider(observation.provider);
+  assertBoundedString(observation.taskId, 'task observation taskId', MAX_ID);
+  assertTaskObservedState(observation.state);
+  assertIso(observation.observedAt, 'task observation observedAt');
+  if (observation.detail !== undefined && observation.detail !== null) {
+    assertBoundedString(observation.detail, 'task observation detail', MAX_FAILURE_TEXT);
+  }
+  const terminal = isTerminalTaskObservedState(observation.state);
+  if (terminal && (observation.terminalAt === undefined || observation.terminalAt === null)) {
+    throw conflict('Terminal automation task observations require terminalAt');
+  }
+  if (!terminal && observation.terminalAt !== undefined && observation.terminalAt !== null) {
+    throw conflict('Non-terminal automation task observations cannot set terminalAt');
+  }
+  if (observation.terminalAt !== undefined && observation.terminalAt !== null) {
+    assertIso(observation.terminalAt, 'task observation terminalAt');
+    if (Date.parse(observation.terminalAt) > Date.parse(observation.observedAt)) {
+      throw conflict('Automation task terminalAt cannot be after observedAt');
+    }
+  }
 }
 
 function validateDispatchReceiptWrite(receipt: AutomationDispatchReceiptWrite): void {
@@ -978,6 +1123,8 @@ function validateDispatchReceiptWrite(receipt: AutomationDispatchReceiptWrite): 
   assertBoundedString(receipt.attemptId, 'receipt attempt id', MAX_ID);
   assertBoundedString(receipt.operationKey, 'receipt operation key', MAX_ID);
   assertDispatchState(receipt.state);
+  if (receipt.provider !== undefined) assertTaskProvider(receipt.provider);
+  if (receipt.deadlineAt !== undefined) assertIso(receipt.deadlineAt, 'receipt deadlineAt');
   for (const [label, value] of [
     ['idempotencyKey', receipt.idempotencyKey],
     ['externalId', receipt.externalId],
@@ -1268,9 +1415,56 @@ function assertDispatchState(value: unknown, reason: 'conflict' | 'corrupt' = 'c
   ) throw stateError(reason, 'Automation dispatch state is invalid');
 }
 
+function assertDispatchStateTransition(
+  current: AutomationDispatchState | string,
+  next: AutomationDispatchState,
+): void {
+  const allowed: Readonly<Record<AutomationDispatchState, readonly AutomationDispatchState[]>> = {
+    reserved: ['reserved', 'dispatched_unresolved', 'confirmed', 'failed', 'cancelled'],
+    dispatched_unresolved: ['dispatched_unresolved', 'confirmed', 'failed', 'cancelled'],
+    confirmed: ['confirmed'],
+    failed: ['failed'],
+    cancelled: ['cancelled'],
+  };
+  if (!isDispatchStateValue(current) || !allowed[current].includes(next)) {
+    throw conflict(`Automation dispatch state cannot transition from ${String(current)} to ${next}`);
+  }
+}
+
+function isDispatchStateValue(value: unknown): value is AutomationDispatchState {
+  return value === 'reserved'
+    || value === 'dispatched_unresolved'
+    || value === 'confirmed'
+    || value === 'failed'
+    || value === 'cancelled';
+}
+
 function assertTaskProvider(value: unknown, reason: 'conflict' | 'corrupt' = 'conflict'): void {
   if (value !== 'process' && value !== 'codex' && value !== 'shell') {
     throw stateError(reason, 'Automation task provider is invalid');
+  }
+}
+
+function isTerminalTaskObservedState(value: AutomationTaskObservedState): boolean {
+  return value === 'completed'
+    || value === 'failed'
+    || value === 'cancelled'
+    || value === 'timed_out';
+}
+
+function assertTaskObservedState(value: unknown, reason: 'conflict' | 'corrupt' = 'conflict'): void {
+  if (
+    value !== 'starting'
+    && value !== 'running'
+    && value !== 'completed'
+    && value !== 'failed'
+    && value !== 'cancelled'
+    && value !== 'timed_out'
+    && value !== 'termination_unverified'
+    && value !== 'not_found'
+    && value !== 'unreachable'
+  ) {
+    throw stateError(reason, 'Automation task observed state is invalid');
   }
 }
 
@@ -1305,6 +1499,9 @@ const EVENT_TYPES = new Set<AutomationEventType>([
   'attempt_failed',
   'milestone_blocked',
   'run_completing',
+  'dispatch_unresolved',
+  'task_deadline_exceeded',
+  'task_recovery_decision',
   'run_terminal',
 ]);
 

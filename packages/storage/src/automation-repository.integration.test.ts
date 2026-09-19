@@ -609,4 +609,119 @@ describe('SqliteAutomationRepository', () => {
       database.close();
     }
   });
+
+  it('persists M3 task supervision deadlines, observations, and dispatch identity', async () => {
+    const { database, automation } = await fixture();
+    try {
+      await automation.createRun(createRequest());
+      const migrationIds = database.connection.prepare(
+        'SELECT id FROM schema_migrations ORDER BY id',
+      ).all().map((row) => (row as { id: string }).id);
+      expect(migrationIds).toContain('020_automation_task_supervisor');
+
+      const bindingColumns = database.connection.prepare(
+        "PRAGMA table_info('automation_task_bindings')",
+      ).all().map((row) => (row as { name: string }).name);
+      expect(bindingColumns).toEqual(expect.arrayContaining([
+        'deadline_at',
+        'last_observed_at',
+        'last_state',
+        'last_detail',
+        'terminal_at',
+      ]));
+      const receiptColumns = database.connection.prepare(
+        "PRAGMA table_info('automation_dispatch_receipts')",
+      ).all().map((row) => (row as { name: string }).name);
+      expect(receiptColumns).toEqual(expect.arrayContaining(['provider', 'deadline_at']));
+
+      const bound = await automation.commitTransition({
+        runId: 'run-1',
+        expectedRevision: 0,
+        runPatch: {
+          status: 'waiting_task',
+          currentMilestoneId: 'm1',
+          currentAttemptId: 'attempt-m3',
+        },
+        createAttempt: {
+          attemptId: 'attempt-m3',
+          milestoneId: 'm1',
+          basedOnGoalRevision: 0,
+          basedOnUserIntentRevision: 0,
+          status: 'waiting_task',
+          startedAt: '2026-09-19T01:00:00.000Z',
+        },
+        milestoneUpdates: [{
+          milestoneId: 'm1',
+          status: 'waiting_task',
+          currentAttemptId: 'attempt-m3',
+        }],
+        taskBindings: [{
+          attemptId: 'attempt-m3',
+          provider: 'shell',
+          taskId: 'task-m3',
+          role: 'blocking_job',
+          cancelWithGoal: true,
+          boundAt: '2026-09-19T01:00:00.000Z',
+          deadlineAt: '2026-09-19T01:05:00.000Z',
+        }],
+        dispatchReceipts: [{
+          id: 'receipt-m3',
+          milestoneId: 'm1',
+          attemptId: 'attempt-m3',
+          operationKey: 'build',
+          state: 'confirmed',
+          provider: 'shell',
+          idempotencyKey: 'm3-idempotency',
+          externalId: 'task-m3',
+          deadlineAt: '2026-09-19T01:05:00.000Z',
+        }],
+        event: {
+          id: 'event-m3-bound',
+          milestoneId: 'm1',
+          attemptId: 'attempt-m3',
+          type: 'task_bound',
+          reason: 'm3_binding_fixture',
+        },
+        now: '2026-09-19T01:00:00.000Z',
+      });
+      expect(bound.taskBindings[0]).toMatchObject({
+        deadlineAt: '2026-09-19T01:05:00.000Z',
+      });
+      expect(bound.dispatchReceipts[0]).toMatchObject({
+        provider: 'shell',
+        deadlineAt: '2026-09-19T01:05:00.000Z',
+      });
+
+      const observed = await automation.commitTransition({
+        runId: 'run-1',
+        expectedRevision: bound.revision,
+        taskObservationUpdates: [{
+          attemptId: 'attempt-m3',
+          provider: 'shell',
+          taskId: 'task-m3',
+          state: 'completed',
+          observedAt: '2026-09-19T01:02:00.000Z',
+          detail: 'exit 0',
+          terminalAt: '2026-09-19T01:01:59.000Z',
+        }],
+        event: {
+          id: 'event-m3-observed',
+          milestoneId: 'm1',
+          attemptId: 'attempt-m3',
+          type: 'task_observed',
+          reason: 'terminal_observation',
+        },
+        now: '2026-09-19T01:02:00.000Z',
+      });
+
+      expect(observed.taskBindings[0]).toMatchObject({
+        lastState: 'completed',
+        lastObservedAt: '2026-09-19T01:02:00.000Z',
+        lastDetail: 'exit 0',
+        terminalAt: '2026-09-19T01:01:59.000Z',
+      });
+    } finally {
+      database.close();
+    }
+  });
 });

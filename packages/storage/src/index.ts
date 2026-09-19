@@ -16,3 +16,4 @@ export * from './backup-service.js';
 export * from './agent-swarm-repository.js';
 export * from './migrations/agent-swarm-migration.js';
 export * from './migrations/automation-engine-migration.js';
+export * from './migrations/automation-task-supervisor-migration.js';

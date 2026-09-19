@@ -21,6 +21,7 @@ import { RECURRING_SCHEDULED_CONTINUATION_MIGRATION_SQL } from './migrations/rec
 import { GOAL_PONYTAIL_MODE_MIGRATION_SQL } from './migrations/goal-ponytail-mode-migration.js';
 import { GOAL_V5_ORCHESTRATION_MIGRATION_SQL } from './migrations/goal-v5-orchestration-migration.js';
 import { AUTOMATION_ENGINE_MIGRATION_SQL } from './migrations/automation-engine-migration.js';
+import { AUTOMATION_TASK_SUPERVISOR_MIGRATION_SQL } from './migrations/automation-task-supervisor-migration.js';
 
 export interface SqliteDatabaseOptions {
   readonly backupDirectory?: string;
@@ -104,6 +105,7 @@ export class SqliteDatabase {
     this.applyMigration({ id: '017_goal_ponytail_mode', sql: GOAL_PONYTAIL_MODE_MIGRATION_SQL });
     this.applyMigration({ id: '018_goal_v5_orchestration', sql: GOAL_V5_ORCHESTRATION_MIGRATION_SQL });
     this.applyMigration({ id: '019_native_automation_engine', sql: AUTOMATION_ENGINE_MIGRATION_SQL });
+    this.applyMigration({ id: '020_automation_task_supervisor', sql: AUTOMATION_TASK_SUPERVISOR_MIGRATION_SQL });
   }
 
   private ensureDirectory(): void {
