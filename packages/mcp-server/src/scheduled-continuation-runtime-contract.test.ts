@@ -27,6 +27,8 @@ describe('scheduled continuation runtime contract', () => {
     expect(serialized).toContain('intervalMinutes=60');
     expect(serialized).toContain('worker_busy_noop');
     expect(serialized).toContain('recurring_acquired');
+    expect(serialized).toContain('automationResume');
+    expect(serialized).toContain('never relaunches a payload merely because the worker restarted');
     expect(serialized).toContain('one-time compatibility');
     expect(serialized).toContain('cloud');
     expect(serialized).toContain('never create a per-wake successor');

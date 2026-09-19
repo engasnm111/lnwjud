@@ -395,16 +395,30 @@ The Automation Engine does not create another scheduler.
 It reuses the existing rolling durable-goal contract:
 - one Native ChatGPT hourly recurring watchdog for an active goal;
 - `claim_scheduled_continuation` is the first durable continuation action on wake;
+- only `recurring_acquired` grants automatic native-automation recovery authority;
 - ordinary recurring wakes reuse the same native task;
-- busy/live worker outcomes are no-op;
-- stale orphan takeover follows existing bounded liveness rules;
+- `worker_busy_noop`, `already_claimed`, and orphan-probe no-op outcomes never advance automation state;
+- stale orphan takeover follows existing bounded liveness rules before automation recovery is attempted;
 - scheduler transport degradation does not fail the work goal by itself.
 
-The Automation Engine persists enough state that a scheduled worker can resume by
-goal/run ID without reconstructing milestones from chat text.
+A successful recurring claim may include an additive `automationResume` projection
+derived entirely from persisted GoalRecord, AutomationRun, dispatch receipt, and
+durable task state. The worker does not reconstruct milestones or task identity
+from chat text. A waiting task is observed by its exact provider/task ID; an
+unresolved dispatch is reconciled before any retry; and a ready attempt advances
+only to a durable dispatch boundary until an explicit execution descriptor is
+supplied through `automation_run`.
 
-Historical one-time continuation rows remain compatibility-only and are not part
-of the new automation design.
+Crash windows are reconciled from durable facts rather than replayed:
+- task completion after disconnect is consumed from the existing bound task;
+- a GoalRecord verification checkpoint committed before AutomationRun milestone
+  completion is recognized by its exact run/milestone/attempt evidence marker;
+- a successful `finish_goal` committed before AutomationRun terminal persistence
+  is recovered from terminal GoalRecord readback;
+- duplicate scheduled delivery performs no automation mutation.
+
+Historical one-time continuation rows remain compatibility-only and do not
+auto-resume native automation until their existing scheduler handoff contract is safe.
 
 ## Verification and completion
 
@@ -508,16 +522,25 @@ behave exactly as before.
 
 On `automation_run` / resume / scheduled wake:
 
-1. load current goal and automation run;
-2. reject terminal/cancelled mismatch states;
-3. validate current user intent revision;
-4. inspect unresolved dispatch receipts;
-5. inspect every bound blocking task by exact provider/task ID;
-6. reconcile terminal task results into attempts;
-7. recover stale `running` milestones only when no live fenced call/task proves ownership;
-8. recompute DAG readiness deterministically;
-9. checkpoint any recovered durable facts;
-10. continue useful work.
+1. on a scheduled wake, claim the existing continuation first and require the
+   existing lease/liveness contract to return `recurring_acquired`;
+2. load current goal and automation run from durable storage;
+3. reject terminal/cancelled mismatch states and validate current user-intent revision;
+4. synchronize the AutomationRun goal revision only after the claimed GoalRecord
+   proves the same user intent;
+5. inspect unresolved dispatch receipts and reconcile them before any replay;
+6. inspect every bound blocking task by exact provider/task ID and consume terminal
+   task evidence without launching a replacement;
+7. if verification was durably checkpointed before a crash, complete the same
+   milestone from its exact persisted verification marker;
+8. if GoalRecord became terminal before AutomationRun terminal persistence,
+   reconcile the run from terminal readback;
+9. recompute DAG readiness deterministically and advance only to a safe dispatch boundary;
+10. checkpoint any recovered durable facts and continue useful work.
+
+Busy/duplicate scheduled claims are idempotent no-ops. Recovery never creates,
+retimes, or replaces the recurring watchdog, never steals a healthy lease, and
+never infers an external payload that is not durably represented.
 
 Recovery must be idempotent. Running recovery twice over the same observations
 must produce the same authoritative state and no duplicate side effect.
@@ -613,7 +636,7 @@ M2 — application orchestrator + deterministic milestone DAG.
 M3 — durable task supervisor + timeout/recovery taxonomy.
 M4 — runtime adapter + native MCP tool surface + `coding_guarded` policy/fence integration.
 M5 — durable-goal/checkpoint integration + final acceptance/terminal readback.
-M6 — scheduled-continuation resume integration + crash recovery.
+M6 — scheduled-continuation resume projection + crash-window reconciliation.
 M7 — observability, audit projection, Live Logs/dashboard read model.
 M8 — fault-injection suite, packaging isolation, migration/upgrade verification.
 

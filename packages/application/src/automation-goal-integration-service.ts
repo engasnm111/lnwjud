@@ -52,6 +52,13 @@ export interface AutomationFinalizeRequest extends AutomationGoalMutationRequest
   readonly acceptance: readonly AutomationAcceptanceCompletion[];
 }
 
+export type AutomationRecoverCheckpointedVerificationRequest = AutomationGoalMutationRequest;
+
+export interface AutomationTerminalReadbackRequest {
+  readonly runId: string;
+  readonly expectedRevision: number;
+}
+
 export interface AutomationGoalCheckpointResult {
   readonly run: AutomationRunSnapshot;
   readonly goal: GoalSnapshot;
@@ -213,6 +220,72 @@ export class AutomationGoalIntegrationService {
       evidence: request.evidence,
     });
     return { run: completed, goal: checkpoint };
+  }
+
+  public async recoverCheckpointedVerification(
+    actor: FileActor,
+    request: AutomationRecoverCheckpointedVerificationRequest,
+  ): Promise<AutomationGoalCheckpointResult | null> {
+    const run = await this.loadExpectedRun(request);
+    if (
+      run.status !== 'verifying'
+      || run.currentMilestoneId === undefined
+      || run.currentAttemptId === undefined
+    ) return null;
+
+    const goal = await this.loadGoal(actor, run.goalId);
+    assertGoalIdentity(run, goal);
+    if (goal.status !== 'active') return null;
+    assertAuthority(run, goal, request.authority);
+
+    const milestone = run.milestones.find((candidate) => candidate.id === run.currentMilestoneId);
+    const attempt = run.attempts.find((candidate) => candidate.id === run.currentAttemptId);
+    if (milestone === undefined || attempt === undefined) {
+      throw new AutomationStateError('corrupt', 'Automation verification recovery references missing milestone or attempt');
+    }
+    if (milestone.status !== 'verifying' || attempt.status !== 'verifying') return null;
+
+    const planStep = goal.plan.steps.find((candidate) => candidate.id === milestone.id);
+    if (planStep?.status !== 'completed') return null;
+
+    const checkpoint = goal.lastCheckpoint;
+    if (checkpoint === null) return null;
+    const markerValue = verificationMarker(run.id, milestone.id, attempt.id);
+    const markerPresent = checkpoint.evidence.some((entry) => (
+      entry.kind === 'note' && entry.value === markerValue
+    ));
+    if (!markerPresent) return null;
+
+    const recoveredEvidence = checkpoint.evidence.length > 0
+      ? checkpoint.evidence
+      : [{ kind: 'note' as const, value: markerValue }];
+    const completed = await this.orchestrator.completeCurrentMilestone({
+      runId: run.id,
+      expectedRevision: run.revision,
+      authority: request.authority,
+      evidence: recoveredEvidence,
+    });
+    return { run: completed, goal };
+  }
+
+  public async reconcileTerminalReadback(
+    actor: FileActor,
+    request: AutomationTerminalReadbackRequest,
+  ): Promise<AutomationGoalCheckpointResult> {
+    const run = await this.orchestrator.get(request.runId);
+    if (run.revision !== request.expectedRevision) {
+      throw new AutomationStateError('conflict', 'Automation run revision changed concurrently');
+    }
+    const goal = await this.loadGoal(actor, run.goalId);
+    assertGoalIdentity(run, goal);
+    assertTerminalReadback(goal, run);
+    if (run.status !== 'completed') assertRunReadyForFinalization(run);
+    const completed = await this.completeRunAfterTerminalReadback(
+      run,
+      goal,
+      goal.terminalEvidence?.length ?? 0,
+    );
+    return { run: completed, goal };
   }
 
   public async finalize(
@@ -719,6 +792,12 @@ function bindingKey(binding: { readonly provider: string; readonly taskId: strin
   return `${binding.provider}\0${binding.taskId}`;
 }
 
+function verificationMarker(runId: string, milestoneId: string, attemptId: string): string {
+  return boundedEvidenceValue(
+    `automation_verified:run=${runId};milestone=${milestoneId};attempt=${attemptId}`,
+  );
+}
+
 function projectedVerificationEvidence(
   runId: string,
   milestoneId: string,
@@ -727,9 +806,7 @@ function projectedVerificationEvidence(
 ): readonly GoalEvidence[] {
   const marker: GoalEvidence = {
     kind: 'note',
-    value: boundedEvidenceValue(
-      `automation_verified:run=${runId};milestone=${milestoneId};attempt=${attemptId}`,
-    ),
+    value: verificationMarker(runId, milestoneId, attemptId),
   };
   return [
     marker,

@@ -244,7 +244,11 @@ export class ToolRegistry {
       ...workspaceIndexTools(context),
       ...sessionTools(context, incrementalVerifier),
       ...goalTools(context),
-      ...scheduledContinuationTools(context),
+      ...scheduledContinuationTools(context, {
+        childInvoker: {
+          invoke: (name, input, signal) => this.invoke(name, input, undefined, signal),
+        },
+      }),
       ...upgradeTools(context, incrementalVerifier, this.activity),
     ];
     const exposedAllBaseTools = allBaseTools.map((tool) => withToolEnvelopes(tool));

@@ -27,4 +27,5 @@ export * from './agent-swarm-service.js';
 export * from './automation-execution-policy.js';
 export * from './automation-goal-integration-service.js';
 export * from './automation-orchestrator-service.js';
+export * from './automation-scheduled-resume-service.js';
 export * from './automation-task-supervisor-service.js';

@@ -1,8 +1,16 @@
 import { z } from 'zod';
 import {
+  AutomationScheduledResumeService,
+  AutomationTaskSupervisorService,
   MAX_SUCCESSOR_DELAY_MINUTES,
+  type ClaimScheduledContinuationResult,
   MIN_SUCCESSOR_DELAY_MINUTES,
 } from '@lnwjud/application';
+import { AutomationStateError, type GoalLeaseProof } from '@lnwjud/domain';
+import {
+  ToolRegistryAutomationRuntimeAdapter,
+  type AutomationChildInvoker,
+} from '../automation-runtime-adapter.js';
 import { defineTool, missingService, type McpToolContext, type McpToolDefinition } from './tool-types.js';
 
 const continuationId = z.string().min(1).max(128);
@@ -132,6 +140,21 @@ const cancelSchema = z.union([
   z.object({ goalId, latest: z.literal(true), expectedVersion: version }).strict(),
 ]);
 
+function scheduledClaimLease(value: ClaimScheduledContinuationResult): GoalLeaseProof | undefined {
+  if (
+    !('leaseToken' in value)
+    || !('leaseGeneration' in value)
+    || typeof value.leaseToken !== 'string'
+    || value.leaseToken.length === 0
+    || typeof value.leaseGeneration !== 'number'
+  ) return undefined;
+  return {
+    goalId: value.goal.goalId,
+    leaseToken: value.leaseToken,
+    leaseGeneration: value.leaseGeneration,
+  };
+}
+
 export const SCHEDULED_CONTINUATION_TOOL_NAMES = [
   'prepare_scheduled_continuation',
   'record_scheduled_continuation_receipt',
@@ -141,7 +164,14 @@ export const SCHEDULED_CONTINUATION_TOOL_NAMES = [
   'cancel_scheduled_continuation',
 ] as const;
 
-export function scheduledContinuationTools(context: McpToolContext): McpToolDefinition[] {
+export interface ScheduledContinuationToolRuntimeOptions {
+  readonly childInvoker: AutomationChildInvoker;
+}
+
+export function scheduledContinuationTools(
+  context: McpToolContext,
+  options?: ScheduledContinuationToolRuntimeOptions,
+): McpToolDefinition[] {
   return [
     defineTool({
       name: 'prepare_scheduled_continuation',
@@ -191,11 +221,72 @@ export function scheduledContinuationTools(context: McpToolContext): McpToolDefi
     }),
     defineTool({
       name: 'claim_scheduled_continuation',
-      description: 'Scheduled-wake entrypoint and the first lnwjud action before any workspace mutation. For occurrence=interval, the same native hourly task remains scheduled across firings: a live/uncertain worker returns worker_busy_noop without lease theft or host-task mutation, duplicate delivery returns already_claimed, a safely available lease returns recurring_acquired, and a still-valid stale lease with trustworthy no-worker/no-blocking-work evidence is recovered in the same hourly tick after the bounded 60-second stale-heartbeat grace rather than waiting for expiry or a second hourly firing. Ordinary recurring wakes never create a successor, never consume the native task, and never retime its cadence. terminal_noop performs no work; if terminal cleanup is pending, make the exact recurring native task non-runnable rather than resuming goal work. Historical occurrence=once rows retain the v4.52 acquired/successor_required/reschedule compatibility paths. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease.',
+      description: 'Scheduled-wake entrypoint and the first lnwjud action before any workspace mutation. For occurrence=interval, the same native hourly task remains scheduled across firings: a live/uncertain worker returns worker_busy_noop without lease theft or host-task mutation, duplicate delivery returns already_claimed, a safely available lease returns recurring_acquired, and a still-valid stale lease with trustworthy no-worker/no-blocking-work evidence is recovered in the same hourly tick after the bounded 60-second stale-heartbeat grace rather than waiting for expiry or a second hourly firing. When the durable goal owns a native AutomationRun, a successful recurring claim also returns automationResume projected from persisted run/task state: it may observe the exact existing blocking task or reconcile an unresolved dispatch, but never relaunches a payload merely because the worker restarted. Busy/duplicate claims never advance automation. Crash recovery can complete a milestone from a previously committed durable verification checkpoint and can reconcile AutomationRun completion from terminal GoalRecord readback. Ordinary recurring wakes never create a successor, never consume the native task, and never retime its cadence. terminal_noop performs no goal work; if terminal cleanup is pending, make the exact recurring native task non-runnable rather than resuming goal work. Historical occurrence=once rows retain the v4.52 acquired/successor_required/reschedule compatibility paths and do not auto-resume native automation before their scheduler handoff is safe. Never count prepared as confirmed and never mutate the workspace without the acquired goal lease.',
       permission: 'WRITE',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: claimSchema,
-      handler: async (input) => context.services.scheduledContinuations?.claimScheduledContinuation(context.actor, input) ?? missingService(),
+      handler: async (input) => {
+        const scheduled = context.services.scheduledContinuations;
+        if (scheduled === undefined) return missingService();
+        const claim = await scheduled.claimScheduledContinuation(context.actor, input);
+        if (!claim.ok || options === undefined) return claim;
+
+        const automation = context.services.automation;
+        if (automation?.goalIntegration === undefined) return claim;
+
+        const value = claim.value;
+        const lease = scheduledClaimLease(value);
+        const runtime = new ToolRegistryAutomationRuntimeAdapter(options.childInvoker, {
+          ...(lease === undefined ? {} : { goalLease: lease }),
+          userConfirmed: false,
+        });
+        const supervisor = new AutomationTaskSupervisorService(
+          automation.repository,
+          automation.orchestrator,
+          runtime,
+        );
+        const resume = new AutomationScheduledResumeService(
+          automation.repository,
+          automation.orchestrator,
+          supervisor,
+          automation.goalIntegration,
+        );
+
+        try {
+          const automationResume = await resume.resumeAfterClaim(context.actor, {
+            claimOutcome: value.outcome,
+            goalId: value.goal.goalId,
+            goalStatus: value.goal.status,
+            goalRevision: value.goal.revision,
+            userIntentRevision: value.goal.userIntentRevision,
+            ...(lease === undefined ? {} : { lease }),
+            ...('acquisition' in value ? { acquisition: value.acquisition } : {}),
+            ...('runKey' in value ? { runKey: value.runKey } : {}),
+          });
+          return {
+            ...claim,
+            value: {
+              ...value,
+              automationResume,
+            },
+          };
+        } catch (error) {
+          const reason = error instanceof AutomationStateError
+            ? error.message
+            : 'Scheduled automation resume could not reconcile authoritative state';
+          return {
+            ...claim,
+            value: {
+              ...value,
+              automationResume: {
+                outcome: 'scheduled_noop' as const,
+                action: 'reconciliation_required' as const,
+                reason,
+              },
+            },
+          };
+        }
+      },
     }),
     defineTool({
       name: 'get_scheduled_continuation',

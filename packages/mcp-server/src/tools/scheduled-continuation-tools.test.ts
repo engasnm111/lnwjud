@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { appError, err, ok } from '@lnwjud/domain';
+import { appError, err, ok, type AutomationRunSnapshot } from '@lnwjud/domain';
 import { ContextEconomyRuntime } from '../context-economy.js';
+import type { McpToolResponse } from '../result-mapper.js';
 import { ToolRegistry } from '../tool-registry.js';
 import { scheduledContinuationTools } from './scheduled-continuation-tools.js';
 import type { McpApplicationServices, McpToolContext } from './tool-types.js';
@@ -127,6 +128,8 @@ describe('scheduled continuation MCP tools', () => {
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('worker_busy_noop');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('already_claimed');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('recurring_acquired');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('automationResume');
+    expect(byName.get('claim_scheduled_continuation')?.description).toContain('Busy/duplicate claims never advance automation');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('never create a successor');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('never consume the native task');
     expect(byName.get('claim_scheduled_continuation')?.description).toContain('terminal cleanup is pending');
@@ -227,6 +230,229 @@ describe('scheduled continuation MCP tools', () => {
     expect(begin).toHaveBeenCalledTimes(1);
     expect(writeFile).toHaveBeenCalledTimes(1);
     expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it('enriches a recurring claim with persisted automation resume state without reconstructing chat context', async () => {
+    const calls: string[] = [];
+    const waiting: AutomationRunSnapshot = {
+      id: 'run-1',
+      goalId: 'goal-1',
+      workspaceId: 'workspace-1',
+      policyProfile: 'coding_guarded',
+      revision: 4,
+      status: 'waiting_task',
+      basedOnGoalRevision: 2,
+      basedOnUserIntentRevision: 0,
+      currentMilestoneId: 'm1',
+      currentAttemptId: 'attempt-1',
+      createdAt: '2026-09-19T00:00:00.000Z',
+      updatedAt: '2026-09-19T00:04:00.000Z',
+      milestones: [{
+        id: 'm1',
+        runId: 'run-1',
+        ordinal: 0,
+        title: 'Build',
+        dependsOn: [],
+        executionIntent: 'Build the project.',
+        verificationRequirements: [],
+        retryPolicy: { classification: 'workspace_mutation', maxAttempts: 1 },
+        status: 'waiting_task',
+        currentAttemptId: 'attempt-1',
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:04:00.000Z',
+      }],
+      attempts: [{
+        id: 'attempt-1',
+        runId: 'run-1',
+        milestoneId: 'm1',
+        sequence: 1,
+        basedOnRunRevision: 2,
+        basedOnGoalRevision: 2,
+        basedOnUserIntentRevision: 0,
+        status: 'waiting_task',
+        verificationEvidence: [],
+        startedAt: '2026-09-19T00:02:00.000Z',
+        updatedAt: '2026-09-19T00:04:00.000Z',
+      }],
+      taskBindings: [{
+        attemptId: 'attempt-1',
+        provider: 'shell',
+        taskId: 'shell-task-1',
+        role: 'blocking_job',
+        cancelWithGoal: true,
+        boundAt: '2026-09-19T00:03:00.000Z',
+      }],
+      dispatchReceipts: [{
+        id: 'receipt-1',
+        runId: 'run-1',
+        milestoneId: 'm1',
+        attemptId: 'attempt-1',
+        operationKey: 'build',
+        state: 'confirmed',
+        provider: 'shell',
+        idempotencyKey: 'build-attempt-1',
+        externalId: 'shell-task-1',
+        createdAt: '2026-09-19T00:03:00.000Z',
+        updatedAt: '2026-09-19T00:03:00.000Z',
+      }],
+    };
+    const observed: AutomationRunSnapshot = {
+      ...waiting,
+      revision: 5,
+      updatedAt: '2026-09-19T00:05:00.000Z',
+      taskBindings: [{
+        ...waiting.taskBindings[0]!,
+        lastObservedAt: '2026-09-19T00:05:00.000Z',
+        lastState: 'running',
+      }],
+    };
+    const scheduledContinuations = {
+      async claimScheduledContinuation(): Promise<unknown> {
+        calls.push('claim');
+        return ok({
+          outcome: 'recurring_acquired' as const,
+          continuation: { continuationId: 'continuation-1', goalId: 'goal-1', occurrence: 'interval' },
+          goal: {
+            goalId: 'goal-1',
+            status: 'active' as const,
+            revision: 2,
+            userIntentRevision: 0,
+          },
+          leaseToken: 'lease-secret',
+          leaseGeneration: 7,
+          acquisition: 'orphan_recovered' as const,
+          runKey: '2026-09-19T01',
+          currentWakeMayReturn: true as const,
+          nextRequiredAction: 'continue_work_with_existing_recurring_watchdog' as const,
+        });
+      },
+    };
+    const repository = {
+      async getRunByGoalId(): Promise<AutomationRunSnapshot> {
+        calls.push('load-run');
+        return waiting;
+      },
+      async getRunById(): Promise<AutomationRunSnapshot> {
+        calls.push('load-run-by-id');
+        return waiting;
+      },
+      async commitTransition(): Promise<AutomationRunSnapshot> {
+        calls.push('persist-observation');
+        return observed;
+      },
+    };
+    const services = {
+      scheduledContinuations,
+      automation: {
+        repository,
+        orchestrator: {},
+        goalIntegration: {
+          recoverCheckpointedVerification: vi.fn(),
+          reconcileTerminalReadback: vi.fn(),
+        },
+      },
+    } as unknown as McpApplicationServices;
+    const childInvoker = {
+      async invoke(name: string, input: unknown): Promise<McpToolResponse> {
+        calls.push(`child:${name}`);
+        expect(name).toBe('task_status');
+        expect(input).toEqual({ workspaceId: 'workspace-1', taskId: 'shell-task-1' });
+        return {
+          content: [{ type: 'text' as const, text: '{"state":"running"}' }],
+          structuredContent: { state: 'running' },
+        };
+      },
+    };
+    const claimTool = scheduledContinuationTools(context(services), { childInvoker })
+      .find((tool) => tool.name === 'claim_scheduled_continuation');
+    if (claimTool === undefined) throw new Error('claim tool missing');
+
+    const result = await claimTool.execute(
+      { continuationId: 'continuation-1', leaseSeconds: 600 },
+      new AbortController().signal,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        outcome: 'recurring_acquired',
+        automationResume: {
+          outcome: 'resumed',
+          action: 'observe_task',
+          recoveryAttempted: 'task_observation',
+          run: { id: 'run-1', revision: 5, status: 'waiting_task' },
+          task: { provider: 'shell', taskId: 'shell-task-1' },
+        },
+      },
+    });
+    expect(calls[0]).toBe('claim');
+    expect(calls).toContain('child:task_status');
+    expect(calls).not.toContain('child:shell');
+  });
+
+  it('keeps duplicate scheduled delivery a no-op for native automation', async () => {
+    const getRunByGoalId = vi.fn(async () => ({
+      id: 'run-1',
+      goalId: 'goal-1',
+      workspaceId: 'workspace-1',
+      policyProfile: 'coding_guarded',
+      revision: 1,
+      status: 'running',
+      basedOnGoalRevision: 2,
+      basedOnUserIntentRevision: 0,
+      createdAt: '2026-09-19T00:00:00.000Z',
+      updatedAt: '2026-09-19T00:01:00.000Z',
+      milestones: [],
+      attempts: [],
+      taskBindings: [],
+      dispatchReceipts: [],
+    } as AutomationRunSnapshot));
+    const childInvoker = { invoke: vi.fn() };
+    const services = {
+      scheduledContinuations: {
+        async claimScheduledContinuation(): Promise<unknown> {
+          return ok({
+            outcome: 'already_claimed' as const,
+            continuation: { continuationId: 'continuation-1', goalId: 'goal-1' },
+            goal: {
+              goalId: 'goal-1',
+              status: 'active' as const,
+              revision: 2,
+              userIntentRevision: 0,
+            },
+          });
+        },
+      },
+      automation: {
+        repository: { getRunByGoalId },
+        orchestrator: {},
+        goalIntegration: {
+          recoverCheckpointedVerification: vi.fn(),
+          reconcileTerminalReadback: vi.fn(),
+        },
+      },
+    } as unknown as McpApplicationServices;
+    const claimTool = scheduledContinuationTools(context(services), { childInvoker })
+      .find((tool) => tool.name === 'claim_scheduled_continuation');
+    if (claimTool === undefined) throw new Error('claim tool missing');
+
+    const result = await claimTool.execute(
+      { continuationId: 'continuation-1', leaseSeconds: 600 },
+      new AbortController().signal,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        outcome: 'already_claimed',
+        automationResume: {
+          outcome: 'scheduled_noop',
+          action: 'scheduled_noop',
+        },
+      },
+    });
+    expect(getRunByGoalId).toHaveBeenCalledTimes(1);
+    expect(childInvoker.invoke).not.toHaveBeenCalled();
   });
 
   it('blocks fenced workspace mutations before the underlying file/Git/process service runs', async () => {
