@@ -24,3 +24,4 @@ export * from './lifecycle-hooks.js';
 export * from './runtime-cache.js';
 export * from './agent-swarm-types.js';
 export * from './agent-swarm-service.js';
+export * from './automation-orchestrator-service.js';

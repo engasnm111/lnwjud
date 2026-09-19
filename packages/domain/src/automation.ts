@@ -91,6 +91,9 @@ export type AutomationEventType =
   | 'run_paused'
   | 'run_resumed'
   | 'dispatch_recorded'
+  | 'attempt_failed'
+  | 'milestone_blocked'
+  | 'run_completing'
   | 'run_terminal';
 
 export interface AutomationRunRecord {
@@ -262,6 +265,7 @@ export interface CommitAutomationTransitionRequest {
   readonly taskBindings?: readonly AutomationTaskBindingWrite[];
   readonly dispatchReceipts?: readonly AutomationDispatchReceiptWrite[];
   readonly event: AutomationEventWrite;
+  readonly additionalEvents?: readonly AutomationEventWrite[];
   readonly now: string;
 }
 

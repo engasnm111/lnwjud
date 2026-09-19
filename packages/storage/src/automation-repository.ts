@@ -338,7 +338,7 @@ export class SqliteAutomationRepository implements AutomationRepository {
         request.expectedRevision,
       );
 
-      this.insertTransitionEvent(request, nextRevision);
+      this.insertTransitionEvents(request, nextRevision);
       const snapshot = this.snapshotById(request.runId);
       if (snapshot === null) {
         throw new AutomationStateError('corrupt', 'Automation run disappeared after transition');
@@ -660,34 +660,43 @@ export class SqliteAutomationRepository implements AutomationRepository {
     }
   }
 
-  private insertTransitionEvent(
+  private insertTransitionEvents(
     request: CommitAutomationTransitionRequest,
     nextRevision: number,
   ): void {
-    validateEventWrite(request.event);
-    if (request.event.milestoneId !== undefined) {
-      this.requireMilestoneRow(request.runId, request.event.milestoneId);
-    }
-    if (request.event.attemptId !== undefined) {
-      this.requireAttemptRow(request.runId, request.event.attemptId);
-    }
-    this.database.connection.prepare(`
+    const events = [request.event, ...(request.additionalEvents ?? [])];
+    const seenIds = new Set<string>();
+    const insert = this.database.connection.prepare(`
       INSERT INTO automation_events (
         id, run_id, milestone_id, attempt_id, revision_before, revision_after,
         type, reason, metadata_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      request.event.id,
-      request.runId,
-      request.event.milestoneId ?? null,
-      request.event.attemptId ?? null,
-      request.expectedRevision,
-      nextRevision,
-      request.event.type,
-      request.event.reason,
-      JSON.stringify(request.event.metadata ?? {}),
-      request.now,
-    );
+    `);
+    for (const event of events) {
+      validateEventWrite(event);
+      if (seenIds.has(event.id)) {
+        throw new AutomationStateError('conflict', 'Automation transition event ids must be unique');
+      }
+      seenIds.add(event.id);
+      if (event.milestoneId !== undefined) {
+        this.requireMilestoneRow(request.runId, event.milestoneId);
+      }
+      if (event.attemptId !== undefined) {
+        this.requireAttemptRow(request.runId, event.attemptId);
+      }
+      insert.run(
+        event.id,
+        request.runId,
+        event.milestoneId ?? null,
+        event.attemptId ?? null,
+        request.expectedRevision,
+        nextRevision,
+        event.type,
+        event.reason,
+        JSON.stringify(event.metadata ?? {}),
+        request.now,
+      );
+    }
   }
   private requireMilestoneRow(runId: string, milestoneId: string): AutomationMilestoneRow {
     const row = this.database.connection.prepare(
@@ -928,6 +937,8 @@ function validateTransitionRequest(request: CommitAutomationTransitionRequest): 
   assertNonNegativeInteger(request.expectedRevision, 'expectedRevision');
   assertIso(request.now, 'transition now');
   validateEventWrite(request.event);
+  if ((request.additionalEvents?.length ?? 0) > MAX_MILESTONES * 2) throw conflict('Too many automation transition events');
+  for (const event of request.additionalEvents ?? []) validateEventWrite(event);
   if (request.runPatch?.status !== undefined) assertRunStatus(request.runPatch.status);
   if (request.runPatch?.basedOnGoalRevision !== undefined) {
     assertNonNegativeInteger(request.runPatch.basedOnGoalRevision, 'run basedOnGoalRevision');
@@ -1291,6 +1302,9 @@ const EVENT_TYPES = new Set<AutomationEventType>([
   'run_paused',
   'run_resumed',
   'dispatch_recorded',
+  'attempt_failed',
+  'milestone_blocked',
+  'run_completing',
   'run_terminal',
 ]);
 

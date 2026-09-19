@@ -570,4 +570,43 @@ describe('SqliteAutomationRepository', () => {
       database.close();
     }
   });
+
+  it('rolls back the whole transition when additional journal events reuse an id', async () => {
+    const { database, automation } = await fixture();
+    try {
+      await automation.createRun(createRequest());
+      await expect(automation.commitTransition({
+        runId: 'run-1',
+        expectedRevision: 0,
+        runPatch: { status: 'running', currentMilestoneId: 'm1' },
+        milestoneUpdates: [{ milestoneId: 'm1', status: 'ready' }],
+        event: {
+          id: 'event-duplicate',
+          milestoneId: 'm1',
+          type: 'milestone_ready',
+          reason: 'primary_event',
+        },
+        additionalEvents: [{
+          id: 'event-duplicate',
+          milestoneId: 'm1',
+          type: 'recovery_reconciled',
+          reason: 'duplicate_event_id',
+        }],
+        now: '2026-09-19T00:04:00.000Z',
+      })).rejects.toMatchObject({
+        reason: 'conflict',
+      });
+
+      const snapshot = await automation.getRunById('run-1');
+      expect(snapshot).toMatchObject({
+        revision: 0,
+        status: 'planned',
+      });
+      expect(snapshot?.milestones[0]).toMatchObject({ status: 'pending' });
+      const events = await automation.listEvents('run-1', 10);
+      expect(events.map((event) => event.id)).toEqual(['event-create']);
+    } finally {
+      database.close();
+    }
+  });
 });
