@@ -3,6 +3,7 @@ import type { CapabilityService, EventLogBackendOptions } from '@lnwjud/capabili
 import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   AgentSwarmService,
+  AutomationGoalIntegrationService,
   AutomationOrchestratorService,
   ApplyPatchRequest,
   CheckpointService,
@@ -101,6 +102,7 @@ export interface McpApplicationServices {
   readonly automation?: {
     readonly repository: AutomationRepository;
     readonly orchestrator: AutomationOrchestratorService;
+    readonly goalIntegration?: AutomationGoalIntegrationService;
   };
 }
 

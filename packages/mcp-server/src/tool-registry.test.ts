@@ -110,7 +110,7 @@ describe('MCP tool registry', () => {
       'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'list_recovery_items', 'restore_deleted_file', 'list_checkpoints', 'restore_checkpoint', 'process_start', 'process_list', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
       'project_typecheck', 'project_build',
-      'automation_create', 'automation_status', 'automation_events', 'automation_run', 'automation_observe', 'automation_recover', 'automation_verify', 'automation_pause', 'automation_resume',
+      'automation_create', 'automation_status', 'automation_events', 'automation_run', 'automation_observe', 'automation_recover', 'automation_verify', 'automation_finalize', 'automation_pause', 'automation_resume',
       'shell', 'dom_cdp', 'computer_use', 'accessibility', 'input_event', 'vision', 'vision_annotated_capture', 'ui_target_action', 'window', 'health',
       'system_info', 'notification', 'file_dialog', 'clipboard', 'web_fetch',
       'audio', 'screen_record', 'office', 'scheduler',

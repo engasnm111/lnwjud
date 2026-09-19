@@ -6,6 +6,7 @@ import path from 'node:path';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
+  AutomationGoalIntegrationService,
   AutomationOrchestratorService,
   CheckpointService,
   CodexService,
@@ -482,6 +483,11 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     taskCancellation,
     requestCancellation,
   });
+  const automationGoalIntegration = new AutomationGoalIntegrationService(
+    automationRepository,
+    automationOrchestrator,
+    goalService,
+  );
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
@@ -527,6 +533,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     automation: {
       repository: automationRepository,
       orchestrator: automationOrchestrator,
+      goalIntegration: automationGoalIntegration,
     },
   };
   const activityLogPath = mcpActivityLogPath(dataPath);

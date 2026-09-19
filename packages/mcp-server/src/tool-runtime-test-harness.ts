@@ -182,6 +182,28 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
       return [];
     },
   };
+  const automationGoalSnapshot = {
+    goalId: 'goal-1',
+    goalKey: 'runtime-contract-goal',
+    workspaceId: 'workspace-1',
+    objective: 'Runtime contract goal',
+    status: 'completed' as const,
+    revision: 1,
+    userIntentRevision: 0,
+    currentPhase: 'completed',
+    plan: { steps: [] },
+    acceptanceCriteria: [],
+    iterationPolicy: { mode: 'outcome' as const, maxIterations: 0, currentIteration: 0, stopOnNoNewEvidence: true },
+    completedSteps: [],
+    pendingSteps: [],
+    nextAction: '',
+    blockers: [],
+    activeTaskIds: [],
+    trackedTasks: [],
+    leaseGeneration: 1,
+    leaseActivitySeq: 0,
+    lastCheckpoint: null,
+  };
   const automationOrchestrator = {
     async create(request: { readonly runId?: string }): Promise<AutomationRunSnapshot> {
       calls.push('automation.orchestrator.create');
@@ -218,6 +240,27 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
     async resume(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
       calls.push('automation.orchestrator.resume');
       return automationSnapshot(request.runId, 'running', 1);
+    },
+  };
+  const automationGoalIntegration = {
+    async checkpointTaskBound(requestActor: unknown, request: { readonly runId: string }): Promise<{ run: AutomationRunSnapshot; goal: typeof automationGoalSnapshot }> {
+      void requestActor;
+      calls.push('automation.goalIntegration.checkpointTaskBound');
+      return { run: automationSnapshotFor(request.runId), goal: automationGoalSnapshot };
+    },
+    async verifyAndCompleteMilestone(requestActor: unknown, request: { readonly runId: string }): Promise<{ run: AutomationRunSnapshot; goal: typeof automationGoalSnapshot }> {
+      void requestActor;
+      calls.push('automation.goalIntegration.verifyAndCompleteMilestone');
+      return { run: automationSnapshot(request.runId), goal: automationGoalSnapshot };
+    },
+    async finalize(requestActor: unknown, request: { readonly runId: string }): Promise<{ run: AutomationRunSnapshot; goal: typeof automationGoalSnapshot; completionState: 'completed' }> {
+      void requestActor;
+      calls.push('automation.goalIntegration.finalize');
+      return {
+        run: automationSnapshot(request.runId),
+        goal: automationGoalSnapshot,
+        completionState: 'completed' as const,
+      };
     },
   };
 
@@ -296,6 +339,7 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
     automation: {
       repository: automationRepository,
       orchestrator: automationOrchestrator,
+      goalIntegration: automationGoalIntegration,
     },
     agentSwarm: serviceProxy('agentSwarm', calls, (method) => {
       if (method === 'list') return { items: [] };

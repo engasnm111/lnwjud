@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   AgentSwarmService,
+  AutomationGoalIntegrationService,
   AutomationOrchestratorService,
   CheckpointService,
   CodexService,
@@ -203,6 +204,11 @@ export function createStdioMcpRuntime(
     taskCancellation,
     requestCancellation,
   });
+  const automationGoalIntegration = new AutomationGoalIntegrationService(
+    automationRepository,
+    automationOrchestrator,
+    goalService,
+  );
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, { workerLiveness: goalMutationFence });
   const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
   const sharedActivityLease = createSharedActivityLease(process.env.TUNNEL_CLIENT_PROFILE_DIR);
@@ -280,6 +286,7 @@ export function createStdioMcpRuntime(
     automation: {
       repository: automationRepository,
       orchestrator: automationOrchestrator,
+      goalIntegration: automationGoalIntegration,
     },
   };
 

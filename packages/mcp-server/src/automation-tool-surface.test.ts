@@ -14,6 +14,7 @@ const AUTOMATION_TOOLS = [
   'automation_observe',
   'automation_recover',
   'automation_verify',
+  'automation_finalize',
   'automation_pause',
   'automation_resume',
 ] as const;
@@ -77,6 +78,7 @@ describe('native automation MCP surface', () => {
     expect(inspectMutationOperation('automation_observe', {}, 'EXECUTE').kind).toBe('execute');
     expect(inspectMutationOperation('automation_recover', {}, 'EXECUTE').kind).toBe('execute');
     expect(inspectMutationOperation('automation_verify', {}, 'EXECUTE').kind).toBe('bounded_write');
+    expect(inspectMutationOperation('automation_finalize', {}, 'EXECUTE').kind).toBe('bounded_write');
     expect(inspectMutationOperation('automation_pause', {}, 'EXECUTE').kind).toBe('bounded_write');
     expect(inspectMutationOperation('automation_resume', {}, 'EXECUTE').kind).toBe('bounded_write');
   });
@@ -128,10 +130,24 @@ describe('native automation MCP surface', () => {
         updatedAt: '2026-09-19T00:05:00.000Z',
       }],
     };
+    const checkpointed = {
+      ...confirmed,
+      revision: 6,
+      basedOnGoalRevision: 6,
+      updatedAt: '2026-09-19T00:06:00.000Z',
+    };
+    const goal = {
+      goalId: 'goal-1',
+      workspaceId: 'workspace-1',
+      status: 'active',
+      revision: 6,
+      userIntentRevision: 0,
+    };
     const get = vi.fn().mockResolvedValue(initial);
     const commitTransition = vi.fn()
       .mockResolvedValueOnce(reserved)
       .mockResolvedValueOnce(confirmed);
+    const checkpointTaskBound = vi.fn().mockResolvedValue({ run: checkpointed, goal });
     const execute = vi.fn().mockImplementation(async () => (
       ok({ task_id: 'shell-task-1', state: 'running' })
     ));
@@ -143,6 +159,80 @@ describe('native automation MCP surface', () => {
           listEvents: vi.fn().mockResolvedValue([]),
         },
         orchestrator: { get },
+        goalIntegration: { checkpointTaskBound },
+      },
+      capabilities: { execute },
+    } as unknown as McpApplicationServices;
+
+    const response = await new ToolRegistry(services, actor, {
+      profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+    }).invoke('automation_run', {
+      workspaceId: 'workspace-1',
+      runId: 'run-1',
+      expectedRevision: 3,
+      goalRevision: 5,
+      userIntentRevision: 0,
+      goalLease: {
+        goalId: 'goal-1',
+        leaseToken: 'lease-token',
+        leaseGeneration: 1,
+      },
+      operationKey: 'build',
+      idempotencyKey: 'build-attempt-1',
+      execution: {
+        provider: 'shell',
+        executable: 'pnpm.cmd',
+        arguments: ['build'],
+      },
+    });
+
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      run: {
+        revision: 6,
+        status: 'waiting_task',
+        taskBindings: [expect.objectContaining({ taskId: 'shell-task-1' })],
+      },
+      nextAction: 'observe_task',
+      policyDecision: { allowed: true },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      'shell',
+      expect.objectContaining({
+        operation: 'run',
+        executable: 'pnpm.cmd',
+        arguments: ['build'],
+        execution: 'background',
+      }),
+      expect.anything(),
+      expect.objectContaining({ mode: 'full_bypass' }),
+    );
+    expect(commitTransition).toHaveBeenCalledTimes(2);
+    expect(checkpointTaskBound).toHaveBeenCalledWith(
+      actor,
+      expect.objectContaining({
+        runId: 'run-1',
+        expectedRevision: 5,
+        lease: expect.objectContaining({ goalId: 'goal-1', leaseGeneration: 1 }),
+      }),
+    );
+  });
+
+  it('refuses real automation execution before child dispatch when no durable goal lease is supplied', async (): Promise<void> => {
+    const initial = dispatchingSnapshot();
+    const execute = vi.fn().mockResolvedValue(ok({ task_id: 'must-not-run' }));
+    const checkpointTaskBound = vi.fn();
+    const services = {
+      automation: {
+        repository: {
+          getRunById: vi.fn().mockResolvedValue(initial),
+          commitTransition: vi.fn(),
+          listEvents: vi.fn().mockResolvedValue([]),
+        },
+        orchestrator: { get: vi.fn().mockResolvedValue(initial) },
+        goalIntegration: { checkpointTaskBound },
       },
       capabilities: { execute },
     } as unknown as McpApplicationServices;
@@ -165,29 +255,95 @@ describe('native automation MCP surface', () => {
       },
     });
 
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      error: {
+        code: 'CONFLICT',
+        message: expect.stringContaining('goalLease proof is required'),
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(checkpointTaskBound).not.toHaveBeenCalled();
+  });
+
+  it('finalizes through durable-goal integration and returns only terminal readback state', async (): Promise<void> => {
+    const completing = {
+      ...dispatchingSnapshot(),
+      revision: 8,
+      status: 'completing' as const,
+      basedOnGoalRevision: 12,
+      currentMilestoneId: undefined,
+      currentAttemptId: undefined,
+      milestones: [{
+        ...dispatchingSnapshot().milestones[0]!,
+        status: 'completed' as const,
+        currentAttemptId: undefined,
+      }],
+      attempts: [{
+        ...dispatchingSnapshot().attempts[0]!,
+        status: 'completed' as const,
+        verificationEvidence: [{ kind: 'note' as const, value: 'verified' }],
+        finishedAt: '2026-09-19T00:08:00.000Z',
+      }],
+    };
+    const completed = {
+      ...completing,
+      revision: 9,
+      status: 'completed' as const,
+      basedOnGoalRevision: 15,
+      terminalAt: '2026-09-19T00:09:00.000Z',
+    };
+    const goal = {
+      goalId: 'goal-1',
+      workspaceId: 'workspace-1',
+      status: 'completed',
+      revision: 15,
+      userIntentRevision: 0,
+    };
+    const finalize = vi.fn().mockResolvedValue({
+      run: completed,
+      goal,
+      completionState: 'completed',
+    });
+    const services = {
+      automation: {
+        repository: { listEvents: vi.fn().mockResolvedValue([]) },
+        orchestrator: { get: vi.fn().mockResolvedValue(completing) },
+        goalIntegration: { finalize },
+      },
+    } as unknown as McpApplicationServices;
+
+    const response = await new ToolRegistry(services, actor, {
+      profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+    }).invoke('automation_finalize', {
+      workspaceId: 'workspace-1',
+      runId: 'run-1',
+      expectedRevision: 8,
+      goalRevision: 12,
+      userIntentRevision: 0,
+      goalLease: {
+        goalId: 'goal-1',
+        leaseToken: 'lease-token',
+        leaseGeneration: 1,
+      },
+      summary: 'Final acceptance passed',
+      finalReviewEvidence: [{ kind: 'note', value: 'final review passed' }],
+      acceptance: [],
+    });
+
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({
-      run: {
-        revision: 5,
-        status: 'waiting_task',
-        taskBindings: [expect.objectContaining({ taskId: 'shell-task-1' })],
-      },
-      nextAction: 'observe_task',
-      policyDecision: { allowed: true },
+      run: { status: 'completed', revision: 9 },
+      goal: { status: 'completed', revision: 15 },
+      completionState: 'completed',
+      nextAction: 'terminal',
     });
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledWith(
-      'shell',
-      expect.objectContaining({
-        operation: 'run',
-        executable: 'pnpm.cmd',
-        arguments: ['build'],
-        execution: 'background',
-      }),
-      expect.anything(),
-      expect.objectContaining({ mode: 'full_bypass' }),
-    );
-    expect(commitTransition).toHaveBeenCalledTimes(2);
+    expect(finalize).toHaveBeenCalledWith(actor, expect.objectContaining({
+      runId: 'run-1',
+      expectedRevision: 8,
+      lease: expect.objectContaining({ goalId: 'goal-1' }),
+    }));
   });
 
   it('hard-denies desktop/browser execution even when ToolRegistry Full Bypass is active', async (): Promise<void> => {

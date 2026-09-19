@@ -50,7 +50,7 @@ const unavailable = (
 ): ToolRuntimeFixture => ({ input, evidence: { kind: 'truthful_unavailable', unavailableStatus } });
 
 /**
- * Safe parse-valid inputs and expected delivery evidence for the 115 core tools.
+ * Safe parse-valid inputs and expected delivery evidence for the 116 core tools.
  * These are non-production fixtures: they use controlled workspace IDs, dry-run
  * inputs where available, and never point at a real user path.
  */
@@ -135,9 +135,20 @@ export const CORE_TOOL_RUNTIME_FIXTURES = {
     expectedRevision: 0,
     goalRevision: 0,
     userIntentRevision: 0,
-    pass: true,
-    evidence: [{ kind: 'note', value: 'runtime contract' }],
-  }, 'automation.orchestrator.completeCurrentMilestone'),
+    pass: false,
+    failureCode: 'runtime_contract_failure',
+    retryable: false,
+  }, 'automation.orchestrator.failCurrentAttempt'),
+  automation_finalize: service({
+    workspaceId,
+    runId: 'run-finalize',
+    expectedRevision: 0,
+    goalRevision: 0,
+    userIntentRevision: 0,
+    summary: 'Runtime contract finalization.',
+    finalReviewEvidence: [{ kind: 'note', value: 'final review passed' }],
+    acceptance: [],
+  }, 'automation.goalIntegration.finalize'),
   automation_pause: service({
     workspaceId,
     runId: 'run-pause',

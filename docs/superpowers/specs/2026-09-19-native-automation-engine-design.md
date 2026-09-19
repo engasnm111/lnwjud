@@ -441,6 +441,7 @@ automation_run
 automation_observe
 automation_recover
 automation_verify
+automation_finalize
 automation_pause
 automation_resume
 ```
@@ -450,7 +451,7 @@ the milestone DAG. `automation_run` is immediate-return orchestration: it advanc
 useful synchronous work and may return durable task bindings when the next step is
 background work.
 
-`automation_status` and `automation_events` are read-only. `automation_observe` records one exact durable-task observation; `automation_recover` reconciles a previously unresolved dispatch without blind replay; `automation_verify` commits milestone verification evidence.
+`automation_status` and `automation_events` are read-only. `automation_observe` records one exact durable-task observation; `automation_recover` reconciles a previously unresolved dispatch without blind replay. Successful task dispatch is projected into durable GoalRecord tracked tasks. `automation_verify` checkpoints durable goal progress before committing milestone completion. `automation_finalize` performs final acceptance and final-review checkpointing, invokes the existing durable goal finish path, and marks the AutomationRun completed only after terminal GoalRecord readback confirms success.
 
 Pause/resume changes orchestration eligibility only. It does not delete the goal,
 kill shared services, or cancel the Native ChatGPT recurring watchdog unless the

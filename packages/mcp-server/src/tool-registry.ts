@@ -1061,11 +1061,11 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt',
   'task_create',
   'automation_create', 'automation_run', 'automation_observe', 'automation_recover',
-  'automation_verify', 'automation_pause', 'automation_resume',
+  'automation_verify', 'automation_finalize', 'automation_pause', 'automation_resume',
 ]);
 const AUTOMATION_GOAL_LEASE_FORWARDING_TOOLS = new Set([
   'automation_create', 'automation_run', 'automation_observe', 'automation_recover',
-  'automation_verify', 'automation_pause', 'automation_resume',
+  'automation_verify', 'automation_finalize', 'automation_pause', 'automation_resume',
 ]);
 const goalLeaseProofSchema = z.object({
   goalId: z.string().min(1).max(128),

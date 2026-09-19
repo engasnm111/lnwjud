@@ -135,7 +135,9 @@ export function inspectMutationOperation(
     case 'automation_recover':
       return execute('automation_recover reconciles an unresolved durable dispatch without blind replay');
     case 'automation_verify':
-      return boundedWrite('automation_verify records verification evidence and deterministic milestone state');
+      return boundedWrite('automation_verify checkpoints durable goal progress and records deterministic milestone verification state');
+    case 'automation_finalize':
+      return boundedWrite('automation_finalize checkpoints final review and acceptance, completes the bound durable goal, and requires terminal readback before run completion');
     case 'automation_pause':
     case 'automation_resume':
       return boundedWrite(`${toolName} changes orchestration eligibility without deleting the goal or task`);

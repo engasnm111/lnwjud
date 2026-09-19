@@ -89,6 +89,16 @@ const evidenceSchema = z.object({
   value: z.string().min(1).max(2_048),
 }).strict();
 
+const durableGoalEvidenceSchema = z.object({
+  kind: z.enum(['path', 'hash', 'task', 'note']),
+  value: z.string().min(1).max(1_024),
+}).strict();
+
+const finalAcceptanceSchema = z.object({
+  criterionId: z.string().min(1).max(128),
+  evidence: z.array(durableGoalEvidenceSchema).min(1).max(20),
+}).strict();
+
 const commonMutationSchema = z.object({
   workspaceId: z.string().min(1).max(256),
   runId: z.string().min(1).max(256),
@@ -256,6 +266,8 @@ export function automationTools(
           ));
         }
 
+        const goalIntegration = requireGoalIntegration(services);
+        const lease = requireAutomationGoalLease(input, snapshot.goalId);
         const supervisor = supervisorFor(services, options.childInvoker, input, signal);
         const dispatched = await supervisor.dispatchCurrentAttempt({
           runId: snapshot.id,
@@ -267,8 +279,21 @@ export function automationTools(
           execution: input.execution as AutomationTaskExecution,
           ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
         });
+        if (dispatched.status !== 'waiting_task') {
+          return ok({
+            ...automationView(dispatched, nextAction(dispatched)),
+            policyDecision,
+          });
+        }
+        const checkpointed = await goalIntegration.checkpointTaskBound(context.actor, {
+          runId: dispatched.id,
+          expectedRevision: dispatched.revision,
+          authority: auth,
+          lease,
+        });
         return ok({
-          ...automationView(dispatched, nextAction(dispatched)),
+          ...automationView(checkpointed.run, nextAction(checkpointed.run)),
+          goal: checkpointed.goal,
           policyDecision,
         });
       }),
@@ -337,22 +362,68 @@ export function automationTools(
         assertLeaseMatchesGoal(input, snapshot.goalId);
         assertExpectedRevision(snapshot, input.expectedRevision);
         const auth = authority(input);
-        const result = input.pass
-          ? await services.orchestrator.completeCurrentMilestone({
-              runId: input.runId,
-              expectedRevision: input.expectedRevision,
-              authority: auth,
-              evidence: input.evidence as readonly GoalEvidence[],
-            })
-          : await services.orchestrator.failCurrentAttempt({
-              runId: input.runId,
-              expectedRevision: input.expectedRevision,
-              authority: auth,
-              failureCode: input.failureCode ?? 'verification_failed',
-              ...(input.failureDetail === undefined ? {} : { failureDetail: input.failureDetail }),
-              retryable: input.retryable,
-            });
-        return ok(automationView(result, nextAction(result)));
+        if (input.pass) {
+          const goalIntegration = requireGoalIntegration(services);
+          const verified = await goalIntegration.verifyAndCompleteMilestone(context.actor, {
+            runId: input.runId,
+            expectedRevision: input.expectedRevision,
+            authority: auth,
+            lease: requireAutomationGoalLease(input, snapshot.goalId),
+            evidence: input.evidence as readonly GoalEvidence[],
+          });
+          return ok({
+            ...automationView(verified.run, nextAction(verified.run)),
+            goal: verified.goal,
+          });
+        }
+        const failed = await services.orchestrator.failCurrentAttempt({
+          runId: input.runId,
+          expectedRevision: input.expectedRevision,
+          authority: auth,
+          failureCode: input.failureCode ?? 'verification_failed',
+          ...(input.failureDetail === undefined ? {} : { failureDetail: input.failureDetail }),
+          retryable: input.retryable,
+        });
+        return ok(automationView(failed, nextAction(failed)));
+      }),
+    }),
+    defineTool({
+      name: 'automation_finalize',
+      description: 'Run final durable-goal acceptance, persist final-review evidence, call finish_goal only when all completion invariants hold, then mark the automation completed only after a terminal goal readback confirms success.',
+      permission: 'EXECUTE',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: commonMutationSchema.extend({
+        summary: z.string().min(1).max(2_048),
+        finalReviewEvidence: z.array(durableGoalEvidenceSchema).min(1).max(20),
+        acceptance: z.array(finalAcceptanceSchema).max(50).default([]),
+      }).strict(),
+      handler: async (input) => withAutomationErrors(async () => {
+        const services = requireAutomation(context);
+        const snapshot = await services.orchestrator.get(input.runId);
+        assertWorkspace(snapshot, input.workspaceId);
+        assertLeaseMatchesGoal(input, snapshot.goalId);
+        assertExpectedRevision(snapshot, input.expectedRevision);
+        const lease = readAutomationGoalLease(input);
+        const finalized = await requireGoalIntegration(services).finalize(context.actor, {
+          runId: input.runId,
+          expectedRevision: input.expectedRevision,
+          authority: authority(input),
+          ...(lease === undefined ? {} : { lease }),
+          summary: input.summary,
+          finalReviewEvidence: input.finalReviewEvidence as readonly GoalEvidence[],
+          acceptance: input.acceptance as readonly {
+            readonly criterionId: string;
+            readonly evidence: readonly GoalEvidence[];
+          }[],
+        });
+        return ok({
+          ...automationView(finalized.run, nextAction(finalized.run)),
+          goal: finalized.goal,
+          completionState: finalized.completionState,
+          ...(finalized.scheduledTaskCancellation === undefined
+            ? {}
+            : { scheduledTaskCancellation: finalized.scheduledTaskCancellation }),
+        });
       }),
     }),
     defineTool({
@@ -423,6 +494,29 @@ function requireAutomation(
     throw new AutomationStateError('not_found', 'Native automation services are unavailable');
   }
   return context.services.automation;
+}
+
+function requireGoalIntegration(
+  services: NonNullable<McpToolContext['services']['automation']>,
+): NonNullable<NonNullable<McpToolContext['services']['automation']>['goalIntegration']> {
+  if (services.goalIntegration === undefined) {
+    throw new AutomationStateError('not_found', 'Durable goal automation integration is unavailable');
+  }
+  return services.goalIntegration;
+}
+
+function requireAutomationGoalLease(input: object, goalId: string): GoalLeaseProof {
+  const lease = readAutomationGoalLease(input);
+  if (lease === undefined) {
+    throw new AutomationStateError(
+      'conflict',
+      'Current goalLease proof is required before durable automation execution or verification',
+    );
+  }
+  if (lease.goalId !== goalId) {
+    throw new AutomationStateError('conflict', 'Automation goal lease proof belongs to another durable goal');
+  }
+  return lease;
 }
 
 function authority(input: { readonly goalRevision: number; readonly userIntentRevision: number }): AutomationAuthorityCursor {
