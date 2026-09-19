@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ok } from '@lnwjud/domain';
+import { ok, type AutomationMilestoneRecord, type AutomationRunSnapshot, type CommitAutomationTransitionRequest } from '@lnwjud/domain';
 import type { McpApplicationServices } from './tools/tool-types.js';
 
 type ServiceResolver = (method: string, args: readonly unknown[]) => unknown;
@@ -32,6 +32,194 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
     startedAt: new Date(0).toISOString(), finishedAt: new Date(1).toISOString(), exitCode: 0,
   };
   const png = { format: 'png', mime_type: 'image/png', data_base64: 'cG5n', width: 640, height: 480, origin_x: 0, origin_y: 0 };
+  const automationTime = '2026-09-19T00:00:00.000Z';
+  const automationMilestone = (runId: string, status: 'waiting_task' | 'completed' = 'completed'): AutomationMilestoneRecord => ({
+    id: 'm1',
+    runId,
+    ordinal: 0,
+    title: 'Smoke milestone',
+    dependsOn: [],
+    executionIntent: 'Exercise native automation surface.',
+    verificationRequirements: [],
+    retryPolicy: { classification: 'safe_read' as const, maxAttempts: 1 },
+    status,
+    ...(status === 'waiting_task' ? { currentAttemptId: 'attempt-1' } : {}),
+    createdAt: automationTime,
+    updatedAt: automationTime,
+  });
+  const automationSnapshot = (
+    runId: string,
+    mode: 'terminal' | 'observe' | 'recover' | 'paused' | 'running' = 'terminal',
+    revision = 0,
+  ): AutomationRunSnapshot => {
+    if (mode === 'observe' || mode === 'recover') {
+      const milestone = automationMilestone(runId, 'waiting_task');
+      return {
+        id: runId,
+        goalId: 'goal-1',
+        workspaceId: 'workspace-1',
+        policyProfile: 'coding_guarded',
+        revision,
+        status: mode === 'recover' ? 'blocked' : 'waiting_task',
+        basedOnGoalRevision: 0,
+        basedOnUserIntentRevision: 0,
+        currentMilestoneId: 'm1',
+        currentAttemptId: 'attempt-1',
+        createdAt: automationTime,
+        updatedAt: automationTime,
+        milestones: [milestone],
+        attempts: [{
+          id: 'attempt-1',
+          runId,
+          milestoneId: 'm1',
+          sequence: 1,
+          basedOnRunRevision: 0,
+          basedOnGoalRevision: 0,
+          basedOnUserIntentRevision: 0,
+          status: 'waiting_task',
+          verificationEvidence: [],
+          startedAt: automationTime,
+          updatedAt: automationTime,
+        }],
+        taskBindings: [{
+          attemptId: 'attempt-1',
+          provider: 'shell',
+          taskId: 'shell-task-1',
+          role: 'blocking_job',
+          cancelWithGoal: true,
+          boundAt: automationTime,
+        }],
+        dispatchReceipts: [{
+          id: 'receipt-1',
+          runId,
+          milestoneId: 'm1',
+          attemptId: 'attempt-1',
+          operationKey: 'smoke-dispatch',
+          state: 'confirmed',
+          provider: 'shell',
+          idempotencyKey: 'runtime-contract-dispatch',
+          externalId: 'shell-task-1',
+          createdAt: automationTime,
+          updatedAt: automationTime,
+        }],
+      };
+    }
+    if (mode === 'paused' || mode === 'running') {
+      return {
+        id: runId,
+        goalId: 'goal-1',
+        workspaceId: 'workspace-1',
+        policyProfile: 'coding_guarded',
+        revision,
+        status: mode,
+        basedOnGoalRevision: 0,
+        basedOnUserIntentRevision: 0,
+        createdAt: automationTime,
+        updatedAt: automationTime,
+        milestones: [],
+        attempts: [],
+        taskBindings: [],
+        dispatchReceipts: [],
+      };
+    }
+    return {
+      id: runId,
+      goalId: 'goal-1',
+      workspaceId: 'workspace-1',
+      policyProfile: 'coding_guarded',
+      revision,
+      status: 'completed',
+      basedOnGoalRevision: 0,
+      basedOnUserIntentRevision: 0,
+      createdAt: automationTime,
+      updatedAt: automationTime,
+      terminalAt: automationTime,
+      milestones: [],
+      attempts: [],
+      taskBindings: [],
+      dispatchReceipts: [],
+    };
+  };
+  const automationSnapshotFor = (runId: string): AutomationRunSnapshot => {
+    if (runId === 'run-observe') return automationSnapshot(runId, 'observe');
+    if (runId === 'run-recover') return automationSnapshot(runId, 'recover');
+    if (runId === 'run-pause') return automationSnapshot(runId, 'running');
+    if (runId === 'run-resume') return automationSnapshot(runId, 'paused');
+    return automationSnapshot(runId);
+  };
+  const automationRepository = {
+    async createRun(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.repository.createRun');
+      return automationSnapshot(request.runId);
+    },
+    async getRunById(runId: string): Promise<AutomationRunSnapshot> {
+      calls.push('automation.repository.getRunById');
+      return automationSnapshotFor(runId);
+    },
+    async getRunByGoalId(): Promise<AutomationRunSnapshot | null> {
+      calls.push('automation.repository.getRunByGoalId');
+      return null;
+    },
+    async commitTransition(request: CommitAutomationTransitionRequest): Promise<AutomationRunSnapshot> {
+      calls.push('automation.repository.commitTransition');
+      const base = automationSnapshotFor(request.runId);
+      return {
+        ...base,
+        revision: request.expectedRevision + 1,
+        status: request.runPatch?.status ?? base.status,
+        basedOnGoalRevision: request.runPatch?.basedOnGoalRevision ?? base.basedOnGoalRevision,
+        basedOnUserIntentRevision: request.runPatch?.basedOnUserIntentRevision ?? base.basedOnUserIntentRevision,
+        ...(request.runPatch?.lastRecoveryDecision === null
+          ? {}
+          : request.runPatch?.lastRecoveryDecision === undefined
+            ? (base.lastRecoveryDecision === undefined ? {} : { lastRecoveryDecision: base.lastRecoveryDecision })
+            : { lastRecoveryDecision: request.runPatch.lastRecoveryDecision }),
+        updatedAt: request.now,
+      };
+    },
+    async listEvents(): Promise<readonly []> {
+      calls.push('automation.repository.listEvents');
+      return [];
+    },
+  };
+  const automationOrchestrator = {
+    async create(request: { readonly runId?: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.create');
+      return automationSnapshot(request.runId ?? 'run-created');
+    },
+    async get(runId: string): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.get');
+      return automationSnapshotFor(runId);
+    },
+    async advance(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.advance');
+      return automationSnapshotFor(request.runId);
+    },
+    async startCurrentAttempt(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.startCurrentAttempt');
+      return automationSnapshotFor(request.runId);
+    },
+    async completeCurrentMilestone(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.completeCurrentMilestone');
+      return automationSnapshot(request.runId);
+    },
+    async failCurrentAttempt(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.failCurrentAttempt');
+      return automationSnapshot(request.runId);
+    },
+    async beginVerification(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.beginVerification');
+      return automationSnapshot(request.runId);
+    },
+    async pause(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.pause');
+      return automationSnapshot(request.runId, 'paused', 1);
+    },
+    async resume(request: { readonly runId: string }): Promise<AutomationRunSnapshot> {
+      calls.push('automation.orchestrator.resume');
+      return automationSnapshot(request.runId, 'running', 1);
+    },
+  };
 
   return {
     sandboxRuntimeOptions: {
@@ -105,6 +293,10 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
       return processSnapshot;
     }),
     codex: serviceProxy('codex', calls, (method) => method === 'list' ? [] : { ...processSnapshot, codexTaskId: 'codex-1' }),
+    automation: {
+      repository: automationRepository,
+      orchestrator: automationOrchestrator,
+    },
     agentSwarm: serviceProxy('agentSwarm', calls, (method) => {
       if (method === 'list') return { items: [] };
       if (method === 'result') return { swarmId: '00000000-0000-4000-8000-000000000001', taskId: 'inspect', state: 'completed', text: '', eof: true, outputTruncated: false };

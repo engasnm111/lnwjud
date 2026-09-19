@@ -50,7 +50,7 @@ const unavailable = (
 ): ToolRuntimeFixture => ({ input, evidence: { kind: 'truthful_unavailable', unavailableStatus } });
 
 /**
- * Safe parse-valid inputs and expected delivery evidence for the 106 core tools.
+ * Safe parse-valid inputs and expected delivery evidence for the 115 core tools.
  * These are non-production fixtures: they use controlled workspace IDs, dry-run
  * inputs where available, and never point at a real user path.
  */
@@ -88,6 +88,70 @@ export const CORE_TOOL_RUNTIME_FIXTURES = {
   project_lint: service({ workspaceId, userConfirmed: true }, 'process.startProjectCommand'),
   project_typecheck: service({ workspaceId, userConfirmed: true }, 'process.startProjectCommand'),
   project_build: service({ workspaceId, userConfirmed: true }, 'process.startProjectCommand'),
+  automation_create: service({
+    workspaceId,
+    goalId: 'goal-1',
+    runId: 'run-create',
+    policyProfile: 'coding_guarded',
+    goalRevision: 0,
+    userIntentRevision: 0,
+    milestones: [{
+      id: 'm1',
+      title: 'Smoke milestone',
+      dependsOn: [],
+      executionIntent: 'Exercise native automation surface.',
+      verificationRequirements: [],
+      retryPolicy: { classification: 'safe_read', maxAttempts: 1 },
+    }],
+  }, 'automation.orchestrator.create'),
+  automation_status: service({ workspaceId, runId: 'run-status' }, 'automation.orchestrator.get'),
+  automation_events: service({ workspaceId, runId: 'run-events', limit: 1 }, 'automation.repository.listEvents'),
+  automation_run: service({
+    workspaceId,
+    runId: 'run-execution',
+    expectedRevision: 0,
+    goalRevision: 0,
+    userIntentRevision: 0,
+    idempotencyKey: 'runtime-contract-run',
+  }, 'automation.orchestrator.get'),
+  automation_observe: service({
+    workspaceId,
+    runId: 'run-observe',
+    expectedRevision: 0,
+    goalRevision: 0,
+    userIntentRevision: 0,
+  }, 'automation.repository.getRunById'),
+  automation_recover: service({
+    workspaceId,
+    runId: 'run-recover',
+    expectedRevision: 0,
+    goalRevision: 0,
+    userIntentRevision: 0,
+    operationKey: 'smoke-dispatch',
+  }, 'automation.repository.getRunById'),
+  automation_verify: service({
+    workspaceId,
+    runId: 'run-verify',
+    expectedRevision: 0,
+    goalRevision: 0,
+    userIntentRevision: 0,
+    pass: true,
+    evidence: [{ kind: 'note', value: 'runtime contract' }],
+  }, 'automation.orchestrator.completeCurrentMilestone'),
+  automation_pause: service({
+    workspaceId,
+    runId: 'run-pause',
+    expectedRevision: 0,
+    goalRevision: 0,
+    userIntentRevision: 0,
+  }, 'automation.orchestrator.pause'),
+  automation_resume: service({
+    workspaceId,
+    runId: 'run-resume',
+    expectedRevision: 0,
+    goalRevision: 0,
+    userIntentRevision: 0,
+  }, 'automation.orchestrator.resume'),
   codex_status: service({}, 'codex.status'),
   codex_run: service({ workspaceId, instruction: 'read-only smoke', userConfirmed: true }, 'codex.run'),
   codex_task_list: service({ workspaceId }, 'codex.list'),

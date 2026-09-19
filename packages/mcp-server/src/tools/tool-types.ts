@@ -1,8 +1,9 @@
-import { err, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
+import { err, ok, type AutomationRepository, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { CapabilityService, EventLogBackendOptions } from '@lnwjud/capabilities';
 import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   AgentSwarmService,
+  AutomationOrchestratorService,
   ApplyPatchRequest,
   CheckpointService,
   CodexService,
@@ -97,6 +98,10 @@ export interface McpApplicationServices {
   readonly process?: Pick<ProcessService, 'start' | 'list' | 'status' | 'logs' | 'stop' | 'previewProjectCommand' | 'startProjectCommand'>;
   readonly codex?: Pick<CodexService, 'status' | 'run' | 'list' | 'taskStatus' | 'taskLogs' | 'stop'>;
   readonly agentSwarm?: Pick<AgentSwarmService, 'start' | 'status' | 'result' | 'cancel' | 'list'>;
+  readonly automation?: {
+    readonly repository: AutomationRepository;
+    readonly orchestrator: AutomationOrchestratorService;
+  };
 }
 
 export interface McpToolAnnotations {

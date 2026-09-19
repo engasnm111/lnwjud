@@ -6,6 +6,7 @@ import path from 'node:path';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
+  AutomationOrchestratorService,
   CheckpointService,
   CodexService,
   FileService,
@@ -101,7 +102,7 @@ import {
   type SecretProtector,
   type DestructiveAutoApprovalPolicy,
 } from '@lnwjud/shared';
-import { AesGcmCheckpointCipher, BACKUP_RESTORE_NOTICE_SETTING_KEY, parseBackupRestoreNotice, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupRestoreNotice as StorageBackupRestoreNotice, type BackupSummary } from '@lnwjud/storage';
+import { AesGcmCheckpointCipher, BACKUP_RESTORE_NOTICE_SETTING_KEY, parseBackupRestoreNotice, SqliteAgentSwarmRepository, SqliteAutomationRepository, SqliteAuditRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupRestoreNotice as StorageBackupRestoreNotice, type BackupSummary } from '@lnwjud/storage';
 import { SqliteGoalRepository } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
 import { comparableHostPath, isDriveRoot, isMachineRootPath, resolveHostPath, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
@@ -314,6 +315,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const workspaceRepository = new SqliteWorkspaceRepository(database);
   const goalRepository = new SqliteGoalRepository(database);
+  const automationRepository = new SqliteAutomationRepository(database);
+  const automationOrchestrator = new AutomationOrchestratorService(automationRepository);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
@@ -521,6 +524,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     process: processService,
     codex: codexService,
     agentSwarm: agentSwarmService,
+    automation: {
+      repository: automationRepository,
+      orchestrator: automationOrchestrator,
+    },
   };
   const activityLogPath = mcpActivityLogPath(dataPath);
   let activityLogDiagnostic: ((key: string, message: string) => void) | null = null;

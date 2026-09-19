@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   AgentSwarmService,
+  AutomationOrchestratorService,
   CheckpointService,
   CodexService,
   FileService,
@@ -43,6 +44,7 @@ import { permissionProfiles, type PermissionProfile, type PermissionProfileName 
 import {
   AesGcmCheckpointCipher,
   SqliteAgentSwarmRepository,
+  SqliteAutomationRepository,
   SqliteAuditRepository,
   SqliteCheckpointRepository,
   SqliteDatabase,
@@ -102,6 +104,8 @@ export function createStdioMcpRuntime(
     ? rawWorkspaceRepository
     : new StrictWorkspaceRepository(rawWorkspaceRepository, options.strictAllowedRoots);
   const goalRepository = new SqliteGoalRepository(database);
+  const automationRepository = new SqliteAutomationRepository(database);
+  const automationOrchestrator = new AutomationOrchestratorService(automationRepository);
   const workspaceIndex = new WorkspaceIndexService(workspaceRepository, new JsonWorkspaceIndexStore(path.join(dataPath, 'workspace-index')));
   const settingsRepository = new SqliteSettingsRepository(database);
   const toolAvailabilityService = new ToolAvailabilityService(settingsRepository);
@@ -273,6 +277,10 @@ export function createStdioMcpRuntime(
     process: processService,
     codex: codexService,
     agentSwarm: agentSwarmService,
+    automation: {
+      repository: automationRepository,
+      orchestrator: automationOrchestrator,
+    },
   };
 
   return {

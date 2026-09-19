@@ -30,6 +30,7 @@ import {
   type ToolAvailabilitySnapshot,
 } from '@lnwjud/shared';
 import { ActivityTracker, describeStructuredResultDetail, summarizeStructuredResultTarget, summarizeToolTarget, type ActivitySink, type TraceContext } from './activity-tracker.js';
+import { AUTOMATION_GOAL_LEASE_CONTEXT_KEY } from './automation-runtime-adapter.js';
 import { ContextEngine } from './context-engine.js';
 import { ContextEconomyRuntime } from './context-economy.js';
 import { hasExplicitUserConfirmation } from './destructive-policy.js';
@@ -46,6 +47,7 @@ import {
 import { inspectMutationOperation, permissionLevelForMutationDecision, requiresMutationConfirmation, type MutationPolicyDecision } from './mutation-policy.js';
 import { mapError, mapResult, type McpToolResponse } from './result-mapper.js';
 import { agentSwarmTools } from './tools/agent-swarm-tools.js';
+import { automationTools } from './tools/automation-tools.js';
 import { batchTools } from './tools/batch-tools.js';
 import { contextTools } from './tools/context-tools.js';
 import { filePageTools } from './tools/file-page-tools.js';
@@ -229,6 +231,11 @@ export class ToolRegistry {
       ...processTools(context),
       ...codexTools(context),
       ...agentSwarmTools(context),
+      ...automationTools(context, {
+        childInvoker: {
+          invoke: (name, input, signal) => this.invoke(name, input, undefined, signal),
+        },
+      }),
       ...capabilityTools(context, options.setOfMarksStore),
       ...skillTools(context),
       ...mcpBridgeTools(context),
@@ -562,9 +569,14 @@ export class ToolRegistry {
         policyAllowsScopedDestructive,
         explicitUserConfirmation: hasExplicitUserConfirmation(activeRoutedInput),
       });
+      const executionInput = goalLease !== undefined
+        && AUTOMATION_GOAL_LEASE_FORWARDING_TOOLS.has(tool.name)
+        && isRecord(approvalExecutionInput)
+        ? { ...approvalExecutionInput, [AUTOMATION_GOAL_LEASE_CONTEXT_KEY]: goalLease }
+        : approvalExecutionInput;
       const execution = await this.executeWithinResponseBudget(
         tool,
-        approvalExecutionInput,
+        executionInput,
         invocationAuthorization,
         parentSignal,
         goalLease === undefined ? undefined : goalLease.goalId,
@@ -1048,6 +1060,12 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'clipboard', 'file_dialog', 'notification', 'web_fetch', 'scheduler',
   'office', 'audio', 'screen_record', 'docx_merge', 'office_ppt',
   'task_create',
+  'automation_create', 'automation_run', 'automation_observe', 'automation_recover',
+  'automation_verify', 'automation_pause', 'automation_resume',
+]);
+const AUTOMATION_GOAL_LEASE_FORWARDING_TOOLS = new Set([
+  'automation_create', 'automation_run', 'automation_observe', 'automation_recover',
+  'automation_verify', 'automation_pause', 'automation_resume',
 ]);
 const goalLeaseProofSchema = z.object({
   goalId: z.string().min(1).max(128),
@@ -1331,7 +1349,7 @@ function prohibitedInvocationReason(toolName: string, input: unknown): string | 
   return undefined;
 }
 
-const LOCAL_MUTATION_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_recovery_item', 'restore_checkpoint', 'git', 'shell', 'wsl_exec', 'process_start', 'process_stop', 'codex_run', 'codex_stop', 'agent_swarm_run', 'office', 'office_ppt', 'docx_merge', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply']);
+const LOCAL_MUTATION_TOOLS = new Set(['write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_recovery_item', 'restore_checkpoint', 'git', 'shell', 'wsl_exec', 'process_start', 'process_stop', 'codex_run', 'codex_stop', 'agent_swarm_run', 'office', 'office_ppt', 'docx_merge', 'git_worktree_spawn', 'git_worktree_remove', 'self_heal_apply', 'automation_create', 'automation_run', 'automation_observe', 'automation_recover', 'automation_verify', 'automation_pause', 'automation_resume']);
 const LOCAL_OUTPUT_REPLACEMENT_TOOLS = new Set(['audio', 'screen_record']);
 function requiresActiveWorkspaceScope(toolName: string, decision: MutationPolicyDecision): boolean {
   return decision.kind !== 'read' && (LOCAL_MUTATION_TOOLS.has(toolName) || (decision.kind === 'replace' && LOCAL_OUTPUT_REPLACEMENT_TOOLS.has(toolName)));

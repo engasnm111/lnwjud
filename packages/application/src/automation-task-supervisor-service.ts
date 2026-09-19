@@ -12,6 +12,7 @@ import {
   type AutomationTaskObservedState,
   type AutomationTaskProvider,
 } from '@lnwjud/domain';
+import type { AutomationTaskExecution } from './automation-execution-policy.js';
 import {
   AutomationOrchestratorService,
   type AutomationAuthorityCursor,
@@ -36,6 +37,7 @@ export interface AutomationTaskLaunchPortRequest {
   readonly operationKey: string;
   readonly idempotencyKey: string;
   readonly executionIntent: string;
+  readonly execution?: AutomationTaskExecution;
   readonly deadlineAt?: string;
 }
 
@@ -94,6 +96,7 @@ export interface AutomationDispatchTaskRequest extends AutomationMutationRequest
   readonly provider: AutomationTaskProvider;
   readonly operationKey: string;
   readonly idempotencyKey: string;
+  readonly execution?: AutomationTaskExecution;
   readonly deadlineMs?: number;
 }
 
@@ -192,6 +195,7 @@ export class AutomationTaskSupervisorService {
         operationKey: request.operationKey,
         idempotencyKey: request.idempotencyKey,
         executionIntent: milestone.executionIntent,
+        ...(request.execution === undefined ? {} : { execution: request.execution }),
         ...(deadlineAt === undefined ? {} : { deadlineAt }),
       });
     } catch (error) {
@@ -236,6 +240,7 @@ export class AutomationTaskSupervisorService {
     validateMutationBase(request);
     assertBoundedText(request.operationKey, 'operationKey', MAX_OPERATION_KEY);
     const snapshot = await this.loadExpected(request);
+    assertTaskSupervisionNotPaused(snapshot);
     const attemptId = requireCurrentAttemptId(snapshot);
     const milestone = requireCurrentMilestone(snapshot);
     const receipt = requireReceipt(snapshot, attemptId, request.operationKey);
@@ -264,6 +269,7 @@ export class AutomationTaskSupervisorService {
   ): Promise<AutomationRunSnapshot> {
     validateMutationBase(request);
     const snapshot = await this.loadExpected(request);
+    assertTaskSupervisionNotPaused(snapshot);
     const milestone = requireCurrentMilestone(snapshot);
     const attemptId = requireCurrentAttemptId(snapshot);
     const binding = currentBlockingBinding(snapshot, attemptId);
@@ -1056,6 +1062,15 @@ function taskFailureRecoveryClass(
   return 'task_timed_out';
 }
 
+function assertTaskSupervisionNotPaused(snapshot: AutomationRunSnapshot): void {
+  if (snapshot.status === 'paused') {
+    throw new AutomationStateError(
+      'conflict',
+      'Automation task supervision is paused; resume the automation before observing or recovering work',
+    );
+  }
+}
+
 function currentDispatchAttempt(snapshot: AutomationRunSnapshot): {
   readonly milestone: AutomationMilestoneRecord;
   readonly attemptId: string;
@@ -1220,6 +1235,9 @@ function validateDispatchRequest(request: AutomationDispatchTaskRequest): void {
   validateMutationBase(request);
   if (request.provider !== 'process' && request.provider !== 'codex' && request.provider !== 'shell') {
     throw new AutomationStateError('conflict', 'Automation task provider is invalid');
+  }
+  if (request.execution !== undefined && request.execution.provider !== request.provider) {
+    throw new AutomationStateError('conflict', 'Automation execution provider does not match the dispatch provider');
   }
   assertBoundedText(request.operationKey, 'operationKey', MAX_OPERATION_KEY);
   assertBoundedText(request.idempotencyKey, 'idempotencyKey', MAX_IDEMPOTENCY_KEY);

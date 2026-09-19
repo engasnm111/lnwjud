@@ -110,6 +110,59 @@ export class AutomationOrchestratorService {
   public async get(runId: string): Promise<AutomationRunSnapshot> {
     return requireRun(await this.repository.getRunById(runId));
   }
+  public async pause(request: AutomationMutationRequest): Promise<AutomationRunSnapshot> {
+    validateMutationRequest(request);
+    const snapshot = await this.loadExpected(request);
+    if (isTerminalRun(snapshot.status)) {
+      throw new AutomationStateError('conflict', 'Automation run is already terminal');
+    }
+    if (snapshot.status === 'paused') return snapshot;
+    return this.repository.commitTransition({
+      runId: snapshot.id,
+      expectedRevision: snapshot.revision,
+      runPatch: {
+        status: 'paused',
+        basedOnGoalRevision: request.authority.goalRevision,
+        basedOnUserIntentRevision: request.authority.userIntentRevision,
+      },
+      event: {
+        id: this.idFactory(),
+        ...(snapshot.currentMilestoneId === undefined ? {} : { milestoneId: snapshot.currentMilestoneId }),
+        ...(snapshot.currentAttemptId === undefined ? {} : { attemptId: snapshot.currentAttemptId }),
+        type: 'run_paused',
+        reason: 'automation_paused',
+      },
+      now: this.now().toISOString(),
+    });
+  }
+
+  public async resume(request: AutomationMutationRequest): Promise<AutomationRunSnapshot> {
+    validateMutationRequest(request);
+    const snapshot = await this.loadExpected(request);
+    if (snapshot.status !== 'paused') {
+      throw new AutomationStateError('conflict', 'Automation run is not paused');
+    }
+    const status = resumableRunStatus(snapshot);
+    return this.repository.commitTransition({
+      runId: snapshot.id,
+      expectedRevision: snapshot.revision,
+      runPatch: {
+        status,
+        basedOnGoalRevision: request.authority.goalRevision,
+        basedOnUserIntentRevision: request.authority.userIntentRevision,
+      },
+      event: {
+        id: this.idFactory(),
+        ...(snapshot.currentMilestoneId === undefined ? {} : { milestoneId: snapshot.currentMilestoneId }),
+        ...(snapshot.currentAttemptId === undefined ? {} : { attemptId: snapshot.currentAttemptId }),
+        type: 'run_resumed',
+        reason: 'automation_resumed',
+        metadata: { resumedStatus: status },
+      },
+      now: this.now().toISOString(),
+    });
+  }
+
   public async advance(request: AutomationMutationRequest): Promise<AutomationRunSnapshot> {
     validateMutationRequest(request);
     const snapshot = await this.loadExpected(request);
@@ -862,6 +915,31 @@ function assertCreateMatchesExisting(
       'Existing automation run for this durable goal does not match the requested definition',
     );
   }
+}
+
+function resumableRunStatus(snapshot: AutomationRunSnapshot): AutomationRunSnapshot['status'] {
+  if (snapshot.milestones.every((milestone) => milestone.status === 'completed')) return 'completing';
+  if (snapshot.currentAttemptId !== undefined) {
+    const attempt = snapshot.attempts.find((candidate) => candidate.id === snapshot.currentAttemptId);
+    if (attempt === undefined) throw new AutomationStateError('corrupt', 'Automation current attempt is missing while resuming');
+    if (attempt.status === 'waiting_task') return 'waiting_task';
+    if (attempt.status === 'verifying') return 'verifying';
+    if (attempt.status === 'dispatch_unresolved') return 'blocked';
+    return 'running';
+  }
+  if (snapshot.currentMilestoneId !== undefined) {
+    const milestone = snapshot.milestones.find((candidate) => candidate.id === snapshot.currentMilestoneId);
+    if (milestone === undefined) throw new AutomationStateError('corrupt', 'Automation current milestone is missing while resuming');
+    if (milestone.status === 'blocked') return 'blocked';
+    if (milestone.status === 'verifying') return 'verifying';
+    if (milestone.status === 'waiting_task') return 'waiting_task';
+    return 'running';
+  }
+  return snapshot.milestones.some((milestone) => (
+    milestone.status === 'ready'
+    || milestone.status === 'retry_ready'
+    || milestone.status === 'running'
+  )) ? 'running' : 'planned';
 }
 
 function requireRun(

@@ -126,6 +126,19 @@ export function inspectMutationOperation(
       return inspectDirectExecution(value, toolName);
     case 'process_stop':
       return execute('process_stop interrupts only an exact process handle owned by the current client/session/workspace');
+    case 'automation_create':
+      return boundedWrite('automation_create persists a durable orchestration definition without executing project work');
+    case 'automation_run':
+      return execute('automation_run advances durable orchestration and delegates any child execution back through ToolRegistry');
+    case 'automation_observe':
+      return execute('automation_observe persists one durable task observation and may perform owner-scoped timeout cancellation');
+    case 'automation_recover':
+      return execute('automation_recover reconciles an unresolved durable dispatch without blind replay');
+    case 'automation_verify':
+      return boundedWrite('automation_verify records verification evidence and deterministic milestone state');
+    case 'automation_pause':
+    case 'automation_resume':
+      return boundedWrite(`${toolName} changes orchestration eligibility without deleting the goal or task`);
     case 'agent_swarm_run': {
       const operation = normalized(value.operation);
       return ['status', 'result', 'list'].includes(operation)

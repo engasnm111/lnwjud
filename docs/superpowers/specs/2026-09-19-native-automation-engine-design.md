@@ -435,12 +435,14 @@ Initial tools:
 
 ```text
 automation_create
-automation_run
 automation_status
+automation_events
+automation_run
+automation_observe
+automation_recover
+automation_verify
 automation_pause
 automation_resume
-automation_reconcile
-automation_events
 ```
 
 `automation_create` binds to an existing or newly acquired durable goal and persists
@@ -448,7 +450,7 @@ the milestone DAG. `automation_run` is immediate-return orchestration: it advanc
 useful synchronous work and may return durable task bindings when the next step is
 background work.
 
-`automation_status`, `automation_events`, and dry-run reconciliation are read-only.
+`automation_status` and `automation_events` are read-only. `automation_observe` records one exact durable-task observation; `automation_recover` reconciles a previously unresolved dispatch without blind replay; `automation_verify` commits milestone verification evidence.
 
 Pause/resume changes orchestration eligibility only. It does not delete the goal,
 kill shared services, or cancel the Native ChatGPT recurring watchdog unless the
@@ -608,8 +610,8 @@ M0 — architecture contract and invariants.
 M1 — domain model + SQLite schema/repositories.
 M2 — application orchestrator + deterministic milestone DAG.
 M3 — durable task supervisor + timeout/recovery taxonomy.
-M4 — `coding_guarded` execution policy and dispatch fence.
-M5 — MCP automation tools + goal/checkpoint integration.
+M4 — runtime adapter + native MCP tool surface + `coding_guarded` policy/fence integration.
+M5 — durable-goal/checkpoint integration + final acceptance/terminal readback.
 M6 — scheduled-continuation resume integration + crash recovery.
 M7 — observability, audit projection, Live Logs/dashboard read model.
 M8 — fault-injection suite, packaging isolation, migration/upgrade verification.

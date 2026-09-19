@@ -544,6 +544,67 @@ describe('AutomationOrchestratorService', () => {
     }
   });
 
+  it('pauses without discarding current attempt state and resumes to the derived phase', async () => {
+    const { database, orchestrator } = await fixture([spec('only')]);
+    try {
+      const advanced = await orchestrator.advance({
+        runId: 'run-1',
+        expectedRevision: 0,
+        authority: AUTHORITY,
+      });
+      const started = await orchestrator.startCurrentAttempt({
+        runId: 'run-1',
+        expectedRevision: advanced.revision,
+        authority: AUTHORITY,
+      });
+
+      const paused = await orchestrator.pause({
+        runId: 'run-1',
+        expectedRevision: started.revision,
+        authority: AUTHORITY,
+      });
+      expect(paused.status).toBe('paused');
+      expect(paused.currentMilestoneId).toBe('only');
+      expect(paused.currentAttemptId).toBe(started.currentAttemptId);
+      expect(paused.attempts[0]).toMatchObject({ status: 'dispatching' });
+
+      const replayedPause = await orchestrator.pause({
+        runId: 'run-1',
+        expectedRevision: paused.revision,
+        authority: AUTHORITY,
+      });
+      expect(replayedPause.revision).toBe(paused.revision);
+
+      const resumed = await orchestrator.resume({
+        runId: 'run-1',
+        expectedRevision: paused.revision,
+        authority: AUTHORITY,
+      });
+      expect(resumed.status).toBe('running');
+      expect(resumed.currentAttemptId).toBe(started.currentAttemptId);
+
+      const verifying = await orchestrator.beginVerification({
+        runId: 'run-1',
+        expectedRevision: resumed.revision,
+        authority: AUTHORITY,
+      });
+      const pausedVerification = await orchestrator.pause({
+        runId: 'run-1',
+        expectedRevision: verifying.revision,
+        authority: AUTHORITY,
+      });
+      const resumedVerification = await orchestrator.resume({
+        runId: 'run-1',
+        expectedRevision: pausedVerification.revision,
+        authority: AUTHORITY,
+      });
+      expect(resumedVerification.status).toBe('verifying');
+      expect(resumedVerification.currentAttemptId).toBe(started.currentAttemptId);
+    } finally {
+      database.close();
+    }
+  });
+
   it('rejects out-of-order verification and stale run revisions', async () => {
     const { database, orchestrator } = await fixture([spec('only')]);
     try {

@@ -10,6 +10,135 @@ function activeFence(): ReturnType<typeof ok> {
 }
 
 describe('scheduled continuation mutation fence', () => {
+  it('fences native automation mutation before its handler when a rolling goal exists', async (): Promise<void> => {
+    const inspectWorkspaceFence = vi.fn().mockResolvedValue(activeFence());
+    const get = vi.fn();
+    const pause = vi.fn();
+    const services = {
+      goalMutationFence: { inspectWorkspaceFence },
+      automation: {
+        repository: {},
+        orchestrator: { get, pause },
+      },
+    } as unknown as McpApplicationServices;
+
+    const response = await new ToolRegistry(services, actor).invoke('automation_pause', {
+      workspaceId: 'workspace-1',
+      runId: 'run-1',
+      expectedRevision: 2,
+      goalRevision: 4,
+      userIntentRevision: 1,
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({ error: { code: 'CONFLICT' } });
+    expect(inspectWorkspaceFence).toHaveBeenCalledWith(actor, 'workspace-1');
+    expect(get).not.toHaveBeenCalled();
+    expect(pause).not.toHaveBeenCalled();
+  });
+
+  it('forwards the validated goal lease privately into native automation handlers', async (): Promise<void> => {
+    const inspectWorkspaceFence = vi.fn().mockResolvedValue(activeFence());
+    const begin = vi.fn().mockResolvedValue(ok({ goalId: 'goal-2', leaseGeneration: 2 }));
+    const heartbeat = vi.fn().mockResolvedValue(undefined);
+    const end = vi.fn().mockResolvedValue(undefined);
+    const get = vi.fn().mockResolvedValue({
+      id: 'run-1',
+      goalId: 'goal-1',
+      workspaceId: 'workspace-1',
+      policyProfile: 'coding_guarded',
+      revision: 2,
+      status: 'running',
+      basedOnGoalRevision: 4,
+      basedOnUserIntentRevision: 1,
+      createdAt: '2026-09-19T00:00:00.000Z',
+      updatedAt: '2026-09-19T00:00:00.000Z',
+      milestones: [],
+      attempts: [],
+      taskBindings: [],
+      dispatchReceipts: [],
+    });
+    const pause = vi.fn();
+    const services = {
+      goalMutationFence: { inspectWorkspaceFence, begin, heartbeat, end },
+      automation: {
+        repository: {},
+        orchestrator: { get, pause },
+      },
+    } as unknown as McpApplicationServices;
+
+    const response = await new ToolRegistry(services, actor).invoke('automation_pause', {
+      workspaceId: 'workspace-1',
+      runId: 'run-1',
+      expectedRevision: 2,
+      goalRevision: 4,
+      userIntentRevision: 1,
+      goalLease: { goalId: 'goal-2', leaseToken: 'lease-2', leaseGeneration: 2 },
+    });
+
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({ error: { code: 'CONFLICT' } });
+    expect(begin).toHaveBeenCalled();
+    expect(get).toHaveBeenCalledWith('run-1');
+    expect(pause).not.toHaveBeenCalled();
+    expect(end).toHaveBeenCalled();
+  });
+
+  it('admits native automation mutation with the matching live goal lease', async (): Promise<void> => {
+    const inspectWorkspaceFence = vi.fn().mockResolvedValue(activeFence());
+    const begin = vi.fn().mockResolvedValue(ok({ goalId: 'goal-1', leaseGeneration: 2 }));
+    const heartbeat = vi.fn().mockResolvedValue(undefined);
+    const end = vi.fn().mockResolvedValue(undefined);
+    const running = {
+      id: 'run-1',
+      goalId: 'goal-1',
+      workspaceId: 'workspace-1',
+      policyProfile: 'coding_guarded',
+      revision: 2,
+      status: 'running',
+      basedOnGoalRevision: 4,
+      basedOnUserIntentRevision: 1,
+      createdAt: '2026-09-19T00:00:00.000Z',
+      updatedAt: '2026-09-19T00:00:00.000Z',
+      milestones: [],
+      attempts: [],
+      taskBindings: [],
+      dispatchReceipts: [],
+    } as const;
+    const get = vi.fn().mockResolvedValue(running);
+    const pause = vi.fn().mockResolvedValue({
+      ...running,
+      revision: 3,
+      status: 'paused',
+      updatedAt: '2026-09-19T00:01:00.000Z',
+    });
+    const services = {
+      goalMutationFence: { inspectWorkspaceFence, begin, heartbeat, end },
+      automation: {
+        repository: {},
+        orchestrator: { get, pause },
+      },
+    } as unknown as McpApplicationServices;
+
+    const response = await new ToolRegistry(services, actor).invoke('automation_pause', {
+      workspaceId: 'workspace-1',
+      runId: 'run-1',
+      expectedRevision: 2,
+      goalRevision: 4,
+      userIntentRevision: 1,
+      goalLease: { goalId: 'goal-1', leaseToken: 'lease-1', leaseGeneration: 2 },
+    });
+
+    expect(response.isError).not.toBe(true);
+    expect(begin).toHaveBeenCalled();
+    expect(pause).toHaveBeenCalledWith({
+      runId: 'run-1',
+      expectedRevision: 2,
+      authority: { goalRevision: 4, userIntentRevision: 1 },
+    });
+    expect(end).toHaveBeenCalled();
+  });
+
   it('blocks file mutation without the current goalLease proof before the file handler executes', async (): Promise<void> => {
     const inspectWorkspaceFence = vi.fn().mockResolvedValue(activeFence());
     const writeFile = vi.fn().mockResolvedValue(ok({ path: 'src/file.ts', bytesWritten: 1 }));
