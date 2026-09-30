@@ -75,6 +75,20 @@ describe('BrowserCdpBackend', () => {
     expect(requests[0]?.params.expression).toContain('document.querySelector');
   });
 
+  it('activates the exact pinned tab with Page.bringToFront', async () => {
+    const requests: { readonly tabId: string; readonly method: string; readonly params: Record<string, unknown> }[] = [];
+    const protocol = protocolStub({
+      tabs: [tab('tab-1', 'First', 'http://127.0.0.1/one'), tab('tab-2', 'Second', 'http://127.0.0.1/two')],
+      onRequest: (tabId, method, params) => requests.push({ tabId, method, params }),
+    });
+    const backend = new BrowserCdpBackend({ protocol });
+
+    const result = await backend.execute({ action: 'activate_tab', tab_id: 'tab-2', parameters: {}, userConfirmed: true });
+
+    expect(result).toEqual({ ok: true, value: { activated: true, tab_id: 'tab-2' } });
+    expect(requests).toEqual([{ tabId: 'tab-2', method: 'Page.bringToFront', params: {} }]);
+  });
+
   it('returns a structured acknowledgement for Page.navigate without claiming page-load completion', async () => {
     const protocol = protocolStub({ tabs: [tab('tab-1', 'Test', 'http://127.0.0.1/')] });
     const backend = new BrowserCdpBackend({ protocol });

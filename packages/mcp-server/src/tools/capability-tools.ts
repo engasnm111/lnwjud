@@ -103,7 +103,7 @@ export function capabilityTools(context: McpToolContext, setOfMarksStore?: SetOf
     }),
     defineTool({
       name: 'dom_cdp',
-      description: 'Default for web-page DOM work inside managed Chrome. Call list_tabs first, select the exact returned tab_id by URL/title, and pass that tab_id to every query, click, type, navigate, evaluate, wait, screenshot, close, or steps call. If no safe matching tab exists, call new_tab and use its returned ID. Target order and the OS-active tab are never ownership signals. Never navigate through the browser address bar with computer_use/accessibility/input_event. Protected ChatGPT tab mutations additionally require allow_protected_tab_action=true plus explicit user confirmation.',
+      description: 'Default for web-page DOM work inside managed Chrome. Call list_tabs first, select the exact returned tab_id by URL/title, and pass that tab_id to every query, click, type, navigate, evaluate, wait, screenshot, activate_tab, close, or steps call. Use activate_tab before crossing into native accessibility/input_event when the selected browser page must match the pinned CDP target. If no safe matching tab exists, call new_tab and use its returned ID. Target order and the OS-active tab are never ownership signals. Never navigate through the browser address bar with computer_use/accessibility/input_event. Protected ChatGPT tab mutations additionally require allow_protected_tab_action=true plus explicit user confirmation.',
       permission: 'READ',
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: domCdpCapabilitySchema,

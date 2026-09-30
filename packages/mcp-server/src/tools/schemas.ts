@@ -364,11 +364,11 @@ export const wslFilesystemCapabilitySchema = z.object({
 }).strict();
 
 const domActionSchema = z.enum([
-  'launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate',
+  'launch', 'status', 'list_tabs', 'new_tab', 'activate_tab', 'close_tab', 'navigate',
   'evaluate', 'query', 'click', 'type', 'wait', 'screenshot',
 ]);
 const domTargetActions = new Set([
-  'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot',
+  'activate_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot',
 ]);
 
 const domStepSchema = z.object({

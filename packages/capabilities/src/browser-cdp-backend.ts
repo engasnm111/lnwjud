@@ -27,7 +27,7 @@ export interface BrowserCdpBackendOptions {
   readonly launcher?: (url: string | undefined, signal?: AbortSignal) => Promise<Result<unknown>>;
 }
 
-type BrowserAction = 'launch' | 'status' | 'list_tabs' | 'new_tab' | 'close_tab' | 'navigate' | 'evaluate' | 'query' | 'click' | 'type' | 'wait' | 'screenshot';
+type BrowserAction = 'launch' | 'status' | 'list_tabs' | 'new_tab' | 'activate_tab' | 'close_tab' | 'navigate' | 'evaluate' | 'query' | 'click' | 'type' | 'wait' | 'screenshot';
 
 interface BrowserRequest {
   readonly action?: BrowserAction;
@@ -40,8 +40,8 @@ interface BrowserRequest {
   readonly userConfirmed: boolean;
 }
 
-const BROWSER_ACTIONS: readonly BrowserAction[] = ['launch', 'status', 'list_tabs', 'new_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot'];
-const TARGET_SCOPED_ACTIONS = new Set<BrowserAction>(['close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot']);
+const BROWSER_ACTIONS: readonly BrowserAction[] = ['launch', 'status', 'list_tabs', 'new_tab', 'activate_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot'];
+const TARGET_SCOPED_ACTIONS = new Set<BrowserAction>(['activate_tab', 'close_tab', 'navigate', 'evaluate', 'query', 'click', 'type', 'wait', 'screenshot']);
 const PROTECTED_TAB_MUTATIONS = new Set<BrowserAction>(['close_tab', 'navigate', 'evaluate', 'click', 'type']);
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const MAX_TIMEOUT_SECONDS = 3600;
@@ -125,6 +125,10 @@ export class BrowserCdpBackend implements CapabilityBackend {
       case 'launch': return this.ensureStarted(readString(parameters, 'url'), signal);
       case 'list_tabs': return ok({ tabs: await this.protocol.listTabs(signal) });
       case 'new_tab': return ok(await this.protocol.newTab(readString(parameters, 'url') ?? 'about:blank', signal));
+      case 'activate_tab': return this.withTab(request, action, async (tab) => {
+        await this.protocol.request(tab.id, 'Page.bringToFront', {}, signal);
+        return ok({ activated: true, tab_id: tab.id });
+      }, signal);
       case 'close_tab': return this.withTab(request, action, async (tab) => ok(await this.protocol.closeTab(tab.id, signal)), signal);
       case 'navigate': return this.withTab(request, action, async (tab) => this.navigateProtocol(tab.id, readString(parameters, 'url') ?? '', signal), signal);
       case 'evaluate': {

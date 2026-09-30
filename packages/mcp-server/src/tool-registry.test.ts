@@ -293,6 +293,8 @@ describe('MCP tool registry', () => {
     const domCdp = byName.get('dom_cdp');
     expect(domCdp?.parse({ action: 'query', parameters: { selector: '#app' } })).toMatchObject({ ok: false });
     expect(domCdp?.parse({ action: 'query', tab_id: 'tab-1', parameters: { selector: '#app' } })).toMatchObject({ ok: true });
+    expect(domCdp?.parse({ action: 'activate_tab' })).toMatchObject({ ok: false });
+    expect(domCdp?.parse({ action: 'activate_tab', tab_id: 'tab-1' })).toMatchObject({ ok: true });
     expect(domCdp?.parse({ action: 'list_tabs' })).toMatchObject({ ok: true });
     expect(domCdp?.parse({ action: 'new_tab', parameters: { url: 'about:blank' } })).toMatchObject({ ok: true });
     expect(domCdp?.parse({

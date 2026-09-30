@@ -427,7 +427,7 @@ function inspectDomCdp(value: Readonly<Record<string, unknown>>): MutationPolicy
   const classify = (actionValue: unknown): MutationPolicyDecision => {
     const action = normalized(actionValue);
     if (['status', 'list_tabs', 'query', 'wait', 'screenshot'].includes(action)) return read('browser inspection action');
-    if (['launch', 'new_tab'].includes(action)) return execute(`browser ${action} action`);
+    if (['launch', 'new_tab', 'activate_tab'].includes(action)) return execute(`browser ${action} action`);
     return opaque('browser action can trigger local or remote side effects');
   };
   const decisions: MutationPolicyDecision[] = [];
