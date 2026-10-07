@@ -2,44 +2,44 @@
   "schemaVersion": 1,
   "tunnelClient": {
     "repository": "openai/tunnel-client",
-    "version": "0.0.15",
-    "provenanceAsset": "tunnel-client-v0.0.15-provenance.sigstore.json",
+    "version": "0.0.16",
+    "provenanceAsset": "tunnel-client-v0.0.16-provenance.sigstore.json",
     "targets": {
       "win32-x64": {
         "releaseTarget": "windows",
         "releaseArch": "amd64",
         "executable": "tunnel-client.exe",
-        "archiveSha256": "3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1"
+        "archiveSha256": "edef7241b0c647fcb30f1a80ff376b6b25c51927960f257a3f01e21b17c2aba6"
       },
       "win32-arm64": {
         "releaseTarget": "windows",
         "releaseArch": "arm64",
         "executable": "tunnel-client.exe",
-        "archiveSha256": "571e0d59ed9e86d1b105dc34f3267865f654de6968b01efd7c847f0af657d11d"
+        "archiveSha256": "ecd748288b9bd9cc8f5a963855eb143f4788b831475156703d0bafdcd2dcb149"
       },
       "darwin-x64": {
         "releaseTarget": "darwin",
         "releaseArch": "amd64",
         "executable": "tunnel-client",
-        "archiveSha256": "9dcae1e2fb121287e73271edb7b853dda52aa86b7bfca1df91bc275371261bdb"
+        "archiveSha256": "57b3dd73f2d042c7aeb5664681f7538078359f55538b9e048640f1df71a0c83f"
       },
       "darwin-arm64": {
         "releaseTarget": "darwin",
         "releaseArch": "arm64",
         "executable": "tunnel-client",
-        "archiveSha256": "b2cae3aa9df45b4c2fe9b1d700ebacce39f9feb6a6b46b86e6499f9a51bf72ff"
+        "archiveSha256": "a160820d45089b5253d8d671fe2a689bde0f73d78c135d1497a7b33f28a3ac62"
       },
       "linux-x64": {
         "releaseTarget": "linux",
         "releaseArch": "amd64",
         "executable": "tunnel-client",
-        "archiveSha256": "8c836dc5d68d68b663d9a5c5b28ff9fa780d9f7a3fffb1c306880b8f32fab5f1"
+        "archiveSha256": "d60cdba019bce451bcc3a15478cc5b9cb11270b049f5b56ea39a80b517f8b117"
       },
       "linux-arm64": {
         "releaseTarget": "linux",
         "releaseArch": "arm64",
         "executable": "tunnel-client",
-        "archiveSha256": "c51bfd883fc22e3445494a03c0179875176564bde470661b308fd83af5d01abb"
+        "archiveSha256": "963d0384aaa7c798778479c45673f9051a4039dd891aef8f8978d2a1a628b74f"
       }
     }
   },
