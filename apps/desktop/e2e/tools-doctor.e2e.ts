@@ -103,8 +103,30 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       await app.page.locator('body > .ui-combobox-popover input').press('Escape');
       const tool = app.page.locator('.diagnostics-filters .ui-combobox-trigger').nth(1);
       await tool.click();
-      await expect(app.page.locator('body > .ui-combobox-popover [role="option"]').first()).toBeVisible();
+      const toolChoices = app.page.locator('body > .ui-combobox-popover [role="option"]');
+      await expect(toolChoices.first()).toBeVisible();
+      await expect.poll(() => toolChoices.count(), { timeout: 15_000 }).toBeGreaterThan(5);
+      await app.page.setViewportSize({ width: 420, height: 720 });
+      // Rows may wrap but must never collapse or overlap in the scrollable options list.
+      const optionLayout = await toolChoices.evaluateAll((nodes) => nodes.map((node) => {
+        const rect = node.getBoundingClientRect();
+        const text = node.querySelector<HTMLElement>('.ui-combobox-option-label');
+        return { top: rect.top, bottom: rect.bottom, height: rect.height,
+          truncated: Boolean(text && text.scrollHeight > text.clientHeight + 1) };
+      }));
+      expect(optionLayout.length).toBeGreaterThan(5);
+      expect(optionLayout.every((item) => item.height >= 36)).toBe(true);
+      expect(optionLayout.slice(1).every((item, index) => item.top >= optionLayout[index]!.bottom)).toBe(true);
+      const clipped = optionLayout.findIndex((item) => item.truncated);
+      if (clipped !== -1) {
+        const choice = toolChoices.nth(clipped);
+        const fullName = await choice.getAttribute('aria-label');
+        await choice.scrollIntoViewIfNeeded();
+        await choice.hover();
+        await expect(app.page.getByRole('tooltip')).toHaveText(fullName!);
+      }
       await app.page.locator('body > .ui-combobox-popover input').press('Escape');
+      await app.page.setViewportSize({ width: 1280, height: 800 });
       await tabs.getByRole('tab', { name: /ประวัติ MCP|Calls/ }).press('ArrowRight');
       await expect(tabs.getByRole('tab', { name: /ผลงาน|Results/ })).toHaveAttribute('aria-selected', 'true');
 

@@ -20,12 +20,13 @@ export function SearchableSelect(props: {
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const popover = useRef<HTMLDivElement>(null);
-  const widthCache = useRef<{ labels: string; font: string; width: number } | null>(null);
+  const tooltip = useRef<HTMLDivElement>(null);
+  const tooltipHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState('');
   const [active, setActive] = useState(0);
+  const [fullLabel, setFullLabel] = useState<{ text: string; top: number; left: number; width: number; maxHeight: number } | null>(null);
   const [placement, setPlacement] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
-  const optionLabels = useMemo(() => props.options.map((item) => item.label).join('\u001f'), [props.options]);
   const current = props.options.find((item) => item.value === props.value);
   const matches = useMemo(() => props.options.filter((item) =>
     (item.label + ' ' + item.value).toLocaleLowerCase().includes(term.toLocaleLowerCase()),
@@ -34,6 +35,7 @@ export function SearchableSelect(props: {
   useLayoutEffect(() => {
     if (!open) return;
     const reposition = (): void => {
+      setFullLabel(null);
       const rect = root.current?.getBoundingClientRect();
       if (!rect) return;
       const below = Math.max(0, window.innerHeight - rect.bottom - 14);
@@ -41,18 +43,8 @@ export function SearchableSelect(props: {
       const desiredHeight = Math.min(310, popover.current?.scrollHeight ?? 310);
       const flip = below < Math.min(220, desiredHeight) && above > below;
       const maxHeight = Math.max(56, Math.min(310, flip ? above : below));
-      const option = popover.current?.querySelector<HTMLElement>('.ui-combobox-option');
-      const style = window.getComputedStyle(option ?? popover.current ?? root.current!);
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      if (context) context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-      const font = context?.font ?? '';
-      if (!widthCache.current || widthCache.current.labels !== optionLabels || widthCache.current.font !== font) {
-        widthCache.current = { labels: optionLabels, font,
-          width: context ? props.options.reduce((widest, item) => Math.max(widest, context.measureText(item.label).width), 0) : 0 };
-      }
-      const labelWidth = widthCache.current.width;
-      const width = Math.min(window.innerWidth - 16, Math.max(rect.width, 240, Math.ceil(labelWidth + 48)));
+      // Long Goal/tool labels wrap to at most three lines; never grow the popup to their unbounded text width.
+      const width = Math.min(Math.max(0, window.innerWidth - 16), Math.max(rect.width, 240, 520));
       setPlacement({
         width, maxHeight,
         left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
@@ -66,7 +58,15 @@ export function SearchableSelect(props: {
       window.removeEventListener('scroll', reposition, true);
       window.removeEventListener('resize', reposition);
     };
-  }, [open, matches.length, optionLabels]);
+  }, [open, matches.length]);
+
+  useEffect(() => {
+    if (!open) setFullLabel(null);
+    return (): void => {
+      if (tooltipHideTimer.current !== null) clearTimeout(tooltipHideTimer.current);
+      tooltipHideTimer.current = null;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open || props.searchable !== false) return;
@@ -80,7 +80,8 @@ export function SearchableSelect(props: {
     const onPointer = (event: PointerEvent): void => {
       if (event.target instanceof Node &&
         !root.current?.contains(event.target) &&
-        !popover.current?.contains(event.target)) setOpen(false);
+        !popover.current?.contains(event.target) &&
+        !tooltip.current?.contains(event.target)) setOpen(false);
     };
     const onEscape = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
@@ -103,7 +104,50 @@ export function SearchableSelect(props: {
     setOpen(false);
     setTerm('');
     setActive(0);
+    if (tooltipHideTimer.current !== null) clearTimeout(tooltipHideTimer.current);
+    tooltipHideTimer.current = null;
+    setFullLabel(null);
     root.current?.querySelector('button')?.focus();
+  }
+
+  function hideFullLabelSoon(): void {
+    if (tooltipHideTimer.current !== null) clearTimeout(tooltipHideTimer.current);
+    tooltipHideTimer.current = setTimeout(() => {
+      tooltipHideTimer.current = null;
+      setFullLabel(null);
+    }, 180);
+  }
+
+  function showFullLabel(text: string, element: HTMLElement): void {
+    if (tooltipHideTimer.current !== null) clearTimeout(tooltipHideTimer.current);
+    tooltipHideTimer.current = null;
+    const label = element.querySelector<HTMLElement>('.ui-combobox-option-label');
+    if (!label || label.scrollHeight <= label.clientHeight + 1) { setFullLabel(null); return; }
+    const rect = element.getBoundingClientRect();
+    const popupRect = popover.current?.getBoundingClientRect() ?? rect;
+    const viewportWidth = window.innerWidth;
+    const rightSpace = viewportWidth - popupRect.right - 12;
+    const leftSpace = popupRect.left - 12;
+    let maxHeight = Math.min(240, window.innerHeight - 16);
+    let width = Math.min(440, viewportWidth - 16);
+    let left = Math.max(8, Math.min(rect.left, viewportWidth - width - 8));
+    let top = Math.max(8, Math.min(rect.top, window.innerHeight - maxHeight - 8));
+    if (rightSpace >= 260) {
+      width = Math.min(440, rightSpace);
+      left = popupRect.right + 8;
+    } else if (leftSpace >= 260) {
+      width = Math.min(440, leftSpace);
+      left = popupRect.left - width - 8;
+    } else {
+      // On narrow screens keep the full-text preview above/below the menu, not over its rows.
+      const above = Math.max(0, popupRect.top - 16);
+      const below = Math.max(0, window.innerHeight - popupRect.bottom - 16);
+      const available = Math.max(above, below);
+      maxHeight = Math.max(16, Math.min(220, available));
+      top = above >= below ? Math.max(8, popupRect.top - maxHeight - 8)
+        : Math.min(window.innerHeight - maxHeight - 8, popupRect.bottom + 8);
+    }
+    setFullLabel({ text, top, left, width, maxHeight });
   }
 
   function choose(value: string): void {
@@ -150,16 +194,34 @@ export function SearchableSelect(props: {
               if (event.key === 'ArrowUp') { event.preventDefault(); setActive((i) => Math.max(0, i - 1)); }
               if (event.key === 'Enter' && matches[active]) { event.preventDefault(); choose(matches[active].value); }
             }} />}
-          <div id={id} role="listbox" className="ui-combobox-options" aria-label={props.label}>
+          <div id={id} role="listbox" className="ui-combobox-options" aria-label={props.label}
+            onScroll={() => setFullLabel(null)}>
             {matches.length === 0 ? <div className="ui-combobox-empty">No matches</div> : matches.map((item, i) => (
               <ActionButton type="button" role="option" id={`${id}-option-${i}`}
                 aria-selected={item.value === props.value}
                 className={i === active ? 'ui-combobox-option highlighted' : 'ui-combobox-option'}
-                key={item.value} title={item.label} onMouseEnter={() => setActive(i)} onClick={() => choose(item.value)}>
-                {item.label}
+                key={item.value} aria-label={item.label}
+                onMouseEnter={(event) => { setActive(i); showFullLabel(item.label, event.currentTarget); }}
+                onMouseLeave={(event) => {
+                  if (!(event.relatedTarget instanceof Node) || !tooltip.current?.contains(event.relatedTarget)) hideFullLabelSoon();
+                }}
+                onFocus={(event) => showFullLabel(item.label, event.currentTarget)}
+                onBlur={() => setFullLabel(null)} onClick={() => choose(item.value)}>
+                <span className="ui-combobox-option-label">{item.label}</span>
               </ActionButton>
             ))}
           </div>
+        </div>, document.body,
+      ) : null}
+      {open && fullLabel ? createPortal(
+        <div ref={tooltip} role="tooltip" className="ui-combobox-full-label"
+          onMouseEnter={() => {
+            if (tooltipHideTimer.current !== null) clearTimeout(tooltipHideTimer.current);
+            tooltipHideTimer.current = null;
+          }}
+          onMouseLeave={hideFullLabelSoon}
+          style={{ top: fullLabel.top, left: fullLabel.left, width: fullLabel.width, maxHeight: fullLabel.maxHeight }}>
+          {fullLabel.text}
         </div>, document.body,
       ) : null}
     </div>

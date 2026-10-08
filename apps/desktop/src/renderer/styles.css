@@ -3357,8 +3357,10 @@ h2 {
 .ui-combobox-trigger:focus-visible { outline:2px solid var(--gold-primary); outline-offset:2px; }
 .ui-combobox-popover { position:fixed; z-index:10000; min-width:0; box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; padding:8px; border:1px solid rgba(245,197,66,.32); border-radius:12px; background:#151c27; box-shadow:0 14px 36px rgba(0,0,0,.6); }
 .ui-combobox-popover input { display:block; width:100%; min-width:0; flex:0 0 auto; margin-bottom:6px; padding:10px; }
-.ui-combobox-options { display:grid; grid-template-columns:minmax(0,1fr); gap:3px; min-height:0; max-height:none; overflow-y:auto; }
-.ui-combobox-option { width:100%; display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; padding:9px 11px; border:0; background:transparent; border-radius:7px; font-size:13px; color:var(--text); }
+.ui-combobox-options { display:flex; flex-direction:column; gap:4px; min-height:0; max-height:none; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; }
+.ui-combobox-option { width:100%; flex:0 0 auto; display:block; height:auto; min-height:38px; min-width:0; text-align:left; padding:9px 11px; border:0; background:transparent; border-radius:7px; font-size:13px; line-height:1.5; white-space:normal; color:var(--text); }
+.ui-combobox-option-label { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden; overflow-wrap:anywhere; word-break:normal; line-height:1.5; max-height:4.5em; }
+.ui-combobox-full-label { position:fixed; z-index:10002; box-sizing:border-box; max-height:min(240px,calc(100vh - 16px)); overflow:auto; overflow-wrap:anywhere; white-space:pre-wrap; padding:11px 13px; border:1px solid rgba(245,197,66,.48); border-radius:10px; background:#202b3a; color:var(--text); box-shadow:0 14px 34px rgba(0,0,0,.68); font:500 13px/1.55 var(--font-ui); pointer-events:auto; }
 .ui-combobox-option.highlighted,.ui-combobox-option:hover { background:rgba(245,197,66,.13); transform:none; box-shadow:none; }
 .ui-combobox-option[aria-selected="true"] { color:var(--gold-bright); font-weight:650; }
 .ui-combobox-empty { padding:10px; font-size:13px; color:var(--muted); }
