@@ -146,6 +146,7 @@ describe('Ponytail ToolRegistry enforcement', () => {
       ...base.services,
       goals: {
         async getGoal() { return ok({ workspaceId: 'workspace-1', ponytailMode: 'full' }); },
+        async validateGoalLease() { return ok({workspaceId:'workspace-1'}); },
       },
     } as unknown as McpApplicationServices;
     const registry = fullRegistry(services);
@@ -176,6 +177,7 @@ describe('Ponytail ToolRegistry enforcement', () => {
       ...base.services,
       goals: {
         async getGoal() { return ok({ workspaceId: 'workspace-1', ponytailMode: 'ultra' }); },
+        async validateGoalLease() { return ok({workspaceId:'workspace-1'}); },
       },
     } as unknown as McpApplicationServices;
     const ledger = new PonytailActivationLedger();
@@ -317,6 +319,7 @@ describe('Ponytail ToolRegistry enforcement', () => {
       ...base.services,
       goals: {
         async getGoal() { return ok(goalSnapshot); },
+        async validateGoalLease() { return ok({workspaceId:'workspace-1'}); },
         async finishGoal() { finishes += 1; return ok({ status: 'completed' }); },
       },
     } as unknown as McpApplicationServices;
@@ -363,6 +366,7 @@ describe('Ponytail ToolRegistry enforcement', () => {
       ...base.services,
       goals: {
         async getGoal() { return ok(goalSnapshot); },
+        async validateGoalLease() { return ok({workspaceId:'workspace-1'}); },
         async finishGoal() {
           finishes += 1;
           return ok({ ...goalSnapshot, status: 'completed', completionState: 'completed', scheduledTaskCancellation: { action: 'none', reason: 'no_live_task' } });

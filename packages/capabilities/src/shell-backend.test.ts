@@ -36,6 +36,8 @@ describe('ShellCapabilityBackend', () => {
       execution: 'foreground', userConfirmed: true, ...owner });
     expect(memoryRun).toMatchObject({ ok: true, value: { task_id: expect.any(String) } });
     if (!memoryRun.ok) return;
+    await expect(memory.isOwnedGoalTask('client-1','workspace-1',String(memoryRun.value.task_id))).resolves.toBe(true);
+    await expect(memory.isOwnedGoalTask('other','workspace-1',String(memoryRun.value.task_id))).resolves.toBe(false);
     await expect(memory.statusForGoalLiveness('workspace-1', String(memoryRun.value.task_id)))
       .resolves.toMatchObject({ ok: true, value: { command_fingerprint: expected } });
   });

@@ -46,7 +46,8 @@ export class DirectGitRunner implements GitRunner {
         resolve({ exitCode: -1, stdout: '', stderr: errorMessage(error) });
         return;
       }
-      let stdout = '';
+      const stdoutChunks: Buffer[] = [];
+      let stdoutBytes = 0;
       let stderr = '';
       let settled = false;
       let terminationRequested = false;
@@ -62,7 +63,7 @@ export class DirectGitRunner implements GitRunner {
         child.stderr?.removeListener('data', captureStderr);
         child.removeListener('error', handleError);
         child.removeListener('close', handleClose);
-        resolve({ exitCode, stdout, stderr: extraStderr.length === 0 ? stderr : `${stderr}${extraStderr}` });
+        resolve({ exitCode, stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString('utf8'), stderr: extraStderr.length === 0 ? stderr : `${stderr}${extraStderr}` });
       };
       const terminate = (reason: string): void => {
         if (settled || terminationRequested) return;
@@ -90,7 +91,14 @@ export class DirectGitRunner implements GitRunner {
         })();
       };
       const abort = (): void => terminate('Git command cancelled');
-      const captureStdout = (chunk: Buffer): void => { stdout = append(stdout, chunk); };
+      const captureStdout = (chunk: Buffer): void => {
+        if (stdoutBytes + chunk.length > MAX_CAPTURE_BYTES) {
+          terminate('Git output exceeded the safe capture limit');
+          return;
+        }
+        stdoutChunks.push(chunk);
+        stdoutBytes += chunk.length;
+      };
       const captureStderr = (chunk: Buffer): void => { stderr = append(stderr, chunk); };
       const handleError = (error: Error): void => {
         stderr = `${stderr}${error.message}`;

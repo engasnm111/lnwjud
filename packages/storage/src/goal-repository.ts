@@ -24,6 +24,7 @@ import {
   type GoalDeliveryState,
   type GoalIterationPolicy,
   type EngineeringGoalMetadata,
+  type StoredWorkflowMetadata,
   type CreateGoalContextCapsuleRecordRequest,
   type RecordGoalDeliveryReceiptRequest,
   type GoalPlan,
@@ -71,6 +72,7 @@ interface GoalRow {
   readonly user_intent_revision: number;
   readonly iteration_policy_json: string;
   readonly engineering_metadata_json: string | null;
+  readonly workflow_json: string | null;
   readonly current_context_capsule_id: string | null;
   readonly status: string;
   readonly revision: number;
@@ -223,6 +225,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           request.now,
           request.now,
         );
+        if (request.workflow !== undefined) this.database.connection.prepare('UPDATE goals SET workflow_json = ? WHERE id = ?').run(JSON.stringify(request.workflow), request.goalId);
         return { goal: this.requireById(request.goalId), acquired: true };
       }
 
@@ -242,6 +245,9 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       }
       if (request.engineering !== undefined && JSON.stringify(request.engineering) !== JSON.stringify(existing.engineering)) {
         throw new GoalStateError('conflict', 'Existing goal engineering metadata does not match the requested metadata');
+      }
+      if (request.workflow !== undefined && JSON.stringify(request.workflow) !== JSON.stringify(existing.workflow)) {
+        throw new GoalStateError('conflict', 'Existing goal workflow metadata does not match the requested metadata');
       }
       if (existing.status !== 'active') return { goal: existing, acquired: false };
 
@@ -2397,6 +2403,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     const acceptanceCriteria = parseAcceptanceCriteria(row.acceptance_criteria_json);
     const iterationPolicy = parseIterationPolicy(row.iteration_policy_json);
     const engineering = row.engineering_metadata_json === null ? undefined : parseEngineeringGoalMetadata(row.engineering_metadata_json);
+    const workflow = row.workflow_json === null ? undefined : parseStoredWorkflowMetadata(row.workflow_json);
     const blockers = parseStringArray(row.blockers_json, 'goal blockers');
     const trackedTasks = parseTrackedTasks(row.tracked_tasks_json, row.active_task_ids_json, 'goal tracked tasks');
     const activeTaskIds = blockingTaskIds(trackedTasks);
@@ -2427,6 +2434,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
       userIntentRevision: row.user_intent_revision,
       iterationPolicy,
       ...(engineering === undefined ? {} : { engineering }),
+      ...(workflow === undefined ? {} : { workflow }),
       ...(row.current_context_capsule_id === null ? {} : { currentContextCapsuleId: row.current_context_capsule_id }),
       status,
       revision: row.revision,
@@ -2477,7 +2485,7 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     if (!isRecord(value)) throw corrupt('Goal row is invalid');
     const requiredStrings = ['id','workspace_id','goal_key','owner_client_id','objective','plan_json','acceptance_criteria_json','iteration_policy_json','status','current_phase','next_action','blockers_json','active_task_ids_json','created_at','updated_at'];
     if (!requiredStrings.every((key) => typeof value[key] === 'string') || typeof value.revision !== 'number' || typeof value.user_intent_revision !== 'number') throw corrupt('Goal row fields are invalid');
-    const nullableStrings = ['engineering_metadata_json','current_context_capsule_id','tracked_tasks_json','ponytail_mode','lease_owner_client_id','lease_owner_session_id','lease_token_hash','lease_heartbeat_at','lease_expires_at','terminal_summary','terminal_evidence_json','terminal_at'];
+    const nullableStrings = ['workflow_json','engineering_metadata_json','current_context_capsule_id','tracked_tasks_json','ponytail_mode','lease_owner_client_id','lease_owner_session_id','lease_token_hash','lease_heartbeat_at','lease_expires_at','terminal_summary','terminal_evidence_json','terminal_at'];
     if (!nullableStrings.every((key) => value[key] === null || typeof value[key] === 'string')) throw corrupt('Goal nullable fields are invalid');
     if (value.lease_duration_seconds !== null && typeof value.lease_duration_seconds !== 'number') throw corrupt('Goal lease duration is invalid');
     if (typeof value.lease_generation !== 'number' || !Number.isInteger(value.lease_generation) || value.lease_generation < 0) throw corrupt('Goal lease generation is invalid');
@@ -3250,6 +3258,21 @@ function parseStringArray(serialized: string, label: string): readonly string[] 
   const value = parseJson(serialized, label);
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) throw corrupt(`${label} is invalid`);
   return value;
+}
+
+function parseStoredWorkflowMetadata(raw: string): StoredWorkflowMetadata {
+  const value = parseJson(raw, 'workflow metadata');
+  if (!isRecord(value) || !Number.isSafeInteger(value.schemaVersion) || (value.schemaVersion as number) < 1) {
+    throw corrupt('Goal workflow metadata is invalid');
+  }
+  if (value.schemaVersion === 1) {
+    if (typeof value.templateId !== 'string' || !Number.isSafeInteger(value.templateRevision) ||
+        typeof value.inputDigest !== 'string' || typeof value.requestKeyHash !== 'string' || !isRecord(value.inputs) ||
+        !Object.values(value.inputs).every((input) => typeof input === 'string')) {
+      throw corrupt('Goal workflow v1 metadata is invalid');
+    }
+  }
+  return value as StoredWorkflowMetadata;
 }
 
 function parseJson(serialized: string, label: string): unknown {

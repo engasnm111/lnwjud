@@ -165,6 +165,9 @@ describe('CodexService', () => {
     await expect(service.taskStatus(owner, workspace.id, started.value.codexTaskId)).resolves.toMatchObject({ ok: true });
     expect(service.statusForGoalLiveness(workspace.id, started.value.codexTaskId)).toMatchObject({ ok: true, value: { state: 'running' } });
     expect(service.statusForGoalLiveness('another-workspace', started.value.codexTaskId)).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    expect(service.isOwnedGoalTask('client-1', workspace.id, started.value.codexTaskId)).toBe(true);
+    expect(service.isOwnedGoalTask('other', workspace.id, started.value.codexTaskId)).toBe(false);
+    expect(service.isOwnedGoalTask('client-1', 'other', started.value.codexTaskId)).toBe(false);
   });
 
   it('cancels a tracked Codex task across MCP sessions while enforcing stable client/workspace ownership', async () => {

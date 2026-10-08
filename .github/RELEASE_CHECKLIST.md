@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v5.7.4` - Windows installer `lnwjud-Setup-5.7.4.exe` and portable executable `lnwjud-Portable-5.7.4.exe`; MCP registry **279 total definitions / 267 advertised by default / all 279 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v5.8.0` - Windows installer `lnwjud-Setup-5.8.0.exe` and portable executable `lnwjud-Portable-5.8.0.exe`; MCP registry **279 total definitions / 267 advertised by default / all 279 with Codex delegation plus Agent Swarm enabled**.
 
 Before tagging any new version, add its plain-language `What's new in vX.Y.Z` bullets to `README.md`, `FULL_README.md`, and `RELEASE_NOTES.md`, then preview the generated GitHub Release body. Also add a non-empty exact-version entry to the in-app What's New registry with Thai and English titles/descriptions. README and GitHub Release notes do not feed the in-app modal. The Desktop release-notes test checks the current package version and must pass in PR and main CI; do not tag or publish a build whose modal would show the empty state. The release generator must stop if the README section is missing or contains no real change; empty `Features` or `Bug Fixes` sections and `- None.` placeholders must not be published. Keep only the newest three versions in the READMEs and preserve detailed history in `RELEASE_NOTES.md` for later audit and backfill.
 

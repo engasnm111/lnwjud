@@ -113,7 +113,7 @@ describe('019_native_automation migration', () => {
       });
       const snapshot = await backup.create('manual');
       snapshotId = snapshot.id;
-      expect(snapshot.dataSchemaVersion).toBe(21);
+      expect(snapshot.dataSchemaVersion).toBe(23);
       await backup.scheduleRestore(snapshot.id);
     } finally {
       upgraded.close();

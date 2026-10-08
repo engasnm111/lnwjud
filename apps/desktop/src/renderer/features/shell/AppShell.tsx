@@ -4,7 +4,7 @@ import { createTranslator, type Translator } from '../../i18n/index.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { WhatsNewModal } from '../release-notes/WhatsNewModal.js';
 
-export type Screen = 'home' | 'projects' | 'tools' | 'git' | 'worklog' | 'live' | 'settings' | 'doctor';
+export type Screen = 'home' | 'projects' | 'tools' | 'git' | 'worklog' | 'live' | 'settings' | 'doctor' | 'workflows';
 
 interface AppShellProps {
   readonly locale: UiLocale;
@@ -29,6 +29,7 @@ const localeItems: ReadonlyArray<{ readonly locale: UiLocale; readonly key: Mess
 const navItems: ReadonlyArray<{ readonly screen: Screen; readonly key: MessageKey }> = [
   { screen: 'home', key: 'nav.home' },
   { screen: 'projects', key: 'nav.projects' },
+  { screen: 'workflows', key: 'nav.workflows' },
   { screen: 'tools', key: 'nav.tools' },
   { screen: 'git', key: 'nav.git' },
   { screen: 'worklog', key: 'nav.workLog' },

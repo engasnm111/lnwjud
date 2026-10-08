@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/mcp-server",
-  "version": "5.7.4",
+  "version": "5.8.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -23,6 +23,9 @@
     "@lnwjud/search": "workspace:*",
     "@lnwjud/shared": "workspace:*",
     "@modelcontextprotocol/server": "2.0.0",
+    "csv-parse": "7.0.3",
+    "csv-stringify": "6.9.0",
+    "exceljs": "4.4.0",
     "zod": "4.2.0"
   },
   "devDependencies": {

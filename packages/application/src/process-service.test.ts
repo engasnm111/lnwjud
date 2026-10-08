@@ -69,6 +69,9 @@ describe('ProcessService', () => {
 
     expect(result).toMatchObject({ ok: true, value: { processId: 'process-1' } });
     expect(calls).toEqual([{ executable: 'pnpm', args: ['test'], cwd: workspace.realRootPath }]);
+    expect(service.isOwnedGoalTask('client-1',workspace.id,'process-1')).toBe(true);
+    expect(service.isOwnedGoalTask('other',workspace.id,'process-1')).toBe(false);
+    expect(service.isOwnedGoalTask('client-1','another-workspace','process-1')).toBe(false);
   });
 
   it('returns PERMISSION_REQUIRED for an unknown client executable', async () => {

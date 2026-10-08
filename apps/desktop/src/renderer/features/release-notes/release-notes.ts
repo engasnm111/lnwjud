@@ -21,6 +21,34 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.8.0',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          { id: 'git-expanded', titleKey: 'whatsNew.580.git.title', descriptionKey: 'whatsNew.580.git.description', badge: 'improved', tags: ['Git', 'untracked files', 'search', 'binary'] },
+          { id: 'workflow-templates', titleKey: 'whatsNew.580.workflows.title', descriptionKey: 'whatsNew.580.workflows.description', badge: 'new', tags: ['workflows', 'Thai', 'English', 'AI handoff'] },
+        ],
+      },
+      {
+        id: 'office',
+        titleKey: 'whatsNew.category.office',
+        items: [
+          { id: 'file-audit', titleKey: 'whatsNew.580.office.title', descriptionKey: 'whatsNew.580.office.description', badge: 'new', tags: ['CSV', 'XLSX', 'audit', 'report preview'] },
+        ],
+      },
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          { id: 'observability', titleKey: 'whatsNew.580.observability.title', descriptionKey: 'whatsNew.580.observability.description', badge: 'improved', tags: ['MCP', 'Goal', 'resource', 'audit'] },
+        ],
+      },
+    ],
+  },
+
+  {
     version: '5.7.4',
     categories: [
       {

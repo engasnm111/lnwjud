@@ -23,6 +23,8 @@ import { GOAL_V5_ORCHESTRATION_MIGRATION_SQL } from './migrations/goal-v5-orches
 import { NATIVE_AUTOMATION_MIGRATION_SQL } from './migrations/native-automation-migration.js';
 import { GOAL_RESUME_CONTEXT_MIGRATION_SQL } from './migrations/goal-resume-context-migration.js';
 import { ENGINEERING_HARNESS_MIGRATION_SQL } from './migrations/engineering-harness-migration.js';
+import { WORKFLOW_METADATA_MIGRATION_SQL } from './migrations/workflow-metadata-migration.js';
+import { CALL_OBSERVABILITY_MIGRATION_SQL } from './migrations/call-observability-migration.js';
 
 export interface SqliteDatabaseOptions {
   readonly backupDirectory?: string;
@@ -109,6 +111,8 @@ export class SqliteDatabase {
       { id: '019_native_automation', sql: NATIVE_AUTOMATION_MIGRATION_SQL },
       { id: '020_goal_resume_context', sql: GOAL_RESUME_CONTEXT_MIGRATION_SQL },
       { id: '021_engineering_harness', sql: ENGINEERING_HARNESS_MIGRATION_SQL },
+      { id: '022_workflow_metadata', sql: WORKFLOW_METADATA_MIGRATION_SQL },
+      { id: '023_call_observability', sql: CALL_OBSERVABILITY_MIGRATION_SQL },
     ]);
   }
 
@@ -215,6 +219,12 @@ export class SqliteDatabase {
     try {
       for (let index = 0; index < pending.length; index += 1) {
         const migration = pending[index]!;
+        // An older partial fixture/database may mark 002_audit as applied without
+        // carrying its table. Defer only the optional observability index until
+        // that table actually exists; do not fabricate or rewrite audit history.
+        if (migration.id === '023_call_observability' && !this.connection.prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'",
+        ).get()) continue;
         const savepoint = `migration_${index}`;
         this.connection.exec(`SAVEPOINT ${savepoint};`);
         try {

@@ -19,6 +19,18 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type ToolCatalogSnapshot,
+  type WorkflowTemplate,
+  type WorkflowPrepareRequest,
+  type WorkflowDraft,
+  type CallHistoryRequest,
+  type CallHistoryPage,
+  type TaskResultSummary,
+  type RestoreTaskCheckpointRequest,
+  type RestoreTaskCheckpointResult,
+  type CancelOwnedGoalTaskRequest,
+  type CancelOwnedGoalTaskResult,
+  type ResourceSnapshotRequest,
+  type ResourceSnapshot,
   type ToolCatalogItem,
   type GetGitDiffRequest,
   type GetGitDiffResponse,
@@ -1568,6 +1580,39 @@ function mutationApprovalPrompt(value: unknown): MutationApprovalPrompt | null {
   };
 }
 
+/** Main owns the actual values; preload refuses malformed or unexpectedly large IPC replies. */
+function boundedWorkflowReply(value: unknown, kind: 'templates' | 'draft' | 'calls' | 'result' | 'resources'): unknown {
+  if (kind === 'templates') {
+    if (!Array.isArray(value) || value.length > 6 || value.some((item: unknown) =>
+      !isRecord(item) || typeof item.id !== 'string' || typeof item.titleTh !== 'string' ||
+      typeof item.titleEn !== 'string' || typeof item.revision !== 'number' || !Array.isArray(item.inputFields))) {
+      throw new Error('Invalid workflow template response');
+    }
+    return value;
+  }
+  if (!isRecord(value)) throw new Error('Invalid workflow IPC response');
+  if (kind === 'draft') {
+    if (value.schemaVersion !== 1 || typeof value.digest !== 'string' || !/^[a-f0-9]{64}$/.test(value.digest)
+      || typeof value.objective !== 'string' || value.objective.length > 2048
+      || !Array.isArray(value.steps) || value.steps.length > 20
+      || !Array.isArray(value.acceptance) || value.acceptance.length > 20
+      || !Array.isArray(value.blockers) || !isRecord(value.inputs)) throw new Error('Invalid workflow draft response');
+  }
+  if (kind === 'calls' && (!Array.isArray(value.items) || value.items.length > 200
+    || !isRecord(value.totals) || typeof value.sampledAt !== 'string'
+    || !(value.nextCursor === null || typeof value.nextCursor === 'string'))) throw new Error('Invalid call history response');
+  if (kind === 'result' && (typeof value.workspaceId !== 'string' || typeof value.goalId !== 'string'
+    || !Array.isArray(value.observedChanges) || !Array.isArray(value.artifacts) || !Array.isArray(value.checks)
+    || !Array.isArray(value.blockers) || typeof value.evidenceCoverage !== 'string')) {
+    throw new Error('Invalid task result response');
+  }
+  if (kind === 'resources' && (typeof value.workspaceId !== 'string' || !Array.isArray(value.resources)
+    || value.resources.length > 200 || !isRecord(value.context) || typeof value.sampledAt !== 'string')) {
+    throw new Error('Invalid resource response');
+  }
+  return value;
+}
+
 const api: LnwjudApi = {
   listWorkspaces: () => invoke(ipcChannels.listWorkspaces).then(workspaceList),
   addWorkspace,
@@ -1621,6 +1666,28 @@ const api: LnwjudApi = {
   launchManagedBrowser,
   installPdfProvider,
   runDoctor: () => invoke(ipcChannels.runDoctor).then(doctorReport),
+  listWorkflowTemplates: (request: { workspaceId: string }) => invoke(ipcChannels.listWorkflowTemplates, request).then((value) => boundedWorkflowReply(value, 'templates') as readonly WorkflowTemplate[]),
+  prepareWorkflow: (request: WorkflowPrepareRequest) => invoke(ipcChannels.prepareWorkflow, request).then((value) => boundedWorkflowReply(value, 'draft') as WorkflowDraft),
+  getCallHistory: (request: CallHistoryRequest) => invoke(ipcChannels.getCallHistory, request).then((value) => boundedWorkflowReply(value, 'calls') as CallHistoryPage),
+  getTaskResult: (request: { workspaceId: string; goalId: string }) => invoke(ipcChannels.getTaskResult, request).then((value) => boundedWorkflowReply(value, 'result') as TaskResultSummary),
+  restoreTaskCheckpoint: (request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult> =>
+    invoke(ipcChannels.restoreTaskCheckpoint, request).then((value) => {
+      if (!isRecord(value) || value.restored !== true || !Array.isArray(value.paths)
+          || value.paths.length > 20 || !value.paths.every((item: unknown) => typeof item === 'string' && item.length <= 1024)
+          || (value.rollbackCheckpointId !== null && typeof value.rollbackCheckpointId !== 'string')) {
+        throw new Error('Invalid checkpoint restore response');
+      }
+      return value as unknown as RestoreTaskCheckpointResult;
+    }),
+  cancelOwnedGoalTask: (request: CancelOwnedGoalTaskRequest): Promise<CancelOwnedGoalTaskResult> =>
+    invoke(ipcChannels.cancelOwnedGoalTask, request).then((value) => {
+      if (!isRecord(value) || typeof value.taskId !== 'string'
+          || !['cancelled','already_terminal','not_found','skipped','failed'].includes(String(value.status))) {
+        throw new Error('Invalid Goal task cancellation response');
+      }
+      return value as unknown as CancelOwnedGoalTaskResult;
+    }),
+  getResourceSnapshot: (request: ResourceSnapshotRequest) => invoke(ipcChannels.getResourceSnapshot, request).then((value) => boundedWorkflowReply(value, 'resources') as ResourceSnapshot),
   getToolCatalog,
   recheckToolCatalog,
   setToolAvailability,
@@ -1663,6 +1730,16 @@ const api: LnwjudApi = {
         path: stringField(value, 'path'),
         patch: stringField(value, 'patch'),
         truncated: booleanField(value, 'truncated'),
+        ...(isRecord(value.preview)
+          && ['text','image','binary','too_large','missing'].includes(String(value.preview.kind))
+          && (value.preview.sizeBytes === null || (typeof value.preview.sizeBytes === 'number' && Number.isSafeInteger(value.preview.sizeBytes) && value.preview.sizeBytes >= 0))
+          && typeof value.preview.extension === 'string' && value.preview.extension.length <= 32
+          && (value.preview.mimeType === null || (typeof value.preview.mimeType === 'string' && value.preview.mimeType.length <= 256))
+          ? { preview: {
+              kind: value.preview.kind as NonNullable<GetGitDiffResponse['preview']>['kind'],
+              sizeBytes: value.preview.sizeBytes as number | null, extension: value.preview.extension,
+              mimeType: value.preview.mimeType as string | null,
+            } } : {}),
         ...(typeof value.oldContent === 'string' ? { oldContent: value.oldContent } : {}),
         ...(typeof value.newContent === 'string' ? { newContent: value.newContent } : {}),
         ...(value.oldImage === undefined ? {} : { oldImage: gitImagePreviewResponse(value.oldImage) }),

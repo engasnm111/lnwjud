@@ -179,6 +179,13 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     }
   }
 
+  /** Trusted owner probe. Never equate workspace membership with actual task ownership. */
+  public async isOwnedGoalTask(ownerClientId: string, workspaceId: string, taskId: string): Promise<boolean> {
+    const record = this.tasks.get(taskId);
+    if (record) return record.owner.clientId === ownerClientId && record.owner.workspaceId === workspaceId;
+    return this.durableStore?.isOwnedGoalTask(ownerClientId, workspaceId, taskId) ?? false;
+  }
+
   /** Trusted read-only host probe scoped to the durable goal's workspace. */
   public async statusForGoalLiveness(workspaceId: string, taskId: string): Promise<Result<unknown>> {
     const record = this.tasks.get(taskId);

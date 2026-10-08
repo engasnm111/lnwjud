@@ -26,6 +26,7 @@ import type {
   WorkLogEntry,
 } from '@lnwjud/ipc-contracts';
 import { AppShell, type Screen } from './features/shell/AppShell.js';
+import { WorkflowsPage } from './features/workflows/WorkflowsPage.js';
 import { GlobalInstallProgressModal } from './features/shell/GlobalInstallProgressModal.js';
 import { ControlCenterPage } from './features/home/ControlCenterPage.js';
 import { ProjectsPage } from './features/projects/ProjectsPage.js';
@@ -36,6 +37,7 @@ import type { LogScopeSelection } from './features/live/LogStreamPanel.js';
 import { appendLogBatch, applyLogSnapshot, rememberLogId } from './features/live/log-buffer.js';
 import { SettingsPage, type SettingsFocusTarget, type SettingsSection } from './features/settings/SettingsPage.js';
 import { DoctorPanel } from './features/doctor/DoctorPanel.js';
+import { DiagnosticsPage } from './features/doctor/DiagnosticsPage.js';
 import { ToolsPage } from './features/tools/ToolsPage.js';
 import { remediationNavigationForTarget } from './features/tools/remediation-navigation.js';
 import { FirstRunTunnelTip } from './features/onboarding/FirstRunTunnelTip.js';
@@ -291,8 +293,12 @@ export function App(): ReactElement {
       return;
     }
     void refresh();
-    const reconcileInterval = window.setInterval(() => { void refresh(); }, 30_000);
-    const refreshOnFocus = (): void => { void refresh(); };
+    const reconcileInterval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh();
+    }, 30_000);
+    const refreshOnFocus = (): void => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
     const refreshOnVisibility = (): void => {
       if (document.visibilityState === 'visible') void refresh();
     };
@@ -1071,9 +1077,11 @@ export function App(): ReactElement {
           requestedSection={requestedSettingsSection}
         />
       ) : null}
+      {screen === 'workflows' ? (
+        <WorkflowsPage locale={locale} workspaceId={selectedWorkspaceId} workspacePath={dashboard?.selectedWorkspace?.rootPath ?? null} />
+      ) : null}
       {screen === 'doctor' ? (
-        <div className="page-content">
-          <h1>{t('doctor.title')}</h1>
+        <DiagnosticsPage locale={locale} workspaceId={selectedWorkspaceId} checks={
           <DoctorPanel
             locale={locale}
             report={doctor}
@@ -1083,7 +1091,7 @@ export function App(): ReactElement {
             onRemediation={handleToolRemediation}
             onOpenProjects={() => setScreen('projects')}
           />
-        </div>
+        } />
       ) : null}
       {firstRunTunnelTipOpen ? (
         <FirstRunTunnelTip

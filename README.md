@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Cross-platform local AI-agent runtime and MCP gateway</strong><br />
-  <em>279 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, Engineering Harness, native Goal automation, context capsules, indexing, observability, Office semantic automation, ECC integration, and extensibility; 267 are advertised by default and all 279 when Codex delegation plus Agent Swarm is enabled.</em>
+  <em>285 total tool definitions for local files, Git, processes, Windows automation, WSL, browser control, durable goal continuation, Engineering Harness, native Goal automation, context capsules, indexing, observability, Office semantic automation, ECC integration, and extensibility; 273 are advertised by default and all 285 when Codex delegation plus Agent Swarm is enabled.</em>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4" />
   <img alt="Node" src="https://img.shields.io/badge/Node.js-24.x-339933" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-279%20tools-6f42c1" />
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-285%20tools-6f42c1" />
 </p>
 
 <h2 align="center">Download lnwjud</h2>
@@ -53,7 +53,7 @@
 
 ## Current published version: v5.7.4
 
-## Current source version: v5.7.4
+## Current source version: v5.8.0
 
 Latest published release: **v5.7.4**. The download buttons above point directly to the v5.7.4 assets. The release was published after the exact tagged main commit passed the target-native release gates.
 
@@ -136,7 +136,7 @@ For the Thai setup and workflow guide, see [docs/USAGE_TH.md](docs/USAGE_TH.md#8
 
 ## What can lnwjud do?
 
-lnwjud exposes **279 tool definitions** through one local runtime and MCP gateway. The default advertised set is 267; all 279 are available when Codex delegation plus Agent Swarm is enabled.
+lnwjud exposes **285 tool definitions** through one local runtime and MCP gateway. The default advertised set is 273; all 285 are available when Codex delegation plus Agent Swarm is enabled.
 
 | Area | Examples |
 | --- | --- |

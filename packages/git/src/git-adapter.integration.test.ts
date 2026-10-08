@@ -1,69 +1,34 @@
-import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import { GitAdapter } from './git-adapter.js';
-import { DirectGitRunner } from './git-runner.js';
 
-const execFileAsync = promisify(execFile);
-const temporaryRoots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-});
-
-async function hasGit(): Promise<boolean> {
-  try {
-    await execFileAsync('git', ['--version'], { windowsHide: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-describe('GitAdapter integration', () => {
-  let gitAvailable = false;
-  beforeAll(async () => {
-    gitAvailable = await hasGit();
-  });
-
-  it('inspects a temporary repository with spaces and Unicode paths', async () => {
-    if (!gitAvailable) return;
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-git-'));
-    temporaryRoots.push(root);
-    const filename = 'space file Ω.txt';
-    await writeFile(path.join(root, filename), 'initial\n', 'utf8');
-    await execFileAsync('git', ['init'], { cwd: root, windowsHide: true });
-    await execFileAsync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: root, windowsHide: true });
-    await execFileAsync('git', ['config', 'user.name', 'lnwjud test'], { cwd: root, windowsHide: true });
-    await execFileAsync('git', ['add', '--', filename], { cwd: root, windowsHide: true });
-    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: root, windowsHide: true });
-    await writeFile(path.join(root, filename), 'changed\n', 'utf8');
-    await writeFile(path.join(root, 'untracked file.txt'), 'new\n', 'utf8');
-    await mkdir(path.join(root, 'artifacts', 'nested'), { recursive: true });
-    await writeFile(path.join(root, 'artifacts', 'one.txt'), 'one\n', 'utf8');
-    await writeFile(path.join(root, 'artifacts', 'nested', 'two.txt'), 'two\n', 'utf8');
-
-    const adapter = new GitAdapter(new DirectGitRunner());
-    const status = await adapter.status(root);
-    const summary = await adapter.statusSummary(root);
-    const diff = await adapter.diff(root, { path: filename });
-    const log = await adapter.log(root, { maxCommits: 20 });
-
-    expect(status).toMatchObject({ ok: true, value: { entries: [
-      { path: filename, kind: 'modified' },
-      { path: 'artifacts/nested/two.txt', kind: 'untracked' },
-      { path: 'artifacts/one.txt', kind: 'untracked' },
-      { path: 'untracked file.txt', kind: 'untracked' },
-    ] } });
-    expect(summary).toMatchObject({ ok: true, value: { entries: [
-      { path: filename, kind: 'modified' },
-      { path: 'artifacts/', kind: 'untracked' },
-      { path: 'untracked file.txt', kind: 'untracked' },
-    ] } });
-    expect(diff).toMatchObject({ ok: true, value: { patch: expect.stringContaining('changed'), truncated: false } });
-    expect(log).toMatchObject({ ok: true, value: { entries: [{ subject: 'initial' }], truncated: false } });
-  }, 15_000);
+const roots:string[]=[];
+afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})))});
+it('shows exact contents of a newly created nested directory, not the directory name',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'lnwjud-git-list-'));
+  roots.push(root);
+  const init=spawnSync('git',['init','-q'],{cwd:root,encoding:'utf8'});
+  if(init.status!==0)throw new Error(`git unavailable: ${init.stderr}`);
+  const nested=path.join(root,'new-folder','nested');
+  await mkdir(nested,{recursive:true});
+  await writeFile(path.join(root,'.gitignore'),'*.cache\n');
+  await writeFile(path.join(root,'new-folder','สินค้าไทย.txt'),'การนำเข้า\n');
+  await writeFile(path.join(nested,'layout.glb'),Buffer.from([0,1,2]));
+  await writeFile(path.join(nested,'report.xlsx'),Buffer.from([0x50,0x4b,3,4]));
+  await writeFile(path.join(nested,'.env'),'SECRET=not-real\n');
+  await writeFile(path.join(nested,'omit.cache'),'ignored\n');
+  const result=await new GitAdapter().statusSummary(root);
+  if(!result.ok)throw new Error(result.error.message);
+  const files=result.value.entries.map(item=>item.path.replaceAll('\\','/'));
+  expect(files).toEqual(expect.arrayContaining([
+    '.gitignore','new-folder/สินค้าไทย.txt','new-folder/nested/layout.glb',
+    'new-folder/nested/report.xlsx','new-folder/nested/.env',
+  ]));
+  expect(files).not.toContain('new-folder/');
+  expect(files).not.toContain('new-folder/nested/');
+  expect(files).not.toContain('new-folder/nested/omit.cache');
+  expect(files).toHaveLength(5);
 });

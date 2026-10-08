@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('[version-contract] pins the product release to v5.7.4', async () => {
+  it('[version-contract] pins the product release to v5.8.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.7.4');
-    expect(desktopPackage.version).toBe('5.7.4');
+    expect(rootPackage.version).toBe('5.8.0');
+    expect(desktopPackage.version).toBe('5.8.0');
   });
 
   it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
@@ -41,12 +41,12 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.7.4');
+      expect(packageJson.version, packagePath).toBe('5.8.0');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.7.4'");
-    expect(shared).toContain("APP_VERSION = '5.7.4'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.8.0'");
+    expect(shared).toContain("APP_VERSION = '5.8.0'");
   });
 
   it('[version-contract] keeps source-version and latest-published documentation explicit and aligned', async () => {
@@ -101,7 +101,7 @@ describe('cross-platform desktop packaging', () => {
       repository?: { type?: unknown; url?: unknown };
     };
 
-    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 279 total tool definitions.');
+    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 285 total tool definitions.');
     expect(desktopPackage.author).toBe('Adisorn');
     expect(desktopPackage.homepage).toBe('https://github.com/engasnm111/lnwjud#readme');
     expect(desktopPackage.repository).toEqual({ type: 'git', url: 'https://github.com/engasnm111/lnwjud.git' });

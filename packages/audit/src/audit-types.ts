@@ -82,7 +82,44 @@ export interface ActivityAuditEvent {
   readonly targetDetail: ActivityTargetReference;
 }
 
+export interface AuditCallHistoryQuery {
+  readonly workspaceId: string;
+  readonly goalId?: string;
+  readonly toolName?: string;
+  readonly since?: string;
+  readonly until?: string;
+  readonly limit: number;
+  readonly cursor?: string;
+}
+export interface AuditCallHistoryRow {
+  readonly eventId: string;
+  readonly callId: string;
+  readonly toolName: string;
+  readonly workspaceId: string;
+  readonly goalId: string | null;
+  readonly resultCode: string | null;
+  readonly durationMs: number | null;
+  readonly phase: 'started' | 'completed';
+  readonly startedAt: string | null;
+  readonly sampledAt: string;
+}
+export interface AuditCallHistoryPage {
+  readonly items: readonly AuditCallHistoryRow[];
+  readonly nextCursor: string | null;
+}
+export interface AuditMutationReceiptRow {
+  readonly operationId: string;
+  readonly path: string;
+  readonly action: string;
+  readonly observedAt: string;
+  readonly checkpointId?: string;
+  readonly afterSha256?: string;
+  readonly sizeBytes?: number;
+  readonly verification?: 'verified';
+}
 export interface AuditEventRepository {
+  listGoalMutationReceipts?(workspaceId: string, goalId: string, limit?: number): Promise<readonly AuditMutationReceiptRow[]>;
+  listCallHistory?(query: AuditCallHistoryQuery): Promise<AuditCallHistoryPage>;
   insert(event: AuditEvent): Promise<void>;
   list(limit?: number): Promise<AuditEvent[]>;
   listByActionPrefix(prefix: string, limit?: number): Promise<AuditEvent[]>;
@@ -112,6 +149,9 @@ export interface McpToolAuditInput {
   readonly workspaceId?: string;
   readonly sessionId?: string;
   readonly toolName: string;
+  /** Server-verified lease association, never an untrusted caller assertion. */
+  readonly goalId?: string;
+  readonly mutationReceipt?: { readonly path: string; readonly action: string; readonly checkpointId?: string; readonly afterSha256?: string; readonly sizeBytes?: number; readonly verification?: 'verified' };
   readonly callId: string;
   readonly phase: 'started' | 'completed';
   readonly targetSummary?: string;

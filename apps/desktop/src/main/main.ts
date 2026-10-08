@@ -24,6 +24,18 @@ import {
   type DestructiveDeletePolicy,
   type DoctorReport,
   type ToolCatalogSnapshot,
+  type WorkflowPrepareRequest,
+  type WorkflowTemplate,
+  type WorkflowDraft,
+  type CallHistoryRequest,
+  type CallHistoryPage,
+  type TaskResultSummary,
+  type RestoreTaskCheckpointRequest,
+  type RestoreTaskCheckpointResult,
+  type CancelOwnedGoalTaskRequest,
+  type CancelOwnedGoalTaskResult,
+  type ResourceSnapshotRequest,
+  type ResourceSnapshot,
   type GetToolCatalogRequest,
   type GetGitDiffRequest,
   type GetGitDiffResponse,
@@ -115,6 +127,7 @@ import { FACTORY_RESET_APPLY_ARG, applyPendingFactoryResetSync, clearFactoryRese
 import { decryptV3WindowsSafeStorageSecretIfPresent } from './checkpoint-key-compat.js';
 import { mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
+import { parseWorkflowWorkspace, parseWorkflowPrepare, parseCallHistory, parseWorkflowGoal, parseResourceSnapshot, parseRestoreTaskCheckpoint, parseCancelOwnedGoalTask } from './workflow-ipc-parser.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
 import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
 import { createUnavailableCheckpointCipher, shouldDegradeUnavailableSecureStorage, shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
@@ -188,6 +201,13 @@ export interface DesktopIpcServices {
   launchManagedBrowser(): Promise<ManagedBrowserStatus>;
   installPdfProvider(): Promise<PdfProviderInstallResult>;
   runDoctor(): Promise<DoctorReport>;
+  listWorkflowTemplates(request: { readonly workspaceId: string }): Promise<readonly WorkflowTemplate[]>;
+  prepareWorkflow(request: WorkflowPrepareRequest): Promise<WorkflowDraft>;
+  getCallHistory(request: CallHistoryRequest): Promise<CallHistoryPage>;
+  getTaskResult(request: { readonly workspaceId: string; readonly goalId: string }): Promise<TaskResultSummary>;
+  restoreTaskCheckpoint(request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult>;
+  cancelOwnedGoalTask(request: CancelOwnedGoalTaskRequest): Promise<CancelOwnedGoalTaskResult>;
+  getResourceSnapshot(request: ResourceSnapshotRequest): Promise<ResourceSnapshot>;
   getToolCatalog(request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot>;
   recheckToolCatalog(request: RecheckToolCatalogRequest): Promise<{ readonly catalog: ToolCatalogSnapshot; readonly doctor: DoctorReport }>;
   setToolAvailability(request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult>;
@@ -367,6 +387,13 @@ const defaultDesktopServices: DesktopIpcServices = {
   configureTunnelProfile: async (): Promise<{ readonly configured: boolean; readonly profilePath: string }> => ({ configured: false, profilePath: '' }),
   launchManagedBrowser: async (): Promise<ManagedBrowserStatus> => ({ ready: false, port: 9222, launched: false }),
   installPdfProvider: async (): Promise<PdfProviderInstallResult> => { throw new Error('PDF provider installer is not configured'); },
+  listWorkflowTemplates: async () => [],
+  prepareWorkflow: async () => { throw new Error('Workflow service not configured'); },
+  getCallHistory: async () => { throw new Error('Call history service not configured'); },
+  getTaskResult: async () => { throw new Error('Goal result service not configured'); },
+  restoreTaskCheckpoint: async () => { throw new Error('Goal checkpoint restore not configured'); },
+  cancelOwnedGoalTask: async () => { throw new Error('Owned Goal task cancellation not configured'); },
+  getResourceSnapshot: async () => { throw new Error('Resource service not configured'); },
   runDoctor: async (): Promise<DoctorReport> => ({
     checks: [{ id: 'desktop', required: true, status: 'fail', title: 'Desktop services', summary: 'Desktop services are not configured', affectedToolNames: [], checkedAt: new Date(0).toISOString(), durationMs: 0, message: 'Desktop services are not configured' }],
     exitCode: 1,
@@ -701,6 +728,34 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);
     return services.installPdfProvider();
+  });
+  registerHandler(ipcChannels.listWorkflowTemplates, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.listWorkflowTemplates(parseWorkflowWorkspace(payload));
+  });
+  registerHandler(ipcChannels.prepareWorkflow, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.prepareWorkflow(parseWorkflowPrepare(payload));
+  });
+  registerHandler(ipcChannels.getCallHistory, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.getCallHistory(parseCallHistory(payload));
+  });
+  registerHandler(ipcChannels.getTaskResult, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.getTaskResult(parseWorkflowGoal(payload));
+  });
+  registerHandler(ipcChannels.restoreTaskCheckpoint, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.restoreTaskCheckpoint(parseRestoreTaskCheckpoint(payload));
+  });
+  registerHandler(ipcChannels.cancelOwnedGoalTask, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.cancelOwnedGoalTask(parseCancelOwnedGoalTask(payload));
+  });
+  registerHandler(ipcChannels.getResourceSnapshot, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.getResourceSnapshot(parseResourceSnapshot(payload));
   });
   registerHandler(ipcChannels.runDoctor, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());

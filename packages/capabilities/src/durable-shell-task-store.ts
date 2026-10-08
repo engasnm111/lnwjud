@@ -305,6 +305,13 @@ export class DurableShellTaskStore {
   }
 
   /** Trusted read-only host probe scoped to the durable goal's workspace. */
+  public async isOwnedGoalTask(clientId: string, workspaceId: string, taskId: string): Promise<boolean> {
+    const metadata = await this.readMetadata(taskId);
+    if (!metadata.ok) return false;
+    const owner = metadataOwner(metadata.value);
+    return owner.clientId === clientId && owner.workspaceId === workspaceId;
+  }
+
   public async snapshotForGoalLiveness(taskId: string, workspaceId: string): Promise<Result<Record<string, unknown>>> {
     const metadata = await this.readMetadata(taskId);
     if (!metadata.ok) return metadata;

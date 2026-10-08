@@ -11,6 +11,11 @@ import {
   EngineeringPreparationService,
   GitService,
   GoalContinuationService,
+  WorkflowTemplateService,
+  WorkflowStartService,
+  CallHistoryService,
+  TaskResultService,
+  ResourceSnapshotService,
   GoalRequestCancellationService,
   GoalTaskCancellationService,
   GoalMutationFenceService,
@@ -41,7 +46,7 @@ import {
   createLocalExtensionsService,
   type ExtensionsService,
 } from '@lnwjud/extensions';
-import { ActivityTracker, RuntimeEngineeringEvidenceVerifier, createEngineeringArtifactVerifier, createEngineeringSourceStateProvider, RuntimeGoalManagedTaskStateReader, SharedActivitySnapshotLease, composeActivitySinks, createFileActivitySink, currentSharedActivityOwner, mcpActivityLogPath, type ActivitySink, type ActivitySinkEvent, type McpApplicationServices, type WorkspaceScope } from '@lnwjud/mcp-server';
+import { OfficeDataWorkflowService, ActivityTracker, RuntimeEngineeringEvidenceVerifier, createEngineeringArtifactVerifier, createEngineeringSourceStateProvider, RuntimeGoalManagedTaskStateReader, SharedActivitySnapshotLease, composeActivitySinks, createFileActivitySink, currentSharedActivityOwner, mcpActivityLogPath, type ActivitySink, type ActivitySinkEvent, type McpApplicationServices, type WorkspaceScope } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
 import {
   AesGcmCheckpointCipher,
@@ -246,6 +251,8 @@ export function createStdioMcpRuntime(
         ...(event.workspaceId === undefined ? {} : { workspaceId: event.workspaceId }),
         ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }),
         toolName: event.toolName,
+        ...(event.goalId === undefined ? {} : { goalId: event.goalId }),
+        ...(event.goalId === undefined || event.mutationReceipt === undefined ? {} : { mutationReceipt: event.mutationReceipt }),
         callId: event.callId,
         phase: event.phase,
         ...(event.targetSummary === undefined ? {} : { targetSummary: event.targetSummary }),
@@ -286,6 +293,12 @@ export function createStdioMcpRuntime(
     file: fileService,
     checkpoint: checkpointService,
     goals: goalService,
+    callHistory: new CallHistoryService(workspaceRepository, auditRepository),
+    taskResults: new TaskResultService(goalService, auditRepository, workspaceRepository),
+    resourceSnapshot: new ResourceSnapshotService(workspaceRepository, goalService),
+    officeDataWorkflow: new OfficeDataWorkflowService(async (id) => (await workspaceRepository.get(id))?.realRootPath ?? null),
+    workflowTemplates: new WorkflowTemplateService(workspaceRepository),
+    workflowStart: new WorkflowStartService(new WorkflowTemplateService(workspaceRepository), goalService),
     goalRequestCancellation: requestCancellation,
     scheduledContinuations: scheduledContinuationService,
     goalMutationFence,

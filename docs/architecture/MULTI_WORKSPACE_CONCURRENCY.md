@@ -6,8 +6,8 @@ Primary invariant: **one lnwjud installation can serve many concurrent AI sessio
 
 The dated phase evidence below preserves the catalog counts that were measured
 at each historical checkpoint (including the earlier 214/208 baseline). The
-current v5.7.4 runtime contract is 279 total definitions, 267 advertised by
-default, and all 279 when Codex delegation plus Agent Swarm is enabled; see the current catalog and
+current v5.8.0 runtime contract is 285 total definitions, 273 advertised by
+default, and all 285 when Codex delegation plus Agent Swarm is enabled; see the current catalog and
 release checklist for the authoritative release count.
 
 ## Goal

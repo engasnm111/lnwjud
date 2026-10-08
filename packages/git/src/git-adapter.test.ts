@@ -21,12 +21,12 @@ describe('GitAdapter', () => {
     expect(runner.calls).toEqual([{ args: ['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd: 'C:\\workspace' }]);
   });
 
-  it('uses collapsed untracked directories for lightweight status summaries', async () => {
-    const runner = new FakeGitRunner({ exitCode: 0, stdout: '?? artifacts/\0', stderr: '' });
+  it('enumerates nested untracked files in summary instead of collapsing directory', async () => {
+    const runner = new FakeGitRunner({ exitCode: 0, stdout: '?? artifacts/model.glb\0?? artifacts/nested/data.xlsx\0', stderr: '' });
     const result = await new GitAdapter(runner).statusSummary('C:\\workspace');
 
-    expect(result).toMatchObject({ ok: true, value: { entries: [{ path: 'artifacts/', kind: 'untracked' }] } });
-    expect(runner.calls).toEqual([{ args: ['status', '--porcelain=v1', '-z', '--untracked-files=normal'], cwd: 'C:\\workspace' }]);
+    expect(result).toMatchObject({ ok: true, value: { entries: [{ path: 'artifacts/model.glb', kind: 'untracked' }, { path: 'artifacts/nested/data.xlsx', kind: 'untracked' }] } });
+    expect(runner.calls).toEqual([{ args: ['status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd: 'C:\\workspace' }]);
   });
 
   it('queries the current branch name', async () => {

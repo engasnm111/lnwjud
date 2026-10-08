@@ -24,6 +24,38 @@ afterEach(() => {
 });
 
 describe('MCP tool registry', () => {
+  it('attaches Goal audit attribution only after verifying a current lease and never executes with a stale proof', async () => {
+    const captured: ActivitySinkEvent[] = [];
+    const tracker = new ActivityTracker(undefined, undefined, { async record(event): Promise<void> { captured.push(event); } });
+    const editFile = vi.fn(async (): Promise<ReturnType<typeof ok>> => ok({ path: 'src/app.ts', replacements: 1, bytesWritten: 2, checkpointId: 'cp-1' }));
+    let valid = true;
+    const validateGoalLease = vi.fn(async (): Promise<ReturnType<typeof ok> | ReturnType<typeof err>> => valid
+      ? ok({ goalId: 'goal-verified', workspaceId: 'workspace-a', status:'active', revision:3, leaseGeneration:8 } as never)
+      : err(appError('CONFLICT', 'Lease is stale', true)));
+    const registry = new ToolRegistry({
+      file: { editFile } as never,
+      goals: { validateGoalLease } as never,
+    }, actor, {
+      activityTracker: tracker,
+      profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+    });
+    const input = { workspaceId:'workspace-a', path:'src/app.ts', oldText:'old', newText:'new',
+      goalLease: { goalId:'goal-verified', leaseToken:'current', leaseGeneration:8 } };
+    await expect(registry.invoke('edit_file', input)).resolves.not.toMatchObject({ isError: true });
+    expect(editFile).toHaveBeenCalledTimes(1);
+    const successes = captured.filter((entry) => entry.phase === 'completed' && entry.resultCode === 'SUCCESS');
+    expect(successes).toHaveLength(1);
+    expect(successes[0]?.goalId).toBe('goal-verified');
+    expect(captured.find((entry) => entry.phase === 'started')?.goalId).toBeUndefined();
+    valid = false;
+    const denied = await registry.invoke('edit_file', input);
+    expect(denied).toMatchObject({ isError: true, structuredContent: { error: { code: 'CONFLICT' } } });
+    expect(editFile).toHaveBeenCalledTimes(1);
+    expect(captured.filter((entry) => entry.phase === 'completed').at(-1)?.goalId).toBeUndefined();
+  });
+
+
   it('fails closed before dispatch when a runtime invocation guard reports stale security policy', async () => {
     let executed = false;
     const registry = new ToolRegistry({ capabilities: { async execute(): Promise<ReturnType<typeof ok>> {
@@ -123,6 +155,7 @@ describe('MCP tool registry', () => {
       'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
       'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure', 'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
       'checkpoint_goal', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
+      'resource_snapshot', 'call_history', 'goal_result', 'workflow_templates', 'workflow_prepare', 'workflow_start',
       'prepare_scheduled_continuation', 'record_scheduled_continuation_receipt', 'claim_scheduled_continuation', 'get_scheduled_continuation', 'expedite_scheduled_continuation', 'cancel_scheduled_continuation',
       ...UPGRADE_TOOL_CATALOG
         .filter((entry) => !isCodexDelegationTool(entry.name)
@@ -946,6 +979,7 @@ describe('MCP tool registry', () => {
     let aborted = false;
     const services: McpApplicationServices = {
       goalRequestCancellation: cancellation,
+      goals: { async validateGoalLease() { return ok({workspaceId:'workspace-1'}); } } as unknown as NonNullable<McpApplicationServices['goals']>,
       file: {
         async writeFile(_actor, _workspaceId, _request, signal) {
           started = true;

@@ -47,6 +47,11 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
         message: 'fixture event',
       }])),
     },
+    resourceSnapshot: serviceProxy('resourceSnapshot', calls, () => ({workspaceId:'workspace-1',resources:[],coverage:'unknown'})),
+    callHistory: serviceProxy('callHistory', calls, () => ({items:[],nextCursor:null,coverage:'unknown'})),
+    taskResults: serviceProxy('taskResults', calls, () => ({workspaceId:'workspace-1',goalId:'goal-1',observedChanges:[],artifacts:[],evidenceCoverage:'partial'})),
+    workflowTemplates: serviceProxy('workflowTemplates', calls, (method) => method === 'list' ? [] : {readiness:'ready'}),
+    workflowStart: serviceProxy('workflowStart', calls, () => ({goalId:'goal-1',status:'active'})),
     workspaceInfo: serviceProxy('workspaceInfo', calls, (method, args) => {
       const requestedWorkspaceId = typeof args[1] === 'string' ? args[1] : 'workspace-1';
       const root = requestedWorkspaceId === 'ecc-workspace' ? runtimeEccWorkspaceRoot : process.cwd();

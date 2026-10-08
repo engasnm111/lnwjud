@@ -12,6 +12,19 @@ afterEach(async () => {
 });
 
 describe('LogHub', () => {
+  it('starts only one live filesystem tail timer on repeated start and stops it on shutdown', () => {
+    vi.useFakeTimers();
+    const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
+    const before = vi.getTimerCount();
+    hub.start();
+    const first = vi.getTimerCount();
+    hub.start();
+    expect(first - before).toBe(1);
+    expect(vi.getTimerCount()).toBe(first);
+    hub.stop();
+    expect(vi.getTimerCount()).toBe(before);
+  });
+
   it('includes filesystem error messages in work-log lines', () => {
     const hub = new LogHub({ tunnelLogPath: 'Z:\\missing\\lnwjud-tunnel.log' });
     hub.syncWorkLog([{

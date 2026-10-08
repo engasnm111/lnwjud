@@ -16,6 +16,11 @@ import {
   EngineeringPreparationService,
   GitService,
   GoalContinuationService,
+  WorkflowTemplateService,
+  WorkflowStartService,
+  CallHistoryService,
+  TaskResultService,
+  ResourceSnapshotService,
   GoalRequestCancellationService,
   GoalTaskCancellationService,
   GoalMutationFenceService,
@@ -44,6 +49,7 @@ import {
 } from '@lnwjud/extensions';
 import {
   ActivityTracker,
+  OfficeDataWorkflowService,
   LNWJUD_MCP_IDENTITY_PATH,
   RuntimeEngineeringEvidenceVerifier,
   createEngineeringArtifactVerifier,
@@ -138,6 +144,18 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type ToolCatalogSnapshot,
+  type WorkflowPrepareRequest,
+  type WorkflowTemplate,
+  type WorkflowDraft,
+  type CallHistoryRequest,
+  type CallHistoryPage,
+  type TaskResultSummary,
+  type RestoreTaskCheckpointRequest,
+  type RestoreTaskCheckpointResult,
+  type CancelOwnedGoalTaskRequest,
+  type CancelOwnedGoalTaskResult,
+  type ResourceSnapshotRequest,
+  type ResourceSnapshot,
   type GetToolCatalogRequest,
   type GetGitDiffRequest,
   type GetGitDiffResponse,
@@ -190,6 +208,7 @@ import {
 import type { DesktopIpcServices } from './main.js';
 import { buildCapabilitySummary, createLocalCapabilityRuntime } from './capability-runtime.js';
 import { AsyncTtlCache } from './async-ttl-cache.js';
+import { inspectGitWorkingFile } from './git-file-inspection.js';
 import { ActivitySessionCatalog } from './activity-session-catalog.js';
 import type { ElectronNativeCapabilityApi } from './electron-native-capability-backend.js';
 import { RequirementRegistry, type RequirementDefinition, type RequirementProbeResult } from './tool-catalog/requirement-registry.js';
@@ -733,6 +752,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     file: fileService,
     checkpoint: checkpointService,
     goals: goalService,
+    callHistory: new CallHistoryService(workspaceRepository, auditRepository),
+    taskResults: new TaskResultService(goalService, auditRepository, workspaceRepository, goalRepository),
+    resourceSnapshot: new ResourceSnapshotService(workspaceRepository, goalService, undefined, undefined, goalRepository),
+    officeDataWorkflow: new OfficeDataWorkflowService(async (id) => (await workspaceRepository.get(id))?.realRootPath ?? null),
+    workflowTemplates: new WorkflowTemplateService(workspaceRepository),
+    workflowStart: new WorkflowStartService(new WorkflowTemplateService(workspaceRepository), goalService),
     goalRequestCancellation: requestCancellation,
     scheduledContinuations: scheduledContinuationService,
     goalMutationFence,
@@ -778,6 +803,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           ...(loggedEvent.workspaceId === undefined ? {} : { workspaceId: loggedEvent.workspaceId }),
           ...(loggedEvent.sessionId === undefined ? {} : { sessionId: loggedEvent.sessionId }),
           toolName: event.toolName,
+          ...(event.goalId === undefined ? {} : { goalId: event.goalId }),
+          ...(event.goalId === undefined || event.mutationReceipt === undefined ? {} : { mutationReceipt: event.mutationReceipt }),
           callId: event.callId,
           phase: event.phase,
           ...(event.targetSummary === undefined ? {} : { targetSummary: event.targetSummary }),
@@ -1923,6 +1950,105 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return { ...installed, restartRequired: runtimeRestartRequired(previous, next) };
     },
     runDoctor: async (): Promise<DoctorReport> => buildFullDoctorReport(readLocale(settingsRepository)),
+    listWorkflowTemplates: async (request: { workspaceId: string }): Promise<readonly WorkflowTemplate[]> =>
+      unwrap(await new WorkflowTemplateService(workspaceRepository).list(actor, request.workspaceId), 'Workflow catalogue unavailable'),
+    prepareWorkflow: async (request: WorkflowPrepareRequest): Promise<WorkflowDraft> =>
+      unwrap(await new WorkflowTemplateService(workspaceRepository).prepare(actor, request), 'Workflow preparation failed'),
+    getCallHistory: async (request: CallHistoryRequest): Promise<CallHistoryPage> =>
+      unwrap(await new CallHistoryService(workspaceRepository, auditRepository).history(actor, request), 'Call history unavailable'),
+    getTaskResult: async (request: { workspaceId: string; goalId: string }): Promise<TaskResultSummary> =>
+      unwrap(await new TaskResultService(goalService, auditRepository, workspaceRepository, goalRepository).get(actor, request.workspaceId, request.goalId), 'Goal result unavailable'),
+    restoreTaskCheckpoint: async (request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult> => {
+      if (request.userConfirmed !== true) throw new Error('Checkpoint restore requires explicit confirmation');
+      const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      if (selected === null || selected.id !== request.workspaceId) throw new Error('Restore target must be the selected workspace');
+      const goal = await goalRepository.getById(request.goalId);
+      if (goal === null || goal.workspaceId !== selected.id || goal.revision !== request.goalRevision) {
+        throw new Error('Goal ownership or revision is stale');
+      }
+      const checkpoint = await checkpointRepository.get(request.checkpointId);
+      if (checkpoint === null || checkpoint.workspaceId !== selected.id
+          || checkpoint.files.length === 0 || checkpoint.files.length > 20) {
+        throw new Error('Checkpoint is missing or outside the selected workspace');
+      }
+      const receipts = await auditRepository.listGoalMutationReceipts(selected.id, request.goalId, 200);
+      const related = receipts.filter((item) => item.checkpointId === request.checkpointId);
+      const expectedPaths = Object.keys(request.expectedCurrentHashes);
+      if (checkpoint.files.length !== expectedPaths.length
+          || !checkpoint.files.every((item) => related.some((receipt) => receipt.path === item.path)
+            && /^[a-f0-9]{64}$/i.test(request.expectedCurrentHashes[item.path] ?? ''))) {
+        throw new Error('Checkpoint has no verified Goal relationship or full current-hash coverage');
+      }
+      await requireNativeAdministrativeApproval({
+        toolName: 'restore_task_checkpoint',
+        mutationKind: 'replace',
+        reason: 'Restore the exact Goal-related file checkpoint after user confirmation and hash comparison',
+        summary: `Restore ${checkpoint.files.length} files in selected workspace ${selected.id} from checkpoint ${request.checkpointId}. A rollback checkpoint will be recorded.`,
+        workspaceId: selected.id,
+        workspaceRoot: selected.realRootPath,
+      });
+      const current = await goalRepository.getById(request.goalId);
+      if (current === null || current.workspaceId !== selected.id || current.revision !== request.goalRevision) {
+        throw new Error('Goal revision changed during confirmation; refresh and review again');
+      }
+      const restored = unwrap(await checkpointService.restore(actor, selected.id, request.checkpointId,
+        { expectedCurrentHashes: request.expectedCurrentHashes, userConfirmed: true }), 'Goal checkpoint restore was denied');
+      return { restored: true, paths: restored.restoredPaths, rollbackCheckpointId: restored.rollbackCheckpointId ?? null };
+    },
+    cancelOwnedGoalTask: async (request: CancelOwnedGoalTaskRequest): Promise<CancelOwnedGoalTaskResult> => {
+      if (request.userConfirmed !== true) throw new Error('Cancellation requires explicit confirmation');
+      const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      if (selected === null || selected.id !== request.workspaceId) throw new Error('Task cancellation must match selected workspace');
+      const goal = await goalRepository.getById(request.goalId);
+      if (goal === null || goal.workspaceId !== selected.id) throw new Error('Goal does not belong to selected workspace');
+      const task = (goal.trackedTasks ?? []).find((row) => row.taskId === request.taskId && row.provider === request.provider);
+      if (!task || !task.cancelWithGoal || task.role !== 'blocking_job') {
+        throw new Error('Task is not an eligible Goal-owned blocking job');
+      }
+      await requireNativeAdministrativeApproval({
+        toolName: 'cancel_owned_goal_task',
+        mutationKind: 'execute',
+        reason: 'Stop one exact tracked blocking job; shared or unknown tasks must remain running',
+        summary: `Cancel task ${request.taskId} through its bound ${request.provider} provider in workspace ${selected.id}.`,
+        workspaceId: selected.id,
+        workspaceRoot: selected.realRootPath,
+      });
+      const fresh = await goalRepository.getById(request.goalId);
+      if (fresh === null || fresh.workspaceId !== selected.id || !(fresh.trackedTasks ?? []).some(
+        (row) => row.taskId === task.taskId && row.provider === task.provider && row.cancelWithGoal && row.role === 'blocking_job',
+      )) throw new Error('Task ownership changed during confirmation');
+      const [outcome] = await taskCancellation.cancelForGoal(fresh.ownerClientId, selected.id, [task]);
+      if (!outcome) throw new Error('Task cancellation produced no provider observation');
+      return {
+        taskId: outcome.taskId, status: outcome.status,
+        ...(outcome.error === undefined ? {} : { error: outcome.error }),
+      };
+    },
+    getResourceSnapshot: async (request: ResourceSnapshotRequest): Promise<ResourceSnapshot> =>
+      unwrap(await new ResourceSnapshotService(workspaceRepository, goalService, {
+        getOwnedTask: async (workspaceId, goalId, taskId, provider): Promise<{ ownerVerified: boolean; observedAt: string } | null> => {
+          const goal = await goalRepository.getById(goalId);
+          if (!goal || goal.workspaceId !== workspaceId) return null;
+          if (!goal.trackedTasks?.some(task => task.taskId === taskId && task.provider === provider)) return null;
+          const client = goal.ownerClientId;
+          let ownerVerified = false;
+          let status;
+          if (provider === 'process') {
+            ownerVerified = processService.isOwnedGoalTask(client, workspaceId, taskId);
+            status = processService.statusForGoalLiveness(workspaceId, taskId);
+          } else if (provider === 'codex') {
+            ownerVerified = codexService.isOwnedGoalTask(client, workspaceId, taskId);
+            status = codexService.statusForGoalLiveness(workspaceId, taskId);
+          } else if (provider === 'shell') {
+            ownerVerified = await capabilityRuntime.shell.isOwnedGoalTask(client, workspaceId, taskId);
+            status = await capabilityRuntime.shell.statusForGoalLiveness(workspaceId, taskId);
+          } else return null;
+          const state = status.ok && status.value !== null && typeof status.value === 'object'
+            && 'state' in status.value ? status.value.state : null;
+          return { ownerVerified: ownerVerified && (state === 'running' || state === 'starting'),
+            observedAt: new Date().toISOString() };
+        },
+      }, undefined, goalRepository).get(actor, request), 'Resource snapshot unavailable'),
     getToolCatalog: async (request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot> => toolCatalogService.getSnapshot(request.locale),
     recheckToolCatalog: recheckCatalogAndDoctor,
     setToolAvailability: async (request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult> => mutateToolAvailability(request, request.enabled),
@@ -2020,9 +2146,10 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       const stats = numstat.get(relativePath);
       const imagePreview = await readGitImagePreview(workspace.realRootPath, relativePath, request.staged === true, patch, resolved.realPath);
 
+      const inspection = await inspectGitWorkingFile(resolved.realPath, relativePath);
       let newContent: string | undefined;
       if (imagePreview.oldImage === undefined && imagePreview.newImage === undefined && imagePreview.error === undefined
-        && !patch && resolved.exists && resolved.realPath !== undefined) {
+        && !patch && inspection.kind === 'text' && resolved.exists && resolved.realPath !== undefined) {
         const bounded = await readBoundedGitTextFile(resolved.realPath);
         if (bounded !== null) {
           newContent = bounded;
@@ -2035,6 +2162,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         path: relativePath,
         patch,
         truncated,
+        preview: {kind:inspection.kind,sizeBytes:inspection.sizeBytes,extension:inspection.extension,mimeType:inspection.mimeType},
         ...(newContent !== undefined ? { newContent } : {}),
         ...(imagePreview.oldImage === undefined ? {} : { oldImage: imagePreview.oldImage }),
         ...(imagePreview.newImage === undefined ? {} : { newImage: imagePreview.newImage }),
@@ -2518,8 +2646,9 @@ async function readBoundedGitTextFile(filePath: string): Promise<string | null> 
     const metadata = statSync(filePath);
     if (!metadata.isFile() || metadata.size > MAX_GIT_DIFF_FALLBACK_BYTES) return null;
     const contents = await readFile(filePath);
-    if (contents.includes(0)) return null;
-    return contents.toString('utf8');
+    const { inspectGitFileBytes } = await import('./git-file-inspection.js');
+    const inspection = inspectGitFileBytes(contents,filePath);
+    return inspection.kind === 'text' ? inspection.text ?? null : null;
   } catch {
     return null;
   }

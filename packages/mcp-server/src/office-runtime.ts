@@ -144,6 +144,42 @@ export class OfficeRuntimeService {
     authorization?: InvocationAuthorization,
   ): Promise<Result<unknown>> {
     if (tool === 'office_status') return this.status(input, authorization);
+    if (tool === 'office_excel' && ['audit_data','compare_cells','create_report'].includes(String(input.action))) {
+      const provider = this.services.officeDataWorkflow;
+      if (!provider) return err(appError('UNSUPPORTED_PLATFORM','Local CSV/XLSX provider is unavailable'));
+      const workspaceId = readString(input.workspaceId);
+      const filePath = readString(input.file_path);
+      if (!workspaceId || !filePath) return err(appError('INVALID_INPUT','workspaceId and file_path required'));
+      const params = isRecord(input.parameters) ? input.parameters : {};
+      const keyColumns = Array.isArray(params.keyColumns) && params.keyColumns.every((item)=>typeof item === 'string')
+        ? params.keyColumns as string[] : [];
+      if (input.action === 'audit_data') return provider.audit(this.actor, {
+        workspaceId, inputPath:filePath,keyColumns,
+        ...(typeof input.sheet==='string'?{sheet:input.sheet}:{}),
+        ...(typeof params.scanCellLimit==='number'?{scanCellLimit:params.scanCellLimit}:{}),
+        ...(typeof params.maxFindings==='number'?{maxFindings:params.maxFindings}:{}),
+      },signal);
+      if (input.action === 'compare_cells') {
+        const rightPath = readString(input.target_path);
+        if(!rightPath) return err(appError('INVALID_INPUT','compare_cells requires target_path'));
+        return provider.compare(this.actor,{
+          workspaceId,leftPath:filePath,rightPath,
+          ...(typeof input.sheet==='string'?{sheet:input.sheet}:{}),
+          ...(typeof params.maxFindings==='number'?{maxFindings:params.maxFindings}:{}),
+        },signal);
+      }
+      const templatePath=readString(params.templatePath);
+      const mappingPath=readString(params.mappingPath);
+      const outputPath=readString(input.target_path);
+      if(!templatePath||!mappingPath||!outputPath) return err(appError('INVALID_INPUT','create_report requires templatePath, mappingPath and target_path'));
+      if (usesDefaultDryRun(input)) return ok({
+        executed:false,dryRun:true,action:'create_report',provider:'file_xlsx',
+        plan:'Produce a new XLSX from validated CSV/XLSX and a supported XLSX reference template, then verify readback.',
+      });
+      return provider.createReport(this.actor,{workspaceId,inputPath:filePath,templatePath,mappingPath,outputPath,keyColumns,
+        ...(signal===undefined?{}:{signal})});
+    }
+
     if (tool === 'office_batch') return this.batch(input, signal, authorization);
     if (tool === 'office_convert') return this.convert(input, signal, authorization);
     if (GRAPH_TOOLS.has(tool)) return graphUnavailable(tool);

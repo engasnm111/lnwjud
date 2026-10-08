@@ -5,7 +5,9 @@ describe('desktop performance contract', () => {
   it('keeps the main renderer refresh single-flight with event-driven wakeups and a slow reconciliation fallback', () => {
     const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
     expect(source).toContain('if (refreshBusyRef.current || updateInstallTransitionRef.current) return;');
-    expect(source).toContain('window.setInterval(() => { void refresh(); }, 30_000)');
+    expect(source).toContain("const reconcileInterval = window.setInterval(() => {");
+    expect(source).toContain("if (document.visibilityState === 'visible') void refresh();");
+    expect(source).toContain('}, 30_000);');
     expect(source).toContain("window.addEventListener('focus', refreshOnFocus)");
     expect(source).toContain("document.addEventListener('visibilitychange', refreshOnVisibility)");
     expect(source).not.toContain('window.setInterval(() => { void refresh(); }, 2_000)');

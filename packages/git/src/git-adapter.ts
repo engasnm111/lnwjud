@@ -61,12 +61,12 @@ export class GitAdapter {
 
 
   /**
-   * Lightweight status for continuously refreshed UI summaries. Collapsing
-   * untracked directories avoids enumerating very large generated trees.
+   * UI status must enumerate every untracked file, including nested new folders.
+   * Git itself honors .gitignore; the caller bounds rendering and caches polling.
    */
   public async statusSummary(cwd: string, signal?: AbortSignal): Promise<Result<GitStatusResult>> {
     const result = await this.runner.run(
-      ['status', '--porcelain=v1', '-z', '--untracked-files=normal'],
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
       cwd,
       this.signalOptions(signal),
     );

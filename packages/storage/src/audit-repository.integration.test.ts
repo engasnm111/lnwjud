@@ -13,6 +13,47 @@ afterEach(async () => {
 });
 
 describe('SqliteAuditRepository', () => {
+  it('pairs started/completed calls by workspace and session with goal attribution, missing timings and stable keyset pages', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-call-history-'));
+    temporaryRoots.push(root);
+    const database = new SqliteDatabase(path.join(root, 'state.db'));
+    const repository = new SqliteAuditRepository(database);
+    try {
+    const at = (n: number): string => new Date(Date.parse('2026-10-08T00:00:00.000Z') + n * 1000).toISOString();
+    const record = (id: string, callId: string, phase: 'started' | 'completed', tick: number, props: Partial<AuditEvent> = {}): Promise<void> =>
+      repository.insert({
+        id, timestamp: at(tick), actorId: 'client', actorName: 'Tester',
+        workspaceId: 'ws-a', sessionId: 'sess-a',
+        action: 'mcp_tool:read_file', resultCode: phase === 'started' ? 'STARTED' : 'SUCCESS',
+        durationMs: phase === 'started' ? 0 : 11,
+        metadata: { callId, toolName: 'read_file', phase, ...(phase === 'completed' ? { goalId: 'goal-verified' } : {}) },
+        ...props,
+      });
+    await record('start-1','call-1','started',1);
+    await record('done-1','call-1','completed',5);
+    await record('start-2','call-2','started',3);
+    await record('done-3','call-3','completed',2, { resultCode: 'CONFLICT', durationMs: 0 });
+    await record('other-workspace','call-1','completed',6,{ workspaceId: 'ws-b', sessionId:'sess-b' });
+    await record('other-session','call-1','completed',7,{ sessionId:'sess-b' });
+    const first = await repository.listCallHistory({ workspaceId: 'ws-a', limit: 1 });
+    expect(first.items).toEqual([expect.objectContaining({ eventId:'other-session', callId:'call-1', goalId:'goal-verified', durationMs:11, startedAt:null })]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const second = await repository.listCallHistory({ workspaceId: 'ws-a', limit: 2, cursor: first.nextCursor! });
+    expect(second.items).toEqual([
+      expect.objectContaining({ eventId:'done-1', callId:'call-1', phase:'completed', durationMs:11, startedAt:at(1) }),
+      expect.objectContaining({ callId:'call-2', phase:'started', durationMs:null }),
+    ]);
+    expect(second.nextCursor).toEqual(expect.any(String));
+    const third = await repository.listCallHistory({ workspaceId:'ws-a', limit:2, cursor: second.nextCursor! });
+    expect(third.items).toEqual([expect.objectContaining({ callId:'call-3', phase:'completed', durationMs:0, startedAt:null })]);
+    expect(third.nextCursor).toBeNull();
+    const filtered = await repository.listCallHistory({ workspaceId:'ws-a', goalId:'goal-verified', limit:10 });
+    expect(filtered.items.map((item)=>item.callId)).toEqual(['call-1','call-1','call-3']);
+    await expect(repository.listCallHistory({ workspaceId:'ws-a', limit:10,cursor:'bad!cursor' })).rejects.toThrow('Invalid audit cursor');
+    } finally { database.close(); }
+  });
+
+
   it('persists sanitized audit metadata through the audit migration', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-audit-db-'));
     temporaryRoots.push(root);

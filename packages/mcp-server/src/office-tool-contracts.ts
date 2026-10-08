@@ -58,6 +58,7 @@ export const OFFICE_WORD_ACTIONS = [
 ] as const;
 
 export const OFFICE_EXCEL_ACTIONS = [
+  'audit_data', 'compare_cells', 'create_report',
   'create', 'list_sheets', 'inspect_workbook', 'used_range', 'read_range', 'read_values',
   'read_formulas', 'read_number_formats', 'read_styles', 'read_tables', 'read_named_ranges',
   'read_charts', 'read_pivots', 'read_filters', 'read_data_validation',
@@ -383,6 +384,7 @@ export function officeToolInputSchema(name: OfficeSemanticToolName): z.ZodObject
 }
 
 export const OFFICE_READ_ACTIONS = new Set<string>([
+  'audit_data', 'compare_cells',
   'status', 'inspect_document', 'read_text', 'read_range', 'get_structure', 'get_sections',
   'get_paragraphs', 'get_runs', 'get_styles', 'get_headings', 'get_tables', 'get_images',
   'get_headers_footers', 'get_bookmarks', 'get_hyperlinks', 'get_fields', 'get_comments',

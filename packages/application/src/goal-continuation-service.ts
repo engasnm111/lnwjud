@@ -24,6 +24,7 @@ import {
   type GoalPlanStep,
   type GoalPonytailMode,
   type GoalRecord,
+  type StoredWorkflowMetadata,
   type GoalRepository,
   type GoalStatus,
   type GoalStepStatus,
@@ -108,6 +109,7 @@ export interface RunGoalRequest {
   readonly engineering?: EngineeringGoalMetadata;
   readonly ponytailMode?: GoalPonytailModeOverride;
   readonly leaseSeconds?: number;
+  readonly workflow?: StoredWorkflowMetadata;
 }
 
 export interface GetGoalRequest {
@@ -295,6 +297,7 @@ export interface GoalSnapshot {
   readonly userIntentRevision: number;
   readonly iterationPolicy: GoalIterationPolicy;
   readonly engineering?: EngineeringGoalMetadata;
+  readonly workflow?: StoredWorkflowMetadata;
   readonly currentContextCapsuleId?: string;
   readonly completedSteps: readonly GoalPlanStep[];
   readonly pendingSteps: readonly GoalPlanStep[];
@@ -454,6 +457,7 @@ export class GoalContinuationService {
         ...(acceptanceCriteria === undefined ? {} : { acceptanceCriteria }),
         ...(iterationPolicy === undefined ? {} : { iterationPolicy }),
         ...(request.engineering === undefined ? {} : { engineering: request.engineering }),
+        ...(request.workflow === undefined ? {} : { workflow: request.workflow }),
         ...(ponytailMode === undefined || ponytailMode === 'inherit' ? {} : { ponytailMode }),
         leaseTokenHash: hashLeaseToken(leaseToken),
         leaseSeconds,
@@ -1272,6 +1276,7 @@ function toRunSnapshot(goal: GoalRecord): Omit<RunGoalResult, 'acquired' | 'leas
     userIntentRevision: snapshot.userIntentRevision,
     iterationPolicy: snapshot.iterationPolicy,
     ...(snapshot.engineering === undefined ? {} : { engineering: snapshot.engineering }),
+    ...(snapshot.workflow === undefined ? {} : { workflow: snapshot.workflow }),
     ...(snapshot.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: snapshot.currentContextCapsuleId }),
     completedSteps: snapshot.completedSteps,
     pendingSteps: snapshot.pendingSteps,
@@ -1301,6 +1306,7 @@ function toSnapshot(goal: GoalRecord): GoalSnapshot {
     userIntentRevision: goal.userIntentRevision,
     iterationPolicy: goal.iterationPolicy,
     ...(goal.engineering === undefined ? {} : { engineering: goal.engineering }),
+    ...(goal.workflow === undefined ? {} : { workflow: goal.workflow }),
     ...(goal.currentContextCapsuleId === undefined ? {} : { currentContextCapsuleId: goal.currentContextCapsuleId }),
     completedSteps: goal.plan.steps.filter((step) => step.status === 'completed'),
     pendingSteps: goal.plan.steps.filter((step) => step.status !== 'completed'),

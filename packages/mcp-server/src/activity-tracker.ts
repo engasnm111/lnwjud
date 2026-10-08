@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { VerifiedMutationReceipt } from './task-mutation-receipt.js';
 import {
   activityTargetReference,
   redactActivityTargetDetail,
@@ -10,6 +11,9 @@ import {
 export interface ActivitySinkEvent {
   readonly callId: string;
   readonly toolName: string;
+  readonly mutationReceipt?: VerifiedMutationReceipt;
+  /** Bound only after a host-side Goal lease validation. Never copied from tool input. */
+  readonly goalId?: string;
   readonly phase: 'started' | 'completed';
   readonly resultCode: string;
   readonly durationMs: number;
@@ -78,6 +82,7 @@ export interface InFlightToolCall {
   readonly callId: string;
   readonly toolName: string;
   readonly startedAt: string;
+  readonly goalId?: string;
   readonly workspaceId?: string;
   readonly sessionId?: string;
   readonly targetSummary?: string;
@@ -104,6 +109,12 @@ export class ActivityTracker {
 
   public listInFlight(): readonly InFlightToolCall[] {
     return [...this.inflight.values()];
+  }
+
+  /** Call attribution happens after permission and lease validation, never in begin(). */
+  public bindVerifiedGoal(callId: string, goalId: string): void {
+    const entry = this.inflight.get(callId);
+    if (entry !== undefined) this.inflight.set(callId, { ...entry, goalId });
   }
 
   public revision(): number {
@@ -239,6 +250,7 @@ export class ActivityTracker {
     durationMs: number,
     resultMessage?: string,
     resultDetail?: ActivityTargetDetail,
+    mutationReceipt?: VerifiedMutationReceipt,
   ): Promise<void> {
     const existing = this.inflight.get(callId);
     this.inflight.delete(callId);
@@ -257,6 +269,8 @@ export class ActivityTracker {
     await this.safeRecord({
       callId,
       toolName: existing?.toolName ?? 'unknown',
+      ...(existing?.goalId === undefined ? {} : { goalId: existing.goalId }),
+      ...(existing?.goalId === undefined || resultCode !== 'SUCCESS' || mutationReceipt === undefined ? {} : { mutationReceipt }),
       phase: 'completed',
       resultCode,
       durationMs,

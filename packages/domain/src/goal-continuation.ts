@@ -1,4 +1,5 @@
 import type { EngineeringGoalMetadata } from './engineering.js';
+import type { StoredWorkflowMetadata } from './workflow.js';
 
 export type GoalStatus = 'active' | 'completed' | 'failed' | 'blocked' | 'cancelled';
 export type GoalTerminalStatus = 'completed' | 'failed' | 'blocked';
@@ -175,6 +176,7 @@ export interface GoalRecord {
   readonly userIntentRevision: number;
   readonly iterationPolicy: GoalIterationPolicy;
   readonly engineering?: EngineeringGoalMetadata;
+  readonly workflow?: StoredWorkflowMetadata;
   readonly currentContextCapsuleId?: string;
   readonly status: GoalStatus;
   readonly revision: number;
@@ -240,6 +242,7 @@ export interface AcquireGoalRecordRequest {
   readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
   readonly iterationPolicy?: GoalIterationPolicy;
   readonly engineering?: EngineeringGoalMetadata;
+  readonly workflow?: StoredWorkflowMetadata;
   readonly ponytailMode?: GoalPonytailMode;
   readonly leaseTokenHash: string;
   readonly leaseSeconds: number;

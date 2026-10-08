@@ -75,6 +75,7 @@ export class LogHub {
   }
 
   public start(options: { readonly skipExisting?: boolean } = {}): void {
+    if (this.tailTimer !== null) return;
     if (options.skipExisting === true) {
       this.tunnelFile.initialOffset = existingFileSize(this.tunnelLogPath);
       if (this.mcpActivityLogPath !== undefined) this.mcpFile.initialOffset = existingFileSize(this.mcpActivityLogPath);
@@ -85,6 +86,7 @@ export class LogHub {
       this.syncTunnelFile();
       this.syncMcpActivityFile();
     }, 500);
+    this.tailTimer.unref?.();
   }
 
   public stop(): void {

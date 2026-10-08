@@ -81,6 +81,44 @@ const createRequest = {
   leaseSeconds: 60,
 } as const;
 
+describe('workflow metadata compatibility', () => {
+  it('persists workflow metadata, rejects same-key input drift, and preserves future schema through checkpoint/reopen', async () => {
+    const { filename, workspace } = await fixture();
+    const now = new Date('2026-10-08T00:00:00.000Z');
+    const runtime = await open(filename, workspace, () => now);
+    const workflow = {
+      schemaVersion: 1, templateId: 'project-check', templateRevision: 1,
+      inputDigest: 'a'.repeat(64), requestKeyHash: 'b'.repeat(64),
+      inputs: { project: workspace.rootPath },
+    } as const;
+    const request = { ...createRequest, goalKey: 'workflow:project-check:abc123', workflow };
+    const created = await runtime.service.runGoal(actor('workflow-test'), request);
+    expect(created.ok).toBe(true);
+    if (!created.ok || !created.value.leaseToken) throw new Error('expected acquired workflow Goal');
+    expect((await runtime.repository.getById(created.value.goalId))?.workflow).toEqual(workflow);
+    const replay = await runtime.service.runGoal(actor('workflow-test'), request);
+    expect(replay).toMatchObject({ ok: true, value: { acquired: false, goalId: created.value.goalId } });
+    const changed = await runtime.service.runGoal(actor('workflow-test'), {
+      ...request, workflow: { ...workflow, inputDigest: 'c'.repeat(64) },
+    });
+    expect(changed).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    const future = { schemaVersion: 2, nextFormat: { opaque: ['must-survive'] } };
+    runtime.database.connection.prepare('UPDATE goals SET workflow_json = ? WHERE id = ?')
+      .run(JSON.stringify(future), created.value.goalId);
+    const checkpointed = await runtime.service.checkpointGoal(actor('workflow-test'), {
+      goalId: created.value.goalId, leaseToken: created.value.leaseToken,
+      expectedRevision: created.value.revision, currentPhase: 'verify',
+      summary: 'Preserve future metadata', stepUpdates: [], nextAction: 'continue',
+      blockers: [], evidence: [], activeTaskIds: [],
+    });
+    expect(checkpointed.ok).toBe(true);
+    runtime.database.close();
+    const reopened = await open(filename, workspace, () => now);
+    expect((await reopened.repository.getById(created.value.goalId))?.workflow).toEqual(future);
+    reopened.database.close();
+  });
+});
+
 describe('durable goal continuation persistence', () => {
   it('creates once, is idempotent by workspace + goalKey, and resumes after a runtime/database restart', async () => {
     const { filename, workspace } = await fixture();

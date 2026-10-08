@@ -29,9 +29,15 @@ import type {
   WorkspaceIndexService,
   WorkspaceQueryService,
   WriteFileRequest,
+  WorkflowTemplateService,
+  WorkflowStartService,
+  CallHistoryService,
+  TaskResultService,
+  ResourceSnapshotService,
 } from '@lnwjud/application';
 import { z } from 'zod';
 import type { ContextEconomyRuntime } from '../context-economy.js';
+import type { OfficeDataWorkflowService } from '../office-data-workflow.js';
 import type { EccRuntimeOptions } from '../ecc-provider.js';
 
 export interface WorkspaceInfoPort {
@@ -93,6 +99,12 @@ export interface McpApplicationServices {
   readonly engineeringPreparation?: Pick<EngineeringPreparationService, 'prepare'>;
   readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
   readonly checkpoint?: Pick<CheckpointService, 'list' | 'restore'>;
+  readonly callHistory?: Pick<CallHistoryService, 'history'>;
+  readonly taskResults?: Pick<TaskResultService, 'get'>;
+  readonly resourceSnapshot?: Pick<ResourceSnapshotService, 'get'>;
+  readonly officeDataWorkflow?: Pick<OfficeDataWorkflowService, 'audit' | 'compare' | 'createReport'>;
+  readonly workflowTemplates?: Pick<WorkflowTemplateService, 'list' | 'prepare'>;
+  readonly workflowStart?: Pick<WorkflowStartService, 'start'>;
   readonly goals?: Pick<GoalContinuationService,
     | 'runGoal'
     | 'getGoal'

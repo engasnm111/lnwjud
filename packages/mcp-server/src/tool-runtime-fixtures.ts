@@ -55,6 +55,12 @@ const unavailable = (
  * inputs where available, and never point at a real user path.
  */
 export const CORE_TOOL_RUNTIME_FIXTURES = {
+  resource_snapshot: service({ workspaceId }, 'resourceSnapshot.get'),
+  call_history: service({ workspaceId }, 'callHistory.history'),
+  goal_result: service({ workspaceId, goalId: 'goal-1' }, 'taskResults.get'),
+  workflow_templates: service({ workspaceId }, 'workflowTemplates.list'),
+  workflow_prepare: service({ workspaceId, templateId: 'project-check', inputs: {} }, 'workflowTemplates.prepare'),
+  workflow_start: service({ draft: {workspaceId, templateId:'project-check',inputs:{},schemaVersion:1,templateRevision:1,digest:'a'.repeat(64),objective:'Audit project',steps:[{id:'scan',title:'Scan'}],acceptance:[{id:'check',title:'Check'}],readiness:'ready',blockers:[],preparedAt:'2026-10-08T00:00:00.000Z'}, idempotencyKey: 'runtime-fixture' }, 'workflowStart.start'),
   workspace_list: service({}, 'workspaceInfo.list'),
   workspace_register: service({ path: 'E:\\project' }, 'workspaceInfo.register'),
   workspace_info: service({ workspaceId }, 'workspaceInfo.info'),

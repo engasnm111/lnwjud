@@ -58,6 +58,8 @@ export class AuditService {
       durationMs: input.durationMs,
       metadata: {
         toolName: input.toolName,
+        ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
+        ...(input.goalId === undefined || input.mutationReceipt === undefined ? {} : { mutationReceipt: input.mutationReceipt }),
         callId: input.callId,
         phase: input.phase,
         targetDetail: decodeActivityTargetReference(input.targetDetail, input.targetSummary),

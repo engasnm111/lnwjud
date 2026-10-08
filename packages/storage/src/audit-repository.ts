@@ -8,6 +8,10 @@ import {
   type AuditEventQuery,
   type AuditEventRepository,
   type AuditEventSummaryProjection,
+  type AuditCallHistoryQuery,
+  type AuditCallHistoryPage,
+  type AuditCallHistoryRow,
+  type AuditMutationReceiptRow,
 } from '@lnwjud/audit';
 import type { SqliteDatabase } from './database.js';
 
@@ -47,6 +51,21 @@ interface AuditSummaryRow {
   readonly timestamp: string;
   readonly action: string;
   readonly result_code: string;
+}
+
+function makeAuditCallCursor(timestamp: string, id: string): string {
+  return Buffer.from(JSON.stringify([timestamp, id])).toString('base64url');
+}
+function parseAuditCallCursor(cursor: string): { timestamp: string; id: string } {
+  if (!/^[A-Za-z0-9_-]{1,1024}$/.test(cursor)) throw new Error('Invalid audit cursor');
+  let values: unknown;
+  try { values = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); }
+  catch { throw new Error('Invalid audit cursor'); }
+  if (!Array.isArray(values) || values.length !== 2 || typeof values[0] !== 'string' || typeof values[1] !== 'string'
+      || Number.isNaN(Date.parse(values[0])) || values[1].length > 256 || values[1].length === 0) {
+    throw new Error('Invalid audit cursor');
+  }
+  return { timestamp: values[0], id: values[1] };
 }
 
 const AUDIT_SELECT = 'SELECT id, timestamp, actor_id, actor_name, workspace_id, session_id, action, target_summary, permission_decision, result_code, duration_ms, metadata_json FROM audit_events';
@@ -98,6 +117,97 @@ export class SqliteAuditRepository implements AuditEventRepository {
       `${AUDIT_SELECT}${where} ORDER BY timestamp DESC, id DESC LIMIT ?`,
     ).all(...parameters, boundedLimit);
     return this.toEvents(rows);
+  }
+
+  /** Keyset-paged, per-call correlation. Full retained metadata is never returned. */
+  public async listCallHistory(query: AuditCallHistoryQuery): Promise<AuditCallHistoryPage> {
+    const limit = Number.isInteger(query.limit) && query.limit > 0 && query.limit <= 200 ? query.limit : 50;
+    const clauses = ['r.rn = 1'];
+    const params: Array<string | number> = [query.workspaceId];
+    if (query.goalId !== undefined) { clauses.push('r.goal_id = ?'); params.push(query.goalId); }
+    if (query.toolName !== undefined) { clauses.push('r.tool_name = ?'); params.push(query.toolName); }
+    if (query.since !== undefined) { clauses.push('r.timestamp >= ?'); params.push(query.since); }
+    if (query.until !== undefined) { clauses.push('r.timestamp <= ?'); params.push(query.until); }
+    if (query.cursor !== undefined) {
+      const decoded = parseAuditCallCursor(query.cursor);
+      clauses.push('(r.timestamp < ? OR (r.timestamp = ? AND r.id < ?))');
+      params.push(decoded.timestamp, decoded.timestamp, decoded.id);
+    }
+    const rows = this.database.connection.prepare(`
+      WITH r AS (
+        SELECT e.id, e.timestamp, e.workspace_id, e.session_id, e.result_code, e.duration_ms,
+          json_extract(e.metadata_json, '$.callId') AS call_id,
+          json_extract(e.metadata_json, '$.toolName') AS tool_name,
+          json_extract(e.metadata_json, '$.phase') AS phase,
+          json_extract(e.metadata_json, '$.goalId') AS goal_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(e.session_id, '') || ':' || json_extract(e.metadata_json, '$.callId')
+            ORDER BY CASE json_extract(e.metadata_json, '$.phase') WHEN 'completed' THEN 0 ELSE 1 END, e.timestamp DESC, e.id DESC
+          ) AS rn
+        FROM audit_events e
+        WHERE e.workspace_id = ? AND e.action LIKE 'mcp_tool:%'
+          AND json_extract(e.metadata_json, '$.callId') IS NOT NULL
+      )
+      SELECT r.id, r.timestamp, r.workspace_id, r.session_id, r.result_code, r.duration_ms,
+        r.call_id, r.tool_name, r.phase, r.goal_id,
+        (SELECT MIN(s.timestamp) FROM audit_events s
+          WHERE s.workspace_id = r.workspace_id
+            AND s.session_id IS r.session_id
+            AND json_extract(s.metadata_json, '$.callId') = r.call_id
+            AND json_extract(s.metadata_json, '$.phase') = 'started'
+        ) AS started_at
+      FROM r WHERE ${clauses.join(' AND ')}
+      ORDER BY r.timestamp DESC, r.id DESC LIMIT ?
+    `).all(...params, limit + 1);
+    const items: AuditCallHistoryRow[] = [];
+    for (const value of rows.slice(0, limit)) {
+      if (!isRecord(value) || typeof value.id !== 'string' || typeof value.timestamp !== 'string'
+        || typeof value.call_id !== 'string' || typeof value.tool_name !== 'string'
+        || typeof value.workspace_id !== 'string'
+        || (value.phase !== 'started' && value.phase !== 'completed')) continue;
+      items.push({
+        eventId: value.id, callId: value.call_id, toolName: value.tool_name,
+        workspaceId: value.workspace_id, goalId: typeof value.goal_id === 'string' ? value.goal_id : null,
+        resultCode: value.phase === 'completed' && typeof value.result_code === 'string' ? value.result_code : null,
+        durationMs: value.phase === 'completed' && typeof value.duration_ms === 'number' && Number.isFinite(value.duration_ms) && value.duration_ms >= 0 ? value.duration_ms : null,
+        phase: value.phase,
+        startedAt: typeof value.started_at === 'string' ? value.started_at : null,
+        sampledAt: value.timestamp,
+      });
+    }
+    const last = rows.length > limit ? items.at(-1) : undefined;
+    return { items, nextCursor: last ? makeAuditCallCursor(last.sampledAt, last.eventId) : null };
+  }
+
+  public async listGoalMutationReceipts(workspaceId: string, goalId: string, limit = 200): Promise<readonly AuditMutationReceiptRow[]> {
+    const count = Number.isInteger(limit) && limit > 0 && limit <= 500 ? limit : 200;
+    const rows = this.database.connection.prepare(`
+      SELECT id, timestamp, json_extract(metadata_json, '$.mutationReceipt') AS receipt
+      FROM audit_events
+      WHERE workspace_id = ? AND result_code = 'SUCCESS'
+        AND action LIKE 'mcp_tool:%' AND json_extract(metadata_json, '$.phase') = 'completed'
+        AND json_extract(metadata_json, '$.goalId') = ?
+        AND json_type(metadata_json, '$.mutationReceipt') = 'object'
+      ORDER BY timestamp DESC, id DESC LIMIT ?
+    `).all(workspaceId, goalId, count);
+    const result: AuditMutationReceiptRow[] = [];
+    for (const row of rows) {
+      if (!isRecord(row) || typeof row.id !== 'string' || typeof row.timestamp !== 'string'
+        || typeof row.receipt !== 'string') continue;
+      let receipt: unknown;
+      try { receipt = JSON.parse(row.receipt); } catch { continue; }
+      if (!isRecord(receipt)
+        || typeof receipt.path !== 'string' || receipt.path.length === 0 || receipt.path.length > 4096
+        || typeof receipt.action !== 'string' || !['write_file','edit_file','copy_file','move_file','office_excel'].includes(receipt.action)) continue;
+      result.push({
+        operationId: row.id, observedAt: row.timestamp, path: receipt.path, action: receipt.action,
+        ...(typeof receipt.checkpointId === 'string' && receipt.checkpointId.length <= 128 ? { checkpointId: receipt.checkpointId } : {}),
+        ...(typeof receipt.afterSha256 === 'string' && /^[a-f0-9]{64}$/.test(receipt.afterSha256) ? { afterSha256: receipt.afterSha256 } : {}),
+        ...(typeof receipt.sizeBytes === 'number' && Number.isSafeInteger(receipt.sizeBytes) && receipt.sizeBytes >= 0 ? { sizeBytes: receipt.sizeBytes } : {}),
+        ...(receipt.verification === 'verified' ? { verification: 'verified' as const } : {}),
+      });
+    }
+    return result;
   }
 
   public async listSummaries(limit = 100): Promise<AuditEventSummaryProjection[]> {

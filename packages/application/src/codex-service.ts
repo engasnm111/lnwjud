@@ -126,6 +126,12 @@ export class CodexService {
     return this.adapter.statusProcess(owner.value.processId);
   }
 
+  /** Trusted read-only exact owner probe. Does not grant rights by PID or display name. */
+  public isOwnedGoalTask(ownerClientId: string, workspaceId: string, taskId: string): boolean {
+    const owner = this.owners.get(taskId);
+    return owner !== undefined && owner.actorId === ownerClientId && owner.workspaceId === workspaceId;
+  }
+
   /** Trusted read-only host probe used only by durable-goal orphan detection. */
   public statusForGoalLiveness(workspaceId: string, codexTaskId: string): Result<ManagedProcess> {
     const owner = this.owners.get(codexTaskId);

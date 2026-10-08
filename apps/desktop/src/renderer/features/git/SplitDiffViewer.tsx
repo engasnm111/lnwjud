@@ -1,6 +1,7 @@
 import { Fragment, useRef, useState, type ReactElement } from 'react';
-import type { GitImagePreview, UiLocale } from '@lnwjud/ipc-contracts';
+import type { GitFilePreviewInfo, GitImagePreview, UiLocale } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
+import { v580Strings } from '../../i18n/v580-copy.js';
 
 export interface DiffRow {
   readonly oldLineNumber: number | null;
@@ -167,6 +168,7 @@ interface SplitDiffViewerProps {
   readonly oldImage?: GitImagePreview | undefined;
   readonly newImage?: GitImagePreview | undefined;
   readonly imagePreviewError?: 'too_large' | 'unsupported' | undefined;
+  readonly preview?: GitFilePreviewInfo | undefined;
   readonly additions?: number | undefined;
   readonly deletions?: number | undefined;
   readonly oldLabel?: string | undefined;
@@ -207,6 +209,7 @@ export function SplitDiffViewer({
   oldImage,
   newImage,
   imagePreviewError,
+  preview,
   additions: propAdditions,
   deletions: propDeletions,
   oldLabel = 'HEAD',
@@ -214,6 +217,7 @@ export function SplitDiffViewer({
   onClose,
 }: SplitDiffViewerProps): ReactElement {
   const t = createTranslator(locale);
+  const copy = v580Strings(locale).git;
   const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
   const [imageFit, setImageFit] = useState(true);
   const [oldImageFailed, setOldImageFailed] = useState(false);
@@ -341,7 +345,17 @@ export function SplitDiffViewer({
       {isImageDiff ? imageDiffBody : null}
       {!isImageDiff && (parsed.hunks.length === 0 ? (
         <div className="diff-empty-notice">
-          <p>{t('diff.noChanges')}</p>
+          {preview?.kind === 'binary' || preview?.kind === 'too_large' || preview?.kind === 'missing'
+            ? <div className="git-preview-metadata">
+                <strong>{copy.details}</strong>
+                <dl>
+                  <dt>{copy.type}</dt><dd>{preview.mimeType ?? (preview.extension || 'Unknown')}</dd>
+                  <dt>{copy.size}</dt><dd>{preview.sizeBytes === null ? 'Unknown' : `${preview.sizeBytes.toLocaleString()} bytes`}</dd>
+                  <dt>{copy.preview}</dt>
+                  <dd>{preview.kind === 'binary' ? (copy.binary) : preview.kind === 'too_large' ? (copy.tooLarge) : (copy.removed)}</dd>
+                </dl>
+              </div>
+            : <p>{t('diff.noChanges')}</p>}
         </div>
       ) : viewMode === 'split' ? (
         <div className="diff-split-container">

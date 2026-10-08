@@ -33,6 +33,30 @@ beforeEach(() => {
 });
 
 describe('DirectGitRunner cancellation', () => {
+  it('rejects oversized Git output instead of presenting an incomplete directory listing', async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    const terminator: ProcessTreeTerminator = { stop: vi.fn(async () => undefined) };
+    const running = new DirectGitRunner(terminator).run(['status','--untracked-files=all'], 'C:\\workspace');
+    child.stdout?.emit('data', Buffer.alloc(8 * 1024 * 1024 + 1, 65));
+    await expect(running).resolves.toMatchObject({
+      exitCode: -1,
+      stderr: expect.stringContaining('safe capture limit'),
+    });
+    expect(terminator.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('decodes UTF-8 filenames across output chunks without replacement characters', async () => {
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    const running = new DirectGitRunner().run(['status'], 'C:\\workspace');
+    const bytes = Buffer.from('?? โฟลเดอร์/สินค้า.txt\0');
+    child.stdout?.emit('data', bytes.subarray(0, 7));
+    child.stdout?.emit('data', bytes.subarray(7));
+    closeChild(child, 0);
+    await expect(running).resolves.toMatchObject({ exitCode: 0, stdout: '?? โฟลเดอร์/สินค้า.txt\0' });
+  });
+
   it('does not spawn Git when the invocation was already aborted', async () => {
     const child = fakeChild();
     spawnMock.mockImplementation(() => {

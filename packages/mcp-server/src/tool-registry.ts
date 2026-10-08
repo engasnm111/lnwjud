@@ -73,6 +73,8 @@ import { fileTools } from './tools/file-tools.js';
 import { engineeringTools } from './tools/engineering-tools.js';
 import { gitTools } from './tools/git-tools.js';
 import { goalTools } from './tools/goal-tools.js';
+import { observedMutationReceipt } from './task-mutation-receipt.js';
+import { workflowTools } from './tools/workflow-tools.js';
 import { mcpBridgeTools } from './tools/mcp-bridge-tools.js';
 import { processTools } from './tools/process-tools.js';
 import { sessionTools } from './tools/session-tools.js';
@@ -287,6 +289,7 @@ export class ToolRegistry {
       ...workspaceIndexTools(context),
       ...sessionTools(context, incrementalVerifier),
       ...goalTools(context),
+      ...workflowTools(context),
       ...scheduledContinuationTools(context),
       ...upgradeTools(context, incrementalVerifier, this.activity),
     ];
@@ -684,6 +687,23 @@ export class ToolRegistry {
           admitted.value.leaseGeneration,
         );
       }
+      if (goalLease !== undefined && mutationDecision.kind !== 'read') {
+        // An admitted Goal mutation fence has already verified this exact proof and
+        // workspace; do not require a second validator from hosts that expose only
+        // the fenced mutation contract. Without a fence, validate independently.
+        if (fencedMutationEnd === undefined) {
+          const validated = this.services.goals?.validateGoalLease
+            ? await this.services.goals.validateGoalLease(this.actor, { goalId: goalLease.goalId, leaseToken: goalLease.leaseToken })
+            : err(appError('CONFLICT', 'Goal lease validation service is unavailable'));
+          if (!validated.ok || (mutationFenceWorkspaceId !== undefined && validated.value.workspaceId !== mutationFenceWorkspaceId)) {
+            const message = validated.ok ? 'Goal lease workspace mismatch' : validated.error.message;
+            const response = mapError(appError('CONFLICT', message, true));
+            await this.activity.end(callId, 'CONFLICT', Date.now() - started, message);
+            return response;
+          }
+        }
+        this.activity.bindVerifiedGoal(callId, goalLease.goalId);
+      }
       const resolvedActivityInput = this.withRememberedActivityTarget(
         name,
         withActivityWorkspaceId(approvalExecutionInput, activityWorkspaceId),
@@ -723,12 +743,12 @@ export class ToolRegistry {
         fencedMutationEnd = undefined;
         void execution.deferredSettlement.then(async () => {
           await endFence?.();
-          await this.activity.end(callId, resultCode, Date.now() - started, resultMessage, resultDetail);
+          await this.activity.end(callId, resultCode, Date.now() - started, resultMessage, resultDetail, observedMutationReceipt(name, response));
         });
       } else {
         await fencedMutationEnd?.();
         fencedMutationEnd = undefined;
-        await this.activity.end(callId, resultCode, Date.now() - started, resultMessage, resultDetail);
+        await this.activity.end(callId, resultCode, Date.now() - started, resultMessage, resultDetail, observedMutationReceipt(name, response));
       }
       return response;
     } catch (error: unknown) {
@@ -1602,7 +1622,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.7.4 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.8.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

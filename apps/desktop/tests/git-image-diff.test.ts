@@ -40,7 +40,7 @@ describe('Desktop Git image diff', () => {
     await writeFile(path.join(repo, 'image.png'), PNG_GREEN);
     await git(repo, 'add', 'image.png');
 
-    const runtime = createDesktopRuntime(dataRoot);
+    const runtime = createDesktopRuntime(dataRoot, { checkpointEncryptionKey: Buffer.alloc(32, 0x42) });
     try {
       const workspaceId = await runtime.ensureDefaultWorkspace(repo);
       const staged = await runtime.services.getGitDiff({ workspaceId, path: 'image.png', staged: true });

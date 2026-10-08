@@ -7,10 +7,11 @@ import { ShellCapabilityBackend, type CapabilityService, type CapabilityToolName
 import type { AutomationDispatchRequest, FileActor } from '@lnwjud/application';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { AutomationRuntimeAdapter, type AutomationToolRegistryPort } from './automation-runtime-adapter.js';
-import { ToolRegistry, type WorkspaceScope } from './tool-registry.js';
+import { ToolRegistry, type WorkspaceScope, type McpApplicationServices } from './tool-registry.js';
 
 const roots: string[] = [];
 const actor: FileActor = { clientId: 'client-a', clientName: 'Client A', sessionId: 'session-a' };
+const goals = { validateGoalLease: async () => ok({ workspaceId: 'workspace-a' }) } as unknown as NonNullable<McpApplicationServices['goals']>;
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -138,7 +139,7 @@ describe('AutomationRuntimeAdapter', () => {
         return backend.statusForAutomation(ownerClientId, workspaceId, taskId, requestDigest);
       },
     };
-    const registry = new ToolRegistry({ capabilities }, actor, {
+    const registry = new ToolRegistry({ capabilities, goals }, actor, {
       profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
       activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: 'workspace-a', rootPath: root }),
       hostMutationApprovalProvider: async (): Promise<boolean> => true,
@@ -211,7 +212,7 @@ describe('AutomationRuntimeAdapter', () => {
           return backend.statusForAutomation(ownerClientId, workspaceId, taskId, requestDigest);
         },
       };
-      const registry = new ToolRegistry({ capabilities }, actor, {
+      const registry = new ToolRegistry({ capabilities, goals }, actor, {
         profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
         authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
         activeWorkspaceScopeProvider: async (): Promise<WorkspaceScope> => ({ workspaceId: 'workspace-a', rootPath: root }),

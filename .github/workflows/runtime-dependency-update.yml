@@ -4,17 +4,21 @@ on:
   schedule:
     - cron: '37 3 * * *'
   workflow_dispatch:
+  pull_request:
+    types: [closed]
+    branches: [dev]
 
 permissions:
   contents: write
   pull-requests: write
 
 concurrency:
-  group: runtime-dependency-update
+  group: runtime-dependency-managed
   cancel-in-progress: false
 
 jobs:
   update:
+    if: github.event_name != 'pull_request'
     name: Check verified runtime releases
     runs-on: ubuntu-latest
     steps:
@@ -62,22 +66,30 @@ jobs:
           pnpm --filter @lnwjud/desktop build
           pnpm test:packaging
 
-      - name: Open update PR against dev
+      - name: Upsert the one verified managed dependency PR
         if: steps.diff.outputs.changed == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          branch="automation/runtime-dependencies-${GITHUB_RUN_ID}"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$branch"
-          git add apps/desktop/src/main/runtime-dependencies.json
-          git commit -m 'chore: update verified runtime dependencies'
-          git push origin "$branch"
-          gh pr create \
-            --base dev \
-            --head "$branch" \
-            --title 'chore: update verified runtime dependencies' \
-            --body 'Automated runtime update. The updater selects exact OS/architecture assets, requires GitHub SHA-256 digests, cross-checks tunnel-client SHA256SUMS/provenance assets, and runs the packaging contract before opening this PR. Normal CI must still pass before merge.'
+          node scripts/apply-runtime-dependency-pr.mjs --apply
+
+  cleanup:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    name: Conditionally delete only the merged managed runtime ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted dev code
+        uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Revalidate merged PR identity and delete exact SHA only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/cleanup-runtime-dependency-branch.mjs --apply

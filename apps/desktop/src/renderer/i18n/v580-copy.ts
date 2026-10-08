@@ -1,0 +1,106 @@
+import type { UiLocale } from '@lnwjud/ipc-contracts';
+
+/** v5.8.0 bilingual message catalog. */
+export const v580Copy = {
+  th: {
+    workflows: { title: 'เวิร์กโฟลว์', copied:'คัดลอกคำสั่งสำหรับ AI แล้ว ยังไม่ได้เริ่ม Goal',
+      intro:'เลือกงาน ตรวจรายละเอียด แล้วคัดลอกคำสั่งไปยัง AI ที่เชื่อม lnwjud ไม่มีการเริ่มงานอัตโนมัติ',
+      noWorkspace:'เลือกโปรเจกต์ก่อน', readOnly:'อ่านอย่างเดียว', output:'สร้างผลลัพธ์ใหม่',
+      inputLabel:'ตั้งค่าเวิร์กโฟลว์', working:'กำลังตรวจสอบ', prepare:'ตรวจและดูแผน',
+      preview:'ตัวอย่างแผน', ready:'พร้อมส่งต่อให้ AI', notReady:'ยังไม่พร้อมใช้งาน',
+      acceptance:'เกณฑ์ตรวจรับ', copy:'คัดลอกคำสั่งไปให้ AI', select:'เลือก',
+      path:'เส้นทางไฟล์หรือโฟลเดอร์ในโปรเจกต์' },
+    doctor: { title:'การวินิจฉัย', views:'หมวดการวินิจฉัย',
+      checks:'การตรวจสอบ', calls:'ประวัติ MCP', results:'ผลงาน', resources:'ทรัพยากร' },
+    calls: {
+      intro:'แสดงเฉพาะระยะเวลาที่เซิร์ฟเวอร์วัดได้ ไม่มีข้อมูลเวลา Tunnel เมื่อโฮสต์ไม่ได้รับข้อมูล',
+      goal:'Goal ID (ไม่บังคับ)', tool:'เครื่องมือ', transport:'การเชื่อมต่อ',
+      all:'ทั้งหมด', unknown:'ไม่ทราบ', load:'ค้นประวัติ', loading:'กำลังโหลด',
+      noWorkspace:'เลือกโปรเจกต์ก่อน', coverage:'ความครอบคลุม',
+      truncated:'ข้อมูลถูกตัด', completed:'รายการที่จบ', incomplete:'ค้างหรือไม่ทราบ',
+      noItems:'ไม่มีรายการที่วัดได้', at:'เมื่อ', outcome:'ผล', next:'หน้าถัดไป',
+    },
+    resources: {
+      intro:'ข้อมูลแยกตามเจ้าของที่ตรวจสอบได้ ไม่คำนวณหน่วยความจำจากการหาร RAM รวม และไม่ยกเลิกบริการที่ใช้ร่วมกัน',
+      goal:'Goal ID (ไม่บังคับ)', loading:'กำลังโหลด', refresh:'ตรวจทรัพยากร',
+      noWorkspace:'เลือกโปรเจกต์ก่อน', sampled:'ตรวจเมื่อ', stale:'ข้อมูลเก่า',
+      sample:'สถานะตามการวัด', contextSent:'Context bytes ที่ส่ง',
+      contextAvoided:'Context bytes ที่หลีกเลี่ยงได้', ledger:'Ledger hits',
+      noItems:'ไม่มีรายการที่ยืนยันความเป็นเจ้าของได้',
+      task:'งาน', provider:'ผู้ให้บริการ', owner:'เจ้าของ', action:'การควบคุม',
+      cancelling:'กำลังยกเลิก', cancel:'ขอยกเลิก',
+      note:'ปุ่มยกเลิกแสดงเฉพาะงานที่ตรวจสอบเจ้าของปัจจุบันได้ และต้องยืนยันกับระบบอีกครั้ง',
+    },
+    results: {
+      intro:'แสดงเฉพาะหลักฐานที่ระบบตรวจสอบแหล่งที่มาได้ การจบ Goal ไม่ได้หมายความว่าการทดสอบหรือไฟล์ผ่านการตรวจสอบ',
+      loading:'กำลังโหลด', inspect:'ตรวจผลลัพธ์', noWorkspace:'เลือกโปรเจกต์ก่อน',
+      status:'สถานะ', coverage:'ความครอบคลุม', revision:'Revision',
+      checkpoint:'Checkpoint ล่าสุด', artifacts:'หลักฐานไฟล์',
+      noArtifacts:'ไม่มีไฟล์ที่มีหลักฐานตรวจสอบได้', file:'ไฟล์', kind:'ประเภท', verification:'ผลตรวจ',
+      changes:'การเปลี่ยนแปลงที่บันทึกได้', noChanges:'ไม่มีหลักฐานการเปลี่ยนแปลงที่ระบุ Goal ได้',
+      at:'เวลา', action:'การกระทำ', path:'ไฟล์', checks:'การตรวจสอบ',
+    },
+    git: { search:'ค้นหาไฟล์', placeholder:'ค้นหาไฟล์ โฟลเดอร์ หรือนามสกุล',
+      filter:'กรองสถานะ Git', all:'ทั้งหมด', untracked:'ไฟล์ใหม่',
+      files:'ไฟล์', root:'โฟลเดอร์หลัก', noMatch:'ไม่พบไฟล์ที่ตรงตัวกรอง',
+      tryFilter:'ปรับคำค้นหาหรือตัวกรอง', showMore:'แสดงเพิ่มอีก 250 ไฟล์',
+      details:'รายละเอียดไฟล์ (ไม่มี text diff)', type:'ประเภท', size:'ขนาด',
+      preview:'การแสดงผล', binary:'ไฟล์ไบนารี ไม่สามารถเปรียบเทียบเนื้อหาเป็นข้อความได้',
+      tooLarge:'ไฟล์ใหญ่เกินขนาด preview ที่ปลอดภัย',
+      removed:'ไฟล์ถูกลบหรือไม่สามารถอ่านได้',
+    },
+  },
+  en: {
+    workflows: { title: 'Workflows', copied:'AI handoff copied. No Goal was started.',
+      intro:'Choose a task, review the plan, then copy an instruction to your connected AI. Nothing starts automatically.',
+      noWorkspace:'Select a project first.', readOnly:'Read-only', output:'Produces output',
+      inputLabel:'Workflow inputs', working:'Checking', prepare:'Prepare and preview',
+      preview:'Plan preview', ready:'Ready for AI handoff', notReady:'Not ready',
+      acceptance:'Acceptance', copy:'Copy AI launch prompt', select:'Select',
+      path:'Workspace file or directory path' },
+    doctor: { title:'Diagnostics', views:'Diagnostic views',
+      checks:'Checks', calls:'Calls', results:'Results', resources:'Resources' },
+    calls: {
+      intro:'Only measured server durations are shown. Tunnel timing stays unknown when not observed.',
+      goal:'Goal ID (optional)', tool:'Tool', transport:'Transport',
+      all:'All', unknown:'Unknown', load:'Load history', loading:'Loading',
+      noWorkspace:'Select a workspace first.', coverage:'Coverage',
+      truncated:'Truncated', completed:'Completed', incomplete:'Incomplete',
+      noItems:'No matching observed calls.', at:'At', outcome:'Outcome', next:'Next page',
+    },
+    resources: {
+      intro:'Only host-verifiable ownership appears. Total RAM is not split into guessed workspace totals, and shared services cannot be cancelled.',
+      goal:'Goal ID (optional)', loading:'Loading', refresh:'Refresh snapshot',
+      noWorkspace:'Select a workspace first', sampled:'Sampled at', stale:'Stale',
+      sample:'Sample status', contextSent:'Context bytes sent',
+      contextAvoided:'Context bytes avoided', ledger:'Ledger hits',
+      noItems:'No scoped resource records.', task:'Task', provider:'Provider',
+      owner:'Ownership', action:'Action', cancelling:'Cancelling', cancel:'Request cancel',
+      note:'Cancellation is offered only for currently verified owned jobs and requires fresh native approval.',
+    },
+    results: {
+      intro:'Only observed evidence is shown. A completed Goal does not imply that checks or artifacts are verified.',
+      loading:'Loading', inspect:'Inspect results', noWorkspace:'Select a workspace first',
+      status:'Status', coverage:'Coverage', revision:'Revision', checkpoint:'Last Goal checkpoint',
+      artifacts:'Artifacts', noArtifacts:'No artifact evidence available.', file:'File', kind:'Kind',
+      verification:'Verification', changes:'Observed changes', noChanges:'No Goal-attributed changes recorded.',
+      at:'At', action:'Action', path:'Path', checks:'Checks',
+    },
+    git: { search:'Search files', placeholder:'Search files, folders, extensions',
+      filter:'Filter Git status', all:'All files', untracked:'Untracked',
+      files:'files', root:'Repository root', noMatch:'No matching files',
+      tryFilter:'Try a different filter', showMore:'Show 250 more files',
+      details:'File details (no text diff)', type:'Type', size:'Size',
+      preview:'Preview', binary:'Binary file; text comparison unavailable',
+      tooLarge:'File exceeds safe preview size', removed:'File removed or unavailable',
+    },
+  },
+} as const;
+
+export function v580Strings(locale: UiLocale): typeof v580Copy.th | typeof v580Copy.en {
+  return v580Copy[locale] ?? v580Copy.en;
+}
+
+export function workflowLocalized(locale: UiLocale, fields: { readonly th: string; readonly en: string }): string {
+  return fields[locale];
+}

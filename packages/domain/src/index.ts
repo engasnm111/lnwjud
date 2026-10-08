@@ -4,6 +4,8 @@ export * from './agent-swarm.js';
 export * from './errors.js';
 export * from './engineering.js';
 export * from './goal-continuation.js';
+export * from './workflow.js';
+export * from './observability.js';
 export * from './invocation-authorization.js';
 export * from './scheduled-continuation.js';
 export * from './limits.js';
