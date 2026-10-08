@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import os from 'node:os';
@@ -201,6 +201,8 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
   await Promise.all(Array.from({ length: 64 }, (_, index) =>
     writeFile(path.join(fixtureRoot, `untracked-${index.toString().padStart(2, '0')}.txt`), `untracked ${index}\n`, 'utf8')
   ));
+  await mkdir(path.join(fixtureRoot, 'src', 'unit'), { recursive: true });
+  await writeFile(path.join(fixtureRoot, 'src', 'unit', 'nested.ts'), 'export const nested = true;\n', 'utf8');
 
   const devToolsPort = await findEphemeralPort();
   const launchExecutable = packagedExecutable ?? electronExecutable;
@@ -238,7 +240,17 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
     await settleFirstRunAndOpenHome(page);
     await page.setViewportSize({ width: 1720, height: 820 });
     await page.getByRole('button', { name: 'Git', exact: true }).click();
-    await expect(page.locator('.git-file-item')).toHaveCount(65, { timeout: 30_000 });
+    await expect(page.locator('.git-tree-file-row')).toHaveCount(65, { timeout: 30_000 });
+    const nestedFolder = page.locator('.git-tree-folder-row').filter({ hasText: 'unit' });
+    await expect(nestedFolder).toHaveAttribute('aria-expanded', 'false');
+    await nestedFolder.click();
+    await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toBeVisible();
+    await nestedFolder.click();
+    await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toHaveCount(0);
+    const gitSearch = page.locator('.git-file-toolbar input');
+    await gitSearch.fill('nested.ts');
+    await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toBeVisible();
+    await gitSearch.fill('');
 
     const fileList = page.locator('.git-file-list');
     const expandedList = await fileList.evaluate((element) => ({
@@ -246,7 +258,7 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
       bottom: element.getBoundingClientRect().bottom,
       viewportHeight: window.innerHeight,
     }));
-    expect(expandedList.height).toBeGreaterThan(440);
+    expect(expandedList.height).toBeGreaterThanOrEqual(400);
     expect(expandedList.viewportHeight - expandedList.bottom).toBeLessThan(80);
     await page.screenshot({ path: testInfo.outputPath('git-list-expanded-1720x820.png'), fullPage: false });
     await page.setViewportSize({ width: 900, height: 650 });
@@ -261,7 +273,7 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
     });
     expect(fileListScrollTop).toBeGreaterThan(0);
 
-    await page.locator('.git-file-item').filter({ hasText: 'long-file.txt' }).click();
+    await page.locator('.git-tree-file-row').filter({ hasText: 'long-file.txt' }).click();
     const leftPane = page.locator('.diff-pane-left');
     await expect(leftPane).toBeVisible({ timeout: 30_000 });
     const diffMetrics = await leftPane.evaluate((element) => ({

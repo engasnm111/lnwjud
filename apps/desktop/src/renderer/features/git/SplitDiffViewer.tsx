@@ -4,6 +4,23 @@ import type { GitFilePreviewInfo, GitImagePreview, UiLocale } from '@lnwjud/ipc-
 import { createTranslator } from '../../i18n/index.js';
 import { v580Strings } from '../../i18n/v580-copy.js';
 
+
+export function formatGitHunkLabel(header: string, locale: UiLocale): string {
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header);
+  if (!match) return header;
+  const range = (startText: string, countText?: string): string => {
+    const start = Number(startText);
+    const count = countText === undefined ? 1 : Number(countText);
+    if (count === 0) return '—';
+    return count === 1 ? String(start) : `${start}–${start + count - 1}`;
+  };
+  const oldRange = range(match[1]!, match[2]);
+  const newRange = range(match[3]!, match[4]);
+  return locale === 'th'
+    ? `ช่วงที่เปลี่ยน • ก่อนแก้ ${oldRange} / หลังแก้ ${newRange}`
+    : `Changed range • Old ${oldRange} / New ${newRange}`;
+}
+
 export interface DiffRow {
   readonly oldLineNumber: number | null;
   readonly oldText: string;
@@ -381,7 +398,7 @@ export function SplitDiffViewer({
             >
               {parsed.hunks.map((hunk, hunkIdx) => (
                 <div key={`hunk-left-${hunkIdx}`} className="diff-hunk-block">
-                  <div className="diff-hunk-header">{hunk.header}</div>
+                  <div className="diff-hunk-header" title={hunk.header}>{formatGitHunkLabel(hunk.header, locale)}</div>
                   <table className="diff-table">
                     <tbody>
                       {hunk.rows.map((row, rowIdx) => (
@@ -414,7 +431,7 @@ export function SplitDiffViewer({
             >
               {parsed.hunks.map((hunk, hunkIdx) => (
                 <div key={`hunk-right-${hunkIdx}`} className="diff-hunk-block">
-                  <div className="diff-hunk-header">{hunk.header}</div>
+                  <div className="diff-hunk-header" title={hunk.header}>{formatGitHunkLabel(hunk.header, locale)}</div>
                   <table className="diff-table">
                     <tbody>
                       {hunk.rows.map((row, rowIdx) => (
@@ -445,7 +462,7 @@ export function SplitDiffViewer({
         <div className="diff-unified-container">
           {parsed.hunks.map((hunk, hunkIdx) => (
             <div key={`hunk-unified-${hunkIdx}`} className="diff-hunk-block">
-              <div className="diff-hunk-header">{hunk.header}</div>
+              <div className="diff-hunk-header" title={hunk.header}>{formatGitHunkLabel(hunk.header, locale)}</div>
               <table className="diff-table unified-table">
                 <tbody>
                   {hunk.rows.map((row, rowIdx) => {

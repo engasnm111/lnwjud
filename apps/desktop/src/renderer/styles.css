@@ -52,7 +52,9 @@
   --copper: #e2c07d;
   --danger: #f87171;
   --font: "Prompt", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: Consolas, "Cascadia Mono", "JetBrains Mono", monospace;
+  --font-mono: "Prompt", sans-serif;
+  --font-sans: var(--font);
+  --font-ui: var(--font);
   --page-bottom-gap: 48px;
   
   color: var(--text);
@@ -3406,3 +3408,27 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .ui-form-field > label { color:var(--text); font-size:13px; font-weight:600; }
 .ui-surface { min-width:0; border:1px solid var(--border-subtle); border-radius:12px; background:var(--ui-card-bg); }
 @media(max-width:600px) { .ui-filter-bar > .ui-combobox { flex:1 1 100%; max-width:none; } }
+
+
+/* Git explorer tree: intrinsic row heights, structured indentation, no sticky overlay. */
+.git-file-tree { display:flex; flex-direction:column; gap:2px; min-height:0; min-width:0; }
+.git-tree-folder, .git-tree-children { display:flex; flex-direction:column; min-width:0; flex:0 0 auto; }
+.git-tree-folder-row, .git-tree-file-row {
+  display:flex; align-items:center; text-align:left; gap:10px; min-width:0;
+  width:100%; min-height:36px; flex:0 0 auto; padding-block:6px;
+  padding-inline-end:12px; border:1px solid transparent; border-radius:8px;
+  background:transparent; color:var(--text); font-size:12px; font-weight:500;
+}
+.git-tree-folder-row { background:rgba(33,43,57,.43); border-color:rgba(255,255,255,.055); font-weight:600; }
+.git-tree-folder-row:hover, .git-tree-file-row:hover { background:rgba(245,197,66,.075); border-color:rgba(245,197,66,.2); }
+.git-tree-folder-row:focus-visible, .git-tree-file-row:focus-visible { outline:2px solid var(--gold-primary); outline-offset:-2px; }
+.git-tree-chevron { width:12px; color:var(--gold-bright); text-align:center; flex:0 0 12px; }
+.git-tree-folder-icon { color:var(--gold-primary); flex:0 0 auto; }
+.git-tree-file-icon { width:12px; color:var(--muted); flex:0 0 12px; }
+.git-tree-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.git-tree-count { color:var(--muted); font-size:11px; padding:2px 8px; border:1px solid var(--border-subtle); border-radius:999px; flex:0 0 auto; }
+.git-tree-file-row .git-file-tag { font-size:10px; letter-spacing:.015em; }
+.git-tree-diff-label { color:var(--gold-bright); font-size:11px; flex:0 0 auto; }
+.git-tree-file-row .git-file-stats { min-width:0; }
+@media (max-width:760px) { .git-tree-file-row .git-file-stats { display:none; } .git-tree-diff-label { font-size:10px; } }
+.diff-hunk-header { font-family:var(--font); }

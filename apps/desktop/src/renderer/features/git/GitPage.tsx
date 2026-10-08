@@ -1,11 +1,13 @@
 import { ActionButton, FormInput, FilterBar } from '../ui/UiPrimitives.js';
-import { Fragment, useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { DashboardSnapshot, GitImagePreview, GitStatusEntrySummary, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import { v580Strings } from '../../i18n/v580-copy.js';
 import { SplitDiffViewer } from './SplitDiffViewer.js';
 import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
-import { filterGitFiles, gitFileFolder, gitFolderCounts, type GitFileStatusFilter } from './git-file-browser.js';
+import { filterGitFiles, type GitFileStatusFilter } from './git-file-browser.js';
+import { buildGitFileTree } from './git-file-tree.js';
+import { GitFileTree } from './GitFileTree.js';
 
 interface GitPageProps {
   readonly locale: UiLocale;
@@ -35,13 +37,20 @@ export function GitPage({
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<GitFileStatusFilter>('all');
   const [visibleCount, setVisibleCount] = useState(250);
-  useEffect(() => { setSelectedFile(null); setDiffData(null); setQuery(''); setStatusFilter('all'); setVisibleCount(250); }, [selectedWorkspace?.id]);
+  const [expandedOverrides, setExpandedOverrides] = useState<ReadonlySet<string>>(new Set());
+  const toggleFolder = (path: string): void => setExpandedOverrides((previous) => {
+    const next = new Set(previous);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    return next;
+  });
+  useEffect(() => { setSelectedFile(null); setDiffData(null); setQuery(''); setStatusFilter('all'); setVisibleCount(250); setExpandedOverrides(new Set()); }, [selectedWorkspace?.id]);
   const filteredEntries = useMemo(
     () => filterGitFiles(gitSummary.entries ?? [], query, statusFilter),
     [gitSummary.entries, query, statusFilter],
   );
   const visibleEntries = useMemo(() => filteredEntries.slice(0, visibleCount), [filteredEntries, visibleCount]);
-  const directoryCounts = useMemo(() => gitFolderCounts(filteredEntries), [filteredEntries]);
+  const fileTree = useMemo(() => buildGitFileTree(visibleEntries), [visibleEntries]);
   const [diffData, setDiffData] = useState<{
     patch: string;
     oldContent?: string;
@@ -237,50 +246,11 @@ export function GitPage({
               <span role="status" className="hint">{visibleEntries.length.toLocaleString()} / {filteredEntries.length.toLocaleString()} {copy.files}</span>
             </FilterBar>
             <div className={`git-file-list ${filteredEntries.length > 0 ? '' : 'empty'}`}>
-              {visibleEntries.length > 0 ? visibleEntries.map((entry, index) => {
-                const isSelected = selectedFile?.path === entry.path;
-                const folder = gitFileFolder(entry.path);
-                const previousFolder = index > 0 ? gitFileFolder(visibleEntries[index - 1]!.path) : null;
-                return (
-                  <Fragment key={entry.path}>
-                  {previousFolder !== folder ? <div className="git-folder-group" title={folder}>▸ {folder === '.' ? (copy.root) : folder}<span>{directoryCounts.get(folder)} {copy.files}</span></div> : null}
-                  <div
-                    className={`git-file-item clickable-file-item ${isSelected ? 'selected' : ''}`}
-                    onClick={() => { void handleOpenFileDiff(entry); }}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        void handleOpenFileDiff(entry);
-                      }
-                    }}
-                  >
-                    <span className={`git-file-tag ${entry.kind}`}>
-                      [{entry.kind.toUpperCase()}]
-                    </span>
-                    <span className="git-file-path">{entry.path}</span>
-                    <div className="git-file-stats">
-                      {typeof entry.additions === 'number' && entry.additions > 0 ? (
-                        <span className="stat-badge stat-add" title={t('git.linesAdded', { count: entry.additions })}>
-                          +{entry.additions}
-                        </span>
-                      ) : null}
-                      {typeof entry.deletions === 'number' && entry.deletions > 0 ? (
-                        <span className="stat-badge stat-del" title={t('git.linesDeleted', { count: entry.deletions })}>
-                          -{entry.deletions}
-                        </span>
-                      ) : null}
-                    </div>
-                    <span className="git-file-status">
-                      {entry.indexStatus !== ' ' && entry.indexStatus !== '?' && entry.worktreeStatus !== ' '
-                        ? 'Staged + Unstaged'
-                        : entry.indexStatus !== ' ' && entry.indexStatus !== '?' ? 'Staged' : 'Unstaged'}
-                    </span>
-                    <span className="git-view-diff-arrow">{t('git.viewDiff')}</span>
-                  </div>
-                  </Fragment>
-                );
-              }) : (
+              {visibleEntries.length > 0 ? (
+                <GitFileTree nodes={fileTree} locale={locale} expandedOverrides={expandedOverrides}
+                  searchActive={query.trim().length > 0}
+                  onToggle={toggleFolder} onOpen={(entry) => { void handleOpenFileDiff(entry); }} />
+              ) : (
                 <div className="git-file-empty">
                   <strong>{filteredEntries.length === 0 && (gitSummary.entries?.length ?? 0) > 0 ? (copy.noMatch) : t('git.noChangedFiles')}</strong>
                   <span className="hint">{filteredEntries.length === 0 && (gitSummary.entries?.length ?? 0) > 0 ? (copy.tryFilter) : t('git.workingTreeClean')}</span>
