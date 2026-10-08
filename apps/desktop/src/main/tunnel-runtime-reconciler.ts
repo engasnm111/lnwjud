@@ -43,6 +43,8 @@ export class TunnelRuntimeReconciler {
   private lastConnectedAt: string | null = null;
   private lastReconnectAt: string | null = null;
   private lastKnownPid: number | null = null;
+  private readinessSinceMs: number | null = null;
+  private readinessPid: number | null = null;
   private lastSnapshot: TunnelRuntimeSnapshot | null = null;
 
   public constructor(private readonly options: TunnelRuntimeReconcilerOptions) {}
@@ -103,6 +105,22 @@ export class TunnelRuntimeReconciler {
 
     const bindingStale = current.mcpServerUrl !== null && !sameMcpUrl(current.mcpServerUrl, desired.mcpServerUrl);
     const healthy = runtimeAcceptable(current);
+    if (current.exists && current.running && !bindingStale && !healthy) {
+      const nowMs = (this.options.now?.() ?? new Date()).getTime();
+      if (this.readinessSinceMs === null || this.readinessPid !== current.pid) {
+        this.readinessSinceMs = nowMs;
+        this.readinessPid = current.pid;
+      }
+      // Retry by elapsed startup time, not by count: the supervisor polls with
+      // exponential backoff and three polls can pass in only seven seconds.
+      if (nowMs - this.readinessSinceMs < 45_000) {
+        return this.publishFailure(desired, capabilities, 'transient', 'RUNTIME_NOT_READY',
+          current.message ?? 'Managed tunnel runtime is starting; waiting for readiness before reconnecting', current);
+      }
+    } else {
+      this.readinessSinceMs = null;
+      this.readinessPid = null;
+    }
     if (current.exists && current.running && !bindingStale && healthy) {
       this.consecutiveFailures = 0;
       if (this.lastConnectedAt === null) this.lastConnectedAt = this.timestamp();
@@ -121,6 +139,8 @@ export class TunnelRuntimeReconciler {
     }
 
     try {
+      this.readinessSinceMs = null;
+      this.readinessPid = null;
       if (current.running && bindingStale) await this.options.adapter.stop(desired.tunnelId);
       const connected = await this.options.adapter.connect({ tunnelId: desired.tunnelId, mcpServerUrl: desired.mcpServerUrl });
       if (connected.tunnelId !== null && connected.tunnelId !== desired.tunnelId) {
@@ -166,6 +186,8 @@ export class TunnelRuntimeReconciler {
       }
     }
     this.consecutiveFailures = 0;
+    this.readinessSinceMs = null;
+    this.readinessPid = null;
     return this.publish(desired, capabilities, {
       action: 'disabled',
       state: 'stopped',

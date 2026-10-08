@@ -36,6 +36,26 @@ describe('ProcessManager', () => {
     ]));
   });
 
+  it('exposes a native PID only while the owned child is active for resource sampling', async () => {
+    const manager = new ProcessManager();
+    const started = await manager.start({ executable: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'], cwd: process.cwd() });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    try {
+      expect(started.value.pid).toEqual(expect.any(Number));
+      expect(started.value.pid).toBeGreaterThan(0);
+      expect(manager.status(started.value.processId)).toMatchObject({
+        ok: true, value: { pid: started.value.pid },
+      });
+    } finally {
+      await manager.stop(started.value.processId);
+    }
+    const stopped = manager.status(started.value.processId);
+    expect(stopped.ok).toBe(true);
+    if (stopped.ok) expect(stopped.value.pid).toBeUndefined();
+  });
+
   it('times out a running child and stops only an owned process handle', async () => {
     const manager = new ProcessManager();
     const started = await manager.start({

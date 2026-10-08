@@ -5,6 +5,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'nod
 import { open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { sampleOwnedProcessMetrics } from './resource-process-metrics.js';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
@@ -49,6 +50,7 @@ import {
 } from '@lnwjud/extensions';
 import {
   ActivityTracker,
+  ContextEconomyRuntime,
   OfficeDataWorkflowService,
   LNWJUD_MCP_IDENTITY_PATH,
   RuntimeEngineeringEvidenceVerifier,
@@ -755,7 +757,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     goals: goalService,
     callHistory: new CallHistoryService(workspaceRepository, auditRepository),
     taskResults: new TaskResultService(goalService, auditRepository, workspaceRepository, goalRepository),
-    resourceSnapshot: new ResourceSnapshotService(workspaceRepository, goalService, undefined, undefined, goalRepository),
+    resourceSnapshot: new ResourceSnapshotService(workspaceRepository, goalService),
     officeDataWorkflow: new OfficeDataWorkflowService(async (id) => (await workspaceRepository.get(id))?.realRootPath ?? null),
     workflowTemplates: new WorkflowTemplateService(workspaceRepository),
     workflowStart: new WorkflowStartService(new WorkflowTemplateService(workspaceRepository), goalService),
@@ -825,8 +827,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   );
   const mcpPort = readMcpPort(process.env.LNWJUD_MCP_PORT ?? settingsRepository.get(USER_SETTING_KEYS.mcpHttpPort) ?? undefined);
   const mcpAllowedHostnames = parseMcpAllowedHostnames(process.env.LNWJUD_MCP_ALLOWED_HOSTNAMES ?? settingsRepository.get(USER_SETTING_KEYS.mcpAllowedHostnames) ?? undefined);
+  // One transport-owned ledger is shared across Modern HTTP requests and the
+  // Desktop read-only diagnostics view. It is not a per-Goal counter.
+  const desktopContextEconomy = new ContextEconomyRuntime();
   const mcpLifecycle = new DesktopMcpLifecycle({
     createServerOptions: (): McpHttpServerOptions => ({
+      contextEconomy: desktopContextEconomy,
       port: mcpPort,
       allowedHostnames: mcpAllowedHostnames,
       services: mcpServices,
@@ -2031,9 +2037,19 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
         ...(outcome.error === undefined ? {} : { error: outcome.error }),
       };
     },
-    getResourceSnapshot: async (request: ResourceSnapshotRequest): Promise<ResourceSnapshot> =>
-      unwrap(await new ResourceSnapshotService(workspaceRepository, goalService, {
-        getOwnedTask: async (workspaceId, goalId, taskId, provider): Promise<{ ownerVerified: boolean; observedAt: string } | null> => {
+    getResourceSnapshot: async (request: ResourceSnapshotRequest): Promise<ResourceSnapshot> => {
+      const resourceSnapshot = unwrap(await new ResourceSnapshotService(workspaceRepository, goalService, {
+        contextScope: 'transport',
+        getContextStats: async (): Promise<Partial<ResourceSnapshot['context']>> => {
+          const counters = desktopContextEconomy.snapshot();
+          return {
+            rawContextBytes: counters.rawContextBytes,
+            contextSentBytes: counters.contextSentBytes,
+            previouslySeenBytesAvoided: counters.previouslySeenBytesAvoided,
+            ledgerHits: counters.ledgerHits,
+          };
+        },
+        getOwnedTask: async (workspaceId, goalId, taskId, provider): Promise<{ ownerVerified: boolean; observedAt: string; workingSetBytes?: number; cpuPercent?: number } | null> => {
           const goal = await goalRepository.getById(goalId);
           if (!goal || goal.workspaceId !== workspaceId) return null;
           if (!goal.trackedTasks?.some(task => task.taskId === taskId && task.provider === provider)) return null;
@@ -2050,12 +2066,35 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
             ownerVerified = await capabilityRuntime.shell.isOwnedGoalTask(client, workspaceId, taskId);
             status = await capabilityRuntime.shell.statusForGoalLiveness(workspaceId, taskId);
           } else return null;
-          const state = status.ok && status.value !== null && typeof status.value === 'object'
-            && 'state' in status.value ? status.value.state : null;
-          return { ownerVerified: ownerVerified && (state === 'running' || state === 'starting'),
-            observedAt: new Date().toISOString() };
+          const detail = status.ok && status.value !== null && typeof status.value === 'object'
+            ? status.value as Record<string, unknown> : null;
+          const state = detail?.state;
+          const runningOwned = ownerVerified && (state === 'running' || state === 'starting');
+          const pid = provider === 'shell' ? detail?.child_pid : detail?.pid;
+          const launchedAt = provider === 'shell' ? (detail?.child_started_at ?? detail?.started_at) : detail?.startedAt;
+          const metrics = runningOwned && typeof pid === 'number' && typeof launchedAt === 'string'
+            ? await sampleOwnedProcessMetrics(pid, launchedAt) : null;
+          return {
+            ownerVerified: runningOwned,
+            observedAt: new Date().toISOString(),
+            ...(metrics === null ? {} : { workingSetBytes: metrics.workingSetBytes,
+              ...(metrics.cpuPercent === null ? {} : { cpuPercent: metrics.cpuPercent }) }),
+          };
         },
-      }, undefined, goalRepository).get(actor, request), 'Resource snapshot unavailable'),
+      }, undefined, goalRepository).get(actor, request), 'Resource snapshot unavailable');
+      // This host-wide baseline remains measurable even when no Goal has an
+      // active, individually attributable OS process. Never label it as Goal usage.
+      const cpu = process.cpuUsage();
+      const upSeconds = process.uptime();
+      const logicalCpus = os.availableParallelism();
+      const avg = upSeconds >= 1 && logicalCpus > 0
+        ? Number(((cpu.user + cpu.system) / 1_000_000 / upSeconds / logicalCpus * 100).toFixed(1))
+        : null;
+      return { ...resourceSnapshot, desktopMain: {
+        rssBytes: process.memoryUsage().rss,
+        cpuAveragePercent: avg,
+      } };
+    },
     getToolCatalog: async (request: GetToolCatalogRequest): Promise<ToolCatalogSnapshot> => toolCatalogService.getSnapshot(request.locale),
     recheckToolCatalog: recheckCatalogAndDoctor,
     setToolAvailability: async (request: SetToolAvailabilityRequest): Promise<SetToolAvailabilityResult> => mutateToolAvailability(request, request.enabled),

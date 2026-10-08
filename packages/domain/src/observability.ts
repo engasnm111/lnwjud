@@ -34,6 +34,9 @@ export interface ResourceSnapshotRequest { readonly workspaceId: string; readonl
 export interface ResourceSnapshot {
   readonly workspaceId: string; readonly sampledAt: string; readonly stale: boolean;
   readonly coverage: 'complete' | 'partial' | 'unknown';
+  readonly contextScope: 'workspace' | 'transport' | 'unavailable';
+  /** Only the Desktop main process, not all Electron processes or a Goal. */
+  readonly desktopMain?: { readonly rssBytes: number; readonly cpuAveragePercent: number | null };
   readonly resources: readonly { readonly taskId?: string; readonly provider: string;
     readonly goalId?: string; readonly role: string;
     readonly ownership: 'owned' | 'shared' | 'foreign' | 'unknown';

@@ -45,6 +45,24 @@ describe('DesktopRuntime persistence', () => {
     }
   }, RUNTIME_TEST_TIMEOUT_MS);
 
+  it('reports real Desktop main-process memory even with no attributable Goal tasks', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-resources-data-'));
+    const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-resources-workspace-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceRoot);
+    const runtime = createDesktopRuntime(await realpath(rawDataRoot));
+    try {
+      const workspace = await runtime.services.addWorkspace({ rootPath: await realpath(rawWorkspaceRoot) });
+      const measured = await runtime.services.getResourceSnapshot({ workspaceId: workspace.id });
+      expect(measured.desktopMain?.rssBytes).toBeGreaterThan(0);
+      expect(measured.desktopMain?.cpuAveragePercent === null
+        || (measured.desktopMain?.cpuAveragePercent ?? -1) >= 0).toBe(true);
+      expect(measured.contextScope).toBe('transport');
+      expect(measured.resources).toEqual([]);
+    } finally {
+      await runtime.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
   it('migrates the legacy 18765 default to Auto once and preserves a later explicit 18765 pin', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-mcp-port-migration-'));
     temporaryRoots.push(rawDataRoot);

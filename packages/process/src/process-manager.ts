@@ -291,6 +291,7 @@ export class ProcessManager {
   private snapshot(record: ManagedRecord): ManagedProcess {
     return {
       processId: record.processId,
+      ...(record.child.pid !== undefined && (record.state === 'starting' || record.state === 'running') ? { pid: record.child.pid } : {}),
       executable: record.spec.executable,
       args: [...record.spec.args],
       cwd: record.spec.cwd,

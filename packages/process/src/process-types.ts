@@ -9,6 +9,8 @@ export interface ManagedProcessStart {
 
 export interface ManagedProcess {
   readonly processId: string;
+  /** Host-owned child PID for read-only resource sampling; never use as an authorization token. */
+  readonly pid?: number;
   readonly executable: string;
   readonly args: readonly string[];
   readonly cwd: string;

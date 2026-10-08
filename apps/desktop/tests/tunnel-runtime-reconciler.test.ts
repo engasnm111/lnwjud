@@ -85,6 +85,33 @@ describe('TunnelRuntimeReconciler', () => {
     expect(runtimeAdapter.connect).not.toHaveBeenCalled();
   });
 
+  it('waits for a running native tunnel to become ready instead of reconnecting during startup', async () => {
+    const runtimeAdapter = adapter(runtime({ ready: false }));
+    vi.mocked(runtimeAdapter.status).mockResolvedValueOnce(runtime({ ready: false })).mockResolvedValue(runtime());
+    const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter, desiredState: (): TunnelRuntimeDesiredState => desired });
+    const starting = await reconciler.reconcile();
+    expect(starting).toMatchObject({ action: 'retry-required', snapshot: { state: 'reconnecting', lastErrorCode: 'RUNTIME_NOT_READY' } });
+    expect(runtimeAdapter.connect).not.toHaveBeenCalled();
+    const recovered = await reconciler.reconcile();
+    expect(recovered.action).toBe('healthy');
+    expect(runtimeAdapter.connect).not.toHaveBeenCalled();
+  });
+
+  it('waits for an elapsed startup grace period before reconnecting a still-running process', async () => {
+    const runtimeAdapter = adapter(runtime({ pollHealthy: false }));
+    let nowMs = Date.parse('2026-10-09T00:00:00Z');
+    const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter,
+      desiredState: (): TunnelRuntimeDesiredState => desired, now: (): Date => new Date(nowMs) });
+    for (const elapsedMs of [0, 1_000, 3_000, 7_000, 15_000, 30_000, 44_999]) {
+      nowMs = Date.parse('2026-10-09T00:00:00Z') + elapsedMs;
+      expect((await reconciler.reconcile()).action).toBe('retry-required');
+      expect(runtimeAdapter.connect).not.toHaveBeenCalled();
+    }
+    nowMs += 1;
+    expect((await reconciler.reconcile()).action).toBe('reconnected');
+    expect(runtimeAdapter.connect).toHaveBeenCalledTimes(1);
+  });
+
   it('does nothing when the same tunnel and local binding are already healthy', async () => {
     const runtimeAdapter = adapter(runtime());
     const reconciler = new TunnelRuntimeReconciler({ adapter: runtimeAdapter, desiredState: (): TunnelRuntimeDesiredState => desired });

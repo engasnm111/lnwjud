@@ -2,6 +2,7 @@ export * from './activity-log-file.js';
 export * from './ecc-provider.js';
 export * from './ecc-memory-vault.js';
 export * from './activity-tracker.js';
+export * from './context-economy.js';
 export * from './office-data-workflow.js';
 export * from './goal-managed-task-state-reader.js';
 export * from './engineering-evidence-verifier.js';

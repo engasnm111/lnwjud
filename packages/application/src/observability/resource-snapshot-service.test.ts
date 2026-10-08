@@ -37,6 +37,40 @@ describe('ResourceSnapshotService ownership and metrics', () => {
       context:{rawContextBytes:512,contextSentBytes:400,ledgerHits:2,previouslySeenBytesAvoided:100},
     }});
   });
+  it('aggregates tracked tasks across Goal options for measured workspace-wide filtering', async () => {
+    const goals = { getGoal:async () => ok({ goalId:'g-a',workspaceId:'ws',trackedTasks:[] }) } as unknown as GoalContinuationService;
+    const hostGoals = {
+      listWorkspaceGoalFilters: async (): Promise<readonly {id:string}[]> => [{ id:'g-a' },{ id:'g-b' }],
+      getById: async (id:string): Promise<{id:string;workspaceId:string;trackedTasks:readonly {taskId:string;provider:string;role:string;cancelWithGoal:boolean}[]}> => ({ id, workspaceId:'ws', trackedTasks:[{ ...task, taskId:id }] }),
+    };
+    const service = new ResourceSnapshotService(workspaces, goals, {
+      getOwnedTask:async (_ws, goalId): Promise<{ownerVerified:boolean;observedAt:string;workingSetBytes?:number}> => ({
+        ownerVerified:true, observedAt:'2026-10-08T00:00:00Z', ...(goalId==='g-a' ? { workingSetBytes: 1234 } : {}),
+      }),
+    }, () => new Date('2026-10-08T00:00:00Z'), hostGoals as never);
+    const result = await service.get(actor, { workspaceId:'ws' });
+    expect(result).toMatchObject({ ok:true, value: { resources: [
+      { goalId:'g-a', workingSetBytes:1234, ownership:'owned' },
+      { goalId:'g-b', ownership:'owned' },
+    ] } });
+    if (result.ok) expect(result.value.resources[1]).not.toHaveProperty('workingSetBytes');
+  });
+
+  it('keeps other Task measurements when one provider observation fails', async () => {
+    const goals = { getGoal: async () => ok({ goalId:'g', workspaceId:'ws', trackedTasks:[task,{...task,taskId:'failed'}] }) } as unknown as GoalContinuationService;
+    const service = new ResourceSnapshotService(workspaces, goals, {
+      getOwnedTask: async (_workspaceId, _goalId, taskId): Promise<{ownerVerified:boolean;observedAt:string;workingSetBytes:number}> => {
+        if (taskId === 'failed') throw new Error('Process exited while probing');
+        return { ownerVerified:true, observedAt:'2026-10-08T00:00:00Z', workingSetBytes:512 };
+      },
+    }, () => new Date('2026-10-08T00:00:00Z'));
+    const result = await service.get(actor,{workspaceId:'ws',goalId:'g'});
+    expect(result).toMatchObject({ok:true,value:{stale:true,resources:[
+      {taskId:'task-1',ownership:'owned',workingSetBytes:512},
+      {taskId:'failed',ownership:'unknown',canCancel:false},
+    ]}});
+  });
+
   it('denies cross-workspace Goal visibility before returning tracked tasks', async () => {
     const goals = { getGoal:async () => ok({goalId:'g',workspaceId:'other',trackedTasks:[task]}) } as unknown as GoalContinuationService;
     expect(await new ResourceSnapshotService(workspaces,goals).get(actor,{workspaceId:'ws',goalId:'g'}))

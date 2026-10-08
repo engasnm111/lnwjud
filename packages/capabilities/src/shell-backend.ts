@@ -650,6 +650,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     return {
       task_id: record.taskId,
       state: record.state,
+      ...(record.state === 'running' && record.child.pid !== undefined ? { child_pid: record.child.pid } : {}),
       ...(record.exitCode === undefined ? {} : { exit_code: record.exitCode }),
       ...(stdout === undefined ? {} : { stdout }),
       ...(stderr === undefined ? {} : { stderr }),

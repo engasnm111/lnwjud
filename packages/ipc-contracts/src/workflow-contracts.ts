@@ -83,6 +83,9 @@ export interface ResourceSnapshotRequest { readonly workspaceId: string; readonl
 export interface ResourceSnapshot {
   readonly workspaceId: string; readonly sampledAt: string; readonly stale: boolean;
   readonly coverage: 'complete' | 'partial' | 'unknown';
+  readonly contextScope: 'workspace' | 'transport' | 'unavailable';
+  /** Only the lnwjud Desktop main process, not Electron child processes or any Goal. */
+  readonly desktopMain?: { readonly rssBytes: number; readonly cpuAveragePercent: number | null };
   readonly resources: readonly { readonly taskId?: string; readonly provider: string; readonly goalId?: string; readonly role: string; readonly ownership: 'owned' | 'shared' | 'foreign' | 'unknown'; readonly workingSetBytes?: number; readonly cpuPercent?: number; readonly canCancel: boolean }[];
   readonly context: { readonly rawContextBytes: number | null; readonly contextSentBytes: number | null; readonly previouslySeenBytesAvoided: number | null; readonly ledgerHits: number | null };
 }
