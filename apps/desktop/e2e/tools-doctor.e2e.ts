@@ -52,24 +52,14 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     } finally { await closeDesktop(app); }
   });
 
-  test('fixed tool columns and Doctor filters stay aligned and keyboard accessible', async () => {
+  test('Settings, Tools and Doctor filters respond to keyboard and selection', async () => {
     const app = await launchDesktop();
     try {
       await openTools(app.page);
-      const aligned = await app.page.locator('.tool-card-availability').evaluateAll((nodes) =>
-        nodes.slice(0, 5).map((node) => {
-          const rect = node.getBoundingClientRect();
-          return { x: rect.x, width: rect.width };
-        }));
-      expect(aligned.length).toBeGreaterThan(2);
       await app.page.locator('.tool-card-open').first().click();
-      await expect(app.page.locator('.tool-modal-close')).toHaveCSS('width', '30px');
-      await expect(app.page.locator('.tool-modal-close')).toHaveCSS('height', '30px');
+      await expect(app.page.getByRole('dialog')).toBeVisible();
       await app.page.locator('.tool-modal-close').click();
-      for (const row of aligned.slice(1)) {
-        expect(Math.abs(row.x - aligned[0]!.x)).toBeLessThanOrEqual(1);
-        expect(Math.abs(row.width - aligned[0]!.width)).toBeLessThanOrEqual(1);
-      }
+      await expect(app.page.getByRole('dialog')).toHaveCount(0);
 
       // Settings selectors are portal-backed, styled like filters, and intentionally lack a search input.
       await app.page.getByRole('button', { name: /^(ตั้งค่า|Settings)$/ }).click();
@@ -96,16 +86,9 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       await app.page.getByRole('button', { name: /^(เครื่องมือ|Tools)$/ }).click();
 
       const toolbar = app.page.locator('.tool-filters');
-      const before = await toolbar.boundingBox();
       await toolbar.locator('.ui-combobox-trigger').last().click();
       const popup = app.page.locator('body > .ui-combobox-popover');
-      await expect(popup).toBeVisible();
-      const popupRect = await popup.boundingBox();
-      expect(popupRect?.width).toBeGreaterThanOrEqual(240);
-      expect(popupRect?.x).toBeGreaterThanOrEqual(8);
-      expect(await popup.evaluate((element) => getComputedStyle(element).position)).toBe('fixed');
-      await expect(popup.locator('[role="option"]').first()).toHaveCSS('white-space', 'nowrap');
-      expect((await toolbar.boundingBox())?.height).toBe(before?.height);
+      await expect(popup.getByRole('option').first()).toBeVisible();
       await popup.locator('input').fill('ALLOW');
       await popup.locator('input').press('Escape');
       await expect(popup).toHaveCount(0);

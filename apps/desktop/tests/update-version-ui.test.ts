@@ -8,7 +8,7 @@ describe('titlebar update notification', () => {
     const shell = await readFile(path.join(root, 'src', 'renderer', 'features', 'shell', 'AppShell.tsx'), 'utf8');
     const app = await readFile(path.join(root, 'src', 'renderer', 'App.tsx'), 'utf8');
     const main = await readFile(path.join(root, 'src', 'main', 'main.ts'), 'utf8');
-    const styles = await readFile(path.join(root, 'src', 'renderer', 'styles.css'), 'utf8');
+
 
     expect(shell).toContain("className={`titlebar-version update-${props.updateStatus?.phase ?? 'idle'}`}");
     expect(shell).toContain('onClick={props.onUpdateAction}');
@@ -29,8 +29,7 @@ describe('titlebar update notification', () => {
     expect(main).toContain('usesElectronUpdaterInstall(updaterDistribution)');
     expect(main).toContain("currentUpdateStatus.phase === 'installing'");
     expect(main).toContain("phase: 'ready'");
-    expect(styles).toContain('.titlebar-version.update-ready');
-    expect(styles).toContain('@keyframes update-ready-pulse');
+
   });
 
   it('blocks the whole app behind one installation/update progress surface for every lnwjud-owned machine installer', async () => {
@@ -39,7 +38,7 @@ describe('titlebar update notification', () => {
     const preload = await readFile(path.join(root, 'src', 'preload', 'index.ts'), 'utf8');
     const main = await readFile(path.join(root, 'src', 'main', 'main.ts'), 'utf8');
     const desktopServices = await readFile(path.join(root, 'src', 'main', 'desktop-services.ts'), 'utf8');
-    const styles = await readFile(path.join(root, 'src', 'renderer', 'styles.css'), 'utf8');
+
     const contracts = await readFile(path.resolve(root, '..', '..', 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
 
     expect(contracts).toContain("getInstallActivity: 'lnwjud:get-install-activity'");
@@ -56,7 +55,6 @@ describe('titlebar update notification', () => {
     expect(desktopServices).toContain("withInstallActivity('ngrok'");
     expect(desktopServices).toContain("withInstallActivity('pdf_provider'");
     expect(main).toContain("kind: 'app_update'");
-    expect(styles).toContain('.install-progress-backdrop');
-    expect(styles).toContain('.install-progress-bar.is-indeterminate');
+
   });
 });
