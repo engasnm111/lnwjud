@@ -1,3 +1,4 @@
+import { ActionButton } from './features/ui/UiPrimitives.js';
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { EMPTY_INSTALL_ACTIVITY, workspaceScopeMatches } from '@lnwjud/ipc-contracts';
 import type {
@@ -912,8 +913,8 @@ export function App(): ReactElement {
                 <strong>{t('app.bootFailed')}</strong>
                 <p>{bootError}</p>
                 <div className="inline-actions">
-                  <button type="button" onClick={() => { void refresh(); }}>{t('action.retry')}</button>
-                  <button type="button" onClick={() => { void popOutLogViewer(); }}>{t('app.openLogs')}</button>
+                  <ActionButton type="button" onClick={() => { void refresh(); }}>{t('action.retry')}</ActionButton>
+                  <ActionButton type="button" onClick={() => { void popOutLogViewer(); }}>{t('app.openLogs')}</ActionButton>
                 </div>
               </div>
             )}
@@ -950,7 +951,7 @@ export function App(): ReactElement {
       {bootError === null ? null : (
         <div className="error-banner boot-partial-error" role="alert">
           <span>{bootError}</span>
-          <button type="button" onClick={() => { void refresh(); }}>{t('action.retry')}</button>
+          <ActionButton type="button" onClick={() => { void refresh(); }}>{t('action.retry')}</ActionButton>
         </div>
       )}
       {error === null ? null : <div className="error-banner" role="alert">{error}</div>}

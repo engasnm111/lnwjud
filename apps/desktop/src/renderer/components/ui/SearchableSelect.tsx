@@ -1,8 +1,10 @@
+import { ActionButton, FormInput } from '../../features/ui/UiPrimitives.js';
 import { useEffect, useId, useRef, useState, type ReactElement } from 'react';
 
 export type SelectOption = { readonly value: string; readonly label: string };
 
 export function SearchableSelect(props: {
+  readonly id?: string;
   readonly value: string;
   readonly options: readonly SelectOption[];
   readonly onChange: (value: string) => void;
@@ -40,13 +42,13 @@ export function SearchableSelect(props: {
 
   return (
     <div ref={root} className={`ui-combobox ${props.className ?? ''}`}>
-      <button type="button" className="ui-combobox-trigger" disabled={props.disabled}
+      <ActionButton id={props.id} type="button" className="ui-combobox-trigger" disabled={props.disabled}
         aria-label={props.label} aria-expanded={open} aria-controls={id} aria-haspopup="listbox"
         onClick={() => { setTerm(''); setActive(0); setOpen(!open); }}>
         <span>{current?.label ?? props.placeholder ?? props.label}</span><span aria-hidden="true">⌄</span>
-      </button>
+      </ActionButton>
       {open ? <div className="ui-combobox-popover">
-        <input ref={search} autoFocus type="search" role="combobox" aria-label={props.label}
+        <FormInput ref={search} autoFocus type="search" role="combobox" aria-label={props.label}
           aria-autocomplete="list" aria-controls={id} aria-expanded={true}
           value={term} placeholder={props.placeholder ?? props.label}
           onChange={(event) => { setTerm(event.target.value); setActive(0); }}
@@ -58,11 +60,11 @@ export function SearchableSelect(props: {
           }} />
         <div id={id} role="listbox" className="ui-combobox-options" aria-label={props.label}>
           {matches.length === 0 ? <div className="ui-combobox-empty">No matches</div> : matches.map((item, i) => (
-            <button type="button" role="option" aria-selected={item.value === props.value}
+            <ActionButton type="button" role="option" aria-selected={item.value === props.value}
               className={i === active ? 'ui-combobox-option highlighted' : 'ui-combobox-option'}
               key={item.value} onMouseEnter={() => setActive(i)} onClick={() => choose(item.value)}>
               {item.label}
-            </button>
+            </ActionButton>
           ))}
         </div>
       </div> : null}

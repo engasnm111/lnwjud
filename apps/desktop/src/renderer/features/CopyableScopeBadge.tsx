@@ -1,3 +1,4 @@
+import { ActionButton } from './ui/UiPrimitives.js';
 import { useState, type ReactElement } from 'react';
 import { copyTextToClipboard } from '../clipboard.js';
 
@@ -23,7 +24,7 @@ export function CopyableScopeBadge(props: CopyableScopeBadgeProps): ReactElement
   };
   const label = props.kind === 'workspace' ? 'Workspace ID' : 'Session ID';
   return (
-    <button
+    <ActionButton
       type="button"
       className={`scope-badge ${props.kind} copyable`}
       title={props.value}
@@ -32,6 +33,6 @@ export function CopyableScopeBadge(props: CopyableScopeBadgeProps): ReactElement
     >
       <span className="scope-badge-label">{props.displayLabel}</span>
       <span className="scope-badge-feedback" aria-live="polite">{copied ? '✓' : ''}</span>
-    </button>
+    </ActionButton>
   );
 }

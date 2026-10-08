@@ -1,3 +1,4 @@
+import { ActionButton, FormSelect } from '../ui/UiPrimitives.js';
 import { useEffect, useRef, type ReactElement } from 'react';
 import type { PermissionProfileName, UiLocale } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
@@ -47,7 +48,7 @@ export function FirstRunTunnelTip(props: FirstRunTunnelTipProps): ReactElement {
           <div className="guided-tunnel-privacy" role="note">🔒 {t('guidedTunnel.privacy')}</div>
           <label className="setting-field" htmlFor="first-run-permission-profile">
             <span className="field-label">{t('guidedTunnel.permissionLabel')}</span>
-            <select
+            <FormSelect
               id="first-run-permission-profile"
               className="settings-select"
               value={props.permissionProfile}
@@ -57,15 +58,15 @@ export function FirstRunTunnelTip(props: FirstRunTunnelTipProps): ReactElement {
               <option value="balanced">{t('permission.balanced')}</option>
               <option value="full">{t('permission.full')}</option>
               <option value="custom">{t('permission.custom')}</option>
-            </select>
+            </FormSelect>
             <span className="hint">{t('guidedTunnel.permissionHint')}</span>
           </label>
         </div>
         <div className="guided-tunnel-tip-actions">
-          <button type="button" className="btn-save-gold" ref={startButtonRef} onClick={props.onStart}>
+          <ActionButton type="button" className="btn-save-gold" ref={startButtonRef} onClick={props.onStart}>
             {t('guidedTunnel.startSetup')}
-          </button>
-          <button type="button" onClick={props.onLater}>{t('guidedTunnel.later')}</button>
+          </ActionButton>
+          <ActionButton type="button" onClick={props.onLater}>{t('guidedTunnel.later')}</ActionButton>
         </div>
       </section>
     </div>

@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 import type { DashboardSnapshot, UiLocale, UpdateStatus } from '@lnwjud/ipc-contracts';
 import { createTranslator, type Translator } from '../../i18n/index.js';
@@ -51,7 +52,7 @@ export function AppShell(props: AppShellProps): ReactElement {
           <div className="titlebar-brand">
             <img src="./favicon.ico" alt="lnwjud logo" className="titlebar-logo" />
             <span className="titlebar-title">{t('brand')}</span>
-            <button
+            <ActionButton
               type="button"
               className={`titlebar-version update-${props.updateStatus?.phase ?? 'idle'}`}
               onClick={props.onUpdateAction}
@@ -62,8 +63,8 @@ export function AppShell(props: AppShellProps): ReactElement {
               aria-busy={props.updateStatus?.phase === 'checking' || props.updateStatus?.phase === 'downloading'}
             >
               {versionBadgeText(props.appVersion, props.updateStatus, t)}
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
               type="button"
               className="titlebar-whats-new"
               onClick={() => setWhatsNewOpen(true)}
@@ -71,7 +72,7 @@ export function AppShell(props: AppShellProps): ReactElement {
               aria-label={t('whatsNew.tooltip')}
             >
               ?
-            </button>
+            </ActionButton>
           </div>
 
           <div className="titlebar-center">
@@ -87,14 +88,14 @@ export function AppShell(props: AppShellProps): ReactElement {
         <div className="titlebar-actions">
           <div className="locale-switch" role="group" aria-label={t('settings.locale')}>
             {localeItems.map((item) => (
-              <button
+              <ActionButton
                 key={item.locale}
                 type="button"
                 className={props.locale === item.locale ? 'active' : undefined}
                 onClick={() => props.onLocaleChange(item.locale)}
               >
                 {t(item.key)}
-              </button>
+              </ActionButton>
             ))}
           </div>
         </div>
@@ -109,14 +110,14 @@ export function AppShell(props: AppShellProps): ReactElement {
           </div>
           <nav className="sidebar-nav">
             {navItems.map((item) => (
-              <button
+              <ActionButton
                 key={item.screen}
                 type="button"
                 className={props.screen === item.screen ? 'nav-item active' : 'nav-item'}
                 onClick={() => props.onNavigate(item.screen)}
               >
                 {t(item.key)}
-              </button>
+              </ActionButton>
             ))}
           </nav>
           <div className="sidebar-footer">

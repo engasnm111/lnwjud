@@ -101,7 +101,7 @@ describe('Backup settings UI', () => {
     }));
 
     expect(markup).toContain('Stop Tunnel and Local MCP before scheduling a database restore.');
-    expect(markup).toContain('<button type="button" disabled="">Restore</button>');
+    expect(markup).toMatch(/<button(?=[^>]*disabled="")[^>]*>Restore<\/button>/);
   });
 
   it('explains the incomplete parts of a cross-platform restore', () => {

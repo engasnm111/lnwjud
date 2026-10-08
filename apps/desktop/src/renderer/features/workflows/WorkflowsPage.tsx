@@ -1,3 +1,4 @@
+import { ActionButton, Surface } from '../ui/UiPrimitives.js';
 import { useEffect, useState, type ReactElement } from 'react';
 import type { UiLocale, WorkflowDraft, WorkflowTemplate } from '@lnwjud/ipc-contracts';
 import { WorkflowInputForm } from './WorkflowInputForm.js';
@@ -57,35 +58,35 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
       {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p> : null}
       <div className="workflow-cards">
         {templates.map((template) => (
-          <button type="button" key={template.id} className={selected?.id === template.id ? 'workflow-card selected' : 'workflow-card'} onClick={() => choose(template)}>
+          <ActionButton type="button" key={template.id} className={selected?.id === template.id ? 'workflow-card selected' : 'workflow-card'} onClick={() => choose(template)}>
             <strong>{workflowLocalized(props.locale,{th:template.titleTh,en:template.titleEn})}</strong>
             <span>{workflowLocalized(props.locale,{th:template.descriptionTh,en:template.descriptionEn})}</span>
             <small>{template.readOnly ? (copy.readOnly) : (copy.output)}</small>
-          </button>
+          </ActionButton>
         ))}
       </div>
       {selected ? (
-        <section className="workflow-config" aria-label={copy.inputLabel}>
+        <Surface as="section" className="workflow-config" aria-label={copy.inputLabel}>
           <h2>{workflowLocalized(props.locale,{th:selected.titleTh,en:selected.titleEn})}</h2>
           <WorkflowInputForm template={selected} locale={props.locale} values={inputs} disabled={busy}
             onChange={(values) => { setInputs(values); setDraft(null); setMessage(null); }}/>
-          <button type="button" className="workflow-primary-action" onClick={() => { void prepare(); }} disabled={busy || !props.workspaceId}>
+          <ActionButton type="button" className="workflow-primary-action" onClick={() => { void prepare(); }} disabled={busy || !props.workspaceId}>
             {busy ? (copy.working) : (copy.prepare)}
-          </button>
-        </section>
+          </ActionButton>
+        </Surface>
       ) : null}
       {draft ? (
-        <section className="workflow-preview" aria-live="polite">
+        <Surface as="section" className="workflow-preview" aria-live="polite">
           <h2>{copy.preview}</h2>
           <p>{draft.readiness === 'ready' ? (copy.ready)
             : (copy.notReady)}</p>
           {draft.blockers.length ? <ul>{draft.blockers.map((item) => <li key={item}>{item}</li>)}</ul> : null}
           <ol>{draft.steps.map((step) => <li key={step.id}>{step.title}</li>)}</ol>
           <p>{copy.acceptance}: {draft.acceptance.map((entry) => entry.title).join('; ')}</p>
-          <button type="button" className="workflow-primary-action" disabled={draft.readiness !== 'ready'} onClick={() => { void copyPrompt(); }}>
+          <ActionButton type="button" className="workflow-primary-action" disabled={draft.readiness !== 'ready'} onClick={() => { void copyPrompt(); }}>
             {copy.copy}
-          </button>
-        </section>
+          </ActionButton>
+        </Surface>
       ) : null}
       {message ? <p role="status">{message}</p> : null}
     </div>

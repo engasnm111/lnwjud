@@ -1,3 +1,4 @@
+import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
 import { useEffect, useState, type ReactElement } from 'react';
 import type { TaskResultSummary, UiLocale } from '@lnwjud/ipc-contracts';
 import { v580Strings } from '../../i18n/v580-copy.js';
@@ -26,10 +27,10 @@ export function GoalResultsPanel(props: {
   return <section className="diagnostics-goal-results">
     <p>{copy.intro}</p>
     <div className="diagnostics-filters">
-      <label>Goal ID <input value={goalId} maxLength={128} onChange={e => setGoalId(e.target.value)}/></label>
-      <button type="button" disabled={!props.workspaceId || !goalId.trim() || busy} onClick={() => { void load(); }}>
+      <label>Goal ID <FormInput value={goalId} maxLength={128} onChange={e => setGoalId(e.target.value)}/></label>
+      <ActionButton type="button" disabled={!props.workspaceId || !goalId.trim() || busy} onClick={() => { void load(); }}>
         {busy ? (copy.loading) : (copy.inspect)}
-      </button>
+      </ActionButton>
     </div>
     {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p> : null}
     {error ? <p role="alert">{error}</p> : null}

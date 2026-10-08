@@ -1,3 +1,4 @@
+import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import {
   EXTERNAL_SETUP_URLS,
@@ -187,7 +188,7 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
           <h3>{t('guidedTunnel.openGuide')}</h3>
           <p>{t('guidedTunnel.privacy')}</p>
         </div>
-        <button type="button" className="guided-tunnel-close" aria-label={t('guidedTunnel.later')} onClick={close}>×</button>
+        <ActionButton type="button" className="guided-tunnel-close" aria-label={t('guidedTunnel.later')} onClick={close}>×</ActionButton>
       </div>
 
       <ol className="guided-tunnel-progress" aria-label={t('guidedTunnel.progress')}>
@@ -203,9 +204,9 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
         {step === 'create_tunnel' ? (
           <>
             <StepHeading title={t('guidedTunnel.stepTunnelTitle')} body={t('guidedTunnel.stepTunnelBody')} />
-            <button type="button" onClick={() => { void openExternal('openai_tunnels'); }}>{t('guidedTunnel.openTunnelSettings')}</button>
+            <ActionButton type="button" onClick={() => { void openExternal('openai_tunnels'); }}>{t('guidedTunnel.openTunnelSettings')}</ActionButton>
             <label className="field-label" htmlFor="guided-tunnel-id">{t('guidedTunnel.tunnelIdLabel')}</label>
-            <input
+            <FormInput
               id="guided-tunnel-id"
               name="tunnelId"
               type="text"
@@ -216,7 +217,7 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
             />
             <p className="hint">{props.tunnel.profileExists ? t('guidedTunnel.configured') : t('guidedTunnel.tunnelIdHint')}</p>
             <div className="inline-actions">
-              <button type="button" className="btn-save-gold" onClick={continueFromTunnelId}>{t('guidedTunnel.next')}</button>
+              <ActionButton type="button" className="btn-save-gold" onClick={continueFromTunnelId}>{t('guidedTunnel.next')}</ActionButton>
             </div>
           </>
         ) : null}
@@ -224,10 +225,10 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
         {step === 'save_key' ? (
           <>
             <StepHeading title={t('guidedTunnel.stepKeyTitle')} body={t('guidedTunnel.stepKeyBody')} />
-            <button type="button" onClick={() => { void openExternal('openai_api_keys'); }}>{t('guidedTunnel.openApiKeys')}</button>
+            <ActionButton type="button" onClick={() => { void openExternal('openai_api_keys'); }}>{t('guidedTunnel.openApiKeys')}</ActionButton>
             <label className="field-label" htmlFor="guided-runtime-api-key">{t('guidedTunnel.apiKeyLabel')}</label>
             <div className="password-input-wrapper guided-key-input">
-              <input
+              <FormInput
                 id="guided-runtime-api-key"
                 name="apiKey"
                 type={showApiKey ? 'text' : 'password'}
@@ -236,16 +237,16 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
                 spellCheck={false}
                 onChange={(event) => setApiKey(event.target.value)}
               />
-              <button type="button" className="toggle-pw-btn" onClick={() => setShowApiKey((shown) => !shown)}>
+              <ActionButton type="button" className="toggle-pw-btn" onClick={() => setShowApiKey((shown) => !shown)}>
                 {showApiKey ? t('guidedTunnel.hideApiKey') : t('guidedTunnel.showApiKey')}
-              </button>
+              </ActionButton>
             </div>
             <p className="hint">{t('guidedTunnel.apiKeyHint')}</p>
             <div className="inline-actions">
-              <button type="button" onClick={goBack}>{t('guidedTunnel.back')}</button>
-              <button type="button" className="btn-save-gold" disabled={busyAction !== null} onClick={() => { void saveApiKey(); }}>
+              <ActionButton type="button" onClick={goBack}>{t('guidedTunnel.back')}</ActionButton>
+              <ActionButton type="button" className="btn-save-gold" disabled={busyAction !== null} onClick={() => { void saveApiKey(); }}>
                 {t('guidedTunnel.saveKey')}
-              </button>
+              </ActionButton>
             </div>
           </>
         ) : null}
@@ -258,10 +259,10 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
               <SummaryRow label={t('guidedTunnel.apiKeyLabel')} value={props.tunnel.hasApiKey ? t('guidedTunnel.keyStored') : '—'} />
             </div>
             <div className="inline-actions">
-              <button type="button" onClick={goBack}>{t('guidedTunnel.back')}</button>
-              <button type="button" className="btn-save-gold" disabled={busyAction !== null || !credentialAvailable} onClick={() => { void configureProfile(); }}>
+              <ActionButton type="button" onClick={goBack}>{t('guidedTunnel.back')}</ActionButton>
+              <ActionButton type="button" className="btn-save-gold" disabled={busyAction !== null || !credentialAvailable} onClick={() => { void configureProfile(); }}>
                 {busyAction === 'configure' ? t('guidedTunnel.configuring') : t('guidedTunnel.configure')}
-              </button>
+              </ActionButton>
             </div>
           </>
         ) : null}
@@ -278,10 +279,10 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
               <div className="alert-box-warning" role="status">⚠️ {t('guidedTunnel.persistentRestartNotice')}</div>
             ) : null}
             <div className="inline-actions">
-              <button type="button" onClick={goBack}>{t('guidedTunnel.back')}</button>
-              <button type="button" className="btn-save-gold" disabled={!canStart} onClick={() => { void startTunnel(); }}>
+              <ActionButton type="button" onClick={goBack}>{t('guidedTunnel.back')}</ActionButton>
+              <ActionButton type="button" className="btn-save-gold" disabled={!canStart} onClick={() => { void startTunnel(); }}>
                 {busyAction === 'start' ? t('guidedTunnel.starting') : t('guidedTunnel.startTunnel')}
-              </button>
+              </ActionButton>
             </div>
           </>
         ) : null}
@@ -295,8 +296,8 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
               <SummaryRow label={t('guidedTunnel.progress')} value={t('guidedTunnel.running')} />
             </div>
             <div className="inline-actions">
-              <button type="button" onClick={() => { void openExternal('chatgpt_plugins'); }}>{t('guidedTunnel.openChatGptPlugins')}</button>
-              <button type="button" className="btn-save-gold" onClick={close}>{t('guidedTunnel.done')}</button>
+              <ActionButton type="button" onClick={() => { void openExternal('chatgpt_plugins'); }}>{t('guidedTunnel.openChatGptPlugins')}</ActionButton>
+              <ActionButton type="button" className="btn-save-gold" onClick={close}>{t('guidedTunnel.done')}</ActionButton>
             </div>
           </>
         ) : null}
@@ -307,7 +308,7 @@ export function GuidedTunnelSetup(props: GuidedTunnelSetupProps): ReactElement |
           <div className="guided-link-fallback" role="alert">
             <strong>{t('guidedTunnel.linkError')}</strong>
             <code className="settings-path-display">{fallbackUrl}</code>
-            <button type="button" onClick={() => { void copyTextToClipboard(fallbackUrl); }}>{t('guidedTunnel.copyLink')}</button>
+            <ActionButton type="button" onClick={() => { void copyTextToClipboard(fallbackUrl); }}>{t('guidedTunnel.copyLink')}</ActionButton>
           </div>
         )}
       </div>

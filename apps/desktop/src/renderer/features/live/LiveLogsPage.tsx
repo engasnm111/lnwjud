@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useCallback, useState, type ReactElement } from 'react';
 import type { IncidentClassification, LiveLogExportReference, LogLine, LogSessionSummary, LogSource, TunnelAuthStatus, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
@@ -46,15 +47,15 @@ export function LiveLogsPage(props: LiveLogsPageProps): ReactElement {
           <p className="page-subtitle">{t(tunnelPresentation.logSubtitleKey)}</p>
         </div>
         <div className="heading-actions">
-          <button type="button" className="clear-all-logs-button" onClick={() => { void props.onClearAll(); }}>{t('live.clearAll')}</button>
-          <button type="button" disabled={props.incidentBusy} onClick={() => { void props.onCaptureIncident(); }}>{t('live.captureIncident')}</button>
-          <button type="button" onClick={() => { void props.onPopOut(); }}>{t('live.popOut')}</button>
+          <ActionButton type="button" className="clear-all-logs-button" onClick={() => { void props.onClearAll(); }}>{t('live.clearAll')}</ActionButton>
+          <ActionButton type="button" disabled={props.incidentBusy} onClick={() => { void props.onCaptureIncident(); }}>{t('live.captureIncident')}</ActionButton>
+          <ActionButton type="button" onClick={() => { void props.onPopOut(); }}>{t('live.popOut')}</ActionButton>
         </div>
       </div>
       {!props.incidentBusy && props.incidentNotice === null && props.incidentClassification === null ? null : <p className="hint" role="status">{props.incidentBusy ? t('live.incident.capturing') : props.incidentNotice ?? `${incidentSummary(t, props.incidentClassification!)} · ${formatDateTime(props.incidentCapturedAt, '—', props.locale)}`}</p>}
       <div className="log-tabs" role="tablist" aria-label={t('live.title')}>
         {sources.map((source) => (
-          <button
+          <ActionButton
             key={source}
             type="button"
             role="tab"
@@ -63,7 +64,7 @@ export function LiveLogsPage(props: LiveLogsPageProps): ReactElement {
             onClick={() => setTab(source)}
           >
             {source === 'tunnel' ? t(tunnelPresentation.logTabKey) : source === 'mcp' ? t('live.tabMcp') : t('live.tabProcess')}
-          </button>
+          </ActionButton>
         ))}
       </div>
       {sources.map((source) => (

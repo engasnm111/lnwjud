@@ -11,7 +11,7 @@ import type {
 } from '@lnwjud/ipc-contracts';
 import { parseDelimitedList } from '@lnwjud/shared/text-list';
 import { createTranslator } from '../../i18n/index.js';
-import { SettingsCardHeading, StatusMessage, EmptyState } from '../ui/UiPrimitives.js';
+import { SettingsCardHeading, StatusMessage, EmptyState , ActionButton, FormInput, FormSelect, FormTextarea } from '../ui/UiPrimitives.js';
 import { SettingSwitch } from './SettingSwitch.js';
 
 export type UserConfigSection = 'general' | 'security' | 'engineering' | 'tools' | 'mcp' | 'tunnel';
@@ -236,10 +236,10 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
           <div className="setting-grid two-col">
             <div className="setting-field">
               <label className="field-label" htmlFor="close-behavior">{t('userConfig.closeBehavior')}</label>
-              <select id="close-behavior" className="settings-select" value={draft.closeBehavior} onChange={(event) => patch({ closeBehavior: event.target.value === 'quit' ? 'quit' : 'tray' })}>
+              <FormSelect id="close-behavior" className="settings-select" value={draft.closeBehavior} onChange={(event) => patch({ closeBehavior: event.target.value === 'quit' ? 'quit' : 'tray' })}>
                 <option value="tray">{t('userConfig.hideToTray')}</option>
                 <option value="quit">{t('userConfig.quit')}</option>
-              </select>
+              </FormSelect>
             </div>
             <NumberField label={t('userConfig.updateInterval')} value={draft.updateIntervalMinutes} min={5} max={1440} onChange={(value) => patch({ updateIntervalMinutes: value })} />
           </div>
@@ -333,19 +333,19 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
             <div className="setting-grid two-col">
               <div className="setting-field">
                 <label className="field-label" htmlFor="engineering-profile">{t('userConfig.engineeringProfile')}</label>
-                <select id="engineering-profile" className="settings-select" value={engineering.profile} onChange={(event) => patchEngineering({ profile: event.target.value === 'standard' || event.target.value === 'strict' || event.target.value === 'custom' ? event.target.value : 'senior' })}>
+                <FormSelect id="engineering-profile" className="settings-select" value={engineering.profile} onChange={(event) => patchEngineering({ profile: event.target.value === 'standard' || event.target.value === 'strict' || event.target.value === 'custom' ? event.target.value : 'senior' })}>
                   <option value="senior">{t('userConfig.engineeringProfileSenior')}</option>
                   <option value="standard">{t('userConfig.engineeringProfileStandard')}</option>
                   <option value="strict">{t('userConfig.engineeringProfileStrict')}</option>
                   <option value="custom">{t('userConfig.engineeringProfileCustom')}</option>
-                </select>
+                </FormSelect>
               </div>
               <div className="setting-field">
                 <label className="field-label" htmlFor="engineering-scope">{t('userConfig.engineeringScope')}</label>
-                <select id="engineering-scope" className="settings-select" value={engineering.applyTo} onChange={(event) => patchEngineering({ applyTo: event.target.value === 'all_workspaces' ? 'all_workspaces' : 'coding_projects' })}>
+                <FormSelect id="engineering-scope" className="settings-select" value={engineering.applyTo} onChange={(event) => patchEngineering({ applyTo: event.target.value === 'all_workspaces' ? 'all_workspaces' : 'coding_projects' })}>
                   <option value="coding_projects">{t('userConfig.engineeringScopeCoding')}</option>
                   <option value="all_workspaces">{t('userConfig.engineeringScopeAll')}</option>
-                </select>
+                </FormSelect>
               </div>
             </div>
             <div className="setting-field">
@@ -356,24 +356,24 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
               <div className="setting-grid two-col" aria-label={t('userConfig.engineeringCustomTitle')}>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="engineering-analysis">{t('userConfig.engineeringAnalysis')}</label>
-                  <select id="engineering-analysis" className="settings-select" value={engineering.custom?.analysis ?? 'cross_file'} onChange={(event) => patchEngineering({ custom: { analysis: event.target.value === 'focused' ? 'focused' : 'cross_file', review: engineering.custom?.review ?? 'risk_based', validation: engineering.custom?.validation ?? 'risk_based', docsImpactCheck: engineering.custom?.docsImpactCheck ?? true } })}>
+                  <FormSelect id="engineering-analysis" className="settings-select" value={engineering.custom?.analysis ?? 'cross_file'} onChange={(event) => patchEngineering({ custom: { analysis: event.target.value === 'focused' ? 'focused' : 'cross_file', review: engineering.custom?.review ?? 'risk_based', validation: engineering.custom?.validation ?? 'risk_based', docsImpactCheck: engineering.custom?.docsImpactCheck ?? true } })}>
                     <option value="focused">{t('userConfig.engineeringAnalysisFocused')}</option>
                     <option value="cross_file">{t('userConfig.engineeringAnalysisCrossFile')}</option>
-                  </select>
+                  </FormSelect>
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="engineering-review">{t('userConfig.engineeringReview')}</label>
-                  <select id="engineering-review" className="settings-select" value={engineering.custom?.review ?? 'risk_based'} onChange={(event) => patchEngineering({ custom: { analysis: engineering.custom?.analysis ?? 'cross_file', review: event.target.value === 'always' ? 'always' : 'risk_based', validation: engineering.custom?.validation ?? 'risk_based', docsImpactCheck: engineering.custom?.docsImpactCheck ?? true } })}>
+                  <FormSelect id="engineering-review" className="settings-select" value={engineering.custom?.review ?? 'risk_based'} onChange={(event) => patchEngineering({ custom: { analysis: engineering.custom?.analysis ?? 'cross_file', review: event.target.value === 'always' ? 'always' : 'risk_based', validation: engineering.custom?.validation ?? 'risk_based', docsImpactCheck: engineering.custom?.docsImpactCheck ?? true } })}>
                     <option value="risk_based">{t('userConfig.engineeringRiskBased')}</option>
                     <option value="always">{t('userConfig.engineeringAlways')}</option>
-                  </select>
+                  </FormSelect>
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="engineering-validation">{t('userConfig.engineeringValidation')}</label>
-                  <select id="engineering-validation" className="settings-select" value={engineering.custom?.validation ?? 'risk_based'} onChange={(event) => patchEngineering({ custom: { analysis: engineering.custom?.analysis ?? 'cross_file', review: engineering.custom?.review ?? 'risk_based', validation: event.target.value === 'strict' ? 'strict' : 'risk_based', docsImpactCheck: engineering.custom?.docsImpactCheck ?? true } })}>
+                  <FormSelect id="engineering-validation" className="settings-select" value={engineering.custom?.validation ?? 'risk_based'} onChange={(event) => patchEngineering({ custom: { analysis: engineering.custom?.analysis ?? 'cross_file', review: engineering.custom?.review ?? 'risk_based', validation: event.target.value === 'strict' ? 'strict' : 'risk_based', docsImpactCheck: engineering.custom?.docsImpactCheck ?? true } })}>
                     <option value="risk_based">{t('userConfig.engineeringRiskBased')}</option>
                     <option value="strict">{t('userConfig.engineeringStrict')}</option>
-                  </select>
+                  </FormSelect>
                 </div>
                 <SettingSwitch checked={engineering.custom?.docsImpactCheck ?? true} label={t('userConfig.engineeringDocsImpact')} description={t('userConfig.engineeringDocsImpactDesc')} onChange={(value) => patchEngineering({ custom: { analysis: engineering.custom?.analysis ?? 'cross_file', review: engineering.custom?.review ?? 'risk_based', validation: engineering.custom?.validation ?? 'risk_based', docsImpactCheck: value } })} />
               </div>
@@ -396,22 +396,22 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
                 <div className="setting-grid two-col">
                   <div className="setting-field">
                     <label className="field-label" htmlFor="engineering-workspace-mode">{t('userConfig.engineeringWorkspaceMode')}</label>
-                    <select id="engineering-workspace-mode" className="settings-select" value={selectedEngineeringOverride?.mode ?? 'inherit'} onChange={(event) => setWorkspaceEngineeringMode(event.target.value === 'on' || event.target.value === 'off' ? event.target.value : 'inherit')}>
+                    <FormSelect id="engineering-workspace-mode" className="settings-select" value={selectedEngineeringOverride?.mode ?? 'inherit'} onChange={(event) => setWorkspaceEngineeringMode(event.target.value === 'on' || event.target.value === 'off' ? event.target.value : 'inherit')}>
                       <option value="inherit">{t('userConfig.engineeringWorkspaceInherit')}</option>
                       <option value="on">{t('status.on')}</option>
                       <option value="off">{t('status.off')}</option>
-                    </select>
+                    </FormSelect>
                   </div>
                   {selectedEngineeringOverride?.mode === 'on' ? (
                     <div className="setting-field">
                       <label className="field-label" htmlFor="engineering-workspace-profile">{t('userConfig.engineeringWorkspaceProfile')}</label>
-                      <select id="engineering-workspace-profile" className="settings-select" value={selectedEngineeringOverride.profile ?? 'inherit'} onChange={(event) => setWorkspaceEngineeringProfile(event.target.value === 'standard' || event.target.value === 'senior' || event.target.value === 'strict' || event.target.value === 'custom' ? event.target.value : 'inherit')}>
+                      <FormSelect id="engineering-workspace-profile" className="settings-select" value={selectedEngineeringOverride.profile ?? 'inherit'} onChange={(event) => setWorkspaceEngineeringProfile(event.target.value === 'standard' || event.target.value === 'senior' || event.target.value === 'strict' || event.target.value === 'custom' ? event.target.value : 'inherit')}>
                         <option value="inherit">{t('userConfig.engineeringWorkspaceInheritProfile')}</option>
                         <option value="senior">{t('userConfig.engineeringProfileSenior')}</option>
                         <option value="standard">{t('userConfig.engineeringProfileStandard')}</option>
                         <option value="strict">{t('userConfig.engineeringProfileStrict')}</option>
                         <option value="custom">{t('userConfig.engineeringProfileCustom')}</option>
-                      </select>
+                      </FormSelect>
                     </div>
                   ) : null}
                 </div>
@@ -511,9 +511,9 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
                 />
                 {canAutoInstallPdfProvider ? (
                   <div className="inline-actions">
-                    <button type="button" className="btn-save-gold" disabled={pdfInstallBusy} onClick={() => { void installPdf(); }}>
+                    <ActionButton type="button" className="btn-save-gold" disabled={pdfInstallBusy} onClick={() => { void installPdf(); }}>
                       {pdfInstallBusy ? t('userConfig.pdfInstalling') : t('userConfig.pdfAutoInstall')}
-                    </button>
+                    </ActionButton>
                   </div>
                 ) : null}
                 <p className="hint">{canAutoInstallPdfProvider ? t('userConfig.pdfAutoInstallHint') : t('userConfig.pdfManualInstallHint', { platform: hostPlatform, arch: hostArch })}</p>
@@ -537,15 +537,15 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
             icon="⬡"
             title={t('userConfig.extensionsTitle')}
             subtitle={t('userConfig.extensionsSubtitle')}
-            action={<button type="button" className="btn-save-gold" onClick={addServer}>+ {t('userConfig.addMcpServer')}</button>}
+            action={<ActionButton type="button" className="btn-save-gold" onClick={addServer}>+ {t('userConfig.addMcpServer')}</ActionButton>}
           />
           <div className="setting-grid two-col">
             <div className="setting-field">
               <label className="field-label" htmlFor="extension-mode">{t('userConfig.extensionMode')}</label>
-              <select id="extension-mode" className="settings-select" value={draft.extensions.mode} onChange={(event) => patchExtensions({ mode: event.target.value === 'allowlist' ? 'allowlist' : 'enable_all' })}>
+              <FormSelect id="extension-mode" className="settings-select" value={draft.extensions.mode} onChange={(event) => patchExtensions({ mode: event.target.value === 'allowlist' ? 'allowlist' : 'enable_all' })}>
                 <option value="enable_all">{t('userConfig.enableAllExceptDisabled')}</option>
                 <option value="allowlist">{t('userConfig.allowlistOnly')}</option>
-              </select>
+              </FormSelect>
             </div>
             <TextList label={t('userConfig.enabledServersAllowlist')} value={draft.extensions.enabledServers} onChange={(value) => patchExtensions({ enabledServers: value })} />
             <TextList label={t('userConfig.disabledServers')} value={draft.extensions.disabledServers} onChange={(value) => patchExtensions({ disabledServers: value })} />
@@ -556,7 +556,7 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
             {draft.extensions.extraMcpServers.length === 0 ? <EmptyState>{t('userConfig.noCustomMcp')}</EmptyState> : null}
             {draft.extensions.extraMcpServers.map((server, index) => (
               <article className="mcp-server-settings-item" key={index}>
-                <div className="section-heading"><strong>{server.name || t('userConfig.mcpServerNumber', { number: index + 1 })}</strong><button type="button" className="danger-soft-button" onClick={() => patchExtensions({ extraMcpServers: draft.extensions.extraMcpServers.filter((_entry, current) => current !== index) })}>{t('userConfig.remove')}</button></div>
+                <div className="section-heading"><strong>{server.name || t('userConfig.mcpServerNumber', { number: index + 1 })}</strong><ActionButton type="button" className="danger-soft-button" onClick={() => patchExtensions({ extraMcpServers: draft.extensions.extraMcpServers.filter((_entry, current) => current !== index) })}>{t('userConfig.remove')}</ActionButton></div>
                 <div className="setting-grid two-col">
                   <Field label={t('userConfig.serverName')} value={server.name} onChange={(value) => updateServer(index, { name: value })} />
                   <Field label={t('userConfig.serverCommand')} value={server.command} placeholder="npx" onChange={(value) => updateServer(index, { command: value })} />
@@ -589,8 +589,8 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
             {message === null ? <span className="save-state-copy">{dirty ? t('userConfig.unsavedChanges') : t('userConfig.allSaved')}</span> : <StatusMessage tone="success" prefix="✓ ">{message}</StatusMessage>}
           </div>
           <div className="inline-actions">
-            <button type="button" disabled={!dirty || busy} onClick={() => { setDraft(effectiveSettings); setDirty(false); setError(null); setMessage(null); }}>{t('userConfig.discard')}</button>
-            <button type="button" className="btn-save-gold" disabled={!dirty || busy} onClick={() => { void save(); }}>{busy ? t('userConfig.saving') : t('userConfig.saveChanges')}</button>
+            <ActionButton type="button" disabled={!dirty || busy} onClick={() => { setDraft(effectiveSettings); setDirty(false); setError(null); setMessage(null); }}>{t('userConfig.discard')}</ActionButton>
+            <ActionButton type="button" className="btn-save-gold" disabled={!dirty || busy} onClick={() => { void save(); }}>{busy ? t('userConfig.saving') : t('userConfig.saveChanges')}</ActionButton>
           </div>
         </div>
       )}
@@ -599,11 +599,11 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
 }
 
 function NumberField({ label, value, min, max, onChange }: { readonly label: string; readonly value: number; readonly min: number; readonly max: number; readonly onChange: (value: number) => void }): ReactElement {
-  return <div className="setting-field"><label className="field-label">{label}</label><input type="number" value={value} min={min} max={max} onChange={(event) => onChange(clampNumber(event.target.value, value, min, max))} /></div>;
+  return <div className="setting-field"><label className="field-label">{label}</label><FormInput type="number" value={value} min={min} max={max} onChange={(event) => onChange(clampNumber(event.target.value, value, min, max))} /></div>;
 }
 
 function Decision({ label, value, onChange }: { readonly label: string; readonly value: PermissionDecisionSetting; readonly onChange: (value: PermissionDecisionSetting) => void }): ReactElement {
-  return <div className="setting-field"><label className="field-label">{label}</label><select className="settings-select" value={value} onChange={(event) => onChange(event.target.value === 'ALLOW' || event.target.value === 'DENY' ? event.target.value : 'ASK')}><option value="ALLOW">ALLOW</option><option value="ASK">ASK</option><option value="DENY">DENY</option></select></div>;
+  return <div className="setting-field"><label className="field-label">{label}</label><FormSelect className="settings-select" value={value} onChange={(event) => onChange(event.target.value === 'ALLOW' || event.target.value === 'DENY' ? event.target.value : 'ASK')}><option value="ALLOW">ALLOW</option><option value="ASK">ASK</option><option value="DENY">DENY</option></FormSelect></div>;
 }
 
 function TextList({ label, value, onChange, id, rows = 3, placeholder }: { readonly label: string; readonly value: readonly string[]; readonly onChange: (value: readonly string[]) => void; readonly id?: string; readonly rows?: number; readonly placeholder?: string }): ReactElement {
@@ -617,7 +617,7 @@ function TextList({ label, value, onChange, id, rows = 3, placeholder }: { reado
   return (
     <div className="setting-field">
       <label className="field-label" htmlFor={id}>{label}</label>
-      <textarea
+      <FormTextarea
         id={id}
         className="settings-textarea"
         rows={rows}
@@ -665,11 +665,11 @@ function sameStringMap(left: Readonly<Record<string, string>>, right: Readonly<R
 }
 
 function Field({ label, value, placeholder, onChange }: { readonly label: string; readonly value: string; readonly placeholder?: string; readonly onChange: (value: string) => void }): ReactElement {
-  return <div className="setting-field"><label className="field-label">{label}</label><input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /></div>;
+  return <div className="setting-field"><label className="field-label">{label}</label><FormInput value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /></div>;
 }
 
 function TextArea({ label, value, onChange }: { readonly label: string; readonly value: string; readonly onChange: (value: string) => void }): ReactElement {
-  return <div className="setting-field"><label className="field-label">{label}</label><textarea className="settings-textarea" rows={3} value={value} onChange={(event) => onChange(event.target.value)} /></div>;
+  return <div className="setting-field"><label className="field-label">{label}</label><FormTextarea className="settings-textarea" rows={3} value={value} onChange={(event) => onChange(event.target.value)} /></div>;
 }
 
 function splitLines(value: string): readonly string[] {

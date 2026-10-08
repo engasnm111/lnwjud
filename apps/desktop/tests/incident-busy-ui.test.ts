@@ -45,7 +45,7 @@ describe('shared incident capture busy UI', () => {
       onClear: async () => undefined, onExport: async () => undefined, onPopOut: async () => undefined,
     }));
     for (const markup of [home, live]) {
-      expect(markup).toContain('<button type="button" disabled="">Capture incident evidence</button>');
+      expect(markup).toMatch(/<button(?=[^>]*disabled="")[^>]*>Capture incident evidence<\/button>/);
       expect(markup).toContain('role="status"');
       expect(markup).toContain('Capturing incident evidence…');
     }

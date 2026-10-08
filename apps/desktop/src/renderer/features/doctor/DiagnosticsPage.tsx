@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useState, type ReactElement, type ReactNode } from 'react';
 import type { UiLocale } from '@lnwjud/ipc-contracts';
 import { v580Strings } from '../../i18n/v580-copy.js';
@@ -21,10 +22,10 @@ export function DiagnosticsPage(props: {
     <h1>Doctor</h1>
     <p className="page-subtitle">{words.title}</p>
     <div className="diagnostics-tabs" role="tablist" aria-label={words.views}>
-      {items.map(item=><button type="button" role="tab" key={item.id}
+      {items.map(item=><ActionButton type="button" role="tab" key={item.id}
         aria-selected={tab===item.id} onClick={()=>setTab(item.id)}>
         {item.label}
-      </button>)}
+      </ActionButton>)}
     </div>
     <div role="tabpanel">
       {tab==='checks'?props.checks:null}

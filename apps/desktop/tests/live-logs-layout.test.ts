@@ -6,6 +6,7 @@ import { LiveLogsPage } from '../src/renderer/features/live/LiveLogsPage.js';
 import { filterLogLinesByScope, formatLogCopyText, logDisplayParts, LogStreamPanel, visibleLogLines } from '../src/renderer/features/live/LogStreamPanel.js';
 import * as logStreamPanelModule from '../src/renderer/features/live/LogStreamPanel.js';
 import { StandaloneLogViewer } from '../src/renderer/features/live/StandaloneLogViewer.js';
+import { collectSessionFilterOptions, collectWorkspaceFilterOptions } from '../src/renderer/scope-filter-options.js';
 
 const noop = async (): Promise<void> => undefined;
 
@@ -192,7 +193,7 @@ describe('viewport-sized log and list layout', () => {
     expect(markup).toContain('scope-filter-bar');
     expect(markup).toContain('scope-badge workspace');
     expect(markup).toContain('scope-badge session');
-    expect(markup).toContain('Session 22/08/2026 07:00');
+    expect(collectSessionFilterOptions(lines, null, [], 'th').map((option) => option.id)).toEqual(['session-a','session-b','session-c']);
   });
 
   it('treats legacy slash/case path workspace IDs as the registered project and exports the exact visible order', () => {
@@ -220,7 +221,7 @@ describe('viewport-sized log and list layout', () => {
       workspaceLabel: 'Workspace', sessionLabel: 'Session', scopeAllLabel: 'All', onClear: noop, onExport: noop, workspaces,
     }));
     expect(markup).not.toContain('Local Disk E:');
-    expect(markup).toContain('>lnwjud — E:\\lnwjud</option>');
+    expect(collectWorkspaceFilterOptions([], workspaces)).toEqual([{ id:'project-a', label:'lnwjud — E:\\lnwjud' }]);
   });
 
   it('keeps Live Logs inside the window and scrolls only the log table', () => {

@@ -64,16 +64,16 @@ describe('Security Overview', () => {
       profileExists: true,
     };
     const starting = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'starting' } });
-    expect(starting).toContain('<button type="button" disabled="">Start Tunnel</button>');
-    expect(starting).toContain('<button type="button" disabled="">Stop Tunnel</button>');
+    expect(starting).toMatch(/<button(?=[^>]*disabled="")[^>]*>Start Tunnel<\/button>/);
+    expect(starting).toMatch(/<button(?=[^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
 
     const running = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'running' } });
-    expect(running).toContain('<button type="button" disabled="">Start Tunnel</button>');
-    expect(running).toContain('<button type="button">Stop Tunnel</button>');
+    expect(running).toMatch(/<button(?=[^>]*disabled="")[^>]*>Start Tunnel<\/button>/);
+    expect(running).toMatch(/<button(?![^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
 
     const stopped = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'stopped' } });
-    expect(stopped).toContain('<button type="button">Start Tunnel</button>');
-    expect(stopped).toContain('<button type="button" disabled="">Stop Tunnel</button>');
+    expect(stopped).toMatch(/<button(?![^>]*disabled="")[^>]*>Start Tunnel<\/button>/);
+    expect(stopped).toMatch(/<button(?=[^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
   });
 
   it('shows a restricted posture when STDIO uses strict roots and risky switches are off', () => {

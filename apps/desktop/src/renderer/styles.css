@@ -1742,7 +1742,7 @@ button.titlebar-version:hover {
 .git-file-toolbar select { flex:0 0 auto; }
 .git-file-toolbar input,.git-file-toolbar select { background:var(--surface); color:var(--text);border:1px solid var(--border-subtle);border-radius:8px;padding:9px 11px; }
 .git-file-toolbar .hint { margin-left:auto;white-space:nowrap; }
-.git-folder-group { position:sticky;top:0;z-index:2;background:var(--surface);color:var(--text);font-family:var(--font-sans);font-size:12px;font-weight:700;padding:9px 10px;border:1px solid var(--border-subtle);border-radius:6px;display:flex;gap:10px;justify-content:space-between;overflow-wrap:anywhere; }
+.git-folder-group { position:relative; flex:0 0 auto;background:var(--surface);color:var(--text);font-family:var(--font-sans);font-size:12px;font-weight:700;padding:9px 10px;border:1px solid var(--border-subtle);border-radius:6px;display:flex;gap:10px;justify-content:space-between;overflow-wrap:anywhere; }
 .git-folder-group span { color:var(--muted);font-weight:400;white-space:nowrap; }
 .git-show-more { margin-top:8px;align-self:center; }
 .git-preview-metadata {max-width:720px;text-align:left;padding:18px;border:1px solid var(--border-subtle);border-radius:10px;}
@@ -1752,6 +1752,7 @@ button.titlebar-version:hover {
 @media (max-width:700px) { .git-file-item { grid-template-columns:70px minmax(0,1fr) auto; } .git-file-stats,.git-file-status { display:none; } .git-file-toolbar .hint {margin-left:0;} }
 
 .git-file-item {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr) auto auto auto;
   gap: 9px;
@@ -3374,3 +3375,34 @@ h2 {
 .workflow-preview p { margin:0; line-height:1.6; overflow-wrap:anywhere; }
 .workflow-field-error { grid-column:1 / -1; color:var(--danger); }
 @media(max-width:750px) { .workflow-config,.workflow-preview { padding:16px; } .workflow-cards { grid-template-columns:1fr; } .workflow-field-control { flex-wrap:wrap; } }
+
+
+/* Shared controls across every Desktop screen. */
+:root {
+  --ui-control-height: 40px;
+  --ui-control-radius: 10px;
+  --ui-space-sm: 8px;
+  --ui-space-md: 14px;
+  --ui-space-lg: 20px;
+  --ui-field-bg: #090c12;
+  --ui-card-bg: rgba(17, 23, 33, 0.88);
+}
+button, input, select, textarea { font-family: var(--font); }
+input, select, textarea { min-width: 0; max-width: 100%; }
+input:not([type="checkbox"]):not([type="radio"]), select, textarea { background:var(--ui-field-bg); color:var(--text); border:1px solid var(--border-subtle); border-radius:var(--ui-control-radius); }
+textarea { padding:10px 12px; resize:vertical; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline:2px solid var(--gold-primary); outline-offset:2px; }
+.ui-action { font:inherit; }
+.ui-action--primary { min-height:var(--ui-control-height); }
+.ui-action--primary { background:rgba(245,197,66,.16); border-color:var(--gold-primary); color:var(--gold-bright); }
+.ui-action--ghost { background:transparent; border-color:transparent; }
+.ui-action--danger { color:var(--danger); border-color:rgba(248,113,113,.4); }
+.ui-text-input, .ui-native-select, .ui-text-area { min-height:var(--ui-control-height); width:100%; min-width:0; }
+.ui-native-select { color-scheme:dark; }
+.ui-native-select option { background:#111923; color:var(--text); }
+.ui-filter-bar { display:flex; align-items:center; flex-wrap:wrap; gap:var(--ui-space-sm); width:100%; min-width:0; }
+.ui-filter-bar > * { min-width:0; }
+.ui-form-field { display:flex; flex-direction:column; gap:var(--ui-space-sm); min-width:0; }
+.ui-form-field > label { color:var(--text); font-size:13px; font-weight:600; }
+.ui-surface { min-width:0; border:1px solid var(--border-subtle); border-radius:12px; background:var(--ui-card-bg); }
+@media(max-width:600px) { .ui-filter-bar > .ui-combobox { flex:1 1 100%; max-width:none; } }

@@ -1,3 +1,4 @@
+import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactElement, type UIEvent } from 'react';
 import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type LiveLogExportReference, type LogLevel, type LogLine, type LogSessionSummary, type LogSource, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
@@ -158,17 +159,17 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
       <div className="section-heading">
         <h2>{props.title}</h2>
         <div className="worklog-actions">
-          <button type="button" className={paused ? 'active' : undefined} onClick={() => {
+          <ActionButton type="button" className={paused ? 'active' : undefined} onClick={() => {
             const nextPaused = !paused;
             setFeedFreeze((state) => transitionLogFeedFreeze(state, currentFeed, nextPaused || normalizeDetailSearchQuery(filter).length > 0));
             setPaused(nextPaused);
           }}>
             {paused ? props.followLabel : props.pauseLabel}
-          </button>
-          <button type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</button>
-          <button type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</button>
-          <button type="button" onClick={() => { void props.onClear({ workspaceId: null, sessionId: null }); }}>{props.clearLabel}</button>
-          <button type="button" onClick={() => { void props.onExport(scope, filter, matchingLines.map((line) => ({ lineId: line.id, correlationRef: detailRefForLine(line) }))); }}>{props.exportLabel}</button>
+          </ActionButton>
+          <ActionButton type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</ActionButton>
+          <ActionButton type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</ActionButton>
+          <ActionButton type="button" onClick={() => { void props.onClear({ workspaceId: null, sessionId: null }); }}>{props.clearLabel}</ActionButton>
+          <ActionButton type="button" onClick={() => { void props.onExport(scope, filter, matchingLines.map((line) => ({ lineId: line.id, correlationRef: detailRefForLine(line) }))); }}>{props.exportLabel}</ActionButton>
         </div>
       </div>
       {props.description === undefined ? null : <p className="hint log-source-description">{props.description}</p>}
@@ -194,7 +195,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
             }} />
         </label>
       </div>
-      <input
+      <FormInput
         type="text"
         className="log-filter"
         placeholder={props.filterPlaceholder}
@@ -226,7 +227,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
               <span className="tag level-tag">[{line.level.toUpperCase()}]</span>
               {display.kind === null ? null : <span className={`event-tag ${display.kind}`}>[{display.kind.toUpperCase()}]</span>}
               <span className="log-message"><ScopeBadges line={line} showWorkspace={workspaceId === null} showSession={sessionId === null} workspaces={feed.workspaces} />{display.detail}</span>
-              <button
+              <ActionButton
                 type="button"
                 className="row-copy-button"
                 title={copiedId === line.id ? (props.copiedLabel ?? 'Copied') : (props.copyLabel ?? 'Copy full log')}
@@ -234,7 +235,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
                 onClick={() => { void copyLine(line); }}
               >
                 {copiedId === line.id ? '✓' : '⧉'}
-              </button>
+              </ActionButton>
               {copyErrorId === line.id ? <p className="log-detail-error row-copy-error" role="alert">{props.detailErrorLabel ?? 'Complete details are unavailable; nothing was copied.'}</p> : null}
               {line.targetDetail === undefined ? null : (
                 <ExpandableTargetDetail

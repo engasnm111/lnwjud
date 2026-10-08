@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import type { ResolvedRemediation, ToolCatalogItem, UiLocale } from '@lnwjud/ipc-contracts';
@@ -73,7 +74,7 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
             </div>
             <code>{item.name}</code>
           </div>
-          <button ref={closeRef} className="tool-modal-close" type="button" onClick={onClose} aria-label={t('tools.detail.close')}>×</button>
+          <ActionButton ref={closeRef} className="tool-modal-close" type="button" onClick={onClose} aria-label={t('tools.detail.close')}>×</ActionButton>
         </header>
         <div className="tool-modal-scroll">
           <p className="tool-modal-description">{item.longDescription}</p>
@@ -91,14 +92,14 @@ export function ToolDetailModal({ locale, item, remediations, onClose, onRemedia
             <div><dt>{t('tools.detail.cancelable')}</dt><dd>{nullableBooleanLabel(t, item.supportsCancel, item.origin === 'external_mcp')}</dd></div>
             <div><dt>{t('tools.detail.dryRun')}</dt><dd>{nullableBooleanLabel(t, item.supportsDryRun, item.origin === 'external_mcp')}</dd></div>
           </dl>
-          {item.origin === 'lnwjud' ? <section className="tool-availability-panel"><div><strong>{toolAvailabilityLabel(locale, item)}</strong><small>{effectiveExposureLabel(locale, item)}</small></div><ToolAvailabilitySwitch locale={locale} checked={toolControlEnabled(item)} busy={availabilityBusy} disabled={onSetAvailability === undefined || (!toolControlEnabled(item) && !toolControlCanEnable(item))} blockedLabel={!toolControlEnabled(item) && !toolControlCanEnable(item) ? t('tools.setupFirst') : undefined} label={item.title} onChange={(enabled) => { void onSetAvailability?.(enabled); }} />{item.userPreference === 'default' ? null : <button type="button" disabled={availabilityBusy || onResetAvailability === undefined} onClick={() => { void onResetAvailability?.(); }}>{t('tools.useDefault')}</button>}</section> : null}
+          {item.origin === 'lnwjud' ? <section className="tool-availability-panel"><div><strong>{toolAvailabilityLabel(locale, item)}</strong><small>{effectiveExposureLabel(locale, item)}</small></div><ToolAvailabilitySwitch locale={locale} checked={toolControlEnabled(item)} busy={availabilityBusy} disabled={onSetAvailability === undefined || (!toolControlEnabled(item) && !toolControlCanEnable(item))} blockedLabel={!toolControlEnabled(item) && !toolControlCanEnable(item) ? t('tools.setupFirst') : undefined} label={item.title} onChange={(enabled) => { void onSetAvailability?.(enabled); }} />{item.userPreference === 'default' ? null : <ActionButton type="button" disabled={availabilityBusy || onResetAvailability === undefined} onClick={() => { void onResetAvailability?.(); }}>{t('tools.useDefault')}</ActionButton>}</section> : null}
           {item.riskMode === 'input_dependent' ? <p role="note" className="tool-risk-caveat">{t('tools.detail.inputDependentRisk')}</p> : null}
           {item.origin === 'external_mcp' && item.readiness === 'ready' ? <p role="note" className="tool-risk-caveat">{t('tools.detail.externalDiscoveryCaveat')}</p> : null}
           {item.stale ? <p role="status" className="tool-stale-caveat">{t('tools.detail.staleCaveat')}</p> : null}
           {item.requirements.length > 0 ? <section className="tool-modal-section"><h3>{t('tools.detail.requirements')}</h3><ul className="tool-requirement-list">{item.requirements.map((requirement) => <li key={requirement.id}><div><strong>{requirement.id}</strong><span className={`doctor-status-badge doctor-status-${requirement.status}`}>{requirement.status}</span></div>{requirement.detail ? <p>{requirement.detail}</p> : null}</li>)}</ul></section> : null}
           {item.inputSchema !== null ? <details className="tool-schema-details"><summary>{t('tools.detail.inputSchema')}</summary><pre>{JSON.stringify(item.inputSchema, null, 2)}</pre></details> : null}
           {actionError === null ? null : <p className="tool-action-error" role="alert">{actionError}</p>}
-          {relevantRemediations.map((remediation) => <section key={remediation.id} className="tool-remediation"><h3>{remediation.title}</h3><p>{remediation.explanation}</p><ol>{remediation.steps.map((step) => <li key={step}>{step}</li>)}</ol><div className="tool-action-row">{remediation.actions.map((action, index) => { const key = `${remediation.id}-${index}`; return <button type="button" key={key} disabled={busyActionKey !== null} onClick={() => { void runRemediation(action, key); }}>{busyActionKey === key ? busyActionLabel(t, action) : actionLabel(t, action)}</button>; })}</div></section>)}
+          {relevantRemediations.map((remediation) => <section key={remediation.id} className="tool-remediation"><h3>{remediation.title}</h3><p>{remediation.explanation}</p><ol>{remediation.steps.map((step) => <li key={step}>{step}</li>)}</ol><div className="tool-action-row">{remediation.actions.map((action, index) => { const key = `${remediation.id}-${index}`; return <ActionButton type="button" key={key} disabled={busyActionKey !== null} onClick={() => { void runRemediation(action, key); }}>{busyActionKey === key ? busyActionLabel(t, action) : actionLabel(t, action)}</ActionButton>; })}</div></section>)}
           {item.readiness !== 'ready' && relevantRemediations.length === 0 ? <section className="tool-remediation tool-remediation-fallback" role="note"><h3>{t('tools.detail.noAutomaticRepair')}</h3><p>{t('tools.detail.noAutomaticRepairBody')}</p></section> : null}
         </div>
       </section>

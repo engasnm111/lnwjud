@@ -7,7 +7,7 @@ import { tunnelRuntimeCredentialAvailable } from '../../tunnel-auth-readiness.js
 import { tunnelAuthPresentation } from '../../tunnel-auth-presentation.js';
 import { GuidedTunnelSetup } from '../onboarding/GuidedTunnelSetup.js';
 import { isTunnelRunning } from '../onboarding/guided-tunnel-setup-state.js';
-import { EmptyState, PageHeading, SettingsCardHeading, StatusMessage } from '../ui/UiPrimitives.js';
+import { EmptyState, PageHeading, SettingsCardHeading, StatusMessage , ActionButton, FormInput, FormSelect, FormTextarea } from '../ui/UiPrimitives.js';
 import { PonytailPolicyEditor } from './PonytailPolicyEditor.js';
 import { SettingSwitch } from './SettingSwitch.js';
 import { UserConfigPanel, type UserConfigSection } from './UserConfigPanel.js';
@@ -512,7 +512,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
       <div className="settings-shell-v2">
         <aside className="settings-subnav" aria-label={t('settingsPage.sectionsAria')}>
           {navItems.map((item) => (
-            <button
+            <ActionButton
               type="button"
               key={item.id}
               className={`settings-nav-item ${activeSection === item.id ? 'is-active' : ''}`}
@@ -522,7 +522,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <span className="settings-nav-icon" aria-hidden="true">{item.icon}</span>
               <span className="settings-nav-copy"><strong>{item.title}</strong><small>{item.description}</small></span>
               <span className="settings-nav-chevron" aria-hidden="true">›</span>
-            </button>
+            </ActionButton>
           ))}
         </aside>
 
@@ -539,10 +539,10 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <SettingsCardHeading icon="A" title={t('settings.generalTitle')} subtitle={t('settingsPage.languageSubtitle')} badge={props.locale.toUpperCase()} />
               <div className="setting-field max-field-width">
                 <label className="field-label" htmlFor="locale-select">{t('settings.locale')}</label>
-                <select id="locale-select" className="settings-select" value={props.locale} onChange={(event) => { void props.onLocaleChange(event.target.value as UiLocale); }}>
+                <FormSelect id="locale-select" className="settings-select" value={props.locale} onChange={(event) => { void props.onLocaleChange(event.target.value as UiLocale); }}>
                   <option value="th">🇹🇭 {t('language.th')}</option>
                   <option value="en">🇺🇸 {t('language.en')}</option>
-                </select>
+                </FormSelect>
               </div>
               <p className="hint">{t('settingsPage.languageHint')}</p>
             </section>
@@ -551,9 +551,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <StatusMessage tone="warning" role="note" prefix="⚠️ ">{t('settingsPage.factoryResetWarning')}</StatusMessage>
               {factoryResetError === null ? null : <StatusMessage tone="warning" role="alert" prefix="⚠️ ">{factoryResetError}</StatusMessage>}
               <div className="inline-actions factory-reset-actions">
-                <button type="button" disabled={factoryResetBusy} onClick={() => { void factoryReset(); }}>
+                <ActionButton type="button" disabled={factoryResetBusy} onClick={() => { void factoryReset(); }}>
                   {factoryResetBusy ? t('settingsPage.factoryResetWorking') : t('settingsPage.factoryResetButton')}
-                </button>
+                </ActionButton>
               </div>
             </section>
             </>
@@ -565,12 +565,12 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <SettingsCardHeading icon="◇" title={t('settings.securityTitle')} subtitle={profileHint(t, props.dashboard.permissionProfile)} badge={props.dashboard.permissionProfile.toUpperCase()} />
                 <div className="setting-field max-field-width">
                   <label className="field-label" htmlFor="permission-profile">{t('settings.permissions')}</label>
-                  <select id="permission-profile" aria-label={t('settings.permissions')} className="settings-select" value={props.dashboard.permissionProfile} onChange={(event) => { void props.onPermissionProfileChange(event.target.value as PermissionProfileName); }}>
+                  <FormSelect id="permission-profile" aria-label={t('settings.permissions')} className="settings-select" value={props.dashboard.permissionProfile} onChange={(event) => { void props.onPermissionProfileChange(event.target.value as PermissionProfileName); }}>
                     <option value="safe">🛡️ {t('permission.safe')}</option>
                     <option value="balanced">⚖️ {t('permission.balanced')}</option>
                     <option value="full">⚡ {t('permission.full')}</option>
                     <option value="custom">🔧 {t('permission.custom')}</option>
-                  </select>
+                  </FormSelect>
                 </div>
               </section>
 
@@ -636,17 +636,17 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="setting-grid two-col align-center">
                   <div className="setting-field">
                     <label className="field-label" htmlFor="stdio-profile">{t('settingsPage.stdioPermissionProfile')}</label>
-                    <select id="stdio-profile" className="settings-select" value={stdioProfile} onChange={(event) => { setStdioProfile(event.target.value as PermissionProfileName); setStdioDirty(true); }}>
+                    <FormSelect id="stdio-profile" className="settings-select" value={stdioProfile} onChange={(event) => { setStdioProfile(event.target.value as PermissionProfileName); setStdioDirty(true); }}>
                       <option value="safe">{t('profile.safe')}</option><option value="balanced">{t('profile.balanced')}</option><option value="full">{t('profile.full')}</option><option value="custom">{t('profile.custom')}</option>
-                    </select>
+                    </FormSelect>
                   </div>
                   <SettingSwitch checked={strictRoots} label={t('settingsPage.stdioStrictLabel')} description={t('settingsPage.stdioStrictDesc')} onChange={(enabled) => { setStrictRoots(enabled); setStdioDirty(true); }} />
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="stdio-roots">{t('settingsPage.stdioRootsLabel')}</label>
-                  <textarea id="stdio-roots" className="settings-textarea" rows={5} value={allowedRootsText} placeholder={hostPlatform === 'win32' ? 'E:\\Projects\\MyApp\nD:\\Shared\\Source' : '/Users/name/Projects\n/home/name/Source'} onChange={(event) => { setAllowedRootsText(event.target.value); setStdioDirty(true); }} />
+                  <FormTextarea id="stdio-roots" className="settings-textarea" rows={5} value={allowedRootsText} placeholder={hostPlatform === 'win32' ? 'E:\\Projects\\MyApp\nD:\\Shared\\Source' : '/Users/name/Projects\n/home/name/Source'} onChange={(event) => { setAllowedRootsText(event.target.value); setStdioDirty(true); }} />
                 </div>
-                <div className="inline-actions"><button type="button" className="btn-save-gold" disabled={!stdioDirty} onClick={() => { void saveStdioPolicy(); }}>{t('settingsPage.stdioSave')}</button></div>
+                <div className="inline-actions"><ActionButton type="button" className="btn-save-gold" disabled={!stdioDirty} onClick={() => { void saveStdioPolicy(); }}>{t('settingsPage.stdioSave')}</ActionButton></div>
                 {policyError === null ? null : <StatusMessage tone="warning" role="alert" prefix="⚠️ ">{policyError}</StatusMessage>}
                 {stdioMessage === null ? null : <StatusMessage tone="success" prefix="✓ ">{stdioMessage}</StatusMessage>}
               </section>
@@ -745,12 +745,12 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 />
                 <div className="setting-field remote-mcp-transport-field">
                   <label className="field-label" htmlFor="remote-mcp-transport">{t('settingsPage.remoteTransportLabel')}</label>
-                  <select id="remote-mcp-transport" value={remoteMcp.transport} disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onChange={(event) => { void setRemoteMcpTransport(event.target.value as RemoteMcpTransport); }}>
+                  <FormSelect id="remote-mcp-transport" value={remoteMcp.transport} disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onChange={(event) => { void setRemoteMcpTransport(event.target.value as RemoteMcpTransport); }}>
                     <option value="ngrok">{t('settingsPage.remoteTransportNgrok')}</option>
                     <option value="cloudflare">{t('settingsPage.remoteTransportCloudflare')}</option>
                     <option value="custom">{t('settingsPage.remoteTransportCustom')}</option>
                     <option value="local">{t('settingsPage.remoteTransportLocal')}</option>
-                  </select>
+                  </FormSelect>
                   <p className="hint">{t('settingsPage.remoteTransportHint')}</p>
                 </div>
                 <div className="setting-grid two-col">
@@ -777,7 +777,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   </div>
                   <div className="inline-actions">
                     {ngrokAutoInstallAvailable ? (
-                      <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcp.state === 'running' || ngrokReady} onClick={() => { void runRemoteMcpAction('install'); }}>
+                      <ActionButton type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcp.state === 'running' || ngrokReady} onClick={() => { void runRemoteMcpAction('install'); }}>
                         {ngrokReady
                           ? t('settingsPage.ngrokReadyButton')
                           : remoteMcp.state === 'installing'
@@ -787,16 +787,16 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                               : remoteMcp.state === 'error'
                                 ? t('settingsPage.ngrokRepair')
                                 : t('settingsPage.ngrokInstall')}
-                      </button>
+                      </ActionButton>
                     ) : null}
-                    {!ngrokReady && !ngrokAutoInstallAvailable ? <button type="button" disabled={remoteMcpBusy} onClick={() => { void props.onOpenExternalSetupPage('ngrok_download'); }}>{t('settingsPage.ngrokDownload')}</button> : null}
-                    <button type="button" disabled={remoteMcpBusy} onClick={() => { void openNgrokAuthtokenPage(); }}>{t('settingsPage.ngrokAuthtokenPage')}</button>
+                    {!ngrokReady && !ngrokAutoInstallAvailable ? <ActionButton type="button" disabled={remoteMcpBusy} onClick={() => { void props.onOpenExternalSetupPage('ngrok_download'); }}>{t('settingsPage.ngrokDownload')}</ActionButton> : null}
+                    <ActionButton type="button" disabled={remoteMcpBusy} onClick={() => { void openNgrokAuthtokenPage(); }}>{t('settingsPage.ngrokAuthtokenPage')}</ActionButton>
                   </div>
                   <label className="field-label" htmlFor="remote-mcp-domain">{t('settingsPage.ngrokDomainLabel')}</label>
-                  <div className="form-row"><input id="remote-mcp-domain" type="text" autoComplete="off" placeholder="example.ngrok-free.app" value={remoteMcpPublicOrigin} onChange={(event) => setRemoteMcpPublicOrigin(event.target.value)} /><button type="button" disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onClick={() => { void runRemoteMcpAction('domain'); }}>{t('settingsPage.ngrokDomainSave')}</button></div>
+                  <div className="form-row"><FormInput id="remote-mcp-domain" type="text" autoComplete="off" placeholder="example.ngrok-free.app" value={remoteMcpPublicOrigin} onChange={(event) => setRemoteMcpPublicOrigin(event.target.value)} /><ActionButton type="button" disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onClick={() => { void runRemoteMcpAction('domain'); }}>{t('settingsPage.ngrokDomainSave')}</ActionButton></div>
                   <p className="hint">{t('settingsPage.ngrokDomainHint')}</p>
                   <label className="field-label" htmlFor="remote-mcp-authtoken">{t('settingsPage.ngrokAuthtokenLabel')}</label>
-                  <div className="form-row"><input id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /><button type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcpAuthtoken.trim().length === 0} onClick={() => { void runRemoteMcpAction('save'); }}>{t('settingsPage.saveSecurely')}</button></div>
+                  <div className="form-row"><FormInput id="remote-mcp-authtoken" type="password" autoComplete="off" placeholder={remoteMcp.hasAuthtoken ? '••••••••••••••••' : '2abc...'} value={remoteMcpAuthtoken} onChange={(event) => setRemoteMcpAuthtoken(event.target.value)} /><ActionButton type="button" className="btn-save-gold" disabled={remoteMcpBusy || remoteMcpAuthtoken.trim().length === 0} onClick={() => { void runRemoteMcpAction('save'); }}>{t('settingsPage.saveSecurely')}</ActionButton></div>
                   <p className="hint">{remoteMcp.hasAuthtoken ? t('settingsPage.ngrokStored', { storage: secureStorageLabel }) : t('settingsPage.ngrokPlaintextHint')}</p>
                 </div>
                 ) : null}
@@ -805,7 +805,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <div className="settings-mini-heading"><strong>{remoteMcp.transport === 'cloudflare' ? t('settingsPage.cloudflareSetup') : t('settingsPage.customUrlSetup')}</strong><span>{remoteMcp.configuredPublicOrigin === null ? t('status.setup') : t('status.ready')}</span></div>
                     <p className="hint">{t('settingsPage.externalProxyHint')}</p>
                     <label className="field-label" htmlFor="remote-mcp-public-origin">{t('settingsPage.externalPublicOriginLabel')}</label>
-                    <div className="form-row"><input id="remote-mcp-public-origin" type="text" autoComplete="off" placeholder="https://mcp.example.com" value={remoteMcpPublicOrigin} onChange={(event) => setRemoteMcpPublicOrigin(event.target.value)} /><button type="button" disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onClick={() => { void runRemoteMcpAction('domain'); }}>{t('settingsPage.ngrokDomainSave')}</button></div>
+                    <div className="form-row"><FormInput id="remote-mcp-public-origin" type="text" autoComplete="off" placeholder="https://mcp.example.com" value={remoteMcpPublicOrigin} onChange={(event) => setRemoteMcpPublicOrigin(event.target.value)} /><ActionButton type="button" disabled={remoteMcpBusy || remoteMcpOnline || remoteMcp.state === 'starting'} onClick={() => { void runRemoteMcpAction('domain'); }}>{t('settingsPage.ngrokDomainSave')}</ActionButton></div>
                     <p className="hint">{t('settingsPage.externalPublicOriginHint')}</p>
                     <span className="field-label">{t('settingsPage.externalGatewayLabel')}</span>
                     <code className="settings-path-display">{remoteMcp.configuredGatewayUrl ?? remoteMcp.localGatewayUrl ?? t('settingsPage.externalGatewayPending')}</code>
@@ -818,11 +818,11 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="tunnel-setup-box">
                   <div className="settings-mini-heading"><strong>{remoteMcp.transport === 'local' ? t('settingsPage.startLocalMcp') : t('settingsPage.startRemoteMcp')}</strong><span>{remoteMcp.transport === 'local' ? t('status.ready') : remoteMcp.oauthConnected ? t('status.linked') : remoteMcp.oauthProtected ? t('status.ready') : t('status.authRequired')}</span></div>
                   <div className="inline-actions">
-                    <button type="button" className="btn-save-gold" disabled={remoteMcpBusy || !remoteMcpStartReady || remoteMcp.state === 'running'} onClick={() => { void runRemoteMcpAction('start'); }}>{remoteMcpBusy && remoteMcp.state !== 'running' ? t('settingsPage.working') : remoteMcp.transport === 'local' ? t('settingsPage.startLocalMcpButton') : t('settingsPage.startRemoteMcpButton')}</button>
-                    <button type="button" disabled={remoteMcpBusy || remoteMcp.state !== 'running'} onClick={() => { void runRemoteMcpAction('stop'); }}>{t('settingsPage.stop')}</button>
-                    <button type="button" disabled={remoteMcpCopyUrl === null} onClick={() => { void copyRemoteMcpUrl(); }}>{t('settingsPage.copyMcpUrl')}</button>
-                    {remoteMcp.transport === 'local' ? null : <button type="button" disabled={remoteMcpBusy || !remoteMcp.oauthConnected} onClick={() => { void runRemoteMcpAction('resetOauth'); }}>{t('settingsPage.reconnectChatgpt')}</button>}
-                    {remoteMcp.transport === 'local' ? null : <button type="button" onClick={() => { void props.onOpenExternalSetupPage('chatgpt_plugins'); }}>{t('settingsPage.openChatgptPlugins')}</button>}
+                    <ActionButton type="button" className="btn-save-gold" disabled={remoteMcpBusy || !remoteMcpStartReady || remoteMcp.state === 'running'} onClick={() => { void runRemoteMcpAction('start'); }}>{remoteMcpBusy && remoteMcp.state !== 'running' ? t('settingsPage.working') : remoteMcp.transport === 'local' ? t('settingsPage.startLocalMcpButton') : t('settingsPage.startRemoteMcpButton')}</ActionButton>
+                    <ActionButton type="button" disabled={remoteMcpBusy || remoteMcp.state !== 'running'} onClick={() => { void runRemoteMcpAction('stop'); }}>{t('settingsPage.stop')}</ActionButton>
+                    <ActionButton type="button" disabled={remoteMcpCopyUrl === null} onClick={() => { void copyRemoteMcpUrl(); }}>{t('settingsPage.copyMcpUrl')}</ActionButton>
+                    {remoteMcp.transport === 'local' ? null : <ActionButton type="button" disabled={remoteMcpBusy || !remoteMcp.oauthConnected} onClick={() => { void runRemoteMcpAction('resetOauth'); }}>{t('settingsPage.reconnectChatgpt')}</ActionButton>}
+                    {remoteMcp.transport === 'local' ? null : <ActionButton type="button" onClick={() => { void props.onOpenExternalSetupPage('chatgpt_plugins'); }}>{t('settingsPage.openChatgptPlugins')}</ActionButton>}
                   </div>
                   {remoteMcp.transport !== 'local' && remoteMcp.oauthConnected ? (
                     <StatusMessage tone="success" className="remote-mcp-auth-banner">
@@ -896,15 +896,15 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                 <div className="inline-actions">
                   {props.dashboard.tunnel.auth?.mode === 'oauth' ? (
                     <>
-                      <button type="button" disabled={oauthBusy || !props.dashboard.tunnel.auth.hasLegacyApiKey} onClick={() => { void rollbackToLegacyAuth(); }}>{t('settingsPage.switchToApiKey')}</button>
-                      <button type="button" disabled={oauthBusy} onClick={() => { void logoutOAuth(); }}>{t('settingsPage.signOutOauth')}</button>
+                      <ActionButton type="button" disabled={oauthBusy || !props.dashboard.tunnel.auth.hasLegacyApiKey} onClick={() => { void rollbackToLegacyAuth(); }}>{t('settingsPage.switchToApiKey')}</ActionButton>
+                      <ActionButton type="button" disabled={oauthBusy} onClick={() => { void logoutOAuth(); }}>{t('settingsPage.signOutOauth')}</ActionButton>
                     </>
                   ) : (
-                    <button type="button" className="btn-save-gold" disabled={oauthBusy || props.dashboard.tunnel.oauth?.available !== true} onClick={() => { void beginOAuthLogin(); }}>
+                    <ActionButton type="button" className="btn-save-gold" disabled={oauthBusy || props.dashboard.tunnel.oauth?.available !== true} onClick={() => { void beginOAuthLogin(); }}>
                       {oauthBusy ? t('settingsPage.oauthStarting') : t('settingsPage.signInOauth')}
-                    </button>
+                    </ActionButton>
                   )}
-                  {oauthLogin?.state === 'waiting_for_browser' || oauthLogin?.state === 'exchanging' ? <button type="button" onClick={() => { void props.onCancelTunnelOAuthLogin().then(setOauthLogin); }}>{t('settingsPage.cancelSignIn')}</button> : null}
+                  {oauthLogin?.state === 'waiting_for_browser' || oauthLogin?.state === 'exchanging' ? <ActionButton type="button" onClick={() => { void props.onCancelTunnelOAuthLogin().then(setOauthLogin); }}>{t('settingsPage.cancelSignIn')}</ActionButton> : null}
                 </div>
                 {oauthLogin === null ? null : <p className="hint" role="status">OAuth: {oauthLogin.state}{oauthLogin.message === null ? '' : ` — ${oauthLogin.message}`}</p>}
               </section>
@@ -915,9 +915,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   <p className="hint">{props.dashboard.tunnel.auth?.accountLabel ?? (props.dashboard.tunnel.auth?.authReady ? t('settingsPage.oauthReady') : t('settingsPage.oauthNeedsAction'))}</p>
                   {props.dashboard.tunnel.auth?.message === null || props.dashboard.tunnel.auth?.message === undefined ? null : <p className="hint">{props.dashboard.tunnel.auth.message}</p>}
                   <div className="inline-actions">
-                    {!props.dashboard.tunnel.auth?.authReady ? <button type="button" className="btn-save-gold" disabled={oauthBusy || props.dashboard.tunnel.oauth?.available !== true} onClick={() => { void beginOAuthLogin(); }}>{t('settingsPage.signInOauth')}</button> : null}
-                    <button type="button" disabled={tunnelControlsLocked || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>{t(tunnelPresentation.startKey)}</button>
-                    <button type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>{t(tunnelPresentation.stopKey)}</button>
+                    {!props.dashboard.tunnel.auth?.authReady ? <ActionButton type="button" className="btn-save-gold" disabled={oauthBusy || props.dashboard.tunnel.oauth?.available !== true} onClick={() => { void beginOAuthLogin(); }}>{t('settingsPage.signInOauth')}</ActionButton> : null}
+                    <ActionButton type="button" disabled={tunnelControlsLocked || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>{t(tunnelPresentation.startKey)}</ActionButton>
+                    <ActionButton type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>{t(tunnelPresentation.stopKey)}</ActionButton>
                   </div>
                 </section>
               ) : (
@@ -926,9 +926,9 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <SettingsCardHeading icon="↗" title={t('guidedTunnel.openGuide')} subtitle={t('guidedTunnel.privacy')} badge={guidedTunnelRunning ? t('status.running') : guidedTunnelConfigured ? t('status.ready') : t('status.setup')} />
                     <p className="hint">{guidedTunnelRunning ? t('guidedTunnel.localComplete') : guidedTunnelConfigured ? t('guidedTunnel.configured') : t('guidedTunnel.dismissedHint')}</p>
                     <div className="inline-actions">
-                      <button type="button" className="btn-save-gold" onClick={() => props.onGuidedTunnelSetupOpenChange(true)}>{t('guidedTunnel.openGuide')}</button>
-                      <button type="button" onClick={() => { void props.onOpenExternalSetupPage('openai_tunnels'); }}>{t('guidedTunnel.openTunnelSettings')}</button>
-                      <button type="button" onClick={() => { void props.onOpenExternalSetupPage('openai_api_keys'); }}>{t('guidedTunnel.openApiKeys')}</button>
+                      <ActionButton type="button" className="btn-save-gold" onClick={() => props.onGuidedTunnelSetupOpenChange(true)}>{t('guidedTunnel.openGuide')}</ActionButton>
+                      <ActionButton type="button" onClick={() => { void props.onOpenExternalSetupPage('openai_tunnels'); }}>{t('guidedTunnel.openTunnelSettings')}</ActionButton>
+                      <ActionButton type="button" onClick={() => { void props.onOpenExternalSetupPage('openai_api_keys'); }}>{t('guidedTunnel.openApiKeys')}</ActionButton>
                     </div>
                   </section>
 
@@ -954,19 +954,19 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               <div className="setting-grid two-col">
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-key">{t('settings.tunnelKey')}</label>
-                  <div className="form-row"><div className="password-input-wrapper"><input id="tunnel-key" type={showApiKey ? 'text' : 'password'} placeholder={props.dashboard.tunnel.hasApiKey ? '••••••••••••••••' : 'sk-...'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" /><button type="button" className="toggle-pw-btn" onClick={() => setShowApiKey((value) => !value)}>{showApiKey ? t('common.hide') : t('common.show')}</button></div><button type="button" className="btn-save-gold" onClick={() => { void props.onSaveTunnelApiKey(apiKey).then(() => { setApiKey(''); setSavedMessage(t('settings.saved')); }); }}>{t('settings.saveKey')}</button></div>
+                  <div className="form-row"><div className="password-input-wrapper"><FormInput id="tunnel-key" type={showApiKey ? 'text' : 'password'} placeholder={props.dashboard.tunnel.hasApiKey ? '••••••••••••••••' : 'sk-...'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" /><ActionButton type="button" className="toggle-pw-btn" onClick={() => setShowApiKey((value) => !value)}>{showApiKey ? t('common.hide') : t('common.show')}</ActionButton></div><ActionButton type="button" className="btn-save-gold" onClick={() => { void props.onSaveTunnelApiKey(apiKey).then(() => { setApiKey(''); setSavedMessage(t('settings.saved')); }); }}>{t('settings.saveKey')}</ActionButton></div>
                   <p className="hint">{props.dashboard.tunnel.hasApiKey ? t('settingsPage.secureStorageProtected') : t('tunnel.needKey')}</p>
                 </div>
                 <div className="setting-field">
                   <label className="field-label" htmlFor="tunnel-client-path">{t('settingsPage.tunnelClientBundled')}</label>
-                  <div className="form-row"><input id="tunnel-client-path" placeholder={t('settingsPage.tunnelClientBundledPlaceholder')} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><button type="button" onClick={() => { void browseTunnelClient(); }}>{t('settingsPage.browse')}</button><button type="button" className="btn-save-gold" onClick={() => { void saveTunnelClientPath(); }}>{clientPath.trim().length === 0 ? t('settingsPage.useBundled') : t('settingsPage.saveOverride')}</button></div>
+                  <div className="form-row"><FormInput id="tunnel-client-path" placeholder={t('settingsPage.tunnelClientBundledPlaceholder')} value={clientPath} onChange={(event) => setClientPath(event.target.value)} /><ActionButton type="button" onClick={() => { void browseTunnelClient(); }}>{t('settingsPage.browse')}</ActionButton><ActionButton type="button" className="btn-save-gold" onClick={() => { void saveTunnelClientPath(); }}>{clientPath.trim().length === 0 ? t('settingsPage.useBundled') : t('settingsPage.saveOverride')}</ActionButton></div>
                   <p className="hint">{t('settingsPage.tunnelClientHint')}</p>
                 </div>
               </div>
               <div className="tunnel-setup-box">
                 <div className="settings-mini-heading"><strong>{t('settingsPage.setupWizard')}</strong><span>{t('settingsPage.setupWizardNoInit')}</span></div>
                 <label className="field-label" htmlFor="tunnel-id">{t('settingsPage.openAiTunnelId')}</label>
-                <div className="form-row"><input id="tunnel-id" placeholder="tunnel_0123456789abcdef..." value={tunnelId} onChange={(event) => setTunnelId(event.target.value)} /><button type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void configureTunnel(); }}>{tunnelBusy ? t('settingsPage.configuring') : t('settingsPage.configureTunnel')}</button></div>
+                <div className="form-row"><FormInput id="tunnel-id" placeholder="tunnel_0123456789abcdef..." value={tunnelId} onChange={(event) => setTunnelId(event.target.value)} /><ActionButton type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void configureTunnel(); }}>{tunnelBusy ? t('settingsPage.configuring') : t('settingsPage.configureTunnel')}</ActionButton></div>
                 <p className="hint">{t('settingsPage.tunnelIdentityHint')}</p>
               </div>
               {savedMessage === null ? null : <div className="toast-success-banner" role="status">✓ {savedMessage}</div>}
@@ -988,7 +988,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                       ? t('settingsPage.zeroDowntimeProven')
                       : t('settingsPage.zeroDowntimeUnproven')}
                   </div>
-                  <div className="inline-actions"><button type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void reconnectSameTunnel(); }}>{t('settingsPage.reconnectSameTunnel')}</button><button type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void stopPersistentTunnel(); }}>{t('settingsPage.stopTunnel')}</button></div>
+                  <div className="inline-actions"><ActionButton type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void reconnectSameTunnel(); }}>{t('settingsPage.reconnectSameTunnel')}</ActionButton><ActionButton type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void stopPersistentTunnel(); }}>{t('settingsPage.stopTunnel')}</ActionButton></div>
                   {props.dashboard.tunnel.persistent.capabilityEvidence === null ? null : <p className="hint">{props.dashboard.tunnel.persistent.capabilityEvidence}</p>}
                 </div>
               )}
@@ -1016,25 +1016,25 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     <strong>{t('settingsPage.recoveryCleanup')}</strong>
                     <p className="hint">{t('settingsPage.recoveryCleanupHint')}</p>
                   </div>
-                  <select aria-label={t('settingsPage.recoveryRetention')} disabled={retentionBusy} value={props.dashboard.settings.recoveryRetentionDays} onChange={(event) => { void setRecoveryRetentionDays(Number(event.target.value)); }}>
+                  <FormSelect aria-label={t('settingsPage.recoveryRetention')} disabled={retentionBusy} value={props.dashboard.settings.recoveryRetentionDays} onChange={(event) => { void setRecoveryRetentionDays(Number(event.target.value)); }}>
                     <option value={0}>{t('settingsPage.never')}</option>
                     {[3, 7, 14, 30, 60, 90, 180, 365].map((days) => <option key={days} value={days}>{days} {t('settingsPage.days')}</option>)}
-                  </select>
+                  </FormSelect>
                 </div>
-                <div className="settings-mini-heading"><strong>{t('settingsPage.deletedBackups')}</strong><div className="inline-actions"><span>{props.dashboard.recovery.trashItems.length}</span><button type="button" disabled={purgeBusyCategory !== null || recoveryBusyId !== null} onClick={() => { void purgeRecoveryData('trash'); }}>{purgeBusyCategory === 'trash' ? t('settingsPage.deleting') : t('settingsPage.deleteAllTrash')}</button></div></div>
+                <div className="settings-mini-heading"><strong>{t('settingsPage.deletedBackups')}</strong><div className="inline-actions"><span>{props.dashboard.recovery.trashItems.length}</span><ActionButton type="button" disabled={purgeBusyCategory !== null || recoveryBusyId !== null} onClick={() => { void purgeRecoveryData('trash'); }}>{purgeBusyCategory === 'trash' ? t('settingsPage.deleting') : t('settingsPage.deleteAllTrash')}</ActionButton></div></div>
                 {props.dashboard.recovery.trashItems.length === 0 ? <EmptyState>{t('settingsPage.recoveryEmpty')}</EmptyState> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setTrashVisibleCount((current) => Math.min(props.dashboard.recovery.trashItems.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.recovery.trashItems.slice(0, trashVisibleCount).map((item) => (
                     <div key={item.recoveryId} className="backup-item">
                       <div><strong>{item.relativePath}</strong><p className="hint">{formatDateTime(item.deletedAt, '—', props.locale)} · {item.kind === 'replacement_backup' ? t('settingsPage.preReplacement') : item.isDirectory ? t('common.folder') : t('common.file')} · {item.payloadAvailable ? t('settingsPage.readyState') : t('settingsPage.payloadMissing')}</p></div>
-                      <button type="button" disabled={!item.payloadAvailable || recoveryBusyId !== null} onClick={() => { void restoreTrashItem(item.workspaceId, item.recoveryId, item.relativePath, item.kind); }}>{recoveryBusyId === item.recoveryId ? t('settingsPage.restoring') : t('settingsPage.restore')}</button>
+                      <ActionButton type="button" disabled={!item.payloadAvailable || recoveryBusyId !== null} onClick={() => { void restoreTrashItem(item.workspaceId, item.recoveryId, item.relativePath, item.kind); }}>{recoveryBusyId === item.recoveryId ? t('settingsPage.restoring') : t('settingsPage.restore')}</ActionButton>
                     </div>
                   ))}</div>
                 )}
-                <div className="settings-mini-heading"><strong>{t('settingsPage.checkpoints')}</strong><div className="inline-actions"><span>{props.dashboard.recovery.checkpoints.length}</span><button type="button" disabled={purgeBusyCategory !== null || recoveryBusyId !== null} onClick={() => { void purgeRecoveryData('checkpoints'); }}>{purgeBusyCategory === 'checkpoints' ? t('settingsPage.deleting') : t('settingsPage.deleteAllCheckpoints')}</button></div></div>
+                <div className="settings-mini-heading"><strong>{t('settingsPage.checkpoints')}</strong><div className="inline-actions"><span>{props.dashboard.recovery.checkpoints.length}</span><ActionButton type="button" disabled={purgeBusyCategory !== null || recoveryBusyId !== null} onClick={() => { void purgeRecoveryData('checkpoints'); }}>{purgeBusyCategory === 'checkpoints' ? t('settingsPage.deleting') : t('settingsPage.deleteAllCheckpoints')}</ActionButton></div></div>
                 {props.dashboard.recovery.checkpoints.length === 0 ? <EmptyState>{t('settingsPage.noCheckpoints')}</EmptyState> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setCheckpointVisibleCount((current) => Math.min(props.dashboard.recovery.checkpoints.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.recovery.checkpoints.slice(0, checkpointVisibleCount).map((checkpoint) => {
                     const paths = checkpoint.files.map((file) => file.path);
-                    return <div key={checkpoint.id} className="backup-item"><div><strong>{formatDateTime(checkpoint.createdAt, '—', props.locale)}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><button type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? t('settingsPage.restoring') : t('settingsPage.restorePoint')}</button></div>;
+                    return <div key={checkpoint.id} className="backup-item"><div><strong>{formatDateTime(checkpoint.createdAt, '—', props.locale)}</strong><p className="hint">{paths.join(', ')} · {formatBytes(checkpoint.files.reduce((total, file) => total + file.size, 0))}</p></div><ActionButton type="button" disabled={recoveryBusyId !== null} onClick={() => { void restoreCheckpoint(checkpoint.workspaceId, checkpoint.id, paths); }}>{recoveryBusyId === checkpoint.id ? t('settingsPage.restoring') : t('settingsPage.restorePoint')}</ActionButton></div>;
                   })}</div>
                 )}
                 {recoveryError === null ? null : <StatusMessage tone="warning" role="alert" prefix="⚠️ ">{recoveryError}</StatusMessage>}
@@ -1047,10 +1047,10 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                     ⚠️ {t('backup.crossHostNotice')} {props.dashboard.restoreNotice.relinkRequired ? t('backup.crossHostRelink') : null} {props.dashboard.restoreNotice.incomplete ? t('backup.crossHostSecret') : null}
                   </div>
                 ) : null}
-                <SettingsCardHeading icon="▣" title={t('settingsPage.databaseBackup')} subtitle={t('settingsPage.sqliteSnapshots')} action={<div className="inline-actions"><button type="button" className="btn-save-gold" disabled={backupBusy || purgeBusyCategory !== null} onClick={() => { void createBackupNow(); }}>{backupBusy ? t('settingsPage.working') : t('settingsPage.backupNow')}</button><button type="button" disabled={backupBusy || purgeBusyCategory !== null} onClick={() => { void purgeRecoveryData('backups'); }}>{purgeBusyCategory === 'backups' ? t('settingsPage.deleting') : t('settingsPage.deleteAllBackups')}</button></div>} />
+                <SettingsCardHeading icon="▣" title={t('settingsPage.databaseBackup')} subtitle={t('settingsPage.sqliteSnapshots')} action={<div className="inline-actions"><ActionButton type="button" className="btn-save-gold" disabled={backupBusy || purgeBusyCategory !== null} onClick={() => { void createBackupNow(); }}>{backupBusy ? t('settingsPage.working') : t('settingsPage.backupNow')}</ActionButton><ActionButton type="button" disabled={backupBusy || purgeBusyCategory !== null} onClick={() => { void purgeRecoveryData('backups'); }}>{purgeBusyCategory === 'backups' ? t('settingsPage.deleting') : t('settingsPage.deleteAllBackups')}</ActionButton></div>} />
                 {props.dashboard.backups.length === 0 ? <EmptyState>{t('settingsPage.noBackups')}</EmptyState> : (
                   <div className="backup-list settings-backup-list recovery-scroll-list" onScroll={(event) => { if (nearScrollEnd(event)) setBackupVisibleCount((current) => Math.min(props.dashboard.backups.length, current + RECOVERY_PAGE_SIZE)); }}>{props.dashboard.backups.slice(0, backupVisibleCount).map((backup) => (
-                    <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt, '—', props.locale)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}{backup.hostCompatibility === 'cross_host' ? ` · ${t('backup.crossHostLabel')}` : ''}</p></div><button type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{t('settingsPage.restoreBackup')}</button></div>
+                    <div key={backup.id} className="backup-item"><div><strong>{formatDateTime(backup.createdAt, '—', props.locale)}</strong><p className="hint">{backup.reason} · {formatBytes(backup.sizeBytes)}{backup.hostCompatibility === 'cross_host' ? ` · ${t('backup.crossHostLabel')}` : ''}</p></div><ActionButton type="button" disabled={backupBusy || props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running} onClick={() => { void scheduleRestore(backup.id); }}>{t('settingsPage.restoreBackup')}</ActionButton></div>
                   ))}</div>
                 )}
                 {(props.dashboard.tunnel.state === 'running' || props.dashboard.mcp.running) ? <StatusMessage tone="warning" prefix="⚠️ ">{t('settingsPage.stopBeforeRestore')}</StatusMessage> : null}

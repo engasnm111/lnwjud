@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import type { MutationApprovalPrompt } from '@lnwjud/ipc-contracts';
 
@@ -63,12 +64,12 @@ export function MutationApprovalPage(): ReactElement {
             <pre dir="auto">{prompt.detail}</pre>
           </div>
           <footer className="mutation-approval-actions">
-            <button ref={cancelButtonRef} type="button" disabled={busy} onClick={() => { void respond(false); }}>
+            <ActionButton ref={cancelButtonRef} type="button" disabled={busy} onClick={() => { void respond(false); }}>
               {prompt.buttons[0]}
-            </button>
-            <button className="mutation-approval-confirm" type="button" disabled={busy} onClick={() => { void respond(true); }}>
+            </ActionButton>
+            <ActionButton className="mutation-approval-confirm" type="button" disabled={busy} onClick={() => { void respond(true); }}>
               {prompt.buttons[1]}
-            </button>
+            </ActionButton>
           </footer>
         </section>
       )}

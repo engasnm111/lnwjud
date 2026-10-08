@@ -1,3 +1,4 @@
+import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
 import { useEffect, useState, type ReactElement } from 'react';
 import { EMPTY_REMOTE_MCP_STATUS, type DashboardSnapshot, type IncidentClassification, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
@@ -108,17 +109,17 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           <p className="page-subtitle">{t('home.subtitle')}</p>
         </div>
         <div className="heading-actions">
-          <button type="button" onClick={() => { void props.onRefresh(); }}>{t('action.refresh')}</button>
+          <ActionButton type="button" onClick={() => { void props.onRefresh(); }}>{t('action.refresh')}</ActionButton>
           <details className="agent-actions-menu">
             <summary aria-label={t('home.agentActions')}>•••</summary>
             <div className="agent-actions-popover">
-              <button type="button" disabled={props.incidentBusy} onClick={() => { void props.onCaptureIncident(); }}>{t('live.captureIncident')}</button>
-              <button type="button" disabled={props.mcpBusy || dashboard.selectedWorkspace === null} onClick={() => { void props.onRestartMcp(); }}>
+              <ActionButton type="button" disabled={props.incidentBusy} onClick={() => { void props.onCaptureIncident(); }}>{t('live.captureIncident')}</ActionButton>
+              <ActionButton type="button" disabled={props.mcpBusy || dashboard.selectedWorkspace === null} onClick={() => { void props.onRestartMcp(); }}>
                 {t('home.restartDesktopAgent')}
-              </button>
-              <button type="button" disabled={props.mcpBusy || !dashboard.mcp.running} onClick={() => { void props.onStopMcp(); }}>
+              </ActionButton>
+              <ActionButton type="button" disabled={props.mcpBusy || !dashboard.mcp.running} onClick={() => { void props.onStopMcp(); }}>
                 {t('home.stopDesktopAgent')}
-              </button>
+              </ActionButton>
             </div>
           </details>
         </div>
@@ -170,7 +171,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
           </code>
           {dashboard.mcp.lastStartError === null || dashboard.mcp.lastStartError === undefined ? null : <p className="hint error-text" role="alert">{t('home.mcpStartError', { detail: dashboard.mcp.lastStartError })}</p>}
           <div className="inline-actions">
-            <button
+            <ActionButton
               type="button"
               disabled={dashboard.connectionModes.httpUrl === null}
               onClick={() => {
@@ -178,7 +179,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
               }}
             >
               {t('mcp.copy')}
-            </button>
+            </ActionButton>
             {copyStatus === null ? null : <span data-testid="mcp-copy-status" role="status">{copyStatus}</span>}
           </div>
           <p className="hint">{t('mcp.stdioCommand')}</p>
@@ -198,8 +199,8 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
             <div className="settings-mini-heading"><strong>{t('home.remoteMcpOauth')}</strong><span>{remoteMcp.state === 'running' ? t('status.online') : remoteMcp.oauthConnected ? (remoteMcp.autoStartEnabled ? t('status.linkedAuto') : t('status.linked')) : remoteMcp.installed && remoteMcp.hasAuthtoken ? t('status.ready') : t('status.setup')}</span></div>
             <code className="endpoint">{remoteMcp.publicMcpUrl ?? '—'}</code>
             <div className="inline-actions">
-              <button type="button" disabled={remoteMcp.publicMcpUrl === null} onClick={() => { if (remoteMcp.publicMcpUrl !== null) void copyText(remoteMcp.publicMcpUrl); }}>{t('home.copyPublicMcp')}</button>
-              <button type="button" onClick={props.onOpenTunnelSetup}>{t('home.configureChatgpt')}</button>
+              <ActionButton type="button" disabled={remoteMcp.publicMcpUrl === null} onClick={() => { if (remoteMcp.publicMcpUrl !== null) void copyText(remoteMcp.publicMcpUrl); }}>{t('home.copyPublicMcp')}</ActionButton>
+              <ActionButton type="button" onClick={props.onOpenTunnelSetup}>{t('home.configureChatgpt')}</ActionButton>
             </div>
             {remoteMcp.oauthConnected ? <div className="home-remote-mcp-status is-connected">{remoteMcp.autoStartEnabled ? t('home.chatgptConnectedAuto') : t('home.chatgptConnectedManual')}</div> : null}
           </div>
@@ -230,16 +231,16 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
               {tunnelCredentialAvailable && dashboard.tunnel.profileExists ? null : (
                 <div className="guided-tunnel-home-entry">
                   <p className="hint">{tunnelPresentation.isOAuth ? t('home.reviewOauthSettings') : t('guidedTunnel.dismissedHint')}</p>
-                  <button type="button" className="btn-save-gold" onClick={props.onOpenTunnelSetup}>{tunnelPresentation.isOAuth ? t('home.openConnectionSettings') : t('guidedTunnel.openGuide')}</button>
+                  <ActionButton type="button" className="btn-save-gold" onClick={props.onOpenTunnelSetup}>{tunnelPresentation.isOAuth ? t('home.openConnectionSettings') : t('guidedTunnel.openGuide')}</ActionButton>
                 </div>
               )}
               <div className="inline-actions">
-                <button type="button" disabled={tunnelControlsLocked || !tunnelCredentialAvailable || dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>
+                <ActionButton type="button" disabled={tunnelControlsLocked || !tunnelCredentialAvailable || dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>
                   {t(tunnelPresentation.startKey)}
-                </button>
-                <button type="button" disabled={tunnelControlsLocked || dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>
+                </ActionButton>
+                <ActionButton type="button" disabled={tunnelControlsLocked || dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>
                   {t(tunnelPresentation.stopKey)}
-                </button>
+                </ActionButton>
               </div>
             </div>
           </details>
@@ -274,7 +275,7 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
                     className={`active-project-option ${active ? 'is-active' : ''} ${primary ? 'is-primary' : ''} ${lastActive ? 'is-locked' : ''}`}
                     title={title}
                   >
-                    <input
+                    <FormInput
                       className="active-project-checkbox"
                       type="checkbox"
                       checked={active}
@@ -305,9 +306,9 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
                 disabled={activeProjects.length === 0}
                 onChange={setSelectedId}
                 options={activeProjects.map((workspace) => ({value:workspace.id,label:workspace.displayName}))} />
-              <button type="button" disabled={selectedId.length === 0 || selectedId === dashboard.selectedWorkspace?.id} onClick={() => { void props.onSelectWorkspace(selectedId); }}>
+              <ActionButton type="button" disabled={selectedId.length === 0 || selectedId === dashboard.selectedWorkspace?.id} onClick={() => { void props.onSelectWorkspace(selectedId); }}>
                 {t('project.setMain')}
-              </button>
+              </ActionButton>
             </div>
           </div>
 
@@ -315,19 +316,19 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
             <label className="field-label" htmlFor="add-project-path">{t('project.add')}</label>
             <p className="hint">{t('project.addHint')}</p>
             <div className="form-row">
-              <input
+              <FormInput
                 id="add-project-path"
                 value={projectPath}
                 onChange={(event) => setProjectPath(event.target.value)}
                 placeholder="D:\\projects\\app"
               />
-              <button
+              <ActionButton
                 type="button"
                 disabled={projectPath.trim().length === 0}
                 onClick={() => { void addCurrentProject(); }}
               >
                 {t('project.add')}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </section>

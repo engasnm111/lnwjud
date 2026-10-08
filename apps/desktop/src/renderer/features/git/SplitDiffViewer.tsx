@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { Fragment, useRef, useState, type ReactElement } from 'react';
 import type { GitFilePreviewInfo, GitImagePreview, UiLocale } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
@@ -280,14 +281,14 @@ export function SplitDiffViewer({
     <div className="split-diff-viewer">
       <div className="diff-header-bar">
         <div className="diff-header-left">
-          <button
+          <ActionButton
             type="button"
             className="diff-back-btn"
             onClick={onClose}
             title={t('diff.backTitle')}
           >
             ← {t('diff.back')}
-          </button>
+          </ActionButton>
           <span className="diff-file-title" title={filePath}>
             📄 {filePath}
           </span>
@@ -305,40 +306,40 @@ export function SplitDiffViewer({
           <div className="diff-view-toggle">
             {isImageDiff ? (
               <>
-                <button type="button" className={`toggle-btn ${imageFit ? 'active' : ''}`} onClick={() => { setImageFit(true); }}>
+                <ActionButton type="button" className={`toggle-btn ${imageFit ? 'active' : ''}`} onClick={() => { setImageFit(true); }}>
                   {t('diff.imageFit')}
-                </button>
-                <button type="button" className={`toggle-btn ${imageFit ? '' : 'active'}`} onClick={() => { setImageFit(false); }}>
+                </ActionButton>
+                <ActionButton type="button" className={`toggle-btn ${imageFit ? '' : 'active'}`} onClick={() => { setImageFit(false); }}>
                   {t('diff.imageActual')}
-                </button>
+                </ActionButton>
               </>
             ) : (
               <>
-                <button
+                <ActionButton
                   type="button"
                   className={`toggle-btn ${viewMode === 'split' ? 'active' : ''}`}
                   onClick={() => { setViewMode('split'); }}
                 >
                   {t('diff.splitView')}
-                </button>
-                <button
+                </ActionButton>
+                <ActionButton
                   type="button"
                   className={`toggle-btn ${viewMode === 'unified' ? 'active' : ''}`}
                   onClick={() => { setViewMode('unified'); }}
                 >
                   {t('diff.unifiedView')}
-                </button>
+                </ActionButton>
               </>
             )}
           </div>
-          <button
+          <ActionButton
             type="button"
             className="diff-close-btn"
             onClick={onClose}
             aria-label={t('diff.closeAria')}
           >
             {t('diff.close')}
-          </button>
+          </ActionButton>
         </div>
       </div>
 

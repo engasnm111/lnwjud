@@ -1,3 +1,4 @@
+import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
 import { useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement, type UIEvent } from 'react';
 import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type LogLevel, type LogSessionSummary, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
@@ -163,31 +164,31 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       <div className="section-heading">
         <h2>{props.title}</h2>
         <div className="worklog-actions">
-          <button
+          <ActionButton
             type="button"
             className={props.filter === 'all' ? 'active' : undefined}
             onClick={() => props.onFilterChange('all')}
           >
             {props.filterAllLabel}
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             type="button"
             className={props.filter === 'warn' ? 'active' : undefined}
             onClick={() => props.onFilterChange('warn')}
           >
             {props.filterWarningLabel ?? 'Warnings'}
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             type="button"
             className={props.filter === 'error' ? 'active' : undefined}
             onClick={() => props.onFilterChange('error')}
           >
             {props.filterErrorLabel}
-          </button>
-          {props.onExport === undefined ? null : <button type="button" onClick={() => { void props.onExport?.(rows.map(workLogRowIdentity)); }}>{props.exportLabel ?? 'Export'}</button>}
-          <button type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</button>
-          <button type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</button>
-          <button type="button" onClick={() => { void props.onClear({ workspaceId: null, sessionId: null }); }}>{props.clearAllLabel}</button>
+          </ActionButton>
+          {props.onExport === undefined ? null : <ActionButton type="button" onClick={() => { void props.onExport?.(rows.map(workLogRowIdentity)); }}>{props.exportLabel ?? 'Export'}</ActionButton>}
+          <ActionButton type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</ActionButton>
+          <ActionButton type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</ActionButton>
+          <ActionButton type="button" onClick={() => { void props.onClear({ workspaceId: null, sessionId: null }); }}>{props.clearAllLabel}</ActionButton>
         </div>
       </div>
       <div className="scope-filter-bar">
@@ -212,7 +213,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
             }} />
         </label>
       </div>
-      <input
+      <FormInput
         type="search"
         className="log-filter worklog-search"
         placeholder={props.searchPlaceholder ?? 'Search work log...'}
@@ -268,9 +269,9 @@ function CopyButton(props: {
   const copied = props.copiedId === props.row.id;
   const label = copied ? (props.copiedLabel ?? 'Copied') : (props.copyLabel ?? 'Copy full log');
   return (
-    <button type="button" className="row-copy-button" title={label} aria-label={label} onClick={() => { void props.onCopy(props.row); }}>
+    <ActionButton type="button" className="row-copy-button" title={label} aria-label={label} onClick={() => { void props.onCopy(props.row); }}>
       {copied ? '✓' : '⧉'}
-    </button>
+    </ActionButton>
   );
 }
 

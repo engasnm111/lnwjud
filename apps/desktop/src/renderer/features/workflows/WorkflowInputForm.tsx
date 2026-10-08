@@ -1,3 +1,4 @@
+import { ActionButton, FormInput, FormField } from '../ui/UiPrimitives.js';
 import { useState, type ReactElement } from 'react';
 import type { UiLocale, WorkflowTemplate } from '@lnwjud/ipc-contracts';
 import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
@@ -13,7 +14,7 @@ export function WorkflowInputForm(props: {
   const copy = v580Strings(props.locale).workflows;
   const [browsing, setBrowsing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const browseLabel = props.locale === 'th' ? 'เลือกไฟล์…' : 'Browse…';
+  const browseLabel = copy.browse;
   async function browse(key: string): Promise<void> {
     if (browsing !== null) return;
     setBrowsing(key);
@@ -32,24 +33,23 @@ export function WorkflowInputForm(props: {
       {props.template.inputFields.map((field) => {
         const label = workflowLocalized(props.locale,{ th:field.labelTh, en:field.labelEn });
         const isFile = field.key === 'inputPath' || field.key === 'templatePath' || field.key === 'mappingPath';
-        return <div className="workflow-field" key={field.key}>
-          <label htmlFor={`workflow-${field.key}`}>{label}{field.required ? ' *' : ''}</label>
+        return <FormField id={`workflow-${field.key}`} label={label} required={field.required} className="workflow-field" key={field.key}>
           {field.type === 'enum' ? (
-            <SearchableSelect value={props.values[field.key] ?? ''} disabled={props.disabled}
+            <SearchableSelect id={`workflow-${field.key}`} value={props.values[field.key] ?? ''} disabled={props.disabled}
               label={label} placeholder={copy.select}
               options={[{ value:'', label:copy.select }, ...(field.options ?? []).map((value) => ({ value, label:value }))]}
               onChange={(value) => props.onChange({ ...props.values, [field.key]:value })}/>
           ) : (
             <div className="workflow-field-control">
-              <input id={`workflow-${field.key}`} type="text" disabled={props.disabled} autoComplete="off"
+              <FormInput id={`workflow-${field.key}`} type="text" disabled={props.disabled} autoComplete="off"
                 value={props.values[field.key] ?? ''}
                 onChange={(event) => props.onChange({ ...props.values, [field.key]: event.target.value })}
                 placeholder={field.type === 'path' || field.type === 'mapping_file' ? copy.path : field.key} />
-              {isFile ? <button type="button" className="ui-browse-button" disabled={props.disabled || browsing !== null}
-                onClick={() => { void browse(field.key); }}>{browsing === field.key ? '…' : browseLabel}</button> : null}
+              {isFile ? <ActionButton type="button" className="ui-browse-button" disabled={props.disabled || browsing !== null}
+                onClick={() => { void browse(field.key); }}>{browsing === field.key ? '…' : browseLabel}</ActionButton> : null}
             </div>
           )}
-        </div>;
+        </FormField>;
       })}
       {error ? <p role="alert" className="workflow-field-error">{error}</p> : null}
     </div>

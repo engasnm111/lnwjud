@@ -1,3 +1,4 @@
+import { ActionButton, FormInput, FilterBar } from '../ui/UiPrimitives.js';
 import { useEffect, useState, type ReactElement } from 'react';
 import type { CallHistoryPage, CallHistoryRequest, UiLocale } from '@lnwjud/ipc-contracts';
 import { v580Strings } from '../../i18n/v580-copy.js';
@@ -31,19 +32,19 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
   }
   return <section className="diagnostics-calls">
     <p>{copy.intro}</p>
-    <div className="diagnostics-filters">
-      <label>{copy.goal} <input value={goalId} onChange={e => setGoalId(e.target.value)} maxLength={128}/></label>
-      <label>{copy.tool} <input value={toolName} onChange={e=>setToolName(e.target.value)} maxLength={128}/></label>
+    <FilterBar className="diagnostics-filters">
+      <label>{copy.goal} <FormInput value={goalId} onChange={e => setGoalId(e.target.value)} maxLength={128}/></label>
+      <label>{copy.tool} <FormInput value={toolName} onChange={e=>setToolName(e.target.value)} maxLength={128}/></label>
       <label>{copy.transport}
         <SearchableSelect label={copy.transport} value={transport} onChange={value => setTransport(value as typeof transport)}
           options={[{value:'',label:copy.all},{value:'unknown',label:copy.unknown},{value:'local_stdio',label:'Local STDIO'},
             {value:'loopback_http',label:'Loopback HTTP'},{value:'secure_tunnel',label:'Secure Tunnel'},
             {value:'external_mcp',label:'External MCP'}]} />
       </label>
-      <button type="button" disabled={busy || props.workspaceId===null} onClick={()=>{void load();}}>
+      <ActionButton type="button" disabled={busy || props.workspaceId===null} onClick={()=>{void load();}}>
         {busy ? (copy.loading) : (copy.load)}
-      </button>
-    </div>
+      </ActionButton>
+    </FilterBar>
     {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p> : null}
     {error ? <p role="alert">{error}</p> : null}
     {page ? <>
@@ -58,7 +59,7 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
           <td>{item.serverMs ?? '-'}</td><td>{item.tunnelObservedMs ?? '-'}</td><td>{item.goalId ?? '-'}</td>
         </tr>)}</tbody>
       </table></div>}
-      {cursor ? <button type="button" disabled={busy} onClick={()=>{void load(cursor);}}>{copy.next}</button> : null}
+      {cursor ? <ActionButton type="button" disabled={busy} onClick={()=>{void load(cursor);}}>{copy.next}</ActionButton> : null}
     </> : null}
   </section>;
 }

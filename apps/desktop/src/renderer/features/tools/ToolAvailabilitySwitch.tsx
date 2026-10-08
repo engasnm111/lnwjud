@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import type { ReactElement } from 'react';
 import type { UiLocale } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
@@ -18,7 +19,7 @@ export function ToolAvailabilitySwitch({ locale, checked, disabled = false, busy
   const accessibleLabel = `${label}: ${stateLabel}`;
 
   return (
-    <button
+    <ActionButton
       type="button"
       className={`tool-availability-switch ${checked ? 'is-on' : 'is-off'}${busy ? ' is-busy' : ''}`}
       role="switch"
@@ -32,6 +33,6 @@ export function ToolAvailabilitySwitch({ locale, checked, disabled = false, busy
       <span className="tool-availability-switch-track" aria-hidden="true">
         <span className="tool-availability-switch-thumb" />
       </span>
-    </button>
+    </ActionButton>
   );
 }

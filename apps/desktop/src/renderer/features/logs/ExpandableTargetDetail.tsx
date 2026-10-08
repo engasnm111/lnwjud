@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useId, useState, type ReactElement } from 'react';
 import type { ActivityTargetDetail, ActivityTargetReference, UiLocale } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
@@ -57,7 +58,7 @@ export function ExpandableTargetDetail(props: ExpandableTargetDetailProps): Reac
 
   return (
     <div className="expandable-log-detail">
-      <button
+      <ActionButton
         type="button"
         className="log-detail-toggle"
         aria-expanded={expanded}
@@ -65,7 +66,7 @@ export function ExpandableTargetDetail(props: ExpandableTargetDetailProps): Reac
         onClick={() => { void toggle(); }}
       >
         {expanded ? props.showLessLabel : props.showMoreLabel}
-      </button>
+      </ActionButton>
       {expanded ? (
         <div id={panelId} className="log-detail-panel" aria-live="polite">
           <h3>{props.detailHeadingLabel}</h3>

@@ -1,3 +1,4 @@
+import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
 import { useMemo, useState, type ReactElement } from 'react';
 import type { UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
@@ -58,35 +59,35 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
         </div>
         <div className="project-actions">
           {archived ? (
-            <button type="button" disabled={busy} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceArchived(workspace.id, false)); }}>
+            <ActionButton type="button" disabled={busy} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceArchived(workspace.id, false)); }}>
               {t('project.restore')}
-            </button>
+            </ActionButton>
           ) : (
             <>
-              <button type="button" disabled={busy || lastActive} title={lastActive ? t('project.minActiveRequired') : undefined} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceActive(workspace.id, !active)); }}>
+              <ActionButton type="button" disabled={busy || lastActive} title={lastActive ? t('project.minActiveRequired') : undefined} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceActive(workspace.id, !active)); }}>
                 {active ? t('project.deactivate') : t('project.activate')}
-              </button>
-              <button type="button" disabled={busy || selected} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSelectWorkspace(workspace.id)); }}>
+              </ActionButton>
+              <ActionButton type="button" disabled={busy || selected} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSelectWorkspace(workspace.id)); }}>
                 {selected ? t('home.primaryBadge') : t('project.setMain')}
-              </button>
-              <button type="button" className="project-archive-button" disabled={busy} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceArchived(workspace.id, true)); }}>
+              </ActionButton>
+              <ActionButton type="button" className="project-archive-button" disabled={busy} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onSetWorkspaceArchived(workspace.id, true)); }}>
                 {t('project.archive')}
-              </button>
+              </ActionButton>
             </>
           )}
           {confirmingDelete ? (
             <>
-              <button type="button" className="project-delete-button confirm" disabled={busy} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onDeleteWorkspace(workspace.id)); }}>
+              <ActionButton type="button" className="project-delete-button confirm" disabled={busy} onClick={() => { void runWorkspaceAction(workspace.id, () => props.onDeleteWorkspace(workspace.id)); }}>
                 {t('project.confirmDelete')}
-              </button>
-              <button type="button" className="project-cancel-button" disabled={busy} onClick={() => setConfirmingDeleteId(null)}>
+              </ActionButton>
+              <ActionButton type="button" className="project-cancel-button" disabled={busy} onClick={() => setConfirmingDeleteId(null)}>
                 {t('project.cancel')}
-              </button>
+              </ActionButton>
             </>
           ) : (
-            <button type="button" className="project-delete-button" disabled={busy} onClick={() => setConfirmingDeleteId(workspace.id)}>
+            <ActionButton type="button" className="project-delete-button" disabled={busy} onClick={() => setConfirmingDeleteId(workspace.id)}>
               {t('project.delete')}
-            </button>
+            </ActionButton>
           )}
         </div>
       </li>
@@ -99,15 +100,15 @@ export function ProjectsPage(props: ProjectsPageProps): ReactElement {
       <section className="panel">
         <label className="field-label" htmlFor="workspace-root">{t('project.add')}</label>
         <div className="form-row">
-          <input
+          <FormInput
             id="workspace-root"
             aria-label={t('project.workspaceRoot')}
             value={rootPath}
             onChange={(event) => setRootPath(event.target.value)}
           />
-          <button type="button" disabled={rootPath.trim().length === 0} onClick={() => { void addCurrentWorkspace(); }}>
+          <ActionButton type="button" disabled={rootPath.trim().length === 0} onClick={() => { void addCurrentWorkspace(); }}>
             {t('project.add')}
-          </button>
+          </ActionButton>
         </div>
         <p className="project-add-hint">{t('project.addHint')}</p>
       </section>

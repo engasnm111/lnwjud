@@ -1,3 +1,4 @@
+import { ActionButton, FormInput, FilterBar } from '../ui/UiPrimitives.js';
 import { Fragment, useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { DashboardSnapshot, GitImagePreview, GitStatusEntrySummary, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
@@ -107,9 +108,9 @@ export function GitPage({
             </div>
           ) : null}
           {onRefresh === undefined ? null : (
-            <button type="button" onClick={() => { void onRefresh(); }}>
+            <ActionButton type="button" onClick={() => { void onRefresh(); }}>
               {t('action.refresh')}
-            </button>
+            </ActionButton>
           )}
         </div>
       </div>
@@ -148,28 +149,28 @@ export function GitPage({
             ) : diffData?.error ? (
               <div className="diff-error-box">
                 <p>{diffData.error}</p>
-                <button type="button" onClick={() => { setSelectedFile(null); }}>
+                <ActionButton type="button" onClick={() => { setSelectedFile(null); }}>
                   {t('git.close')}
-                </button>
+                </ActionButton>
               </div>
             ) : (
               <>
                 {selectedFile.indexStatus !== ' ' && selectedFile.indexStatus !== '?' && selectedFile.worktreeStatus !== ' ' ? (
                   <div className="diff-view-toggle" aria-label={t('git.diffScope')}>
-                    <button
+                    <ActionButton
                       type="button"
                       className={`toggle-btn ${selectedStaged ? 'active' : ''}`}
                       onClick={() => { void handleOpenFileDiff(selectedFile, true); }}
                     >
                       HEAD → Index (Staged)
-                    </button>
-                    <button
+                    </ActionButton>
+                    <ActionButton
                       type="button"
                       className={`toggle-btn ${selectedStaged ? '' : 'active'}`}
                       onClick={() => { void handleOpenFileDiff(selectedFile, false); }}
                     >
                       Index → Working Tree (Unstaged)
-                    </button>
+                    </ActionButton>
                   </div>
                 ) : null}
                 <SplitDiffViewer
@@ -212,9 +213,9 @@ export function GitPage({
                       <strong>{ws.displayName}</strong>
                       <p className="hint">{ws.realRootPath}</p>
                     </div>
-                    <button type="button" onClick={() => { void onSelectWorkspace(ws.id); }}>
+                    <ActionButton type="button" onClick={() => { void onSelectWorkspace(ws.id); }}>
                       {t('git.switchProject')}
-                    </button>
+                    </ActionButton>
                   </div>
                 ))}
               </div>
@@ -228,13 +229,13 @@ export function GitPage({
                 {t('git.changedFilesHint')}
               </span>
             </div>
-            <div className="git-file-toolbar">
-              <input aria-label={copy.search} placeholder={copy.placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(250); }} />
+            <FilterBar className="git-file-toolbar">
+              <FormInput aria-label={copy.search} placeholder={copy.placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(250); }} />
               <SearchableSelect label={copy.filter} value={statusFilter}
                 options={[{ value:'all', label:copy.all }, { value:'staged',label:'Staged' }, { value:'unstaged',label:'Unstaged' }, { value:'untracked',label:copy.untracked }]}
                 onChange={(value) => { setStatusFilter(value as GitFileStatusFilter); setVisibleCount(250); }} />
               <span role="status" className="hint">{visibleEntries.length.toLocaleString()} / {filteredEntries.length.toLocaleString()} {copy.files}</span>
-            </div>
+            </FilterBar>
             <div className={`git-file-list ${filteredEntries.length > 0 ? '' : 'empty'}`}>
               {visibleEntries.length > 0 ? visibleEntries.map((entry, index) => {
                 const isSelected = selectedFile?.path === entry.path;
@@ -286,7 +287,7 @@ export function GitPage({
                 </div>
               )}
             </div>
-            {visibleEntries.length < filteredEntries.length ? <button type="button" className="git-show-more" onClick={() => setVisibleCount(c => c + 250)}>{copy.showMore}</button> : null}
+            {visibleEntries.length < filteredEntries.length ? <ActionButton type="button" className="git-show-more" onClick={() => setVisibleCount(c => c + 250)}>{copy.showMore}</ActionButton> : null}
           </div>
         )}
       </section>

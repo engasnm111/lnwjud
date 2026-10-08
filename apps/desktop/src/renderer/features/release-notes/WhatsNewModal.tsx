@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useEffect, useRef, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import type { UiLocale } from '@lnwjud/ipc-contracts';
@@ -68,7 +69,7 @@ export function WhatsNewModal({ locale, version, onClose }: WhatsNewModalProps):
             <p className="eyebrow">{t('whatsNew.eyebrow')}</p>
             <h2 ref={titleRef} tabIndex={-1} id="whats-new-title">{t('whatsNew.title', { version })}</h2>
           </div>
-          <button className="tool-modal-close" type="button" onClick={onClose} aria-label={t('whatsNew.close')}>×</button>
+          <ActionButton className="tool-modal-close" type="button" onClick={onClose} aria-label={t('whatsNew.close')}>×</ActionButton>
         </header>
         <div className="tool-modal-scroll whats-new-scroll">
           {note === undefined || categories.length === 0 ? (

@@ -1,3 +1,4 @@
+import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
 import { useEffect, useState, type ReactElement } from 'react';
 import type { ResourceSnapshot, UiLocale } from '@lnwjud/ipc-contracts';
 import { v580Strings } from '../../i18n/v580-copy.js';
@@ -42,8 +43,8 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
   }
   return <section className="diagnostics-resources">
     <p>{copy.intro}</p>
-    <label>{copy.goal} <input maxLength={128} value={goalId} onChange={e=>setGoalId(e.target.value)}/></label>
-    <button type="button" disabled={!props.workspaceId || loading} onClick={()=>{void load()}}>{loading?(copy.loading):(copy.refresh)}</button>
+    <label>{copy.goal} <FormInput maxLength={128} value={goalId} onChange={e=>setGoalId(e.target.value)}/></label>
+    <ActionButton type="button" disabled={!props.workspaceId || loading} onClick={()=>{void load()}}>{loading?(copy.loading):(copy.refresh)}</ActionButton>
     {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p>:null}
     {error?<p role="alert">{error}</p>:null}
     {snapshot?<div aria-live="polite">
@@ -59,9 +60,9 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
             <td>{row.taskId??'-'}</td><td>{row.provider}</td><td>{row.ownership}</td>
             <td>{measured(row.workingSetBytes,'bytes')}</td><td>{measured(row.cpuPercent,'%')}</td>
             <td>{row.canCancel && row.taskId && ['process','codex','shell'].includes(row.provider)
-              ? <button type="button" disabled={cancelling !== null} onClick={()=>{void cancelOwned(row.taskId!,row.provider)}}>
+              ? <ActionButton type="button" disabled={cancelling !== null} onClick={()=>{void cancelOwned(row.taskId!,row.provider)}}>
                 {cancelling === row.taskId ? (copy.cancelling):(copy.cancel)}
-              </button> : '—'}</td>
+              </ActionButton> : '—'}</td>
           </tr>)}</tbody>
         </table>}
       <p>{copy.note}</p>

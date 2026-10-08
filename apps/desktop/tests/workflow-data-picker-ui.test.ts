@@ -29,6 +29,6 @@ describe('Workflow data picker behavior', () => {
       template,locale:'en',values:{},onChange:()=>{},disabled:true,
     }));
     expect(html).toContain('Browse');
-    expect(html).toMatch(/class="ui-browse-button" disabled=""/);
+    expect(html).toMatch(/<button(?=[^>]*ui-browse-button)(?=[^>]*disabled="")[^>]*>/);
   });
 });

@@ -9,7 +9,7 @@ export const v580Copy = {
       inputLabel:'ตั้งค่าเวิร์กโฟลว์', working:'กำลังตรวจสอบ', prepare:'ตรวจและดูแผน',
       preview:'ตัวอย่างแผน', ready:'พร้อมส่งต่อให้ AI', notReady:'ยังไม่พร้อมใช้งาน',
       acceptance:'เกณฑ์ตรวจรับ', copy:'คัดลอกคำสั่งไปให้ AI', select:'เลือก',
-      path:'เส้นทางไฟล์หรือโฟลเดอร์ในโปรเจกต์' },
+      path:'เส้นทางไฟล์หรือโฟลเดอร์ในโปรเจกต์', browse:'เลือกไฟล์…' },
     doctor: { title:'การวินิจฉัย', views:'หมวดการวินิจฉัย',
       checks:'การตรวจสอบ', calls:'ประวัติ MCP', results:'ผลงาน', resources:'ทรัพยากร' },
     calls: {
@@ -57,7 +57,7 @@ export const v580Copy = {
       inputLabel:'Workflow inputs', working:'Checking', prepare:'Prepare and preview',
       preview:'Plan preview', ready:'Ready for AI handoff', notReady:'Not ready',
       acceptance:'Acceptance', copy:'Copy AI launch prompt', select:'Select',
-      path:'Workspace file or directory path' },
+      path:'Workspace file or directory path', browse:'Browse…' },
     doctor: { title:'Diagnostics', views:'Diagnostic views',
       checks:'Checks', calls:'Calls', results:'Results', resources:'Resources' },
     calls: {

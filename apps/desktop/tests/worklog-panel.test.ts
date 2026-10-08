@@ -1,5 +1,6 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { collectSessionFilterOptions, collectWorkspaceFilterOptions } from '../src/renderer/scope-filter-options.js';
 import { describe, expect, it } from 'vitest';
 import type { InFlightWorkItem, WorkLogEntry } from '@lnwjud/ipc-contracts';
 import { formatWorkLogCopyText, newestFirstWorkLogRows, WorkLogPanel } from '../src/renderer/features/worklog/WorkLogPanel.js';
@@ -133,7 +134,8 @@ describe('WorkLogPanel', () => {
     expect(markup).toContain('Destructive operation requires explicit user confirmation');
     expect(markup).toContain('71ms');
     expect(markup).toContain('12ms');
-    expect(markup).toContain('Session 19/08/2026 21:00');
+    const sessions = [...mockEntries.map((row) => ({ workspaceId:row.workspaceId ?? null, sessionId:row.sessionId ?? null, timestamp:row.timestamp })), ...mockInFlight.map((row) => ({ workspaceId:row.workspaceId ?? null, sessionId:row.sessionId ?? null, timestamp:row.startedAt }))];
+    expect(collectSessionFilterOptions(sessions, null, undefined, 'th').some((option) => option.label.startsWith('Session 19/08/2026 21:00'))).toBe(true);
   });
 
   it('drops cleared historical entries so loaded sessions do not reappear after refresh', () => {
@@ -216,9 +218,11 @@ describe('WorkLogPanel', () => {
       clearSessionLabel: 'Clear session', clearWorkspaceLabel: 'Clear workspace', clearAllLabel: 'Clear all',
       filter: 'all', onFilterChange: () => {}, onClear: async () => {}, entries: [], inFlight: [], workspaces,
     }));
-    expect(markup).toContain('lnwjud — E:\\lnwjud');
-    expect(markup).toContain('lnwjud — D:\\projects\\lnwjud');
-    expect(markup.match(/value="workspace-alias"/g)).toBeNull();
+    const choices = collectWorkspaceFilterOptions([], workspaces);
+    expect(choices.map((option) => option.label)).toContain('lnwjud — E:\\lnwjud');
+    expect(choices.map((option) => option.label)).toContain('lnwjud — D:\\projects\\lnwjud');
+    expect(choices.some((option) => option.id === 'workspace-alias')).toBe(false);
+    expect(choices.some((option) => option.id === 'drive-e')).toBe(false);
     expect(markup).not.toContain('Local Disk E:');
   });
 
@@ -299,7 +303,7 @@ describe('WorkLogPanel', () => {
       clearSessionLabel: 'Clear session', clearWorkspaceLabel: 'Clear workspace', clearAllLabel: 'Clear all',
       filter: 'all', onFilterChange: () => {}, onClear: async () => {}, entries: [entry], inFlight: [], workspaces,
     }));
-    expect(markup).toContain(`lnwjud — ${workspaceId}`);
+    expect(collectWorkspaceFilterOptions([{ workspaceId }], workspaces)).toEqual([{ id:workspaceId, label:'lnwjud — E:\\lnwjud' }]);
     expect(markup).toContain(`title="${workspaceId}"`);
     expect(markup).toContain(`title="${sessionId}"`);
     expect(markup).toContain('scope-badge workspace copyable');
@@ -349,7 +353,7 @@ describe('WorkLogPanel', () => {
       showMoreLabel: 'ดูเพิ่ม', showLessLabel: 'แสดงน้อยลง', detailHeadingLabel: 'รายการเป้าหมาย',
     }));
 
-    expect(markup.match(/aria-expanded="false"/g)).toHaveLength(2);
+    expect(markup.match(/<button(?=[^>]*aria-expanded="false")(?=[^>]*log-detail-toggle)[^>]*>/g)).toHaveLength(2);
     expect(markup.match(/aria-controls="log-detail-/g)).toHaveLength(2);
     expect(markup.match(/>ดูเพิ่ม</g)).toHaveLength(2);
     expect(markup).not.toContain('แสดงน้อยลง');
@@ -379,7 +383,7 @@ describe('WorkLogPanel', () => {
     }));
 
     expect(markup.match(/>ดูเพิ่ม</g)).toHaveLength(1);
-    expect(markup.match(/aria-expanded="false"/g)).toHaveLength(1);
+    expect(markup.match(/<button(?=[^>]*aria-expanded="false")(?=[^>]*log-detail-toggle)[^>]*>/g)).toHaveLength(1);
   });
 
   it('keeps old generic rows without an eligibility flag quiet unless they are clearly large', () => {
@@ -417,7 +421,7 @@ describe('WorkLogPanel', () => {
     }));
 
     expect(markup).toContain('Older log: the omitted items were not retained.');
-    expect(markup).not.toContain('aria-expanded');
+    expect(markup).not.toContain('class="log-detail-toggle"');
   });
 
   it('does not claim ordinary legacy summaries lost omitted items', () => {

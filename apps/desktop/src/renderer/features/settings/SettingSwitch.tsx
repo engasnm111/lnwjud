@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import type { ReactElement } from 'react';
 
 interface SettingSwitchProps {
@@ -10,7 +11,7 @@ interface SettingSwitchProps {
 
 export function SettingSwitch({ checked, label, description, disabled = false, onChange }: SettingSwitchProps): ReactElement {
   return (
-    <button
+    <ActionButton
       type="button"
       className={`setting-switch ${checked ? 'is-on' : ''}`}
       role="switch"
@@ -25,6 +26,6 @@ export function SettingSwitch({ checked, label, description, disabled = false, o
       <span className="setting-switch-track" aria-hidden="true">
         <span className="setting-switch-thumb" />
       </span>
-    </button>
+    </ActionButton>
   );
 }

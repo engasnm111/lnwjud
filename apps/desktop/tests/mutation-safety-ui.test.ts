@@ -127,8 +127,8 @@ describe('mutation safety UI contract', () => {
         },
       },
     }, 'tunnel');
-    expect(markup).toContain('<button type="button" class="btn-save-gold" disabled="">Reconnect same Tunnel</button>');
-    expect(markup).toContain('<button type="button" disabled="">Stop Tunnel</button>');
+    expect(markup).toMatch(/<button(?=[^>]*disabled="")(?=[^>]*btn-save-gold)[^>]*>Reconnect same Tunnel<\/button>/);
+    expect(markup).toMatch(/<button(?=[^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
   });
 
   it('renders the actual 5.8.0 application version', () => {

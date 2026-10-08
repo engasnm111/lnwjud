@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react';
+import type { ComponentPropsWithRef, HTMLAttributes, ReactElement, ReactNode } from 'react';
 
 interface HeadingProps {
   readonly title: ReactNode;
@@ -79,4 +79,48 @@ interface EmptyStateProps {
 export function EmptyState({ children, variant = 'settings', className }: EmptyStateProps): ReactElement {
   const base = variant === 'doctor' ? 'doctor-empty-state' : 'empty-setting-state';
   return <div className={[base, className].filter(Boolean).join(' ')}>{children}</div>;
+}
+
+
+export type ActionVariant = 'default' | 'primary' | 'ghost' | 'danger';
+
+export function ActionButton({ variant = 'default', loading = false, className, disabled, type = 'button', ...props }:
+  ComponentPropsWithRef<'button'> & { readonly variant?: ActionVariant; readonly loading?: boolean }): ReactElement {
+  return <button {...props} type={type} disabled={disabled || loading} aria-busy={loading || undefined}
+    className={['ui-action', `ui-action--${variant}`, className].filter(Boolean).join(' ')} />;
+}
+
+export function FormInput({ className, type = 'text', ...props }: ComponentPropsWithRef<'input'>): ReactElement {
+  return <input {...props} type={type} className={[type === 'checkbox' || type === 'radio' ? '' : 'ui-text-input', className].filter(Boolean).join(' ')} />;
+}
+
+export function FormSelect({ className, ...props }: ComponentPropsWithRef<'select'>): ReactElement {
+  return <select {...props} className={['ui-native-select', className].filter(Boolean).join(' ')} />;
+}
+
+export function FormTextarea({ className, ...props }: ComponentPropsWithRef<'textarea'>): ReactElement {
+  return <textarea {...props} className={['ui-text-area', className].filter(Boolean).join(' ')} />;
+}
+
+export function FilterBar({ className, ...props }: HTMLAttributes<HTMLDivElement>): ReactElement {
+  return <div {...props} className={['ui-filter-bar', className].filter(Boolean).join(' ')} />;
+}
+
+export function FormField({ id, label, required, className, children }: {
+  readonly id: string;
+  readonly label: ReactNode;
+  readonly required?: boolean;
+  readonly className?: string;
+  readonly children: ReactNode;
+}): ReactElement {
+  return <div className={['ui-form-field', className].filter(Boolean).join(' ')}>
+    <label htmlFor={id}>{label}{required ? ' *' : null}</label>
+    {children}
+  </div>;
+}
+
+export function Surface({ as = 'div', className, children, ...props }:
+  HTMLAttributes<HTMLDivElement> & { readonly as?: 'div' | 'section' }): ReactElement {
+  const classes = ['ui-surface', className].filter(Boolean).join(' ');
+  return as === 'section' ? <section {...props} className={classes}>{children}</section> : <div {...props} className={classes}>{children}</div>;
 }

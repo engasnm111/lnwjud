@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import type { ReactElement } from 'react';
 import type { DoctorCheck, DoctorReport, RemediationAction, ResolvedRemediation, UiLocale } from '@lnwjud/ipc-contracts';
 import { formatDateTime } from '../../date-time.js';
@@ -55,11 +56,11 @@ export function DoctorPanel({
           <div className="doctor-remediation">
             <div className="doctor-remediation-copy"><strong>{remediation.title}</strong><p>{remediation.explanation}</p></div>
             {remediation.steps.length === 0 ? null : <ol>{remediation.steps.map((step) => <li key={step}>{step}</li>)}</ol>}
-            <div className="doctor-remediation-actions">{remediation.actions.map((action, index) => <button type="button" key={`${remediation.id}:${index}`} onClick={() => { void onRemediation?.(action); }}>{actionLabel(t, action)}</button>)}</div>
+            <div className="doctor-remediation-actions">{remediation.actions.map((action, index) => <ActionButton type="button" key={`${remediation.id}:${index}`} onClick={() => { void onRemediation?.(action); }}>{actionLabel(t, action)}</ActionButton>)}</div>
           </div>
         )}
         <div className="doctor-check-footer">
-          {onRecheck === undefined ? null : <button type="button" className="doctor-recheck" onClick={() => { void onRecheck([check.id]); }}>{t('doctor.recheckIssue')}</button>}
+          {onRecheck === undefined ? null : <ActionButton type="button" className="doctor-recheck" onClick={() => { void onRecheck([check.id]); }}>{t('doctor.recheckIssue')}</ActionButton>}
           <small>{t('doctor.checked')} {formatDateTime(check.checkedAt, check.checkedAt, locale)} · {check.durationMs} ms</small>
         </div>
       </article>
@@ -70,7 +71,7 @@ export function DoctorPanel({
     <section className="panel doctor-panel">
       <div className="section-heading">
         <div><p className="page-subtitle" style={{ margin: 0 }}>{t('doctor.subtitle')}</p>{report === null ? null : <small>{report.exitCode === 0 ? t('doctor.corePassed') : t('doctor.requiredAttention')}</small>}</div>
-        <button type="button" onClick={() => { void onRunDoctor(); }}>{t('doctor.run')}</button>
+        <ActionButton type="button" onClick={() => { void onRunDoctor(); }}>{t('doctor.run')}</ActionButton>
       </div>
       {report === null ? <div className="doctor-empty-state"><p>{t('doctor.noReport')}</p></div> : (
         <>
@@ -78,7 +79,7 @@ export function DoctorPanel({
           {passed.length === 0 ? null : <details className="doctor-passed"><summary>{t('doctor.checksPassed', { count: passed.length })}</summary><div className="doctor-list">{passed.map(renderCheck)}</div></details>}
         </>
       )}
-      {projectSetupRequired ? <div className="doctor-recovery-actions"><p>{t('doctor.addProjectPrompt')}</p><button type="button" onClick={onOpenProjects}>{t('doctor.addProject')}</button></div> : null}
+      {projectSetupRequired ? <div className="doctor-recovery-actions"><p>{t('doctor.addProjectPrompt')}</p><ActionButton type="button" onClick={onOpenProjects}>{t('doctor.addProject')}</ActionButton></div> : null}
     </section>
   );
 }

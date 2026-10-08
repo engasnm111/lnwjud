@@ -1,3 +1,4 @@
+import { ActionButton } from '../ui/UiPrimitives.js';
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { workspaceScopeMatches, type DashboardSnapshot, type LiveLogExportReference, type LogLine, type LogSource, type TunnelAuthStatus, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
@@ -133,7 +134,7 @@ export function StandaloneLogViewer(): ReactElement {
         <div className="log-tabs-toolbar">
           <div className="log-tabs" role="tablist" aria-label={t('live.title')}>
             {sources.map((source) => (
-              <button
+              <ActionButton
                 key={source}
                 type="button"
                 role="tab"
@@ -142,10 +143,10 @@ export function StandaloneLogViewer(): ReactElement {
                 onClick={() => setTab(source)}
               >
                 {source === 'tunnel' ? t(tunnelPresentation.logTabKey) : source === 'mcp' ? t('live.tabMcp') : t('live.tabProcess')}
-              </button>
+              </ActionButton>
             ))}
           </div>
-          <button type="button" className="clear-all-logs-button" onClick={() => { void clearAll(); }}>{t('live.clearAll')}</button>
+          <ActionButton type="button" className="clear-all-logs-button" onClick={() => { void clearAll(); }}>{t('live.clearAll')}</ActionButton>
         </div>
         <LogStreamPanel
           locale={locale}
