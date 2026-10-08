@@ -19,6 +19,8 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
     ...goals.map((goal) => ({ value: goal.goalId,
       label: `${goal.goalKey} · ${goal.objective || goal.status} (${goal.goalId.slice(0, 8)})` })),
   ], [goals, copy.all]);
+  const goalNames = useMemo(() => new Map(goals.map((goal) => [goal.goalId, goal.goalKey] as const)), [goals]);
+  const toolTitles = useMemo(() => new Map(tools.map((tool) => [tool.name, tool.title] as const)), [tools]);
   const toolOptions = useMemo(() => [
     { value: '', label: copy.all },
     ...[...new Map(tools.map((tool) => [tool.name, tool] as const)).values()]
@@ -84,11 +86,20 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
       <p>{copy.completed}: {page.totals.completedCount}. {copy.incomplete}: {page.totals.incompleteCount}.
       Server p50/p95: {page.totals.serverP50Ms ?? 'unknown'} / {page.totals.serverP95Ms ?? 'unknown'} ms
       ({page.totals.serverSampleCount} samples).</p>
-      {page.items.length === 0 ? <p>{copy.noItems}</p> : <div className="diagnostics-history-scroll"><table>
+      {page.items.length === 0 ? <div className="diagnostics-history-empty" role="status">
+        <strong>{copy.noItems}</strong>
+        <p>{copy.noTelemetryReason}</p>
+        {(goalId || toolName || transport) ? <ActionButton type="button" onClick={() => {
+          setGoalId(''); setToolName(''); setTransport(''); setPage(null); setCursor(null);
+        }}>{copy.clearFilters}</ActionButton> : null}
+        <p className="hint">{copy.liveLogsNote}</p>
+      </div> : <div className="diagnostics-history-scroll"><table>
         <thead><tr><th>{copy.at}</th><th>Tool</th><th>{copy.outcome}</th><th>Server ms</th><th>Tunnel ms</th><th>Goal</th></tr></thead>
         <tbody>{page.items.map(item=><tr key={item.correlationKey}>
-          <td>{item.completedAt ?? '-'}</td><td>{item.toolName}</td><td>{item.outcome}</td>
-          <td>{item.serverMs ?? '-'}</td><td>{item.tunnelObservedMs ?? '-'}</td><td>{item.goalId ?? '-'}</td>
+          <td>{item.completedAt ? new Date(item.completedAt).toLocaleString(copy.dateLocale) : '-'}</td>
+          <td title={item.toolName}>{toolTitles.get(item.toolName) ?? item.toolName}</td><td>{item.outcome}</td>
+          <td>{item.serverMs ?? '-'}</td><td>{item.tunnelObservedMs ?? '-'}</td>
+          <td title={item.goalId ?? ''}>{item.goalId ? goalNames.get(item.goalId) ?? item.goalId.slice(0, 8) : copy.unattributed}</td>
         </tr>)}</tbody>
       </table></div>}
       {cursor ? <ActionButton type="button" disabled={busy} onClick={()=>{void load(cursor);}}>{copy.next}</ActionButton> : null}

@@ -48,6 +48,12 @@ export interface CallHistoryPage {
 }
 export interface TaskResultSummary {
   readonly workspaceId: string; readonly goalId: string; readonly goalRevision: number;
+  readonly progress?: { readonly currentPhase: string; readonly nextAction: string;
+    readonly updatedAt: string; readonly lastCheckpointSummary: string | null;
+    readonly terminalSummary?: string; readonly steps: readonly {
+      readonly id: string; readonly title: string; readonly status: 'pending' | 'in_progress' | 'completed' | 'blocked';
+      readonly summary?: string;
+    }[]; };
   readonly status: 'active' | 'completed' | 'failed' | 'blocked' | 'cancelled';
   readonly observedChanges: readonly { readonly operationId: string; readonly path: string; readonly action: string; readonly observedAt: string }[];
   readonly artifacts: readonly { readonly path: string; readonly kind: string; readonly sha256?: string; readonly sizeBytes?: number; readonly verification: 'verified' | 'unverified' | 'failed' }[];

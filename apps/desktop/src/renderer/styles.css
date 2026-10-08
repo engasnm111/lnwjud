@@ -3440,6 +3440,40 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .ui-filter-bar > .ui-action { min-height:42px; }
 .ui-filter-bar > .ui-text-input { min-height:42px; }
 .diagnostics-filters > .ui-action { min-height:42px; align-self:flex-end; }
+/* Doctor filters: visible spacing even when button is beside the last control. */
+.diagnostics-filters { display:flex; flex-wrap:wrap; align-items:flex-end; gap:14px 16px; width:100%; min-width:0; }
+.diagnostics-filters > .ui-action { flex:0 0 auto; margin-inline-start:8px; }
+.diagnostics-result-filters { justify-content:flex-start; gap:14px 18px; margin:16px 0 20px; }
+.diagnostics-result-filters > .diagnostics-filter-field { flex:0 1 520px; width:min(520px,100%); max-width:520px; }
+.diagnostics-goal-results > p { line-height:1.6; }
+.diagnostics-selected-goal { display:flex; flex-direction:column; gap:5px; padding:14px 16px; margin:8px 0 16px; background:var(--ui-card-bg); border:1px solid var(--border-subtle); border-radius:12px; overflow-wrap:anywhere; }
+.diagnostics-selected-goal > strong { color:var(--gold-bright); font-weight:600; }
+.diagnostics-selected-goal > small { color:var(--muted); }
+.diagnostics-result-detail { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.diagnostics-evidence-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,135px),1fr)); gap:10px; }
+.diagnostics-evidence-summary > div { display:flex; flex-direction:column; gap:6px; padding:13px 15px; border:1px solid var(--border-subtle); border-radius:10px; background:var(--ui-card-bg); }
+.diagnostics-evidence-summary small { color:var(--muted); }
+.diagnostics-evidence-summary strong { font-weight:600; overflow-wrap:anywhere; }
+.diagnostics-result-section { min-width:0; border:1px solid var(--border-subtle); border-radius:12px; padding:16px; background:var(--ui-card-bg); }
+.diagnostics-result-section h3 { font-size:15px; font-weight:600; margin:0 0 12px; }
+.diagnostics-result-section .hint { line-height:1.6; }
+.diagnostics-result-checks { display:flex; flex-direction:column; gap:8px; padding-left:16px; }
+.diagnostics-result-checks li { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--border-subtle); padding:7px 0; }
+.diagnostics-result-checks li > span:first-child { display:flex; flex-direction:column; min-width:0; gap:4px; overflow-wrap:anywhere; }
+.diagnostics-result-checks li small { color:var(--muted); line-height:1.5; }
+.diagnostics-step-status { align-self:flex-start; flex:0 0 auto; white-space:nowrap; color:var(--gold-bright); font-weight:600; font-size:12px; }
+.diagnostics-progress-overview { display:grid; grid-template-columns:minmax(100px,170px) minmax(0,1fr); gap:9px 15px; margin:0 0 16px; }
+.diagnostics-progress-overview dt { color:var(--muted); font-size:12px; }
+.diagnostics-progress-overview dd { margin:0; font-size:13px; overflow-wrap:anywhere; line-height:1.6; }
+.diagnostics-history-empty { display:flex; flex-direction:column; align-items:flex-start; gap:8px; padding:16px; border:1px solid var(--border-subtle); background:var(--ui-card-bg); border-radius:12px; }
+.diagnostics-history-empty p { margin:0; line-height:1.65; }
+.diagnostics-history-empty > .ui-action { margin:4px 0; }
+@media(max-width:520px) { .diagnostics-progress-overview { grid-template-columns:1fr; gap:3px; } .diagnostics-progress-overview dd { margin-bottom:10px; } }
+.diagnostics-history-scroll { min-width:0; overflow-x:auto; }
+.diagnostics-history-scroll td { overflow-wrap:anywhere; }
+.diagnostics-history-scroll code { font-size:11px; word-break:break-all; }
+@media (max-width:700px) { .diagnostics-filters > .ui-action { margin-inline-start:0; } .diagnostics-result-filters > .diagnostics-filter-field { flex:1 1 100%; max-width:none; } }
+
 .ui-loading-status { display:flex; align-items:center; gap:9px; color:var(--gold-bright); font-size:13px; font-weight:600; padding:8px 0; }
 .ui-loading-status::before { content:''; width:14px; height:14px; flex:none; border:2px solid rgba(245,197,66,.2); border-top-color:var(--gold-primary); border-radius:50%; animation:ui-loading-spin .85s linear infinite; }
 @keyframes ui-loading-spin { to { transform:rotate(360deg); } }

@@ -54,6 +54,15 @@ export class TaskResultService {
     // A model-completed Goal does not imply host-observed checks or artifacts passed.
     return ok({
       workspaceId,goalId,goalRevision:goal.revision,status:goal.status,
+      progress: {
+        currentPhase: goal.currentPhase ?? '', nextAction: goal.nextAction ?? '',
+        updatedAt: goal.updatedAt ?? '', lastCheckpointSummary: checkpoint?.summary ?? null,
+        ...(goal.terminalSummary === undefined ? {} : { terminalSummary: goal.terminalSummary }),
+        steps: (goal.plan?.steps ?? []).slice(0, 50).map((step) => ({
+          id: step.id, title: step.title, status: step.status,
+          ...(step.summary === undefined ? {} : { summary: step.summary }),
+        })),
+      },
       observedChanges,artifacts,checks,
       blockers:goal.blockers,lastCheckpointId:checkpoint?.id??null,
       evidenceCoverage:'partial',

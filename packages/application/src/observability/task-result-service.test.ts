@@ -18,7 +18,10 @@ async function fixture(): Promise<{dir:string;workspace:WorkspaceRepository;serv
   created.push(dir);
   const workspace={get:async(id:string)=>id==='ws'?{id:'ws',realRootPath:dir}:null} as WorkspaceRepository;
   const goal={goalId:'goal-1',workspaceId:'ws',revision:4,status:'active',blockers:[],
-    lastCheckpoint:{id:'cp-1'},engineering:{gates:[{title:'Functional integration',status:'pending'}]}};
+    currentPhase:'Preparing report',nextAction:'Review the new report',updatedAt:'2026-10-08T12:00:00Z',
+    plan:{steps:[{id:'step-1',title:'Create report',status:'completed',summary:'Report saved'}]},
+    lastCheckpoint:{id:'cp-1',summary:'Verified checksum'},
+    engineering:{gates:[{title:'Functional integration',status:'pending'}]}};
   const service={getGoal:async()=>ok(goal)} as unknown as GoalContinuationService;
   return {dir,workspace,service};
 }
@@ -39,6 +42,9 @@ describe('Task Results authoritative observations',()=>{
       artifacts:[{path:file,verification:'verified',sha256:sha}],
       checks:[{name:'Functional integration',status:'pending'}],
       evidenceCoverage:'partial',lastCheckpointId:'cp-1',
+      progress:{currentPhase:'Preparing report',nextAction:'Review the new report',
+        lastCheckpointSummary:'Verified checksum',
+        steps:[{id:'step-1',title:'Create report',status:'completed',summary:'Report saved'}]},
     }});
   });
   it('fails artifact verification after user edits bytes and never rewrites files',async()=>{

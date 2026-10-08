@@ -69,6 +69,11 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       const settingsPopup = app.page.locator('body > .ui-combobox-popover');
       await expect(settingsPopup).toBeVisible();
       await expect(settingsPopup.locator('input')).toHaveCount(0);
+      // Short lists stay close to the trigger width rather than opening a giant popup.
+      const shortMenu = await settingsPopup.boundingBox();
+      const shortTrigger = await firstSettingsSelect.boundingBox();
+      expect(shortMenu).not.toBeNull();
+      expect(shortMenu!.width).toBeLessThanOrEqual(Math.max(260, (shortTrigger?.width ?? 0) + 24));
       await settingsPopup.locator('[role="option"]').first().press('Escape');
       await expect(settingsPopup).toHaveCount(0);
       const nav = app.page.locator('.settings-subnav .settings-nav-item');
@@ -129,6 +134,10 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       await app.page.setViewportSize({ width: 1280, height: 800 });
       await tabs.getByRole('tab', { name: /ประวัติ MCP|Calls/ }).press('ArrowRight');
       await expect(tabs.getByRole('tab', { name: /ผลงาน|Results/ })).toHaveAttribute('aria-selected', 'true');
+      // Results are selected by a named Goal from the system, not manually memorized UUIDs.
+      await expect(app.page.locator('.diagnostics-result-filters .ui-combobox-trigger')).toBeVisible();
+      await expect(app.page.locator('.diagnostics-result-filters input[maxlength="128"]')).toHaveCount(0);
+      await expect(app.page.locator('.diagnostics-result-filters .ui-action').last()).toBeDisabled();
 
       await app.page.getByRole('button', { name: /^(ตั้งค่า|Settings)$/ }).click();
       const locale = app.page.locator('#locale-select');

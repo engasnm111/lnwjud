@@ -12,6 +12,8 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
   const [loading, setLoading] = useState(false);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const copy = v580Strings(props.locale).resources;
+  const selectedGoal = goals.find((goal) => goal.goalId === goalId);
+  const contextMeasured = snapshot ? Object.values(snapshot.context).some((value) => value !== null) : false;
   useEffect(() => {
     let active = true;
     setGoals([]); setGoalId(''); setSnapshot(null); setError(null);
@@ -63,14 +65,21 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
     {loading ? <p role="status" aria-live="polite" className="ui-loading-status">{copy.loading}…</p> : null}
     {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p>:null}
     {error?<p role="alert">{error}</p>:null}
+    {selectedGoal ? <div className="diagnostics-selected-goal">
+      <strong>{selectedGoal.goalKey}</strong><span>{selectedGoal.objective}</span>
+      <small>{copy.goalStatus}: {selectedGoal.status}</small>
+    </div> : <p className="hint">{copy.selectGoalNote}</p>}
     {snapshot?<div aria-live="polite">
-      <p>{copy.sampled} {snapshot.sampledAt} · {copy.coverage}: {snapshot.coverage} · {snapshot.stale?(copy.stale):(copy.sample)}</p>
-      <dl>
+      <p>{copy.sampled} {new Date(snapshot.sampledAt).toLocaleString(copy.dateLocale)} · {copy.coverage}: {snapshot.coverage} · {snapshot.stale?(copy.stale):(copy.sample)}</p>
+      <p role="status">{copy.attributedTasks}: {snapshot.resources.length} · {copy.ownedTasks}: {snapshot.resources.filter(row => row.ownership === 'owned').length}</p>
+      {contextMeasured ? <dl>
         <dt>{copy.contextSent}</dt><dd>{measured(snapshot.context.contextSentBytes,'bytes')}</dd>
         <dt>{copy.contextAvoided}</dt><dd>{measured(snapshot.context.previouslySeenBytesAvoided,'bytes')}</dd>
         <dt>{copy.ledger}</dt><dd>{measured(snapshot.context.ledgerHits,'hits')}</dd>
-      </dl>
-      {snapshot.resources.length===0?<p>{copy.noItems}</p>:
+      </dl> : <p className="hint">{copy.noCounters}</p>}
+      {snapshot.resources.length===0?<p className="hint">{goalId
+        ? copy.noTrackedForGoal
+        : copy.selectToInspect}</p>:
         <table><thead><tr><th>{copy.task}</th><th>{copy.provider}</th><th>{copy.owner}</th><th>{copy.memory}</th><th>{copy.cpu}</th><th>{copy.action}</th></tr></thead>
           <tbody>{snapshot.resources.map((row,i)=><tr key={row.taskId??i}>
             <td>{row.taskId??'-'}</td><td>{row.provider}</td><td>{row.ownership}</td>

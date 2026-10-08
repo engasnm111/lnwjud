@@ -43,8 +43,22 @@ export function SearchableSelect(props: {
       const desiredHeight = Math.min(310, popover.current?.scrollHeight ?? 310);
       const flip = below < Math.min(220, desiredHeight) && above > below;
       const maxHeight = Math.max(56, Math.min(310, flip ? above : below));
-      // Long Goal/tool labels wrap to at most three lines; never grow the popup to their unbounded text width.
-      const width = Math.min(Math.max(0, window.innerWidth - 16), Math.max(rect.width, 240, 520));
+      // Fit short option sets to their actual labels; clamp very long Goals/tools to
+      // a readable maximum, where each item wraps to at most three lines.
+      const availableWidth = Math.max(0, window.innerWidth - 16);
+      const optionStyle = window.getComputedStyle(
+        popover.current?.querySelector<HTMLElement>('.ui-combobox-option') ?? root.current!,
+      );
+      const measure = document.createElement('canvas').getContext('2d');
+      if (measure) measure.font = `${optionStyle.fontWeight} ${optionStyle.fontSize} ${optionStyle.fontFamily}`;
+      let widestLabel = 0;
+      for (const item of matches) {
+        const measured = measure?.measureText(item.label).width ?? item.label.length * 7;
+        widestLabel = Math.max(widestLabel, measured);
+        if (widestLabel >= 520) break;
+      }
+      const contentWidth = Math.ceil(widestLabel + 48);
+      const width = Math.min(availableWidth, Math.max(rect.width, 160, Math.min(520, contentWidth)));
       setPlacement({
         width, maxHeight,
         left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
