@@ -1663,7 +1663,7 @@ button.titlebar-version:hover {
 }
 
 .git-files-section {
-  margin-top: 8px;
+  margin-top: 4px;
   display: flex;
   flex-direction: column;
   flex: 1;
