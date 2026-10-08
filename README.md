@@ -55,6 +55,14 @@
 
 ## Current source version: v5.8.0
 
+### v5.8.0 development preview (not yet published)
+
+- Desktop UI uses bundled Prompt for Thai/English controls while preserving monospace for code and Git paths. Doctor tabs are keyboard-accessible, with selectable recent workspace Goals (newest first) and actual catalog tools rather than manual IDs.
+- Searchable dropdowns are positioned outside clipping containers, keep layout dimensions stable, and support keyboard navigation. Workflow required fields now receive inline warnings and focus before API submission.
+- Work Log begins with the All-workspaces filter; Git File Tree automatically opens changed-file folders and retains collapse/expand controls and human-readable diff hunk labels. Tools catalog controls have aligned fixed columns, with responsive stacking on narrow screens.
+- Windows native workflow Browse, existing permission/workspace checks, Portable startup behavior, and previous released download links are retained. This section documents **source under development**, not a published download.
+
+
 Latest published release: **v5.7.4**. The download buttons above point directly to the v5.7.4 assets. The release was published after the exact tagged main commit passed the target-native release gates.
 
 ### What's new in v5.7.4

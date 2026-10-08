@@ -12,14 +12,16 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
   const [draft, setDraft] = useState<WorkflowDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageError, setMessageError] = useState(false);
+  const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(new Set());
   const copy = v580Strings(props.locale).workflows;
   useEffect(() => {
     let live = true;
-    setTemplates([]); setSelected(null); setDraft(null); setInputs({}); setMessage(null);
+    setTemplates([]); setSelected(null); setDraft(null); setInputs({}); setMessage(null); setInvalidFields(new Set());
     if (props.workspaceId !== null) {
       void window.lnwjud.listWorkflowTemplates({ workspaceId: props.workspaceId })
         .then((items) => { if (live) setTemplates(items); })
-        .catch((error: unknown) => { if (live) setMessage(error instanceof Error ? error.message : String(error)); });
+        .catch((error: unknown) => { if (live) { setMessage(error instanceof Error ? error.message : String(error)); setMessageError(true); } });
     }
     return (): void => { live = false; };
   }, [props.workspaceId]);
@@ -27,6 +29,7 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
     setSelected(template);
     setDraft(null);
     setMessage(null);
+    setInvalidFields(new Set());
     const initial: Record<string, string> = {};
     for (const field of template.inputFields) {
       if (field.type === 'enum' && field.options?.length) initial[field.key] = field.options[0]!;
@@ -36,12 +39,25 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
   }
   async function prepare(): Promise<void> {
     if (!props.workspaceId || !selected || busy) return;
+    const missing = selected.inputFields.filter((field) => field.required && !(inputs[field.key] ?? '').trim());
+    if (missing.length > 0) {
+      setInvalidFields(new Set(missing.map((field) => field.key)));
+      const first = `workflow-${missing[0]!.key}`;
+      requestAnimationFrame(() => {
+        const control = document.getElementById(first);
+        control?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        control?.focus();
+      });
+      return;
+    }
+    setInvalidFields(new Set());
     setBusy(true); setDraft(null); setMessage(null);
     try {
       const result = await window.lnwjud.prepareWorkflow({ workspaceId: props.workspaceId, templateId: selected.id, inputs });
       setDraft(result);
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : String(error));
+      setMessageError(true);
     } finally { setBusy(false); }
   }
   async function copyPrompt(): Promise<void> {
@@ -49,7 +65,8 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
     try {
       await navigator.clipboard.writeText(workflowLaunchPrompt(draft, selected));
       setMessage(copy.copied);
-    } catch (error: unknown) { setMessage(error instanceof Error ? error.message : String(error)); }
+      setMessageError(false);
+    } catch (error: unknown) { setMessage(error instanceof Error ? error.message : String(error)); setMessageError(true); }
   }
   return (
     <div className="page-content workflows-page">
@@ -69,7 +86,10 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
         <Surface as="section" className="workflow-config" aria-label={copy.inputLabel}>
           <h2>{workflowLocalized(props.locale,{th:selected.titleTh,en:selected.titleEn})}</h2>
           <WorkflowInputForm template={selected} locale={props.locale} values={inputs} disabled={busy}
-            onChange={(values) => { setInputs(values); setDraft(null); setMessage(null); }}/>
+            invalidKeys={invalidFields}
+            onChange={(values) => { setInputs(values); setDraft(null); setMessage(null);
+              setInvalidFields((current) => new Set([...current].filter((key) => !(values[key] ?? '').trim())));
+            }}/>
           <ActionButton type="button" className="workflow-primary-action" onClick={() => { void prepare(); }} disabled={busy || !props.workspaceId}>
             {busy ? (copy.working) : (copy.prepare)}
           </ActionButton>
@@ -88,7 +108,10 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
           </ActionButton>
         </Surface>
       ) : null}
-      {message ? <p role="status">{message}</p> : null}
+      {message ? messageError ? <div role="alert" className="workflow-operation-error">
+        <strong>{copy.operationFailed}</strong>
+        <details><summary>{copy.technicalDetails}</summary><code>{message}</code></details>
+      </div> : <p role="status">{message}</p> : null}
     </div>
   );
 }

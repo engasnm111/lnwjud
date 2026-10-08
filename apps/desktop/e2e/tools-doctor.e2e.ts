@@ -52,6 +52,74 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
     } finally { await closeDesktop(app); }
   });
 
+  test('fixed tool columns and Doctor filters stay aligned and keyboard accessible', async () => {
+    const app = await launchDesktop();
+    try {
+      await openTools(app.page);
+      const aligned = await app.page.locator('.tool-card-availability').evaluateAll((nodes) =>
+        nodes.slice(0, 5).map((node) => {
+          const rect = node.getBoundingClientRect();
+          return { x: rect.x, width: rect.width };
+        }));
+      expect(aligned.length).toBeGreaterThan(2);
+      for (const row of aligned.slice(1)) {
+        expect(Math.abs(row.x - aligned[0]!.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(row.width - aligned[0]!.width)).toBeLessThanOrEqual(1);
+      }
+
+      const toolbar = app.page.locator('.tool-filters');
+      const before = await toolbar.boundingBox();
+      await toolbar.locator('.ui-combobox-trigger').last().click();
+      const popup = app.page.locator('body > .ui-combobox-popover');
+      await expect(popup).toBeVisible();
+      expect(await popup.evaluate((element) => getComputedStyle(element).position)).toBe('fixed');
+      expect((await toolbar.boundingBox())?.height).toBe(before?.height);
+      await popup.locator('input').fill('ALLOW');
+      await popup.locator('input').press('Escape');
+      await expect(popup).toHaveCount(0);
+
+      await app.page.getByRole('button', { name: 'Doctor', exact: true }).click();
+      const tabs = app.page.getByRole('tablist', { name: /หมวดการวินิจฉัย|Diagnostic views/ });
+      await tabs.getByRole('tab', { name: /ประวัติ MCP|Calls/ }).click();
+      const goal = app.page.getByRole('button', { name: 'Goal', exact: true });
+      await expect(goal).toBeVisible();
+      await goal.click();
+      await expect(app.page.locator('body > .ui-combobox-popover')).toBeVisible();
+      await app.page.locator('body > .ui-combobox-popover input').press('Escape');
+      const tool = app.page.locator('.diagnostics-filters .ui-combobox-trigger').nth(1);
+      await tool.click();
+      await expect(app.page.locator('body > .ui-combobox-popover [role="option"]').first()).toBeVisible();
+      await app.page.locator('body > .ui-combobox-popover input').press('Escape');
+      await tabs.getByRole('tab', { name: /ประวัติ MCP|Calls/ }).press('ArrowRight');
+      await expect(tabs.getByRole('tab', { name: /ผลงาน|Results/ })).toHaveAttribute('aria-selected', 'true');
+
+      await app.page.getByRole('button', { name: /^(ตั้งค่า|Settings)$/ }).click();
+      const locale = app.page.locator('#locale-select');
+      await locale.click();
+      await locale.selectOption('en');
+      await expect(locale).toHaveValue('en');
+    } finally { await closeDesktop(app); }
+  });
+
+  test('Workflow required input is shown inline and focused before backend preparation', async () => {
+    const app = await launchDesktop();
+    try {
+      await dismissFirstRunTip(app.page);
+      await app.page.getByRole('button', { name: /^(เวิร์กโฟลว์|Workflows)$/ }).click();
+      await expect(app.page.locator('.workflow-card')).toHaveCount(6);
+      await app.page.locator('.workflow-card').filter({ hasText: /รีวิวโค้ด|Code Review/ }).click();
+      await app.page.locator('.workflow-primary-action').first().click();
+      const required = app.page.locator('#workflow-baseRef');
+      await expect(required).toHaveAttribute('aria-invalid', 'true');
+      await expect(required).toBeFocused();
+      await expect(app.page.locator('#workflow-baseRef-error')).toBeVisible();
+      await expect(app.page.locator('.workflow-operation-error')).toHaveCount(0);
+      await required.fill('HEAD');
+      await expect(required).not.toHaveAttribute('aria-invalid', 'true');
+      await expect(app.page.locator('#workflow-baseRef-error')).toHaveCount(0);
+    } finally { await closeDesktop(app); }
+  });
+
   test('missing LSP dependency is needs_setup and explains the real requirement', async () => {
     const app = await launchDesktop();
     try {

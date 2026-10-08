@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { GitFileTree } from '../src/renderer/features/git/GitFileTree.js';
 import type { GitStatusEntrySummary } from '@lnwjud/ipc-contracts';
 import { buildGitFileTree } from '../src/renderer/features/git/git-file-tree.js';
 import { formatGitHunkLabel } from '../src/renderer/features/git/SplitDiffViewer.js';
@@ -26,6 +28,16 @@ describe('Git file explorer tree', () => {
     const src = desktop.children[0];
     if (src?.type !== 'folder') throw Error('expected src folder');
     expect(src.children.map((node) => node.name)).toEqual(['App.tsx','Z.ts']);
+  });
+  it('automatically renders changed files inside every nested folder and supports manual collapse/search expansion', () => {
+    const tree = buildGitFileTree([entry('apps/desktop/src/renderer/styles.css')]);
+    const render = (collapsedFolders: ReadonlySet<string>, searchActive = false): string => renderToStaticMarkup(
+      GitFileTree({ nodes: tree, locale: 'th', collapsedFolders, searchActive,
+        onToggle: () => undefined, onOpen: () => undefined }),
+    );
+    expect(render(new Set())).toContain('styles.css');
+    expect(render(new Set(['apps/desktop']))).not.toContain('styles.css');
+    expect(render(new Set(['apps/desktop']), true)).toContain('styles.css');
   });
   it('normalizes backslashes without losing the source entry path', () => {
     const tree = buildGitFileTree([entry('src\\feature\\index.ts')]);

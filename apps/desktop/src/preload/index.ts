@@ -1677,6 +1677,14 @@ const api: LnwjudApi = {
   listWorkflowTemplates: (request: { workspaceId: string }) => invoke(ipcChannels.listWorkflowTemplates, request).then((value) => boundedWorkflowReply(value, 'templates') as readonly WorkflowTemplate[]),
   prepareWorkflow: (request: WorkflowPrepareRequest) => invoke(ipcChannels.prepareWorkflow, request).then((value) => boundedWorkflowReply(value, 'draft') as WorkflowDraft),
   getCallHistory: (request: CallHistoryRequest) => invoke(ipcChannels.getCallHistory, request).then((value) => boundedWorkflowReply(value, 'calls') as CallHistoryPage),
+  getDoctorGoals: (request: { workspaceId: string }) => invoke(ipcChannels.getDoctorGoals, request).then((value) => {
+    if (!Array.isArray(value) || value.length > 100 || !value.every((goal: unknown) => isRecord(goal)
+      && typeof goal.goalId === 'string' && goal.goalId.length <= 128
+      && typeof goal.goalKey === 'string' && goal.goalKey.length <= 128
+      && typeof goal.objective === 'string' && goal.objective.length <= 4096
+      && typeof goal.updatedAt === 'string' && goal.updatedAt.length <= 64)) throw new Error('Invalid Doctor goal list');
+    return value as import('@lnwjud/ipc-contracts').DoctorGoalOption[];
+  }),
   getTaskResult: (request: { workspaceId: string; goalId: string }) => invoke(ipcChannels.getTaskResult, request).then((value) => boundedWorkflowReply(value, 'result') as TaskResultSummary),
   restoreTaskCheckpoint: (request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult> =>
     invoke(ipcChannels.restoreTaskCheckpoint, request).then((value) => {

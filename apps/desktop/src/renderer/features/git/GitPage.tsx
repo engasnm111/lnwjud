@@ -37,20 +37,40 @@ export function GitPage({
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<GitFileStatusFilter>('all');
   const [visibleCount, setVisibleCount] = useState(250);
-  const [expandedOverrides, setExpandedOverrides] = useState<ReadonlySet<string>>(new Set());
-  const toggleFolder = (path: string): void => setExpandedOverrides((previous) => {
+  const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(new Set());
+  const toggleFolder = (path: string): void => setCollapsedFolders((previous) => {
     const next = new Set(previous);
     if (next.has(path)) next.delete(path);
     else next.add(path);
     return next;
   });
-  useEffect(() => { setSelectedFile(null); setDiffData(null); setQuery(''); setStatusFilter('all'); setVisibleCount(250); setExpandedOverrides(new Set()); }, [selectedWorkspace?.id]);
+  useEffect(() => { setSelectedFile(null); setDiffData(null); setQuery(''); setStatusFilter('all'); setVisibleCount(250); setCollapsedFolders(new Set()); }, [selectedWorkspace?.id]);
   const filteredEntries = useMemo(
     () => filterGitFiles(gitSummary.entries ?? [], query, statusFilter),
     [gitSummary.entries, query, statusFilter],
   );
   const visibleEntries = useMemo(() => filteredEntries.slice(0, visibleCount), [filteredEntries, visibleCount]);
   const fileTree = useMemo(() => buildGitFileTree(visibleEntries), [visibleEntries]);
+
+  const folderPaths = useMemo(() => {
+
+    const paths: string[] = [];
+
+    const walk = (nodes: typeof fileTree): void => {
+
+      for (const node of nodes) {
+
+        if (node.type === 'folder') { paths.push(node.path); walk(node.children); }
+
+      }
+
+    };
+
+    walk(fileTree);
+
+    return paths;
+
+  }, [fileTree]);
   const [diffData, setDiffData] = useState<{
     patch: string;
     oldContent?: string;
@@ -237,6 +257,10 @@ export function GitPage({
               <span className="hint">
                 {t('git.changedFilesHint')}
               </span>
+              <div className="git-tree-actions">
+                <ActionButton type="button" onClick={() => setCollapsedFolders(new Set())}>{copy.expandAll}</ActionButton>
+                <ActionButton type="button" onClick={() => setCollapsedFolders(new Set(folderPaths))}>{copy.collapseAll}</ActionButton>
+              </div>
             </div>
             <FilterBar className="git-file-toolbar">
               <FormInput aria-label={copy.search} placeholder={copy.placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(250); }} />
@@ -247,7 +271,7 @@ export function GitPage({
             </FilterBar>
             <div className={`git-file-list ${filteredEntries.length > 0 ? '' : 'empty'}`}>
               {visibleEntries.length > 0 ? (
-                <GitFileTree nodes={fileTree} locale={locale} expandedOverrides={expandedOverrides}
+                <GitFileTree nodes={fileTree} locale={locale} collapsedFolders={collapsedFolders}
                   searchActive={query.trim().length > 0}
                   onToggle={toggleFolder} onOpen={(entry) => { void handleOpenFileDiff(entry); }} />
               ) : (

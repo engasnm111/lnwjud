@@ -61,6 +61,7 @@ export const ipcChannels = {
   listWorkflowTemplates: 'lnwjud:list-workflow-templates',
   prepareWorkflow: 'lnwjud:prepare-workflow',
   getCallHistory: 'lnwjud:get-call-history',
+  getDoctorGoals: 'lnwjud:get-doctor-goals',
   getTaskResult: 'lnwjud:get-task-result',
   restoreTaskCheckpoint: 'lnwjud:restore-task-checkpoint',
   cancelOwnedGoalTask: 'lnwjud:cancel-owned-goal-task',
@@ -127,6 +128,14 @@ export interface PonytailGoalPolicySummary {
   readonly effectiveSource: PonytailPolicySource;
   readonly editable: boolean;
   readonly editBlockedReason: 'live_lease' | 'live_continuation' | 'live_mutation' | null;
+}
+
+export interface DoctorGoalOption {
+  readonly goalId: string;
+  readonly goalKey: string;
+  readonly objective: string;
+  readonly status: 'active' | 'completed' | 'failed' | 'blocked' | 'cancelled';
+  readonly updatedAt: string;
 }
 
 export interface PonytailPolicyContext {
@@ -1206,6 +1215,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.listWorkflowTemplates]: { readonly workspaceId: string };
   readonly [ipcChannels.prepareWorkflow]: WorkflowPrepareRequest;
   readonly [ipcChannels.getCallHistory]: CallHistoryRequest;
+  readonly [ipcChannels.getDoctorGoals]: { readonly workspaceId: string };
   readonly [ipcChannels.getTaskResult]: { readonly workspaceId: string; readonly goalId: string };
   readonly [ipcChannels.restoreTaskCheckpoint]: RestoreTaskCheckpointRequest;
   readonly [ipcChannels.cancelOwnedGoalTask]: CancelOwnedGoalTaskRequest;
@@ -1290,6 +1300,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.listWorkflowTemplates]: readonly WorkflowTemplate[];
   readonly [ipcChannels.prepareWorkflow]: WorkflowDraft;
   readonly [ipcChannels.getCallHistory]: CallHistoryPage;
+  readonly [ipcChannels.getDoctorGoals]: readonly DoctorGoalOption[];
   readonly [ipcChannels.getTaskResult]: TaskResultSummary;
   readonly [ipcChannels.restoreTaskCheckpoint]: RestoreTaskCheckpointResult;
   readonly [ipcChannels.cancelOwnedGoalTask]: CancelOwnedGoalTaskResult;
@@ -1376,6 +1387,7 @@ export interface LnwjudApi {
   listWorkflowTemplates(request: { readonly workspaceId: string }): Promise<readonly WorkflowTemplate[]>;
   prepareWorkflow(request: WorkflowPrepareRequest): Promise<WorkflowDraft>;
   getCallHistory(request: CallHistoryRequest): Promise<CallHistoryPage>;
+  getDoctorGoals(request: { readonly workspaceId: string }): Promise<readonly DoctorGoalOption[]>;
   getTaskResult(request: { readonly workspaceId: string; readonly goalId: string }): Promise<TaskResultSummary>;
   restoreTaskCheckpoint(request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult>;
   cancelOwnedGoalTask(request: CancelOwnedGoalTaskRequest): Promise<CancelOwnedGoalTaskResult>;

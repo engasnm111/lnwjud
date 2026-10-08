@@ -240,13 +240,14 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
     await settleFirstRunAndOpenHome(page);
     await page.setViewportSize({ width: 1720, height: 820 });
     await page.getByRole('button', { name: 'Git', exact: true }).click();
-    await expect(page.locator('.git-tree-file-row')).toHaveCount(65, { timeout: 30_000 });
+    await expect(page.locator('.git-tree-file-row')).toHaveCount(66, { timeout: 30_000 });
     const nestedFolder = page.locator('.git-tree-folder-row').filter({ hasText: 'unit' });
-    await expect(nestedFolder).toHaveAttribute('aria-expanded', 'false');
-    await nestedFolder.click();
+    await expect(nestedFolder).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toBeVisible();
     await nestedFolder.click();
     await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toHaveCount(0);
+    await nestedFolder.click();
+    await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toBeVisible();
     const gitSearch = page.locator('.git-file-toolbar input');
     await gitSearch.fill('nested.ts');
     await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toBeVisible();

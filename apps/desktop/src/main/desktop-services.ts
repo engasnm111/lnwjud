@@ -149,6 +149,7 @@ import {
   type WorkflowDraft,
   type CallHistoryRequest,
   type CallHistoryPage,
+  type DoctorGoalOption,
   type TaskResultSummary,
   type RestoreTaskCheckpointRequest,
   type RestoreTaskCheckpointResult,
@@ -1956,6 +1957,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       unwrap(await new WorkflowTemplateService(workspaceRepository).prepare(actor, request), 'Workflow preparation failed'),
     getCallHistory: async (request: CallHistoryRequest): Promise<CallHistoryPage> =>
       unwrap(await new CallHistoryService(workspaceRepository, auditRepository).history(actor, request), 'Call history unavailable'),
+    getDoctorGoals: async (request: { readonly workspaceId: string }): Promise<readonly DoctorGoalOption[]> => {
+      const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      if (selected === null || selected.id !== request.workspaceId) throw new Error('Doctor Goal filter requires the selected workspace');
+      const goals = await goalRepository.listWorkspaceGoalFilters(request.workspaceId);
+      return goals.map((goal) => ({ goalId: goal.id, goalKey: goal.goalKey, objective: goal.objective, status: goal.status, updatedAt: goal.updatedAt }));
+    },
     getTaskResult: async (request: { workspaceId: string; goalId: string }): Promise<TaskResultSummary> =>
       unwrap(await new TaskResultService(goalService, auditRepository, workspaceRepository, goalRepository).get(actor, request.workspaceId, request.goalId), 'Goal result unavailable'),
     restoreTaskCheckpoint: async (request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult> => {

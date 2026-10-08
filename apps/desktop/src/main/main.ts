@@ -29,6 +29,7 @@ import {
   type WorkflowDraft,
   type CallHistoryRequest,
   type CallHistoryPage,
+  type DoctorGoalOption,
   type TaskResultSummary,
   type RestoreTaskCheckpointRequest,
   type RestoreTaskCheckpointResult,
@@ -204,6 +205,7 @@ export interface DesktopIpcServices {
   listWorkflowTemplates(request: { readonly workspaceId: string }): Promise<readonly WorkflowTemplate[]>;
   prepareWorkflow(request: WorkflowPrepareRequest): Promise<WorkflowDraft>;
   getCallHistory(request: CallHistoryRequest): Promise<CallHistoryPage>;
+  getDoctorGoals(request: { readonly workspaceId: string }): Promise<readonly DoctorGoalOption[]>;
   getTaskResult(request: { readonly workspaceId: string; readonly goalId: string }): Promise<TaskResultSummary>;
   restoreTaskCheckpoint(request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult>;
   cancelOwnedGoalTask(request: CancelOwnedGoalTaskRequest): Promise<CancelOwnedGoalTaskResult>;
@@ -390,6 +392,7 @@ const defaultDesktopServices: DesktopIpcServices = {
   listWorkflowTemplates: async () => [],
   prepareWorkflow: async () => { throw new Error('Workflow service not configured'); },
   getCallHistory: async () => { throw new Error('Call history service not configured'); },
+  getDoctorGoals: async () => [],
   getTaskResult: async () => { throw new Error('Goal result service not configured'); },
   restoreTaskCheckpoint: async () => { throw new Error('Goal checkpoint restore not configured'); },
   cancelOwnedGoalTask: async () => { throw new Error('Owned Goal task cancellation not configured'); },
@@ -752,6 +755,10 @@ export function registerIpcHandlers(
   registerHandler(ipcChannels.getCallHistory, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     return services.getCallHistory(parseCallHistory(payload));
+  });
+  registerHandler(ipcChannels.getDoctorGoals, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    return services.getDoctorGoals(parseWorkflowWorkspace(payload));
   });
   registerHandler(ipcChannels.getTaskResult, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());

@@ -28,6 +28,7 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
         titleKey: 'whatsNew.category.experience',
         items: [
           { id: 'git-expanded', titleKey: 'whatsNew.580.git.title', descriptionKey: 'whatsNew.580.git.description', badge: 'improved', tags: ['Git', 'untracked files', 'search', 'binary'] },
+          { id: 'ui-controls', titleKey: 'whatsNew.580.ui.title', descriptionKey: 'whatsNew.580.ui.description', badge: 'fixed', tags: ['Prompt', 'Doctor', 'Tools', 'dropdown', 'validation', 'Git tree'] },
           { id: 'workflow-templates', titleKey: 'whatsNew.580.workflows.title', descriptionKey: 'whatsNew.580.workflows.description', badge: 'new', tags: ['workflows', 'Thai', 'English', 'AI handoff'] },
         ],
       },

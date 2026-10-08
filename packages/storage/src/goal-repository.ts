@@ -338,6 +338,19 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     return rows.map((row) => this.toGoalRecord(this.requireGoalRow(row)));
   }
 
+  /** Recent Goal metadata for the trusted Desktop Doctor view, scoped to one workspace. */
+  public async listWorkspaceGoalFilters(workspaceId: string, limit = 100): Promise<readonly Pick<GoalRecord, 'id' | 'goalKey' | 'objective' | 'status' | 'updatedAt'>[]> {
+    const boundedLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
+    const rows = this.database.connection.prepare(`
+      SELECT * FROM goals WHERE workspace_id = ?
+      ORDER BY updated_at DESC, id DESC LIMIT ?
+    `).all(workspaceId, boundedLimit);
+    return rows.map((row) => {
+      const goal = this.toGoalRecord(this.requireGoalRow(row));
+      return { id: goal.id, goalKey: goal.goalKey, objective: goal.objective, status: goal.status, updatedAt: goal.updatedAt };
+    });
+  }
+
   /**
    * Changes only the Ponytail override of an idle durable goal. A live lease,
    * scheduled continuation, or fenced mutation wins over Desktop Settings.

@@ -7,7 +7,7 @@ import { v580Strings } from '../../i18n/v580-copy.js';
 interface GitFileTreeProps {
   readonly nodes: readonly GitTreeNode[];
   readonly locale: UiLocale;
-  readonly expandedOverrides: ReadonlySet<string>;
+  readonly collapsedFolders: ReadonlySet<string>;
   readonly searchActive: boolean;
   readonly onToggle: (path: string) => void;
   readonly onOpen: (entry: GitStatusEntrySummary) => void;
@@ -18,8 +18,7 @@ export function GitFileTree(props: GitFileTreeProps): ReactElement {
   function renderNode(node: GitTreeNode, depth: number): ReactElement {
     const style = { paddingInlineStart: `${12 + depth * 18}px` } satisfies CSSProperties;
     if (node.type === 'folder') {
-      const expanded = props.searchActive || (depth === 0
-        ? !props.expandedOverrides.has(node.path) : props.expandedOverrides.has(node.path));
+      const expanded = props.searchActive || !props.collapsedFolders.has(node.path);
       const title = `${copy.folder} ${node.path} • ${node.count} ${copy.files}`;
       return <div className="git-tree-folder" key={node.path}>
         <ActionButton type="button" role="treeitem" aria-level={depth + 1} aria-expanded={expanded}

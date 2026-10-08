@@ -10,6 +10,7 @@ export function WorkflowInputForm(props: {
   readonly values: Readonly<Record<string, string>>;
   readonly onChange: (values: Record<string, string>) => void;
   readonly disabled: boolean;
+  readonly invalidKeys?: ReadonlySet<string>;
 }): ReactElement {
   const copy = v580Strings(props.locale).workflows;
   const [browsing, setBrowsing] = useState<string | null>(null);
@@ -33,15 +34,18 @@ export function WorkflowInputForm(props: {
       {props.template.inputFields.map((field) => {
         const label = workflowLocalized(props.locale,{ th:field.labelTh, en:field.labelEn });
         const isFile = field.key === 'inputPath' || field.key === 'templatePath' || field.key === 'mappingPath';
+        const invalid = props.invalidKeys?.has(field.key) ?? false;
+        const errorId = `workflow-${field.key}-error`;
         return <FormField id={`workflow-${field.key}`} label={label} required={field.required} className="workflow-field" key={field.key}>
           {field.type === 'enum' ? (
             <SearchableSelect id={`workflow-${field.key}`} value={props.values[field.key] ?? ''} disabled={props.disabled}
-              label={label} placeholder={copy.select}
+              label={label} placeholder={copy.select} invalid={invalid} describedBy={invalid ? errorId : undefined}
               options={[{ value:'', label:copy.select }, ...(field.options ?? []).map((value) => ({ value, label:value }))]}
               onChange={(value) => props.onChange({ ...props.values, [field.key]:value })}/>
           ) : (
             <div className="workflow-field-control">
               <FormInput id={`workflow-${field.key}`} type="text" disabled={props.disabled} autoComplete="off"
+                aria-invalid={invalid || undefined} aria-describedby={invalid ? errorId : undefined}
                 value={props.values[field.key] ?? ''}
                 onChange={(event) => props.onChange({ ...props.values, [field.key]: event.target.value })}
                 placeholder={field.type === 'path' || field.type === 'mapping_file' ? copy.path : field.key} />
@@ -49,6 +53,7 @@ export function WorkflowInputForm(props: {
                 onClick={() => { void browse(field.key); }}>{browsing === field.key ? '…' : browseLabel}</ActionButton> : null}
             </div>
           )}
+          {invalid ? <p id={errorId} className="field-validation-message" role="alert">{copy.required}</p> : null}
         </FormField>;
       })}
       {error ? <p role="alert" className="workflow-field-error">{error}</p> : null}

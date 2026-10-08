@@ -55,6 +55,11 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current source version: v5.8.0
 
+### Unreleased v5.8.0 Desktop UI improvements
+
+The development build tightens the bundled Prompt typography; adds accessible Doctor tabs, recent named Goal/tool selectors, and bounded searchable dropdowns; aligns the right-hand Tools control column across rows; defaults Work Log scope to All; expands changed-file Git folders automatically; and validates required Workflow fields inline before invoking the backend. Windows native Browse and the existing Git Diff, security and Portable workflows remain part of regression verification. These source changes have **not** been published as a release. Download links continue to target v5.7.4.
+
+
 Latest published release: **v5.7.4**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
 
 ### What's new in v5.7.4
