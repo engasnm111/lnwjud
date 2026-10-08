@@ -240,7 +240,6 @@ input:focus, select:focus {
 }
 
 .titlebar-version {
-  font-size: 10.5px;
   line-height: 1.45;
   font-family: var(--font-mono);
   color: var(--gold-primary);
@@ -252,6 +251,7 @@ input:focus, select:focus {
 }
 
 button.titlebar-version {
+  font-size: 10px;
   -webkit-app-region: no-drag;
   appearance: none;
   cursor: pointer;
