@@ -11,17 +11,20 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<WorkflowDraft | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageError, setMessageError] = useState(false);
   const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(new Set());
   const copy = v580Strings(props.locale).workflows;
   useEffect(() => {
     let live = true;
-    setTemplates([]); setSelected(null); setDraft(null); setInputs({}); setMessage(null); setInvalidFields(new Set());
+    setTemplates([]); setSelected(null); setDraft(null); setInputs({}); setMessage(null); setMessageError(false); setInvalidFields(new Set());
+    setLoadingTemplates(props.workspaceId !== null);
     if (props.workspaceId !== null) {
       void window.lnwjud.listWorkflowTemplates({ workspaceId: props.workspaceId })
         .then((items) => { if (live) setTemplates(items); })
-        .catch((error: unknown) => { if (live) { setMessage(error instanceof Error ? error.message : String(error)); setMessageError(true); } });
+        .catch((error: unknown) => { if (live) { setMessage(error instanceof Error ? error.message : String(error)); setMessageError(true); } })
+        .finally(() => { if (live) setLoadingTemplates(false); });
     }
     return (): void => { live = false; };
   }, [props.workspaceId]);
@@ -73,7 +76,9 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
       <h1>{copy.title}</h1>
       <p>{copy.intro}</p>
       {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p> : null}
-      <div className="workflow-cards">
+      {loadingTemplates ? <p className="ui-loading-status" role="status" aria-live="polite">{copy.loadingTemplates}…</p> : null}
+      {props.workspaceId && !loadingTemplates && templates.length === 0 && !message ? <p role="status">{copy.noTemplates}</p> : null}
+      <div className="workflow-cards" aria-busy={loadingTemplates}>
         {templates.map((template) => (
           <ActionButton type="button" key={template.id} className={selected?.id === template.id ? 'workflow-card selected' : 'workflow-card'} onClick={() => choose(template)}>
             <strong>{workflowLocalized(props.locale,{th:template.titleTh,en:template.titleEn})}</strong>
@@ -95,6 +100,7 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
           </ActionButton>
         </Surface>
       ) : null}
+      {busy ? <p role="status" className="ui-loading-status" aria-live="polite">{copy.working}…</p> : null}
       {draft ? (
         <Surface as="section" className="workflow-preview" aria-live="polite">
           <h2>{copy.preview}</h2>

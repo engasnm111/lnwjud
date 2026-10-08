@@ -49,6 +49,8 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
         ...(transport ? { transport } : {}),
         ...(nextCursor ? { cursor: nextCursor } : {}),
       };
+      // Paint the loading state before a potentially expensive audit query reaches the main process.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       const result = await window.lnwjud.getCallHistory(query);
       setPage(result);
       setCursor(result.nextCursor);
@@ -57,7 +59,7 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
   }
   return <section className="diagnostics-calls">
     <p>{copy.intro}</p>
-    <FilterBar className="diagnostics-filters">
+    <FilterBar className="diagnostics-filters" aria-busy={busy}>
       <div className="diagnostics-filter-field"><span>{copy.goal}</span>
         <SearchableSelect label={copy.goal} value={goalId} options={goalOptions} onChange={setGoalId} />
       </div>
@@ -75,6 +77,7 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
       </ActionButton>
     </FilterBar>
     {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p> : null}
+    {busy ? <p role="status" aria-live="polite" className="ui-loading-status">{copy.loading}…</p> : null}
     {error ? <p role="alert">{error}</p> : null}
     {page ? <>
       <p role="status">{copy.coverage}: {page.coverage}. {copy.truncated}: {String(page.truncated)}</p>

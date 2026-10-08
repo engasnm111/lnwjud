@@ -133,6 +133,8 @@ export class SqliteAuditRepository implements AuditEventRepository {
       clauses.push('(r.timestamp < ? OR (r.timestamp = ? AND r.id < ?))');
       params.push(decoded.timestamp, decoded.timestamp, decoded.id);
     }
+    // Keyset paging should stop after the requested calls; avoid ranking the entire audit
+    // history with ROW_NUMBER on every search. Correlation uses the existing callId index.
     const rows = this.database.connection.prepare(`
       WITH r AS (
         SELECT e.id, e.timestamp, e.workspace_id, e.session_id, e.result_code, e.duration_ms,
@@ -140,13 +142,25 @@ export class SqliteAuditRepository implements AuditEventRepository {
           json_extract(e.metadata_json, '$.toolName') AS tool_name,
           json_extract(e.metadata_json, '$.phase') AS phase,
           json_extract(e.metadata_json, '$.goalId') AS goal_id,
-          ROW_NUMBER() OVER (
-            PARTITION BY COALESCE(e.session_id, '') || ':' || json_extract(e.metadata_json, '$.callId')
-            ORDER BY CASE json_extract(e.metadata_json, '$.phase') WHEN 'completed' THEN 0 ELSE 1 END, e.timestamp DESC, e.id DESC
-          ) AS rn
+          1 AS rn
         FROM audit_events e
         WHERE e.workspace_id = ? AND e.action LIKE 'mcp_tool:%'
           AND json_extract(e.metadata_json, '$.callId') IS NOT NULL
+          AND json_extract(e.metadata_json, '$.phase') IN ('started', 'completed')
+          AND NOT EXISTS (
+            SELECT 1 FROM audit_events newer
+            WHERE newer.workspace_id = e.workspace_id AND newer.session_id IS e.session_id
+              AND newer.action LIKE 'mcp_tool:%'
+              AND json_extract(newer.metadata_json, '$.callId') = json_extract(e.metadata_json, '$.callId')
+              AND (
+                (json_extract(newer.metadata_json, '$.phase') = 'completed'
+                  AND json_extract(e.metadata_json, '$.phase') = 'started')
+                OR (
+                  json_extract(newer.metadata_json, '$.phase') = json_extract(e.metadata_json, '$.phase')
+                  AND (newer.timestamp > e.timestamp OR (newer.timestamp = e.timestamp AND newer.id > e.id))
+                )
+              )
+          )
       )
       SELECT r.id, r.timestamp, r.workspace_id, r.session_id, r.result_code, r.duration_ms,
         r.call_id, r.tool_name, r.phase, r.goal_id,

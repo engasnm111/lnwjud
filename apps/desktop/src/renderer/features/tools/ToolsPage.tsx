@@ -1,5 +1,5 @@
 import { ActionButton, FormInput, FilterBar } from '../ui/UiPrimitives.js';
-import { useMemo, useState, type ReactElement } from 'react';
+import { useDeferredValue, useMemo, useState, type ReactElement } from 'react';
 import type { ResolvedRemediation, ToolCatalogItem, ToolCatalogSnapshot, ToolCategory, ToolDeclaredPermission, ToolOrigin, ToolProfileDecision, ToolReadinessStatus, UiLocale } from '@lnwjud/ipc-contracts';
 import { createTranslator, type Translator } from '../../i18n/index.js';
 import { ToolAvailabilitySwitch } from './ToolAvailabilitySwitch.js';
@@ -29,6 +29,7 @@ export function ToolsPage({ locale, snapshot, loading, hostSyncNotice = null, on
   const t = createTranslator(locale);
   const [origin, setOrigin] = useState<ToolOrigin>('lnwjud');
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
   const [readiness, setReadiness] = useState<ToolReadinessStatus | 'all'>('all');
   const [availability, setAvailability] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [category, setCategory] = useState<ToolCategory | 'all'>('all');
@@ -39,8 +40,8 @@ export function ToolsPage({ locale, snapshot, loading, hostSyncNotice = null, on
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const items = snapshot?.items ?? [];
   const selected = selectedKey === null ? null : items.find((item) => toolKey(item) === selectedKey) ?? null;
-  const filters: ToolCatalogFilters = { origin, query, readiness, availability, category, permission, profileDecision };
-  const visible = useMemo(() => filterAndSortTools(items, filters), [items, origin, query, readiness, availability, category, permission, profileDecision]);
+  const filters: ToolCatalogFilters = { origin, query: deferredQuery, readiness, availability, category, permission, profileDecision };
+  const visible = useMemo(() => filterAndSortTools(items, filters), [items, origin, deferredQuery, readiness, availability, category, permission, profileDecision]);
   const originItems = items.filter((item) => item.origin === origin);
   const counts = catalogStatusCounts(originItems);
   const remediationById = new Map((snapshot?.remediations ?? []).map((remediation) => [remediation.id, remediation] as const));
@@ -89,6 +90,7 @@ export function ToolsPage({ locale, snapshot, loading, hostSyncNotice = null, on
         <SearchableSelect value={profileDecision} label={t('tools.profileDecision')} onChange={(value) => setProfileDecision(value as typeof profileDecision)} options={[{value:'all',label:t('tools.allDecisions')},...decisions.map(value=>({value,label:value}))]} />
         <ActionButton type="button" onClick={() => { setQuery(''); setReadiness('all'); setAvailability('all'); setCategory('all'); setPermission('all'); setProfileDecision('all'); }}>{t('tools.clearFilters')}</ActionButton>
       </FilterBar>
+      {query !== deferredQuery || loading ? <p role="status" className="ui-loading-status">{loading ? t('tools.checking') : locale === 'en' ? 'Filtering tools' : 'กำลังกรองเครื่องมือ'}…</p> : null}
       {availabilityError === null ? null : <p className="tool-action-error" role="alert">{availabilityError}</p>}
       {hostSyncNotice === null ? null : <p className="tool-host-sync-notice" role="status">{hostSyncNotice}</p>}
       {snapshot === null ? <div className="doctor-empty-state"><p>{t('tools.catalogNotLoaded')}</p></div> : visible.length === 0 ? <div className="doctor-empty-state"><p>{t('tools.noMatches')}</p></div> : <div className="tool-card-list">{visible.map((item) => {

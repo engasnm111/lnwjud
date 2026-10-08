@@ -25,6 +25,7 @@ import { GOAL_RESUME_CONTEXT_MIGRATION_SQL } from './migrations/goal-resume-cont
 import { ENGINEERING_HARNESS_MIGRATION_SQL } from './migrations/engineering-harness-migration.js';
 import { WORKFLOW_METADATA_MIGRATION_SQL } from './migrations/workflow-metadata-migration.js';
 import { CALL_OBSERVABILITY_MIGRATION_SQL } from './migrations/call-observability-migration.js';
+import { AUDIT_CALL_HISTORY_PAGING_MIGRATION_SQL } from './migrations/audit-call-history-paging-migration.js';
 
 export interface SqliteDatabaseOptions {
   readonly backupDirectory?: string;
@@ -113,6 +114,7 @@ export class SqliteDatabase {
       { id: '021_engineering_harness', sql: ENGINEERING_HARNESS_MIGRATION_SQL },
       { id: '022_workflow_metadata', sql: WORKFLOW_METADATA_MIGRATION_SQL },
       { id: '023_call_observability', sql: CALL_OBSERVABILITY_MIGRATION_SQL },
+      { id: '024_audit_call_history_paging', sql: AUDIT_CALL_HISTORY_PAGING_MIGRATION_SQL },
     ]);
   }
 
@@ -222,7 +224,7 @@ export class SqliteDatabase {
         // An older partial fixture/database may mark 002_audit as applied without
         // carrying its table. Defer only the optional observability index until
         // that table actually exists; do not fabricate or rewrite audit history.
-        if (migration.id === '023_call_observability' && !this.connection.prepare(
+        if ((migration.id === '023_call_observability' || migration.id === '024_audit_call_history_paging') && !this.connection.prepare(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'",
         ).get()) continue;
         const savepoint = `migration_${index}`;

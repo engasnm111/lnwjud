@@ -67,12 +67,26 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
         expect(Math.abs(row.width - aligned[0]!.width)).toBeLessThanOrEqual(1);
       }
 
+      const settingsSelects = app.page.locator('.settings-page select.ui-native-select');
+      // All Settings tabs share the same styled native control instead of a fragile custom menu.
+      await app.page.getByRole('button', { name: /^(ตั้งค่า|Settings)$/ }).click();
+      const firstSettingsSelect = app.page.locator('#locale-select');
+      await expect(firstSettingsSelect).toBeVisible();
+      await expect(firstSettingsSelect).toHaveCSS('appearance', 'none');
+      expect(await firstSettingsSelect.evaluate((node) => getComputedStyle(node).backgroundImage)).toContain('svg');
+      await app.page.getByRole('button', { name: /^(เครื่องมือ|Tools)$/ }).click();
+      await expect(settingsSelects).toHaveCount(0);
+
       const toolbar = app.page.locator('.tool-filters');
       const before = await toolbar.boundingBox();
       await toolbar.locator('.ui-combobox-trigger').last().click();
       const popup = app.page.locator('body > .ui-combobox-popover');
       await expect(popup).toBeVisible();
+      const popupRect = await popup.boundingBox();
+      expect(popupRect?.width).toBeGreaterThanOrEqual(240);
+      expect(popupRect?.x).toBeGreaterThanOrEqual(8);
       expect(await popup.evaluate((element) => getComputedStyle(element).position)).toBe('fixed');
+      await expect(popup.locator('[role="option"]').first()).toHaveCSS('white-space', 'nowrap');
       expect((await toolbar.boundingBox())?.height).toBe(before?.height);
       await popup.locator('input').fill('ALLOW');
       await popup.locator('input').press('Escape');

@@ -1,16 +1,26 @@
-import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
+import { ActionButton } from '../ui/UiPrimitives.js';
+import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 import { useEffect, useState, type ReactElement } from 'react';
-import type { ResourceSnapshot, UiLocale } from '@lnwjud/ipc-contracts';
+import type { DoctorGoalOption, ResourceSnapshot, UiLocale } from '@lnwjud/ipc-contracts';
 import { v580Strings } from '../../i18n/v580-copy.js';
 
 export function ResourcePanel(props: { readonly locale: UiLocale; readonly workspaceId: string | null }): ReactElement {
   const [goalId, setGoalId] = useState('');
+  const [goals, setGoals] = useState<readonly DoctorGoalOption[]>([]);
   const [snapshot, setSnapshot] = useState<ResourceSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const copy = v580Strings(props.locale).resources;
-  useEffect(()=>{setSnapshot(null);setError(null)},[props.workspaceId,goalId]);
+  useEffect(() => {
+    let active = true;
+    setGoals([]); setGoalId(''); setSnapshot(null); setError(null);
+    if (props.workspaceId) void window.lnwjud.getDoctorGoals({ workspaceId: props.workspaceId })
+      .then((items) => { if (active) setGoals(items); })
+      .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
+    return (): void => { active = false; };
+  }, [props.workspaceId]);
+  useEffect(() => { setSnapshot(null); }, [goalId]);
   async function load():Promise<void>{
     if(!props.workspaceId || loading)return;
     setLoading(true);setError(null);
@@ -43,19 +53,25 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
   }
   return <section className="diagnostics-resources">
     <p>{copy.intro}</p>
-    <label>{copy.goal} <FormInput maxLength={128} value={goalId} onChange={e=>setGoalId(e.target.value)}/></label>
+    <div className="diagnostics-resources-filter">
+      <label>{copy.goal}</label>
+      <SearchableSelect label={copy.goal} value={goalId} onChange={setGoalId}
+        options={[{ value: '', label: copy.all }, ...goals.map((goal) => ({ value: goal.goalId,
+          label: `${goal.goalKey} · ${goal.objective || goal.status} (${goal.goalId.slice(0, 8)})` }))]} />
+    </div>
     <ActionButton type="button" disabled={!props.workspaceId || loading} onClick={()=>{void load()}}>{loading?(copy.loading):(copy.refresh)}</ActionButton>
+    {loading ? <p role="status" aria-live="polite" className="ui-loading-status">{copy.loading}…</p> : null}
     {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p>:null}
     {error?<p role="alert">{error}</p>:null}
     {snapshot?<div aria-live="polite">
-      <p>{copy.sampled} {snapshot.sampledAt}. Coverage {snapshot.coverage}. {snapshot.stale?(copy.stale):(copy.sample)}.</p>
+      <p>{copy.sampled} {snapshot.sampledAt} · {copy.coverage}: {snapshot.coverage} · {snapshot.stale?(copy.stale):(copy.sample)}</p>
       <dl>
         <dt>{copy.contextSent}</dt><dd>{measured(snapshot.context.contextSentBytes,'bytes')}</dd>
         <dt>{copy.contextAvoided}</dt><dd>{measured(snapshot.context.previouslySeenBytesAvoided,'bytes')}</dd>
         <dt>{copy.ledger}</dt><dd>{measured(snapshot.context.ledgerHits,'hits')}</dd>
       </dl>
       {snapshot.resources.length===0?<p>{copy.noItems}</p>:
-        <table><thead><tr><th>{copy.task}</th><th>{copy.provider}</th><th>{copy.owner}</th><th>Working set</th><th>CPU</th><th>{copy.action}</th></tr></thead>
+        <table><thead><tr><th>{copy.task}</th><th>{copy.provider}</th><th>{copy.owner}</th><th>{copy.memory}</th><th>{copy.cpu}</th><th>{copy.action}</th></tr></thead>
           <tbody>{snapshot.resources.map((row,i)=><tr key={row.taskId??i}>
             <td>{row.taskId??'-'}</td><td>{row.provider}</td><td>{row.ownership}</td>
             <td>{measured(row.workingSetBytes,'bytes')}</td><td>{measured(row.cpuPercent,'%')}</td>
@@ -65,6 +81,7 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
               </ActionButton> : '—'}</td>
           </tr>)}</tbody>
         </table>}
+      <p className="hint">{copy.unknownNote}</p>
       <p>{copy.note}</p>
     </div>:null}
   </section>

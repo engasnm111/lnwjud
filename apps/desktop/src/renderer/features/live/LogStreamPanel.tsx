@@ -1,5 +1,5 @@
 import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
-import { useEffect, useMemo, useReducer, useRef, useState, type ReactElement, type UIEvent } from 'react';
+import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState, type ReactElement, type UIEvent } from 'react';
 import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type LiveLogExportReference, type LogLevel, type LogLine, type LogSessionSummary, type LogSource, type UiLocale, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
@@ -62,6 +62,7 @@ const PROGRESSIVE_PAGE_SIZE = 120;
 export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState('');
+  const deferredFilter = useDeferredValue(filter);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [copyErrorId, setCopyErrorId] = useState<number | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -95,7 +96,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
   const scope = useMemo<LogScopeSelection>(() => ({ workspaceId, sessionId }), [workspaceId, sessionId]);
   const searchCandidates = useMemo(() => visibleLogLines(feedLines, scope, '', feed.workspaces), [feed, scope]);
   useEffect(() => {
-    const query = normalizeDetailSearchQuery(filter);
+    const query = normalizeDetailSearchQuery(deferredFilter);
     const generation = ++detailSearchGeneration.current;
     if (query.length === 0 || props.onSearchTargetDetails === undefined) {
       dispatchDetailSearch({ type: 'reset', generation });
@@ -119,9 +120,9 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
       });
     }, 180);
     return (): void => window.clearTimeout(timeout);
-  }, [filter, props.onSearchTargetDetails, searchCandidates]);
-  const hiddenMatches = activeDetailMatchIds(detailSearchState, filter);
-  const matchingLines = useMemo(() => visibleLogLines(feedLines, scope, filter, feed.workspaces, hiddenMatches), [feed, scope, filter, hiddenMatches]);
+  }, [deferredFilter, props.onSearchTargetDetails, searchCandidates]);
+  const hiddenMatches = activeDetailMatchIds(detailSearchState, deferredFilter);
+  const matchingLines = useMemo(() => visibleLogLines(feedLines, scope, deferredFilter, feed.workspaces, hiddenMatches), [feed, scope, deferredFilter, hiddenMatches]);
   useEffect(() => setVisibleCount(PROGRESSIVE_PAGE_SIZE), [props.source, filter, workspaceId, sessionId]);
   const visible = useMemo(() => matchingLines.slice(0, visibleCount), [matchingLines, visibleCount]);
   const newestLineId = matchingLines[0]?.id ?? null;
@@ -207,6 +208,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
         }}
         aria-label={props.filterPlaceholder}
       />
+      {filter !== deferredFilter ? <p role="status" className="ui-loading-status">{props.locale === 'en' ? 'Filtering logs' : 'กำลังกรองบันทึก'}…</p> : null}
       {detailSearchState.status === 'loading' ? <p className="log-detail-search-status" role="status">{props.detailLoadingLabel ?? 'Searching complete details…'}</p> : null}
       {detailSearchState.status === 'error' ? <p className="log-detail-search-status log-detail-error" role="alert">{props.detailErrorLabel ?? 'Complete details could not be searched.'}</p> : null}
       {props.source === 'tunnel' && !props.tunnelLogExists ? (

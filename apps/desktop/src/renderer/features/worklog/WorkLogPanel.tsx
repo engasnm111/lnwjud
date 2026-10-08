@@ -1,5 +1,5 @@
 import { ActionButton, FormInput } from '../ui/UiPrimitives.js';
-import { useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement, type UIEvent } from 'react';
+import { useDeferredValue, useEffect, useMemo, useReducer, useRef, useState, type ComponentProps, type ReactElement, type UIEvent } from 'react';
 import { canonicalWorkspaceScopeId, workspaceScopeMatches, type ActivityTargetDetail, type InFlightWorkItem, type LogLevel, type LogSessionSummary, type UiLocale, type WorkLogEntry, type WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { formatDisplayTimestampItem } from '@lnwjud/shared/date-time-display';
 import { copyTextToClipboard } from '../../clipboard.js';
@@ -66,6 +66,7 @@ const PROGRESSIVE_PAGE_SIZE = 120;
 
 export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
   const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyErrorId, setCopyErrorId] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -104,7 +105,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
     [feed, props.filter, scope],
   );
   useEffect(() => {
-    const query = normalizeDetailSearchQuery(search);
+    const query = normalizeDetailSearchQuery(deferredSearch);
     const generation = ++detailSearchGeneration.current;
     if (query.length === 0 || props.onSearchTargetDetails === undefined) {
       dispatchDetailSearch({ type: 'reset', generation });
@@ -128,11 +129,11 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
       });
     }, 180);
     return (): void => window.clearTimeout(timeout);
-  }, [candidates, props.onSearchTargetDetails, search]);
-  const hiddenMatches = activeDetailMatchIds(detailSearchState, search);
+  }, [candidates, props.onSearchTargetDetails, deferredSearch]);
+  const hiddenMatches = activeDetailMatchIds(detailSearchState, deferredSearch);
   const rows = useMemo(
-    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, search, scope, feed.workspaces, hiddenMatches),
-    [feed, props.filter, search, scope, hiddenMatches],
+    () => newestFirstWorkLogRows(feed.entries, feed.inFlight, props.filter, deferredSearch, scope, feed.workspaces, hiddenMatches),
+    [feed, props.filter, deferredSearch, scope, hiddenMatches],
   );
   useEffect(() => setVisibleCount(PROGRESSIVE_PAGE_SIZE), [props.filter, search, workspaceId, sessionId]);
   const visible = props.compact ? rows.slice(0, 40) : rows.slice(0, visibleCount);
@@ -225,6 +226,7 @@ export function WorkLogPanel(props: WorkLogPanelProps): ReactElement {
           setSearch(nextSearch);
         }}
       />
+      {search !== deferredSearch ? <p role="status" className="ui-loading-status">{props.locale === 'en' ? 'Filtering logs' : 'กำลังกรองบันทึก'}…</p> : null}
       {detailSearchState.status === 'loading' ? <p className="log-detail-search-status" role="status">{props.detailLoadingLabel ?? 'Searching complete details…'}</p> : null}
       {detailSearchState.status === 'error' ? <p className="log-detail-search-status log-detail-error" role="alert">{props.detailErrorLabel ?? 'Complete details could not be searched.'}</p> : null}
       <div className="worklog-stream" data-testid="work-log" onScroll={loadMoreOnScroll}>

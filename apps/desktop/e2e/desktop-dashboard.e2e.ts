@@ -65,6 +65,27 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
 
     await expect(page.getByRole('heading', { name: /^(ศูนย์ควบคุม Agent|Agent Control Center)$/ })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('mcp-status')).toHaveText(/Agent พร้อมทำงาน|Agent ready/, { timeout: 30_000 });
+    const titleVersion = page.locator('button.titlebar-version');
+    const whatsNew = page.locator('button.titlebar-whats-new');
+    await expect(titleVersion).toHaveCSS('font-size', '8px');
+    await expect(whatsNew).toHaveCSS('font-size', '8px');
+    const badgePositions = await page.locator('.titlebar-brand').evaluate((brand) => {
+      const brandBox = brand.getBoundingClientRect();
+      const versionBox = brand.querySelector('button.titlebar-version')!.getBoundingClientRect();
+      const whatsNewBox = brand.querySelector('button.titlebar-whats-new')!.getBoundingClientRect();
+      const center = brandBox.top + brandBox.height / 2;
+      return [Math.abs(versionBox.top + versionBox.height / 2 - center), Math.abs(whatsNewBox.top + whatsNewBox.height / 2 - center)];
+    });
+    expect(Math.max(...badgePositions)).toBeLessThanOrEqual(1);
+    const homeSelect = page.locator('.primary-project-control .ui-combobox-trigger');
+    await expect(homeSelect).toBeEnabled();
+    await homeSelect.click();
+    const homePopup = page.locator('body > .ui-combobox-popover');
+    await expect(homePopup).toBeVisible();
+    expect((await homePopup.boundingBox())?.width).toBeGreaterThanOrEqual(240);
+    await expect(homePopup.locator('[role="option"]').first()).toHaveCSS('white-space', 'nowrap');
+    await homePopup.locator('input').press('Escape');
+    await expect(homePopup).toHaveCount(0);
     await expect(page.getByTestId('mcp-endpoint')).toContainText('http://127.0.0.1:', { timeout: 30_000 });
      await page.setViewportSize({ width: 800, height: 600 });
      await expectNoHorizontalOverflow(page);

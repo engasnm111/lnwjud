@@ -1,5 +1,5 @@
 import { ActionButton, FormInput, FilterBar } from '../ui/UiPrimitives.js';
-import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { DashboardSnapshot, GitImagePreview, GitStatusEntrySummary, UiLocale, WorkspaceSummary } from '@lnwjud/ipc-contracts';
 import { createTranslator } from '../../i18n/index.js';
 import { v580Strings } from '../../i18n/v580-copy.js';
@@ -35,6 +35,7 @@ export function GitPage({
   const [selectedFile, setSelectedFile] = useState<GitStatusEntrySummary | null>(null);
   const [selectedStaged, setSelectedStaged] = useState(false);
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
   const [statusFilter, setStatusFilter] = useState<GitFileStatusFilter>('all');
   const [visibleCount, setVisibleCount] = useState(250);
   const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(new Set());
@@ -46,8 +47,8 @@ export function GitPage({
   });
   useEffect(() => { setSelectedFile(null); setDiffData(null); setQuery(''); setStatusFilter('all'); setVisibleCount(250); setCollapsedFolders(new Set()); }, [selectedWorkspace?.id]);
   const filteredEntries = useMemo(
-    () => filterGitFiles(gitSummary.entries ?? [], query, statusFilter),
-    [gitSummary.entries, query, statusFilter],
+    () => filterGitFiles(gitSummary.entries ?? [], deferredQuery, statusFilter),
+    [gitSummary.entries, deferredQuery, statusFilter],
   );
   const visibleEntries = useMemo(() => filteredEntries.slice(0, visibleCount), [filteredEntries, visibleCount]);
   const fileTree = useMemo(() => buildGitFileTree(visibleEntries), [visibleEntries]);
@@ -267,12 +268,12 @@ export function GitPage({
               <SearchableSelect label={copy.filter} value={statusFilter}
                 options={[{ value:'all', label:copy.all }, { value:'staged',label:'Staged' }, { value:'unstaged',label:'Unstaged' }, { value:'untracked',label:copy.untracked }]}
                 onChange={(value) => { setStatusFilter(value as GitFileStatusFilter); setVisibleCount(250); }} />
-              <span role="status" className="hint">{visibleEntries.length.toLocaleString()} / {filteredEntries.length.toLocaleString()} {copy.files}</span>
+              <span role="status" className="hint">{query !== deferredQuery ? (locale === 'en' ? 'Filtering… ' : 'กำลังกรอง… ') : ''}{visibleEntries.length.toLocaleString()} / {filteredEntries.length.toLocaleString()} {copy.files}</span>
             </FilterBar>
             <div className={`git-file-list ${filteredEntries.length > 0 ? '' : 'empty'}`}>
               {visibleEntries.length > 0 ? (
                 <GitFileTree nodes={fileTree} locale={locale} collapsedFolders={collapsedFolders}
-                  searchActive={query.trim().length > 0}
+                  searchActive={deferredQuery.trim().length > 0}
                   onToggle={toggleFolder} onOpen={(entry) => { void handleOpenFileDiff(entry); }} />
               ) : (
                 <div className="git-file-empty">

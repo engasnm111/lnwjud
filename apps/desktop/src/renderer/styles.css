@@ -240,18 +240,24 @@ input:focus, select:focus {
 }
 
 .titlebar-version {
-  line-height: 1.45;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  min-height: 16px;
+  box-sizing: border-box;
+  line-height: 1;
   font-family: var(--font-mono);
   color: var(--gold-primary);
   background: rgba(245, 197, 66, 0.1);
   border: 1px solid rgba(245, 197, 66, 0.25);
-  padding: 1px 7px;
+  padding: 0 7px;
   border-radius: 999px;
   font-weight: 650;
 }
 
 button.titlebar-version {
-  font-size: 10px;
+  font-size: 8px;
   -webkit-app-region: no-drag;
   appearance: none;
   cursor: pointer;
@@ -264,7 +270,8 @@ button.titlebar-version:hover {
   transform: translateY(-1px);
 }
 
-.titlebar-whats-new {
+button.titlebar-whats-new {
+  align-self: center;
   -webkit-app-region: no-drag;
   width: 15px;
   height: 15px;
@@ -276,7 +283,7 @@ button.titlebar-version:hover {
   border-radius: 50%;
   background: rgba(245, 197, 66, 0.08);
   color: var(--gold-primary);
-  font: 650 7px/1 var(--font-mono);
+  font: 650 8px/1 var(--font-mono);
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
@@ -3293,6 +3300,8 @@ h2 {
 .primary-project-row select {
   min-width: 0;
 }
+.primary-project-row .ui-combobox { flex:1 1 0; width:0; }
+.primary-project-row > .ui-action { flex:0 0 auto; min-height:42px; }
 
 .add-project-control {
   margin-top: 16px;
@@ -3344,8 +3353,8 @@ h2 {
 .ui-combobox-trigger:focus-visible { outline:2px solid var(--gold-primary); outline-offset:2px; }
 .ui-combobox-popover { position:fixed; z-index:10000; min-width:0; box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; padding:8px; border:1px solid rgba(245,197,66,.32); border-radius:12px; background:#151c27; box-shadow:0 14px 36px rgba(0,0,0,.6); }
 .ui-combobox-popover input { display:block; width:100%; min-width:0; flex:0 0 auto; margin-bottom:6px; padding:10px; }
-.ui-combobox-options { display:grid; gap:3px; min-height:0; max-height:none; overflow-y:auto; }
-.ui-combobox-option { width:100%; display:block; text-align:left; padding:9px 11px; border:0; background:transparent; border-radius:7px; font-size:13px; color:var(--text); white-space:normal; overflow-wrap:anywhere; }
+.ui-combobox-options { display:grid; grid-template-columns:minmax(0,1fr); gap:3px; min-height:0; max-height:none; overflow-y:auto; }
+.ui-combobox-option { width:100%; display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; padding:9px 11px; border:0; background:transparent; border-radius:7px; font-size:13px; color:var(--text); }
 .ui-combobox-option.highlighted,.ui-combobox-option:hover { background:rgba(245,197,66,.13); transform:none; box-shadow:none; }
 .ui-combobox-option[aria-selected="true"] { color:var(--gold-bright); font-weight:650; }
 .ui-combobox-empty { padding:10px; font-size:13px; color:var(--muted); }
@@ -3417,7 +3426,30 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .ui-action--ghost { background:transparent; border-color:transparent; }
 .ui-action--danger { color:var(--danger); border-color:rgba(248,113,113,.4); }
 .ui-text-input, .ui-native-select, .ui-text-area { min-height:var(--ui-control-height); width:100%; min-width:0; }
-.ui-native-select { color-scheme:dark; }
+.ui-native-select { color-scheme:dark; box-sizing:border-box; appearance:none; -webkit-appearance:none; width:100%; min-height:42px; line-height:1.45; padding:9px 37px 9px 12px; border:1px solid var(--border-subtle); border-radius:10px; background-color:#0b1018 !important; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23d9bc74' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; background-size:16px; font-family:var(--font-ui); font-size:13px; font-weight:500; color:var(--text); cursor:pointer; transition:border-color .15s ease, box-shadow .15s ease, background-color .15s ease; }
+.ui-native-select:not(:disabled):hover { border-color:rgba(245,197,66,.45); background-color:#111923 !important; }
+.ui-native-select:focus-visible { outline:2px solid var(--gold-primary); outline-offset:2px; border-color:var(--gold-primary); }
+.ui-native-select:disabled { opacity:.55; cursor:not-allowed; }
+.ui-filter-bar { align-items:center; }
+.ui-filter-bar > .ui-action { min-height:42px; }
+.ui-filter-bar > .ui-text-input { min-height:42px; }
+.diagnostics-filters > .ui-action { min-height:42px; align-self:flex-end; }
+.ui-loading-status { display:flex; align-items:center; gap:9px; color:var(--gold-bright); font-size:13px; font-weight:600; padding:8px 0; }
+.ui-loading-status::before { content:''; width:14px; height:14px; flex:none; border:2px solid rgba(245,197,66,.2); border-top-color:var(--gold-primary); border-radius:50%; animation:ui-loading-spin .85s linear infinite; }
+@keyframes ui-loading-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .ui-loading-status::before { animation:none; } }
+.diagnostics-resources { display:flex; flex-direction:column; align-items:flex-start; gap:12px; min-width:0; }
+.diagnostics-resources > p { margin:0; }
+.diagnostics-resources-filter { display:flex; flex-direction:column; gap:7px; width:min(360px,100%); min-width:0; }
+.diagnostics-resources-filter > label { font-size:13px; font-weight:600; color:var(--text); }
+.diagnostics-resources > [aria-live] { width:100%; min-width:0; }
+.diagnostics-resources > [aria-live] > dl { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); gap:10px; margin:12px 0; }
+.diagnostics-resources > [aria-live] > dl > dt { color:var(--muted); }
+.diagnostics-resources > [aria-live] > dl > dd { margin:0; font-weight:600; }
+.diagnostics-resources > [aria-live] table { width:100%; border-collapse:collapse; }
+.diagnostics-resources > [aria-live] { overflow-x:auto; }
+.workflow-field .ui-combobox { min-width:0; width:100%; }
+.workflow-config .ui-browse-button { min-width:105px; }
 .ui-native-select option { background:#111923; color:var(--text); }
 .ui-filter-bar { display:flex; align-items:center; flex-wrap:wrap; gap:var(--ui-space-sm); width:100%; min-width:0; }
 .ui-filter-bar > * { min-width:0; }
