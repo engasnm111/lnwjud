@@ -7,7 +7,8 @@ import { tunnelRuntimeCredentialAvailable } from '../../tunnel-auth-readiness.js
 import { tunnelAuthPresentation } from '../../tunnel-auth-presentation.js';
 import { GuidedTunnelSetup } from '../onboarding/GuidedTunnelSetup.js';
 import { isTunnelRunning } from '../onboarding/guided-tunnel-setup-state.js';
-import { EmptyState, PageHeading, SettingsCardHeading, StatusMessage , ActionButton, FormInput, FormSelect, FormTextarea } from '../ui/UiPrimitives.js';
+import { EmptyState, PageHeading, SettingsCardHeading, StatusMessage , ActionButton, FormInput, FormTextarea } from '../ui/UiPrimitives.js';
+import { SettingsSelect as FormSelect } from '../ui/SettingsSelect.js';
 import { PonytailPolicyEditor } from './PonytailPolicyEditor.js';
 import { SettingSwitch } from './SettingSwitch.js';
 import { UserConfigPanel, type UserConfigSection } from './UserConfigPanel.js';

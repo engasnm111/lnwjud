@@ -251,13 +251,15 @@ input:focus, select:focus {
   color: var(--gold-primary);
   background: rgba(245, 197, 66, 0.1);
   border: 1px solid rgba(245, 197, 66, 0.25);
-  padding: 0 7px;
+  padding: 2px 8px 2px 7px;
   border-radius: 999px;
-  font-weight: 650;
+  font-weight: 900;
 }
 
 button.titlebar-version {
-  font-size: 8px;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 2px 8px 2px 7px;
   -webkit-app-region: no-drag;
   appearance: none;
   cursor: pointer;
@@ -283,7 +285,7 @@ button.titlebar-whats-new {
   border-radius: 50%;
   background: rgba(245, 197, 66, 0.08);
   color: var(--gold-primary);
-  font: 650 8px/1 var(--font-mono);
+  font: 650 12px/1 var(--font-mono);
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
@@ -2358,7 +2360,7 @@ button.titlebar-whats-new {
 .tool-modal-title-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tool-modal-header h2 { margin: 0; line-height: 1.2; }
 .tool-modal-header code { color: var(--muted); overflow-wrap: anywhere; }
-.tool-modal-close { width: 42px; height: 42px; flex: 0 0 42px; padding: 0; display: grid; place-items: center; border-radius: 12px; font-size: 20px; line-height: 1; }
+.tool-modal-close { width: 30px; height: 30px; flex: 0 0 30px; padding: 0; display: grid; place-items: center; border-radius: 9px; font-size: 16px; line-height: 1; }
 .tool-modal-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 22px; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .mutation-approval-window { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: clamp(12px, 2.5vw, 24px); background: var(--bg); }
 .mutation-approval-card { display: flex; flex: 1 1 auto; flex-direction: column; width: min(100%, 820px); min-width: 0; min-height: 0; margin: 0 auto; }
@@ -3349,7 +3351,9 @@ h2 {
 /* Shared searchable controls */
 .ui-combobox { position:relative; min-width:0; width:100%; }
 .ui-combobox-trigger { width:100%; min-height:42px; justify-content:space-between; gap:12px; text-align:left; background:#0b1018; border:1px solid var(--border-subtle); border-radius:10px; padding:9px 12px; }
-.ui-combobox-trigger > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ui-combobox-trigger > span:first-child { min-width:0; flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ui-combobox-trigger > span:last-child { flex:0 0 16px; width:16px; height:16px; display:grid; place-items:center; align-self:center; font-size:0; line-height:0; }
+.ui-combobox-trigger > span:last-child::before { content:''; width:6px; height:6px; border-right:2px solid currentColor; border-bottom:2px solid currentColor; transform:translateY(-2px) rotate(45deg); }
 .ui-combobox-trigger:focus-visible { outline:2px solid var(--gold-primary); outline-offset:2px; }
 .ui-combobox-popover { position:fixed; z-index:10000; min-width:0; box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; padding:8px; border:1px solid rgba(245,197,66,.32); border-radius:12px; background:#151c27; box-shadow:0 14px 36px rgba(0,0,0,.6); }
 .ui-combobox-popover input { display:block; width:100%; min-width:0; flex:0 0 auto; margin-bottom:6px; padding:10px; }
@@ -3451,6 +3455,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .workflow-field .ui-combobox { min-width:0; width:100%; }
 .workflow-config .ui-browse-button { min-width:105px; }
 .ui-native-select option { background:#111923; color:var(--text); }
+.settings-select-control { display:block; width:100%; min-width:0; }
+.settings-select-control .ui-combobox-trigger { width:100%; min-height:42px; background:#0b1018; border:1px solid var(--border-subtle); border-radius:10px; font-size:13px; font-weight:500; }
+.settings-select-control .ui-combobox-trigger:hover:not(:disabled) { background:#111923; border-color:rgba(245,197,66,.45); transform:none; }
+.settings-select-control .ui-combobox-trigger:focus-visible { outline:2px solid var(--gold-primary); outline-offset:2px; }
+.settings-select-control .ui-combobox-trigger:disabled { opacity:.55; }
+.settings-select-control .ui-combobox-popover { max-width:calc(100vw - 16px); }
 .ui-filter-bar { display:flex; align-items:center; flex-wrap:wrap; gap:var(--ui-space-sm); width:100%; min-width:0; }
 .ui-filter-bar > * { min-width:0; }
 .ui-form-field { display:flex; flex-direction:column; gap:var(--ui-space-sm); min-width:0; }
@@ -3462,7 +3472,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 /* Git explorer tree: intrinsic row heights, structured indentation, no sticky overlay. */
 .git-files-header { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; }
 .git-tree-actions { display:flex; flex-wrap:wrap; gap:8px; margin-inline-start:auto; }
-.git-tree-actions .ui-action { min-height:32px; padding:5px 10px; font-size:12px; }
+.git-tree-actions .ui-action { min-height:32px; padding:5px 10px; font-size:12px; transition:border-color .15s ease,background-color .15s ease,box-shadow .15s ease; }
+.git-tree-actions .ui-action:hover,.git-tree-actions .ui-action:active,.git-tree-actions .ui-action:focus-visible { transform:none; }
+.git-tree-actions .ui-action:focus-visible { outline-offset:-2px; }
+.git-files-header { align-items:center; padding-block:3px; overflow:visible; }
 .git-file-tree { display:flex; flex-direction:column; gap:2px; min-height:0; min-width:0; }
 .git-tree-folder, .git-tree-children { display:flex; flex-direction:column; min-width:0; flex:0 0 auto; }
 .git-tree-folder-row, .git-tree-file-row {

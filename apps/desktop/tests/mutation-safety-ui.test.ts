@@ -244,10 +244,11 @@ describe('mutation safety UI contract', () => {
     expect(markup).not.toContain('id="ponytail-mode"');
     expect(markup).toContain('Ponytail Policy');
     expect(markup).toContain('Global default');
-    expect(markup).toContain('<option value="off" selected="">Off</option>');
-    expect(markup).toContain('<option value="lite">Lite</option>');
-    expect(markup).toContain('<option value="full">Full</option>');
-    expect(markup).toContain('<option value="ultra">Ultra</option>');
+    // Settings now uses a portal-backed button/listbox; choices appear only when open.
+    expect(markup).toContain('data-value="off"');
+    expect(markup).toContain('aria-haspopup="listbox"');
+    expect(markup).toContain('settings-select-control');
+    expect(markup).not.toContain('<option value="off"');
     expect(markup).toContain('Advanced overrides — optional');
     expect(markup).toContain('Inherit Global');
     expect(markup).toContain('Effective: Off · Global');

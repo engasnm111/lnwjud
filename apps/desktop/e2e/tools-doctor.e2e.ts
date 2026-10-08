@@ -62,20 +62,38 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
           return { x: rect.x, width: rect.width };
         }));
       expect(aligned.length).toBeGreaterThan(2);
+      await app.page.locator('.tool-card-open').first().click();
+      await expect(app.page.locator('.tool-modal-close')).toHaveCSS('width', '30px');
+      await expect(app.page.locator('.tool-modal-close')).toHaveCSS('height', '30px');
+      await app.page.locator('.tool-modal-close').click();
       for (const row of aligned.slice(1)) {
         expect(Math.abs(row.x - aligned[0]!.x)).toBeLessThanOrEqual(1);
         expect(Math.abs(row.width - aligned[0]!.width)).toBeLessThanOrEqual(1);
       }
 
-      const settingsSelects = app.page.locator('.settings-page select.ui-native-select');
-      // All Settings tabs share the same styled native control instead of a fragile custom menu.
+      // Settings selectors are portal-backed, styled like filters, and intentionally lack a search input.
       await app.page.getByRole('button', { name: /^(ตั้งค่า|Settings)$/ }).click();
       const firstSettingsSelect = app.page.locator('#locale-select');
       await expect(firstSettingsSelect).toBeVisible();
-      await expect(firstSettingsSelect).toHaveCSS('appearance', 'none');
-      expect(await firstSettingsSelect.evaluate((node) => getComputedStyle(node).backgroundImage)).toContain('svg');
+      await firstSettingsSelect.click();
+      const settingsPopup = app.page.locator('body > .ui-combobox-popover');
+      await expect(settingsPopup).toBeVisible();
+      await expect(settingsPopup.locator('input')).toHaveCount(0);
+      await settingsPopup.locator('[role="option"]').first().press('Escape');
+      await expect(settingsPopup).toHaveCount(0);
+      const nav = app.page.locator('.settings-subnav .settings-nav-item');
+      for (let index = 0; index < await nav.count(); index++) {
+        await nav.nth(index).click();
+        const enabled = app.page.locator('.settings-select-control .ui-combobox-trigger:not(:disabled)');
+        if (await enabled.count() === 0) continue;
+        await enabled.first().click();
+        const popup = app.page.locator('body > .ui-combobox-popover');
+        await expect(popup).toBeVisible();
+        await expect(popup.locator('input')).toHaveCount(0);
+        await popup.locator('[role="option"]').first().press('Escape');
+        await expect(popup).toHaveCount(0);
+      }
       await app.page.getByRole('button', { name: /^(เครื่องมือ|Tools)$/ }).click();
-      await expect(settingsSelects).toHaveCount(0);
 
       const toolbar = app.page.locator('.tool-filters');
       const before = await toolbar.boundingBox();
@@ -110,8 +128,12 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       await app.page.getByRole('button', { name: /^(ตั้งค่า|Settings)$/ }).click();
       const locale = app.page.locator('#locale-select');
       await locale.click();
-      await locale.selectOption('en');
-      await expect(locale).toHaveValue('en');
+      const languagePopup = app.page.locator('body > .ui-combobox-popover');
+      await expect(languagePopup.locator('input')).toHaveCount(0);
+      await languagePopup.getByRole('option', { name: /English/ }).click();
+      await expect(locale).toHaveAttribute('data-value', 'en');
+      // Check the localized content actually changed, not just an internal value.
+      await expect(app.page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
     } finally { await closeDesktop(app); }
   });
 

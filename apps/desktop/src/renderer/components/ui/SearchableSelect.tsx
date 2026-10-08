@@ -15,6 +15,7 @@ export function SearchableSelect(props: {
   readonly className?: string;
   readonly invalid?: boolean;
   readonly describedBy?: string | undefined;
+  readonly searchable?: boolean;
 }): ReactElement {
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -68,6 +69,13 @@ export function SearchableSelect(props: {
   }, [open, matches.length, optionLabels]);
 
   useEffect(() => {
+    if (!open || props.searchable !== false) return;
+    const selected = popover.current?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')
+      ?? popover.current?.querySelector<HTMLButtonElement>('[role="option"]');
+    selected?.focus();
+  }, [open, props.searchable]);
+
+  useEffect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent): void => {
       if (event.target instanceof Node &&
@@ -105,7 +113,7 @@ export function SearchableSelect(props: {
 
   return (
     <div ref={root} className={`ui-combobox ${props.className ?? ''}`}>
-      <ActionButton id={props.id} type="button" className="ui-combobox-trigger" disabled={props.disabled}
+      <ActionButton id={props.id} type="button" data-value={props.value} className="ui-combobox-trigger" disabled={props.disabled}
         aria-label={props.label} aria-expanded={open} aria-controls={id} aria-haspopup="listbox"
         aria-invalid={props.invalid || undefined} aria-describedby={props.describedBy}
         onClick={() => { setTerm(''); setActive(0); setPlacement(null); setOpen(!open); }}>
@@ -117,9 +125,21 @@ export function SearchableSelect(props: {
             width: placement?.width ?? 0, maxHeight: placement?.maxHeight ?? 310,
             visibility: placement ? 'visible' : 'hidden' }}
           onKeyDown={(event) => {
-            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return; }
+            if (props.searchable !== false) return;
+            const optionButtons = Array.from(popover.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              const index = optionButtons.indexOf(document.activeElement as HTMLButtonElement);
+              const next = Math.max(0, Math.min(optionButtons.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+              optionButtons[next]?.focus(); setActive(next);
+            }
+            if (event.key === 'Home' || event.key === 'End') {
+              event.preventDefault(); const next = event.key === 'Home' ? 0 : optionButtons.length - 1;
+              optionButtons[next]?.focus(); setActive(next);
+            }
           }}>
-          <FormInput autoFocus type="search" role="combobox" aria-label={props.label}
+          {props.searchable === false ? null : <FormInput autoFocus type="search" role="combobox" aria-label={props.label}
             aria-autocomplete="list" aria-controls={id} aria-expanded={true}
             aria-activedescendant={matches[active] ? `${id}-option-${active}` : undefined}
             value={term} placeholder={props.placeholder ?? props.label}
@@ -129,7 +149,7 @@ export function SearchableSelect(props: {
               if (event.key === 'ArrowDown') { event.preventDefault(); setActive((i) => Math.min(i + 1, matches.length - 1)); }
               if (event.key === 'ArrowUp') { event.preventDefault(); setActive((i) => Math.max(0, i - 1)); }
               if (event.key === 'Enter' && matches[active]) { event.preventDefault(); choose(matches[active].value); }
-            }} />
+            }} />}
           <div id={id} role="listbox" className="ui-combobox-options" aria-label={props.label}>
             {matches.length === 0 ? <div className="ui-combobox-empty">No matches</div> : matches.map((item, i) => (
               <ActionButton type="button" role="option" id={`${id}-option-${i}`}

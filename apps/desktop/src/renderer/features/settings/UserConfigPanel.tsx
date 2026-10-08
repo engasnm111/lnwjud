@@ -11,7 +11,8 @@ import type {
 } from '@lnwjud/ipc-contracts';
 import { parseDelimitedList } from '@lnwjud/shared/text-list';
 import { createTranslator } from '../../i18n/index.js';
-import { SettingsCardHeading, StatusMessage, EmptyState , ActionButton, FormInput, FormSelect, FormTextarea } from '../ui/UiPrimitives.js';
+import { SettingsCardHeading, StatusMessage, EmptyState , ActionButton, FormInput, FormTextarea } from '../ui/UiPrimitives.js';
+import { SettingsSelect as FormSelect } from '../ui/SettingsSelect.js';
 import { SettingSwitch } from './SettingSwitch.js';
 
 export type UserConfigSection = 'general' | 'security' | 'engineering' | 'tools' | 'mcp' | 'tunnel';

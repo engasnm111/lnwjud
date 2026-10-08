@@ -7,7 +7,8 @@ import type {
   UiLocale,
 } from '@lnwjud/ipc-contracts';
 import { createTranslator, type Translator } from '../../i18n/index.js';
-import { EmptyState, SettingsCardHeading, StatusMessage , FormSelect } from '../ui/UiPrimitives.js';
+import { EmptyState, SettingsCardHeading, StatusMessage } from '../ui/UiPrimitives.js';
+import { SettingsSelect as FormSelect } from '../ui/SettingsSelect.js';
 
 interface PonytailPolicyEditorProps {
   readonly locale: UiLocale;

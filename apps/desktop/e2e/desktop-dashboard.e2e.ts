@@ -67,8 +67,12 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await expect(page.getByTestId('mcp-status')).toHaveText(/Agent พร้อมทำงาน|Agent ready/, { timeout: 30_000 });
     const titleVersion = page.locator('button.titlebar-version');
     const whatsNew = page.locator('button.titlebar-whats-new');
-    await expect(titleVersion).toHaveCSS('font-size', '8px');
-    await expect(whatsNew).toHaveCSS('font-size', '8px');
+    await expect(titleVersion).toHaveCSS('font-size', '10px');
+    await expect(titleVersion).toHaveCSS('font-weight', '900');
+    await expect(titleVersion).toHaveCSS('padding-top', '2px');
+    await expect(titleVersion).toHaveCSS('padding-bottom', '2px');
+    await expect(titleVersion).toHaveCSS('padding-right', '8px');
+    await expect(whatsNew).toHaveCSS('font-size', '12px');
     const badgePositions = await page.locator('.titlebar-brand').evaluate((brand) => {
       const brandBox = brand.getBoundingClientRect();
       const versionBox = brand.querySelector('button.titlebar-version')!.getBoundingClientRect();
@@ -160,8 +164,12 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     expect(guideBox).not.toBeNull();
     if (authBox !== null && guideBox !== null) expect(Math.round(guideBox.y - (authBox.y + authBox.height))).toBeLessThanOrEqual(12);
     await page.getByRole('button', { name: /ความปลอดภัย|Security/ }).click();
-    await page.getByLabel(/^(โปรไฟล์สิทธิ์|Permission profile)$/, { exact: true }).selectOption('balanced');
-    await expect(page.getByLabel(/^(โปรไฟล์สิทธิ์|Permission profile)$/, { exact: true })).toHaveValue('balanced');
+    const profileSelect = page.locator('#permission-profile');
+    await profileSelect.click();
+    const profileOptions = page.locator('body > .ui-combobox-popover');
+    await expect(profileOptions.locator('input')).toHaveCount(0);
+    await profileOptions.getByRole('option', { name: /Balanced|สมดุล/ }).click();
+    await expect(profileSelect).toHaveAttribute('data-value', 'balanced');
     await page.locator('.settings-subnav').getByRole('button', { name: /^(เครื่องมือ|Tools)/ }).click();
     const codexSwitch = page.getByRole('switch', { name: /codex_\*/ });
     await expect(codexSwitch).toHaveAttribute('aria-checked', 'false');
@@ -262,6 +270,13 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
     await page.setViewportSize({ width: 1720, height: 820 });
     await page.getByRole('button', { name: 'Git', exact: true }).click();
     await expect(page.locator('.git-tree-file-row')).toHaveCount(66, { timeout: 30_000 });
+    const expandAll = page.locator('.git-tree-actions .ui-action').first();
+    const normalBox = await expandAll.boundingBox();
+    await expandAll.hover();
+    const hoverBox = await expandAll.boundingBox();
+    expect(Math.abs((hoverBox?.y ?? 0) - (normalBox?.y ?? 0))).toBeLessThanOrEqual(0.5);
+    expect(hoverBox?.y).toBeGreaterThanOrEqual(0);
+    await expect(expandAll).toHaveCSS('transform', 'none');
     const nestedFolder = page.locator('.git-tree-folder-row').filter({ hasText: 'unit' });
     await expect(nestedFolder).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toBeVisible();
