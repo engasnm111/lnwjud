@@ -55,13 +55,15 @@
 
 ## Current source version: v5.8.0
 
-### v5.8.0 development preview (not yet published)
+### What's new in v5.8.0
 
-- Desktop UI uses bundled Prompt for Thai/English controls while preserving monospace for code and Git paths. Doctor tabs are keyboard-accessible, with selectable recent workspace Goals (newest first) and actual catalog tools rather than manual IDs.
-- Searchable dropdowns are positioned outside clipping containers, keep layout dimensions stable, and support keyboard navigation. Workflow required fields now receive inline warnings and focus before API submission.
-- Work Log begins with the All-workspaces filter; Git File Tree automatically opens changed-file folders and retains collapse/expand controls and human-readable diff hunk labels. Tools catalog controls have aligned fixed columns, with responsive stacking on narrow screens.
-- Windows native workflow Browse, existing permission/workspace checks, Portable startup behavior, and previous released download links are retained. This section documents **source under development**, not a published download.
+- **Six ready-to-review workflows (Thai/English):** inspect a project, review code, check release readiness, diagnose connections, audit data, or prepare a report. Required inputs are validated inline; preparing a draft does not silently start a Goal or a schedule.
+- **Doctor and task evidence:** inspect MCP call history, available resource measurements, Goal-associated results, and bounded change previews. Unknown/unobserved values remain clearly unavailable rather than fabricated; restore and cancellation remain subject to existing permission and ownership checks.
+- **CSV/XLSX and Office reporting:** audit tabular files, compare cells, and create report drafts through declared file or native providers. Native Office operations depend on the supported host/provider; source documents are not overwritten by default.
+- **Clearer, faster Desktop controls:** bundled Prompt, consistent accessible dropdowns in Settings and filters, live loading states, inline Workflow validation, responsive Tools controls, and Work Log's All-workspaces default. Git opens changed-file folder ancestors and preserves diff navigation.
+- **Managed runtime and release safety:** bounded owned-process/resource diagnostics, read-only Agent Swarm delegation, upgraded verified target-native `tunnel-client 0.0.16`, and one managed runtime-dependency update PR with conditional cleanup. Functional regression coverage is retained without brittle pixel/CSS-only tests.
 
+ภาษาไทย: v5.8.0 เพิ่มเวิร์กโฟลว์ 6 แบบพร้อมตรวจช่องจำเป็นก่อนเริ่ม, Doctor สำหรับตรวจประวัติ MCP/ทรัพยากรและผลงานตาม Goal, เครื่องมือ CSV/XLSX พร้อมระบุข้อจำกัด provider, ปรับ UI Prompt/dropdown/Git/Work Log และลดอาการค้างระหว่างค้นหา โดยยังรักษาการอนุญาต ความเป็นเจ้าของงาน การสำรอง/กู้คืน และหลักฐาน CI/ไฟล์ติดตั้งตามจริง
 
 Latest published release: **v5.7.4**. The download buttons above point directly to the v5.7.4 assets. The release was published after the exact tagged main commit passed the target-native release gates.
 
@@ -83,17 +85,6 @@ Latest published release: **v5.7.4**. The download buttons above point directly 
 - **Managed-browser/native foreground coordination is hardened:** `activate_tab`, browser-scoped file upload with Active Project checks, cross-project foreground serialization, and optional postcondition evidence keep native input aligned with the intended tab and target state.
 
 ภาษาไทย: v5.7.3 เน้นแก้ความต่อเนื่องของ Durable Goal/Serena, Linux AppImage, Work Log, Secure MCP Tunnel และ Portable โดยเฉพาะการกลับมาใช้ bundled `tunnel-client` หลังลบ custom path, พร้อมเพิ่มหลักฐาน release แบบ exact-SHA/cross-platform และยังรองรับ community Windows release แบบ unsigned เมื่อไม่มี production certificate โดยต้องผ่าน SHA-256/provenance checks ครบ
-
-### What's new in v5.7.2
-
-- **Git image diff previews:** the Git page can show before/after images at the real `HEAD → Index` and `Index → Working Tree` scopes, including added/deleted images. Preview payloads are bounded to 4 MB per side, with Fit/Actual Size controls and a clear fallback when Chromium cannot decode a particular image format.
-- **Engineering Harness settings persist correctly:** the preload bridge now preserves Harness settings, workspace overrides, and diagnostics, so an enabled Harness no longer appears Off after restarting the app while the saved value is still enabled.
-- **Engineering tools are discoverable and Goal-aware:** Engineering Harness primitives are exposed through the tool catalog and bind to the active Goal/lease correctly.
-- **Safer rich-text typing:** CDP typing uses native `Input.insertText` for ProseMirror/contenteditable targets and verifies that the DOM actually changed instead of reporting a silent no-op as success.
-- **Durable Goal progress stays fresh for Watcher:** lnwjud now instructs every connected worker to checkpoint immediately at step/task/blocker/commit/push/CI/package milestones and at least every 10 minutes during sustained work without a natural milestone, while stale superseded Goals should be reconciled instead of remaining active.
-- **Secure MCP Tunnel avoids false Windows Error state:** a temporary PowerShell failure while inventorying local tunnel-client processes/listeners is retried as a transient runtime check instead of permanently flipping an otherwise healthy Tunnel to Error; duplicate/unverifiable process identity checks remain fail-closed.
-
-ภาษาไทย: v5.7.2 เพิ่มตัวอย่างรูปก่อน/หลังในหน้า Git, แก้ Engineering Harness ให้จำสถานะเปิดหลังรีสตาร์ต, เปิดเครื่องมือ Engineering ใน catalog ให้ถูกต้อง, ตรวจผลการพิมพ์ ProseMirror/ContentEditable จริงก่อนรายงานว่าสำเร็จ, กำหนดให้ Durable Goal อัปเดต checkpoint ตาม milestone/อย่างน้อยทุก 10 นาทีระหว่างงานต่อเนื่อง เพื่อให้ lnwjud Watcher แสดงสถานะล่าสุดพร้อมปิด Goal ที่ถูกแทนที่ไม่ให้ค้างเป็นงาน active และแก้ Secure MCP Tunnel บน Windows ไม่ให้สถานะหลุดเป็น Error เพียงเพราะคำสั่ง PowerShell ตรวจ process/listener ล้มเหลวชั่วคราว โดยยังคง fail closed เมื่อยืนยัน process ซ้ำหรือ identity ไม่ได้
 
 See the [Thai Engineering Harness guide](docs/USAGE_TH.md#8a-engineering-harness--senior-coding-workflow) for setup and workflow details.
 

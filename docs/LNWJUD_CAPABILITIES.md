@@ -1,6 +1,6 @@
 # lnwjud — สรุปความสามารถทั้งหมด
 
-สถานะเอกสาร: สรุปจาก source candidate และ runtime contract ปัจจุบันของ lnwjud v5.8.0 (มีทั้งหมด 279 definitions; advertise 267 tools โดยปริยายก่อนใช้ per-tool override และครบ 279 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
+สถานะเอกสาร: สรุปจาก source candidate และ runtime contract ปัจจุบันของ lnwjud v5.8.0 (มีทั้งหมด 285 definitions; advertise 273 tools โดยปริยายก่อนใช้ per-tool override และครบ 285 tools เมื่อเปิด Codex delegation กับ Agent Swarm)
 ขอบเขต: ความสามารถของ gateway, MCP tools, การเชื่อมต่อ AI, สิทธิ์, Live Logs และข้อจำกัดในการใช้งาน
 เอกสารนี้ถูกติดตามใน repository และต้องสอดคล้องกับ source, runtime contract และ release ปัจจุบัน
 
@@ -8,7 +8,7 @@
 
 lnwjud ไม่ใช่ AI model และไม่ใช่ provider API aggregator แต่เป็น cross-platform local development gateway ที่เปิดความสามารถของเครื่องและ workspace บน Windows, macOS และ Linux ให้ AI host ที่พูดภาษา Model Context Protocol (MCP) ได้ โดย capability ที่เป็น OS-specific จะเปิดเฉพาะเมื่อ host รองรับจริง
 
-ความสามารถหลักใน v5.6.0 source/runtime ปัจจุบัน คือ:
+ความสามารถหลักใน v5.8.0 source/runtime ปัจจุบัน คือ:
 
 - เปิด workspace และ machine roots ให้ AI อ่าน ค้นหา วิเคราะห์ และแก้ไขไฟล์ได้
 - ใช้ Context Economy Engine ลด I/O/token จากการค้นหาอัตโนมัติ โดยยังอ่าน .env, .git, dist และ node_modules ได้เมื่อร้องขอแบบ explicit และอยู่ในขอบเขตที่ workspace/path policy อนุญาต
@@ -134,7 +134,7 @@ Bridge นี้ทำให้ lnwjud เป็น MCP gateway ได้ แต
 4. เรียก tool จริง เช่น workspace_list หรือ workspace_info
 5. ตรวจผลใน Live Logs, process logs หรือ tunnel log
 
-สำหรับ runtime contract ปัจจุบัน full registry มี 279 tool definitions; ค่า default โฆษณา 267 tools และครบ 279 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. การเห็น catalog เป็นหลักฐานของ runtime ที่ทดสอบ ไม่ได้ยืนยันว่า tunnel หรือ client ภายนอกกำลังเชื่อมอยู่ในขณะนั้น
+สำหรับ runtime contract ปัจจุบัน full registry มี 285 tool definitions; ค่า default โฆษณา 273 tools และครบ 285 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. การเห็น catalog เป็นหลักฐานของ runtime ที่ทดสอบ ไม่ได้ยืนยันว่า tunnel หรือ client ภายนอกกำลังเชื่อมอยู่ในขณะนั้น
 
 ถ้า Start Tunnel เชื่อมแล้วหลุดวน:
 
@@ -354,7 +354,7 @@ skill_match และ skill_load โหลด local skill ตาม intent ผ�
 
 ## รายชื่อ MCP tools ใน runtime snapshot
 
-runtime contract ปัจจุบันมีทั้งหมด 279 tool definitions; ค่า default ส่งกลับ 267 tools และส่งกลับครบ 279 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. Planned และ feature-disabled definitions ยังคงอยู่ใน complete inventory แต่ไม่ถูก advertise. รายชื่อ full registry ตามลำดับ canonical มีดังนี้:
+runtime contract ปัจจุบันมีทั้งหมด 285 tool definitions; ค่า default ส่งกลับ 273 tools และส่งกลับครบ 285 tools เมื่อเปิด `codex_*` กับ `agent_swarm_run` แบบ opt-in. Planned และ feature-disabled definitions ยังคงอยู่ใน complete inventory แต่ไม่ถูก advertise. รายชื่อ full registry ตามลำดับ canonical มีดังนี้:
 
 ~~~text
 workspace_list
@@ -460,6 +460,12 @@ finish_goal
 cancel_goal
 reconcile_goals
 list_goals
+resource_snapshot
+call_history
+goal_result
+workflow_templates
+workflow_prepare
+workflow_start
 prepare_scheduled_continuation
 record_scheduled_continuation_receipt
 claim_scheduled_continuation
@@ -597,7 +603,24 @@ git_worktree_remove
 db_inspect
 db_query
 office_ppt
+office_status
+office_word
+office_excel
+office_powerpoint
 office_outlook
+office_calendar
+office_contacts
+office_tasks
+office_onenote
+office_onedrive
+office_sharepoint
+office_teams
+office_access
+office_visio
+office_project
+office_publisher
+office_convert
+office_batch
 pdf_extract_tables
 docx_merge
 self_heal_plan

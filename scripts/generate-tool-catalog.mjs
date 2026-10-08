@@ -6,6 +6,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const contractPath = path.join(repositoryRoot, 'docs', 'architecture', 'TOOL_CONTRACT.md');
 const readmePath = path.join(repositoryRoot, 'FULL_README.md');
+const conciseReadmePath = path.join(repositoryRoot, 'README.md');
+const capabilityPath = path.join(repositoryRoot, 'docs', 'LNWJUD_CAPABILITIES.md');
+const releaseChecklistPath = path.join(repositoryRoot, '.github', 'RELEASE_CHECKLIST.md');
 const registryModulePath = path.join(repositoryRoot, 'packages', 'mcp-server', 'dist', 'tool-registry.js');
 const upgradeCatalogModulePath = path.join(repositoryRoot, 'packages', 'mcp-server', 'dist', 'upgrade-catalog.js');
 const runtimeFixturesModulePath = path.join(repositoryRoot, 'packages', 'mcp-server', 'dist', 'tool-runtime-fixtures.js');
@@ -35,6 +38,9 @@ const deliveryLabel = (name) => upgradeCatalogEntry(name)?.deliveryState ?? 'ope
 const evidenceLabel = (name) => TOOL_RUNTIME_FIXTURES[name]?.evidence?.kind ?? 'missing';
 const current = await readFile(contractPath, 'utf8');
 const currentReadme = await readFile(readmePath, 'utf8');
+const currentConciseReadme = await readFile(conciseReadmePath, 'utf8');
+const currentCapabilities = await readFile(capabilityPath, 'utf8');
+const currentReleaseChecklist = await readFile(releaseChecklistPath, 'utf8');
 const newline = current.includes('\r\n') ? '\r\n' : '\n';
 const readmeNewline = currentReadme.includes('\r\n') ? '\r\n' : '\n';
 const rows = tools.map((tool, index) => {
@@ -100,11 +106,70 @@ expectedReadme = expectedReadme.replace(quickStartCountPattern, quickStartCountT
 const missingEvidence = tools.filter((tool) => evidenceLabel(tool.name) === 'missing').map((tool) => tool.name);
 if (missingEvidence.length > 0) throw new Error(`Runtime evidence is missing for: ${missingEvidence.join(', ')}`);
 
+// Current inventories and counts are generated from the same runtime registry.
+// Historical release summaries are intentionally left unchanged.
+function replaceRequired(text, pattern, replacement, surface) {
+  if (!pattern.test(text)) throw new Error('Missing current tool-count surface: ' + surface);
+  return text.replace(pattern, replacement);
+}
+
+const capabilityListPattern = /(## รายชื่อ MCP tools ใน runtime snapshot[\s\S]*?~~~text\r?\n)([\s\S]*?)(\r?\n~~~)/;
+let expectedCapabilities = replaceRequired(
+  currentCapabilities,
+  capabilityListPattern,
+  (_match, prefix, _oldNames, suffix) => prefix + tools.map((tool) => tool.name).join('\n') + suffix,
+  'Thai full ToolRegistry list',
+);
+const countSurfaces = [
+  [/(มีทั้งหมด )\d+( definitions; advertise )\d+( tools โดยปริยายก่อนใช้ per-tool override และครบ )\d+( tools)/,
+    (_m, a, b, c, d) => a + tools.length + b + defaultAdvertisedCount + c + codexEnabledAdvertisedCount + d],
+  [/(full registry มี )\d+( tool definitions; ค่า default โฆษณา )\d+( tools และครบ )\d+( tools)/,
+    (_m, a, b, c, d) => a + tools.length + b + defaultAdvertisedCount + c + codexEnabledAdvertisedCount + d],
+  [/(runtime contract ปัจจุบันมีทั้งหมด )\d+( tool definitions; ค่า default ส่งกลับ )\d+( tools และส่งกลับครบ )\d+( tools)/,
+    (_m, a, b, c, d) => a + tools.length + b + defaultAdvertisedCount + c + codexEnabledAdvertisedCount + d],
+];
+for (const [pattern, replacement] of countSurfaces) {
+  expectedCapabilities = replaceRequired(expectedCapabilities, pattern, replacement, 'Thai capability totals');
+}
+let expectedReleaseChecklist = replaceRequired(
+  currentReleaseChecklist,
+  /(\*\*)\d+( total definitions \/ )\d+( advertised by default \/ all )\d+( with Codex delegation plus Agent Swarm enabled\*\*)/,
+  (_m, a, b, c, d) => a + tools.length + b + defaultAdvertisedCount + c + codexEnabledAdvertisedCount + d,
+  'Release checklist headline counts',
+);
+expectedReleaseChecklist = replaceRequired(
+  expectedReleaseChecklist,
+  /(Tool catalog synchronization passes with )\d+( total definitions, )\d+( advertised by default, and all )\d+( advertised)/,
+  (_m, a, b, c) => a + tools.length + b + defaultAdvertisedCount + c + codexEnabledAdvertisedCount + ' advertised',
+  'Release checklist runtime counts',
+);
+let expectedConciseReadme = replaceRequired(
+  currentConciseReadme,
+  /\d+( total tool definitions for local files,[^\r\n]*?; )\d+( are advertised by default and all )\d+( when Codex delegation plus Agent Swarm is enabled\.)/,
+  (_m, a, b, c) => tools.length + a + defaultAdvertisedCount + b + codexEnabledAdvertisedCount + c,
+  'README tool-count introduction',
+);
+expectedConciseReadme = replaceRequired(
+  expectedConciseReadme,
+  /(MCP-)\d+(%20tools-6f42c1)/,
+  (_m, a, b) => a + tools.length + b,
+  'README MCP tool-count badge',
+);
+expectedConciseReadme = replaceRequired(
+  expectedConciseReadme,
+  /(lnwjud exposes \*\*)\d+( tool definitions\*\* through one local runtime and MCP gateway\. The default advertised set is )\d+(; all )\d+( are available when Codex delegation plus Agent Swarm is enabled\.)/,
+  (_m, a, b, c, d) => a + tools.length + b + defaultAdvertisedCount + c + codexEnabledAdvertisedCount + d,
+  'README capability summary',
+);
+
 const normalizeLineEndings = (value) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
 if (checkOnly) {
   if (normalizeLineEndings(current) !== normalizeLineEndings(expected)
-    || normalizeLineEndings(currentReadme) !== normalizeLineEndings(expectedReadme)) {
+    || normalizeLineEndings(currentReadme) !== normalizeLineEndings(expectedReadme)
+    || normalizeLineEndings(currentConciseReadme) !== normalizeLineEndings(expectedConciseReadme)
+    || normalizeLineEndings(currentCapabilities) !== normalizeLineEndings(expectedCapabilities)
+    || normalizeLineEndings(currentReleaseChecklist) !== normalizeLineEndings(expectedReleaseChecklist)) {
     process.stderr.write(`Tool catalog drift detected: total=${tools.length}, defaultAdvertised=${defaultAdvertisedCount}, codexAdvertised=${codexEnabledAdvertisedCount}. Run: corepack pnpm@10.15.0 docs:tools\n`);
     process.exitCode = 1;
   } else {
@@ -113,5 +178,8 @@ if (checkOnly) {
 } else {
   await writeFile(contractPath, expected, 'utf8');
   await writeFile(readmePath, expectedReadme, 'utf8');
+  await writeFile(conciseReadmePath, expectedConciseReadme, 'utf8');
+  await writeFile(capabilityPath, expectedCapabilities, 'utf8');
+  await writeFile(releaseChecklistPath, expectedReleaseChecklist, 'utf8');
   process.stdout.write(`Generated ToolRegistry catalogs: total=${tools.length}, defaultAdvertised=${defaultAdvertisedCount}, codexAdvertised=${codexEnabledAdvertisedCount}.\n`);
 }

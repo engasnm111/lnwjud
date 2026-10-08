@@ -2,6 +2,16 @@
 
 Release highlights are listed newest first. The [README](README.md) shows the three newest versions, and each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) contains its published notes and downloads.
 
+### What's new in v5.8.0
+
+- **Bilingual, review-first workflows:** six templates for project review, code review, release readiness, connection diagnosis, data audit and report drafts, with required-field validation and no automatic Goal scheduling.
+- **Correlated diagnostics and guarded results:** Doctor call/Goal/tool filters, truthful resource coverage, task results, bounded artifacts and safe preview/restore checks that retain ownership and permission boundaries.
+- **CSV/XLSX workflows:** provider-aware audit, cell comparison, and template reporting with non-destructive defaults, readback, and explicit limitations on native Office availability.
+- **Desktop usability:** Prompt typography, consistent accessible Settings dropdowns, inline validation, search/loading feedback, Work Log scope defaults, Git change trees and diff navigation, and aligned Tools controls.
+- **Runtime and delivery:** verified `tunnel-client 0.0.16` packaging, bounded owned-resource diagnostics, managed dependency-update PR behavior, and release gates that test real workflows instead of pixel-level CSS values.
+
+ภาษาไทย: v5.8.0 รวมเวิร์กโฟลว์ภาษาไทย/อังกฤษ 6 แบบ, Doctor/ผลลัพธ์ตาม Goal ที่แสดงข้อมูลจริงและป้องกันการกู้คืนผิดสิทธิ์, งาน CSV/XLSX, หน้าจอและ dropdown ที่ใช้งานสะดวกขึ้น และการบรรจุส่วนประกอบ/ตรวจหลักฐาน Release ตามมาตรฐานเดิม
+
 ### What's new in v5.7.4
 
 - **High-risk approval details stay on screen across Windows, macOS, and Linux:** the complete command appears in a bounded lnwjud window with its own scrollable detail area. Cancel is focused by default, and closing the window or pressing Escape cancels the request.

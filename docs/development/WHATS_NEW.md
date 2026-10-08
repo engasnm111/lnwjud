@@ -26,7 +26,18 @@ Before packaging a new public version:
 
 `scripts/set-version.mjs` synchronizes version surfaces but intentionally does **not** invent release notes. The release-note entry is a reviewed product artifact.
 
-## Current v5.7.2 release-note coverage
+## Current v5.8.0 release-note coverage
+
+The exact `5.8.0` in-app registry provides localized Thai and English entries for:
+
+- Six review-first Workflows with required input validation and explicit AI handoff (without automatic Goal creation or scheduling);
+- Git changed-file browsing, Prompt typography, shared dropdowns and Doctor/Tools/Work Log improvements;
+- CSV/XLSX file auditing and template report support subject to native provider availability;
+- Goal-aware MCP call diagnostics, resources, result coverage and honest unavailable measurements.
+
+For each item, verify the corresponding code and target-native runtime before publication. Registry text alone does not prove the full flow.
+
+## Historical v5.7.2 release-note coverage
 
 The bundled `5.7.2` entry covers the behavior shipped in the current published release:
 

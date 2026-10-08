@@ -148,7 +148,7 @@ async function syncAllVersions() {
       .replace(/lnwjud-Portable-[0-9.]+\.exe/g, `lnwjud-Portable-${publishedVersion}.exe`)
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`)
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Portable-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`)],
-    ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`).replace(/ความสามารถหลักใน v[0-9.]+ คือ:/g, `ความสามารถหลักใน v${version} คือ:`)],
+    ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`).replace(/ความสามารถหลักใน v[0-9.]+(?= source\/runtime ปัจจุบัน คือ:| คือ:)/g, `ความสามารถหลักใน v${version}`)],
     ['docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md', (content) => content.replace(/current v[0-9.]+ runtime contract/g, `current v${version} runtime contract`)],
     ['docs/architecture/TOOL_CONTRACT.md', (content) => content.replace(/snapshot synchronized for `v[0-9.]+`/g, `snapshot synchronized for ` + '`v' + version + '`')],
     ['docs/architecture/UPGRADE_ARCHITECTURE.md', (content) => content.replace(/checkpoint synchronized for `v[0-9.]+`/g, `checkpoint synchronized for ` + '`v' + version + '`')],

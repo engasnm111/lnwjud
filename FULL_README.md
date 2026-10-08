@@ -55,10 +55,15 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current source version: v5.8.0
 
-### Unreleased v5.8.0 Desktop UI improvements
+### What's new in v5.8.0
 
-The development build tightens the bundled Prompt typography; adds accessible Doctor tabs, recent named Goal/tool selectors, and bounded searchable dropdowns; aligns the right-hand Tools control column across rows; defaults Work Log scope to All; expands changed-file Git folders automatically; and validates required Workflow fields inline before invoking the backend. Windows native Browse and the existing Git Diff, security and Portable workflows remain part of regression verification. These source changes have **not** been published as a release. Download links continue to target v5.7.4.
+- **Six ready-to-review workflows (Thai/English):** inspect a project, review code, check release readiness, diagnose connections, audit data, or prepare a report. Required inputs are validated inline; preparing a draft does not silently start a Goal or a schedule.
+- **Doctor and task evidence:** inspect MCP call history, available resource measurements, Goal-associated results, and bounded change previews. Unknown/unobserved values remain clearly unavailable rather than fabricated; restore and cancellation remain subject to existing permission and ownership checks.
+- **CSV/XLSX and Office reporting:** audit tabular files, compare cells, and create report drafts through declared file or native providers. Native Office operations depend on the supported host/provider; source documents are not overwritten by default.
+- **Clearer, faster Desktop controls:** bundled Prompt, consistent accessible dropdowns in Settings and filters, live loading states, inline Workflow validation, responsive Tools controls, and Work Log's All-workspaces default. Git opens changed-file folder ancestors and preserves diff navigation.
+- **Managed runtime and release safety:** bounded owned-process/resource diagnostics, read-only Agent Swarm delegation, upgraded verified target-native `tunnel-client 0.0.16`, and one managed runtime-dependency update PR with conditional cleanup. Functional regression coverage is retained without brittle pixel/CSS-only tests.
 
+ภาษาไทย: v5.8.0 เพิ่มเวิร์กโฟลว์ 6 แบบพร้อมตรวจช่องจำเป็นก่อนเริ่ม, Doctor สำหรับตรวจประวัติ MCP/ทรัพยากรและผลงานตาม Goal, เครื่องมือ CSV/XLSX พร้อมระบุข้อจำกัด provider, ปรับ UI Prompt/dropdown/Git/Work Log และลดอาการค้างระหว่างค้นหา โดยยังรักษาการอนุญาต ความเป็นเจ้าของงาน การสำรอง/กู้คืน และหลักฐาน CI/ไฟล์ติดตั้งตามจริง
 
 Latest published release: **v5.7.4**. Windows, macOS, and Linux artifacts are published only after the exact tagged main commit passes the target-native release gates described below.
 
@@ -78,15 +83,6 @@ Latest published release: **v5.7.4**. Windows, macOS, and Linux artifacts are pu
 - **Work Log and Live Logs report severity truthfully:** RESULT event type is separated from INFO/WARN/ERROR severity, recoverable states no longer look like hard errors, filters are clearer, and Workspace/Session badges can copy full canonical IDs.
 - **Secure MCP Tunnel, Portable, and Recovery are safer:** fresh installs no longer auto-enable persistent reconnect, Recovery adds a 3-day option, bundled `tunnel-client` selection works after clearing a custom override, and stale runtime ownership is cleared only after lnwjud proves no external Tunnel is running.
 - **Managed-browser/native foreground coordination is hardened:** `activate_tab`, browser-scoped file upload with Active Project checks, cross-project foreground serialization, and optional postcondition evidence keep native input aligned with the intended tab and target state.
-
-### What's new in v5.7.2
-
-- **Git image diff previews:** the Git page can show before/after images at the real `HEAD → Index` and `Index → Working Tree` scopes, including added/deleted images. Preview payloads are bounded to 4 MB per side, with Fit/Actual Size controls and a clear fallback when Chromium cannot decode a particular image format.
-- **Engineering Harness settings persist correctly:** the preload bridge now preserves Harness settings, workspace overrides, and diagnostics, so an enabled Harness no longer appears Off after restarting the app while the saved value is still enabled.
-- **Engineering tools are discoverable and Goal-aware:** Engineering Harness primitives are exposed through the tool catalog and bind to the active Goal/lease correctly.
-- **Safer rich-text typing:** CDP typing uses native `Input.insertText` for ProseMirror/contenteditable targets and verifies that the DOM actually changed instead of reporting a silent no-op as success.
-- **Durable Goal progress stays fresh for Watcher:** lnwjud now instructs every connected worker to checkpoint immediately at step/task/blocker/commit/push/CI/package milestones and at least every 10 minutes during sustained work without a natural milestone, while stale superseded Goals should be reconciled instead of remaining active.
-- **Secure MCP Tunnel avoids false Windows Error state:** a temporary PowerShell failure while inventorying local tunnel-client processes/listeners is retried as a transient runtime check instead of permanently flipping an otherwise healthy Tunnel to Error; duplicate/unverifiable process identity checks remain fail-closed.
 
 See [Thai Engineering Harness setup and workflow](docs/USAGE_TH.md#8a-engineering-harness--senior-coding-workflow) for details.
 
