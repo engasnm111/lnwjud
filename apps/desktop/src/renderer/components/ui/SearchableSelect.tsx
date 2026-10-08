@@ -51,11 +51,17 @@ export function SearchableSelect(props: {
         top: flip ? Math.max(8, rect.top - 6 - Math.min(maxHeight, desiredHeight)) : rect.bottom + 6,
       });
     };
+    const onScroll = (event: Event): void => {
+      // Scrolling long option lists or full-text previews must not dismiss their own tooltip.
+      if (event.target instanceof Node &&
+        (popover.current?.contains(event.target) || tooltip.current?.contains(event.target))) return;
+      reposition();
+    };
     reposition();
-    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', reposition);
     return (): void => {
-      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', reposition);
     };
   }, [open, matches.length]);
