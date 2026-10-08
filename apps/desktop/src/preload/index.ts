@@ -1677,7 +1677,7 @@ const api: LnwjudApi = {
   listWorkflowTemplates: (request: { workspaceId: string }) => invoke(ipcChannels.listWorkflowTemplates, request).then((value) => boundedWorkflowReply(value, 'templates') as readonly WorkflowTemplate[]),
   prepareWorkflow: (request: WorkflowPrepareRequest) => invoke(ipcChannels.prepareWorkflow, request).then((value) => boundedWorkflowReply(value, 'draft') as WorkflowDraft),
   getCallHistory: (request: CallHistoryRequest) => invoke(ipcChannels.getCallHistory, request).then((value) => boundedWorkflowReply(value, 'calls') as CallHistoryPage),
-  getDoctorGoals: (request: { workspaceId: string }) => invoke(ipcChannels.getDoctorGoals, request).then((value) => {
+  getDoctorGoals: (request: { workspaceId: string; view?: 'calls' | 'results' }) => invoke(ipcChannels.getDoctorGoals, request).then((value) => {
     if (!Array.isArray(value) || value.length > 100 || !value.every((goal: unknown) => isRecord(goal)
       && typeof goal.goalId === 'string' && goal.goalId.length <= 128
       && typeof goal.goalKey === 'string' && goal.goalKey.length <= 128

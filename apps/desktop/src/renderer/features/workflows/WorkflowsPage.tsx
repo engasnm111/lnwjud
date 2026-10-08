@@ -1,9 +1,24 @@
 import { ActionButton, Surface } from '../ui/UiPrimitives.js';
 import { useEffect, useState, type ReactElement } from 'react';
-import type { UiLocale, WorkflowDraft, WorkflowTemplate } from '@lnwjud/ipc-contracts';
+import type { UiLocale, WorkflowDraft, WorkflowTemplate, WorkflowTemplateId } from '@lnwjud/ipc-contracts';
 import { WorkflowInputForm } from './WorkflowInputForm.js';
 import { workflowLaunchPrompt } from './workflow-launch-prompt.js';
 import { v580Strings, workflowLocalized } from '../../i18n/v580-copy.js';
+
+function WorkflowCardIcon(props: { readonly id: WorkflowTemplateId }): ReactElement {
+  const shapes: Record<WorkflowTemplateId, ReactElement> = {
+    'project-check': <><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h4M8 12h8M8 16h5"/></>,
+    'code-review': <><path d="M12 2 3 6v6c0 5.5 3.9 8.5 9 10 5.1-1.5 9-4.5 9-10V6z"/><path d="m8 12 3 3 5-6"/></>,
+    'release-readiness': <><path d="m12 2 9 5v10l-9 5-9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></>,
+    'connection-check': <><path d="M10 13a5 5 0 0 0 7 .2l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7-.2l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></>,
+    'data-audit': <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 10v10"/></>,
+    'template-report': <><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v5h4M9 12h7M9 16h5"/></>,
+  };
+  return <span className="workflow-card-icon" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"
+      strokeLinecap="round" strokeLinejoin="round" focusable="false">{shapes[props.id]}</svg>
+  </span>;
+}
 
 export function WorkflowsPage(props: { readonly workspaceId: string | null; readonly workspacePath: string | null; readonly locale: UiLocale }): ReactElement {
   const [templates, setTemplates] = useState<readonly WorkflowTemplate[]>([]);
@@ -81,7 +96,10 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
       <div className="workflow-cards" aria-busy={loadingTemplates}>
         {templates.map((template) => (
           <ActionButton type="button" key={template.id} className={selected?.id === template.id ? 'workflow-card selected' : 'workflow-card'} onClick={() => choose(template)}>
-            <strong>{workflowLocalized(props.locale,{th:template.titleTh,en:template.titleEn})}</strong>
+            <div className="workflow-card-heading">
+              <WorkflowCardIcon id={template.id} />
+              <strong>{workflowLocalized(props.locale,{th:template.titleTh,en:template.titleEn})}</strong>
+            </div>
             <span>{workflowLocalized(props.locale,{th:template.descriptionTh,en:template.descriptionEn})}</span>
             <small>{template.readOnly ? (copy.readOnly) : (copy.output)}</small>
           </ActionButton>

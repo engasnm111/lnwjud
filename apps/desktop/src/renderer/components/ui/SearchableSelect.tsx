@@ -22,6 +22,7 @@ export function SearchableSelect(props: {
   const popover = useRef<HTMLDivElement>(null);
   const tooltip = useRef<HTMLDivElement>(null);
   const tooltipHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didScrollOnOpen = useRef(false);
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState('');
   const [active, setActive] = useState(0);
@@ -36,13 +37,17 @@ export function SearchableSelect(props: {
     if (!open) return;
     const reposition = (): void => {
       setFullLabel(null);
-      const rect = root.current?.getBoundingClientRect();
+      let rect = root.current?.getBoundingClientRect();
       if (!rect) return;
+      // This control never opens upwards. Move the surrounding scroll region once
+      // when needed, then scroll inside the bounded list for additional options.
+      if (!didScrollOnOpen.current && window.innerHeight - rect.bottom < 190) {
+        didScrollOnOpen.current = true;
+        root.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+        rect = root.current?.getBoundingClientRect() ?? rect;
+      }
       const below = Math.max(0, window.innerHeight - rect.bottom - 14);
-      const above = Math.max(0, rect.top - 14);
-      const desiredHeight = Math.min(310, popover.current?.scrollHeight ?? 310);
-      const flip = below < Math.min(220, desiredHeight) && above > below;
-      const maxHeight = Math.max(56, Math.min(310, flip ? above : below));
+      const maxHeight = Math.max(72, Math.min(310, below));
       // Fit short option sets to their actual labels; clamp very long Goals/tools to
       // a readable maximum, where each item wraps to at most three lines.
       const availableWidth = Math.max(0, window.innerWidth - 16);
@@ -62,7 +67,7 @@ export function SearchableSelect(props: {
       setPlacement({
         width, maxHeight,
         left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-        top: flip ? Math.max(8, rect.top - 6 - Math.min(maxHeight, desiredHeight)) : rect.bottom + 6,
+        top: rect.bottom + 6,
       });
     };
     const onScroll = (event: Event): void => {
@@ -121,6 +126,7 @@ export function SearchableSelect(props: {
   }, [open]);
 
   function close(): void {
+    didScrollOnOpen.current = false;
     setOpen(false);
     setTerm('');
     setActive(0);
@@ -180,7 +186,7 @@ export function SearchableSelect(props: {
       <ActionButton id={props.id} type="button" data-value={props.value} className="ui-combobox-trigger" disabled={props.disabled}
         aria-label={props.label} aria-expanded={open} aria-controls={id} aria-haspopup="listbox"
         aria-invalid={props.invalid || undefined} aria-describedby={props.describedBy}
-        onClick={() => { setTerm(''); setActive(0); setPlacement(null); setOpen(!open); }}>
+        onClick={() => { didScrollOnOpen.current = false; setTerm(''); setActive(0); setPlacement(null); setOpen(!open); }}>
         <span title={current?.label ?? props.placeholder ?? props.label}>{current?.label ?? props.placeholder ?? props.label}</span><span aria-hidden="true">⌄</span>
       </ActionButton>
       {open ? createPortal(

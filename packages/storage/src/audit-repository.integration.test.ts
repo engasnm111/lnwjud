@@ -49,6 +49,28 @@ describe('SqliteAuditRepository', () => {
     expect(third.nextCursor).toBeNull();
     const filtered = await repository.listCallHistory({ workspaceId:'ws-a', goalId:'goal-verified', limit:10 });
     expect(filtered.items.map((item)=>item.callId)).toEqual(['call-1','call-1','call-3']);
+    expect([...await repository.listWorkspaceGoalIdsWithEvidence('ws-a', 'calls')]).toEqual(['goal-verified']);
+    expect([...await repository.listWorkspaceGoalIdsWithEvidence('ws-b', 'calls')]).toEqual(['goal-verified']);
+    expect([...await repository.listWorkspaceGoalIdsWithEvidence('ws-a', 'receipts')]).toEqual([]);
+    await repository.insert({
+      id:'receipt-1', timestamp:at(9), actorId:'client', actorName:'Tester', workspaceId:'ws-a',sessionId:'sess-a',
+      action:'mcp_tool:edit_file', resultCode:'SUCCESS', durationMs:4,
+      metadata:{goalId:'goal-receipt',phase:'completed',mutationReceipt:{path:'src/a.ts',action:'edit_file'}},
+    });
+    expect([...await repository.listWorkspaceGoalIdsWithEvidence('ws-a','receipts')]).toEqual(['goal-receipt']);
+    expect([...await repository.listWorkspaceGoalIdsWithEvidence('ws-b','receipts')]).toEqual([]);
+    await repository.insert({
+      id:'invalid-call',timestamp:at(10),actorId:'client',actorName:'Tester',workspaceId:'ws-a',sessionId:'sess-a',
+      action:'mcp_tool:read_file',resultCode:'SUCCESS',durationMs:3,
+      metadata:{callId:123,toolName:'read_file',phase:'completed',goalId:'phantom-call'},
+    });
+    await repository.insert({
+      id:'invalid-receipt',timestamp:at(11),actorId:'client',actorName:'Tester',workspaceId:'ws-a',sessionId:'sess-a',
+      action:'mcp_tool:edit_file',resultCode:'SUCCESS',durationMs:3,
+      metadata:{phase:'completed',goalId:'phantom-receipt',mutationReceipt:{wrongField:true}},
+    });
+    expect([...await repository.listWorkspaceGoalIdsWithEvidence('ws-a','calls')]).toEqual(['goal-verified']);
+    expect([...await repository.listWorkspaceGoalIdsWithEvidence('ws-a','receipts')]).toEqual(['goal-receipt']);
     await expect(repository.listCallHistory({ workspaceId:'ws-a', limit:10,cursor:'bad!cursor' })).rejects.toThrow('Invalid audit cursor');
     } finally { database.close(); }
   });

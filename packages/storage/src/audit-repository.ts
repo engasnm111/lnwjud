@@ -120,6 +120,23 @@ export class SqliteAuditRepository implements AuditEventRepository {
   }
 
   /** Keyset-paged, per-call correlation. Full retained metadata is never returned. */
+  /** Desktop Doctor: only Goals with persisted, attributable observations.
+   * No synthetic rows and no global 50-item history window. */
+  public async listWorkspaceGoalIdsWithEvidence(workspaceId: string, kind: 'calls' | 'receipts'): Promise<ReadonlySet<string>> {
+    const condition = kind === 'calls'
+      ? "json_type(metadata_json, '$.callId') = 'text' AND json_type(metadata_json, '$.toolName') = 'text' AND json_extract(metadata_json, '$.phase') IN ('started', 'completed')"
+      : "result_code = 'SUCCESS' AND json_extract(metadata_json, '$.phase') = 'completed' AND json_type(metadata_json, '$.mutationReceipt') = 'object' AND json_type(metadata_json, '$.mutationReceipt.path') = 'text' AND length(json_extract(metadata_json, '$.mutationReceipt.path')) BETWEEN 1 AND 4096 AND json_extract(metadata_json, '$.mutationReceipt.action') IN ('write_file','edit_file','copy_file','move_file','office_excel')";
+    const rows = this.database.connection.prepare(`
+      SELECT DISTINCT json_extract(metadata_json, '$.goalId') AS goal_id
+      FROM audit_events
+      WHERE workspace_id = ? AND action LIKE 'mcp_tool:%'
+        AND json_type(metadata_json, '$.goalId') = 'text'
+        AND ${condition}
+    `).all(workspaceId);
+    return new Set(rows.flatMap((row) => isRecord(row) && typeof row.goal_id === 'string' && row.goal_id.length > 0 && row.goal_id.length <= 128
+      ? [row.goal_id] : []));
+  }
+
   public async listCallHistory(query: AuditCallHistoryQuery): Promise<AuditCallHistoryPage> {
     const limit = Number.isInteger(query.limit) && query.limit > 0 && query.limit <= 200 ? query.limit : 50;
     const clauses = ['r.rn = 1'];

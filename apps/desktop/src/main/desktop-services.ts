@@ -6,6 +6,7 @@ import { open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { sampleOwnedProcessMetrics } from './resource-process-metrics.js';
+import { hasInspectableGoalResults } from './doctor-goal-evidence.js';
 import runtimeDependencies from './runtime-dependencies.json' with { type: 'json' };
 import {
   AgentSwarmService,
@@ -1963,11 +1964,25 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       unwrap(await new WorkflowTemplateService(workspaceRepository).prepare(actor, request), 'Workflow preparation failed'),
     getCallHistory: async (request: CallHistoryRequest): Promise<CallHistoryPage> =>
       unwrap(await new CallHistoryService(workspaceRepository, auditRepository).history(actor, request), 'Call history unavailable'),
-    getDoctorGoals: async (request: { readonly workspaceId: string }): Promise<readonly DoctorGoalOption[]> => {
+    getDoctorGoals: async (request: { readonly workspaceId: string; readonly view?: 'calls' | 'results' }): Promise<readonly DoctorGoalOption[]> => {
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       if (selected === null || selected.id !== request.workspaceId) throw new Error('Doctor Goal filter requires the selected workspace');
       const goals = await goalRepository.listWorkspaceGoalFilters(request.workspaceId);
-      return goals.map((goal) => ({ goalId: goal.id, goalKey: goal.goalKey, objective: goal.objective, status: goal.status, updatedAt: goal.updatedAt }));
+      if (request.view !== undefined && request.view !== 'calls' && request.view !== 'results') throw new Error('Invalid Doctor Goal view');
+      const calls = request.view === 'calls'
+        ? await auditRepository.listWorkspaceGoalIdsWithEvidence(request.workspaceId, 'calls') : null;
+      const receipts = request.view === 'results'
+        ? await auditRepository.listWorkspaceGoalIdsWithEvidence(request.workspaceId, 'receipts') : null;
+      const selectedGoals: typeof goals[number][] = [];
+      for (const goal of goals) {
+        if (calls !== null && !calls.has(goal.id)) continue;
+        if (receipts !== null && !receipts.has(goal.id)) {
+          const record = await goalRepository.getById(goal.id);
+          if (!record || !hasInspectableGoalResults(record)) continue;
+        }
+        selectedGoals.push(goal);
+      }
+      return selectedGoals.map((goal) => ({ goalId: goal.id, goalKey: goal.goalKey, objective: goal.objective, status: goal.status, updatedAt: goal.updatedAt }));
     },
     getTaskResult: async (request: { workspaceId: string; goalId: string }): Promise<TaskResultSummary> =>
       unwrap(await new TaskResultService(goalService, auditRepository, workspaceRepository, goalRepository).get(actor, request.workspaceId, request.goalId), 'Goal result unavailable'),

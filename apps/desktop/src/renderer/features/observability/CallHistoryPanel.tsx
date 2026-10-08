@@ -30,7 +30,7 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
     let live = true;
     setGoalId(''); setToolName(''); setGoals([]); setTools([]);
     if (props.workspaceId) {
-      void window.lnwjud.getDoctorGoals({ workspaceId: props.workspaceId })
+      void window.lnwjud.getDoctorGoals({ workspaceId: props.workspaceId, view: 'calls' })
         .then((items) => { if (live) setGoals(items); })
         .catch((cause: unknown) => { if (live) setError(cause instanceof Error ? cause.message : String(cause)); });
       void window.lnwjud.getToolCatalog({ locale: props.locale })

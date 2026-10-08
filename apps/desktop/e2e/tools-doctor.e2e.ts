@@ -111,6 +111,14 @@ test.describe('Tools catalog and Doctor real Electron acceptance', () => {
       const toolChoices = app.page.locator('body > .ui-combobox-popover [role="option"]');
       await expect(toolChoices.first()).toBeVisible();
       await expect.poll(() => toolChoices.count(), { timeout: 15_000 }).toBeGreaterThan(5);
+      await app.page.setViewportSize({ width: 420, height: 420 });
+      const triggerBox = await tool.boundingBox();
+      const popupBox = await popup.boundingBox();
+      expect(triggerBox).not.toBeNull();
+      expect(popupBox).not.toBeNull();
+      expect(popupBox!.y).toBeGreaterThanOrEqual(triggerBox!.y + triggerBox!.height - 2);
+      expect(popupBox!.height).toBeLessThanOrEqual(310);
+      await expect.poll(() => popup.locator('.ui-combobox-options').evaluate((list) => list.scrollHeight > list.clientHeight)).toBe(true);
       await app.page.setViewportSize({ width: 420, height: 720 });
       // Rows may wrap but must never collapse or overlap in the scrollable options list.
       const optionLayout = await toolChoices.evaluateAll((nodes) => nodes.map((node) => {

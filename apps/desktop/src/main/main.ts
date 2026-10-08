@@ -128,7 +128,7 @@ import { FACTORY_RESET_APPLY_ARG, applyPendingFactoryResetSync, clearFactoryRese
 import { decryptV3WindowsSafeStorageSecretIfPresent } from './checkpoint-key-compat.js';
 import { mutationApprovalDialogOptions } from './mutation-approval.js';
 import { prependBundledRuntimeToolsToPath } from './runtime-tools.js';
-import { parseWorkflowWorkspace, parseWorkflowPrepare, parseCallHistory, parseWorkflowGoal, parseResourceSnapshot, parseRestoreTaskCheckpoint, parseCancelOwnedGoalTask } from './workflow-ipc-parser.js';
+import { parseWorkflowWorkspace, parseWorkflowPrepare, parseCallHistory, parseDoctorGoalsRequest, parseWorkflowGoal, parseResourceSnapshot, parseRestoreTaskCheckpoint, parseCancelOwnedGoalTask } from './workflow-ipc-parser.js';
 import { COPY_COMMANDS, OFFICIAL_URL_TARGETS } from './tool-catalog/remediation-registry.js';
 import { SafeStorageSecretProtector } from './safe-storage-secret-protector.js';
 import { createUnavailableCheckpointCipher, shouldDegradeUnavailableSecureStorage, shouldUseMacos26E2eSecrets, waitForMacosAsyncSafeStorageStartup } from './safe-storage-startup.js';
@@ -205,7 +205,7 @@ export interface DesktopIpcServices {
   listWorkflowTemplates(request: { readonly workspaceId: string }): Promise<readonly WorkflowTemplate[]>;
   prepareWorkflow(request: WorkflowPrepareRequest): Promise<WorkflowDraft>;
   getCallHistory(request: CallHistoryRequest): Promise<CallHistoryPage>;
-  getDoctorGoals(request: { readonly workspaceId: string }): Promise<readonly DoctorGoalOption[]>;
+  getDoctorGoals(request: { readonly workspaceId: string; readonly view?: 'calls' | 'results' }): Promise<readonly DoctorGoalOption[]>;
   getTaskResult(request: { readonly workspaceId: string; readonly goalId: string }): Promise<TaskResultSummary>;
   restoreTaskCheckpoint(request: RestoreTaskCheckpointRequest): Promise<RestoreTaskCheckpointResult>;
   cancelOwnedGoalTask(request: CancelOwnedGoalTaskRequest): Promise<CancelOwnedGoalTaskResult>;
@@ -758,7 +758,7 @@ export function registerIpcHandlers(
   });
   registerHandler(ipcChannels.getDoctorGoals, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
-    return services.getDoctorGoals(parseWorkflowWorkspace(payload));
+    return services.getDoctorGoals(parseDoctorGoalsRequest(payload));
   });
   registerHandler(ipcChannels.getTaskResult, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());

@@ -670,49 +670,85 @@ button.titlebar-whats-new {
   color: var(--gold-bright);
 }
 
-/* Agent Hero / Status Panel */
+/* Agent Status: faceted Command Prism, driven by the real MCP agent state. */
 .agent-status-panel {
   display: flex;
-  gap: 20px;
+  gap: clamp(14px, 2.6vw, 26px);
   align-items: center;
-  background: linear-gradient(135deg, rgba(22, 29, 42, 0.95) 0%, rgba(13, 17, 26, 0.95) 100%);
-  border: 1.5px solid var(--border);
+  min-height: 154px;
+  background:
+    radial-gradient(ellipse at 10% 50%, rgba(246, 193, 61, .085), transparent 38%),
+    linear-gradient(116deg, #141d2b, #0b111b 90%);
+  border: 1px solid rgba(245,197,66,.36);
+  box-shadow: inset 0 1px rgba(255,255,255,.035), 0 14px 32px rgba(0,0,0,.18);
 }
-
-.agent-status-panel > div:last-child {
-  min-width: 0;
+.agent-status-panel > div:last-child { min-width:0; }
+.agent-status-panel > div:last-child > strong {
+  display:flex; align-items:center; gap:10px;
+  font-size:clamp(19px,2vw,25px); line-height:1.3; font-weight:700;
 }
-
-.agent-orb {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  border: 2px solid var(--border);
-  background: #1a2330;
-  flex-shrink: 0;
+.agent-status-panel > div:last-child > strong::before {
+  content:''; width:9px; height:9px; flex:0 0 9px;
+  border-radius:50%; background:var(--agent-status-dot,#f2bd46);
+  box-shadow:0 0 13px var(--agent-status-dot,#f2bd46);
 }
-
-.agent-orb.idle {
-  background: radial-gradient(circle at 35% 35%, #fff0a8, #d49f22 50%, #4a3407 100%);
-  border-color: #fff5c0;
-  box-shadow: 0 0 26px var(--gold-primary), inset 0 0 10px rgba(255, 255, 255, 0.6);
-  animation: goldPulse 3s infinite ease-in-out;
+.agent-status-panel:has(.agent-prism.busy) { --agent-status-dot:#38a7fa; }
+.agent-status-panel:has(.agent-prism.idle) { --agent-status-dot:#5ce5a8; }
+.agent-status-panel:has(.agent-prism.stopped) { --agent-status-dot:#ef6277; }
+.agent-status-panel > div:last-child > p { color:var(--muted); font-size:clamp(13px,1.4vw,18px); margin:6px 0 0; }
+.agent-prism {
+  --prism-highlight:#fff6bb;
+  --prism-edge:#ffc13c;
+  --prism-core:#ffc32d;
+  --prism-shadow:#7c430b;
+  position:relative; width:116px; height:116px;
+  flex:0 0 116px; display:grid; place-items:center;
+  isolation:isolate; border-radius:24px;
+  background:radial-gradient(ellipse at 50% 60%,rgba(243,178,28,.15),transparent 68%);
 }
-
-@keyframes goldPulse {
-  0%, 100% { transform: scale(1); filter: brightness(1); }
-  50% { transform: scale(1.05); filter: brightness(1.2); box-shadow: 0 0 32px var(--gold-bright); }
+.agent-prism::before {
+  content:''; position:absolute; z-index:-1; inset:15px; border-radius:50%;
+  background:var(--prism-edge); filter:blur(25px); opacity:.3;
 }
-
-.agent-orb.busy {
-  background: radial-gradient(circle at 35% 35%, #ffdf9e, #d97706 60%, #451a03 100%);
-  border-color: #fde68a;
-  box-shadow: 0 0 24px rgba(217, 119, 6, 0.6);
+.agent-prism-art {
+  width:100%; height:100%; display:block; overflow:visible;
+  filter:drop-shadow(0 0 10px var(--prism-core)) drop-shadow(0 9px 10px rgba(0,0,0,.5));
+  animation:prismBreathe 4s ease-in-out infinite;
 }
-
-.agent-orb.stopped {
-  background: #1e2530;
-  border-color: #334155;
+.agent-prism-orbits { transform-origin:60px 60px; animation:prismOrbit 19s linear infinite; }
+.agent-prism.busy {
+  --prism-highlight:#dbf6ff;
+  --prism-edge:#51adff;
+  --prism-core:#137fe5;
+  --prism-shadow:#08285a;
+}
+.agent-prism.stopped {
+  --prism-highlight:#ffe0df;
+  --prism-edge:#ff6877;
+  --prism-core:#df304b;
+  --prism-shadow:#4b1426;
+}
+.agent-prism.unknown {
+  --prism-highlight:#d2d9e5;
+  --prism-edge:#8996aa;
+  --prism-core:#586577;
+  --prism-shadow:#252e3d;
+}
+.agent-prism.stopped .agent-prism-art,
+.agent-prism.unknown .agent-prism-art { animation:none; filter:drop-shadow(0 0 5px var(--prism-shadow)); }
+.agent-prism.stopped .agent-prism-orbits,
+.agent-prism.unknown .agent-prism-orbits { animation:none; }
+@keyframes prismBreathe {
+  0%,100% { transform:scale(.985); opacity:.92; }
+  50% { transform:scale(1.025); opacity:1; }
+}
+@keyframes prismOrbit { to { transform:rotate(360deg); } }
+@media (max-width:600px) {
+  .agent-status-panel { min-height:106px; gap:10px; }
+  .agent-prism { width:74px; height:74px; flex-basis:74px; border-radius:16px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .agent-prism-art, .agent-prism-orbits { animation:none !important; }
 }
 
 /* Endpoints & Code Snippets */
@@ -2360,7 +2396,7 @@ button.titlebar-whats-new {
 .tool-modal-title-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tool-modal-header h2 { margin: 0; line-height: 1.2; }
 .tool-modal-header code { color: var(--muted); overflow-wrap: anywhere; }
-.tool-modal-close { width: 30px; height: 30px; flex: 0 0 30px; padding: 0; display: grid; place-items: center; align-content: center; border-radius: 9px; font-size: 25px; line-height: 1; }
+.tool-modal-header .tool-modal-close { width: 44px; height: 44px; flex: 0 0 44px; min-width: 44px; min-height: 44px; padding: 0; display: grid; place-items: center; align-content: center; justify-content: center; border-radius: 11px; font-size: 25px; line-height: 1; }
 .tool-modal-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 22px; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .mutation-approval-window { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: clamp(12px, 2.5vw, 24px); background: var(--bg); }
 .mutation-approval-card { display: flex; flex: 1 1 auto; flex-direction: column; width: min(100%, 820px); min-width: 0; min-height: 0; margin: 0 auto; }
@@ -3350,6 +3386,8 @@ h2 {
 
 /* Shared searchable controls */
 .ui-combobox { position:relative; min-width:0; width:100%; }
+/* Reserve a scroll runway while an anchored menu is open: all menus stay below their field. */
+.page-content:has(.ui-combobox-trigger[aria-expanded="true"]) { padding-bottom:max(340px,var(--page-bottom-gap)); }
 .ui-combobox-trigger { width:100%; min-height:42px; justify-content:space-between; gap:12px; text-align:left; background:#0b1018; border:1px solid var(--border-subtle); border-radius:10px; padding:9px 12px; }
 .ui-combobox-trigger > span:first-child { min-width:0; flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ui-combobox-trigger > span:last-child { flex:0 0 16px; width:16px; height:16px; display:grid; place-items:center; align-self:center; font-size:0; line-height:0; }
@@ -3378,6 +3416,10 @@ h2 {
 .workflows-page > p { margin:0; color:var(--muted); line-height:1.65; }
 .workflow-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr)); gap:12px; width:100%; }
 .workflow-card { display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start; text-align:left; min-width:0; min-height:112px; gap:7px; padding:17px 18px; border:1px solid var(--border-subtle); border-radius:14px; background:linear-gradient(135deg,#141b26,#0c111a); }
+.workflow-card-heading { display:flex; align-items:center; gap:12px; width:100%; min-width:0; }
+.workflow-card-icon { display:grid; place-items:center; width:36px; height:36px; flex:0 0 36px; border-radius:10px; color:#d6dbef !important; background:rgba(122,141,176,.10); border:1px solid rgba(122,141,176,.18); }
+.workflow-card-icon svg { width:22px; height:22px; }
+.workflow-card.selected .workflow-card-icon { color:var(--gold-bright) !important; background:rgba(245,197,66,.12); border-color:rgba(245,197,66,.4); }
 .workflow-card strong { color:var(--text); font-size:15px; overflow-wrap:anywhere; }
 .workflow-card span { color:var(--muted); font-size:13px; line-height:1.55; overflow-wrap:anywhere; }
 .workflow-card small { margin-top:auto; color:var(--gold-primary); font-size:11px; }

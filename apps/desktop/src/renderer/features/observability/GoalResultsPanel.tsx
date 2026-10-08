@@ -30,7 +30,7 @@ export function GoalResultsPanel(props: {
     setGoalId(''); setGoals([]); setResult(null); setError(null);
     setGoalsLoading(Boolean(props.workspaceId));
     if (!props.workspaceId) return (): void => { active = false; };
-    void window.lnwjud.getDoctorGoals({ workspaceId: props.workspaceId })
+    void window.lnwjud.getDoctorGoals({ workspaceId: props.workspaceId, view: 'results' })
       .then((items): void => { if (active) setGoals(items); })
       .catch((cause: unknown): void => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCancelOwnedGoalTask, parseRestoreTaskCheckpoint } from '../src/main/workflow-ipc-parser.js';
+import { parseCancelOwnedGoalTask, parseDoctorGoalsRequest, parseRestoreTaskCheckpoint } from '../src/main/workflow-ipc-parser.js';
 
 describe('Goal-scoped Desktop IPC mutations', () => {
   const original = {
@@ -19,6 +19,15 @@ describe('Goal-scoped Desktop IPC mutations', () => {
       {...original,expectedCurrentHashes:{'src/file.ts':'a'.repeat(64)},leaseToken:'forbidden'},
       {...original,expectedCurrentHashes:Object.fromEntries(Array.from({length:21},(_,i)=>['file'+i,'a'.repeat(64)]))},
     ]) expect(()=>parseRestoreTaskCheckpoint(bad)).toThrow();
+  });
+  it('only accepts bounded Doctor Goal evidence views, never arbitrary query scopes', () => {
+    expect(parseDoctorGoalsRequest({ workspaceId: 'ws', view: 'calls' })).toEqual({ workspaceId:'ws',view:'calls' });
+    expect(parseDoctorGoalsRequest({ workspaceId: 'ws', view: 'results' })).toEqual({ workspaceId:'ws',view:'results' });
+    expect(parseDoctorGoalsRequest({ workspaceId: 'ws' })).toEqual({ workspaceId:'ws' });
+    for(const bad of [{workspaceId:'ws',view:'any'}, {workspaceId:'ws',view:'resources'},
+      {workspaceId:'ws',goalId:'foreign'}, {workspaceId:''}, {workspaceId:'ws',view: null}]) {
+      expect(() => parseDoctorGoalsRequest(bad)).toThrow();
+    }
   });
   it('accepts only exact supported providers and explicit cancellation', () => {
     const input={workspaceId:'workspace-1',goalId:'goal-1',taskId:'task-1',provider:'shell',userConfirmed:true};

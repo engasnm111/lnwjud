@@ -19,6 +19,15 @@ export function parseWorkflowWorkspace(value: unknown): { workspaceId: string } 
   guardKeys(input, ['workspaceId']);
   return { workspaceId: bounded(input.workspaceId) };
 }
+export function parseDoctorGoalsRequest(value: unknown): { workspaceId: string; view?: 'calls' | 'results' } {
+  const input = record(value);
+  guardKeys(input, ['workspaceId', 'view']);
+  const workspaceId = bounded(input.workspaceId);
+  if (input.view === undefined) return { workspaceId };
+  if (input.view !== 'calls' && input.view !== 'results') throw new Error('Invalid Doctor Goal view');
+  return { workspaceId, view: input.view };
+}
+
 export function parseWorkflowPrepare(value: unknown): WorkflowPrepareRequest {
   const input = record(value);
   guardKeys(input, ['workspaceId', 'templateId', 'inputs']);
