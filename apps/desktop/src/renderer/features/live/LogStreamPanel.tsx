@@ -5,6 +5,7 @@ import { copyTextToClipboard } from '../../clipboard.js';
 import type { MessageKey } from '../../i18n/messages.js';
 import { formatLogExportDateTime, formatLogUiTime } from '../../log-timestamp.js';
 import { CopyableScopeBadge } from '../CopyableScopeBadge.js';
+import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 import { ExpandableTargetDetail } from '../logs/ExpandableTargetDetail.js';
 import { activeDetailMatchIds, activeLogFeed, createDetailSearchState, normalizeDetailSearchQuery, reduceDetailSearchState, transitionLogFeedFreeze } from '../logs/detail-search-state.js';
 import { collectSessionFilterOptions, collectWorkspaceFilterOptions } from '../../scope-filter-options.js';
@@ -174,25 +175,23 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
       <div className="scope-filter-bar">
         <label>
           <span>{props.workspaceLabel ?? 'Workspace'}</span>
-          <select value={workspaceId ?? ''} onChange={(event) => {
-            const nextWorkspaceId = event.target.value.length === 0 ? null : event.target.value;
-            setWorkspaceId(nextWorkspaceId);
-            if (sessionId !== null) void props.onSessionChange?.({ workspaceId: nextWorkspaceId, sessionId });
-          }}>
-            <option value="">{props.scopeAllLabel ?? 'All'}</option>
-            {workspaceOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-          </select>
+          <SearchableSelect label={props.workspaceLabel ?? 'Workspace'} value={workspaceId ?? ''}
+            options={[{value:'',label:props.scopeAllLabel ?? 'All'},...workspaceOptions.map(option=>({value:option.id,label:option.label}))]}
+            onChange={(value) => {
+              const nextWorkspaceId = value.length === 0 ? null : value;
+              setWorkspaceId(nextWorkspaceId);
+              if (sessionId !== null) void props.onSessionChange?.({ workspaceId: nextWorkspaceId, sessionId });
+            }} />
         </label>
         <label>
           <span>{props.sessionLabel ?? 'Session'}</span>
-          <select value={sessionId ?? ''} onChange={(event) => {
-            const nextSessionId = event.target.value.length === 0 ? null : event.target.value;
-            setSessionId(nextSessionId);
-            void props.onSessionChange?.({ workspaceId, sessionId: nextSessionId });
-          }}>
-            <option value="">{props.scopeAllLabel ?? 'All'}</option>
-            {sessionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-          </select>
+          <SearchableSelect label={props.sessionLabel ?? 'Session'} value={sessionId ?? ''}
+            options={[{value:'',label:props.scopeAllLabel ?? 'All'},...sessionOptions.map(option=>({value:option.id,label:option.label}))]}
+            onChange={(value) => {
+              const nextSessionId = value.length === 0 ? null : value;
+              setSessionId(nextSessionId);
+              void props.onSessionChange?.({ workspaceId, sessionId: nextSessionId });
+            }} />
         </label>
       </div>
       <input

@@ -696,6 +696,18 @@ export function registerIpcHandlers(
     assertTrustedSender(event, getMainWindow());
     return services.setGoalPonytailMode(parseSetGoalPonytailModeRequest(payload));
   });
+  registerHandler(ipcChannels.chooseWorkflowDataFile, async (event, payload: unknown) => {
+    assertTrustedSender(event, getMainWindow());
+    assertNoPayload(payload);
+    const owner = getMainWindow();
+    if (owner === null) return { filePath: null };
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Select Excel / CSV data file',
+      properties: ['openFile'],
+      filters: [{ name: 'Excel and CSV', extensions: ['xlsx', 'csv', 'tsv'] }, { name: 'All files', extensions: ['*'] }],
+    });
+    return { filePath: result.canceled ? null : (result.filePaths[0] ?? null) };
+  });
   registerHandler(ipcChannels.chooseTunnelClientPath, async (event, payload: unknown) => {
     assertTrustedSender(event, getMainWindow());
     assertNoPayload(payload);

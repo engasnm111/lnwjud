@@ -51,7 +51,7 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
     } catch (error: unknown) { setMessage(error instanceof Error ? error.message : String(error)); }
   }
   return (
-    <div className="page-content">
+    <div className="page-content workflows-page">
       <h1>{copy.title}</h1>
       <p>{copy.intro}</p>
       {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p> : null}
@@ -69,7 +69,7 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
           <h2>{workflowLocalized(props.locale,{th:selected.titleTh,en:selected.titleEn})}</h2>
           <WorkflowInputForm template={selected} locale={props.locale} values={inputs} disabled={busy}
             onChange={(values) => { setInputs(values); setDraft(null); setMessage(null); }}/>
-          <button type="button" onClick={() => { void prepare(); }} disabled={busy || !props.workspaceId}>
+          <button type="button" className="workflow-primary-action" onClick={() => { void prepare(); }} disabled={busy || !props.workspaceId}>
             {busy ? (copy.working) : (copy.prepare)}
           </button>
         </section>
@@ -82,7 +82,7 @@ export function WorkflowsPage(props: { readonly workspaceId: string | null; read
           {draft.blockers.length ? <ul>{draft.blockers.map((item) => <li key={item}>{item}</li>)}</ul> : null}
           <ol>{draft.steps.map((step) => <li key={step.id}>{step.title}</li>)}</ol>
           <p>{copy.acceptance}: {draft.acceptance.map((entry) => entry.title).join('; ')}</p>
-          <button type="button" disabled={draft.readiness !== 'ready'} onClick={() => { void copyPrompt(); }}>
+          <button type="button" className="workflow-primary-action" disabled={draft.readiness !== 'ready'} onClick={() => { void copyPrompt(); }}>
             {copy.copy}
           </button>
         </section>

@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactElement } from 'react';
 import type { ResolvedRemediation, ToolCatalogItem, ToolCatalogSnapshot, ToolCategory, ToolDeclaredPermission, ToolOrigin, ToolProfileDecision, ToolReadinessStatus, UiLocale } from '@lnwjud/ipc-contracts';
 import { createTranslator, type Translator } from '../../i18n/index.js';
 import { ToolAvailabilitySwitch } from './ToolAvailabilitySwitch.js';
+import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 import { ToolDetailModal } from './ToolDetailModal.js';
 import { catalogStatusCounts, filterAndSortTools, toolControlCanEnable, toolControlEnabled, type ToolCatalogFilters } from './tool-catalog-view.js';
 import { toolAvailabilityLabel } from './tool-availability-copy.js';
@@ -81,10 +82,10 @@ export function ToolsPage({ locale, snapshot, loading, hostSyncNotice = null, on
       <div className="tool-status-strip" aria-label={t('tools.statusCounts')}>{statuses.map((status) => <button type="button" key={status} aria-pressed={readiness === status} className={readiness === status ? 'active' : undefined} onClick={() => setReadiness(readiness === status ? 'all' : status)}><strong>{counts[status]}</strong><span>{coarseReadinessLabel(locale, status)}</span></button>)}</div>
       <div className="tool-filters">
         <input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={t('tools.searchPlaceholder')} aria-label={t('tools.searchAria')} />
-        <select value={availability} disabled={origin !== 'lnwjud'} onChange={(event) => setAvailability(event.currentTarget.value as 'all' | 'enabled' | 'disabled')} aria-label={t('tools.availability')}><option value="all">{t('tools.allAvailability')}</option><option value="enabled">{t('security.enabled')}</option><option value="disabled">{t('security.disabled')}</option></select>
-        <select value={category} onChange={(event) => setCategory(event.currentTarget.value as ToolCategory | 'all')} aria-label={t('tools.category')}><option value="all">{t('tools.allCategories')}</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        <select value={permission} onChange={(event) => setPermission(event.currentTarget.value as ToolDeclaredPermission | 'all')} aria-label={t('tools.permission')}><option value="all">{t('tools.allPermissions')}</option>{permissions.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        <select value={profileDecision} onChange={(event) => setProfileDecision(event.currentTarget.value as ToolProfileDecision | 'all')} aria-label={t('tools.profileDecision')}><option value="all">{t('tools.allDecisions')}</option>{decisions.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+        <SearchableSelect value={availability} disabled={origin !== 'lnwjud'} label={t('tools.availability')} onChange={(value) => setAvailability(value as typeof availability)} options={[{value:'all',label:t('tools.allAvailability')},{value:'enabled',label:t('security.enabled')},{value:'disabled',label:t('security.disabled')}]} />
+        <SearchableSelect value={category} label={t('tools.category')} onChange={(value) => setCategory(value as typeof category)} options={[{value:'all',label:t('tools.allCategories')},...categories.map(value=>({value,label:value}))]} />
+        <SearchableSelect value={permission} label={t('tools.permission')} onChange={(value) => setPermission(value as typeof permission)} options={[{value:'all',label:t('tools.allPermissions')},...permissions.map(value=>({value,label:value}))]} />
+        <SearchableSelect value={profileDecision} label={t('tools.profileDecision')} onChange={(value) => setProfileDecision(value as typeof profileDecision)} options={[{value:'all',label:t('tools.allDecisions')},...decisions.map(value=>({value,label:value}))]} />
         <button type="button" onClick={() => { setQuery(''); setReadiness('all'); setAvailability('all'); setCategory('all'); setPermission('all'); setProfileDecision('all'); }}>{t('tools.clearFilters')}</button>
       </div>
       {availabilityError === null ? null : <p className="tool-action-error" role="alert">{availabilityError}</p>}

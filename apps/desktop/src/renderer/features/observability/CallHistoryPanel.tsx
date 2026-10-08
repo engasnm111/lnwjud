@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import type { CallHistoryPage, CallHistoryRequest, UiLocale } from '@lnwjud/ipc-contracts';
 import { v580Strings } from '../../i18n/v580-copy.js';
+import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 export function CallHistoryPanel(props: { readonly workspaceId: string | null; readonly locale: UiLocale }): ReactElement {
   const [goalId, setGoalId] = useState('');
   const [toolName, setToolName] = useState('');
@@ -34,14 +35,10 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
       <label>{copy.goal} <input value={goalId} onChange={e => setGoalId(e.target.value)} maxLength={128}/></label>
       <label>{copy.tool} <input value={toolName} onChange={e=>setToolName(e.target.value)} maxLength={128}/></label>
       <label>{copy.transport}
-        <select value={transport} onChange={e=>setTransport(e.target.value as typeof transport)}>
-          <option value="">{copy.all}</option>
-          <option value="unknown">{copy.unknown}</option>
-          <option value="local_stdio">Local STDIO</option>
-          <option value="loopback_http">Loopback HTTP</option>
-          <option value="secure_tunnel">Secure Tunnel</option>
-          <option value="external_mcp">External MCP</option>
-        </select>
+        <SearchableSelect label={copy.transport} value={transport} onChange={value => setTransport(value as typeof transport)}
+          options={[{value:'',label:copy.all},{value:'unknown',label:copy.unknown},{value:'local_stdio',label:'Local STDIO'},
+            {value:'loopback_http',label:'Loopback HTTP'},{value:'secure_tunnel',label:'Secure Tunnel'},
+            {value:'external_mcp',label:'External MCP'}]} />
       </label>
       <button type="button" disabled={busy || props.workspaceId===null} onClick={()=>{void load();}}>
         {busy ? (copy.loading) : (copy.load)}

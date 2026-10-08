@@ -1346,6 +1346,13 @@ function setGoalPonytailMode(request: SetGoalPonytailModeRequest): Promise<Ponyt
   return invoke(ipcChannels.setGoalPonytailMode, { workspaceId: request.workspaceId, goalId: request.goalId, expectedRevision: request.expectedRevision, mode }).then(ponytailPolicyContext);
 }
 
+function chooseWorkflowDataFile(): Promise<{ readonly filePath: string | null }> {
+  return invoke(ipcChannels.chooseWorkflowDataFile).then((value: unknown) => {
+    if (!isRecord(value)) throw new Error('Invalid IPC response');
+    return { filePath: nullableString(value.filePath) };
+  });
+}
+
 function chooseTunnelClientPath(): Promise<{ readonly clientPath: string | null }> {
   return invoke(ipcChannels.chooseTunnelClientPath).then((value: unknown) => {
     if (!isRecord(value)) throw new Error('Invalid IPC response');
@@ -1661,6 +1668,7 @@ const api: LnwjudApi = {
   setWorkspacePonytailMode,
   setGoalPonytailMode,
   chooseTunnelClientPath,
+  chooseWorkflowDataFile,
   configureTunnelProfile,
   openExternalSetupPage,
   launchManagedBrowser,

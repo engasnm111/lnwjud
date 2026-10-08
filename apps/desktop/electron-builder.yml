@@ -140,3 +140,4 @@ nsis:
   include: build/installer.nsh
 portable:
   artifactName: lnwjud-Portable-${version}.${ext}
+  splashImage: build/portable-splash.bmp

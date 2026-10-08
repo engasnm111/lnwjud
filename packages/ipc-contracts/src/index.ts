@@ -52,6 +52,7 @@ export const ipcChannels = {
   setWorkspacePonytailMode: 'lnwjud:set-workspace-ponytail-mode',
   setGoalPonytailMode: 'lnwjud:set-goal-ponytail-mode',
   chooseTunnelClientPath: 'lnwjud:choose-tunnel-client-path',
+  chooseWorkflowDataFile: 'lnwjud:choose-workflow-data-file',
   configureTunnelProfile: 'lnwjud:configure-tunnel-profile',
   openExternalSetupPage: 'lnwjud:open-external-setup-page',
   launchManagedBrowser: 'lnwjud:launch-managed-browser',
@@ -1196,6 +1197,7 @@ export interface IpcRequestMap {
   readonly [ipcChannels.setWorkspacePonytailMode]: SetWorkspacePonytailModeRequest;
   readonly [ipcChannels.setGoalPonytailMode]: SetGoalPonytailModeRequest;
   readonly [ipcChannels.chooseTunnelClientPath]: undefined;
+  readonly [ipcChannels.chooseWorkflowDataFile]: undefined;
   readonly [ipcChannels.configureTunnelProfile]: ConfigureTunnelProfileRequest;
   readonly [ipcChannels.openExternalSetupPage]: OpenExternalSetupPageRequest;
   readonly [ipcChannels.launchManagedBrowser]: undefined;
@@ -1279,6 +1281,7 @@ export interface IpcResponseMap {
   readonly [ipcChannels.setWorkspacePonytailMode]: PonytailPolicyContext;
   readonly [ipcChannels.setGoalPonytailMode]: PonytailPolicyContext;
   readonly [ipcChannels.chooseTunnelClientPath]: { readonly clientPath: string | null };
+  readonly [ipcChannels.chooseWorkflowDataFile]: { readonly filePath: string | null };
   readonly [ipcChannels.configureTunnelProfile]: { readonly configured: boolean; readonly profilePath: string };
   readonly [ipcChannels.openExternalSetupPage]: { readonly opened: true };
   readonly [ipcChannels.launchManagedBrowser]: ManagedBrowserStatus;
@@ -1364,6 +1367,7 @@ export interface LnwjudApi {
   setWorkspacePonytailMode(request: SetWorkspacePonytailModeRequest): Promise<IpcResponseMap[typeof ipcChannels.setWorkspacePonytailMode]>;
   setGoalPonytailMode(request: SetGoalPonytailModeRequest): Promise<IpcResponseMap[typeof ipcChannels.setGoalPonytailMode]>;
   chooseTunnelClientPath(): Promise<IpcResponseMap[typeof ipcChannels.chooseTunnelClientPath]>;
+  chooseWorkflowDataFile(): Promise<IpcResponseMap[typeof ipcChannels.chooseWorkflowDataFile]>;
   configureTunnelProfile(request: ConfigureTunnelProfileRequest): Promise<IpcResponseMap[typeof ipcChannels.configureTunnelProfile]>;
   openExternalSetupPage(request: OpenExternalSetupPageRequest): Promise<IpcResponseMap[typeof ipcChannels.openExternalSetupPage]>;
   launchManagedBrowser(): Promise<IpcResponseMap[typeof ipcChannels.launchManagedBrowser]>;

@@ -3,6 +3,7 @@ import type { DashboardSnapshot, GitImagePreview, GitStatusEntrySummary, UiLocal
 import { createTranslator } from '../../i18n/index.js';
 import { v580Strings } from '../../i18n/v580-copy.js';
 import { SplitDiffViewer } from './SplitDiffViewer.js';
+import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 import { filterGitFiles, gitFileFolder, gitFolderCounts, type GitFileStatusFilter } from './git-file-browser.js';
 
 interface GitPageProps {
@@ -100,18 +101,9 @@ export function GitPage({
         <div className="heading-actions">
           {workspaces.length > 1 && onSelectWorkspace !== undefined ? (
             <div className="form-row">
-              <select
-                aria-label={t('git.selectWorkspace')}
-                className="settings-select"
-                value={selectedWorkspace?.id ?? ''}
-                onChange={(event) => { void onSelectWorkspace(event.target.value); }}
-              >
-                {workspaces.map((ws) => (
-                  <option key={ws.id} value={ws.id}>
-                    {ws.displayName}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect label={t('git.selectWorkspace')} value={selectedWorkspace?.id ?? ''}
+                options={workspaces.map((ws) => ({ value: ws.id, label: ws.displayName }))}
+                onChange={(value) => { void onSelectWorkspace(value); }} />
             </div>
           ) : null}
           {onRefresh === undefined ? null : (
@@ -238,12 +230,9 @@ export function GitPage({
             </div>
             <div className="git-file-toolbar">
               <input aria-label={copy.search} placeholder={copy.placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(250); }} />
-              <select aria-label={copy.filter} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as GitFileStatusFilter); setVisibleCount(250); }}>
-                <option value="all">{copy.all}</option>
-                <option value="staged">Staged</option>
-                <option value="unstaged">Unstaged</option>
-                <option value="untracked">{copy.untracked}</option>
-              </select>
+              <SearchableSelect label={copy.filter} value={statusFilter}
+                options={[{ value:'all', label:copy.all }, { value:'staged',label:'Staged' }, { value:'unstaged',label:'Unstaged' }, { value:'untracked',label:copy.untracked }]}
+                onChange={(value) => { setStatusFilter(value as GitFileStatusFilter); setVisibleCount(250); }} />
               <span role="status" className="hint">{visibleEntries.length.toLocaleString()} / {filteredEntries.length.toLocaleString()} {copy.files}</span>
             </div>
             <div className={`git-file-list ${filteredEntries.length > 0 ? '' : 'empty'}`}>

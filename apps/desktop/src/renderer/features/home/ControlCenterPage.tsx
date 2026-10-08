@@ -5,6 +5,7 @@ import { createTranslator } from '../../i18n/index.js';
 import { tunnelRuntimeCredentialAvailable } from '../../tunnel-auth-readiness.js';
 import { tunnelAuthPresentation } from '../../tunnel-auth-presentation.js';
 import { settleWorkspaceAdd, type AddWorkspaceAction } from '../workspaces/workspace-add.js';
+import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 
 interface ControlCenterPageProps {
   readonly dashboard: DashboardSnapshot;
@@ -300,14 +301,10 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
               <small>{t('home.primaryProjectHint')}</small>
             </div>
             <div className="form-row primary-project-row">
-              <select
-                aria-label={t('home.primaryProject')}
-                value={selectedId}
+              <SearchableSelect label={t('home.primaryProject')} value={selectedId}
                 disabled={activeProjects.length === 0}
-                onChange={(event) => setSelectedId(event.target.value)}
-              >
-                {activeProjects.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.displayName}</option>)}
-              </select>
+                onChange={setSelectedId}
+                options={activeProjects.map((workspace) => ({value:workspace.id,label:workspace.displayName}))} />
               <button type="button" disabled={selectedId.length === 0 || selectedId === dashboard.selectedWorkspace?.id} onClick={() => { void props.onSelectWorkspace(selectedId); }}>
                 {t('project.setMain')}
               </button>
