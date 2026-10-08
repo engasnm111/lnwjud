@@ -2,6 +2,7 @@ import type { CSSProperties, ReactElement } from 'react';
 import type { GitStatusEntrySummary, UiLocale } from '@lnwjud/ipc-contracts';
 import { ActionButton } from '../ui/UiPrimitives.js';
 import type { GitTreeNode } from './git-file-tree.js';
+import { v580Strings } from '../../i18n/v580-copy.js';
 
 interface GitFileTreeProps {
   readonly nodes: readonly GitTreeNode[];
@@ -13,13 +14,13 @@ interface GitFileTreeProps {
 }
 
 export function GitFileTree(props: GitFileTreeProps): ReactElement {
+  const copy = v580Strings(props.locale).git;
   function renderNode(node: GitTreeNode, depth: number): ReactElement {
     const style = { paddingInlineStart: `${12 + depth * 18}px` } satisfies CSSProperties;
     if (node.type === 'folder') {
       const expanded = props.searchActive || (depth === 0
         ? !props.expandedOverrides.has(node.path) : props.expandedOverrides.has(node.path));
-      const title = props.locale === 'th' ? `โฟลเดอร์ ${node.path} • ${node.count} ไฟล์`
-        : `Folder ${node.path} • ${node.count} files`;
+      const title = `${copy.folder} ${node.path} • ${node.count} ${copy.files}`;
       return <div className="git-tree-folder" key={node.path}>
         <ActionButton type="button" role="treeitem" aria-level={depth + 1} aria-expanded={expanded}
           className="git-tree-folder-row" title={title} style={style}
@@ -47,10 +48,10 @@ export function GitFileTree(props: GitFileTreeProps): ReactElement {
         {typeof entry.deletions === 'number' && entry.deletions > 0
           ? <span className="stat-badge stat-del">-{entry.deletions}</span> : null}
       </span>
-      <span className="git-tree-diff-label">{props.locale === 'th' ? 'ดู Diff' : 'View Diff'}</span>
+      <span className="git-tree-diff-label">{copy.openDiff}</span>
     </ActionButton>;
   }
 
-  return <div role="tree" aria-label={props.locale === 'th' ? 'รายการไฟล์ Git' : 'Git changed files'}
+  return <div role="tree" aria-label={copy.treeLabel}
     className="git-file-tree">{props.nodes.map((node) => renderNode(node, 0))}</div>;
 }

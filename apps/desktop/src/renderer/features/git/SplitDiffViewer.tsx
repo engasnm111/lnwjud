@@ -16,9 +16,8 @@ export function formatGitHunkLabel(header: string, locale: UiLocale): string {
   };
   const oldRange = range(match[1]!, match[2]);
   const newRange = range(match[3]!, match[4]);
-  return locale === 'th'
-    ? `ช่วงที่เปลี่ยน • ก่อนแก้ ${oldRange} / หลังแก้ ${newRange}`
-    : `Changed range • Old ${oldRange} / New ${newRange}`;
+  const copy = v580Strings(locale).git;
+  return `${copy.changedRange} • ${copy.oldRange} ${oldRange} / ${copy.newRange} ${newRange}`;
 }
 
 export interface DiffRow {
