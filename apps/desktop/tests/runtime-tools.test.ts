@@ -39,6 +39,14 @@ describe('bundled target-native runtime tools', () => {
   });
 
   it('accepts only a manifest-matched bundled tunnel executable', async () => {
+    const runtimeDependencies = JSON.parse(await readFile(
+      new URL('../src/main/runtime-dependencies.json', import.meta.url), 'utf8',
+    )) as { tunnelClient: { version: string; provenanceAsset: string } };
+    const { version, provenanceAsset } = runtimeDependencies.tunnelClient;
+    const prefix = `tunnel-client-v${version}-windows-amd64`;
+    const asset = `${prefix}.zip`;
+    const licenseAsset = `${prefix}-licenses.txt`;
+    const spdxAsset = `${prefix}.spdx.json`;
     const resources = await mkdtemp(path.join(process.cwd(), '.lnwjud-bundled-tunnel-'));
     const directory = path.join(resources, 'tunnel-client');
     const executable = path.join(directory, 'tunnel-client.exe');
@@ -46,50 +54,42 @@ describe('bundled target-native runtime tools', () => {
       await mkdir(directory, { recursive: true });
       const bytes = Buffer.from('fixture tunnel client');
       await writeFile(executable, bytes);
-      for (const evidence of ['tunnel-client-v0.0.15-windows-amd64.zip', 'tunnel-client-v0.0.15-windows-amd64-licenses.txt', 'tunnel-client-v0.0.15-windows-amd64.spdx.json', 'tunnel-client-v0.0.15-provenance.sigstore.json']) {
+      for (const evidence of [asset, licenseAsset, spdxAsset, provenanceAsset]) {
         await writeFile(path.join(directory, evidence), 'evidence', 'utf8');
       }
-      await writeFile(path.join(directory, 'BUNDLED_TUNNEL_CLIENT.json'), JSON.stringify({
+      const manifest = {
         schemaVersion: 1,
         product: 'lnwjud',
-        version: '0.0.15',
+        version,
         platform: 'win32',
         arch: 'x64',
-        asset: 'tunnel-client-v0.0.15-windows-amd64.zip',
-        licenseAsset: 'tunnel-client-v0.0.15-windows-amd64-licenses.txt',
-        spdxAsset: 'tunnel-client-v0.0.15-windows-amd64.spdx.json',
-        provenanceAsset: 'tunnel-client-v0.0.15-provenance.sigstore.json',
+        asset,
+        licenseAsset,
+        spdxAsset,
+        provenanceAsset,
         executable: 'tunnel-client.exe',
         assetSha256: 'a'.repeat(64),
         executableSha256: createHash('sha256').update(bytes).digest('hex'),
         verified: { archiveSha256: true, executableVersion: true, executableBit: false },
-      }), 'utf8');
+      };
+      await writeFile(path.join(directory, 'BUNDLED_TUNNEL_CLIENT.json'), JSON.stringify(manifest), 'utf8');
       expect(resolveBundledTunnelClientPath({ resourcesPath: resources, platform: 'win32', architecture: 'x64' })).toBe(executable);
       // The release ZIP is verified during staging and retained in the vendor
       // cache; it is not shipped inside the installed application. Runtime
       // integrity must therefore rely on the executable hash and bundled
       // license/SPDX/provenance evidence rather than requiring that archive.
-      await rm(path.join(directory, 'tunnel-client-v0.0.15-windows-amd64.zip'));
+      await rm(path.join(directory, asset));
       expect(resolveBundledTunnelClientPath({ resourcesPath: resources, platform: 'win32', architecture: 'x64' })).toBe(executable);
-      await rm(path.join(directory, 'tunnel-client-v0.0.15-provenance.sigstore.json'));
+      await rm(path.join(directory, provenanceAsset));
       expect(resolveBundledTunnelClientPath({ resourcesPath: resources, platform: 'win32', architecture: 'x64' })).toBeNull();
-      await writeFile(path.join(directory, 'tunnel-client-v0.0.15-provenance.sigstore.json'), 'evidence', 'utf8');
+      await writeFile(path.join(directory, provenanceAsset), 'evidence', 'utf8');
       await writeFile(path.join(directory, 'BUNDLED_TUNNEL_CLIENT.json'), JSON.stringify({
-        schemaVersion: 1,
-        product: 'lnwjud',
+        ...manifest,
         version: '0.0.12',
-        platform: 'win32',
-        arch: 'x64',
-        asset: 'tunnel-client-v0.0.15-windows-amd64.zip',
-        licenseAsset: 'tunnel-client-v0.0.15-windows-amd64-licenses.txt',
-        spdxAsset: 'tunnel-client-v0.0.15-windows-amd64.spdx.json',
-        provenanceAsset: 'tunnel-client-v0.0.15-provenance.sigstore.json',
-        executable: 'tunnel-client.exe',
-        assetSha256: 'a'.repeat(64),
-        executableSha256: createHash('sha256').update(bytes).digest('hex'),
-        verified: { archiveSha256: true, executableVersion: true, executableBit: false },
       }), 'utf8');
       expect(resolveBundledTunnelClientPath({ resourcesPath: resources, platform: 'win32', architecture: 'x64' })).toBeNull();
+      await writeFile(path.join(directory, 'BUNDLED_TUNNEL_CLIENT.json'), JSON.stringify(manifest), 'utf8');
+      expect(resolveBundledTunnelClientPath({ resourcesPath: resources, platform: 'win32', architecture: 'x64' })).toBe(executable);
       await writeFile(executable, Buffer.from('tampered tunnel client'));
       expect(resolveBundledTunnelClientPath({ resourcesPath: resources, platform: 'win32', architecture: 'x64' })).toBeNull();
     } finally {
