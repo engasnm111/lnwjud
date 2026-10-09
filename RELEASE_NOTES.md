@@ -4,7 +4,7 @@ Release highlights are listed newest first. The [README](README.md) shows the th
 
 ### What's new in v5.8.0
 
-This release is a substantial functional expansion over **v5.7.4**, whose main fixes were bounded high-risk approval/native-alert dialogs. The features below are based on the `v5.7.4..dev` changeset, not on plans alone.
+This release is a substantial functional expansion over **v5.7.4**, whose main fixes were bounded high-risk approval/native-alert dialogs. The features below are based on the `v5.7.4..v5.8.0` changeset, not on plans alone.
 
 - **Six bilingual, review-first task templates:** Project Check, Code Review, Release Readiness, Connection Check, Data Audit and Template Report. Inputs are validated and drafts can be copied to a connected AI; previewing does not schedule or start a Goal.
 - **Persistent MCP call observability:** SQLite-backed call correlation, bounded keyset paging, tool/Goal filters and server p50/p95 where samples exist. Unmeasured Tunnel spans and transport identity remain unknown, never fabricated. Goal dropdowns omit Goals without attributable calls.

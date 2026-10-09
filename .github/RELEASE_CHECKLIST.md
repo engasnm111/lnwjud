@@ -4,6 +4,8 @@ Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.
 
 **Current version:** `v5.8.0` - Windows installer `lnwjud-Setup-5.8.0.exe` and portable executable `lnwjud-Portable-5.8.0.exe`; MCP registry **285 total definitions / 273 advertised by default / all 285 with Codex delegation plus Agent Swarm enabled**.
 
+After a tagged release is publicly published and GitHub assets are verified, synchronize the published-version headings/download filenames with `node scripts/sync-published-docs.mjs vX.Y.Z --apply`, verify using `node scripts/sync-published-docs.mjs vX.Y.Z`, then PR `dev -> main`. Keep historical comparison sections and the immutable tag unchanged. The main README and all public download links must match the actual published release before declaring documentation complete.
+
 Before tagging any new version, add its plain-language `What's new in vX.Y.Z` bullets to `README.md`, `FULL_README.md`, and `RELEASE_NOTES.md`, then preview the generated GitHub Release body. Also add a non-empty exact-version entry to the in-app What's New registry with Thai and English titles/descriptions. README and GitHub Release notes do not feed the in-app modal. The Desktop release-notes test checks the current package version and must pass in PR and main CI; do not tag or publish a build whose modal would show the empty state. The release generator must stop if the README section is missing or contains no real change; empty `Features` or `Bug Fixes` sections and `- None.` placeholders must not be published. Keep only the newest three versions in the READMEs and preserve detailed history in `RELEASE_NOTES.md` for later audit and backfill.
 
 ## v5.8.0 functional release acceptance

@@ -54,6 +54,10 @@ system is never evidence for another.
     GitHub Release notes do not populate the in-app modal. The Desktop release
     notes test must fail when the current package version has no in-app entry.
 
+## Post-publication documentation synchronization
+
+After GitHub Release `vX.Y.Z` is public and verified, but **before starting the next development version**, run `node scripts/sync-published-docs.mjs vX.Y.Z --apply` on `dev` and then `node scripts/sync-published-docs.mjs vX.Y.Z` (without `--apply`) as a no-change verification. Commit and PR the documentation follow-up to `main` through normal branch protection; synchronize `dev` again afterwards. This updates the current-published headings, release download filenames, and Thai installation guide without rewriting historical v5.7.x comparisons or mutating the immutable release tag. Recheck the actual assets at `https://github.com/engasnm111/lnwjud/releases/tag/vX.Y.Z` before merging. **Publishing alone does not update README URLs**: do not claim documentation synchronization is finished until this follow-up PR is merged and the public README shows the published version.
+
 ## Release-note format
 
 Release notes are not free-form. Before tagging, write at least one clear,
