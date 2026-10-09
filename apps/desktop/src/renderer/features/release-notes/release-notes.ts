@@ -21,6 +21,17 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.8.1',
+    categories: [{
+      id: 'experience',
+      titleKey: 'whatsNew.category.experience',
+      items: [
+        { id: 'dropdown-overlay', titleKey: 'whatsNew.581.dropdown.title', descriptionKey: 'whatsNew.581.dropdown.description', badge: 'fixed', tags: ['dropdown', 'Work Log', 'overlay', 'scroll'] },
+        { id: 'tunnel-filter', titleKey: 'whatsNew.581.tunnelFilter.title', descriptionKey: 'whatsNew.581.tunnelFilter.description', badge: 'fixed', tags: ['Live Logs', 'Tunnel', 'workspace', 'session'] },
+      ],
+    }],
+  },
+  {
     version: '5.8.0',
     categories: [
       {
@@ -741,4 +752,37 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
 
 export function releaseNotesForVersion(version: string): ReleaseNote | undefined {
   return RELEASE_NOTES.find((entry) => entry.version === version.trim());
+}
+
+interface StableVersion {
+  readonly major: number;
+  readonly minor: number;
+  readonly patch: number;
+}
+
+function parseStableVersion(version: string): StableVersion | null {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version.trim());
+  if (!match) return null;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  if (![major, minor, patch].every(Number.isSafeInteger)) return null;
+  return { major: major!, minor: minor!, patch: patch! };
+}
+
+function compareVersions(a: StableVersion, b: StableVersion): number {
+  return a.major - b.major || a.minor - b.minor || a.patch - b.patch;
+}
+
+/** Show only installed-or-earlier releases in the current train, newest first.
+ * v5 trains reset at every minor (5.8.x, 5.9.x); v6+ trains group by major (6.x.x).
+ */
+export function releaseNotesForSeries(version: string, notes: readonly ReleaseNote[] = RELEASE_NOTES): readonly ReleaseNote[] {
+  const installed = parseStableVersion(version);
+  if (installed === null) return [];
+  return notes.flatMap((note) => {
+    const candidate = parseStableVersion(note.version);
+    if (candidate === null || candidate.major !== installed.major ||
+      (installed.major < 6 && candidate.minor !== installed.minor) ||
+      compareVersions(candidate, installed) > 0) return [];
+    return [{ note, parsed: candidate }];
+  }).sort((a, b) => compareVersions(b.parsed, a.parsed)).map(({ note }) => note);
 }

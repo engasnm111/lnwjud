@@ -167,14 +167,16 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
           }}>
             {paused ? props.followLabel : props.pauseLabel}
           </ActionButton>
-          <ActionButton type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</ActionButton>
-          <ActionButton type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</ActionButton>
+          {props.source === 'tunnel' ? null : <>
+            <ActionButton type="button" disabled={sessionId === null} onClick={() => { if (sessionId !== null) void props.onClear({ workspaceId: null, sessionId }); }}>{props.clearSessionLabel}</ActionButton>
+            <ActionButton type="button" disabled={workspaceId === null} onClick={() => { if (workspaceId !== null) void props.onClear({ workspaceId, sessionId: null }); }}>{props.clearWorkspaceLabel}</ActionButton>
+          </>}
           <ActionButton type="button" onClick={() => { void props.onClear({ workspaceId: null, sessionId: null }); }}>{props.clearLabel}</ActionButton>
           <ActionButton type="button" onClick={() => { void props.onExport(scope, filter, matchingLines.map((line) => ({ lineId: line.id, correlationRef: detailRefForLine(line) }))); }}>{props.exportLabel}</ActionButton>
         </div>
       </div>
       {props.description === undefined ? null : <p className="hint log-source-description">{props.description}</p>}
-      <div className="scope-filter-bar">
+      {props.source === 'tunnel' ? null : <div className="scope-filter-bar">
         <label>
           <span>{props.workspaceLabel ?? 'Workspace'}</span>
           <SearchableSelect label={props.workspaceLabel ?? 'Workspace'} value={workspaceId ?? ''}
@@ -195,7 +197,7 @@ export function LogStreamPanel(props: LogStreamPanelProps): ReactElement {
               void props.onSessionChange?.({ workspaceId, sessionId: nextSessionId });
             }} />
         </label>
-      </div>
+      </div>}
       <FormInput
         type="text"
         className="log-filter"

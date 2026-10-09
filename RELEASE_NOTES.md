@@ -2,6 +2,12 @@
 
 Release highlights are listed newest first. The [README](README.md) shows the three newest versions, and each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) contains its published notes and downloads.
 
+### What's new in v5.8.1
+
+- **Work Log and shared dropdown overlay:** remove the page-padding scroll reservation and automatic scroll-into-view on dropdown opening. Popup menus stay below the trigger and scroll internally without compressing data tables behind them.
+- **What’s New version grouping:** show all installed-or-earlier patch notes within 5.8.x, newest first; switch to 5.9.x at v5.9.0, and group 6.x.x under the same major when v6 arrives. Keep notes scrollable and local.
+- **Live Logs Tunnel:** hide Workspace and Session selectors and scoped-clear actions that do not filter Tunnel output. Text search, pause, clear Tab, and export remain; MCP activity and Processes keep their scoped filters.
+
 ### What's new in v5.8.0
 
 This release is a substantial functional expansion over **v5.7.4**, whose main fixes were bounded high-risk approval/native-alert dialogs. The features below are based on the `v5.7.4..v5.8.0` changeset, not on plans alone.

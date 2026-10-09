@@ -3,7 +3,7 @@
 The Desktop title bar has two independent controls:
 
 1. the existing version/update button, which keeps update/check/install behavior;
-2. the adjacent `?` button, which opens bundled release notes for the exact installed version.
+2. the adjacent `?` button, which opens bundled release notes for the current release series, newest installed-or-earlier version first.
 
 Do not merge those responsibilities.
 
@@ -12,13 +12,13 @@ Do not merge those responsibilities.
 - `apps/desktop/src/renderer/features/release-notes/release-notes.ts` — typed local release-note registry.
 - `apps/desktop/src/renderer/features/release-notes/WhatsNewModal.tsx` — accessible modal.
 - `apps/desktop/src/renderer/i18n/messages.ts` — Thai/English titles, descriptions, badges, empty-state and accessibility copy.
-- `apps/desktop/tests/release-notes.test.ts` — exact-version and missing-version behavior.
+- `apps/desktop/tests/release-notes.test.ts` and `apps/desktop/tests/release-notes-series.test.ts` — exact-version registry, series ordering, future-version filtering and modal rendering.
 
 ## Adding a release
 
 Before packaging a new public version:
 
-1. Add exactly one registry entry whose `version` equals the installed semantic version.
+1. Add exactly one registry entry whose `version` equals the installed semantic version. The modal displays all entries for the installed series with descending semantic-version order (5.8.x, then 5.9.x after upgrading; v6+ groups by major as 6.x.x). Never show notes for future or other series.
 2. Keep stable item/category IDs; put user-visible copy in i18n rather than branching on locale in components.
 3. Describe only functionality that actually ships. Provider contracts that remain unavailable must not be described as ready.
 4. Keep the registry local/offline. Opening What's New must not require GitHub or any network request.

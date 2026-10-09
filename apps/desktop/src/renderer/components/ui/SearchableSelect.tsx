@@ -22,7 +22,7 @@ export function SearchableSelect(props: {
   const popover = useRef<HTMLDivElement>(null);
   const tooltip = useRef<HTMLDivElement>(null);
   const tooltipHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const didScrollOnOpen = useRef(false);
+
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState('');
   const [active, setActive] = useState(0);
@@ -37,15 +37,10 @@ export function SearchableSelect(props: {
     if (!open) return;
     const reposition = (): void => {
       setFullLabel(null);
-      let rect = root.current?.getBoundingClientRect();
+      const rect = root.current?.getBoundingClientRect();
       if (!rect) return;
-      // This control never opens upwards. Move the surrounding scroll region once
-      // when needed, then scroll inside the bounded list for additional options.
-      if (!didScrollOnOpen.current && window.innerHeight - rect.bottom < 190) {
-        didScrollOnOpen.current = true;
-        root.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
-        rect = root.current?.getBoundingClientRect() ?? rect;
-      }
+      // Fixed portal positioning never scrolls or resizes the underlying page.
+      // The menu stays below the field, and overflowing options scroll internally.
       const below = Math.max(0, window.innerHeight - rect.bottom - 14);
       const maxHeight = Math.max(72, Math.min(310, below));
       // Fit short option sets to their actual labels; clamp very long Goals/tools to
@@ -126,7 +121,7 @@ export function SearchableSelect(props: {
   }, [open]);
 
   function close(): void {
-    didScrollOnOpen.current = false;
+
     setOpen(false);
     setTerm('');
     setActive(0);
@@ -186,7 +181,7 @@ export function SearchableSelect(props: {
       <ActionButton id={props.id} type="button" data-value={props.value} className="ui-combobox-trigger" disabled={props.disabled}
         aria-label={props.label} aria-expanded={open} aria-controls={id} aria-haspopup="listbox"
         aria-invalid={props.invalid || undefined} aria-describedby={props.describedBy}
-        onClick={() => { didScrollOnOpen.current = false; setTerm(''); setActive(0); setPlacement(null); setOpen(!open); }}>
+        onClick={() => { setTerm(''); setActive(0); setPlacement(null); setOpen(!open); }}>
         <span title={current?.label ?? props.placeholder ?? props.label}>{current?.label ?? props.placeholder ?? props.label}</span><span aria-hidden="true">⌄</span>
       </ActionButton>
       {open ? createPortal(

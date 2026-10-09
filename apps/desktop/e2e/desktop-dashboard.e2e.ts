@@ -68,6 +68,13 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     // Keep the update controls accessible; their CSS dimensions are not a workflow contract.
     await expect(page.locator('button.titlebar-version')).toBeEnabled();
     await expect(page.locator('button.titlebar-whats-new')).toBeEnabled();
+    await page.locator('button.titlebar-whats-new').click();
+    const whatsNew = page.getByRole('dialog', { name: /มีอะไรใหม่ใน|What.s new in/ });
+    await expect(whatsNew).toBeVisible();
+    await expect(whatsNew.locator('.whats-new-version-title')).toHaveText(['v5.8.1', 'v5.8.0']);
+    await expect.poll(() => whatsNew.locator('.whats-new-scroll').evaluate((container) => container.scrollHeight > container.clientHeight)).toBe(true);
+    await whatsNew.press('Escape');
+    await expect(whatsNew).toHaveCount(0);
     const homeSelect = page.locator('.primary-project-control .ui-combobox-trigger');
     await expect(homeSelect).toBeEnabled();
     await homeSelect.click();
@@ -91,6 +98,25 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await page.getByRole('button', { name: 'บันทึกการทำงาน', exact: true }).click();
     await expect(page.getByTestId('work-log')).toBeVisible();
     await page.setViewportSize({ width: 1280, height: 800 });
+    // Opening a portal-backed Workspace filter must overlay the Work Log, not shrink its scroll table.
+    const workLogStream = page.getByTestId('work-log');
+    const beforeDropdown = await workLogStream.boundingBox();
+    expect(beforeDropdown).not.toBeNull();
+    const workspaceTrigger = page.locator('.worklog-panel .scope-filter-bar .ui-combobox-trigger').first();
+    await workspaceTrigger.click();
+    const workspacePopup = page.locator('body > .ui-combobox-popover');
+    await expect(workspacePopup).toBeVisible();
+    const triggerRect = await workspaceTrigger.boundingBox();
+    const popupRect = await workspacePopup.boundingBox();
+    const whileDropdown = await workLogStream.boundingBox();
+    expect(popupRect).not.toBeNull();
+    expect(triggerRect).not.toBeNull();
+    expect(whileDropdown).not.toBeNull();
+    expect(popupRect!.y).toBeGreaterThanOrEqual(triggerRect!.y + triggerRect!.height - 1);
+    expect(Math.abs(whileDropdown!.y - beforeDropdown!.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(whileDropdown!.height - beforeDropdown!.height)).toBeLessThanOrEqual(1);
+    await workspacePopup.locator('input').press('Escape');
+    await expect(workspacePopup).toHaveCount(0);
     const showMore = page.locator('.log-detail-toggle').first();
     await expect(showMore).toHaveAccessibleName(/ดูเพิ่ม|Show more/);
     await expect(showMore).toHaveAttribute('aria-expanded', 'false');
