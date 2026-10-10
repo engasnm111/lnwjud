@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { access, link, lstat, mkdir, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -63,6 +64,11 @@ export function detectUpdaterDistribution(
 }
 
 /** Use electron-updater's native quit/install path only for formats it owns. */
+/** Native macOS and AppImage installers must accept the update while IPC stays live. */
+export function waitsForNativeInstallAcceptance(distribution: UpdaterDistribution): boolean {
+  return distribution === 'macos' || distribution === 'linux-appimage';
+}
+
 export function usesElectronUpdaterInstall(distribution: UpdaterDistribution): boolean {
   return distribution === 'installer' || distribution === 'macos' || distribution === 'linux-appimage';
 }
@@ -104,6 +110,40 @@ export function configureUpdaterForPlatform(
     // AppImage updates are full-file replacements. Differential blockmaps
     // are not a supported contract for this portable Linux distribution.
     updater.disableDifferentialDownload = true;
+  }
+}
+
+/**
+ * electron-updater AppImageUpdater.doInstall() unlinks the running AppImage
+ * BEFORE moving its downloaded replacement into place. Keep a hard-link to the
+ * verified current executable so an unsuccessful move cannot delete the app.
+ * Hard-link creation is mandatory (fail closed on unsupported filesystems).
+ */
+export async function createLinuxAppImageRollback(
+  currentPath: string,
+  downloadedPath: string,
+): Promise<{ currentPath: string; backupPath: string }> {
+  if (!path.isAbsolute(currentPath) || !path.isAbsolute(downloadedPath) || currentPath === downloadedPath) {
+    throw new Error('Linux AppImage update requires distinct absolute current and downloaded paths');
+  }
+  const [current, downloaded] = await Promise.all([lstat(currentPath), lstat(downloadedPath)]);
+  if (!current.isFile() || !downloaded.isFile()) {
+    throw new Error('Linux AppImage update paths must be regular files (not symlinks)');
+  }
+  const backupPath = `${currentPath}.lnwjud-backup-${randomUUID()}`;
+  await link(currentPath, backupPath);
+  return { currentPath, backupPath };
+}
+
+/** Restore an AppImage deleted by a failing native move, without overwriting a new installation. */
+export async function restoreLinuxAppImageIfMissing(currentPath: string, backupPath: string): Promise<boolean> {
+  try {
+    await lstat(currentPath);
+    return false;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    await rename(backupPath, currentPath);
+    return true;
   }
 }
 

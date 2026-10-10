@@ -21,6 +21,14 @@ type Candidate = {
 
 const temporaryRoots: string[] = [];
 
+it('wires Developer ID CI signing secrets as an all-or-nothing pair', async () => {
+  const workflow = await fs.readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  expect(workflow).toContain('MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}');
+  expect(workflow).toContain('MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}');
+  expect(workflow).toContain('if [[ -z "$MACOS_CSC_LINK" || -z "$MACOS_CSC_KEY_PASSWORD" ]]; then');
+  expect(workflow).toContain('export LNWJUD_REQUIRE_CODESIGN=1');
+});
+
 afterEach(async () => {
   for (const root of temporaryRoots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });

@@ -14,6 +14,9 @@ describe('native main-process i18n', () => {
     };
     expect(localizedUpdateStatusMessage(ready, 'th')).toContain('พร้อมติดตั้ง');
     expect(localizedUpdateStatusMessage(ready, 'en')).toContain('is ready');
+    expect(localizedUpdateStatusMessage({
+      ...ready, phase: 'unavailable', canInstall: false, message: nativeMessages('th').updaterUnavailableMacosUnsigned,
+    }, 'en')).toContain('ad-hoc');
     expect(nativeMessages('th').shutdownBlockedTitle).toContain('ยังทำงานอยู่');
     expect(nativeMessages('en').shutdownBlockedTitle).toBe('lnwjud is still running');
     expect(nativeMessages('th').updaterTunnelStopConfirm).toContain('ติดตั้งต่อ');

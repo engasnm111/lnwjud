@@ -53,7 +53,13 @@
 
 ## Current published version: v5.8.1
 
-## Current source version: v5.8.1
+## Current source version: v5.8.2
+
+### What's new in v5.8.2 (source under verification)
+
+- **macOS updater:** Prevent the IPC shutdown that previously occurred before Squirrel.Mac completed native package verification. Existing ad-hoc-signed installs cannot update safely in place; download and replace the app manually. Developer ID signing is needed for future seamless automatic updates.
+- **Linux AppImage:** Keep a local rollback link to the old AppImage and restore it if the native installer fails after deleting the previous path. DEB updates remain managed by the system package manager.
+- **What’s New:** Includes bilingual v5.8.2 notes above the v5.8.1 and v5.8.0 history.
 
 ### What's new in v5.8.1
 

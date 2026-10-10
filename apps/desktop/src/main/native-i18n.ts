@@ -7,6 +7,7 @@ export interface NativeMessages {
   readonly trayTooltip: string;
   readonly updaterUnavailablePackagedOnly: string;
   readonly updaterUnavailablePlatform: string;
+  readonly updaterUnavailableMacosUnsigned: string;
   readonly updaterCheckTitle: string;
   readonly updaterUnavailable: string;
   readonly updaterAlreadyChecking: string;
@@ -58,6 +59,7 @@ const th: NativeMessages = {
   trayTooltip: 'lnwjud — ทำงานเบื้องหลัง',
   updaterUnavailablePackagedOnly: 'ระบบอัปเดตทำงานในแอปที่ติดตั้งจาก Release',
   updaterUnavailablePlatform: 'รูปแบบการติดตั้งนี้ให้ระบบปฏิบัติการจัดการอัปเดตเอง จึงปิดการอัปเดตอัตโนมัติของ lnwjud',
+  updaterUnavailableMacosUnsigned: 'macOS เวอร์ชันนี้ใช้ลายเซ็น ad-hoc ที่อัปเดตข้ามเวอร์ชันไม่ได้ กรุณาดาวน์โหลดจาก GitHub Releases แล้วติดตั้งทับด้วยตนเอง (ข้อมูลเดิมไม่ถูกลบ)',
   updaterCheckTitle: 'ตรวจอัปเดต - lnwjud',
   updaterUnavailable: 'การตรวจอัปเดตจะทำงานเมื่อใช้แอปที่ติดตั้งจาก Release แล้ว',
   updaterAlreadyChecking: 'กำลังตรวจอัปเดตอยู่ กรุณารอผลการตรวจสอบ',
@@ -109,6 +111,7 @@ const en: NativeMessages = {
   trayTooltip: 'lnwjud — running in background',
   updaterUnavailablePackagedOnly: 'Updates are available in an installed Release build',
   updaterUnavailablePlatform: 'This installation format is updated by the operating system package manager; lnwjud automatic updates are disabled.',
+  updaterUnavailableMacosUnsigned: 'This macOS build has an ad-hoc signature incompatible with in-place updates. Download from GitHub Releases and manually replace the app; your data is preserved.',
   updaterCheckTitle: 'Check for Updates - lnwjud',
   updaterUnavailable: 'Update checks are available after installing a Release build',
   updaterAlreadyChecking: 'An update check is already running. Please wait for it to finish.',
@@ -161,7 +164,10 @@ export function localizedUpdateStatusMessage(status: UpdateStatus, locale: UiLoc
   const messages = nativeMessages(locale);
   const version = status.availableVersion;
   switch (status.phase) {
-    case 'unavailable': return messages.updaterUnavailablePackagedOnly;
+    case 'unavailable':
+      if (status.message === th.updaterUnavailableMacosUnsigned || status.message === en.updaterUnavailableMacosUnsigned) return messages.updaterUnavailableMacosUnsigned;
+      if (status.message === th.updaterUnavailablePlatform || status.message === en.updaterUnavailablePlatform) return messages.updaterUnavailablePlatform;
+      return messages.updaterUnavailablePackagedOnly;
     case 'checking': return messages.updaterChecking;
     case 'available': return version === null ? messages.updaterChecking : messages.updateAvailableStatus(version);
     case 'downloading': return messages.updateDownloadingStatus(version, status.progressPercent);

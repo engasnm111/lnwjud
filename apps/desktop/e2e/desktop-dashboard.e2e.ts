@@ -71,7 +71,13 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     await page.locator('button.titlebar-whats-new').click();
     const whatsNew = page.getByRole('dialog', { name: /มีอะไรใหม่ใน|What.s new in/ });
     await expect(whatsNew).toBeVisible();
-    await expect(whatsNew.locator('.whats-new-version-title')).toHaveText(['v5.8.1', 'v5.8.0']);
+    const installedVersion = (JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version: string }).version;
+    const versionTitles = await whatsNew.locator('.whats-new-version-title').allTextContents();
+    const seriesPrefix = installedVersion.startsWith('5.')
+      ? `v${installedVersion.split('.').slice(0, 2).join('.')}.`
+      : `v${installedVersion.split('.')[0]}.`;
+    expect(versionTitles[0]).toBe(`v${installedVersion}`);
+    expect(versionTitles.every((title) => title.startsWith(seriesPrefix))).toBe(true);
     await expect.poll(() => whatsNew.locator('.whats-new-scroll').evaluate((container) => container.scrollHeight > container.clientHeight)).toBe(true);
     await whatsNew.press('Escape');
     await expect(whatsNew).toHaveCount(0);

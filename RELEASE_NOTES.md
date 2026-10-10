@@ -2,6 +2,13 @@
 
 Release highlights are listed newest first. The [README](README.md) shows the three newest versions, and each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) contains its published notes and downloads.
 
+### What's new in v5.8.2
+
+- **macOS update lifecycle:** Keep the Desktop runtime and IPC available while Squirrel.Mac validates a downloaded update. Only shut down for the native updater's accepted quit.
+- **Legacy macOS signing compatibility:** An ad-hoc-signed installation cannot satisfy another version's CDHash-bound designated requirement. Do not attempt an unsafe auto-update. Display Thai/English manual-upgrade instructions; future in-place auto-updates require a stable Developer ID Application signature. See [macOS manual migration guide](docs/INSTALL_MACOS.md).
+- **Linux AppImage failure recovery:** Stage a hard-linked backup before electron-updater's unlink-and-move installation. On failure, attempt to restore the original executable; unsupported/DEB install formats still do not self-update.
+- **Verification:** Targeted updater regression tests for signature eligibility, rollback after native unlink failure, and localized guidance. Native macOS/Linux release packaging and exact-SHA CI remain independent publication gates.
+
 ### What's new in v5.8.1
 
 - **Work Log and shared dropdown overlay:** remove the page-padding scroll reservation and automatic scroll-into-view on dropdown opening. Popup menus stay below the trigger and scroll internally without compressing data tables behind them.
