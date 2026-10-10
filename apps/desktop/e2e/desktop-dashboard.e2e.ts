@@ -289,14 +289,14 @@ test('Git page supports real vertical page scrolling plus X/Y diff scrolling', a
     await gitSearch.fill('nested.ts');
     await expect(page.locator('.git-tree-file-row[title="src/unit/nested.ts"]')).toBeVisible();
     await gitSearch.fill('');
+    // Git search state and layout re-render asynchronously. Observe the full
+    // fixture list restored before checking whether its scroll container overflows.
+    await expect(page.locator('.git-tree-file-row')).toHaveCount(66);
 
     const fileList = page.locator('.git-file-list');
     await page.setViewportSize({ width: 900, height: 650 });
-    const fileListMetrics = await fileList.evaluate((element) => ({
-      scrollHeight: element.scrollHeight,
-      clientHeight: element.clientHeight,
-    }));
-    expect(fileListMetrics.scrollHeight).toBeGreaterThan(fileListMetrics.clientHeight);
+    await expect.poll(async () => fileList.evaluate((element) =>
+      element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
     const fileListScrollTop = await fileList.evaluate((element) => {
       element.scrollTop = 120;
       return element.scrollTop;
