@@ -55,7 +55,7 @@
 
 ## Current source version: v5.8.2
 
-### What's new in v5.8.2 (source under verification)
+### What's new in v5.8.2
 
 - **macOS updater:** Prevent the IPC shutdown that previously occurred before Squirrel.Mac completed native package verification. Existing ad-hoc-signed installs cannot update safely in place; download and replace the app manually. Developer ID signing is needed for future seamless automatic updates.
 - **Linux AppImage:** Keep a local rollback link to the old AppImage and restore it if the native installer fails after deleting the previous path. DEB updates remain managed by the system package manager.
@@ -92,13 +92,6 @@
 **ภาษาไทย — ต่างจาก 5.7.4:** เพิ่มเทมเพลต 6 แบบ, ประวัติ MCP และผลงาน Goal ที่มีหลักฐาน, RAM/CPU จริงของโปรเซสที่ตรวจเจ้าของได้, Context Economy แบบรวมระดับ Transport, ตรวจ CSV/XLSX, Git tree/preview ที่ครบขึ้น, UI และ dropdown กลาง, กากบาท Modal ขนาดชัดเจน, Work Log ที่กรองง่ายขึ้น, แก้ Tunnel reconnect ก่อนพร้อม และอัปเดต tunnel-client 0.0.16 พร้อมการทดสอบ/แพ็กเกจตาม SHA จริง ค่าไม่ทราบจะไม่แสดงเป็น 0 หรืออ้างว่าสำเร็จโดยไม่มีข้อมูล
 
 Latest published release: **v5.8.1**. The download buttons above point directly to the verified v5.8.1 assets. The release was published after the exact tagged main commit passed the target-native release gates.
-
-### What's new in v5.7.4
-
-- **High-risk approval details stay on screen across Windows, macOS, and Linux:** the complete command appears in a bounded lnwjud window with its own scrollable detail area. Cancel is focused by default, and closing the window or pressing Escape cancels the request.
-- **Other native alerts resist oversized error text:** variable Update, Tunnel, and shutdown error messages are bounded before they reach native dialogs.
-
-ภาษาไทย: v5.7.4 แก้กล่องยืนยันคำสั่งเสี่ยงสูงที่ยาวจนล้นจอ โดยยังดูคำสั่งฉบับเต็มผ่านพื้นที่เลื่อนได้เหมือนกันบน Windows, macOS และ Linux; ปุ่มยกเลิกเป็นค่าเริ่มต้น และยังจำกัด error text ที่ยาวผิดปกติใน native alert จุดอื่นด้วย
 
 See [RELEASE_NOTES.md](RELEASE_NOTES.md) for previous releases and the complete release history.
 
