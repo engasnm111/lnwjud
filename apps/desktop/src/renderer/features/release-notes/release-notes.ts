@@ -21,6 +21,17 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.8.2',
+    categories: [{
+      id: 'safety',
+      titleKey: 'whatsNew.category.safety',
+      items: [
+        { id: 'macos-signed-update-safety', titleKey: 'whatsNew.582.macos.title', descriptionKey: 'whatsNew.582.macos.description', badge: 'fixed', tags: ['macOS', 'Squirrel.Mac', 'Developer ID', 'manual migration'] },
+        { id: 'linux-appimage-recovery', titleKey: 'whatsNew.582.linux.title', descriptionKey: 'whatsNew.582.linux.description', badge: 'fixed', tags: ['Linux', 'AppImage', 'rollback', 'IPC'] },
+      ],
+    }],
+  },
+  {
     version: '5.8.1',
     categories: [{
       id: 'experience',

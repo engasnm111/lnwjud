@@ -224,8 +224,24 @@ jobs:
           LNWJUD_VERIFY_PLATFORM: ${{ matrix.platform }}
           LNWJUD_VERIFY_ARCH: ${{ matrix.arch }}
           LNWJUD_COSIGN_PATH: cosign
+          MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          # Developer ID signing must be stable across macOS releases. Never
+          # silently fall back to ad-hoc when half a certificate pair is set.
+          if [[ "$LNWJUD_VERIFY_PLATFORM" == darwin ]]; then
+            if [[ -n "$MACOS_CSC_LINK" || -n "$MACOS_CSC_KEY_PASSWORD" ]]; then
+              if [[ -z "$MACOS_CSC_LINK" || -z "$MACOS_CSC_KEY_PASSWORD" ]]; then
+                echo 'macOS signing needs both MACOS_CSC_LINK and MACOS_CSC_KEY_PASSWORD' >&2
+                exit 1
+              fi
+              export CSC_LINK="$MACOS_CSC_LINK"
+              export CSC_KEY_PASSWORD="$MACOS_CSC_KEY_PASSWORD"
+              export LNWJUD_REQUIRE_CODESIGN=1
+              echo 'LNWJUD_REQUIRE_CODESIGN=1' >> "$GITHUB_ENV"
+            fi
+          fi
           # app-builder checks presence, not truthiness: even an empty value
           # selects system FPM, so leave it completely unset on other targets.
           if [[ "$LNWJUD_VERIFY_PLATFORM/$LNWJUD_VERIFY_ARCH" == linux/arm64 ]]; then

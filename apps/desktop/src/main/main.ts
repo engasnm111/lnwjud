@@ -109,12 +109,15 @@ import { UpdateCheckScheduler } from './update-check-scheduler.js';
 import {
   configureUpdaterForDistribution,
   configureUpdaterForPlatform,
+  createLinuxAppImageRollback,
+  restoreLinuxAppImageIfMissing,
   currentPortableExecutablePath,
   detectWindowsDistribution,
   detectUpdaterDistribution,
   launchPortableReplacement,
   preparePortableReplacement,
   usesElectronUpdaterInstall,
+  waitsForNativeInstallAcceptance,
 } from './portable-update.js';
 import { platformCompatibilityProfile, supportedHostPlatform } from './platform-compatibility.js';
 import { atomicWrite, type IncidentDesktopMemory, type IncidentReport } from './incident-report.js';
@@ -135,6 +138,7 @@ import { createUnavailableCheckpointCipher, shouldDegradeUnavailableSecureStorag
 import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDesktopCaptureResult, NativeDialogOptions, NativeDialogResult, NativeDisplayMetadata } from './electron-native-capability-backend.js';
 import { configureLinuxAutostart } from './linux-autostart.js';
 import { InstallActivityCoordinator } from './install-activity.js';
+import { canInstallMacosUpdates } from './macos-update-trust.js';
 
 const ECC_UPSTREAM_VERSION = '2.2.1';
 
@@ -1554,6 +1558,7 @@ const windowsDistribution = detectWindowsDistribution(app.isPackaged);
 const updaterDistribution = detectUpdaterDistribution(app.isPackaged, process.platform, process.env);
 const platformCompatibility = platformCompatibilityProfile(process.platform, os.release(), process.arch);
 let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
+let pendingLinuxAppImageUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
 let crashDiagnostics: CrashDiagnosticsRecorder | null = null;
 let desktopSessionDiagnostics: DesktopSessionDiagnostics | null = null;
 let runtimeDiagnosticsHistory: RuntimeDiagnosticsHistoryRecorder | null = null;
@@ -1744,6 +1749,16 @@ function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateSt
     }
     return status;
   }
+  if (!autoUpdaterInitialized && currentUpdateStatus.phase === 'unavailable') {
+    if (source === 'tray') {
+      void dialog.showMessageBox({
+        type: 'info', title: messages.updaterCheckTitle,
+        message: boundedNativeDialogText(currentUpdateStatus.message ?? messages.updaterUnavailable),
+        buttons: [messages.ok],
+      });
+    }
+    return currentUpdateStatus;
+  }
   if (currentUpdateStatus.phase === 'available') {
     if (source !== 'automatic' && !desktopUserSettings.updateAutoDownload) {
       const status = patchUpdateStatus({
@@ -1835,8 +1850,12 @@ async function requestUpdateInstall(): Promise<{ readonly accepted: boolean; rea
     });
     if (!approved) return { accepted: false, status: currentUpdateStatus };
 
-    const tunnelStopped = await stopTunnelForUpdateInstall(runtime);
-    if (!tunnelStopped) return { accepted: false, status: currentUpdateStatus };
+    // Native macOS/AppImage must validate/install before runtime shutdown.
+    // before-quit closes the owned tunnel once native installation succeeds.
+    if (!waitsForNativeInstallAcceptance(updaterDistribution)) {
+      const tunnelStopped = await stopTunnelForUpdateInstall(runtime);
+      if (!tunnelStopped) return { accepted: false, status: currentUpdateStatus };
+    }
 
     const status = patchUpdateStatus({
       phase: 'installing',
@@ -2066,6 +2085,10 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePlatform, canInstall: false });
     return;
   }
+  if (updaterDistribution === 'macos' && !canInstallMacosUpdates(process.execPath)) {
+    patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailableMacosUnsigned, canInstall: false });
+    return;
+  }
   try {
     configureUpdaterForDistribution(autoUpdater, windowsDistribution);
     configureUpdaterForPlatform(autoUpdater, updaterDistribution);
@@ -2095,13 +2118,53 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
       },
       maxWaitMs: 5_000,
       install: (): void => {
-        void stopTunnelForUpdateInstall(runtime).then((tunnelStopped) => {
+        const ensureTunnelStopped = waitsForNativeInstallAcceptance(updaterDistribution)
+          ? Promise.resolve(true)
+          : stopTunnelForUpdateInstall(runtime);
+        void ensureTunnelStopped.then((tunnelStopped) => {
           if (!tunnelStopped) return;
           void runtime.createBackup('pre-update').catch((error: unknown) => {
             console.error(`Pre-update backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
           }).finally(() => {
             if (usesElectronUpdaterInstall(updaterDistribution)) {
-              void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
+              if (updaterDistribution === 'macos') {
+                // Squirrel.Mac validates the signature after native checkForUpdates.
+                // Do not enter IPC shutdown before it accepts the replacement.
+                try { autoUpdater.quitAndInstall(); } catch (error: unknown) {
+                  patchUpdateStatus({ phase: 'error', message: error instanceof Error ? error.message : String(error), canInstall: false });
+                }
+              } else if (updaterDistribution === 'linux-appimage') {
+                const downloaded = pendingLinuxAppImageUpdate?.downloadedFile;
+                const installed = process.env.APPIMAGE;
+                if (!downloaded || !installed) {
+                  patchUpdateStatus({ phase: 'error', message: 'Linux AppImage update is missing its current or downloaded file.', canInstall: false });
+                  return;
+                }
+                void createLinuxAppImageRollback(installed, downloaded).then(async ({ currentPath, backupPath }) => {
+                  // electron-updater unlinks the old AppImage before moving the new.
+                  // Its installer is synchronous and emits error for failed moves.
+                  let installError = '';
+                  const onError = (error: Error): void => { installError = error.message; };
+                  autoUpdater.on('error', onError);
+                  try { autoUpdater.quitAndInstall(); } catch (error: unknown) {
+                    installError = error instanceof Error ? error.message : String(error);
+                  } finally {
+                    autoUpdater.off('error', onError);
+                  }
+                  if (installError) {
+                    try {
+                      await restoreLinuxAppImageIfMissing(currentPath, backupPath);
+                    } catch (restoreError: unknown) {
+                      installError += ` (recovery failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}; backup: ${backupPath})`;
+                    }
+                    patchUpdateStatus({ phase: 'error', message: installError, canInstall: false });
+                  }
+                }).catch((error: unknown) => {
+                  patchUpdateStatus({ phase: 'error', message: error instanceof Error ? error.message : String(error), canInstall: false });
+                });
+              } else {
+                void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
+              }
               return;
             }
             const portableUpdate = pendingPortableUpdate;
@@ -2138,6 +2201,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
       const requestedFromTray = pendingUpdateCheckSource === 'tray';
       pendingUpdateCheckSource = null;
       pendingPortableUpdate = null;
+      pendingLinuxAppImageUpdate = null;
       console.log(`[AutoUpdater] Update available: v${info.version}`);
       const messages = nativeMessages(desktopLocale);
       patchUpdateStatus({
@@ -2201,6 +2265,9 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
       recordUpdaterDownload(info.version);
       if (windowsDistribution === 'portable') {
         pendingPortableUpdate = { version: info.version, downloadedFile: info.downloadedFile };
+      }
+      if (updaterDistribution === 'linux-appimage') {
+        pendingLinuxAppImageUpdate = { version: info.version, downloadedFile: info.downloadedFile };
       }
       patchUpdateStatus({
         phase: 'ready',

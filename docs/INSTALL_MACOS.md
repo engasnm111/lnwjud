@@ -1,6 +1,6 @@
 # Install lnwjud on macOS
 
-This guide covers the v5.8.1 native macOS release target. macOS 13 or newer is
+This guide covers the v5.8.2 native macOS release target. macOS 13 or newer is
 supported on both Apple silicon (`arm64`) and Intel (`x64`). The package is
 built on macOS for the matching architecture; there is no universal build
 claim until every native helper and runtime has been verified as universal.
@@ -29,6 +29,35 @@ Release CI builds the target-native DMG/ZIP on macOS 15, then verifies and launc
 The app contains Electron, the target-native ripgrep binary, and the official
 OpenAI `tunnel-client` selected for the artifact architecture. A system Node.js
 installation is not required for the packaged Desktop app or `lnwjud-mcp-stdio`.
+
+## Updating from v5.8.0 / v5.8.1 on macOS
+
+**Manual replacement is required for older ad-hoc-signed builds.** Their
+Squirrel.Mac designated requirement is tied to that build's CDHash; a newer
+package cannot satisfy it even when the download completes. A code-only change
+to v5.8.2 cannot alter the signature embedded in the already-installed app.
+
+1. Quit lnwjud and stop its Secure Tunnel before replacing the application.
+2. Download the correct architecture's verified v5.8.2 DMG/ZIP from
+   [GitHub Releases](https://github.com/engasnm111/lnwjud/releases).
+3. Replace `/Applications/lnwjud.app` with the downloaded app. Do not delete
+   lnwjud's user data, settings or Keychain items.
+4. Open the new app. An ad-hoc-signed release intentionally disables in-app
+   auto-install and displays instructions for manually downloading future versions.
+
+Future in-place macOS updates require consistently signed **Developer ID
+Application** builds (same designated requirement across releases), plus
+matching Apple code signing and notarization credentials in protected CI.
+A developer certificate cannot retroactively enable seamless updates from
+older ad-hoc builds; the first migration must still be manual.
+
+For future Developer ID CI builds, configure **both** repository Actions secrets
+`MACOS_CSC_LINK` (the base64-encoded signing identity/P12) and
+`MACOS_CSC_KEY_PASSWORD` (its password). The native macOS packaging job then
+requires certificate signing and fails instead of silently falling back to
+ad-hoc when only one secret exists. Notarization/stapling must also be set up
+and verified before treating a signed artifact as a seamless production upgrade.
+The community v5.8.2 artifact does not claim these credentials exist.
 
 ## Permissions
 
