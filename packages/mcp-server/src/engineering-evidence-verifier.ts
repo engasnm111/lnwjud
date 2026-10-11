@@ -6,6 +6,8 @@ import { engineeringCommandFingerprint, formatEngineeringCommand } from '@lnwjud
 
 interface EngineeringEvidenceStatusProvider {
   statusForGoalLiveness(workspaceId: string, taskId: string): Result<unknown> | Promise<Result<unknown>>;
+  /** Explicit bounded terminal proof, not used during polling. */
+  statusForGoalEvidence?(workspaceId: string, taskId: string): Result<unknown> | Promise<Result<unknown>>;
 }
 
 export interface EngineeringSourceState {
@@ -114,7 +116,11 @@ export class RuntimeEngineeringEvidenceVerifier implements EngineeringGateEviden
       && !(await this.matchesCurrentTrackedSource(workspaceId, evidence))) return false;
     const results = await Promise.all(this.providers.map(async (provider) => {
       try {
-        const result = await provider.statusForGoalLiveness(workspaceId, runId);
+        const needsOutput = gateId === 'exact_sha_ci' || gateId === 'cross_platform'
+          || (gateId === 'package' && evidence.command?.includes('verify-release-evidence.mjs'));
+        const result = await (needsOutput && provider.statusForGoalEvidence !== undefined
+          ? provider.statusForGoalEvidence(workspaceId, runId)
+          : provider.statusForGoalLiveness(workspaceId, runId));
         if (!successfulObservation(result, command, evidence.exitCode)) return false;
         if (gateId === 'exact_sha_ci') return exactShaCiObservation(result, evidence);
         if (gateId === 'package') return packageObservation(workspaceId, result, evidence, this.artifactVerifier);

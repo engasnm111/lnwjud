@@ -24,6 +24,51 @@ afterEach(async () => {
 });
 
 describe('durable shell background tasks', () => {
+  it('keeps liveness output-free but returns bounded terminal CI proof only to its workspace', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-evidence-proof-'));
+    temporaryRoots.push(root);
+    const store = new DurableShellTaskStore(path.join(root, '.tasks'));
+    const owner = { clientId: 'proof-client', sessionId: 'proof-session', workspaceId: 'workspace-evidence' };
+    const output = JSON.stringify({ headSha: 'a'.repeat(40), status: 'completed', conclusion: 'success' });
+    const start = await store.launch({
+      taskId: 'proof-1', commandFingerprint: 'a'.repeat(64), executable: process.execPath,
+      arguments: ['-e', `process.stdout.write(${JSON.stringify(output)})`], cwd: root,
+      timeoutSeconds: 15, maxOutputBytes: 4096, includeStdout: true, includeStderr: true, owner,
+    });
+    expect(start.ok).toBe(true);
+    await expect.poll(async () => {
+      const current = await store.snapshotForGoalLiveness('proof-1', owner.workspaceId);
+      return current.ok ? current.value.state : 'error';
+    }, { timeout: 10000 }).toBe('completed');
+    const alive = await store.snapshotForGoalLiveness('proof-1', owner.workspaceId);
+    expect(alive).toMatchObject({ ok: true, value: { state: 'completed', command_fingerprint: 'a'.repeat(64) } });
+    if (alive.ok) expect(alive.value).not.toHaveProperty('stdout');
+    const verified = await store.snapshotForGoalEvidence('proof-1', owner.workspaceId);
+    expect(verified).toMatchObject({ ok: true, value: { stdout: output, state: 'completed', exit_code: 0 } });
+    const foreign = await store.snapshotForGoalEvidence('proof-1', 'another-workspace');
+    expect(foreign).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+  }, 15000);
+
+  it('fails closed for truncated terminal stdout evidence', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-evidence-truncated-'));
+    temporaryRoots.push(root);
+    const store = new DurableShellTaskStore(path.join(root, '.tasks'));
+    const owner = { clientId: 'proof', sessionId: 'proof', workspaceId: 'workspace-evidence' };
+    const start = await store.launch({
+      taskId: 'proof-truncated', executable: process.execPath,
+      arguments: ['-e', "process.stdout.write('X'.repeat(2048))"], cwd: root,
+      timeoutSeconds: 15, maxOutputBytes: 64, includeStdout: true, includeStderr: true, owner,
+    });
+    expect(start.ok).toBe(true);
+    await expect.poll(async () => {
+      const status = await store.snapshot('proof-truncated');
+      return status.ok ? status.value.state : 'error';
+    }, { timeout: 10000 }).toBe('completed');
+    expect(await store.snapshotForGoalEvidence('proof-truncated', owner.workspaceId)).toMatchObject({
+      ok: false, error: { code: 'INVALID_INPUT' },
+    });
+  }, 15000);
+
   it('treats an exited POSIX zombie as terminated without trusting a reused live PID', () => {
     expect(parsePosixProcessProbe('Wed Sep  9 14:58:14 2026 Z+')).toEqual({ state: 'gone' });
     expect(parsePosixProcessProbe('Wed Sep  9 14:58:14 2026 Ssl')).toMatchObject({

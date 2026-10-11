@@ -147,6 +147,35 @@ describe('RuntimeEngineeringEvidenceVerifier', () => {
     }, 'exact_sha_ci')).resolves.toBe(false);
   });
 
+  it('uses explicit bounded terminal proof for CI and platform checks without using liveness stdout', async () => {
+    const commit = 'cbb9ac40cc6d1acfd0f66a0a2d62c25a8f3a1264';
+    const ciCommand = 'gh run view 36568935961 --json "headSha,status,conclusion"';
+    const platformCommand = 'gh run view 36568935961 --json "headSha,status,conclusion,jobs"';
+    const statusForGoalLiveness = vi.fn(async () => ok({ state: 'completed', exit_code: 0 }));
+    const statusForGoalEvidence = vi.fn(async (_ws: string, taskId: string) => ok({
+      state: 'completed', exit_code: 0,
+      command_fingerprint: engineeringCommandFingerprint(taskId === 'ci' ? ciCommand : platformCommand),
+      stdout: JSON.stringify({
+        headSha: commit, status: 'completed', conclusion: 'success',
+        jobs: ['Windows', 'macOS', 'Linux'].map((name) => ({
+          name: `Native Platform Contract (${name})`, status: 'completed', conclusion: 'success',
+        })),
+      }),
+    }));
+    const verifier = new RuntimeEngineeringEvidenceVerifier({
+      shell: { statusForGoalLiveness, statusForGoalEvidence },
+      sourceState: async (): Promise<EngineeringSourceState> => ({ commit, clean: true }),
+    });
+    const base = { source: 'host_observed' as const, workspaceId: 'workspace-1',
+      observedAt: '2026-10-11T00:00:00Z', exitCode: 0, commit, conclusion: 'success' };
+    await expect(verifier.verify('workspace-1', { ...base, runId: 'ci', command: ciCommand }, 'exact_sha_ci')).resolves.toBe(true);
+    await expect(verifier.verify('workspace-1', { ...base, runId: 'platform', command: platformCommand }, 'cross_platform')).resolves.toBe(true);
+    expect(statusForGoalEvidence).toHaveBeenCalledTimes(2);
+    expect(statusForGoalLiveness).not.toHaveBeenCalled();
+    await expect(verifier.verify('workspace-1', { ...base, runId: 'ci', command: ciCommand,
+      commit: 'f'.repeat(40) }, 'exact_sha_ci')).resolves.toBe(false);
+  });
+
   it('accepts a fresh generic package artifact from the exact durable shell receipt and rejects stale or missing artifacts', async () => {
     const commit = 'cbb9ac40cc6d1acfd0f66a0a2d62c25a8f3a1264';
     const command = 'corepack pnpm@10.15.0 desktop:pack:windows';

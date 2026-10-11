@@ -75,6 +75,7 @@ interface DurableWorkerSpec {
 const METADATA_FILENAME = 'task.json';
 const STDOUT_FILENAME = 'stdout.log';
 const STDERR_FILENAME = 'stderr.log';
+const MAX_GOAL_EVIDENCE_STDOUT_BYTES = 256 * 1024;
 const SPEC_FILENAME = 'spec.json';
 const WORKER_PID_FILENAME = 'worker.pid';
 const WORKER_STARTED_FILENAME = 'worker.started';
@@ -323,6 +324,38 @@ export class DurableShellTaskStore {
     // Goal liveness/resource probes need identity and state, not entire retained
     // stdout/stderr. Avoid rereading large logs on each 15-second sample.
     return ok({ ...await this.snapshotFromMetadata(reconciled, undefined, false), ...(reconciled.command_fingerprint === undefined ? {} : { command_fingerprint: reconciled.command_fingerprint }) });
+  }
+
+  /** Explicit bounded proof for a successfully completed task, never used during liveness polling. */
+  public async snapshotForGoalEvidence(taskId: string, workspaceId: string): Promise<Result<Record<string, unknown>>> {
+    const metadata = await this.readMetadata(taskId);
+    if (!metadata.ok) return metadata;
+    if (metadataOwner(metadata.value).workspaceId !== workspaceId) {
+      return err(appError('PERMISSION_DENIED', 'Task belongs to another or unknown workspace'));
+    }
+    const reconciled = await this.reconcile(metadata.value);
+    await this.releaseTerminalReservation(reconciled);
+    if (reconciled.state !== 'completed' || reconciled.exit_code !== 0 || !reconciled.include_stdout || reconciled.stdout_truncated === true) {
+      return err(appError('INVALID_INPUT', 'Engineering evidence requires complete stdout from a successful terminal task'));
+    }
+    const filename = path.join(this.taskDirectory(taskId), STDOUT_FILENAME);
+    let size: number;
+    try {
+      const handle = await open(filename, 'r');
+      try { size = (await handle.stat()).size; } finally { await handle.close(); }
+    } catch {
+      return err(appError('INVALID_INPUT', 'Engineering evidence stdout is unavailable'));
+    }
+    if (size <= 0 || size > MAX_GOAL_EVIDENCE_STDOUT_BYTES) {
+      return err(appError('INVALID_INPUT', 'Engineering evidence stdout exceeds the bounded proof limit'));
+    }
+    const stdout = await readBoundedText(filename, MAX_GOAL_EVIDENCE_STDOUT_BYTES);
+    if (stdout.length === 0) return err(appError('INVALID_INPUT', 'Engineering evidence stdout is unavailable'));
+    return ok({
+      ...await this.snapshotFromMetadata(reconciled, undefined, false),
+      stdout,
+      ...(reconciled.command_fingerprint === undefined ? {} : { command_fingerprint: reconciled.command_fingerprint }),
+    });
   }
 
   /** Trusted exact lookup for a reserved automation task. Legacy/no-digest rows fail closed. */
