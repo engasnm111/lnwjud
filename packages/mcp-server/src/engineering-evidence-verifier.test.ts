@@ -164,7 +164,7 @@ describe('RuntimeEngineeringEvidenceVerifier', () => {
     }));
     const verifier = new RuntimeEngineeringEvidenceVerifier({
       shell: { statusForGoalLiveness, statusForGoalEvidence },
-      sourceState: async () => ({ commit, clean: true }),
+      sourceState: async (): Promise<EngineeringSourceState> => ({ commit, clean: true }),
     });
     const base = { source: 'host_observed' as const, workspaceId: 'workspace-1',
       observedAt: '2026-10-11T00:00:00Z', exitCode: 0, commit, conclusion: 'success' };
