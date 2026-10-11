@@ -53,7 +53,13 @@
 
 ## Current published version: v5.8.2
 
-## Current source version: v5.8.2
+## Current source version: v5.8.3
+
+### What's new in v5.8.3 (development preview; not yet published)
+
+- **Doctor MCP history and Results:** Improved readable tables, status indicators, and per-row / full-result JSON copy buttons retaining every recorded field.
+- **Doctor Resources:** Tracked Goal tasks remain visible even when CPU/RAM cannot be measured; show ownership and why cancellation is unavailable. Only verified active owned blocking jobs can request native-approved cancellation.
+- **ภาษาไทย:** ตาราง Doctor อ่านง่ายขึ้น คัดลอกรายละเอียดแบบ JSON ได้ครบ ทั้งรายรายการและทั้งชุด; Task ที่ติดตามอยู่ไม่หายไปเพียงเพราะไม่มีค่า CPU/RAM และแสดงสาเหตุที่ยกเลิกไม่ได้อย่างชัดเจน
 
 ### What's new in v5.8.2
 

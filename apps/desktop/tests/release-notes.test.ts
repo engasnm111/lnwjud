@@ -12,6 +12,7 @@ describe('release notes registry', () => {
   });
 
   it('shows all installed v5.8 patch notes newest-first without leaking v5.7 or later minors', () => {
+    expect(releaseNotesForSeries('5.8.3').map((note) => note.version)).toEqual(['5.8.3', '5.8.2', '5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.2').map((note) => note.version)).toEqual(['5.8.2', '5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.1').map((note) => note.version)).toEqual(['5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.0').map((note) => note.version)).toEqual(['5.8.0']);

@@ -1,4 +1,5 @@
 import { ActionButton, FilterBar } from '../ui/UiPrimitives.js';
+import { DiagnosticCopyButton } from '../ui/DiagnosticCopyButton.js';
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { CallHistoryPage, CallHistoryRequest, DoctorGoalOption, ToolCatalogItem, UiLocale } from '@lnwjud/ipc-contracts';
 import { v580Strings } from '../../i18n/v580-copy.js';
@@ -82,10 +83,16 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
     {busy ? <p role="status" aria-live="polite" className="ui-loading-status">{copy.loading}…</p> : null}
     {error ? <p role="alert">{error}</p> : null}
     {page ? <>
-      <p role="status">{copy.coverage}: {page.coverage}. {copy.truncated}: {String(page.truncated)}</p>
-      <p>{copy.completed}: {page.totals.completedCount}. {copy.incomplete}: {page.totals.incompleteCount}.
-      Server p50/p95: {page.totals.serverP50Ms ?? 'unknown'} / {page.totals.serverP95Ms ?? 'unknown'} ms
-      ({page.totals.serverSampleCount} samples).</p>
+      <div className="diagnostics-section-header">
+        <div className="diagnostics-metrics">
+          <div><span>{copy.completed}</span><strong>{page.totals.completedCount}</strong></div>
+          <div><span>{copy.incomplete}</span><strong>{page.totals.incompleteCount}</strong></div>
+          <div><span>Server p50 / p95</span><strong>{page.totals.serverP50Ms ?? '—'} / {page.totals.serverP95Ms ?? '—'} ms</strong></div>
+          <div><span>{copy.coverage}</span><strong>{page.coverage}{page.truncated ? ' · '+copy.truncated : ''}</strong></div>
+        </div>
+        <DiagnosticCopyButton details={{...page, filters:{workspaceId:props.workspaceId,goalId,toolName,transport}}}
+          label={copy.copyAll} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} />
+      </div>
       {page.items.length === 0 ? <div className="diagnostics-history-empty" role="status">
         <strong>{copy.noItems}</strong>
         <p>{copy.noTelemetryReason}</p>
@@ -93,13 +100,16 @@ export function CallHistoryPanel(props: { readonly workspaceId: string | null; r
           setGoalId(''); setToolName(''); setTransport(''); setPage(null); setCursor(null);
         }}>{copy.clearFilters}</ActionButton> : null}
         <p className="hint">{copy.liveLogsNote}</p>
-      </div> : <div className="diagnostics-history-scroll"><table>
-        <thead><tr><th>{copy.at}</th><th>Tool</th><th>{copy.outcome}</th><th>Server ms</th><th>Tunnel ms</th><th>Goal</th></tr></thead>
+      </div> : <div className="diagnostics-history-scroll"><table className="diagnostics-data-table">
+        <thead><tr><th>{copy.at}</th><th>{copy.tool}</th><th>{copy.outcome}</th><th>Server ms</th><th>Tunnel ms</th><th>{copy.goal}</th><th>{copy.details}</th></tr></thead>
         <tbody>{page.items.map(item=><tr key={item.correlationKey}>
-          <td>{item.completedAt ? new Date(item.completedAt).toLocaleString(copy.dateLocale) : '-'}</td>
-          <td title={item.toolName}>{toolTitles.get(item.toolName) ?? item.toolName}</td><td>{item.outcome}</td>
-          <td>{item.serverMs ?? '-'}</td><td>{item.tunnelObservedMs ?? '-'}</td>
+          <td className="diagnostics-date">{item.completedAt ? new Date(item.completedAt).toLocaleString(copy.dateLocale) : '—'}</td>
+          <td className="diagnostics-tool" title={item.toolName}>{toolTitles.get(item.toolName) ?? item.toolName}<small>{item.toolName}</small></td>
+          <td><span className={`diagnostics-status diagnostics-status--${item.outcome === 'success' ? 'success' : item.outcome === 'failure' ? 'error' : 'neutral'}`}>{item.outcome}</span></td>
+          <td className="diagnostics-number">{item.serverMs ?? '—'}</td>
+          <td className="diagnostics-number">{item.tunnelObservedMs ?? '—'}</td>
           <td title={item.goalId ?? ''}>{item.goalId ? goalNames.get(item.goalId) ?? item.goalId.slice(0, 8) : copy.unattributed}</td>
+          <td><DiagnosticCopyButton details={item} label={copy.copyDetails} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} /></td>
         </tr>)}</tbody>
       </table></div>}
       {cursor ? <ActionButton type="button" disabled={busy} onClick={()=>{void load(cursor);}}>{copy.next}</ActionButton> : null}

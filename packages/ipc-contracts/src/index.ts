@@ -2,7 +2,7 @@ import type { WorkflowPrepareRequest, WorkflowTemplate, WorkflowDraft, CallHisto
 export type * from './workflow-contracts.js';
 
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.8.2';
+export const APP_VERSION = '5.8.3';
 
 export const ipcChannels = {
   listWorkspaces: 'lnwjud:list-workspaces',

@@ -1,4 +1,5 @@
 import { ActionButton, FilterBar } from '../ui/UiPrimitives.js';
+import { DiagnosticCopyButton } from '../ui/DiagnosticCopyButton.js';
 import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import type { DoctorGoalOption, TaskResultSummary, UiLocale } from '@lnwjud/ipc-contracts';
@@ -91,6 +92,10 @@ export function GoalResultsPanel(props: {
     </p> : null}
     {busy ? <p role="status" className="ui-loading-status">{copy.loading}…</p> : null}
     {result ? <div className="diagnostics-result-detail" aria-live="polite">
+      <div className="diagnostics-section-header">
+        <h3>{copy.progressTitle}</h3>
+        <DiagnosticCopyButton details={result} label={copy.copyAll} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} />
+      </div>
       <div className="diagnostics-evidence-summary">
         <div><small>{copy.status}</small><strong>{result.status}</strong></div>
         <div><small>{copy.coverage}</small><strong>{result.evidenceCoverage}</strong></div>
@@ -126,21 +131,24 @@ export function GoalResultsPanel(props: {
       <div className="diagnostics-result-section">
         <h3>{copy.artifacts} ({result.artifacts.length})</h3>
         {result.artifacts.length === 0 ? <p className="hint">{copy.noArtifacts}</p>
-          : <div className="diagnostics-history-scroll"><table><thead><tr>
-            <th>{copy.file}</th><th>{copy.kind}</th><th>{copy.verification}</th><th>SHA-256</th>
+          : <div className="diagnostics-history-scroll"><table className="diagnostics-data-table"><thead><tr>
+            <th>{copy.file}</th><th>{copy.kind}</th><th>{copy.verification}</th><th>SHA-256</th><th>{copy.details}</th>
           </tr></thead><tbody>{result.artifacts.map((item,i) => <tr key={item.path+i}>
-            <td>{item.path}</td><td>{item.kind}</td><td>{item.verification}</td>
-            <td><code title={item.sha256 ?? ''}>{item.sha256 ?? 'unknown'}</code></td>
+            <td className="diagnostics-identifier" title={item.path}>{item.path}</td><td>{item.kind}</td>
+            <td><span className={`diagnostics-status diagnostics-status--${item.verification === 'verified' ? 'success' : item.verification === 'failed' ? 'error' : 'neutral'}`}>{item.verification}</span></td>
+            <td className="diagnostics-identifier"><code title={item.sha256 ?? ''}>{item.sha256 ?? '—'}</code></td>
+            <td><DiagnosticCopyButton details={item} label={copy.copyDetails} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} /></td>
           </tr>)}</tbody></table></div>}
       </div>
       <div className="diagnostics-result-section">
         <h3>{copy.changes} ({result.observedChanges.length})</h3>
         {result.observedChanges.length === 0 ? <p className="hint">{copy.noChanges}</p>
-          : <div className="diagnostics-history-scroll"><table><thead><tr>
-            <th>{copy.at}</th><th>{copy.action}</th><th>{copy.path}</th>
+          : <div className="diagnostics-history-scroll"><table className="diagnostics-data-table"><thead><tr>
+            <th>{copy.at}</th><th>{copy.action}</th><th>{copy.path}</th><th>{copy.details}</th>
           </tr></thead><tbody>{result.observedChanges.map((item) => <tr key={item.operationId}>
-            <td>{new Date(item.observedAt).toLocaleString(copy.dateLocale)}</td>
-            <td>{item.action}</td><td>{item.path}</td>
+            <td className="diagnostics-date">{new Date(item.observedAt).toLocaleString(copy.dateLocale)}</td>
+            <td>{item.action}</td><td className="diagnostics-identifier">{item.path}</td>
+            <td><DiagnosticCopyButton details={item} label={copy.copyDetails} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} /></td>
           </tr>)}</tbody></table></div>}
       </div>
       <div className="diagnostics-result-section">
@@ -148,7 +156,8 @@ export function GoalResultsPanel(props: {
         {result.checks.length === 0 ? <p className="hint">
           {copy.noChecks}
         </p> : <ul className="diagnostics-result-checks">{result.checks.map((item,i) =>
-          <li key={item.name+i}><span>{item.name}</span><strong>{item.status}</strong></li>)}</ul>}
+          <li key={item.name+i}><span>{item.name}</span><span className="diagnostics-inline-actions"><strong>{item.status}</strong><DiagnosticCopyButton
+              details={item} label={copy.copyDetails} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} /></span></li>)}</ul>}
       </div>
       <div className="diagnostics-result-section">
         <h3>{copy.blockersTitle} ({result.blockers.length})</h3>

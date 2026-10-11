@@ -1,4 +1,5 @@
 import { ActionButton } from '../ui/UiPrimitives.js';
+import { DiagnosticCopyButton } from '../ui/DiagnosticCopyButton.js';
 import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 import { useEffect, useState, type ReactElement } from 'react';
 import type { DoctorGoalOption, ResourceSnapshot, UiLocale } from '@lnwjud/ipc-contracts';
@@ -11,6 +12,10 @@ export function measurableGoalIds(snapshot: ResourceSnapshot | null): ReadonlySe
   return new Set((snapshot?.resources ?? [])
     .filter((row) => row.goalId && (row.workingSetBytes !== undefined || row.cpuPercent !== undefined))
     .map((row) => row.goalId!));
+}
+
+export function trackedGoalIds(snapshot: ResourceSnapshot | null): ReadonlySet<string> {
+  return new Set((snapshot?.resources ?? []).flatMap(row => row.goalId ? [row.goalId] : []));
 }
 
 export function ResourcePanel(props: { readonly locale: UiLocale; readonly workspaceId: string | null }): ReactElement {
@@ -59,15 +64,14 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
   }, [props.workspaceId]);
 
   useEffect(() => {
-    if (goalId && snapshot !== null && !measurableGoalIds(snapshot).has(goalId)) setGoalId('');
+    if (goalId && snapshot !== null && !trackedGoalIds(snapshot).has(goalId)) setGoalId('');
   }, [goalId, snapshot]);
 
-  const eligibleIds = measurableGoalIds(snapshot);
+  const eligibleIds = trackedGoalIds(snapshot);
   const eligibleGoals = goals.filter((goal) => eligibleIds.has(goal.goalId));
   const selectedGoal = eligibleGoals.find((goal) => goal.goalId === goalId);
-  const measuredRows = (snapshot?.resources ?? []).filter((row) =>
-    row.workingSetBytes !== undefined || row.cpuPercent !== undefined);
-  const visibleRows = measuredRows.filter((row) => !goalId || row.goalId === goalId);
+  const visibleRows = (snapshot?.resources ?? []).filter((row) => !goalId || row.goalId === goalId);
+  const measuredRows = visibleRows.filter((row) => row.workingSetBytes !== undefined || row.cpuPercent !== undefined);
   const memoryTotal = visibleRows.reduce((total, row) => total + (row.workingSetBytes ?? 0), 0);
   const contextMeasured = snapshot ? Object.values(snapshot.context).some((value) => value !== null) : false;
 
@@ -81,7 +85,7 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
       ]);
       setGoals(availableGoals);
       setSnapshot(result);
-      if (goalId && !measurableGoalIds(result).has(goalId)) setGoalId('');
+      if (goalId && !trackedGoalIds(result).has(goalId)) setGoalId('');
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally { setLoading(false); }
@@ -120,9 +124,14 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
             ...eligibleGoals.map((goal) => ({ value: goal.goalId,
               label: `${goal.goalKey} · ${goal.objective || goal.status} (${goal.goalId.slice(0, 8)})` }))]} />
       </div> : <p className="hint">{loading ? copy.loading : copy.noMeasuredGoals}</p>}
-      <ActionButton type="button" disabled={!props.workspaceId || loading} onClick={() => { void load(); }}>
-        {loading ? copy.loading : copy.refresh}
-      </ActionButton>
+      <div className="diagnostics-inline-actions">
+        <ActionButton type="button" disabled={!props.workspaceId || loading} onClick={() => { void load(); }}>
+          {loading ? copy.loading : copy.refresh}
+        </ActionButton>
+        {snapshot ? <DiagnosticCopyButton key={snapshot.sampledAt + goalId}
+          details={{...snapshot,resources:visibleRows,selectedGoalId:goalId || null}}
+          label={copy.copyAll} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} /> : null}
+      </div>
     </div>
     {!props.workspaceId ? <p role="status">{copy.noWorkspace}</p> : null}
     {error ? <p role="alert">{error}</p> : null}
@@ -141,7 +150,8 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
         <p className="hint">{copy.desktopMainNote}</p>
       </div> : null}
       <dl className="diagnostics-resource-summary">
-        <div><dt>{copy.measuredTasks}</dt><dd>{visibleRows.length.toLocaleString(copy.dateLocale)}</dd></div>
+        <div><dt>{copy.measuredTasks}</dt><dd>{measuredRows.length.toLocaleString(copy.dateLocale)}</dd></div>
+        <div><dt>{copy.trackedTasks}</dt><dd>{visibleRows.length.toLocaleString(copy.dateLocale)}</dd></div>
         <div><dt>{copy.memory}</dt><dd>{memory(visibleRows.some((row) => row.workingSetBytes !== undefined) ? memoryTotal : undefined)}</dd></div>
         <div><dt>{copy.ownedTasks}</dt><dd>{visibleRows.filter((row) => row.ownership === 'owned').length.toLocaleString(copy.dateLocale)}</dd></div>
       </dl>
@@ -153,19 +163,28 @@ export function ResourcePanel(props: { readonly locale: UiLocale; readonly works
           <div><dt>{copy.ledger}</dt><dd>{measured(snapshot.context.ledgerHits, 'hits')}</dd></div>
         </dl>
       </div> : <p className="hint">{copy.noCounters}</p>}
-      {visibleRows.length === 0 ? <p className="hint">{copy.noMeasuredTasks}</p> :
-        <table><thead><tr><th>{copy.task}</th><th>{copy.provider}</th><th>{copy.owner}</th><th>{copy.memory}</th><th>{copy.cpuAverage}</th><th>{copy.action}</th></tr></thead>
-          <tbody>{visibleRows.map((row, i) => <tr key={`${row.goalId}-${row.provider}-${row.taskId ?? i}`}>
-            <td>{row.taskId ?? '—'}</td><td>{row.provider}</td><td>{row.ownership}</td>
-            <td>{memory(row.workingSetBytes)}</td><td>{measured(row.cpuPercent, '%')}</td>
-            <td>{row.canCancel && row.goalId && row.taskId && ['process', 'codex', 'shell'].includes(row.provider)
-              ? <ActionButton type="button" disabled={cancelling !== null} onClick={() => { void cancelOwned(row); }}>
-                  {cancelling === row.taskId ? copy.cancelling : copy.cancel}
-                </ActionButton> : '—'}</td>
-          </tr>)}</tbody>
-        </table>}
+      {visibleRows.length === 0 ? <p className="hint">{copy.noTrackedForGoal}</p> :
+        <div className="diagnostics-history-scroll"><table className="diagnostics-data-table"><thead><tr>
+          <th>{copy.task}</th><th>{copy.provider}</th><th>{copy.owner}</th>
+          <th>{copy.memory}</th><th>{copy.cpuAverage}</th><th>{copy.action}</th><th>{copy.details}</th>
+        </tr></thead><tbody>{visibleRows.map((row, i) => <tr key={`${row.goalId}-${row.provider}-${row.taskId ?? i}`}>
+          <td className="diagnostics-identifier" title={row.taskId ?? ''}>{row.taskId ?? '—'}</td>
+          <td>{row.provider}</td>
+          <td><span className={`diagnostics-status diagnostics-status--${row.ownership === 'owned' ? 'success' : 'neutral'}`}>
+            {row.ownership === 'owned' ? copy.ownerVerified : row.ownership === 'shared' ? copy.ownerShared : copy.ownerUnknown}
+          </span></td>
+          <td className="diagnostics-number">{memory(row.workingSetBytes)}</td>
+          <td className="diagnostics-number">{measured(row.cpuPercent, '%')}</td>
+          <td>{row.canCancel && row.goalId && row.taskId && ['process','codex','shell'].includes(row.provider)
+            ? <ActionButton type="button" disabled={cancelling !== null} onClick={() => { void cancelOwned(row); }}>
+                {cancelling === row.taskId ? copy.cancelling : copy.cancel}
+              </ActionButton>
+            : <span className="diagnostics-muted" title={copy.cancelUnavailable}>{copy.cancelUnavailable}</span>}</td>
+          <td><DiagnosticCopyButton details={{...row, sampledAt:snapshot.sampledAt, workspaceId:snapshot.workspaceId}}
+            label={copy.copyDetails} copiedLabel={copy.copied} errorLabel={copy.copyError} onError={setError} /></td>
+        </tr>)}</tbody></table></div>}
       <p className="hint">{copy.cpuAverageNote}</p>
-      <p>{copy.note}</p>
+      <p className="hint">{copy.note}</p>
     </div> : null}
   </section>;
 }

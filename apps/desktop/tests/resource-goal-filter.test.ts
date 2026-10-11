@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { measurableGoalIds } from '../src/renderer/features/resources/ResourcePanel.js';
+import { measurableGoalIds, trackedGoalIds } from '../src/renderer/features/resources/ResourcePanel.js';
 import type { ResourceSnapshot } from '@lnwjud/ipc-contracts';
 
 describe('Resources Goal filter', () => {
@@ -15,5 +15,7 @@ describe('Resources Goal filter', () => {
     } satisfies ResourceSnapshot;
     expect([...measurableGoalIds(snapshot)]).toEqual(['goal-measured-zero', 'goal-measured-cpu']);
     expect(measurableGoalIds(null).size).toBe(0);
+    expect([...trackedGoalIds(snapshot)]).toEqual(['goal-unknown','goal-measured-zero','goal-measured-cpu']);
+    expect(trackedGoalIds(null).size).toBe(0);
   });
 });

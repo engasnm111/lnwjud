@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/ipc-contracts",
-  "version": "5.8.2",
+  "version": "5.8.3",
   "private": true,
   "type": "module",
   "exports": {
