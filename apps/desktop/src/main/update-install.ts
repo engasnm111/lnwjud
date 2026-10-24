@@ -24,6 +24,21 @@ export async function confirmTunnelStopForUpdate(options: UpdateTunnelStopConfir
   return options.confirmStop();
 }
 
+/** Revalidate after a potentially long backup, immediately before native install. */
+export async function silentInstallStillSafe(options: {
+  readonly enabled: () => boolean;
+  readonly activeCalls: () => number;
+  readonly tunnelStopped: () => Promise<boolean>;
+}): Promise<boolean> {
+  if (!options.enabled() || options.activeCalls() !== 0) return false;
+  try {
+    if (!await options.tunnelStopped()) return false;
+  } catch {
+    return false;
+  }
+  return options.enabled() && options.activeCalls() === 0;
+}
+
 export interface UpdateReadyDialogOptions {
   readonly type: 'info';
   readonly title: string;
@@ -38,9 +53,7 @@ export interface UpdateInstallCoordinatorOptions {
   readonly activityRevision?: () => number;
   readonly tunnelRunning?: () => Promise<boolean | 'unverifiable'>;
   readonly sharedActivitySnapshot?: () => Promise<UpdateSharedActivitySnapshot>;
-  readonly install: () => void;
-  /** Optional bounded grace period after explicit install confirmation. When reached, proceed even if stale activity never drains. */
-  readonly maxWaitMs?: number;
+  readonly install: (unattended: boolean) => void;
   readonly quietPeriodMs?: number;
   readonly pollIntervalMs?: number;
 }
@@ -104,11 +117,11 @@ export class UpdateInstallCoordinator {
   private readonly quietPeriodMs: number;
   private readonly pollIntervalMs: number;
   private pending = false;
+  private unattended = false;
   private shutdown = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quietUntil = 0;
   private quietRevision = '';
-  private forceInstallAt = 0;
   private evaluating = false;
 
   public constructor(private readonly options: UpdateInstallCoordinatorOptions) {
@@ -116,20 +129,25 @@ export class UpdateInstallCoordinator {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   }
 
-  public requestInstall(): void {
+  public requestInstall(unattended = false): void {
     if (this.shutdown || this.pending) return;
     this.pending = true;
-    const maxWaitMs = this.options.maxWaitMs;
-    this.forceInstallAt = maxWaitMs !== undefined && Number.isFinite(maxWaitMs) && maxWaitMs >= 0
-      ? Date.now() + maxWaitMs
-      : 0;
+    this.unattended = unattended;
     void this.evaluate();
+  }
+
+  /** Disabling silent updates withdraws the unattended request without disabling manual installs. */
+  public cancelUnattended(): void {
+    if (!this.unattended) return;
+    this.pending = false;
+    this.unattended = false;
+    this.clearTimer();
   }
 
   public cancel(): void {
     this.shutdown = true;
     this.pending = false;
-    this.forceInstallAt = 0;
+    this.unattended = false;
     this.clearTimer();
   }
 
@@ -139,7 +157,6 @@ export class UpdateInstallCoordinator {
 
   private async evaluate(): Promise<void> {
     if (!this.pending || this.shutdown || this.evaluating) return;
-    if (this.maybeForceInstall()) return;
     this.evaluating = true;
     let activity: { readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string };
     try {
@@ -160,7 +177,6 @@ export class UpdateInstallCoordinator {
 
   private async waitForQuietPeriod(): Promise<void> {
     if (!this.pending || this.shutdown) return;
-    if (this.maybeForceInstall()) return;
     // Poll the existing tracker throughout the quiet period so a short call
     // that starts and ends inside the interval restarts the quiet clock.
     const activity = await this.observeActivity();
@@ -172,7 +188,7 @@ export class UpdateInstallCoordinator {
     const remaining = this.quietUntil - Date.now();
     if (remaining <= 0) {
       this.pending = false;
-      this.options.install();
+      this.options.install(this.unattended);
       return;
     }
     this.schedule(Math.min(this.pollIntervalMs, remaining), () => { void this.waitForQuietPeriod(); });
@@ -189,6 +205,11 @@ export class UpdateInstallCoordinator {
 
     const afterTunnel = this.sampleLocalActivity();
     if (!sameLocalActivity(initialLocal, afterTunnel)) return staleLocalActivity(afterTunnel);
+    // Unattended restarts never tear down a live or unverifiable Secure Tunnel.
+    // Manual installation retains its separate user-confirmed tunnel-stop flow.
+    if (this.unattended && tunnelState !== false) {
+      return { trustworthy: false, activeCount: afterTunnel.activeCount, revision: `${localRevisionKey(afterTunnel)}:silent:tunnel-not-stopped` };
+    }
     if (tunnelState === false) {
       return { trustworthy: true, activeCount: afterTunnel.activeCount, revision: localRevisionKey(afterTunnel) };
     }
@@ -209,15 +230,6 @@ export class UpdateInstallCoordinator {
 
   private sampleLocalActivity(): LocalActivityObservation {
     return { activeCount: this.options.activeCallCount(), revision: this.options.activityRevision?.() ?? 0 };
-  }
-
-  private maybeForceInstall(): boolean {
-    if (!this.pending || this.shutdown || this.forceInstallAt <= 0 || Date.now() < this.forceInstallAt) return false;
-    this.pending = false;
-    this.forceInstallAt = 0;
-    this.clearTimer();
-    this.options.install();
-    return true;
   }
 
   private schedule(delayMs: number, action: () => void): void {

@@ -90,7 +90,7 @@ export class WslCapabilityBackend implements CapabilityBackend {
     if (options.allowedRoots.length === 0) throw new Error('At least one WSL workspace root is required');
     this.platform = options.platform ?? process.platform;
     this.runner = options.runner;
-    this.allowedRoots = options.allowedRoots.map((root) => path.win32.resolve(root));
+    this.allowedRoots = options.allowedRoots;
     this.allowedRootsProvider = options.allowedRootsProvider;
     this.availabilityProbe = options.availabilityProbe;
     this.defaultDistro = normalizeDistro(options.defaultDistro ?? 'default') ?? 'default';
@@ -114,7 +114,8 @@ export class WslCapabilityBackend implements CapabilityBackend {
     if (taskOwner === undefined) return err(appError('PROCESS_NOT_FOUND', 'WSL task was not found'));
     if (taskOwner.workspaceId !== parsed.value.workspaceId) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another workspace'));
     if (taskOwner.distro !== parsed.value.distro) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another distribution'));
-    if (!capabilityTaskOwnerMatches(taskOwner.owner, parsed.value.owner)) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another client session'));
+    const authorized = capabilityTaskOwnerMatches(taskOwner.owner, parsed.value.owner);
+    if (!authorized) return err(appError('PERMISSION_DENIED', 'WSL task belongs to another client session'));
     if (parsed.value.operation === 'cancel' && !isApplicationAuthorized(authorization, parsed.value.userConfirmed)) return err(appError('PERMISSION_REQUIRED', 'Cancelling a WSL task requires explicit user confirmation'));
 
     const forwarded = this.forwardTaskRequest(parsed.value);
@@ -135,19 +136,22 @@ export class WslCapabilityBackend implements CapabilityBackend {
 
     const requestedCwd = normalizeWslExecCwd(request.cwd, request.distro);
     if (!requestedCwd.ok) return requestedCwd;
-    const cwd = await this.resolveWorkspaceCwd(requestedCwd.value.windowsCwd, request.activeWorkspaceRoot, authorization);
+    const cwd = await resolveScopedWslPath({
+      requestedPath: requestedCwd.value,
+      activeRoot: request.activeWorkspaceRoot,
+      roots: this.allowedRootsProvider === undefined ? this.allowedRoots : await this.allowedRootsProvider(),
+      distro: request.distro,
+      authorization,
+      purpose: 'execution',
+    });
     if (!cwd.ok) return cwd;
-    const linuxCwd = requestedCwd.value.linuxCwd === undefined
-      ? windowsToWslPath(cwd.value)
-      : ok(requestedCwd.value.linuxCwd);
-    if (!linuxCwd.ok) return linuxCwd;
     if (request.dryRun) {
       return ok({
         dry_run: true,
         backend: 'wsl',
         workspace_id: request.workspaceId,
         distro: request.distro,
-        linux_cwd: linuxCwd.value,
+        linux_cwd: cwd.value.linuxPath,
         executable: request.executable,
         arguments: [...request.arguments],
       });
@@ -155,8 +159,8 @@ export class WslCapabilityBackend implements CapabilityBackend {
     const forwarded = {
       operation: 'run',
       executable: 'wsl.exe',
-      arguments: buildWslArguments(request, linuxCwd.value),
-      cwd: cwd.value,
+      arguments: buildWslArguments(request, cwd.value.linuxPath),
+      cwd: cwd.value.windowsPath,
       execution: request.execution,
       privilege: 'user',
       workspace_id: request.workspaceId,
@@ -172,7 +176,7 @@ export class WslCapabilityBackend implements CapabilityBackend {
     const result = await this.runner.execute(forwarded, signal, authorization);
     const annotated = annotateResult(result, {
       ...this.metadata(request.workspaceId, request.distro),
-      linux_cwd: linuxCwd.value,
+      linux_cwd: cwd.value.linuxPath,
     });
     if (annotated.ok && isRecord(annotated.value) && typeof annotated.value.task_id === 'string') {
       this.taskOwners.set(annotated.value.task_id, { workspaceId: request.workspaceId!, distro: request.distro, owner: request.owner });
@@ -218,73 +222,6 @@ export class WslCapabilityBackend implements CapabilityBackend {
     return { backend: 'wsl', distro, ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }) };
   }
 
-  private async resolveWorkspaceCwd(
-    requestedCwd: string | undefined,
-    activeWorkspaceRoot: string | undefined,
-    authorization?: InvocationAuthorization,
-  ): Promise<Result<string>> {
-    if (requestedCwd !== undefined && !path.win32.isAbsolute(requestedCwd) && activeWorkspaceRoot === undefined) {
-      return err(appError('INVALID_INPUT', 'WSL cwd must be an absolute Windows path'));
-    }
-    if (isFullBypassAuthorization(authorization) && requestedCwd !== undefined && path.win32.isAbsolute(requestedCwd)) {
-      try {
-        const canonical = await realpath(requestedCwd);
-        if (!(await stat(canonical)).isDirectory()) return err(appError('INVALID_INPUT', 'WSL cwd must be a directory'));
-        return ok(canonical);
-      } catch {
-        return err(appError('FILE_NOT_FOUND', 'WSL cwd was not found'));
-      }
-    }
-    const configuredRoots = this.allowedRootsProvider === undefined ? this.allowedRoots : (await this.allowedRootsProvider()).map((root) => path.win32.resolve(root));
-    if (configuredRoots.length === 0) return err(appError('FILE_NOT_FOUND', 'No registered workspace root is available'));
-    if (activeWorkspaceRoot === undefined) {
-      const candidate = path.win32.resolve(requestedCwd ?? configuredRoots[0]!);
-      if (!configuredRoots.some((root) => isWithinWindowsRoot(root, candidate))) {
-        return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL cwd is outside registered workspace roots'));
-      }
-      return ok(candidate);
-    }
-    if (!path.win32.isAbsolute(activeWorkspaceRoot)) {
-      return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is invalid'));
-    }
-    const canonicalRoots: string[] = [];
-    for (const root of configuredRoots) {
-      try {
-        const canonicalRoot = await realpath(root);
-        if ((await stat(canonicalRoot)).isDirectory()) canonicalRoots.push(canonicalRoot);
-      } catch {
-        continue;
-      }
-    }
-    if (canonicalRoots.length === 0) return err(appError('FILE_NOT_FOUND', 'No registered workspace root is available'));
-    let canonicalActiveRoot: string;
-    try {
-      canonicalActiveRoot = await realpath(activeWorkspaceRoot);
-      if (!(await stat(canonicalActiveRoot)).isDirectory()) return err(appError('INVALID_INPUT', 'Host active workspace root must be a directory'));
-    } catch {
-      return err(appError('FILE_NOT_FOUND', 'Host active workspace root was not found'));
-    }
-    if (!canonicalRoots.some((root) => isWithinWindowsRoot(root, canonicalActiveRoot))) {
-      return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is outside registered workspace roots'));
-    }
-    const candidate = requestedCwd === undefined
-      ? canonicalActiveRoot
-      : path.win32.resolve(canonicalActiveRoot, requestedCwd);
-    let canonicalCandidate: string;
-    try {
-      canonicalCandidate = await realpath(candidate);
-      if (!(await stat(canonicalCandidate)).isDirectory()) return err(appError('INVALID_INPUT', 'WSL cwd must be a directory'));
-    } catch {
-      return err(appError('FILE_NOT_FOUND', 'WSL cwd was not found'));
-    }
-    if (!canonicalRoots.some((root) => isWithinWindowsRoot(root, canonicalCandidate))) {
-      return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL cwd is outside registered workspace roots'));
-    }
-    if (!isWithinWindowsRoot(canonicalActiveRoot, canonicalCandidate)) {
-      return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL cwd is outside the host active workspace'));
-    }
-    return ok(canonicalCandidate);
-  }
 }
 
 export class WslFilesystemCapabilityBackend implements CapabilityBackend {
@@ -297,7 +234,7 @@ export class WslFilesystemCapabilityBackend implements CapabilityBackend {
   public constructor(options: WslFilesystemCapabilityOptions) {
     if (options.allowedRoots.length === 0) throw new Error('At least one WSL filesystem root is required');
     this.platform = options.platform ?? process.platform;
-    this.allowedRoots = options.allowedRoots.map((root) => path.win32.resolve(root));
+    this.allowedRoots = options.allowedRoots;
     this.allowedRootsProvider = options.allowedRootsProvider;
     this.availabilityProbe = options.availabilityProbe;
     this.defaultDistro = normalizeDistro(options.defaultDistro ?? 'default') ?? 'default';
@@ -328,13 +265,19 @@ export class WslFilesystemCapabilityBackend implements CapabilityBackend {
     if (distro === undefined) return err(appError('INVALID_INPUT', 'WSL distribution is invalid'));
 
     if (direction === 'windows_to_wsl') {
-      const candidate = path.win32.resolve(rawPath);
-      const roots = this.allowedRootsProvider === undefined ? this.allowedRoots : (await this.allowedRootsProvider()).map((root) => path.win32.resolve(root));
-      if (!isFullBypassAuthorization(authorization) && !roots.some((root) => isWithinWindowsRoot(root, candidate))) return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL filesystem path is outside registered workspace roots'));
-      const translated = windowsToWslPath(candidate);
-      if (!translated.ok) return translated;
-      if (operation === 'metadata') return this.windowsMetadata(workspaceId, candidate, translated.value, distro);
-      return ok({ workspace_id: workspaceId, distro, direction, path: translated.value, windows_path: candidate, raw_access: false });
+      const parsedPath = windowsToWslPath(rawPath, distro);
+      if (!parsedPath.ok) return parsedPath;
+      const candidate = await resolveScopedWslPath({
+        requestedPath: parsedPath.value.windowsPath,
+        activeRoot: readCapabilityActiveWorkspaceRoot(input),
+        roots: this.allowedRootsProvider === undefined ? this.allowedRoots : await this.allowedRootsProvider(),
+        distro,
+        authorization,
+        purpose: operation,
+      });
+      if (!candidate.ok) return candidate;
+      if (operation === 'metadata') return this.windowsMetadata(workspaceId, candidate.value.windowsPath, candidate.value.linuxPath, distro);
+      return ok({ workspace_id: workspaceId, distro, direction, path: candidate.value.linuxPath, windows_path: candidate.value.windowsPath, raw_access: false });
     }
 
     const translated = wslToWindowsPath(rawPath, distro);
@@ -418,16 +361,17 @@ function parseEnvironment(value: unknown): Result<Readonly<Record<string, string
   return ok(parsed);
 }
 
-function normalizeWslExecCwd(value: string | undefined, distro: string): Result<{ windowsCwd?: string; linuxCwd?: string }> {
-  if (value === undefined) return ok({});
-  if (!value.startsWith('/')) return ok({ windowsCwd: value });
-  if (value.includes('\0')) return err(appError('INVALID_INPUT', 'WSL cwd is invalid'));
-  const segments = value.split('/').filter((segment) => segment.length > 0 && segment !== '.');
-  if (segments.some((segment) => segment === '..')) return err(appError('INVALID_INPUT', 'WSL parent traversal is not allowed'));
-  const linuxCwd = `/${segments.join('/')}`;
-  const windowsCwd = wslToWindowsPath(linuxCwd, distro);
-  if (!windowsCwd.ok) return windowsCwd;
-  return ok({ windowsCwd: windowsCwd.value, linuxCwd });
+function normalizeWslExecCwd(value: string | undefined, distro: string): Result<string | undefined> {
+  if (value === undefined) return ok(undefined);
+  if (value.startsWith('/') && !value.startsWith('//')) return wslToWindowsPath(value, distro);
+  if (path.win32.isAbsolute(value)) {
+    const parsed = windowsToWslPath(value, distro);
+    return parsed.ok ? ok(parsed.value.windowsPath) : parsed;
+  }
+  if (value.includes('\0') || value.includes(':') || value.split(/[\\/]/).includes('..')) {
+    return err(appError('INVALID_INPUT', 'WSL cwd is invalid or contains parent traversal'));
+  }
+  return ok(value);
 }
 
 function buildWslArguments(request: WslRequest, linuxCwd: string): string[] {
@@ -446,32 +390,126 @@ function containsShellString(executable: string, args: readonly string[]): boole
   return args.some((argument) => SHELL_STRING_FLAGS.has(argument.toLowerCase()));
 }
 
-function windowsToWslPath(value: string): Result<string> {
-  const normalized = path.win32.normalize(value);
-  const match = /^([A-Za-z]):\\(.*)$/.exec(normalized);
-  if (match === null) return err(appError('INVALID_INPUT', 'Only drive-letter Windows paths can be mapped to WSL'));
-  const drive = match[1]!.toLowerCase();
-  const rest = match[2]!.replaceAll('\\', '/');
-  return ok(`/mnt/${drive}${rest.length === 0 ? '' : `/${rest}`}`);
+type WslPathIdentity =
+  | { readonly kind: 'drive'; readonly windowsPath: string; readonly linuxPath: string }
+  | { readonly kind: 'wsl_share'; readonly distro: string; readonly windowsPath: string; readonly linuxPath: string };
+
+function windowsToWslPath(value: string, distro: string): Result<WslPathIdentity> {
+  if (value.includes('\0') || value.split(/[\\/]/).includes('..')) {
+    return err(appError('INVALID_INPUT', 'WSL paths cannot contain NUL or parent traversal'));
+  }
+  const windowsPath = value.replaceAll('/', '\\');
+  const drive = /^([A-Za-z]):\\(.*)$/.exec(windowsPath);
+  if (drive !== null) {
+    const normalized = path.win32.normalize(windowsPath);
+    const suffix = normalized.slice(3).replaceAll('\\', '/').replace(/\/$/, '');
+    return ok({ kind: 'drive', windowsPath: normalized, linuxPath: `/mnt/${drive[1]!.toLowerCase()}${suffix ? `/${suffix}` : ''}` });
+  }
+  const share = /^\\\\(wsl\.localhost|wsl\$)\\([^\\]+)(?:\\(.*))?$/i.exec(windowsPath);
+  if (share === null || distro.toLowerCase() === 'default'
+    || normalizeDistro(share[2]!) === undefined || share[2]!.toLowerCase() !== distro.toLowerCase()) {
+    return err(appError('INVALID_INPUT', 'WSL paths require a drive letter or a WSL share matching the selected concrete distribution'));
+  }
+  const segments = (share[3] ?? '').split('\\').filter((segment) => segment !== '' && segment !== '.');
+  const linuxPath = `/${segments.join('/')}`;
+  return ok({ kind: 'wsl_share', distro, windowsPath: `\\\\wsl.localhost\\${distro}\\${segments.join('\\')}`, linuxPath });
 }
 
 function wslToWindowsPath(value: string, distro: string): Result<string> {
-  if (!value.startsWith('/') || value.includes('\0')) return err(appError('INVALID_INPUT', 'WSL path must be an absolute POSIX path'));
-  const segments = value.split('/').filter((segment) => segment.length > 0);
+  if (!value.startsWith('/') || value.startsWith('//') || value.includes('\0') || value.includes('\\')) return err(appError('INVALID_INPUT', 'WSL path must be an absolute POSIX path'));
+  const segments = value.split('/').filter((segment) => segment.length > 0 && segment !== '.');
   if (segments.some((segment) => segment === '..')) return err(appError('INVALID_INPUT', 'WSL parent traversal is not allowed'));
   const normalized = `/${segments.join('/')}`;
   const mount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(normalized);
   if (mount !== null) {
-    const suffix = mount[2] === undefined ? '' : `\\${mount[2].replaceAll('/', '\\')}`;
+    const suffix = mount[2] === undefined ? '\\' : `\\${mount[2].replaceAll('/', '\\')}`;
     return ok(`${mount[1]!.toUpperCase()}:${suffix}`);
   }
+  if (distro.toLowerCase() === 'default') return err(appError('INVALID_INPUT', 'A concrete WSL distribution is required for a Linux filesystem path'));
   return ok(`\\\\wsl.localhost\\${distro}${normalized.replaceAll('/', '\\')}`);
 }
 
-function isWithinWindowsRoot(root: string, candidate: string): boolean {
-  const normalizedRoot = path.win32.resolve(root).toLowerCase();
-  const normalizedCandidate = path.win32.resolve(candidate).toLowerCase();
-  const relative = path.win32.relative(normalizedRoot, normalizedCandidate);
+async function canonicalWslPath(value: WslPathIdentity, distro: string, requireDirectory: boolean): Promise<Result<WslPathIdentity>> {
+  try {
+    const canonical = windowsToWslPath(await realpath(value.windowsPath), distro);
+    if (!canonical.ok) return canonical;
+    if (requireDirectory && !(await stat(canonical.value.windowsPath)).isDirectory()) {
+      return err(appError('INVALID_INPUT', 'WSL workspace path must be a directory'));
+    }
+    return canonical;
+  } catch {
+    return err(appError('FILE_NOT_FOUND', 'WSL workspace path was not found'));
+  }
+}
+
+async function resolveScopedWslPath(input: {
+  readonly requestedPath: string | undefined;
+  readonly activeRoot: string | undefined;
+  readonly roots: readonly string[];
+  readonly distro: string;
+  readonly authorization: InvocationAuthorization | undefined;
+  readonly purpose: 'execution' | 'translate' | 'metadata';
+}): Promise<Result<WslPathIdentity>> {
+  const { requestedPath, activeRoot, distro } = input;
+  const requireDirectory = input.purpose === 'execution';
+  if (requestedPath !== undefined && !path.win32.isAbsolute(requestedPath) && activeRoot === undefined) {
+    return err(appError('INVALID_INPUT', 'WSL workspace path must be absolute'));
+  }
+  const base = activeRoot ?? input.roots[0];
+  let candidatePath: string;
+  if (requestedPath !== undefined && path.win32.isAbsolute(requestedPath)) candidatePath = requestedPath;
+  else {
+    if (base === undefined) return err(appError('FILE_NOT_FOUND', 'No registered workspace root is available'));
+    const parsedBase = windowsToWslPath(base, distro);
+    if (!parsedBase.ok) return parsedBase;
+    candidatePath = requestedPath === undefined ? parsedBase.value.windowsPath : path.win32.resolve(parsedBase.value.windowsPath, requestedPath);
+  }
+  const candidate = windowsToWslPath(candidatePath, distro);
+  if (!candidate.ok) return candidate;
+  if (isFullBypassAuthorization(input.authorization)) {
+    return input.purpose !== 'translate' || activeRoot !== undefined
+      ? canonicalWslPath(candidate.value, distro, requireDirectory)
+      : candidate;
+  }
+  const resolveCanonical = input.purpose === 'metadata' || activeRoot !== undefined
+    || (candidate.value.kind === 'wsl_share' && input.purpose === 'execution');
+  const roots: WslPathIdentity[] = [];
+  for (const rawRoot of input.roots) {
+    const parsed = windowsToWslPath(rawRoot, distro);
+    if (!parsed.ok) continue;
+    const root = resolveCanonical ? await canonicalWslPath(parsed.value, distro, true) : parsed;
+    if (root.ok) roots.push(root.value);
+  }
+  if (roots.length === 0) return err(appError('FILE_NOT_FOUND', 'No registered workspace root is available'));
+  if (activeRoot === undefined) {
+    const checked = resolveCanonical ? await canonicalWslPath(candidate.value, distro, requireDirectory) : candidate;
+    if (!checked.ok) return checked;
+    return roots.some((root) => isWithinWslRoot(root, checked.value))
+      ? checked : err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL path is outside registered workspace roots'));
+  }
+  const parsedActive = windowsToWslPath(activeRoot, distro);
+  if (!parsedActive.ok) return parsedActive;
+  const active = await canonicalWslPath(parsedActive.value, distro, true);
+  if (!active.ok) return active;
+  if (!roots.some((root) => isWithinWslRoot(root, active.value))) {
+    return err(appError('PATH_OUTSIDE_WORKSPACE', 'Host active workspace root is outside registered workspace roots'));
+  }
+  const canonical = await canonicalWslPath(candidate.value, distro, requireDirectory);
+  if (!canonical.ok) return canonical;
+  if (!roots.some((root) => isWithinWslRoot(root, canonical.value)) || !isWithinWslRoot(active.value, canonical.value)) {
+    return err(appError('PATH_OUTSIDE_WORKSPACE', 'WSL path is outside the host active workspace'));
+  }
+  return canonical;
+}
+
+function isWithinWslRoot(root: WslPathIdentity, candidate: WslPathIdentity): boolean {
+  if (root.kind !== candidate.kind) return false;
+  if (root.kind === 'wsl_share' && candidate.kind === 'wsl_share') {
+    if (root.distro.toLowerCase() !== candidate.distro.toLowerCase()) return false;
+    const relative = path.posix.relative(root.linuxPath, candidate.linuxPath);
+    return relative === '' || (!path.posix.isAbsolute(relative) && relative.split('/')[0] !== '..');
+  }
+  const relative = path.win32.relative(root.windowsPath.toLowerCase(), candidate.windowsPath.toLowerCase());
   if (relative === '') return true;
   if (path.win32.isAbsolute(relative)) return false;
   const [firstSegment] = relative.split(path.win32.sep);
@@ -480,7 +518,7 @@ function isWithinWindowsRoot(root: string, candidate: string): boolean {
 
 function normalizeDistro(value: string): string | undefined {
   const trimmed = value.trim();
-  return /^[A-Za-z0-9._-]{1,64}$/.test(trimmed) ? trimmed : undefined;
+  return trimmed !== '.' && trimmed !== '..' && /^[A-Za-z0-9._-]{1,64}$/.test(trimmed) ? trimmed : undefined;
 }
 
 function annotateResult(result: Result<unknown>, metadata: Record<string, unknown>): Result<unknown> {

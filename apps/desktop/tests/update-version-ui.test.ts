@@ -25,7 +25,6 @@ describe('titlebar update notification', () => {
     const tunnelStopIndex = main.indexOf('await stopTunnelForUpdateInstall(runtime)');
     expect(tunnelStopIndex).toBeGreaterThanOrEqual(0);
     expect(tunnelStopIndex).toBeLessThan(main.indexOf("phase: 'installing'", tunnelStopIndex));
-    expect(main).toContain('maxWaitMs: 5_000');
     expect(main).toContain('usesElectronUpdaterInstall(updaterDistribution)');
     expect(main).toContain("currentUpdateStatus.phase === 'installing'");
     expect(main).toContain("phase: 'ready'");

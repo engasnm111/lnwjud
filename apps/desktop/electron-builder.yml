@@ -22,6 +22,8 @@ publish:
 afterPack: scripts/capture-packaged-runtime-evidence.mjs
 afterSign: scripts/capture-packaged-runtime-evidence.mjs
 extraResources:
+  - from: build/native-containment
+    to: native-containment
   - from: build/tunnel-client
     to: tunnel-client
   - from: build/runtime-tools
@@ -60,6 +62,8 @@ win:
     - from: build/lnwjud-mcp-stdio.cmd
       to: lnwjud-mcp-stdio.cmd
   extraResources:
+    - from: build/update-worker
+      to: update-worker
     - from: build/capability-bridge/windows-capability-bridge.ps1
       to: windows-capability-bridge.ps1
     - from: build/capability-bridge/windows-capability-bridge.sha256
@@ -127,9 +131,9 @@ linux:
 nsis:
   oneClick: false
   perMachine: false
-  # Preserve the historical per-user default (%LOCALAPPDATA%\Programs\lnwjud).
-  # All-users remains an explicit installer-page choice instead of the default.
-  selectPerMachineByDefault: false
+  # Prefer the protected all-users install so the native LocalSystem containment service is available.
+  # Users can still select per-user; that mode and Portable remain fail-closed for managed tasks.
+  selectPerMachineByDefault: true
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
   # Create the Start Menu link in installer.nsh from $INSTDIR so no build-user path can be baked in.

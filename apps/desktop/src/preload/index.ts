@@ -1,3 +1,4 @@
+import { isEngineeringWorkerTarget } from '@lnwjud/shared/user-settings';
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   ipcChannels,
@@ -402,6 +403,7 @@ function userSettings(value: unknown): UserSettings {
     updateCheckOnStartup: booleanField(value, 'updateCheckOnStartup'),
     updateIntervalMinutes: integerField(value, 'updateIntervalMinutes'),
     updateAutoDownload: booleanField(value, 'updateAutoDownload'),
+    updateSilentInstall: value.updateSilentInstall === undefined ? false : booleanField(value, 'updateSilentInstall'),
     closeBehavior,
     launchAtStartup: booleanField(value, 'launchAtStartup'),
     startMinimized: booleanField(value, 'startMinimized'),
@@ -444,12 +446,14 @@ function permissionDecisionResponse(value: unknown): 'ALLOW' | 'ASK' | 'DENY' {
 
 function engineeringHarnessSettingsResponse(value: unknown): NonNullable<UserSettings['engineeringHarness']> {
   if (!isRecord(value)
-    || Object.keys(value).some((key) => !['schemaVersion', 'enabled', 'profile', 'applyTo', 'autoProjectAssessment', 'custom'].includes(key))
+    || Object.keys(value).some((key) => !['schemaVersion', 'enabled', 'profile', 'applyTo', 'autoProjectAssessment', 'custom', 'hostedCi', 'allowNoGit', 'workerTarget'].includes(key))
     || value.schemaVersion !== 1
     || typeof value.enabled !== 'boolean'
     || (value.profile !== 'standard' && value.profile !== 'senior' && value.profile !== 'strict' && value.profile !== 'custom')
     || (value.applyTo !== 'coding_projects' && value.applyTo !== 'all_workspaces')
     || typeof value.autoProjectAssessment !== 'boolean') throw new Error('Invalid IPC response');
+  if ((value.hostedCi !== undefined && value.hostedCi !== 'required' && value.hostedCi !== 'local_only') || (value.allowNoGit !== undefined && typeof value.allowNoGit !== 'boolean')) throw new Error('Invalid Engineering delivery policy');
+  if (value.workerTarget !== undefined && !isEngineeringWorkerTarget(value.workerTarget)) throw new Error('Invalid Engineering Worker target');
   const custom = value.custom;
   if (custom !== undefined && (!isRecord(custom)
     || Object.keys(custom).some((key) => !['analysis', 'review', 'validation', 'docsImpactCheck'].includes(key))
@@ -463,6 +467,9 @@ function engineeringHarnessSettingsResponse(value: unknown): NonNullable<UserSet
     profile: value.profile,
     applyTo: value.applyTo,
     autoProjectAssessment: value.autoProjectAssessment,
+    ...(value.workerTarget === undefined || !isEngineeringWorkerTarget(value.workerTarget) ? {} : { workerTarget: value.workerTarget }),
+    ...(value.hostedCi === undefined ? {} : { hostedCi: value.hostedCi }),
+    ...(value.allowNoGit === undefined ? {} : { allowNoGit: value.allowNoGit }),
     ...(custom === undefined ? {} : { custom: {
       analysis: custom.analysis as 'focused' | 'cross_file',
       review: custom.review as 'risk_based' | 'always',
@@ -666,7 +673,8 @@ function engineeringHarnessStatus(value: unknown): DashboardSnapshot['engineerin
         const applicability = entry.applicability;
         const status = entry.status;
         const evidenceSource = entry.evidenceSource;
-        if (!['required', 'optional', 'not_applicable'].includes(String(applicability))
+        if ((applicability !== 'required' && applicability !== 'optional'
+          && applicability !== 'not_applicable' && applicability !== 'unresolved')
           || !['pending', 'running', 'passed', 'failed', 'blocked', 'not_applicable', 'stale'].includes(String(status))
           || (evidenceSource !== undefined && evidenceSource !== 'host_observed' && evidenceSource !== 'user_attested')) {
           throw new Error('Invalid IPC response');
@@ -674,7 +682,7 @@ function engineeringHarnessStatus(value: unknown): DashboardSnapshot['engineerin
         return {
           id: stringField(entry, 'id'),
           title: stringField(entry, 'title'),
-          applicability: applicability as 'required' | 'optional' | 'not_applicable',
+          applicability,
           status: status as 'pending' | 'running' | 'passed' | 'failed' | 'blocked' | 'not_applicable' | 'stale',
           reason: stringField(entry, 'reason'),
           ...(evidenceSource === undefined ? {} : { evidenceSource }),

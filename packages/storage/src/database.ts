@@ -26,6 +26,7 @@ import { ENGINEERING_HARNESS_MIGRATION_SQL } from './migrations/engineering-harn
 import { WORKFLOW_METADATA_MIGRATION_SQL } from './migrations/workflow-metadata-migration.js';
 import { CALL_OBSERVABILITY_MIGRATION_SQL } from './migrations/call-observability-migration.js';
 import { AUDIT_CALL_HISTORY_PAGING_MIGRATION_SQL } from './migrations/audit-call-history-paging-migration.js';
+import { GOAL_CONTRACT_COMPATIBILITY_MIGRATION_SQL, configureGoalContractConnection } from './goal-contract-compatibility.js';
 
 export interface SqliteDatabaseOptions {
   readonly backupDirectory?: string;
@@ -115,6 +116,7 @@ export class SqliteDatabase {
       { id: '022_workflow_metadata', sql: WORKFLOW_METADATA_MIGRATION_SQL },
       { id: '023_call_observability', sql: CALL_OBSERVABILITY_MIGRATION_SQL },
       { id: '024_audit_call_history_paging', sql: AUDIT_CALL_HISTORY_PAGING_MIGRATION_SQL },
+      { id: '025_goal_contract_compatibility', sql: GOAL_CONTRACT_COMPATIBILITY_MIGRATION_SQL },
     ]);
   }
 
@@ -138,7 +140,14 @@ export class SqliteDatabase {
 
   private createConnection(): DatabaseSync {
     this.ensureDirectory();
-    return new DatabaseSync(this.filename, { timeout: 5_000 });
+    const connection = new DatabaseSync(this.filename, { timeout: 5_000 });
+    try {
+      configureGoalContractConnection(connection);
+      return connection;
+    } catch (error) {
+      connection.close();
+      throw error;
+    }
   }
 
   private initPragmas(conn: DatabaseSync): void {

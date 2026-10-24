@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
-import { confirmTunnelStopForUpdate, UpdateDownloadedDialogController, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, updateReadyDialogOptions, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
+import { confirmTunnelStopForUpdate, silentInstallStillSafe, UpdateDownloadedDialogController, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, updateReadyDialogOptions, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -230,19 +230,89 @@ describe('downloaded update installation', () => {
     expect(sharedActivitySnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it('forces installation after a bounded grace period once the user has confirmed an update', async () => {
+  it('revalidates unattended install safety when activity or Tunnel changes during backup', async () => {
+    let enabled = true;
+    let active = 0;
+    let tunnel = true;
+    const check = (): Promise<boolean> => Promise.resolve(tunnel);
+    const valid = (): Promise<boolean> => silentInstallStillSafe({
+      enabled: () => enabled,
+      activeCalls: () => active,
+      tunnelStopped: check,
+    });
+    await expect(valid()).resolves.toBe(true);
+    active = 1;
+    await expect(valid()).resolves.toBe(false);
+    active = 0;
+    tunnel = false;
+    await expect(valid()).resolves.toBe(false);
+    tunnel = true;
+    enabled = false;
+    await expect(valid()).resolves.toBe(false);
+  });
+
+  it('never force-installs an unattended update while a running or unverifiable tunnel is observed', async () => {
     vi.useFakeTimers();
+    let tunnel: boolean | 'unverifiable' = true;
     const install = vi.fn();
     const coordinator = new UpdateInstallCoordinator({
-      activeCallCount: (): number => 1,
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<boolean | 'unverifiable'> => tunnel,
       install,
-      maxWaitMs: 50,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(install).not.toHaveBeenCalled();
+    tunnel = 'unverifiable';
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    tunnel = false;
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledOnce();
+    expect(install).toHaveBeenCalledWith(true);
+  });
+
+  it('cancels silent installation when opt-in is disabled and still allows a later manual request', async () => {
+    vi.useFakeTimers();
+    let active = 1;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => active,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(true);
+    await vi.advanceTimersByTimeAsync(30);
+    coordinator.cancelUnattended();
+    active = 0;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    coordinator.requestInstall();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(install).toHaveBeenCalledOnce();
+    expect(install).toHaveBeenCalledWith(false);
+  });
+
+  it('preserves active work after manual confirmation and waits for a full idle window', async () => {
+    vi.useFakeTimers();
+    let active = 1;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => active,
+      install,
       pollIntervalMs: 10,
       quietPeriodMs: 20,
     });
 
     coordinator.requestInstall();
-    await vi.advanceTimersByTimeAsync(49);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(install).not.toHaveBeenCalled();
+    expect(coordinator.hasPendingInstall()).toBe(true);
+    active = 0;
+    await vi.advanceTimersByTimeAsync(29);
     expect(install).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
 

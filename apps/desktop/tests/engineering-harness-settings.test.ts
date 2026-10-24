@@ -70,8 +70,8 @@ describe('Desktop Engineering Harness settings and status', () => {
           policyDigest: enabled.engineeringHarnessStatus.policyDigest ?? 'missing-policy-digest',
           deliveryScope: 'local',
           gates: [{
-            id: 'focused-tests',
-            title: 'Focused tests',
+            id: 'focused_validation',
+            title: 'Focused behavioral validation',
             applicability: 'required',
             status: 'pending',
             reason: 'Auth persistence is behavior-changing.',
@@ -90,7 +90,7 @@ describe('Desktop Engineering Harness settings and status', () => {
             goalKey: 'engineering-dashboard-status',
             primaryTaskKind: 'bugfix',
             riskTier: 'high',
-            gates: [{ id: 'focused-tests', status: 'pending' }],
+            gates: expect.arrayContaining([expect.objectContaining({ id: 'focused_validation', status: 'stale' })]),
           },
         },
       });

@@ -2,6 +2,7 @@ import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { ok } from '@lnwjud/domain';
+import type { PosixProcessGroupObservation } from './posix-process-tree.js';
 import { PathExecutableResolver, ProcessManager, type ExecutableResolver, type ProcessTreeTerminator } from './index.js';
 
 async function waitForState(manager: ProcessManager, processId: string, state: string): Promise<void> {
@@ -15,6 +16,67 @@ async function waitForState(manager: ProcessManager, processId: string, state: s
 }
 
 describe('ProcessManager', () => {
+  it.runIf(process.platform === 'darwin')('refuses a managed writer before spawning when OS-owned descendant containment is absent', async () => {
+    const root = await mkdtemp(path.join(process.cwd(), 'lnwjud-macos-writer-'));
+    const marker = path.join(root, 'must-not-create');
+    const released = vi.fn(async (): Promise<void> => undefined);
+    try {
+      const result = await new ProcessManager().start({
+        executable: process.execPath, args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unsafe')`], cwd: root,
+      }, undefined, undefined, released);
+      expect(result).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+      expect(released).toHaveBeenCalledTimes(1);
+      await expect(access(marker)).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'darwin')('holds completion until group zero and an awaited release callback succeeds, then recovers without replay', async () => {
+    let empty = false;
+    let allowRelease!: () => void;
+    const gate = new Promise<void>((resolve) => { allowRelease = resolve; });
+    const released = vi.fn(async () => { await gate; });
+    const manager = new ProcessManager(undefined, undefined, undefined, undefined, undefined, undefined,
+      async () => empty ? { state: 'empty' } : { state: 'live', livePids: [4243] });
+    const started = await manager.start({ executable: process.execPath, args: ['-e', 'process.exit(0)'], cwd: process.cwd() }, undefined, undefined, released);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await waitForState(manager, started.value.processId, 'termination_unverified');
+    expect(released).not.toHaveBeenCalled();
+    empty = true;
+    await vi.waitFor(() => expect(released).toHaveBeenCalledTimes(1));
+    expect(manager.status(started.value.processId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
+    allowRelease();
+    await waitForState(manager, started.value.processId, 'exited');
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(process.platform === 'darwin')('retains admission after a release failure and retries verified completion', async () => {
+    const released = vi.fn().mockRejectedValueOnce(new Error('index unavailable')).mockResolvedValue(undefined);
+    const manager = new ProcessManager(undefined, undefined, undefined, undefined, undefined, undefined, async () => ({ state: 'empty' }));
+    const started = await manager.start({ executable: process.execPath, args: ['-e', 'process.exit(0)'], cwd: process.cwd() }, undefined, undefined, released);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await waitForState(manager, started.value.processId, 'exited');
+    expect(released).toHaveBeenCalledTimes(2);
+  });
+
+  it.skipIf(process.platform !== 'linux').each([false, true])('does not release an ordinary parent exit while inherited pipes remain open (detached descendant: %s)', async (detached) => {
+    const released = vi.fn();
+    const manager = new ProcessManager();
+    const childScript = "setTimeout(() => process.stdout.write('descendant-finished'), 1500)";
+    const parentScript = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { detached: ${detached}, stdio: ['ignore', 1, 2] }).unref();`;
+    const started = await manager.start({ executable: process.execPath, args: ['-e', parentScript], cwd: process.cwd() }, undefined, undefined, released);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    await waitForState(manager, started.value.processId, 'termination_unverified');
+    expect(released).not.toHaveBeenCalled();
+    await waitForState(manager, started.value.processId, 'exited');
+    expect(manager.logs(started.value.processId, {})).toMatchObject({ ok: true, value: { entries: expect.arrayContaining([expect.objectContaining({ text: 'descendant-finished' })]) } });
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+
   it('captures stdout/stderr and retains a managed process handle', async () => {
     const manager = new ProcessManager();
     const started = await manager.start({
@@ -55,7 +117,7 @@ describe('ProcessManager', () => {
     });
   });
 
-  it('exposes a native PID only while the owned child is active for resource sampling', async () => {
+  it.skipIf(process.platform === 'darwin')('exposes a native PID only while the owned child is active for resource sampling', async () => {
     const manager = new ProcessManager();
     const started = await manager.start({ executable: process.execPath,
       args: ['-e', 'setInterval(() => {}, 1000)'], cwd: process.cwd() });
@@ -75,7 +137,7 @@ describe('ProcessManager', () => {
     if (stopped.ok) expect(stopped.value.pid).toBeUndefined();
   });
 
-  it('times out a running child and stops only an owned process handle', async () => {
+  it.skipIf(process.platform === 'darwin')('times out a running child and stops only an owned process handle', async () => {
     const manager = new ProcessManager();
     const started = await manager.start({
       executable: process.execPath,
@@ -99,7 +161,7 @@ describe('ProcessManager', () => {
       cwd: process.cwd(),
     }, undefined, undefined, onVerifiedTermination);
 
-    expect(result).toMatchObject({ ok: false, error: { code: 'EXECUTABLE_NOT_FOUND' } });
+    expect(result).toMatchObject({ ok: false, error: { code: process.platform === 'darwin' ? 'CONFLICT' : 'EXECUTABLE_NOT_FOUND' } });
     // No process was spawned: a managed writer must not be reserved indefinitely.
     expect(onVerifiedTermination).toHaveBeenCalledTimes(1);
   });
@@ -177,7 +239,10 @@ describe('ProcessManager', () => {
         if (!terminationAllowed) throw new Error('tree verification failed after root close');
       },
     };
-    const manager = new ProcessManager(terminator);
+    const groupInspector = async (): Promise<PosixProcessGroupObservation> => terminationAllowed
+      ? { state: 'empty' } : { state: 'live', livePids: [4242] };
+    const manager = new ProcessManager(terminator, undefined, undefined, undefined, undefined, undefined,
+      process.platform === 'win32' ? undefined : groupInspector);
     const started = await manager.start({
       executable: process.execPath,
       args: ['-e', 'setTimeout(() => {}, 10)'],
@@ -250,7 +315,7 @@ describe('ProcessManager', () => {
     }
   });
 
-  it('caps simultaneous managed processes to prevent runaway child-process growth', async () => {
+  it.skipIf(process.platform === 'darwin')('caps simultaneous managed processes to prevent runaway child-process growth', async () => {
     const manager = new ProcessManager(undefined, undefined, 1);
     const first = await manager.start({
       executable: process.execPath,

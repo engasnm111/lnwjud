@@ -1,10 +1,11 @@
 ---
 name: ponytail-help
 description: >
-  Quick-reference card for all ponytail modes, skills, and commands.
-  One-shot display, not a persistent mode. Trigger: /ponytail-help,
-  "ponytail help", "what ponytail commands", "how do I use ponytail".
+  Quick reference for ponytail levels, skills and commands. One-shot display.
+  Use for /ponytail-help, "ponytail help", "how do I use ponytail".
 ---
+
+For lnwjud, first read [repository integration](../ponytail/references/lnwjud.md). It controls activation, source discovery, and host-specific guidance below.
 
 # Ponytail Help
 
@@ -15,9 +16,9 @@ write flag files, or persist anything.
 
 | Level | Trigger | What change |
 |-------|---------|-------------|
-| **Lite** | `/ponytail lite` | Build what's asked, name the lazier alternative in one line. |
-| **Full** | `/ponytail` | The ladder enforced: YAGNI → stdlib → native → one line → minimum. Default. |
-| **Ultra** | `/ponytail ultra` | YAGNI extremist. Deletion before addition. Challenges requirements before building. |
+| **Lite** | `/ponytail lite` | Build what was asked, name the smaller option in one line. |
+| **Full** | `/ponytail` | The smallest complete change, a check where the logic needs one, and a reply that names what was skipped and any risk. Default. |
+| **Ultra** | `/ponytail ultra` | Also questions the request and pushes back before building. |
 
 Level sticks until changed or session end.
 
@@ -25,46 +26,43 @@ Level sticks until changed or session end.
 
 | Skill | Trigger | What it does |
 |-------|---------|--------------|
-| **ponytail** | `/ponytail` | Lazy mode itself. Simplest solution that works. |
-| **ponytail-review** | `/ponytail-review` | Over-engineering review: `L42: yagni: factory, one product. Inline.` |
-| **ponytail-audit** | `/ponytail-audit` | Whole-repo over-engineering audit: ranked list of what to delete. |
-| **ponytail-debt** | `/ponytail-debt` | Harvest `ponytail:` shortcut comments into a tracked ledger. |
+| **ponytail** | `/ponytail` | Lazy mode itself: least new code, clear replies that name skipped work and risks. |
+| **ponytail-review** | `/ponytail-review` | Quality review of a diff: bugs, security, load, missing tests, speed, what to cut. Each finding says what goes wrong and how to fix it. |
+| **ponytail-audit** | `/ponytail-audit` | The same quality review for the whole repo, ranked. |
+| **ponytail-debt** | `/ponytail-debt` | Harvest `shortcut:` comments into a tracked ledger. |
 | **ponytail-gain** | `/ponytail-gain` | Measured-impact scoreboard: less code, less cost, more speed. |
 | **ponytail-help** | `/ponytail-help` | This card. |
 
-Codex uses `@ponytail`, `@ponytail-review`, and `@ponytail-help`; Claude Code
-and OpenCode use the slash-command forms above (OpenCode ships all six as
-slash commands).
+In this workspace, use the exposed names such as `$ponytail`, `$ponytail-review`,
+or `$ponytail-help`. If a separately installed plugin exposes namespaced skills,
+use its actual advertised name, such as `$ponytail:ponytail-review`. Slash forms
+above describe hosts that support those commands.
 
 ## Deactivate
 
-Say "stop ponytail" or "normal mode". Resume anytime with `/ponytail`.
-`/ponytail off` also works.
+Say "stop ponytail", "normal mode", or `/ponytail off`. This ends the requested
+mode; persistent lnwjud policy changes still require the user's instruction.
 
-## Configure Default Mode
+## lnwjud settings
 
-Default mode = `full`, auto-active every session. Change it:
+Native lnwjud defaults automatic activation to `off`. It resolves Goal override,
+then workspace profile `ponytail.mode`, then global `ponytailMode`. Use the native
+settings or the currently advertised Goal API for an authorized policy change.
+Upstream `PONYTAIL_DEFAULT_MODE`, external config files, and Claude Code defaults
+do not override lnwjud's policy.
 
-**Environment variable** (highest priority):
-```bash
-export PONYTAIL_DEFAULT_MODE=ultra
-```
+## Host features and updates
 
-**Config file** (`~/.config/ponytail/config.json`, Windows: `%APPDATA%\ponytail\config.json`):
-```json
-{ "defaultMode": "lite" }
-```
+The upstream v5.3.2 plugin also has a Claude Code band and board. This workspace
+vendors six skill documents and their MIT license only. It does not install
+hooks, command handlers, telemetry, band scripts, or session-history import.
+Report those features unavailable here unless a separate host installation is
+actually present. A help request does not authorize installing or trusting one.
 
-Set `"off"` to disable auto-activation on session start, activate manually
-with `/ponytail` when wanted.
-
-Resolution: env var > config file > `full`.
-
-## Update
-
-Enable auto-update once: open `/plugin`, go to Marketplaces, pick ponytail, Enable auto-update. Claude Code then pulls new versions at startup (run `/reload-plugins` when it prompts). Manual refresh: `/plugin marketplace update ponytail` then `/reload-plugins`.
-
-If `/plugin` is not recognized, your Claude Code is out of date. Update it (`npm install -g @anthropic-ai/claude-code@latest`, or `brew upgrade claude-code`) and restart. Other hosts use their own update flow.
+For a requested workspace update, verify the latest stable release at the
+upstream repository, pin its commit, review all changed documents, retain the
+repository integration rules, and refresh each `SOURCE.md`. Plugin-manager
+commands update a separately installed host plugin, not these vendored files.
 
 ## More
 

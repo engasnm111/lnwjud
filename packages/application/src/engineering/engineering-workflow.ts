@@ -30,6 +30,7 @@ export interface EngineeringWorkflowPlan {
   readonly selectedCodeIntelligence: EngineeringCodeIntelligence;
   readonly codeIntelligenceReason: string;
   readonly deliveryScope: EngineeringDeliveryScope;
+  readonly contract?: import('@lnwjud/domain').EngineeringDeliveryContract;
 }
 
 export function planEngineeringWorkflow(
@@ -74,7 +75,8 @@ export function engineeringGoalMetadata(
   scopedPath?: string,
 ): EngineeringGoalMetadata {
   return {
-    schemaVersion: 1,
+    schemaVersion: plan.contract === undefined ? 1 : 2,
+    ...(plan.contract === undefined ? {} : { contract: plan.contract }),
     primaryTaskKind: plan.primaryTaskKind,
     riskTier: plan.riskTier,
     policyDigest,
@@ -103,12 +105,13 @@ export function classifyEngineeringRisk(
   taskKind: EngineeringTaskKind = classifyEngineeringTaskKind(objective),
 ): { readonly tier: EngineeringRiskTier; readonly reasons: readonly string[] } {
   const value = objective.trim().toLowerCase();
+  const platformIntent = inferPlatformIntent(value);
   const reasons: string[] = [];
   if (taskKind === 'release' || hasRequestedProductionDeploy(value) || /(\bdata migration\b|\bdestructive\b|\bdrop table\b|\bcredential boundary\b)/i.test(value)) {
     reasons.push('Release, production, destructive data, or credential-boundary work requires recovery/provenance evidence.');
     return { tier: 'critical', reasons };
   }
-  if (/(auth|token|session|permission|security|persist|storage|database|schema|migration|concurr|race|cross[- ]platform|native|api contract|oauth|สิทธิ์|ฐานข้อมูล|โทเคน|เซสชัน)/i.test(value)) {
+  if (platformIntent.nativeOrCrossPlatform || /(auth|token|session|permission|security|persist|storage|database|schema|migration|concurr|race|api contract|oauth|สิทธิ์|ฐานข้อมูล|โทเคน|เซสชัน)/i.test(value)) {
     reasons.push('The request touches a high-risk contract, persistence, security, concurrency, native, or cross-platform surface.');
     return { tier: 'high', reasons };
   }
@@ -439,8 +442,9 @@ function gatesFor(
   }
   if (/(persist|storage|session|token|database|restart|ฐานข้อมูล|โทเคน|เซสชัน)/i.test(objective)) add('restart_persistence', 'Restart/persistence evidence', 'Persistence work must prove behavior across restart or reload.');
   if (/(auth|token|permission|security|credential|oauth|สิทธิ์|โทเคน)/i.test(objective)) add('security_review', 'Security boundary review', 'Security-sensitive changes require explicit boundary review.');
-  if (/(cross[- ]platform|windows|macos|linux|native|แพลตฟอร์ม)/i.test(objective) || (changesBehavior && project.requiredPlatforms.length > 0)) {
-    const requiredPlatforms = project.requiredPlatforms.length > 0 ? project.requiredPlatforms : inferRequiredPlatforms(objective);
+  const platformIntent = inferPlatformIntent(objective);
+  if (platformIntent.requiredPlatforms.length > 0 || (changesBehavior && project.requiredPlatforms.length > 0)) {
+    const requiredPlatforms = project.requiredPlatforms.length > 0 ? project.requiredPlatforms : platformIntent.requiredPlatforms;
     add('cross_platform', 'Cross-platform evidence', project.requiredPlatforms.length > 0
       ? `Project profile requires target-host or CI evidence for: ${project.requiredPlatforms.join(', ')}.`
       : 'Cross-platform claims require target-host or CI evidence.', 'required', undefined, requiredPlatforms);
@@ -460,11 +464,37 @@ function gatesFor(
   return gates;
 }
 
-function inferRequiredPlatforms(objective: string): readonly ('win32' | 'darwin' | 'linux')[] {
-  const platforms: ('win32' | 'darwin' | 'linux')[] = [];
-  if (/windows/i.test(objective)) platforms.push('win32');
-  if (/(macos|mac\s*os)/i.test(objective)) platforms.push('darwin');
-  if (/linux/i.test(objective)) platforms.push('linux');
-  if (platforms.length > 0) return platforms;
-  return ['win32', 'darwin', 'linux'];
+interface EngineeringPlatformIntent {
+  readonly nativeOrCrossPlatform: boolean;
+  readonly requiredPlatforms: ProjectEngineeringSettings['requiredPlatforms'];
+}
+
+function inferPlatformIntent(objective: string): EngineeringPlatformIntent {
+  const componentObjective = objective.replace(/\b(?:windows|mac[ \t]*os|linux)(?:[ \t]*\/[ \t]*(?:windows|mac[ \t]*os|linux))+\b/gi, 'os');
+  let nativeComponent = false;
+  for (const native of componentObjective.matchAll(/\bnative\b/gi)) {
+    let remaining = componentObjective.slice((native.index ?? 0) + native[0].length);
+    for (let word = 0; word < 5; word += 1) {
+      const next = /^[- \t]+([a-z][a-z0-9_]*)/i.exec(remaining);
+      if (next === null) break;
+      const token = next[1];
+      if (token === undefined || /^(?:tools?|tooling|and|or|but|then|using|with|for|to|from|of|on|in|the|an?)$/i.test(token)) break;
+      if (/^(?:apps?|applications?|modules?|bridges?|hosts?|providers?|adapters?|components?|backends?|process(?:es)?|platforms?|integrations?|code|libraries|library|bindings?|addons?)$/i.test(token)) {
+        nativeComponent = true;
+        break;
+      }
+      remaining = remaining.slice(next[0].length);
+    }
+    if (nativeComponent) break;
+  }
+  const crossPlatform = /\bcross[-\s]+platform\b/i.test(objective);
+  const platforms: Array<ProjectEngineeringSettings['requiredPlatforms'][number]> = [];
+  if (/\bwindows\b/i.test(objective)) platforms.push('win32');
+  if (/\bmac\s*os\b/i.test(objective)) platforms.push('darwin');
+  if (/\blinux\b/i.test(objective)) platforms.push('linux');
+  return {
+    nativeOrCrossPlatform: nativeComponent || crossPlatform,
+    requiredPlatforms: platforms.length > 0 ? platforms
+      : nativeComponent || crossPlatform || /แพลตฟอร์ม/i.test(objective) ? ['win32', 'darwin', 'linux'] : [],
+  };
 }

@@ -9,7 +9,7 @@ describe('scheduled continuation skill contract', () => {
       'utf8',
     );
 
-    expect(skill).toMatch(/description: Use when/);
+    expect(skill).toContain('description: Resume one durable lnwjud goal across ChatGPT turns when the user authorized scheduled continuation');
     expect(skill).toContain('hourly recurring');
     expect(skill).toContain('intervalMinutes=60');
     expect(skill).toContain('600 seconds');

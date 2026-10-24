@@ -21,6 +21,37 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.9.0',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          { id: 'managed-task-lifetime-proof', titleKey: 'whatsNew.590.tasks.title', descriptionKey: 'whatsNew.590.tasks.description', badge: 'improved', tags: ['Windows', 'Restricted', 'native containment', 'writer admission'] },
+          { id: 'writer-lease-orphan-recovery', titleKey: 'whatsNew.590.recovery.title', descriptionKey: 'whatsNew.590.recovery.description', badge: 'fixed', tags: ['Goal', 'writer lease', 'fencing', 'continuation'] },
+          { id: 'native-service-pipe-access', titleKey: 'whatsNew.590.pipeAccess.title', descriptionKey: 'whatsNew.590.pipeAccess.description', badge: 'fixed', tags: ['Windows', 'native service', 'IPC'] },
+          { id: 'repository-import-publication', titleKey: 'whatsNew.590.import.title', descriptionKey: 'whatsNew.590.import.description', badge: 'improved', tags: ['Git import', 'publication identity', 'recovery'] },
+          { id: 'update-recovery-and-availability', titleKey: 'whatsNew.590.updater.title', descriptionKey: 'whatsNew.590.updater.description', badge: 'improved', tags: ['Updates', 'startup recovery', 'manual installation'] },
+          { id: 'file-publication-limits', titleKey: 'whatsNew.590.publication.title', descriptionKey: 'whatsNew.590.publication.description', badge: 'improved', tags: ['write_file', 'documentation', 'durability'] },
+        ],
+      },
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          { id: 'engineering-gate-applicability', titleKey: 'whatsNew.590.engineering.title', descriptionKey: 'whatsNew.590.engineering.description', badge: 'improved', tags: ['Engineering Harness', 'applicability', 'evidence', 'readiness'] },
+          { id: 'wsl-workspace-paths', titleKey: 'whatsNew.590.wsl.title', descriptionKey: 'whatsNew.590.wsl.description', badge: 'fixed', tags: ['WSL', 'workspace', 'UNC'] },
+          { id: 'managed-writer-capacity', titleKey: 'whatsNew.590.capacity.title', descriptionKey: 'whatsNew.590.capacity.description', badge: 'fixed', tags: ['macOS', 'Linux', 'reservations', 'diagnostics'] },
+          { id: 'native-tooling-intent', titleKey: 'whatsNew.590.nativeTools.title', descriptionKey: 'whatsNew.590.nativeTools.description', badge: 'fixed', tags: ['Engineering Harness', 'platform intent'] },
+          { id: 'dashboard-unresolved-startup', titleKey: 'whatsNew.590.startup.title', descriptionKey: 'whatsNew.590.startup.description', badge: 'fixed', tags: ['Dashboard', 'startup', 'IPC'] },
+          { id: 'tunnel-stop-history', titleKey: 'whatsNew.590.tunnelStop.title', descriptionKey: 'whatsNew.590.tunnelStop.description', badge: 'fixed', tags: ['Tunnel', 'Stop', 'history'] },
+          { id: 'tunnel-stale-alias-recovery', titleKey: 'whatsNew.590.staleAlias.title', descriptionKey: 'whatsNew.590.staleAlias.description', badge: 'fixed', tags: ['Windows', 'Tunnel', 'Stop', 'Reset', 'ownership'] },
+          { id: 'ponytail-stable-skills', titleKey: 'whatsNew.590.ponytail.title', descriptionKey: 'whatsNew.590.ponytail.description', badge: 'improved', tags: ['Ponytail', 'v5.3.2', 'six skills', 'GitHub'] },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.8.7',
     categories: [
       {

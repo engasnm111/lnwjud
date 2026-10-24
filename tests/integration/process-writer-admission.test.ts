@@ -1,9 +1,11 @@
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SharedManagedWriterAdmission } from '../../packages/capabilities/src/shared-managed-writer-admission.js';
 import { DurableShellTaskStore } from '../../packages/capabilities/src/durable-shell-task-store.js';
+import { nativeFixture } from '../../packages/process/test/native-fixture.js';
 import type { Workspace, WorkspaceRepository } from '@lnwjud/workspace';
 import { ProcessService } from '@lnwjud/application';
 
@@ -30,25 +32,28 @@ describe.skipIf(process.platform !== 'win32')('cross-workspace native ProcessSer
         async get(workspaceId) { return workspaceId === workspace.id ? workspace : null; },
         async insert() {}, async delete() {},
       };
-      const admission = new SharedManagedWriterAdmission(indexRoot);
+      const { authority } = await nativeFixture(root);
+      const admission = new SharedManagedWriterAdmission(indexRoot, authority);
       const processes = new ProcessService(repository, {
         writerAdmission: admission,
         nativeContainmentRoot: jobRoot,
+        nativeAuthority: authority,
       });
       const actor = { clientId: 'external-writer', clientName: 'test', sessionId: 'writer-session' };
       const started = await processes.start(actor, workspace.id, {
         executable: process.execPath, args: [childScript, sentinel], userConfirmed: true,
       }, undefined, { mode: 'standard', applicationApproved: true, bypassApplicationAuthorization: false, source: 'host_approval' });
-      expect(started).toMatchObject({ ok: true });
+      expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
       if (!started.ok) return;
-      const tasks = new DurableShellTaskStore(indexRoot);
+      const tasks = new DurableShellTaskStore(indexRoot, { windowsNativeAuthority: authority });
       const importRequest = {
-        taskId: 'other-workspace-import', mutationKind: 'repository_import' as const,
+        taskId: 'other-workspace-import-' + randomUUID(), mutationKind: 'repository_import' as const,
         executable: process.execPath, arguments: ['-e', 'process.exit(0)'], cwd: root,
         timeoutSeconds: process.env.CI ? 110 : 20, maxOutputBytes: 1024, includeStdout: false, includeStderr: false,
         owner: { clientId: 'importer', sessionId: 'importer', workspaceId: 'different-workspace' },
       };
-      expect(await tasks.launch(importRequest)).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+      const blockedImport = await tasks.launch(importRequest);
+      expect(blockedImport, JSON.stringify(blockedImport)).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
       await expect.poll(async () => {
         try { return await readFile(sentinel, 'utf8'); } catch { return ''; }
       }, { timeout: process.env.CI ? 90000 : 15000 }).toBe('done');

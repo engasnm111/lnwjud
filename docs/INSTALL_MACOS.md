@@ -1,6 +1,8 @@
 # Install lnwjud on macOS
 
-This guide covers the v5.8.7 native macOS release target. macOS 13 or newer is
+**v5.9.0 development status:** The published version remains v5.8.7. This guide describes a packaging target, not a released or accepted v5.9.0 build. Automatic installation is unavailable while the native transaction, global work admission, health and rollback are completed and tested. Developer ID signing alone does not enable it. New macOS durable shell and managed process writers are temporarily refused before spawn because Issue #216 still lacks accepted escaped-descendant containment. See the [acceptance ledger](codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
+
+This guide covers the v5.9.0 native macOS release target. macOS 13 or newer is
 supported on both Apple silicon (`arm64`) and Intel (`x64`). The package is
 built on macOS for the matching architecture; there is no universal build
 claim until every native helper and runtime has been verified as universal.
@@ -48,6 +50,8 @@ to v5.8.2 cannot alter the signature embedded in the already-installed app.
 Future in-place macOS updates require consistently signed **Developer ID
 Application** builds (same designated requirement across releases), plus
 matching Apple code signing and notarization credentials in protected CI.
+These signing prerequisites do not replace the unfinished transaction,
+maintenance, migration, health and trusted rollback requirements.
 A developer certificate cannot retroactively enable seamless updates from
 older ad-hoc builds; the first migration must still be manual.
 

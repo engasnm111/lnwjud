@@ -1,6 +1,6 @@
 # lnwjud tool contract
 
-Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v5.8.7`.
+Status: God-Tier Wave 0–8 additive contract snapshot synchronized for `v5.9.0`.
 
 This is the compatibility contract for the current MCP surface. The runtime
 advertises the JSON Schema for every input through `tools/list`; the TypeScript
@@ -8,7 +8,7 @@ Zod schemas in `packages/mcp-server/src/tools/` are the implementation source
 of truth. The existing human-oriented catalog remains useful for field details,
 while this document records the primitive/core contract, preserves the earlier
 compatibility baseline, and records policy class, annotations, and schema source.
-The historical v4 inventory contained 233 tool definitions. The current runtime contains 286 definitions, advertises 274 through `tools/list` by default, and advertises all 286 when Codex delegation plus Agent Swarm is enabled. Those 12 Codex/Agent Swarm definitions are opt-in; every other current first-party definition remains available through the default catalog and reports dependency/setup state truthfully at runtime. The additive v4 entries are defined
+The historical v4 inventory contained 233 tool definitions. The current runtime contains 298 definitions, advertises 286 through `tools/list` by default, and advertises all 298 when Codex delegation plus Agent Swarm is enabled. Those 12 Codex/Agent Swarm definitions are opt-in; every other current first-party definition remains available through the default catalog and reports dependency/setup state truthfully at runtime. The additive v4 entries are defined
 in `packages/mcp-server/src/upgrade-catalog.ts` and the exact runtime order is
 verified by `packages/mcp-server/src/tool-registry.test.ts`.
 
@@ -17,6 +17,8 @@ Desktop readiness is a separate presentation contract built from the same live d
 **Effective exposure boundary (v4.54.0):** First-party tool exposure is resolved independently from readiness and permission using persisted per-tool intent plus canonical Settings/runtime eligibility and default exposure. Hard Settings/runtime prerequisites are authoritative: a persisted `enabled` override cannot bypass a disabled family gate, missing provider, unsupported platform, or other system-ineligible state. `codex_*` and `agent_swarm_run`, for example, remain effectively hidden until Codex Delegation and the required runtime/provider make that family eligible. `ToolRegistry.listAll()` always remains the recovery-safe canonical inventory; `ToolRegistry.list()`, new `invoke()` calls, `tool_batch` children, and tool discovery/ranking/describe surfaces apply `effectiveExposed`. Disabling a tool blocks new execution but does not cancel a call that already crossed the registry boundary. Long-lived MCP servers keep canonical SDK registrations and toggle `RegisteredTool.enable()/disable()` handles so `notifications/tools/list_changed` is emitted for meaningful list transitions. Desktop and direct stdio share persisted availability state, while external MCP child tools retain their own control plane.
 
 **Native Ponytail correctness boundary (v4.60.0):** Ponytail policy is optional and defaults to OFF. Effective mode resolves `Current Goal > Workspace > Global`, with `lite`, `full`, and `ultra` treated as active. Before a coding mutation crosses the central `ToolRegistry.invoke()` boundary, an active policy requires a successful exact load of `bundled:agent-skills/ponytail` for the current session/workspace/goal policy fingerprint. `skill_match`, skill listing, similarly named workspace/user skills, and instruction text do not satisfy activation. A failed or zero-result matcher therefore cannot disable the direct exact-load path. Successful code mutations advance a review generation; FULL/ULTRA durable coding goals cannot complete until exact bundled `ponytail-review` plus the latest `review_changes` satisfies that generation. A later code mutation makes the review stale again. `tool_batch` children re-enter the same registry gate. Full Bypass does not bypass this correctness policy; explicit `ponytail_session` suppression is session-scoped and does not rewrite persisted Global/Workspace/Goal policy.
+
+**Vendored Ponytail policy/source separation (v5.9.0):** The six bundled document-only skills are pinned to upstream stable [Ponytail v5.3.2](https://github.com/DietrichGebert/ponytail/releases/tag/v5.3.2), commit `16352ac229eb08a9598dcae48fe9f2b342567d86`. The workspace-local adaptations, upstream provenance and package acceptance boundaries are documented in [docs/PONYTAIL.md](../PONYTAIL.md). No upstream executable hooks are installed. Source presence does not establish runtime readiness or override the activation contract above.
 
 **ChatGPT host-sync boundary:** MCP list-change notification proves only that the MCP server offered a different list. It is not proof that an approved ChatGPT app/action snapshot was refreshed. ChatGPT-specific guidance is conditional and must never promise that browser F5 alone updates a frozen/approved host snapshot.
 
@@ -36,7 +38,7 @@ allowed to fail later.
 <!-- BEGIN GENERATED TOOL REGISTRY -->
 ## Generated live ToolRegistry index
 
-This complete inventory is generated from `ToolRegistry.listAll()`: **294 total tool definitions**. The runtime advertises **282 tools by default** and **294 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
+This complete inventory is generated from `ToolRegistry.listAll()`: **298 total tool definitions**. The runtime advertises **286 tools by default** and **298 tools when Codex delegation plus Agent Swarm is enabled** through `tools/list`.
 Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm docs:tools:check` and fails on drift.
 
 | # | Tool | Permission | Advertised | Delivery | Runtime evidence | Read-only | Destructive |
@@ -54,287 +56,291 @@ Run `pnpm docs:tools` after intentionally changing the registry; CI runs `pnpm d
 | 11 | `engineering_prepare_task` | READ | default | operational | service_dispatch | yes | no |
 | 12 | `engineering_start_task` | WRITE | default | operational | service_dispatch | no | no |
 | 13 | `engineering_get_status` | READ | default | operational | service_dispatch | yes | no |
-| 14 | `read_file` | READ | default | operational | service_dispatch | yes | no |
-| 15 | `read_files` | READ | default | operational | service_dispatch | yes | no |
-| 16 | `search_files` | READ | default | operational | service_dispatch | yes | no |
-| 17 | `search_text` | READ | default | operational | service_dispatch | yes | no |
-| 18 | `git_status` | READ | default | operational | service_dispatch | yes | no |
-| 19 | `git_diff` | READ | default | operational | service_dispatch | yes | no |
-| 20 | `git_log` | READ | default | operational | service_dispatch | yes | no |
-| 21 | `git_clone_safe` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 22 | `git_clone_status` | READ | default | operational | service_dispatch | yes | no |
-| 23 | `git_clone_cancel` | EXECUTE | default | operational | service_dispatch | no | no |
-| 24 | `git` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 25 | `write_file` | WRITE | default | operational | service_dispatch | no | no |
-| 26 | `apply_patch` | WRITE | default | operational | service_dispatch | no | no |
-| 27 | `edit_file` | WRITE | default | operational | service_dispatch | no | no |
-| 28 | `move_file` | WRITE | default | operational | service_dispatch | no | no |
-| 29 | `copy_file` | WRITE | default | operational | service_dispatch | no | no |
-| 30 | `delete_file` | DANGEROUS | default | operational | service_dispatch | no | yes |
-| 31 | `list_recovery_items` | READ | default | operational | service_dispatch | yes | no |
-| 32 | `restore_deleted_file` | WRITE | default | operational | service_dispatch | no | no |
-| 33 | `list_checkpoints` | READ | default | operational | service_dispatch | yes | no |
-| 34 | `restore_checkpoint` | WRITE | default | operational | service_dispatch | no | yes |
-| 35 | `process_start` | EXECUTE | default | operational | service_dispatch | no | no |
-| 36 | `process_list` | READ | default | operational | service_dispatch | yes | no |
-| 37 | `process_status` | READ | default | operational | service_dispatch | yes | no |
-| 38 | `process_logs` | READ | default | operational | service_dispatch | yes | no |
-| 39 | `process_stop` | EXECUTE | default | operational | service_dispatch | no | no |
-| 40 | `project_dev` | EXECUTE | default | operational | service_dispatch | no | no |
-| 41 | `project_test` | EXECUTE | default | operational | service_dispatch | no | no |
-| 42 | `project_lint` | EXECUTE | default | operational | service_dispatch | no | no |
-| 43 | `project_typecheck` | EXECUTE | default | operational | service_dispatch | no | no |
-| 44 | `project_build` | EXECUTE | default | operational | service_dispatch | no | no |
-| 45 | `codex_status` | READ | Codex opt-in | operational | service_dispatch | yes | no |
-| 46 | `codex_run` | EXECUTE | Codex opt-in | operational | service_dispatch | no | no |
-| 47 | `codex_task_list` | READ | Codex opt-in | operational | service_dispatch | yes | no |
-| 48 | `codex_task_status` | READ | Codex opt-in | operational | service_dispatch | yes | no |
-| 49 | `codex_task_logs` | READ | Codex opt-in | operational | service_dispatch | yes | no |
-| 50 | `codex_stop` | EXECUTE | Codex opt-in | operational | service_dispatch | no | no |
-| 51 | `agent_swarm_run` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
-| 52 | `shell` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 53 | `dom_cdp` | READ | default | operational | service_dispatch | no | yes |
-| 54 | `computer_use` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 55 | `accessibility` | READ | default | operational | service_dispatch | no | yes |
-| 56 | `input_event` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 57 | `vision` | READ | default | operational | service_dispatch | yes | no |
-| 58 | `vision_annotated_capture` | READ | default | operational | service_dispatch | yes | no |
-| 59 | `ui_target_action` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 60 | `window` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 61 | `health` | READ | default | operational | service_dispatch | yes | no |
-| 62 | `system_info` | READ | default | operational | service_dispatch | yes | no |
-| 63 | `notification` | EXECUTE | default | operational | service_dispatch | no | no |
-| 64 | `file_dialog` | EXECUTE | default | operational | service_dispatch | yes | no |
-| 65 | `clipboard` | EXECUTE | default | operational | service_dispatch | no | no |
-| 66 | `web_fetch` | READ | default | operational | service_dispatch | no | yes |
-| 67 | `audio` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 68 | `screen_record` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 69 | `office` | WRITE | default | operational | service_dispatch | no | no |
-| 70 | `scheduler` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 71 | `wsl_exec` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 72 | `wsl_fs` | READ | default | operational | service_dispatch | yes | no |
-| 73 | `skills_list` | READ | default | operational | service_dispatch | yes | no |
-| 74 | `skills_read` | READ | default | operational | service_dispatch | yes | no |
-| 75 | `ponytail_session` | WRITE | default | operational | service_dispatch | no | no |
-| 76 | `mcp_list` | READ | default | operational | service_dispatch | yes | no |
-| 77 | `mcp_describe` | READ | default | operational | service_dispatch | yes | no |
-| 78 | `mcp_call` | DANGEROUS | default | operational | service_dispatch | no | yes |
-| 79 | `workspace_context` | READ | default | operational | service_dispatch | yes | no |
-| 80 | `workspace_context_continue` | READ | default | operational | service_dispatch | yes | no |
-| 81 | `workspace_full_scan` | READ | default | operational | service_dispatch | yes | no |
-| 82 | `workspace_full_scan_continue` | READ | default | operational | deterministic_operation | yes | no |
-| 83 | `workspace_snapshot` | READ | default | operational | service_dispatch | yes | no |
-| 84 | `search_all` | READ | default | operational | service_dispatch | yes | no |
-| 85 | `read_many_files` | READ | default | operational | service_dispatch | yes | no |
-| 86 | `read_file_page` | READ | default | operational | service_dispatch | yes | no |
-| 87 | `read_file_page_continue` | READ | default | operational | service_dispatch | yes | no |
-| 88 | `workspace_index` | WRITE | default | operational | service_dispatch | no | no |
-| 89 | `workspace_index_status` | READ | default | operational | service_dispatch | yes | no |
-| 90 | `workspace_index_watch` | WRITE | default | operational | service_dispatch | no | no |
-| 91 | `workspace_index_stop` | WRITE | default | operational | service_dispatch | no | no |
-| 92 | `session_handoff` | READ | default | operational | service_dispatch | yes | no |
-| 93 | `verify_incremental` | EXECUTE | default | operational | service_dispatch | no | no |
-| 94 | `run_goal` | WRITE | default | operational | service_dispatch | no | no |
-| 95 | `get_goal` | READ | default | operational | service_dispatch | yes | no |
-| 96 | `get_goal_plan` | READ | default | operational | service_dispatch | yes | no |
-| 97 | `update_goal_plan` | WRITE | default | operational | service_dispatch | no | no |
-| 98 | `update_goal_acceptance` | WRITE | default | operational | service_dispatch | no | no |
-| 99 | `revise_goal_intent` | WRITE | default | operational | service_dispatch | no | no |
-| 100 | `create_context_capsule` | WRITE | default | operational | service_dispatch | no | no |
-| 101 | `get_context_capsule` | READ | default | operational | service_dispatch | yes | no |
-| 102 | `list_context_capsules` | READ | default | operational | service_dispatch | yes | no |
-| 103 | `context_pressure` | READ | default | operational | service_dispatch | yes | no |
-| 104 | `record_delivery_receipt` | WRITE | default | operational | service_dispatch | no | no |
-| 105 | `list_delivery_receipts` | READ | default | operational | service_dispatch | yes | no |
-| 106 | `advance_goal_iteration` | WRITE | default | operational | service_dispatch | no | no |
-| 107 | `checkpoint_goal` | WRITE | default | operational | service_dispatch | no | no |
-| 108 | `checkpoint_goal_engineering` | WRITE | default | operational | service_dispatch | no | no |
-| 109 | `finish_goal` | WRITE | default | operational | service_dispatch | no | no |
-| 110 | `cancel_goal` | WRITE | default | operational | service_dispatch | no | yes |
-| 111 | `reconcile_goals` | WRITE | default | operational | service_dispatch | no | no |
-| 112 | `list_goals` | READ | default | operational | service_dispatch | yes | no |
-| 113 | `resource_snapshot` | READ | default | operational | service_dispatch | yes | no |
-| 114 | `call_history` | READ | default | operational | service_dispatch | yes | no |
-| 115 | `goal_result` | READ | default | operational | service_dispatch | yes | no |
-| 116 | `workflow_templates` | READ | default | operational | service_dispatch | yes | no |
-| 117 | `workflow_prepare` | READ | default | operational | service_dispatch | yes | no |
-| 118 | `workflow_start` | WRITE | default | operational | service_dispatch | no | no |
-| 119 | `prepare_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | no |
-| 120 | `record_scheduled_continuation_receipt` | WRITE | default | operational | service_dispatch | no | no |
-| 121 | `claim_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | no |
-| 122 | `get_scheduled_continuation` | READ | default | operational | service_dispatch | yes | no |
-| 123 | `expedite_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | no |
-| 124 | `cancel_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | yes |
-| 125 | `symbol_search` | READ | default | operational | service_dispatch | yes | no |
-| 126 | `find_definition` | READ | default | operational | service_dispatch | yes | no |
-| 127 | `find_references` | READ | default | operational | service_dispatch | yes | no |
-| 128 | `find_implementations` | READ | default | operational | service_dispatch | yes | no |
-| 129 | `call_hierarchy` | READ | default | operational | service_dispatch | yes | no |
-| 130 | `import_graph` | READ | default | operational | service_dispatch | yes | no |
-| 131 | `dependency_graph` | READ | default | operational | service_dispatch | yes | no |
-| 132 | `module_graph` | READ | default | operational | service_dispatch | yes | no |
-| 133 | `type_search` | READ | default | operational | service_dispatch | yes | no |
-| 134 | `trace_symbol` | READ | default | operational | service_dispatch | yes | no |
-| 135 | `context_ranking` | READ | default | operational | deterministic_operation | yes | no |
-| 136 | `debug_context` | READ | default | operational | service_dispatch | yes | no |
-| 137 | `review_context` | READ | default | operational | service_dispatch | yes | no |
-| 138 | `change_context` | READ | default | operational | service_dispatch | yes | no |
-| 139 | `symbol_context` | READ | default | operational | service_dispatch | yes | no |
-| 140 | `test_context` | READ | default | operational | service_dispatch | yes | no |
-| 141 | `dependency_context` | READ | default | operational | service_dispatch | yes | no |
-| 142 | `git_context` | READ | default | operational | service_dispatch | yes | no |
-| 143 | `frontend_context` | READ | default | operational | service_dispatch | yes | no |
-| 144 | `backend_context` | READ | default | operational | service_dispatch | yes | no |
-| 145 | `route_intent` | READ | default | operational | deterministic_operation | yes | no |
-| 146 | `recipe_list` | READ | default | operational | deterministic_operation | yes | no |
-| 147 | `recipe_describe` | READ | default | operational | deterministic_operation | yes | no |
-| 148 | `recipe_run` | EXECUTE | default | operational | deterministic_operation | no | no |
-| 149 | `dry_run` | READ | default | operational | deterministic_operation | yes | no |
-| 150 | `review_changes` | READ | default | operational | service_dispatch | yes | no |
-| 151 | `changed_symbols` | READ | default | operational | service_dispatch | yes | no |
-| 152 | `affected_modules` | READ | default | operational | service_dispatch | yes | no |
-| 153 | `git_history_context` | READ | default | operational | service_dispatch | yes | no |
-| 154 | `git_blame_context` | READ | default | operational | service_dispatch | yes | no |
-| 155 | `discover_tests` | READ | default | operational | service_dispatch | yes | no |
-| 156 | `run_affected_tests` | EXECUTE | default | operational | service_dispatch | no | no |
-| 157 | `test_failures` | READ | default | operational | service_dispatch | yes | no |
-| 158 | `coverage_context` | READ | default | operational | service_dispatch | yes | no |
-| 159 | `test_history` | READ | default | operational | service_dispatch | yes | no |
-| 160 | `cache_stats` | READ | default | operational | deterministic_operation | yes | no |
-| 161 | `cache_clear` | WRITE | default | operational | deterministic_operation | no | no |
-| 162 | `cache_invalidate` | WRITE | default | operational | deterministic_operation | no | no |
-| 163 | `hook_list` | READ | default | operational | deterministic_operation | yes | no |
-| 164 | `hook_register` | WRITE | default | operational | deterministic_operation | no | no |
-| 165 | `hook_remove` | WRITE | default | operational | deterministic_operation | no | no |
-| 166 | `skill_match` | READ | default | operational | service_dispatch | yes | no |
-| 167 | `skill_load` | READ | default | operational | service_dispatch | yes | no |
-| 168 | `plugin_install` | WRITE | default | operational | truthful_unavailable | no | no |
-| 169 | `plugin_list` | READ | default | operational | deterministic_operation | yes | no |
-| 170 | `plugin_enable` | WRITE | default | operational | truthful_unavailable | no | no |
-| 171 | `plugin_disable` | WRITE | default | operational | truthful_unavailable | no | no |
-| 172 | `plugin_remove` | DANGEROUS | default | operational | truthful_unavailable | no | yes |
-| 173 | `session_context` | READ | default | operational | deterministic_operation | yes | no |
-| 174 | `session_checkpoint` | WRITE | default | operational | deterministic_operation | no | no |
-| 175 | `session_resume` | READ | default | operational | deterministic_operation | yes | no |
-| 176 | `session_history` | READ | default | operational | deterministic_operation | yes | no |
-| 177 | `response_mode` | READ | default | operational | deterministic_operation | yes | no |
-| 178 | `inspect_web_app` | READ | default | operational | service_dispatch | yes | no |
-| 179 | `debug_ui` | READ | default | operational | service_dispatch | yes | no |
-| 180 | `capture_ui_state` | READ | default | operational | service_dispatch | yes | no |
-| 181 | `form_context` | READ | default | operational | service_dispatch | yes | no |
-| 182 | `network_context` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 183 | `console_context` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 184 | `browser_debug_context` | READ | default | operational | service_dispatch | yes | no |
-| 185 | `windows_environment` | READ | default | dependency_gated | service_dispatch | yes | no |
-| 186 | `service_context` | READ | default | operational | deterministic_operation | yes | no |
-| 187 | `process_context` | READ | default | operational | service_dispatch | yes | no |
-| 188 | `port_context` | READ | default | operational | deterministic_operation | yes | no |
-| 189 | `registry_context` | READ | default | dependency_gated | deterministic_operation | yes | no |
-| 190 | `event_log_context` | READ | default | operational | deterministic_operation | yes | no |
-| 191 | `installed_runtime_context` | READ | default | operational | deterministic_operation | yes | no |
-| 192 | `path_context` | READ | default | operational | deterministic_operation | yes | no |
-| 193 | `startup_context` | READ | default | operational | deterministic_operation | yes | no |
-| 194 | `mcp_discover` | READ | default | operational | service_dispatch | yes | no |
-| 195 | `mcp_health` | READ | default | operational | service_dispatch | yes | no |
-| 196 | `mcp_resources` | READ | default | dependency_gated | service_dispatch | yes | no |
-| 197 | `task_create` | EXECUTE | default | operational | service_dispatch | no | no |
-| 198 | `task_status` | READ | default | operational | service_dispatch | yes | no |
-| 199 | `task_cancel` | EXECUTE | default | operational | service_dispatch | no | no |
-| 200 | `task_result` | READ | default | operational | service_dispatch | yes | no |
-| 201 | `task_list` | READ | default | operational | service_dispatch | yes | no |
-| 202 | `delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
-| 203 | `delegate_status` | READ | Codex opt-in | dependency_gated | service_dispatch | yes | no |
-| 204 | `delegate_cancel` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
-| 205 | `delegate_result` | READ | Codex opt-in | dependency_gated | service_dispatch | yes | no |
-| 206 | `parallel_delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
-| 207 | `permission_check` | READ | default | operational | deterministic_operation | yes | no |
-| 208 | `permission_profile` | READ | default | operational | deterministic_operation | yes | no |
-| 209 | `live_logs_query` | READ | default | operational | truthful_unavailable | yes | no |
-| 210 | `live_logs_status` | READ | default | operational | truthful_unavailable | yes | no |
-| 211 | `telemetry_dashboard` | READ | default | operational | deterministic_operation | yes | no |
-| 212 | `context_economy_stats` | READ | default | operational | deterministic_operation | yes | no |
-| 213 | `execution_plan` | READ | default | operational | deterministic_operation | yes | no |
-| 214 | `repo_map` | READ | default | operational | service_dispatch | yes | no |
-| 215 | `context_expand` | READ | default | operational | service_dispatch | yes | no |
-| 216 | `recovery_status` | READ | default | operational | service_dispatch | yes | no |
-| 217 | `tool_schema_list` | READ | default | operational | deterministic_operation | yes | no |
-| 218 | `tool_schema_register` | WRITE | default | operational | deterministic_operation | no | no |
-| 219 | `capabilities` | READ | default | operational | deterministic_operation | yes | no |
-| 220 | `tool_search` | READ | default | operational | deterministic_operation | yes | no |
-| 221 | `tool_dynamic_filter` | READ | default | operational | deterministic_operation | yes | no |
-| 222 | `tool_describe` | READ | default | operational | deterministic_operation | yes | no |
-| 223 | `tool_categories` | READ | default | operational | deterministic_operation | yes | no |
-| 224 | `tool_function_find` | READ | default | operational | deterministic_operation | yes | no |
-| 225 | `tool_aliases` | READ | default | operational | deterministic_operation | yes | no |
-| 226 | `mcp_hub` | READ | default | dependency_gated | service_dispatch | yes | no |
-| 227 | `dev_context` | READ | default | operational | service_dispatch | yes | no |
-| 228 | `recipe_catalog` | READ | default | operational | deterministic_operation | yes | no |
-| 229 | `capture_screenshot` | READ | default | operational | service_dispatch | yes | no |
-| 230 | `compare_screenshot` | READ | default | operational | deterministic_operation | yes | no |
-| 231 | `dom_snapshot` | READ | default | operational | service_dispatch | yes | no |
-| 232 | `layout_metadata` | READ | default | operational | service_dispatch | yes | no |
-| 233 | `visual_context` | READ | default | operational | service_dispatch | yes | no |
-| 234 | `inspect_workbook` | READ | default | operational | service_dispatch | yes | no |
-| 235 | `compare_workbook_layout` | READ | default | dependency_gated | service_dispatch | yes | no |
-| 236 | `render_excel_preview` | READ | default | dependency_gated | service_dispatch | yes | no |
-| 237 | `inspect_pdf` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 238 | `compare_pdf_pages` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 239 | `project_profile_get` | READ | default | operational | service_dispatch | yes | no |
-| 240 | `project_profile_set` | WRITE | default | operational | deterministic_operation | no | no |
-| 241 | `handoff_context` | READ | default | operational | service_dispatch | yes | no |
-| 242 | `benchmark_run` | EXECUTE | default | dependency_gated | service_dispatch | no | no |
-| 243 | `regression_report` | READ | default | operational | deterministic_operation | yes | no |
-| 244 | `sandbox_exec` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
-| 245 | `event_watch` | EXECUTE | default | dependency_gated | deterministic_operation | no | no |
-| 246 | `crash_trace` | READ | default | dependency_gated | deterministic_operation | yes | no |
-| 247 | `lsp_diagnostics` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 248 | `lsp_rename` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 249 | `debug_attach` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
-| 250 | `debug_step` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
-| 251 | `git_worktree_spawn` | WRITE | default | dependency_gated | deterministic_operation | no | no |
-| 252 | `git_worktree_remove` | DANGEROUS | default | dependency_gated | deterministic_operation | no | yes |
-| 253 | `db_inspect` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 254 | `db_query` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 255 | `office_ppt` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 256 | `office_status` | READ | default | operational | service_dispatch | yes | no |
-| 257 | `office_word` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 258 | `office_excel` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 259 | `office_powerpoint` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 260 | `office_outlook` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 261 | `office_calendar` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 262 | `office_contacts` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 263 | `office_tasks` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 264 | `office_onenote` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 265 | `office_onedrive` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 266 | `office_sharepoint` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 267 | `office_teams` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
-| 268 | `office_access` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 269 | `office_visio` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 270 | `office_project` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 271 | `office_publisher` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 272 | `office_convert` | WRITE | default | dependency_gated | deterministic_operation | no | no |
-| 273 | `office_batch` | WRITE | default | dependency_gated | deterministic_operation | no | no |
-| 274 | `pdf_extract_tables` | READ | default | dependency_gated | truthful_unavailable | yes | no |
-| 275 | `docx_merge` | WRITE | default | dependency_gated | service_dispatch | no | no |
-| 276 | `self_heal_plan` | READ | default | operational | service_dispatch | yes | no |
-| 277 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | no | yes |
-| 278 | `skills_import` | WRITE | default | operational | service_dispatch | no | no |
-| 279 | `ecc_status` | READ | default | operational | deterministic_operation | yes | no |
-| 280 | `ecc_catalog` | READ | default | operational | deterministic_operation | yes | no |
-| 281 | `ecc_load` | READ | default | operational | truthful_unavailable | yes | no |
-| 282 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | no | no |
-| 283 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
-| 284 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | no | no |
-| 285 | `ecc_memory_search` | READ | default | operational | service_dispatch | yes | no |
-| 286 | `ecc_memory_read` | READ | default | operational | service_dispatch | yes | no |
-| 287 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | yes | no |
-| 288 | `tool_batch` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 289 | `automation_create` | WRITE | default | operational | service_dispatch | no | no |
-| 290 | `automation_status` | READ | default | operational | service_dispatch | yes | no |
-| 291 | `automation_events` | READ | default | operational | service_dispatch | yes | no |
-| 292 | `automation_run` | EXECUTE | default | operational | service_dispatch | no | yes |
-| 293 | `automation_control` | DANGEROUS | default | operational | service_dispatch | no | yes |
-| 294 | `automation_finalize` | WRITE | default | operational | service_dispatch | no | yes |
+| 14 | `engineering_build_artifact` | EXECUTE | default | operational | service_dispatch | no | no |
+| 15 | `engineering_complete_build` | WRITE | default | operational | service_dispatch | no | no |
+| 16 | `engineering_upload_worker` | EXECUTE | default | operational | service_dispatch | no | no |
+| 17 | `read_file` | READ | default | operational | service_dispatch | yes | no |
+| 18 | `read_files` | READ | default | operational | service_dispatch | yes | no |
+| 19 | `search_files` | READ | default | operational | service_dispatch | yes | no |
+| 20 | `search_text` | READ | default | operational | service_dispatch | yes | no |
+| 21 | `git_status` | READ | default | operational | service_dispatch | yes | no |
+| 22 | `git_diff` | READ | default | operational | service_dispatch | yes | no |
+| 23 | `git_log` | READ | default | operational | service_dispatch | yes | no |
+| 24 | `git_clone_safe` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 25 | `git_clone_status` | READ | default | operational | service_dispatch | yes | no |
+| 26 | `git_clone_cancel` | EXECUTE | default | operational | service_dispatch | no | no |
+| 27 | `git` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 28 | `write_file` | WRITE | default | operational | service_dispatch | no | no |
+| 29 | `apply_patch` | WRITE | default | operational | service_dispatch | no | no |
+| 30 | `edit_file` | WRITE | default | operational | service_dispatch | no | no |
+| 31 | `move_file` | WRITE | default | operational | service_dispatch | no | no |
+| 32 | `copy_file` | WRITE | default | operational | service_dispatch | no | no |
+| 33 | `delete_file` | DANGEROUS | default | operational | service_dispatch | no | yes |
+| 34 | `list_recovery_items` | READ | default | operational | service_dispatch | yes | no |
+| 35 | `restore_deleted_file` | WRITE | default | operational | service_dispatch | no | no |
+| 36 | `list_checkpoints` | READ | default | operational | service_dispatch | yes | no |
+| 37 | `restore_checkpoint` | WRITE | default | operational | service_dispatch | no | yes |
+| 38 | `process_start` | EXECUTE | default | operational | service_dispatch | no | no |
+| 39 | `process_list` | READ | default | operational | service_dispatch | yes | no |
+| 40 | `process_status` | READ | default | operational | service_dispatch | yes | no |
+| 41 | `process_logs` | READ | default | operational | service_dispatch | yes | no |
+| 42 | `process_stop` | EXECUTE | default | operational | service_dispatch | no | no |
+| 43 | `project_dev` | EXECUTE | default | operational | service_dispatch | no | no |
+| 44 | `project_test` | EXECUTE | default | operational | service_dispatch | no | no |
+| 45 | `project_lint` | EXECUTE | default | operational | service_dispatch | no | no |
+| 46 | `project_typecheck` | EXECUTE | default | operational | service_dispatch | no | no |
+| 47 | `project_build` | EXECUTE | default | operational | service_dispatch | no | no |
+| 48 | `codex_status` | READ | Codex opt-in | operational | service_dispatch | yes | no |
+| 49 | `codex_run` | EXECUTE | Codex opt-in | operational | service_dispatch | no | no |
+| 50 | `codex_task_list` | READ | Codex opt-in | operational | service_dispatch | yes | no |
+| 51 | `codex_task_status` | READ | Codex opt-in | operational | service_dispatch | yes | no |
+| 52 | `codex_task_logs` | READ | Codex opt-in | operational | service_dispatch | yes | no |
+| 53 | `codex_stop` | EXECUTE | Codex opt-in | operational | service_dispatch | no | no |
+| 54 | `agent_swarm_run` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
+| 55 | `shell` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 56 | `dom_cdp` | READ | default | operational | service_dispatch | no | yes |
+| 57 | `computer_use` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 58 | `accessibility` | READ | default | operational | service_dispatch | no | yes |
+| 59 | `input_event` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 60 | `vision` | READ | default | operational | service_dispatch | yes | no |
+| 61 | `vision_annotated_capture` | READ | default | operational | service_dispatch | yes | no |
+| 62 | `ui_target_action` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 63 | `window` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 64 | `health` | READ | default | operational | service_dispatch | yes | no |
+| 65 | `system_info` | READ | default | operational | service_dispatch | yes | no |
+| 66 | `notification` | EXECUTE | default | operational | service_dispatch | no | no |
+| 67 | `file_dialog` | EXECUTE | default | operational | service_dispatch | yes | no |
+| 68 | `clipboard` | EXECUTE | default | operational | service_dispatch | no | no |
+| 69 | `web_fetch` | READ | default | operational | service_dispatch | no | yes |
+| 70 | `audio` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 71 | `screen_record` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 72 | `office` | WRITE | default | operational | service_dispatch | no | no |
+| 73 | `scheduler` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 74 | `wsl_exec` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 75 | `wsl_fs` | READ | default | operational | service_dispatch | yes | no |
+| 76 | `skills_list` | READ | default | operational | service_dispatch | yes | no |
+| 77 | `skills_read` | READ | default | operational | service_dispatch | yes | no |
+| 78 | `ponytail_session` | WRITE | default | operational | service_dispatch | no | no |
+| 79 | `mcp_list` | READ | default | operational | service_dispatch | yes | no |
+| 80 | `mcp_describe` | READ | default | operational | service_dispatch | yes | no |
+| 81 | `mcp_call` | DANGEROUS | default | operational | service_dispatch | no | yes |
+| 82 | `workspace_context` | READ | default | operational | service_dispatch | yes | no |
+| 83 | `workspace_context_continue` | READ | default | operational | service_dispatch | yes | no |
+| 84 | `workspace_full_scan` | READ | default | operational | service_dispatch | yes | no |
+| 85 | `workspace_full_scan_continue` | READ | default | operational | deterministic_operation | yes | no |
+| 86 | `workspace_snapshot` | READ | default | operational | service_dispatch | yes | no |
+| 87 | `search_all` | READ | default | operational | service_dispatch | yes | no |
+| 88 | `read_many_files` | READ | default | operational | service_dispatch | yes | no |
+| 89 | `read_file_page` | READ | default | operational | service_dispatch | yes | no |
+| 90 | `read_file_page_continue` | READ | default | operational | service_dispatch | yes | no |
+| 91 | `workspace_index` | WRITE | default | operational | service_dispatch | no | no |
+| 92 | `workspace_index_status` | READ | default | operational | service_dispatch | yes | no |
+| 93 | `workspace_index_watch` | WRITE | default | operational | service_dispatch | no | no |
+| 94 | `workspace_index_stop` | WRITE | default | operational | service_dispatch | no | no |
+| 95 | `session_handoff` | READ | default | operational | service_dispatch | yes | no |
+| 96 | `verify_incremental` | EXECUTE | default | operational | service_dispatch | no | no |
+| 97 | `recover_blocked_goal` | WRITE | default | operational | service_dispatch | no | no |
+| 98 | `run_goal` | WRITE | default | operational | service_dispatch | no | no |
+| 99 | `get_goal` | READ | default | operational | service_dispatch | yes | no |
+| 100 | `get_goal_plan` | READ | default | operational | service_dispatch | yes | no |
+| 101 | `update_goal_plan` | WRITE | default | operational | service_dispatch | no | no |
+| 102 | `update_goal_acceptance` | WRITE | default | operational | service_dispatch | no | no |
+| 103 | `revise_goal_intent` | WRITE | default | operational | service_dispatch | no | no |
+| 104 | `create_context_capsule` | WRITE | default | operational | service_dispatch | no | no |
+| 105 | `get_context_capsule` | READ | default | operational | service_dispatch | yes | no |
+| 106 | `list_context_capsules` | READ | default | operational | service_dispatch | yes | no |
+| 107 | `context_pressure` | READ | default | operational | service_dispatch | yes | no |
+| 108 | `record_delivery_receipt` | WRITE | default | operational | service_dispatch | no | no |
+| 109 | `list_delivery_receipts` | READ | default | operational | service_dispatch | yes | no |
+| 110 | `advance_goal_iteration` | WRITE | default | operational | service_dispatch | no | no |
+| 111 | `checkpoint_goal` | WRITE | default | operational | service_dispatch | no | no |
+| 112 | `checkpoint_goal_engineering` | WRITE | default | operational | service_dispatch | no | no |
+| 113 | `finish_goal` | WRITE | default | operational | service_dispatch | no | no |
+| 114 | `cancel_goal` | WRITE | default | operational | service_dispatch | no | yes |
+| 115 | `reconcile_goals` | WRITE | default | operational | service_dispatch | no | no |
+| 116 | `list_goals` | READ | default | operational | service_dispatch | yes | no |
+| 117 | `resource_snapshot` | READ | default | operational | service_dispatch | yes | no |
+| 118 | `call_history` | READ | default | operational | service_dispatch | yes | no |
+| 119 | `goal_result` | READ | default | operational | service_dispatch | yes | no |
+| 120 | `workflow_templates` | READ | default | operational | service_dispatch | yes | no |
+| 121 | `workflow_prepare` | READ | default | operational | service_dispatch | yes | no |
+| 122 | `workflow_start` | WRITE | default | operational | service_dispatch | no | no |
+| 123 | `prepare_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | no |
+| 124 | `record_scheduled_continuation_receipt` | WRITE | default | operational | service_dispatch | no | no |
+| 125 | `claim_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | no |
+| 126 | `get_scheduled_continuation` | READ | default | operational | service_dispatch | yes | no |
+| 127 | `expedite_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | no |
+| 128 | `cancel_scheduled_continuation` | WRITE | default | operational | service_dispatch | no | yes |
+| 129 | `symbol_search` | READ | default | operational | service_dispatch | yes | no |
+| 130 | `find_definition` | READ | default | operational | service_dispatch | yes | no |
+| 131 | `find_references` | READ | default | operational | service_dispatch | yes | no |
+| 132 | `find_implementations` | READ | default | operational | service_dispatch | yes | no |
+| 133 | `call_hierarchy` | READ | default | operational | service_dispatch | yes | no |
+| 134 | `import_graph` | READ | default | operational | service_dispatch | yes | no |
+| 135 | `dependency_graph` | READ | default | operational | service_dispatch | yes | no |
+| 136 | `module_graph` | READ | default | operational | service_dispatch | yes | no |
+| 137 | `type_search` | READ | default | operational | service_dispatch | yes | no |
+| 138 | `trace_symbol` | READ | default | operational | service_dispatch | yes | no |
+| 139 | `context_ranking` | READ | default | operational | deterministic_operation | yes | no |
+| 140 | `debug_context` | READ | default | operational | service_dispatch | yes | no |
+| 141 | `review_context` | READ | default | operational | service_dispatch | yes | no |
+| 142 | `change_context` | READ | default | operational | service_dispatch | yes | no |
+| 143 | `symbol_context` | READ | default | operational | service_dispatch | yes | no |
+| 144 | `test_context` | READ | default | operational | service_dispatch | yes | no |
+| 145 | `dependency_context` | READ | default | operational | service_dispatch | yes | no |
+| 146 | `git_context` | READ | default | operational | service_dispatch | yes | no |
+| 147 | `frontend_context` | READ | default | operational | service_dispatch | yes | no |
+| 148 | `backend_context` | READ | default | operational | service_dispatch | yes | no |
+| 149 | `route_intent` | READ | default | operational | deterministic_operation | yes | no |
+| 150 | `recipe_list` | READ | default | operational | deterministic_operation | yes | no |
+| 151 | `recipe_describe` | READ | default | operational | deterministic_operation | yes | no |
+| 152 | `recipe_run` | EXECUTE | default | operational | deterministic_operation | no | no |
+| 153 | `dry_run` | READ | default | operational | deterministic_operation | yes | no |
+| 154 | `review_changes` | READ | default | operational | service_dispatch | yes | no |
+| 155 | `changed_symbols` | READ | default | operational | service_dispatch | yes | no |
+| 156 | `affected_modules` | READ | default | operational | service_dispatch | yes | no |
+| 157 | `git_history_context` | READ | default | operational | service_dispatch | yes | no |
+| 158 | `git_blame_context` | READ | default | operational | service_dispatch | yes | no |
+| 159 | `discover_tests` | READ | default | operational | service_dispatch | yes | no |
+| 160 | `run_affected_tests` | EXECUTE | default | operational | service_dispatch | no | no |
+| 161 | `test_failures` | READ | default | operational | service_dispatch | yes | no |
+| 162 | `coverage_context` | READ | default | operational | service_dispatch | yes | no |
+| 163 | `test_history` | READ | default | operational | service_dispatch | yes | no |
+| 164 | `cache_stats` | READ | default | operational | deterministic_operation | yes | no |
+| 165 | `cache_clear` | WRITE | default | operational | deterministic_operation | no | no |
+| 166 | `cache_invalidate` | WRITE | default | operational | deterministic_operation | no | no |
+| 167 | `hook_list` | READ | default | operational | deterministic_operation | yes | no |
+| 168 | `hook_register` | WRITE | default | operational | deterministic_operation | no | no |
+| 169 | `hook_remove` | WRITE | default | operational | deterministic_operation | no | no |
+| 170 | `skill_match` | READ | default | operational | service_dispatch | yes | no |
+| 171 | `skill_load` | READ | default | operational | service_dispatch | yes | no |
+| 172 | `plugin_install` | WRITE | default | operational | truthful_unavailable | no | no |
+| 173 | `plugin_list` | READ | default | operational | deterministic_operation | yes | no |
+| 174 | `plugin_enable` | WRITE | default | operational | truthful_unavailable | no | no |
+| 175 | `plugin_disable` | WRITE | default | operational | truthful_unavailable | no | no |
+| 176 | `plugin_remove` | DANGEROUS | default | operational | truthful_unavailable | no | yes |
+| 177 | `session_context` | READ | default | operational | deterministic_operation | yes | no |
+| 178 | `session_checkpoint` | WRITE | default | operational | deterministic_operation | no | no |
+| 179 | `session_resume` | READ | default | operational | deterministic_operation | yes | no |
+| 180 | `session_history` | READ | default | operational | deterministic_operation | yes | no |
+| 181 | `response_mode` | READ | default | operational | deterministic_operation | yes | no |
+| 182 | `inspect_web_app` | READ | default | operational | service_dispatch | yes | no |
+| 183 | `debug_ui` | READ | default | operational | service_dispatch | yes | no |
+| 184 | `capture_ui_state` | READ | default | operational | service_dispatch | yes | no |
+| 185 | `form_context` | READ | default | operational | service_dispatch | yes | no |
+| 186 | `network_context` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 187 | `console_context` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 188 | `browser_debug_context` | READ | default | operational | service_dispatch | yes | no |
+| 189 | `windows_environment` | READ | default | dependency_gated | service_dispatch | yes | no |
+| 190 | `service_context` | READ | default | operational | deterministic_operation | yes | no |
+| 191 | `process_context` | READ | default | operational | service_dispatch | yes | no |
+| 192 | `port_context` | READ | default | operational | deterministic_operation | yes | no |
+| 193 | `registry_context` | READ | default | dependency_gated | deterministic_operation | yes | no |
+| 194 | `event_log_context` | READ | default | operational | deterministic_operation | yes | no |
+| 195 | `installed_runtime_context` | READ | default | operational | deterministic_operation | yes | no |
+| 196 | `path_context` | READ | default | operational | deterministic_operation | yes | no |
+| 197 | `startup_context` | READ | default | operational | deterministic_operation | yes | no |
+| 198 | `mcp_discover` | READ | default | operational | service_dispatch | yes | no |
+| 199 | `mcp_health` | READ | default | operational | service_dispatch | yes | no |
+| 200 | `mcp_resources` | READ | default | dependency_gated | service_dispatch | yes | no |
+| 201 | `task_create` | EXECUTE | default | operational | service_dispatch | no | no |
+| 202 | `task_status` | READ | default | operational | service_dispatch | yes | no |
+| 203 | `task_cancel` | EXECUTE | default | operational | service_dispatch | no | no |
+| 204 | `task_result` | READ | default | operational | service_dispatch | yes | no |
+| 205 | `task_list` | READ | default | operational | service_dispatch | yes | no |
+| 206 | `delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
+| 207 | `delegate_status` | READ | Codex opt-in | dependency_gated | service_dispatch | yes | no |
+| 208 | `delegate_cancel` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
+| 209 | `delegate_result` | READ | Codex opt-in | dependency_gated | service_dispatch | yes | no |
+| 210 | `parallel_delegate` | EXECUTE | Codex opt-in | dependency_gated | service_dispatch | no | no |
+| 211 | `permission_check` | READ | default | operational | deterministic_operation | yes | no |
+| 212 | `permission_profile` | READ | default | operational | deterministic_operation | yes | no |
+| 213 | `live_logs_query` | READ | default | operational | truthful_unavailable | yes | no |
+| 214 | `live_logs_status` | READ | default | operational | truthful_unavailable | yes | no |
+| 215 | `telemetry_dashboard` | READ | default | operational | deterministic_operation | yes | no |
+| 216 | `context_economy_stats` | READ | default | operational | deterministic_operation | yes | no |
+| 217 | `execution_plan` | READ | default | operational | deterministic_operation | yes | no |
+| 218 | `repo_map` | READ | default | operational | service_dispatch | yes | no |
+| 219 | `context_expand` | READ | default | operational | service_dispatch | yes | no |
+| 220 | `recovery_status` | READ | default | operational | service_dispatch | yes | no |
+| 221 | `tool_schema_list` | READ | default | operational | deterministic_operation | yes | no |
+| 222 | `tool_schema_register` | WRITE | default | operational | deterministic_operation | no | no |
+| 223 | `capabilities` | READ | default | operational | deterministic_operation | yes | no |
+| 224 | `tool_search` | READ | default | operational | deterministic_operation | yes | no |
+| 225 | `tool_dynamic_filter` | READ | default | operational | deterministic_operation | yes | no |
+| 226 | `tool_describe` | READ | default | operational | deterministic_operation | yes | no |
+| 227 | `tool_categories` | READ | default | operational | deterministic_operation | yes | no |
+| 228 | `tool_function_find` | READ | default | operational | deterministic_operation | yes | no |
+| 229 | `tool_aliases` | READ | default | operational | deterministic_operation | yes | no |
+| 230 | `mcp_hub` | READ | default | dependency_gated | service_dispatch | yes | no |
+| 231 | `dev_context` | READ | default | operational | service_dispatch | yes | no |
+| 232 | `recipe_catalog` | READ | default | operational | deterministic_operation | yes | no |
+| 233 | `capture_screenshot` | READ | default | operational | service_dispatch | yes | no |
+| 234 | `compare_screenshot` | READ | default | operational | deterministic_operation | yes | no |
+| 235 | `dom_snapshot` | READ | default | operational | service_dispatch | yes | no |
+| 236 | `layout_metadata` | READ | default | operational | service_dispatch | yes | no |
+| 237 | `visual_context` | READ | default | operational | service_dispatch | yes | no |
+| 238 | `inspect_workbook` | READ | default | operational | service_dispatch | yes | no |
+| 239 | `compare_workbook_layout` | READ | default | dependency_gated | service_dispatch | yes | no |
+| 240 | `render_excel_preview` | READ | default | dependency_gated | service_dispatch | yes | no |
+| 241 | `inspect_pdf` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 242 | `compare_pdf_pages` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 243 | `project_profile_get` | READ | default | operational | service_dispatch | yes | no |
+| 244 | `project_profile_set` | WRITE | default | operational | deterministic_operation | no | no |
+| 245 | `handoff_context` | READ | default | operational | service_dispatch | yes | no |
+| 246 | `benchmark_run` | EXECUTE | default | dependency_gated | service_dispatch | no | no |
+| 247 | `regression_report` | READ | default | operational | deterministic_operation | yes | no |
+| 248 | `sandbox_exec` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
+| 249 | `event_watch` | EXECUTE | default | dependency_gated | deterministic_operation | no | no |
+| 250 | `crash_trace` | READ | default | dependency_gated | deterministic_operation | yes | no |
+| 251 | `lsp_diagnostics` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 252 | `lsp_rename` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 253 | `debug_attach` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
+| 254 | `debug_step` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
+| 255 | `git_worktree_spawn` | WRITE | default | dependency_gated | deterministic_operation | no | no |
+| 256 | `git_worktree_remove` | DANGEROUS | default | dependency_gated | deterministic_operation | no | yes |
+| 257 | `db_inspect` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 258 | `db_query` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 259 | `office_ppt` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 260 | `office_status` | READ | default | operational | service_dispatch | yes | no |
+| 261 | `office_word` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 262 | `office_excel` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 263 | `office_powerpoint` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 264 | `office_outlook` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 265 | `office_calendar` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 266 | `office_contacts` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 267 | `office_tasks` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 268 | `office_onenote` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 269 | `office_onedrive` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 270 | `office_sharepoint` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 271 | `office_teams` | WRITE | default | dependency_gated | truthful_unavailable | no | no |
+| 272 | `office_access` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 273 | `office_visio` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 274 | `office_project` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 275 | `office_publisher` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 276 | `office_convert` | WRITE | default | dependency_gated | deterministic_operation | no | no |
+| 277 | `office_batch` | WRITE | default | dependency_gated | deterministic_operation | no | no |
+| 278 | `pdf_extract_tables` | READ | default | dependency_gated | truthful_unavailable | yes | no |
+| 279 | `docx_merge` | WRITE | default | dependency_gated | service_dispatch | no | no |
+| 280 | `self_heal_plan` | READ | default | operational | service_dispatch | yes | no |
+| 281 | `self_heal_apply` | DANGEROUS | default | dependency_gated | service_dispatch | no | yes |
+| 282 | `skills_import` | WRITE | default | operational | service_dispatch | no | no |
+| 283 | `ecc_status` | READ | default | operational | deterministic_operation | yes | no |
+| 284 | `ecc_catalog` | READ | default | operational | deterministic_operation | yes | no |
+| 285 | `ecc_load` | READ | default | operational | truthful_unavailable | yes | no |
+| 286 | `ecc_configure` | WRITE | default | operational | truthful_unavailable | no | no |
+| 287 | `ecc_security_scan` | EXECUTE | default | dependency_gated | truthful_unavailable | no | no |
+| 288 | `ecc_memory_save` | WRITE | default | operational | service_dispatch | no | no |
+| 289 | `ecc_memory_search` | READ | default | operational | service_dispatch | yes | no |
+| 290 | `ecc_memory_read` | READ | default | operational | service_dispatch | yes | no |
+| 291 | `ecc_memory_doctor` | READ | default | operational | service_dispatch | yes | no |
+| 292 | `tool_batch` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 293 | `automation_create` | WRITE | default | operational | service_dispatch | no | no |
+| 294 | `automation_status` | READ | default | operational | service_dispatch | yes | no |
+| 295 | `automation_events` | READ | default | operational | service_dispatch | yes | no |
+| 296 | `automation_run` | EXECUTE | default | operational | service_dispatch | no | yes |
+| 297 | `automation_control` | DANGEROUS | default | operational | service_dispatch | no | yes |
+| 298 | `automation_finalize` | WRITE | default | operational | service_dispatch | no | yes |
 <!-- END GENERATED TOOL REGISTRY -->
 
 ## Protocol and result rules
@@ -372,7 +378,7 @@ Mutations still receive typed policy classification for audit/dispatch behavior.
 
 ## Core primitive runtime catalog
 
-The generated live `ToolRegistry.listAll()` index above is the authoritative complete catalog for all **286 tool definitions**. It is generated from the built registry and checked in CI. This section intentionally does not maintain a second hand-numbered primitive table, because duplicate permission/schema tables can drift from the registry. The Zod schemas in `packages/mcp-server/src/tools/` and the generated table above remain the source of truth for names, permissions, annotations, ordering, and input JSON Schema; `tools/list` exposes only the currently advertised subset.
+The generated live `ToolRegistry.listAll()` index above is the authoritative complete catalog for all **298 tool definitions**. It is generated from the built registry and checked in CI. This section intentionally does not maintain a second hand-numbered primitive table, because duplicate permission/schema tables can drift from the registry. The Zod schemas in `packages/mcp-server/src/tools/` and the generated table above remain the source of truth for names, permissions, annotations, ordering, and input JSON Schema; `tools/list` exposes only the currently advertised subset.
 
 ## Schema groups and contract examples
 

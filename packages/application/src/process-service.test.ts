@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ok, type CommandSpec, type Result } from '@lnwjud/domain';
+import { appError, err, ok, type CommandSpec, type Result } from '@lnwjud/domain';
 import { permissionProfiles } from '@lnwjud/permissions';
 import type { ManagedProcess, ManagedProcessStart, ProcessLogResult } from '@lnwjud/process';
 import type { Workspace, WorkspaceRepository } from '@lnwjud/workspace';
@@ -250,6 +250,48 @@ describe('ProcessService', () => {
     }, signal)).resolves.toMatchObject({ ok: true });
 
     expect(observedSignals).toEqual([signal]);
+  });
+
+  it('aborts a failed pre-spawn writer admission only after the native no-launch proof', async () => {
+    const workspace = await createWorkspace();
+    let aborted = 0;
+    let released = 0;
+    let launched = false;
+    const admission: NonNullable<ProcessServiceDependencies['writerAdmission']> = {
+      async enter() {
+        return ok({
+          id: 'writer-reservation',
+          async abortBeforeLaunch(): Promise<void> { aborted += 1; },
+          async releaseAfterVerifiedTermination(): Promise<void> { released += 1; },
+        });
+      },
+    };
+    const manager: NonNullable<ProcessServiceDependencies['processManager']> = {
+      async start(_spec, _signal, onCreated): Promise<Result<ManagedProcess>> {
+        if (launched) onCreated?.(processHandle());
+        return err(appError('PROCESS_TIMEOUT', 'Failed native startup'));
+      },
+      status(): Result<ManagedProcess> { return err(appError('PROCESS_NOT_FOUND', 'Not running')); },
+      logs(): Result<ProcessLogResult> { return ok({ entries: [], truncated: false, nextSequence: 0 }); },
+      async stop(): Promise<Result<void>> { return ok(undefined); },
+    };
+    const service = new ProcessService(repository(workspace), {
+      writerAdmission: admission,
+      nativeContainmentRoot: path.join(workspace.realRootPath, 'native'),
+      processManager: manager,
+      profile: permissionProfiles.full,
+    });
+    const request = { executable: 'pnpm', args: ['test'], userConfirmed: true };
+    await expect(service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, request))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_TIMEOUT' } });
+    expect(aborted).toBe(1);
+    expect(released).toBe(0);
+
+    launched = true;
+    await expect(service.start({ clientId: 'client-1', clientName: 'test' }, workspace.id, request))
+      .resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_TIMEOUT' } });
+    expect(aborted).toBe(1);
+    expect(released).toBe(0);
   });
 
   it('provisionally owns a created process so a cancelled launch remains listable and stoppable', async () => {

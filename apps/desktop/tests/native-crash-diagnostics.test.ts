@@ -16,7 +16,7 @@ describe('native crash diagnostics', () => {
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ uploadToServer: false, compress: false }));
 
     const directory = path.join(root, 'crash-dumps'); mkdirSync(directory, { recursive: true });
-    const now = Date.UTC(2026, 8, 18);
+    const now = Date.now();
     for (let index = 0; index < 22; index += 1) {
       const file = path.join(directory, String(index).padStart(2, '0') + '.dmp'); writeFileSync(file, 'dump');
       const modified = new Date(now - index * 1_000); utimesSync(file, modified, modified);
@@ -24,7 +24,7 @@ describe('native crash diagnostics', () => {
     const old = path.join(directory, 'old.dmp'); writeFileSync(old, 'old');
     const oldDate = new Date(now - 31 * 24 * 60 * 60 * 1000); utimesSync(old, oldDate, oldDate);
     pruneNativeCrashDumps(directory, now);
-    const metadata = readNativeCrashDumpMetadata(root);
+    const metadata = readNativeCrashDumpMetadata(root, now);
     expect(metadata.count).toBe(20);
     expect(metadata).not.toHaveProperty('directory');
     expect(metadata.dumps.some((dump) => dump.fileName === 'old.dmp')).toBe(false);

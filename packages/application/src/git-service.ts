@@ -1,6 +1,6 @@
 import { realpath, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { ProcessManager } from '@lnwjud/process';
+import { ProcessManager, type WindowsNativeAuthority } from '@lnwjud/process';
 import type { ManagedWriterAdmissionPort } from './writer-admission.js';
 import path from 'node:path';
 import {
@@ -37,6 +37,7 @@ export interface GitRunRequest {
 export interface GitManagedWriterOptions {
   readonly writerAdmission?: ManagedWriterAdmissionPort;
   readonly nativeContainmentRoot?: string;
+  readonly nativeAuthority?: WindowsNativeAuthority;
   readonly processManager?: ProcessManager;
 }
 
@@ -118,8 +119,7 @@ export class GitService {
     if (isProvablyReadOnlyGitInvocation(request.args) || this.writerOptions.writerAdmission === undefined) {
       return this.adapter.run(cwd.value, request.args, request.timeoutMs, signal);
     }
-    if (process.platform !== 'win32') return this.adapter.run(cwd.value, request.args, request.timeoutMs, signal);
-    if (this.writerOptions.nativeContainmentRoot === undefined) {
+    if (process.platform === 'win32' && this.writerOptions.nativeContainmentRoot === undefined) {
       return err(appError('CONFLICT', 'Windows native Git mutation containment is required while managed writer admission is enabled'));
     }
     return this.runContainedMutation(actor, request, cwd.value, signal);
@@ -127,25 +127,28 @@ export class GitService {
 
   private async runContainedMutation(actor: FileActor, request: GitRunRequest, cwd: string, signal?: AbortSignal): Promise<Result<GitCommandResult>> {
     const containmentId = randomUUID();
-    const nativeRoot = this.writerOptions.nativeContainmentRoot!;
-    const receiptPath = path.join(nativeRoot, containmentId, 'containment.receipt.json');
+    const nativeRoot = this.writerOptions.nativeContainmentRoot;
+    const receiptPath = process.platform === 'win32' && nativeRoot !== undefined ? path.join(nativeRoot, containmentId, 'containment.receipt.json') : undefined;
     const admission = await this.writerOptions.writerAdmission!.enter({
       actorClientId: actor.clientId,
+      actorSessionId: actor.sessionId?.trim() || actor.clientId,
+      nativeTaskId: containmentId,
       workspaceId: request.workspaceId ?? 'unscoped-git',
-      kind: 'contained_process',
-      nativeReceiptPath: receiptPath,
+      kind: receiptPath === undefined ? 'uncontained_process' : 'contained_process',
+      ...(receiptPath === undefined ? {} : { nativeReceiptPath: receiptPath }),
     });
     if (!admission.ok) return admission;
     // Only a zero-active native Windows Job receipt authorizes release.
-    const manager = this.writerOptions.processManager ?? new ProcessManager(undefined, undefined, undefined, undefined, nativeRoot);
+    const manager = this.writerOptions.processManager ?? new ProcessManager(undefined, undefined, undefined, undefined, nativeRoot, this.writerOptions.nativeAuthority);
     const started = await manager.start({
       executable: 'git',
       args: [...request.args],
       cwd,
       containmentId,
+      ...(admission.value.nativeBinding === undefined ? {} : { nativeBinding: admission.value.nativeBinding }),
       stdinMode: 'ignore',
       timeoutMs: request.timeoutMs ?? 60_000,
-    }, signal, undefined, () => { void admission.value.releaseAfterVerifiedTermination(); });
+    }, signal, undefined, () => admission.value.releaseAfterVerifiedTermination());
     if (!started.ok) return started;
     let snapshot = started.value;
     while (snapshot.state === 'running' || snapshot.state === 'starting') {

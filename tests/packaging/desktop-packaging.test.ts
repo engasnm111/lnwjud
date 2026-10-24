@@ -14,11 +14,11 @@ const ponytailSkillNames = [
 ] as const;
 
 describe('cross-platform desktop packaging', () => {
-  it('[version-contract] pins the product release to v5.8.7', async () => {
+  it('[version-contract] pins the product release to v5.9.0', async () => {
     const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as { version?: unknown };
     const desktopPackage = JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')) as { version?: unknown };
-    expect(rootPackage.version).toBe('5.8.7');
-    expect(desktopPackage.version).toBe('5.8.7');
+    expect(rootPackage.version).toBe('5.9.0');
+    expect(desktopPackage.version).toBe('5.9.0');
   });
 
   it('[version-contract] keeps every workspace package and runtime version aligned', async () => {
@@ -41,12 +41,12 @@ describe('cross-platform desktop packaging', () => {
     }
     for (const packagePath of packagePaths) {
       const packageJson = JSON.parse(await readFile(packagePath, 'utf8')) as { version?: unknown };
-      expect(packageJson.version, packagePath).toBe('5.8.7');
+      expect(packageJson.version, packagePath).toBe('5.9.0');
     }
     const ipcContracts = await readFile(path.join(repositoryRoot, 'packages', 'ipc-contracts', 'src', 'index.ts'), 'utf8');
     const shared = await readFile(path.join(repositoryRoot, 'packages', 'shared', 'src', 'index.ts'), 'utf8');
-    expect(ipcContracts).toContain("APP_VERSION = '5.8.7'");
-    expect(shared).toContain("APP_VERSION = '5.8.7'");
+    expect(ipcContracts).toContain("APP_VERSION = '5.9.0'");
+    expect(shared).toContain("APP_VERSION = '5.9.0'");
   });
 
   it('[version-contract] keeps source-version and latest-published documentation explicit and aligned', async () => {
@@ -101,7 +101,7 @@ describe('cross-platform desktop packaging', () => {
       repository?: { type?: unknown; url?: unknown };
     };
 
-    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 294 total tool definitions.');
+    expect(desktopPackage.description).toBe('Cross-platform local AI-agent runtime and MCP gateway with 298 total tool definitions.');
     expect(desktopPackage.author).toBe('Adisorn');
     expect(desktopPackage.homepage).toBe('https://github.com/engasnm111/lnwjud#readme');
     expect(desktopPackage.repository).toEqual({ type: 'git', url: 'https://github.com/engasnm111/lnwjud.git' });
@@ -116,11 +116,13 @@ describe('cross-platform desktop packaging', () => {
     expect(config).toContain('output: dist/installers');
     expect(config).toContain('target: nsis');
     expect(config).toContain('target: portable');
+    expect(config).toContain('selectPerMachineByDefault: true');
     expect(config).toContain('- x64');
     expect(config).toContain('artifactName: lnwjud-Setup-${version}.${ext}');
     expect(config).toContain('portable:');
     expect(config).toContain('artifactName: lnwjud-Portable-${version}.${ext}');
     expect(desktopPackage.scripts?.['package:windows']).toContain('--filter @lnwjud/desktop... build');
+    expect(desktopPackage.scripts?.['package:windows']).toContain('prepare-containment-runtime.mjs');
     expect(desktopPackage.scripts?.['package:windows']).toContain('--win nsis portable --x64');
     expect(desktopPackage.scripts?.['package:windows']).toContain('write-portable-update-manifest.mjs');
     expect(desktopPackage.scripts?.build).toContain('write-capability-integrity.mjs && corepack pnpm@10.15.0 --filter @lnwjud/capabilities build && tsc');
@@ -155,6 +157,9 @@ describe('cross-platform desktop packaging', () => {
     const installerScript = await readFile(path.join(desktopRoot, 'build', 'installer.nsh'), 'utf8');
     expect(installerScript).toContain('CreateShortCut "$SMPROGRAMS\\lnwjud.lnk" "$INSTDIR\\lnwjud.exe"');
     expect(installerScript).toContain('SetOutPath "$INSTDIR"');
+    expect(installerScript).toContain('service-install');
+    expect(installerScript).toContain('service-uninstall');
+    expect(installerScript).toContain('$installMode == "all"');
     expect(installerScript).not.toMatch(/[A-Z]:\\Users\\[^\r\n]+/i);
     expect(config).toContain('extraResources:');
     expect(config).toContain('from: build/capability-bridge/windows-capability-bridge.ps1');
@@ -259,7 +264,8 @@ describe('cross-platform desktop packaging', () => {
     const tunnelBundle = await readFile(path.join(desktopRoot, 'dist', 'main', 'tunnel-controller.js'), 'utf8');
     expect(windowBundle).toContain('webSecurity: true');
     expect(windowBundle).not.toContain('webSecurity: false');
-    expect(mainBundle).toMatch(/setName\(["']lnwjud["']|setName\(APP_NAME\)/);
+    expect(mainBundle).toMatch(/(?:const|let|var) APP_NAME\d*\s*=\s*["']lnwjud["']/);
+    expect(mainBundle).toMatch(/app\.setName\((?:APP_NAME\d*|["']lnwjud["'])\)/);
     expect(tunnelBundle).toContain('delete env.LNWJUD_DATA_PATH');
     expect(tunnelBundle).toContain('delete env.LNWJUD_UNRESTRICTED');
     expect(mainBundle).toMatch(/setPath\(["']userData["']/);

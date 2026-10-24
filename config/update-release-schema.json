@@ -1,0 +1,75 @@
+{
+  "protocol": 1,
+  "limits": { "envelopeBytes": 49152, "payloadBytes": 32768, "maxDepth": 12 },
+  "objects": {
+    "envelope": { "fields": {
+      "protocol": { "kind": "integer", "constant": 1 },
+      "keyId": { "kind": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$", "maxLength": 64 },
+      "payload": { "kind": "string", "format": "base64", "maxLength": 43692 },
+      "signature": { "kind": "string", "format": "base64", "maxLength": 88 }
+    } },
+    "payload": { "fields": {
+      "protocol": { "kind": "integer", "constant": 1 },
+      "product": { "kind": "string", "constant": "lnwjud" },
+      "policyRevision": { "kind": "integer", "min": 1, "max": 2147483647 },
+      "releaseId": { "kind": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$", "maxLength": 128 },
+      "channel": { "kind": "string", "constant": "stable" },
+      "platform": { "kind": "string", "constant": "win32" },
+      "architecture": { "kind": "string", "constant": "x64" },
+      "distribution": { "kind": "string", "constant": "windows-nsis" },
+      "version": { "kind": "string", "format": "semver", "maxLength": 32 },
+      "releaseSequence": { "kind": "string", "format": "positive-uint64", "maxLength": 20 },
+      "issuedAt": { "kind": "string", "format": "unix-seconds", "maxLength": 12 },
+      "notBefore": { "kind": "string", "format": "unix-seconds", "maxLength": 12 },
+      "expiresAt": { "kind": "string", "format": "unix-seconds", "maxLength": 12 },
+      "source": { "kind": "object", "object": "source" },
+      "buildEvidence": { "kind": "object", "object": "buildEvidence" },
+      "artifact": { "kind": "object", "object": "identity" },
+      "provenance": { "kind": "object", "object": "identity" },
+      "previous": { "kind": "object", "object": "previous" },
+      "compatibility": { "kind": "object", "object": "compatibility" },
+      "recoveryAuthorization": { "kind": "object", "object": "recoveryAuthorization" }
+    } },
+    "source": { "fields": {
+      "repository": { "kind": "string", "constant": "https://github.com/engasnm111/lnwjud" },
+      "commit": { "kind": "string", "format": "sha1", "maxLength": 40 },
+      "workflow": { "kind": "string", "pattern": "^\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml$", "maxLength": 256 },
+      "ref": { "kind": "string", "pattern": "^refs/heads/[A-Za-z0-9._/-]+$", "maxLength": 256 },
+      "runId": { "kind": "string", "format": "positive-uint64", "maxLength": 20 },
+      "runAttempt": { "kind": "string", "format": "positive-uint64", "maxLength": 20 }
+    } },
+    "buildEvidence": { "fields": {
+      "kind": { "kind": "string", "constant": "github-artifact-attestation-v1" },
+      "artifactAttestationSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "provenanceAttestationSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "sourceTree": { "kind": "string", "constant": "clean" }
+    } },
+    "identity": { "fields": {
+      "name": { "kind": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$", "maxLength": 128 },
+      "sha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "sizeBytes": { "kind": "string", "format": "positive-uint64", "maxLength": 20 }
+    } },
+    "previous": { "fields": {
+      "version": { "kind": "string", "format": "semver", "maxLength": 32 },
+      "releaseSequence": { "kind": "string", "format": "positive-uint64", "maxLength": 20 },
+      "envelopeSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "artifact": { "kind": "object", "object": "identity" },
+      "provenance": { "kind": "object", "object": "identity" }
+    } },
+    "compatibility": { "fields": {
+      "migrationContractSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "workerContractSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "serviceContractSha256": { "kind": "string", "format": "sha256", "maxLength": 64 }
+    } },
+    "recoveryAuthorization": { "fields": {
+      "purpose": { "kind": "string", "constant": "failed-candidate-only" },
+      "candidateArtifactSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "candidateReleaseSequence": { "kind": "string", "format": "positive-uint64", "maxLength": 20 },
+      "previousEnvelopeSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "previousArtifactSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "previousProvenanceSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "expiresAt": { "kind": "string", "format": "unix-seconds", "maxLength": 12 },
+      "maximumAttempts": { "kind": "integer", "constant": 1 }
+    } }
+  }
+}

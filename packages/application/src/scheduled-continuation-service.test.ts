@@ -2,10 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ScheduledContinuationWorkerLivenessPort } from '@lnwjud/domain';
+import { appError, ok, type Result, type ScheduledContinuationWorkerLivenessPort } from '@lnwjud/domain';
 import type { FileActor } from './file-service.js';
 import { GoalContinuationService, type RunGoalResult } from './goal-continuation-service.js';
-import { ScheduledContinuationService, type PrepareScheduledContinuationRequest } from './scheduled-continuation-service.js';
+import { ScheduledContinuationService, type PrepareScheduledContinuationRequest, type ScheduledContinuationWriterFencePort } from './scheduled-continuation-service.js';
 import { SqliteDatabase } from '../../storage/src/database.js';
 import { SqliteGoalRepository } from '../../storage/src/goal-repository.js';
 import { SqliteWorkspaceRepository } from '../../storage/src/workspace-repository.js';
@@ -1840,6 +1840,112 @@ describe('ScheduledContinuationService', () => {
           continuation: { status: 'superseded' },
           cancellation: { action: 'none', reason: 'no_live_task' },
         },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('treats a live workspace writer lease owner as a busy worker and recovers an abandoned lease on claim', async () => {
+    let writerState: { live: boolean; reason: string; generation: number } = {
+      live: true,
+      reason: 'within_stale_grace',
+      generation: 1,
+    };
+    let revokeCalled = 0;
+    const writerFence: ScheduledContinuationWriterFencePort = {
+      async assessAbandonment(): Promise<Result<{ live: boolean; reason: string; generation: number }>> {
+        return ok(writerState);
+      },
+      async revokeAbandoned(): Promise<Result<{ revoked: boolean; previousGeneration: number; generation: number }>> {
+        revokeCalled += 1;
+        if (writerState.live) return err(appError('CONFLICT', 'owner is live'));
+        const prev = writerState.generation;
+        writerState = { live: false, reason: 'unleased', generation: prev + 1 };
+        return ok({ revoked: true, previousGeneration: prev, generation: prev + 1 });
+      },
+    };
+
+    const { database, repository, goals, clock } = await fixture();
+    const scheduled = new ScheduledContinuationService(repository, {
+      now: clock.now,
+      hostTimeZone: 'Asia/Bangkok',
+      workspaceWriterFence: writerFence,
+    });
+
+    try {
+      const started = await startGoal(goals);
+      const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error('prepare failed');
+
+      await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'native-task-fence-test',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'cloud',
+      });
+
+      // Advance clock to due date
+      clock.set(prepared.value.continuation.dueAt);
+
+      // Case 1: Writer lease owner is actively alive (within stale grace or active call)
+      // Claim must return worker_busy_noop without stealing or revoking writer lease
+      const busyClaim = await scheduled.claimScheduledContinuation(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        workspaceId: 'workspace-1',
+        goalId: started.goalId,
+      });
+      expect(busyClaim).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'worker_busy_noop',
+          currentWakeMayReturn: true,
+        },
+      });
+      expect(revokeCalled).toBe(0);
+
+      // Case 2: Writer lease owner died (idle beyond grace, no active calls)
+      // Goal lease is expired or orphan-recoverable. Claim recovers continuation AND atomically revokes abandoned writer lease
+      clock.set(new Date(Date.parse(prepared.value.continuation.dueAt) + 600_000).toISOString());
+      writerState = { live: false, reason: 'idle_beyond_grace', generation: 1 };
+
+      const recoveredClaim = await scheduled.claimScheduledContinuation(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        workspaceId: 'workspace-1',
+        goalId: started.goalId,
+      });
+      expect(recoveredClaim).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'recurring_acquired',
+          workspaceWriterRecovery: {
+            action: 'revoked_abandoned',
+            previousGeneration: 1,
+            generation: 2,
+          },
+        },
+      });
+      expect(revokeCalled).toBe(1);
+
+      // Checkpoint with the newly acquired lease succeeds
+      if (!recoveredClaim.ok || recoveredClaim.value.outcome !== 'recurring_acquired') throw new Error('claim failed');
+      const checkpoint = await goals.checkpointGoal(actor, {
+        goalId: started.goalId,
+        leaseToken: recoveredClaim.value.leaseToken,
+        expectedRevision: recoveredClaim.value.goal.revision,
+        currentPhase: 'recovered_phase',
+        summary: 'Progress after recovering abandoned writer lease.',
+        stepUpdates: [],
+        nextAction: 'continue next task',
+        blockers: [],
+        evidence: [],
+      });
+      expect(checkpoint).toMatchObject({
+        ok: true,
+        value: { currentPhase: 'recovered_phase' },
       });
     } finally {
       database.close();

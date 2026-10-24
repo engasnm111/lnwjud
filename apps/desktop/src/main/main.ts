@@ -1,3 +1,4 @@
+import { isEngineeringWorkerTarget } from '@lnwjud/shared';
 import { app, BrowserWindow, clipboard, ClipboardItem, crashReporter, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
@@ -105,7 +106,7 @@ import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './ex
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, createMutationApprovalWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
 import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, getTrayIconPath, shouldHideMainWindowOnClose } from './tray.js';
-import { confirmTunnelStopForUpdate, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, type UpdateSharedActivitySnapshot } from './update-install.js';
+import { confirmTunnelStopForUpdate, silentInstallStillSafe, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, type UpdateSharedActivitySnapshot } from './update-install.js';
 import { UpdateCheckScheduler } from './update-check-scheduler.js';
 import {
   configureUpdaterForDistribution,
@@ -140,6 +141,8 @@ import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDe
 import { configureLinuxAutostart } from './linux-autostart.js';
 import { InstallActivityCoordinator } from './install-activity.js';
 import { canInstallMacosUpdates } from './macos-update-trust.js';
+import { installWindowsUpdate, unattendedUpdateSupport } from './unattended-update-policy.js';
+import { createNativeUpdateBootstrapClient, type NativeUpdateBootstrapClient } from './native-update-client.js';
 
 const ECC_UPSTREAM_VERSION = '2.2.1';
 
@@ -270,6 +273,7 @@ const defaultUserSettings: UserSettings = {
   updateCheckOnStartup: true,
   updateIntervalMinutes: 30,
   updateAutoDownload: true,
+  updateSilentInstall: false,
   closeBehavior: 'tray',
   launchAtStartup: false,
   startMinimized: false,
@@ -1420,6 +1424,7 @@ function parseUserSettings(record: Record<string, unknown>): UserSettings {
     updateCheckOnStartup: booleanField(record.updateCheckOnStartup, 'updateCheckOnStartup'),
     updateIntervalMinutes: boundedInteger(record.updateIntervalMinutes, 'updateIntervalMinutes', 5, 24 * 60),
     updateAutoDownload: booleanField(record.updateAutoDownload, 'updateAutoDownload'),
+    updateSilentInstall: record.updateSilentInstall === undefined ? false : booleanField(record.updateSilentInstall, 'updateSilentInstall'),
     closeBehavior: record.closeBehavior === 'tray' || record.closeBehavior === 'quit' ? record.closeBehavior : invalidField('closeBehavior'),
     launchAtStartup: booleanField(record.launchAtStartup, 'launchAtStartup'),
     startMinimized: booleanField(record.startMinimized, 'startMinimized'),
@@ -1474,12 +1479,14 @@ function ponytailModeField(value: unknown): 'off' | 'lite' | 'full' | 'ultra' {
 
 function engineeringHarnessSettingsField(value: unknown): NonNullable<UserSettings['engineeringHarness']> {
   if (!isRecord(value)
-    || Object.keys(value).some((key) => !['schemaVersion', 'enabled', 'profile', 'applyTo', 'autoProjectAssessment', 'custom'].includes(key))
+    || Object.keys(value).some((key) => !['schemaVersion', 'enabled', 'profile', 'applyTo', 'autoProjectAssessment', 'custom', 'hostedCi', 'allowNoGit', 'workerTarget'].includes(key))
     || value.schemaVersion !== 1
     || typeof value.enabled !== 'boolean'
     || (value.profile !== 'standard' && value.profile !== 'senior' && value.profile !== 'strict' && value.profile !== 'custom')
     || (value.applyTo !== 'coding_projects' && value.applyTo !== 'all_workspaces')
     || typeof value.autoProjectAssessment !== 'boolean') throw new Error('Invalid IPC payload: engineeringHarness');
+  if ((value.hostedCi !== undefined && value.hostedCi !== 'required' && value.hostedCi !== 'local_only') || (value.allowNoGit !== undefined && typeof value.allowNoGit !== 'boolean')) throw new Error('Invalid Engineering delivery policy');
+  if (value.workerTarget !== undefined && !isEngineeringWorkerTarget(value.workerTarget)) throw new Error('Invalid Engineering Worker target');
   const custom = value.custom;
   if (custom !== undefined && (!isRecord(custom)
     || Object.keys(custom).some((key) => !['analysis', 'review', 'validation', 'docsImpactCheck'].includes(key))
@@ -1493,6 +1500,9 @@ function engineeringHarnessSettingsField(value: unknown): NonNullable<UserSettin
     profile: value.profile,
     applyTo: value.applyTo,
     autoProjectAssessment: value.autoProjectAssessment,
+    ...(value.workerTarget === undefined || !isEngineeringWorkerTarget(value.workerTarget) ? {} : { workerTarget: value.workerTarget }),
+    ...(value.hostedCi === undefined ? {} : { hostedCi: value.hostedCi }),
+    ...(value.allowNoGit === undefined ? {} : { allowNoGit: value.allowNoGit }),
     ...(custom === undefined ? {} : { custom: {
       analysis: custom.analysis as 'focused' | 'cross_file',
       review: custom.review as 'risk_based' | 'always',
@@ -1584,6 +1594,7 @@ let factoryResetQueued = false;
 const desktopIpcDrainBarrier = new DesktopIpcDrainBarrier();
 let desktopShutdownCoordinator: DesktopShutdownCoordinator | null = null;
 let updateInstallCoordinator: UpdateInstallCoordinator | null = null;
+let nativeUpdateBootstrapClient: NativeUpdateBootstrapClient | null = null;
 let updateInstallConfirmationPending = false;
 let updateCheckScheduler: UpdateCheckScheduler | null = null;
 let pendingUpdateCheckSource: 'automatic' | 'tray' | 'renderer' | null = null;
@@ -1862,6 +1873,9 @@ async function requestUpdateInstall(): Promise<{ readonly accepted: boolean; rea
   const runtime = desktopRuntime;
   if (runtime === null) return { accepted: false, status: currentUpdateStatus };
 
+  // A manual request takes ownership before prompting, preventing a queued
+  // unattended attempt from racing a later user decision.
+  updateInstallCoordinator.cancelUnattended();
   updateInstallConfirmationPending = true;
   try {
     const approved = await confirmTunnelStopForUpdate({
@@ -2008,6 +2022,7 @@ function bootstrapMcpStdio(): void {
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
     assertSupportedPlatform();
+    await prepareDataPath(dataPath);
     prependBundledRuntimeToolsToPath();
     const secrets = await resolveDesktopRuntimeSecrets(dataPath);
     const runtime = createDesktopRuntime(dataPath, {
@@ -2015,6 +2030,7 @@ function bootstrapMcpStdio(): void {
       hostMutationApprovalProvider: requestMutationApproval,
       nativeCapabilityApi: createElectronNativeCapabilityApi(() => null),
       eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
+      nativeContainmentDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native-containment') : path.join(app.getAppPath(), 'build', 'native-containment'),
       ...secrets,
       watchToolAvailability: true,
     });
@@ -2077,7 +2093,51 @@ function bootstrapMcpStdio(): void {
   });
 }
 
+function unattendedUpdateUnavailableMessage(): string | null {
+  const support = unattendedUpdateSupport(updaterDistribution);
+  if (support.kind === 'native-supported') return null;
+  const messages = nativeMessages(desktopLocale);
+  switch (support.reason) {
+    case 'windows-publisher-verification-unavailable':
+      return messages.updaterAutomaticWindowsUnavailable;
+    case 'native-update-transaction-unavailable':
+      return messages.updaterAutomaticMacosUnavailable;
+    case 'unsupported-distribution':
+      return messages.updaterAutomaticDistributionUnavailable;
+  }
+}
+
+function silentUpdateEnabled(settings: UserSettings): boolean {
+  // Distribution and signing eligibility alone cannot authorize installation
+  // before the native update transaction and its recovery authority are ready.
+  return app.isPackaged && unattendedUpdateSupport(updaterDistribution).kind === 'native-supported'
+    && settings.updateSilentInstall && settings.updateAutoCheck && settings.updateAutoDownload;
+}
+
+async function deferNativeAutomaticUpdate(version: string): Promise<void> {
+  const capability = await nativeUpdateBootstrapClient?.automaticCapability();
+  recordUpdaterEvent(`native-update-capability:${capability?.reason ?? 'UPDATE_WORKER_UNAVAILABLE'}`);
+  if (!desktopUserSettings.updateSilentInstall || currentUpdateStatus.phase !== 'ready' || currentUpdateStatus.availableVersion !== version) return;
+  patchUpdateStatus({ message: unattendedUpdateUnavailableMessage() ?? 'Automatic installation is unavailable.' });
+}
+
+async function tunnelStoppedForSilentInstall(runtime: DesktopRuntime): Promise<boolean> {
+  try {
+    const status = await runtime.services.getTunnelStatus();
+    if (status.state !== 'stopped' || updateInstallNeedsTunnelStopConfirmation(status)) return false;
+    try {
+      await access(path.join(resolveTunnelProfileDirectory(), 'lnwjud.tunnel.lock'));
+      return false;
+    } catch (error: unknown) {
+      return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOENT';
+    }
+  } catch {
+    return false;
+  }
+}
+
 function applyDesktopUserSettings(settings: UserSettings): void {
+  const wasSilent = silentUpdateEnabled(desktopUserSettings);
   desktopUserSettings = settings;
   if ((process.platform === 'win32' || process.platform === 'darwin') && app.isPackaged) {
     try {
@@ -2098,6 +2158,12 @@ function applyDesktopUserSettings(settings: UserSettings): void {
   if (autoUpdaterInitialized) {
     autoUpdater.autoDownload = settings.updateAutoDownload;
     configureUpdateCheckSchedule();
+    if (wasSilent && !silentUpdateEnabled(settings)) updateInstallCoordinator?.cancelUnattended();
+    if (silentUpdateEnabled(settings) && currentUpdateStatus.phase === 'ready') updateInstallCoordinator?.requestInstall(true);
+    const unavailableMessage = unattendedUpdateUnavailableMessage();
+    if (settings.updateSilentInstall && unavailableMessage !== null && currentUpdateStatus.phase === 'ready') {
+      patchUpdateStatus({ message: unavailableMessage });
+    }
   }
 }
 
@@ -2153,16 +2219,36 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
           ? { state: 'available', activeCallCount: snapshot.activeCount, revision: snapshot.revision, ownerKey: snapshot.ownerKey }
           : { state: snapshot.state, reason: snapshot.reason };
       },
-      maxWaitMs: 5_000,
-      install: (): void => {
-        const ensureTunnelStopped = waitsForNativeInstallAcceptance(updaterDistribution)
+      install: (unattended: boolean): void => {
+        if (unattended) {
+          const version = currentUpdateStatus.availableVersion;
+          if (version !== null) void deferNativeAutomaticUpdate(version);
+          return;
+        }
+        const ensureTunnelStopped = unattended
+          ? tunnelStoppedForSilentInstall(runtime)
+          : waitsForNativeInstallAcceptance(updaterDistribution)
           ? Promise.resolve(true)
           : stopTunnelForUpdateInstall(runtime);
         void ensureTunnelStopped.then((tunnelStopped) => {
-          if (!tunnelStopped) return;
+          if (!tunnelStopped) {
+            if (unattended) patchUpdateStatus({ phase: 'ready', message: 'Unattended installation deferred: Secure Tunnel is active or cannot be verified stopped.', canInstall: true });
+            return;
+          }
+          if (unattended && !silentUpdateEnabled(desktopUserSettings)) return;
+          patchUpdateStatus({ phase: 'installing', message: nativeMessages(desktopLocale).updaterInstallWaiting, canInstall: false });
           void runtime.createBackup('pre-update').catch((error: unknown) => {
             console.error(`Pre-update backup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-          }).finally(() => {
+            if (unattended) throw error;
+          }).then(async () => {
+            if (unattended && !await silentInstallStillSafe({
+              enabled: () => silentUpdateEnabled(desktopUserSettings),
+              activeCalls: () => runtime.activityTracker.listInFlight().length,
+              tunnelStopped: () => tunnelStoppedForSilentInstall(runtime),
+            })) {
+              patchUpdateStatus({ phase: 'ready', message: 'Unattended installation deferred: activity or Secure Tunnel changed after backup.', canInstall: true });
+              return;
+            }
             if (usesElectronUpdaterInstall(updaterDistribution)) {
               if (updaterDistribution === 'macos') {
                 // Squirrel.Mac validates the signature after native checkForUpdates.
@@ -2200,7 +2286,7 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
                   patchUpdateStatus({ phase: 'error', message: error instanceof Error ? error.message : String(error), canInstall: false });
                 });
               } else {
-                void desktopShutdownCoordinator?.requestQuit(() => autoUpdater.quitAndInstall(), 'install');
+                void desktopShutdownCoordinator?.requestQuit(() => installWindowsUpdate(autoUpdater, unattended), 'install');
               }
               return;
             }
@@ -2222,6 +2308,8 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
               console.error(`[AutoUpdater] portable install preparation failed: ${message}`);
               patchUpdateStatus({ phase: 'error', message, canInstall: false });
             });
+          }).catch((error: unknown) => {
+            patchUpdateStatus({ phase: 'error', message: `Pre-update backup failed: ${error instanceof Error ? error.message : String(error)}`, canInstall: false });
           });
         });
       },
@@ -2310,16 +2398,22 @@ function initAutoUpdater(runtime: DesktopRuntime): void {
         phase: 'ready',
         availableVersion: info.version,
         progressPercent: 100,
-        message: nativeMessages(desktopLocale).updateReadyStatus(info.version),
+        message: (desktopUserSettings.updateSilentInstall ? unattendedUpdateUnavailableMessage() : null)
+          ?? nativeMessages(desktopLocale).updateReadyStatus(info.version),
         canInstall: true,
       });
-      console.log(`[AutoUpdater] Downloaded update: v${info.version}; waiting for user action.`);
+      if (desktopUserSettings.updateSilentInstall && desktopUserSettings.updateAutoCheck && desktopUserSettings.updateAutoDownload) {
+        void deferNativeAutomaticUpdate(info.version);
+      }
+      console.log(`[AutoUpdater] Downloaded update: v${info.version}; ${silentUpdateEnabled(desktopUserSettings) ? 'unattended idle install queued' : 'waiting for user action'}.`);
       broadcastToAllWindows(pushChannels.logEvent, {
         id: Date.now(),
         timestamp: new Date().toISOString(),
         level: 'info',
         source: 'process',
-        text: `[AutoUpdater] Update v${info.version} downloaded! Click the version badge to install.`,
+        text: silentUpdateEnabled(desktopUserSettings)
+          ? `[AutoUpdater] Update v${info.version} downloaded; unattended installation waits for an idle, stopped Secure Tunnel.`
+          : `[AutoUpdater] Update v${info.version} downloaded! Click the version badge to install.`,
       });
     });
 
@@ -2572,6 +2666,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     ...secrets,
     nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
     eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
+    nativeContainmentDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native-containment') : path.join(app.getAppPath(), 'build', 'native-containment'),
     collectIncidentMemory,
     captureRuntimeDiagnostics: () => { runtimeDiagnosticsHistory?.captureNow(); },
     ...(desktopLogSession === null ? {} : {
@@ -2777,6 +2872,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
   void app.whenReady().then(async () => {
     recordDesktopStartup('app-ready:resolved');
     assertSupportedPlatform();
+    await prepareDataPath(dataPath);
     app.setAppUserModelId('com.lnwjud.desktop');
     const session = platformCompatibility.linuxSession;
     console.log(
@@ -2835,6 +2931,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
   if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   void app.whenReady().then(async () => {
     assertSupportedPlatform();
+    await prepareDataPath(dataPath);
     app.setAppUserModelId('com.lnwjud.desktop');
     prependBundledRuntimeToolsToPath();
     const runtime = await createNativeDesktopRuntime(dataPath);
@@ -3076,6 +3173,15 @@ function configureDataPath(configuredDataPath?: string): string {
   const dataPath = configuredDataPath ?? configureUserDataPath();
   configureCrashRecovery(dataPath);
   recordDesktopStartup('data-path:configured');
+  return dataPath;
+}
+
+export async function prepareDataPath(dataPath: string): Promise<void> {
+  if (app.isPackaged) {
+    nativeUpdateBootstrapClient = createNativeUpdateBootstrapClient(dataPath, process.execPath, process.resourcesPath);
+    const recovery = await nativeUpdateBootstrapClient.recoverBeforeStartup();
+    if (recovery.kind === 'held') throw new Error(`Update recovery holds writable startup (${recovery.reason})`);
+  }
   recordDesktopStartup('restore:begin');
   const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'), {
     platform: process.platform,
@@ -3088,7 +3194,6 @@ function configureDataPath(configuredDataPath?: string): string {
   recordDesktopStartup('restore:end');
   if (restore.error !== undefined) console.error(`Scheduled database restore failed: ${restore.error}`);
   if (restore.applied) console.log(`Database restore applied from ${restore.backupId ?? 'scheduled backup'}`);
-  return dataPath;
 }
 
 const factoryResetApplyRequested = process.argv.includes(FACTORY_RESET_APPLY_ARG);

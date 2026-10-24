@@ -1,0 +1,13 @@
+{
+  "protocol": 1,
+  "revision": 1,
+  "roots": [],
+  "authorities": [],
+  "verifier": null,
+  "limits": {
+    "maximumValiditySeconds": "86400",
+    "maximumFutureSkewSeconds": "300",
+    "maximumPackageBytes": "2147483648",
+    "maximumProvenanceBytes": "1048576"
+  }
+}

@@ -94,6 +94,7 @@ export interface TunnelControllerOptions {
   readonly getRuntimeOwnerPath?: () => string | null;
   readonly setRuntimeOwnerPath?: (value: string) => void;
   readonly createRuntimeAdapter?: (options: TunnelRuntimeAdapterOptions) => TunnelRuntimeReconcilerAdapter;
+  readonly clearStaleTunnelAlias?: TunnelRuntimeAdapterOptions['clearStaleTunnelAlias'];
 }
 
 export interface TunnelProcessDiagnostics {
@@ -603,6 +604,7 @@ export class TunnelController {
     if (!capabilities.nativeRuntimes) {
       throw new Error('Cannot verify persistent Tunnel alias state with this tunnel-client. Reset was not started.');
     }
+    await adapter.recoverStoppedAliasRetirement?.();
     const initial = await adapter.status();
     if (initial.exists && initial.running) {
       const configuredTunnelId = await this.resolvePersistentTunnelId();
@@ -652,7 +654,9 @@ export class TunnelController {
     if (this.runtimeMode === 'native-managed' && this.runtimeSupervisor !== null) {
       const result = await this.runtimeSupervisor.stopRuntime();
       if (result !== null && result.snapshot.state !== 'stopped') {
-        throw new Error(result.snapshot.message ?? 'Tunnel runtime did not stop');
+        if (!await this.stopPersistedNativeRuntimeIfOwned()) {
+          throw new Error(result.snapshot.message ?? 'Tunnel runtime did not stop');
+        }
       }
       this.disposeRuntimeSupervisor();
       this.options.setRuntimeOwnerPath?.('');
@@ -1199,6 +1203,7 @@ export class TunnelController {
 
     let nativeStatus;
     try {
+      await adapter.recoverStoppedAliasRetirement?.();
       nativeStatus = await adapter.status();
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : 'status probe failed';
@@ -1212,9 +1217,10 @@ export class TunnelController {
       return false;
     }
     if (storedTunnelId !== null && nativeStatus.tunnelId !== null && nativeStatus.tunnelId !== storedTunnelId) {
-      if (nativeStatus.running || nativeStatus.pid !== null) {
+      if (nativeStatus.processStateEvidence !== 'stopped' || nativeStatus.running) {
         throw new Error('Persistent tunnel alias lnwjud belongs to a different Tunnel ID; refusing to stop it automatically');
       }
+      await adapter.ensureSingleProcess?.(storedTunnelId, nativeStatus);
       if (await this.probeExternalRunning(true) !== 'gone' || adapter.retireStoppedAlias === undefined) {
         throw new Error('Stopped lnwjud Tunnel alias has a different Tunnel ID, but safe cleanup could not be verified. No other runtime was stopped; explicitly stop the original runtime and retry.');
       }
@@ -1260,6 +1266,7 @@ export class TunnelController {
       profileDirectory: this.profileDirectory(),
       recoveryDirectory: tunnelAliasRecoveryDirectory(this.options.getDataPath()),
       environment: tunnelClientEnv(apiKey, this.profileDirectory(), this.options.platform ?? process.platform),
+      ...(this.options.clearStaleTunnelAlias === undefined ? {} : { clearStaleTunnelAlias: this.options.clearStaleTunnelAlias }),
     };
     return this.options.createRuntimeAdapter?.(options) ?? new TunnelRuntimeAdapter(options);
   }
@@ -1293,6 +1300,7 @@ export class TunnelController {
     const capabilities = await adapter.capabilities();
     throwIfStartCancelled(signal);
     if (!capabilities.managedConnect) return null;
+    if (allowPersistentConfigurationReplacement) await adapter.recoverStoppedAliasRetirement?.();
 
     let nativeStatus;
     try {

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefineConstants>NATIVE_CONTAINMENT_TESTS</DefineConstants>
+    <StartupObject>Lnwjud.Containment.NativeTests</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../StaleTunnelAlias.cs" Link="StaleTunnelAlias.cs" />
+    <Compile Include="../ServiceEndpointIdentity.cs" Link="ServiceEndpointIdentity.cs" />
+    <Compile Include="../ServiceAttemptLedgerPersistence.cs" Link="ServiceAttemptLedgerPersistence.cs" />
+    <Compile Include="../ServiceAttemptLedger.cs" Link="ServiceAttemptLedger.cs" />
+    <Compile Include="../ServiceImportTransactionRuntime.cs" Link="ServiceImportTransactionRuntime.cs" />
+    <Compile Include="../ContainedProcess.cs" Link="ContainedProcess.cs" />
+    <Compile Include="../AuthenticatedPipeCaller.cs" Link="AuthenticatedPipeCaller.cs" />
+    <Compile Include="../ServicePipeSecurity.cs" Link="ServicePipeSecurity.cs" />
+    <Compile Include="../WindowsContainmentService.cs" Link="WindowsContainmentService.cs" />
+    <Compile Include="../WindowsContainmentServiceInstaller.cs" Link="WindowsContainmentServiceInstaller.cs" />
+    <Compile Include="../WindowsServiceProcessRuntime.cs" Link="WindowsServiceProcessRuntime.cs" />
+    <Compile Include="../WindowsContainmentServiceClient.cs" Link="WindowsContainmentServiceClient.cs" />
+    <Compile Include="../Platform.cs" Link="Platform.cs" />
+    <Compile Include="../Program.cs" Link="HelperProgram.cs" />
+    <Compile Include="../ProfileKey.cs" Link="ProfileKey.cs" />
+    <Compile Include="../PinnedDirectory.cs" Link="PinnedDirectory.cs" />
+    <Compile Include="../ImportOperations.cs" Link="ImportOperations.cs" />
+    <Compile Include="../RepositoryImportAnchor.cs" Link="RepositoryImportAnchor.cs" />
+  </ItemGroup>
+</Project>

@@ -1,4 +1,13 @@
 !macro customInstall
+  ; The LocalSystem containment service belongs only to a protected all-users install.
+  ${if} $installMode == "all"
+    ExecWait '"$INSTDIR\resources\native-containment\lnwjud-containment.exe" service-install' $0
+    ${if} $0 != 0
+      MessageBox MB_ICONSTOP|MB_OK "Windows containment service installation failed (exit code $0). lnwjud requires this protected service for managed tasks."
+      Abort
+    ${endIf}
+  ${endIf}
+
   ; Resolve the shortcut from the actual end-user install directory at install time.
   SetOutPath "$INSTDIR"
   CreateDirectory "$SMPROGRAMS"
@@ -22,6 +31,13 @@
 !macroend
 
 !macro customUnInstall
+  ${if} $installMode == "all"
+    ExecWait '"$INSTDIR\resources\native-containment\lnwjud-containment.exe" service-uninstall' $0
+    ${if} $0 != 0
+      MessageBox MB_ICONSTOP|MB_OK "Windows containment service removal failed (exit code $0). The application files were left in place."
+      Abort
+    ${endIf}
+  ${endIf}
   Delete "$SMPROGRAMS\lnwjud.lnk"
   ; Silent updates/uninstalls must never block on an interactive prompt. Preserve user data by default.
   IfSilent keepData 0

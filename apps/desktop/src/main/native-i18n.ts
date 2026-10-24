@@ -8,6 +8,9 @@ export interface NativeMessages {
   readonly updaterUnavailablePackagedOnly: string;
   readonly updaterUnavailablePlatform: string;
   readonly updaterUnavailableMacosUnsigned: string;
+  readonly updaterAutomaticWindowsUnavailable: string;
+  readonly updaterAutomaticMacosUnavailable: string;
+  readonly updaterAutomaticDistributionUnavailable: string;
   readonly updaterCheckTitle: string;
   readonly updaterUnavailable: string;
   readonly updaterAlreadyChecking: string;
@@ -60,6 +63,9 @@ const th: NativeMessages = {
   updaterUnavailablePackagedOnly: 'ระบบอัปเดตทำงานในแอปที่ติดตั้งจาก Release',
   updaterUnavailablePlatform: 'รูปแบบการติดตั้งนี้ให้ระบบปฏิบัติการจัดการอัปเดตเอง จึงปิดการอัปเดตอัตโนมัติของ lnwjud',
   updaterUnavailableMacosUnsigned: 'macOS เวอร์ชันนี้ใช้ลายเซ็น ad-hoc ที่อัปเดตข้ามเวอร์ชันไม่ได้ กรุณาดาวน์โหลดจาก GitHub Releases แล้วติดตั้งทับด้วยตนเอง (ข้อมูลเดิมไม่ถูกลบ)',
+  updaterAutomaticWindowsUnavailable: 'รุ่นนี้ยังไม่พร้อมติดตั้งอัปเดต Windows อัตโนมัติ คุณยังติดตั้งอัปเดตที่ดาวน์โหลดแล้วด้วยตนเองได้',
+  updaterAutomaticMacosUnavailable: 'รุ่นนี้ยังไม่พร้อมติดตั้งอัปเดต macOS อัตโนมัติ คุณยังติดตั้งอัปเดตที่ดาวน์โหลดแล้วด้วยตนเองได้',
+  updaterAutomaticDistributionUnavailable: 'แพ็กเกจนี้ไม่รองรับการติดตั้งอัปเดตอัตโนมัติ โปรดอัปเดตด้วยวิธีที่แพ็กเกจรองรับ',
   updaterCheckTitle: 'ตรวจอัปเดต - lnwjud',
   updaterUnavailable: 'การตรวจอัปเดตจะทำงานเมื่อใช้แอปที่ติดตั้งจาก Release แล้ว',
   updaterAlreadyChecking: 'กำลังตรวจอัปเดตอยู่ กรุณารอผลการตรวจสอบ',
@@ -112,6 +118,9 @@ const en: NativeMessages = {
   updaterUnavailablePackagedOnly: 'Updates are available in an installed Release build',
   updaterUnavailablePlatform: 'This installation format is updated by the operating system package manager; lnwjud automatic updates are disabled.',
   updaterUnavailableMacosUnsigned: 'This macOS build has an ad-hoc signature incompatible with in-place updates. Download from GitHub Releases and manually replace the app; your data is preserved.',
+  updaterAutomaticWindowsUnavailable: 'Automatic Windows installation is unavailable for this build. You can install the downloaded update manually.',
+  updaterAutomaticMacosUnavailable: 'Automatic macOS installation is unavailable for this build. You can install the downloaded update manually.',
+  updaterAutomaticDistributionUnavailable: 'This distribution does not support automatic installation. Use its supported manual update method.',
   updaterCheckTitle: 'Check for Updates - lnwjud',
   updaterUnavailable: 'Update checks are available after installing a Release build',
   updaterAlreadyChecking: 'An update check is already running. Please wait for it to finish.',
@@ -171,7 +180,11 @@ export function localizedUpdateStatusMessage(status: UpdateStatus, locale: UiLoc
     case 'checking': return messages.updaterChecking;
     case 'available': return version === null ? messages.updaterChecking : messages.updateAvailableStatus(version);
     case 'downloading': return messages.updateDownloadingStatus(version, status.progressPercent);
-    case 'ready': return version === null ? status.message : messages.updateReadyStatus(version);
+    case 'ready':
+      for (const key of ['updaterAutomaticWindowsUnavailable', 'updaterAutomaticMacosUnavailable', 'updaterAutomaticDistributionUnavailable'] as const) {
+        if (status.message === th[key] || status.message === en[key]) return messages[key];
+      }
+      return version === null ? status.message : messages.updateReadyStatus(version);
     case 'installing': return messages.updaterInstallWaiting;
     case 'up-to-date': return messages.updateCurrentStatus(status.currentVersion);
     case 'idle': return null;

@@ -57,6 +57,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   updateCheckOnStartup: true,
   updateIntervalMinutes: 30,
   updateAutoDownload: true,
+  updateSilentInstall: false,
   closeBehavior: 'tray',
   launchAtStartup: false,
   startMinimized: false,
@@ -250,6 +251,7 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
             <SettingSwitch checked={draft.updateAutoCheck} label={t('userConfig.autoUpdateCheck')} description={t('userConfig.autoUpdateCheckDesc')} onChange={(value) => patch({ updateAutoCheck: value })} />
             <SettingSwitch checked={draft.updateCheckOnStartup} label={t('userConfig.checkOnStartup')} description={t('userConfig.checkOnStartupDesc')} onChange={(value) => patch({ updateCheckOnStartup: value })} />
             <SettingSwitch checked={draft.updateAutoDownload} label={t('userConfig.autoDownload')} description={t('userConfig.autoDownloadDesc')} onChange={(value) => patch({ updateAutoDownload: value })} />
+            <SettingSwitch checked={draft.updateSilentInstall} label={t('userConfig.silentInstall')} description={t('userConfig.silentInstallDesc')} onChange={(value) => patch({ updateSilentInstall: value, ...(value ? { updateAutoCheck: true, updateAutoDownload: true } : {}) })} />
           </div>
         </section>
       ) : null}
@@ -353,6 +355,22 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
               <strong>{t('userConfig.engineeringAssessment')}</strong>
               <p className="hint">{t('userConfig.engineeringAssessmentDesc')}</p>
             </div>
+            <div className="setting-field">
+              <label className="field-label" htmlFor="engineering-hosted-ci">{t('userConfig.engineeringHostedCi')}</label>
+              <FormSelect id="engineering-hosted-ci" className="settings-select" value={engineering.hostedCi ?? 'required'} onChange={(event) => patchEngineering({ hostedCi: event.target.value === 'local_only' ? 'local_only' : 'required' })}>
+                <option value="required">{t('userConfig.engineeringHostedCiRequired')}</option>
+                <option value="local_only">{t('userConfig.engineeringHostedCiLocal')}</option>
+              </FormSelect>
+              <p className="hint">{t('userConfig.engineeringHostedCiDesc')}</p>
+            </div>
+            <SettingSwitch checked={engineering.allowNoGit ?? false} label={t('userConfig.engineeringNoGit')} description={t('userConfig.engineeringNoGitDesc')} onChange={(value) => patchEngineering({ allowNoGit: value })} />
+            <details>
+              <summary>{t('userConfig.engineeringWorkerTarget')}</summary>
+              <Field label="Cloudflare account ID" value={engineering.workerTarget?.accountId ?? ''} onChange={(accountId) => patchEngineering({ workerTarget: { accountId, worker: engineering.workerTarget?.worker ?? '', environment: engineering.workerTarget?.environment ?? 'production', trafficPercent: engineering.workerTarget?.trafficPercent ?? 100 } })} />
+              <Field label="Worker" value={engineering.workerTarget?.worker ?? ''} onChange={(worker) => patchEngineering({ workerTarget: { accountId: engineering.workerTarget?.accountId ?? '', worker, environment: engineering.workerTarget?.environment ?? 'production', trafficPercent: engineering.workerTarget?.trafficPercent ?? 100 } })} />
+              <Field label={t('userConfig.engineeringEnvironment')} value={engineering.workerTarget?.environment ?? 'production'} onChange={(environment) => patchEngineering({ workerTarget: { accountId: engineering.workerTarget?.accountId ?? '', worker: engineering.workerTarget?.worker ?? '', environment, trafficPercent: engineering.workerTarget?.trafficPercent ?? 100 } })} />
+              <NumberField label={t('userConfig.engineeringTraffic')} value={engineering.workerTarget?.trafficPercent ?? 100} min={1} max={100} onChange={(trafficPercent) => patchEngineering({ workerTarget: { accountId: engineering.workerTarget?.accountId ?? '', worker: engineering.workerTarget?.worker ?? '', environment: engineering.workerTarget?.environment ?? 'production', trafficPercent } })} />
+            </details>
             {engineering.profile === 'custom' ? (
               <div className="setting-grid two-col" aria-label={t('userConfig.engineeringCustomTitle')}>
                 <div className="setting-field">

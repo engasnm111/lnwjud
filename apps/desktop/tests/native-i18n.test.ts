@@ -35,4 +35,15 @@ describe('native main-process i18n', () => {
     expect(main).toContain("from './native-i18n.js'");
     expect(tray).toContain("from './native-i18n.js'");
   });
+
+  it('preserves the automatic-installation limit when a downloaded update changes language', () => {
+    for (const key of ['updaterAutomaticWindowsUnavailable', 'updaterAutomaticMacosUnavailable', 'updaterAutomaticDistributionUnavailable'] as const) {
+      const ready: UpdateStatus = {
+        phase: 'ready', currentVersion: '5.8.7', availableVersion: '5.9.0', progressPercent: 100,
+        lastCheckedAt: null, message: nativeMessages('en')[key], canInstall: true,
+      };
+      expect(localizedUpdateStatusMessage(ready, 'th')).toBe(nativeMessages('th')[key]);
+      expect(localizedUpdateStatusMessage({ ...ready, message: nativeMessages('th')[key] }, 'en')).toBe(nativeMessages('en')[key]);
+    }
+  });
 });

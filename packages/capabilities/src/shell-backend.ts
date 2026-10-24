@@ -13,12 +13,12 @@ import {
   type InvocationAuthorization,
   type Result,
 } from '@lnwjud/domain';
-import { createProcessTreeTerminator, PathExecutableResolver, toSpawnInvocation, type ExecutableResolver, type ProcessTreeTerminator } from '@lnwjud/process';
+import { createProcessTreeTerminator, PathExecutableResolver, toSpawnInvocation, type ExecutableResolver, type ProcessTreeTerminator, type WindowsNativeAuthority } from '@lnwjud/process';
 import { engineeringCommandFingerprint, formatEngineeringCommand } from '@lnwjud/shared';
 import type { CapabilityBackend } from './local-capability-service.js';
 import { prohibitedAgentCommandReason, riskyAgentCommandReason } from './agent-command-policy.js';
 import { DurableShellTaskStore } from './durable-shell-task-store.js';
-import { capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, readCapabilityActiveWorkspaceRoot, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
+import { capabilityTaskOwnerCanInspect, capabilityTaskOwnerCanRecover, legacyCapabilityTaskOwner, readCapabilityActiveWorkspaceRoot, readCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
 
 type ShellOperation = 'run' | 'list' | 'status' | 'wait' | 'logs' | 'result' | 'cancel' | 'resume' | 'approve' | 'deny';
 type ShellExecution = 'foreground' | 'background' | 'auto';
@@ -81,6 +81,8 @@ export interface ShellCapabilityOptions {
   readonly defaultTimeoutSeconds?: number;
   readonly defaultBackgroundTimeoutSeconds?: number;
   readonly taskStateDirectory?: string;
+  readonly windowsNativeAuthority?: WindowsNativeAuthority;
+  readonly posixProcessRuntime?: { readonly modulePath: string; readonly sha256: string };
   readonly autoWaitSeconds?: number;
   readonly maxSynchronousWaitSeconds?: number;
   readonly maxSynchronousWaitSecondsProvider?: () => number;
@@ -149,7 +151,10 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     this.terminator = options.terminator ?? createProcessTreeTerminator();
     this.defaultTimeoutSeconds = clampNumber(options.defaultTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, 0.1, MAX_TIMEOUT_SECONDS);
     this.defaultBackgroundTimeoutSeconds = clampNumber(options.defaultBackgroundTimeoutSeconds ?? DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 0.1, MAX_TIMEOUT_SECONDS);
-    this.durableStore = options.taskStateDirectory === undefined ? undefined : new DurableShellTaskStore(path.resolve(options.taskStateDirectory));
+    this.durableStore = options.taskStateDirectory === undefined ? undefined : new DurableShellTaskStore(path.resolve(options.taskStateDirectory), {
+      ...(options.windowsNativeAuthority === undefined ? {} : { windowsNativeAuthority: options.windowsNativeAuthority }),
+      ...(options.posixProcessRuntime === undefined ? {} : { posixProcessRuntime: options.posixProcessRuntime }),
+    });
     this.autoWaitSeconds = clampNumber(options.autoWaitSeconds ?? DEFAULT_AUTO_WAIT_SECONDS, 0, DEFAULT_TIMEOUT_SECONDS);
     this.maxSynchronousWaitSeconds = clampNumber(options.maxSynchronousWaitSeconds ?? DEFAULT_MAX_SYNCHRONOUS_WAIT_SECONDS, 0.01, 90);
     this.maxSynchronousWaitSecondsProvider = options.maxSynchronousWaitSecondsProvider;
@@ -314,12 +319,12 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (request.automationDispatch !== undefined && this.durableStore === undefined) {
       return err(appError('INTERNAL_ERROR', 'Reserved automation shell dispatch requires the durable task store', true));
     }
-    if (this.durableStore !== undefined && request.execution !== 'foreground') {
+    if (this.durableStore !== undefined) {
       // Durable tasks intentionally outlive the originating MCP request. Goal
       // cancellation reaches them through GoalTaskCancellationService using
       // the tracked task id, while an ordinary caller/response timeout must
       // not cancel a task that has already been submitted.
-      return this.runDurable(request, cwd.value, invocation.value);
+      return this.runDurable(request, cwd.value, invocation.value, signal);
     }
 
     let child: ChildProcess;
@@ -388,7 +393,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (request.taskId === undefined) return err(appError('INVALID_INPUT', 'Task ID is required'));
     const record = this.tasks.get(request.taskId);
     if (record !== undefined) {
-      const ownership = this.authorizeTaskOwner(record.owner, request.owner);
+      const ownership = this.authorizeTaskInspection(record.owner, request.owner);
       if (!ownership.ok) return ownership;
       await this.waitFor(record, Math.min(request.timeoutSeconds, this.currentMaxSynchronousWaitSeconds()));
       return ok(this.snapshot(record, request.tailLines));
@@ -445,7 +450,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       return err(appError('PROCESS_NOT_FOUND', 'Task was not found'));
     }
     const record = existing;
-    const ownership = this.authorizeTaskOwner(record.owner, owner);
+    const ownership = this.authorizeTaskRecovery(record.owner, owner);
     if (!ownership.ok) return ownership;
     if (record.state === 'running' || record.state === 'termination_unverified') {
       const targetState = record.terminationTarget ?? 'cancelled';
@@ -503,7 +508,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (taskId === undefined) return err(appError('INVALID_INPUT', 'Task ID is required'));
     const record = this.tasks.get(taskId);
     if (record !== undefined) {
-      const ownership = this.authorizeTaskOwner(record.owner, owner);
+      const ownership = this.authorizeTaskInspection(record.owner, owner);
       return ownership.ok ? ok(this.snapshot(record, tailLines)) : ownership;
     }
     if (this.durableStore !== undefined) return this.durableStore.snapshot(taskId, tailLines, owner);
@@ -520,6 +525,7 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     request: ShellRequest,
     cwd: string,
     invocation: { readonly executable: string; readonly args: readonly string[]; readonly windowsVerbatimArguments?: boolean },
+    signal?: AbortSignal,
   ): Promise<Result<unknown>> {
     if (this.durableStore === undefined) return err(appError('INTERNAL_ERROR', 'Durable task store is unavailable', true));
     const taskId = request.automationDispatch?.taskId ?? randomUUID();
@@ -540,17 +546,37 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       ? await this.durableStore.launch(durableRequest)
       : await this.durableStore.launchReserved(durableRequest, request.automationDispatch.requestDigest);
     if (!launched.ok || request.execution === 'background') return launched;
-    return this.durableStore.wait(taskId, Math.min(this.autoWaitSeconds, this.currentMaxSynchronousWaitSeconds()), undefined, request.owner, false);
+    const waitSeconds = request.execution === 'foreground'
+      ? Math.min(request.timeoutSeconds, this.currentMaxSynchronousWaitSeconds())
+      : Math.min(this.autoWaitSeconds, this.currentMaxSynchronousWaitSeconds());
+    if (request.execution !== 'foreground' || signal === undefined) {
+      return this.durableStore.wait(taskId, waitSeconds, undefined, request.owner, false);
+    }
+    const store = this.durableStore;
+    let abort: (() => void) | undefined;
+    const cancelled = new Promise<Result<unknown>>((resolve) => {
+      abort = (): void => { void store.cancel(taskId, request.owner).then(resolve); };
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    });
+    try {
+      return await Promise.race([store.wait(taskId, waitSeconds, undefined, request.owner, false), cancelled]);
+    } finally {
+      if (abort !== undefined) signal.removeEventListener('abort', abort);
+    }
   }
 
   private async listTasks(owner: CapabilityTaskOwner, limit?: number, cursor?: string): Promise<Result<unknown>> {
+    let admission;
+    try { admission = this.durableStore === undefined ? {} : { admission: await this.durableStore.admissionDiagnostics() }; }
+    catch { return err(appError('INTERNAL_ERROR', 'Writer admission diagnostics are unavailable; no empty-capacity conclusion can be made', true)); }
     const inMemory = [...this.tasks.values()]
-      .filter((record) => capabilityTaskOwnerMatches(record.owner, owner))
+      .filter((record) => capabilityTaskOwnerCanInspect(record.owner, owner))
       .map((record) => this.snapshot(record));
     if (limit !== undefined) {
       const memoryOffset: Result<number | undefined> = cursor === undefined ? ok(undefined) : decodeMemoryCursor(cursor);
       if (memoryOffset.ok && memoryOffset.value !== undefined) {
-        return ok(memoryTaskPage(inMemory, limit, memoryOffset.value));
+        return ok({ ...memoryTaskPage(inMemory, limit, memoryOffset.value), ...admission });
       }
       if (this.durableStore === undefined) {
         if (!memoryOffset.ok) return memoryOffset;
@@ -562,24 +588,31 @@ export class ShellCapabilityBackend implements CapabilityBackend {
       const durableIds = new Set(durable.value.tasks.map((task) => task.task_id).filter((value): value is string => typeof value === 'string'));
       const remainingMemory = inMemory.filter((task) => !durableIds.has(String(task.task_id ?? '')));
       if (durable.value.nextCursor !== undefined) {
-        return ok({ tasks: durable.value.tasks, next_cursor: durable.value.nextCursor });
+        return ok({ tasks: durable.value.tasks, next_cursor: durable.value.nextCursor, ...admission });
       }
       const room = Math.max(0, limit - durable.value.tasks.length);
       const memoryTasks = remainingMemory.slice(0, room);
       const tasks = [...durable.value.tasks, ...memoryTasks];
       return ok({
         tasks,
+        ...admission,
         ...(memoryTasks.length < remainingMemory.length ? { next_cursor: encodeMemoryCursor(memoryTasks.length) } : {}),
       });
     }
     if (this.durableStore === undefined) return ok({ tasks: inMemory });
     const durable = await this.durableStore.list(owner);
     const durableIds = new Set(durable.map((task) => task.task_id).filter((value): value is string => typeof value === 'string'));
-    return ok({ tasks: [...durable, ...inMemory.filter((task) => !durableIds.has(String(task.task_id ?? '')))] });
+    return ok({ tasks: [...durable, ...inMemory.filter((task) => !durableIds.has(String(task.task_id ?? '')))], ...admission });
   }
 
-  private authorizeTaskOwner(stored: CapabilityTaskOwner, requester: CapabilityTaskOwner): Result<void> {
-    return capabilityTaskOwnerMatches(stored, requester)
+  private authorizeTaskInspection(stored: CapabilityTaskOwner, requester: CapabilityTaskOwner): Result<void> {
+    return capabilityTaskOwnerCanInspect(stored, requester)
+      ? ok(undefined)
+      : err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
+  }
+
+  private authorizeTaskRecovery(stored: CapabilityTaskOwner, requester: CapabilityTaskOwner): Result<void> {
+    return capabilityTaskOwnerCanRecover(stored, requester)
       ? ok(undefined)
       : err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
   }

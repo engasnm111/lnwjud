@@ -1,3 +1,5 @@
+import type { NativeAttemptBinding } from './windows-native-authority.js';
+
 export type ManagedProcessState = 'starting' | 'running' | 'exited' | 'failed' | 'stopped' | 'timed_out' | 'termination_unverified';
 
 export interface ManagedProcessStart {
@@ -9,6 +11,8 @@ export interface ManagedProcessStart {
   readonly stdinMode?: 'ignore';
   /** Internal trusted host identity for native Job Object isolation, not an RPC field. */
   readonly containmentId?: string;
+  /** Admission-issued binding, supplied only by trusted application composition. */
+  readonly nativeBinding?: NativeAttemptBinding;
 }
 
 export interface ManagedProcess {

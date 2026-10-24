@@ -64,6 +64,15 @@ try {
     Assert-RepositoryChecks
     Invoke-ReleaseStage 'install --frozen-lockfile' @('install', '--frozen-lockfile')
     Invoke-ReleaseStage 'test:version' @('test:version')
+    Invoke-ReleaseStage 'prepare:containment' @('prepare:containment')
+    Invoke-ReleaseStage 'prepare:update-worker' @('prepare:update-worker')
+    Invoke-ReleaseStage 'test:update-release-metadata' @('test:update-release-metadata')
+    Invoke-ReleaseStage 'test:update-worker' @('test:update-worker')
+    if ($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_OS -eq 'Windows') {
+        Write-Host '==> provision hash-attested protected Windows containment CI service'
+        & (Join-Path $PSScriptRoot 'prepare-windows-containment-ci.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'CI_CONTAINMENT_SERVICE_BOOTSTRAP_FAILED' }
+    }
     Invoke-ReleaseStage 'lint' @('lint')
     Invoke-ReleaseStage 'typecheck' @('typecheck')
     if ($SkipWorkspaceTests) {
@@ -76,6 +85,7 @@ try {
     Invoke-ReleaseStage 'test:integration' @('test:integration')
     Invoke-ReleaseStage 'test:e2e' @('test:e2e')
     Invoke-ReleaseStage 'build' @('build')
+    Invoke-ReleaseStage 'test:update-worker-trust' @('test:update-worker-trust')
     Invoke-ReleaseStage 'docs:tools:check' @('docs:tools:check')
     Invoke-ReleaseStage 'test:packaging' @('test:packaging')
     Invoke-ReleaseStage 'test:release-gate' @('test:release-gate')

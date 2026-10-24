@@ -5,11 +5,11 @@ const builderConfig = readFileSync(new URL('../electron-builder.yml', import.met
 const installerScript = readFileSync(new URL('../build/installer.nsh', import.meta.url), 'utf8');
 
 describe('Windows installer scope regression', () => {
-  it('keeps the historical per-user install mode selected by default', () => {
+  it('defaults to protected all-users installation while retaining per-user choice', () => {
     expect(builderConfig).toContain('oneClick: false');
     expect(builderConfig).toContain('perMachine: false');
-    expect(builderConfig).toContain('selectPerMachineByDefault: false');
-    expect(builderConfig).not.toContain('selectPerMachineByDefault: true');
+    expect(builderConfig).toContain('selectPerMachineByDefault: true');
+    expect(builderConfig).not.toContain('selectPerMachineByDefault: false');
   });
 
   it('keeps silent update uninstall from waiting on the user-data prompt', () => {

@@ -183,7 +183,9 @@ describe('AgentSwarmService', () => {
     }
   });
 
-  it('runs three read-only agents through actual managed processes and collects their EOF-driven results after request cancellation', async () => {
+  // macOS lacks a kernel all-descendants owner-loss proof, so native completion
+  // of opaque child agents stays unverified even when root pipes close.
+  it.skipIf(process.platform === 'darwin')('runs three read-only agents through actual managed processes and collects their EOF-driven results after request cancellation', async () => {
     const workdir = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-real-swarm-cli-'));
     temporaryRoots.push(workdir);
     await mkdir(path.join(workdir, 'workspace'));

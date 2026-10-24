@@ -173,6 +173,7 @@ export type ClaimScheduledContinuationResult =
       readonly leaseGeneration: number;
       readonly acquisition: 'normal' | 'expired_lease' | 'orphan_recovered';
       readonly scheduleRequest: ScheduledContinuationRequest;
+      readonly workspaceWriterRecovery?: ScheduledWriterLeaseRecovery;
       readonly handoffReady: false;
       readonly currentWakeMayReturn: false;
       readonly nextRequiredAction: 'create_native_task_and_record_receipt_before_current_wake_returns';
@@ -186,6 +187,7 @@ export type ClaimScheduledContinuationResult =
       readonly acquisition: 'normal' | 'expired_lease' | 'orphan_recovered';
       readonly runKey: string;
       readonly automationResume?: AutomationResumeHint;
+      readonly workspaceWriterRecovery?: ScheduledWriterLeaseRecovery;
       readonly currentWakeMayReturn: false;
       readonly nextRequiredAction: 'continue_work_with_existing_recurring_watchdog';
     }
@@ -290,10 +292,30 @@ export type ExpediteScheduledContinuationResult =
       readonly continuation: ScheduledContinuationSnapshot;
     };
 
+/**
+ * Durable workspace writer lease seen by scheduled claims. Structural so the
+ * application layer does not depend on the capability implementation.
+ */
+export interface ScheduledContinuationWriterFencePort {
+  assessAbandonment(workspaceId: string, clientId: string): Promise<Result<{ readonly live: boolean; readonly reason: string; readonly generation: number }>>;
+  revokeAbandoned(workspaceId: string, clientId: string): Promise<Result<{ readonly revoked: boolean; readonly previousGeneration: number; readonly generation: number }>>;
+}
+
+/** Writer-lease outcome reported only on an acquired claim. */
+export type ScheduledWriterLeaseRecovery =
+  | { readonly action: 'none' | 'revoked_abandoned'; readonly previousGeneration: number; readonly generation: number }
+  | { readonly action: 'contended'; readonly reason: string };
+
 export interface ScheduledContinuationServiceOptions {
   readonly now?: () => Date;
   readonly workerLiveness?: ScheduledContinuationWorkerLivenessPort;
   readonly automationResumes?: AutomationResumeLookupPort;
+  /**
+   * A live writer owner counts as a live worker. After a goal claim succeeds, an
+   * abandoned writer lease is atomically fenced (generation rotated) so a dead
+   * owner's still-`active` row cannot block the claimant indefinitely.
+   */
+  readonly workspaceWriterFence?: ScheduledContinuationWriterFencePort;
   /** IANA zone used in native ChatGPT VEVENT schedules. Defaults to the machine's resolved zone. */
   readonly hostTimeZone?: string;
 }
@@ -303,6 +325,7 @@ export class ScheduledContinuationService {
   private readonly workerLiveness: ScheduledContinuationWorkerLivenessPort;
   private readonly hostTimeZone: string;
   private readonly automationResumes: AutomationResumeLookupPort | undefined;
+  private readonly writerFence: ScheduledContinuationWriterFencePort | undefined;
 
   public constructor(
     private readonly goals: ScheduledContinuationRepository & {
@@ -313,6 +336,7 @@ export class ScheduledContinuationService {
     this.now = options.now ?? ((): Date => new Date());
     this.hostTimeZone = normalizeHostTimeZone(options.hostTimeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
     this.automationResumes = options.automationResumes;
+    this.writerFence = options.workspaceWriterFence;
     this.workerLiveness = options.workerLiveness ?? {
       observe: async (goalId, trackedTasks): ReturnType<ScheduledContinuationWorkerLivenessPort['observe']> => {
         const goal = await this.goals.getById(goalId);
@@ -588,6 +612,32 @@ export class ScheduledContinuationService {
     }
   }
 
+  private async observeWriterFence(actor: FileActor, workspaceId: string): Promise<{ live: boolean; trustworthy: boolean } | undefined> {
+    if (this.writerFence === undefined) return undefined;
+    try {
+      const assessed = await this.writerFence.assessAbandonment(workspaceId, owner(actor));
+      // Unavailable writer state is not proof of inactivity: fail closed.
+      return assessed.ok ? { live: assessed.value.live, trustworthy: true } : { live: false, trustworthy: false };
+    } catch {
+      return { live: false, trustworthy: false };
+    }
+  }
+
+  private async recoverWriterFence(actor: FileActor, workspaceId: string): Promise<ScheduledWriterLeaseRecovery | undefined> {
+    if (this.writerFence === undefined) return undefined;
+    try {
+      const revoked = await this.writerFence.revokeAbandoned(workspaceId, owner(actor));
+      if (!revoked.ok) return { action: 'contended', reason: revoked.error.message };
+      return {
+        action: revoked.value.revoked ? 'revoked_abandoned' : 'none',
+        previousGeneration: revoked.value.previousGeneration,
+        generation: revoked.value.generation,
+      };
+    } catch {
+      return { action: 'contended', reason: 'Workspace writer lease state is unavailable' };
+    }
+  }
+
   public async claimScheduledContinuation(
     actor: FileActor,
     request: ClaimScheduledContinuationRequest,
@@ -612,7 +662,16 @@ export class ScheduledContinuationService {
       const trackedTasks = currentGoal.trackedTasks ?? currentGoal.activeTaskIds.map((taskId) => legacyTrackedTask(taskId));
       // Liveness may perform async probes. Sample the authoritative transition time only after
       // those probes finish so a fresh observedAt cannot appear to come from the future.
-      const liveness = await this.workerLiveness.observe(currentGoal.id, trackedTasks);
+      const goalLiveness = await this.workerLiveness.observe(currentGoal.id, trackedTasks);
+      // The writer lease is a second ownership fence for the same workspace. A live
+      // (or unprovable) writer owner is a live worker; an idle-beyond-grace or
+      // expired owner is not, so claim and writer acquisition agree on ownership.
+      const writer = await this.observeWriterFence(actor, currentGoal.workspaceId);
+      const liveness = writer === undefined ? goalLiveness : {
+        ...goalLiveness,
+        trustworthy: goalLiveness.trustworthy && writer.trustworthy,
+        liveFencedCallCount: goalLiveness.liveFencedCallCount + (writer.live ? 1 : 0),
+      };
       const nowDate = this.now();
       const now = nowDate.toISOString();
       const leaseToken = randomBytes(32).toString('base64url');
@@ -638,6 +697,7 @@ export class ScheduledContinuationService {
       const goal = toGoalSnapshot(claimed.goal);
       if (claimed.outcome === 'acquired') {
         const successor = toPublicContinuation(claimed.successor);
+        const workspaceWriterRecovery = await this.recoverWriterFence(actor, claimed.goal.workspaceId);
         return ok({
           outcome: 'acquired',
           continuation,
@@ -647,12 +707,14 @@ export class ScheduledContinuationService {
           leaseGeneration: claimed.goal.leaseGeneration,
           acquisition: claimed.acquisition,
           scheduleRequest: buildScheduleRequest(successor, claimed.goal.workspaceId, this.hostTimeZone),
+          ...(workspaceWriterRecovery === undefined ? {} : { workspaceWriterRecovery }),
           handoffReady: false,
           currentWakeMayReturn: false,
           nextRequiredAction: 'create_native_task_and_record_receipt_before_current_wake_returns',
         });
       }
       if (claimed.outcome === 'recurring_acquired') {
+        const workspaceWriterRecovery = await this.recoverWriterFence(actor, claimed.goal.workspaceId);
         const automationResume = await this.automationResumeHint(
           claimed.goal.id,
           claimed.goal.ownerClientId,
@@ -667,6 +729,7 @@ export class ScheduledContinuationService {
           acquisition: claimed.acquisition,
           runKey: claimed.runKey,
           ...(automationResume === undefined ? {} : { automationResume }),
+          ...(workspaceWriterRecovery === undefined ? {} : { workspaceWriterRecovery }),
           currentWakeMayReturn: false,
           nextRequiredAction: 'continue_work_with_existing_recurring_watchdog',
         });

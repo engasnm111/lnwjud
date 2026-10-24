@@ -1,103 +1,111 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { DurableShellTaskStore } from './durable-shell-task-store.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { WindowsNativeAuthority } from '@lnwjud/process';
+import type { NativeAttemptBinding, WindowsContainmentServiceClient, WindowsContainmentRpcRequest } from '../../process/src/windows-native-authority.js';
 import { SharedManagedWriterAdmission } from './shared-managed-writer-admission.js';
-import { SqliteWorkspaceWriterLease } from './workspace-writer-lease.js';
 
-describe('global managed writer admission', () => {
-  it('refuses to grant/release workspace lease while a separate managed writer is active', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-global-lease-admission-'));
-    try {
-      const gate = new SharedManagedWriterAdmission(path.join(root, 'background-tasks'));
-      const lease = new SqliteWorkspaceWriterLease(path.join(root, 'writer-leases.sqlite'), Date.now, gate);
-      const blocker = await gate.enter({ actorClientId: 'other-client', workspaceId: 'other-workspace', kind: 'synchronous_mutation' });
-      expect(blocker.ok).toBe(true);
-      if (!blocker.ok) return;
-      expect(await lease.acquire('first-workspace', 'owner', 'session', 60))
-        .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
-      await blocker.value.releaseAfterVerifiedTermination();
-      const acquired = await lease.acquire('first-workspace', 'owner', 'session', 60);
-      expect(acquired.ok).toBe(true);
-      if (!acquired.ok) return;
-      const active = await gate.enter({ actorClientId: 'other-client', workspaceId: 'other-workspace', kind: 'synchronous_mutation' });
-      expect(active.ok).toBe(true);
-      if (!active.ok) return;
-      expect(await lease.release('first-workspace', 'owner', 'session', acquired.value))
-        .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
-      await active.value.releaseAfterVerifiedTermination();
-      expect(await lease.release('first-workspace', 'owner', 'session', acquired.value))
-        .toMatchObject({ ok: true });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
-  }, 20000);
+const roots: string[] = [];
+afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
-  it('refuses same-client idle recovery until the global managed writer is released', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-recover-managed-writer-'));
-    try {
-      let time = 100_000;
-      const gate = new SharedManagedWriterAdmission(path.join(root, 'background-tasks'));
-      const lease = new SqliteWorkspaceWriterLease(path.join(root, 'leases.sqlite'), () => time, gate);
-      expect(await lease.acquire('workspace', 'owner', 'old-session', 600)).toMatchObject({ ok: true });
-      const blocker = await gate.enter({ actorClientId: 'separate-client', workspaceId: 'other-workspace', kind: 'synchronous_mutation' });
-      if (!blocker.ok) throw new Error('global writer not admitted');
-      time += 61_000;
-      expect(await lease.acquire('workspace', 'owner', 'new-session', 600, true))
-        .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
-      await blocker.value.releaseAfterVerifiedTermination();
-      expect(await lease.acquire('workspace', 'owner', 'new-session', 600, true))
-        .toMatchObject({ ok: true, value: { generation: 2 } });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
+async function fixture(): Promise<{
+  root: string; authority: WindowsNativeAuthority; taskDirectory: string; admission: SharedManagedWriterAdmission;
+  taskId: string; receiptPath: string;
+  input: { actorClientId: string; actorSessionId: string; workspaceId: string; kind: 'contained_process'; nativeTaskId: string; nativeReceiptPath: string };
+}> {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'managed-writer-proof-')));
+  roots.push(root);
+  const aborted = new Map<string, NativeAttemptBinding>();
+  const client: WindowsContainmentServiceClient = {
+    async request<T>(request: WindowsContainmentRpcRequest): Promise<T> {
+      const existing = aborted.get(request.identity.attemptId);
+      if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(request.identity)) throw new Error('SERVICE_IDENTITY_MISMATCH');
+      if (request.command === 'abort') aborted.set(request.identity.attemptId, request.identity);
+      else if (request.command !== 'inspect' || existing === undefined) throw new Error('SERVICE_ATTEMPT_UNAVAILABLE');
+      const response: unknown = { identity: request.identity, phase: 2, reservationHeld: false };
+      return response as T;
+    },
+    async startWatcher(): Promise<void> { throw new Error('Unit fixture never launches a process'); },
+  };
+  const authority = new WindowsNativeAuthority({ helper: { executable: path.join(root, 'helper.exe'), sha256: 'a'.repeat(64), buildId: 'lnwjud-containment-v2' }, pin: { modulePath: path.join(root, 'pin.node'), sha256: 'a'.repeat(64) }, profileDirectory: path.join(root, 'profile') }, client);
+  const taskDirectory = path.join(root, 'tasks');
+  const admission = new SharedManagedWriterAdmission(taskDirectory, authority);
+  const taskId = randomUUID();
+  const receiptPath = path.join(root, 'native', taskId, 'containment.receipt.json');
+  const input = { actorClientId: 'client', actorSessionId: 'session', workspaceId: 'workspace', kind: 'contained_process' as const, nativeTaskId: taskId, nativeReceiptPath: receiptPath };
+  return { root, authority, taskDirectory, admission, taskId, receiptPath, input };
+}
+
+describe('SharedManagedWriterAdmission authenticated release', () => {
+  it.skipIf(process.platform === 'darwin')('persists distinct process and reservation identity and the actual owner session', async () => {
+    const f = await fixture();
+    const admitted = await f.admission.enter(f.input);
+    expect(admitted.ok).toBe(true); if (!admitted.ok) return;
+    expect(admitted.value.nativeBinding).toMatchObject({ taskId: f.taskId, reservationId: admitted.value.id, ownerSessionId: 'session' });
+    expect(admitted.value.id).not.toBe(f.taskId);
+    const markers = path.join(f.taskDirectory, '.index', 'v1', 'active');
+    const files = await readdir(markers);
+    expect(files).toHaveLength(1);
+    expect(JSON.parse(await readFile(path.join(markers, files[0]!), 'utf8'))).toMatchObject({ nativeBinding: admitted.value.nativeBinding });
   });
 
-  it('excludes repository import against even a different workspace synchronous file writer', async () => {
-    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-global-admission-')));
-    try {
-      const gate = new SharedManagedWriterAdmission(root);
-      const store = new DurableShellTaskStore(root);
-      const entered = await gate.enter({ actorClientId: 'file-client', workspaceId: 'other-workspace', kind: 'synchronous_mutation' });
-      expect(entered).toMatchObject({ ok: true });
-      if (!entered.ok) throw new Error('admission failed');
-      const start = {
-        taskId: 'import-test',
-        executable: process.execPath, arguments: ['-e', 'process.exit(0)'],
-        cwd: root, timeoutSeconds: process.env.CI ? 110 : 15,
-        mutationKind: 'repository_import' as const,
-        maxOutputBytes: 1000, includeStdout: false, includeStderr: false,
-        owner: { clientId: 'other-client', sessionId: 'other', workspaceId: 'import-workspace' },
-      };
-      expect(await store.launch(start)).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
-      await entered.value.releaseAfterVerifiedTermination();
-      expect(await store.launch(start)).toMatchObject({ ok: true });
-      await expect.poll(async (): Promise<string> => {
-        const observed = await store.snapshot(start.taskId);
-        return observed.ok ? String(observed.value.state) : 'unverified';
-      }, { timeout: process.env.CI ? 90000 : 12000 }).toBe('completed');
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
-  }, process.env.CI ? 130000 : 25000);
+  it.skipIf(process.platform === 'darwin')('retains forged terminal proof across restart and releases only after an exclusive authenticated abort', async () => {
+    const f = await fixture(); const admitted = await f.admission.enter(f.input);
+    expect(admitted.ok).toBe(true); if (!admitted.ok) return;
+    await mkdir(path.dirname(f.receiptPath), { recursive: true });
+    await writeFile(f.receiptPath, JSON.stringify({ kind: 'windows_job_v1', activeProcesses: 0, outcome: 'completed', exitCode: 0 }));
+    await expect(admitted.value.releaseAfterVerifiedTermination()).rejects.toThrow('MANAGED_WRITER_RELEASE_UNVERIFIED');
+    const reopened = new SharedManagedWriterAdmission(f.taskDirectory, f.authority);
+    expect(await reopened.holdExclusiveProbe('workspace')).toMatchObject({ ok: false });
+    await admitted.value.abortBeforeLaunch?.();
+    const probe = await reopened.holdExclusiveProbe('workspace');
+    expect(probe.ok).toBe(true); if (probe.ok) await probe.value.releaseAfterVerifiedTermination();
+  });
 
-  it('an uncontained writer keeps its reservation until an explicit verified-release operation', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-uncontained-'));
-    try {
-      const gate = new SharedManagedWriterAdmission(root);
-      const writer = await gate.enter({ actorClientId: 'direct-process', workspaceId: 'different-workspace', kind: 'uncontained_process' });
-      expect(writer.ok).toBe(true);
-      const store = new DurableShellTaskStore(root);
-      const launch = {
-        taskId: 'import-while-opaque', mutationKind: 'repository_import' as const,
-        executable: process.execPath, arguments: ['-e', 'process.exit(0)'],
-        cwd: root, timeoutSeconds: 10, maxOutputBytes: 1000, includeStdout: false, includeStderr: false,
-        owner: { clientId: 'import', sessionId: 'import', workspaceId: 'import-workspace' },
-      };
-      expect(await store.launch(launch)).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
+  it.skipIf(process.platform === 'darwin')('refuses another session proof even when process and reservation IDs match', async () => {
+    const f = await fixture(); const admitted = await f.admission.enter(f.input);
+    expect(admitted.ok).toBe(true); if (!admitted.ok || admitted.value.nativeBinding === undefined) return;
+    await f.authority.abortBeforeLaunch({ directory: path.dirname(f.receiptPath), binding: { ...admitted.value.nativeBinding, ownerSessionId: 'other-session' } });
+    await expect(admitted.value.releaseAfterVerifiedTermination()).rejects.toThrow('MANAGED_WRITER_RELEASE_UNVERIFIED');
+    expect(await new SharedManagedWriterAdmission(f.taskDirectory, f.authority).holdExclusiveProbe('workspace')).toMatchObject({ ok: false });
+  });
+
+  it.skipIf(process.platform === 'darwin')('requires full native identity and canonical receipt path before reserving', async () => {
+    const f = await fixture();
+    const missingSession = { ...f.input };
+    Reflect.deleteProperty(missingSession, 'actorSessionId');
+    expect(await f.admission.enter(missingSession)).toMatchObject({ ok: false, error: {
+      code: 'INVALID_INPUT', message: 'Contained writer native attempt or session identity is invalid',
+    } });
+    expect(await f.admission.enter({ ...f.input, nativeReceiptPath: path.join(f.root, 'receipt.json') })).toMatchObject({ ok: false, error: {
+      code: 'INVALID_INPUT', message: 'Contained writer receipt path does not match native attempt identity',
+    } });
+    expect(await new SharedManagedWriterAdmission(f.taskDirectory).enter(f.input)).toMatchObject({ ok: false, error: {
+      code: 'INVALID_INPUT', message: 'Contained writer trusted native authority is unavailable',
+    } });
+  });
+
+  it('denies new macOS process writers before reservation but still permits bounded synchronous mutations', async () => {
+    const f = await fixture();
+    const admission = new SharedManagedWriterAdmission(f.taskDirectory, f.authority, 'darwin');
+    for (const input of [f.input, { actorClientId: 'owner', workspaceId: 'workspace', kind: 'uncontained_process' as const }]) {
+      expect(await admission.enter(input)).toMatchObject({
+        ok: false, error: { code: 'CONFLICT' },
+      });
     }
+    const synchronous = await admission.enter({ actorClientId: 'owner', workspaceId: 'workspace', kind: 'synchronous_mutation' });
+    expect(synchronous.ok).toBe(true);
+    if (synchronous.ok) await synchronous.value.releaseAfterVerifiedTermination();
+    const probe = await admission.holdExclusiveProbe('workspace');
+    expect(probe.ok).toBe(true);
+    if (probe.ok) await probe.value.releaseAfterVerifiedTermination();
+  });
+
+  it.skipIf(process.platform === 'darwin')('retains an old uncontained reservation after restart rather than inferring descendants are gone', async () => {
+    const f = await fixture();
+    expect(await f.admission.enter({ actorClientId: 'old-host', workspaceId: 'workspace', kind: 'uncontained_process' })).toMatchObject({ ok: true });
+    expect(await new SharedManagedWriterAdmission(f.taskDirectory, f.authority).holdExclusiveProbe('workspace')).toMatchObject({ ok: false });
   });
 });

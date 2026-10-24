@@ -2,7 +2,8 @@ import { execFile, spawn } from 'node:child_process';
 import { mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { prepareWindowsContainedLaunch, readWindowsContainmentReceipt } from '@lnwjud/process';
+import { inspectPosixProcessGroup, PosixProcessTree, parseNativeAttemptBinding, type PosixProcessGroupInspector, type NativeAttemptBinding, type WindowsNativeAuthority, type WindowsNativeAuthorityConfiguration } from '@lnwjud/process';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { appError, err, ok, type GoalTaskCancellationObservation, type Result } from '@lnwjud/domain';
 import {
@@ -10,10 +11,13 @@ import {
   type ActiveTaskInspection,
   type DurableMutationKind,
   type DurableTaskLaunchRecord,
+  type DurableTaskReservation,
+  type WriterAdmissionDiagnostics,
 } from './durable-shell-task-index.js';
-import { capabilityTaskOwnerMatches, legacyCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
+import { capabilityTaskOwnerCanInspect, capabilityTaskOwnerCanRecover, legacyCapabilityTaskOwner, type CapabilityTaskOwner } from './task-ownership.js';
+import { createHostPosixProcessRuntime } from './host-native-authority.js';
 
-export type DurableShellTaskState = 'running' | 'completed' | 'failed' | 'timed_out' | 'cancelled' | 'termination_unverified';
+export type DurableShellTaskState = 'starting' | 'running' | 'completed' | 'failed' | 'timed_out' | 'cancelled' | 'termination_unverified';
 
 export interface DurableShellLaunchRequest {
   /** Trusted internal classification; never taken from generic shell inputs. */
@@ -32,8 +36,11 @@ export interface DurableShellLaunchRequest {
 }
 
 interface DurableTaskMetadata {
-  readonly containment?: 'windows_job_v1';
-  readonly version: 1;
+  readonly containment?: 'windows_job_v1' | 'windows_job_v2' | 'posix_group_v1';
+  posix_launch_not_started?: boolean;
+  posix_stop_target?: 'cancelled' | 'timed_out';
+  readonly containmentBinding?: NativeAttemptBinding;
+  readonly version: 1 | 2;
   readonly task_id: string;
   readonly command_fingerprint?: string;
   readonly request_digest?: string;
@@ -52,13 +59,24 @@ interface DurableTaskMetadata {
   child_started_at?: string;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+  output_finalized?: boolean;
   readonly owner_client_id?: string;
   readonly owner_session_id?: string;
   readonly owner_workspace_id?: string;
 }
 
+type GoalTaskProjection =
+  | { readonly kind: 'legacy_unverified'; readonly metadata: DurableTaskMetadata; readonly reason: string }
+  | { readonly kind: 'reconciled'; readonly metadata: DurableTaskMetadata };
+
 interface DurableWorkerSpec {
-  readonly containment?: { readonly receiptPath: string; readonly cancelPath: string };
+  readonly posix?: { readonly moduleUrl: string; readonly sha256: string; readonly cancelPath: string };
+  readonly native?: {
+    readonly configuration: WindowsNativeAuthorityConfiguration;
+    readonly binding: NativeAttemptBinding;
+    readonly directory: string;
+    readonly moduleUrl: string;
+  };
   readonly version: 1;
   readonly taskId: string;
   readonly executable: string;
@@ -76,6 +94,7 @@ interface DurableWorkerSpec {
   readonly stderrPath: string;
   readonly requestDigest: string;
   readonly activeMarkerPath: string;
+  readonly electronRunAsNode?: boolean;
 }
 
 const METADATA_FILENAME = 'task.json';
@@ -110,6 +129,9 @@ function repositoryImportBootstrapEnvironment(): NodeJS.ProcessEnv {
 export interface DurableShellTaskStoreOptions {
   readonly maxConcurrentTasks?: number;
   readonly platform?: NodeJS.Platform;
+  readonly windowsNativeAuthority?: WindowsNativeAuthority;
+  readonly posixProcessRuntime?: { readonly modulePath: string; readonly sha256: string };
+  readonly posixGroupInspector?: PosixProcessGroupInspector;
 }
 
 export const DEFAULT_MAX_CONCURRENT_DURABLE_TASKS = 16;
@@ -118,19 +140,26 @@ export class DurableShellTaskStore {
   private readonly maxConcurrentTasks: number;
   private readonly platform: NodeJS.Platform;
   private readonly activeIndex: DurableShellTaskIndex;
+  private readonly windowsNativeAuthority: WindowsNativeAuthority | undefined;
+  private readonly posixProcessRuntime: { readonly modulePath: string; readonly sha256: string };
+  private readonly posixGroupInspector: PosixProcessGroupInspector;
 
   public constructor(private readonly rootDirectory: string, options: DurableShellTaskStoreOptions = {}) {
     this.maxConcurrentTasks = normalizeMaxConcurrentTasks(options.maxConcurrentTasks);
     this.platform = options.platform ?? process.platform;
+    this.windowsNativeAuthority = options.windowsNativeAuthority;
+    this.posixProcessRuntime = options.posixProcessRuntime ?? createHostPosixProcessRuntime();
+    this.posixGroupInspector = options.posixGroupInspector ?? inspectPosixProcessGroup;
     this.activeIndex = new DurableShellTaskIndex(rootDirectory, {
       maxConcurrentTasks: this.maxConcurrentTasks,
       inspectTask: async (taskId): Promise<ActiveTaskInspection> => this.inspectTaskForIndex(taskId),
       loadLaunchRecord: async (taskId): Promise<DurableTaskLaunchRecord | undefined> => this.loadLaunchRecord(taskId),
+      verifyContainedTermination: (reservation): Promise<boolean> => this.verifyNativeReservation(reservation),
     });
   }
 
   public launch(request: DurableShellLaunchRequest): Promise<Result<Record<string, unknown>>> {
-    return this.launchWithDigest(request, durableShellRequestDigest(request));
+    return this.launchWithDigest(request, durableShellRequestDigest(request), 'session');
   }
 
   /** Trusted deterministic launch used only after the shell backend verifies the canonical automation digest. */
@@ -138,16 +167,22 @@ export class DurableShellTaskStore {
     if (!/^[a-f0-9]{64}$/i.test(requestDigest)) {
       return Promise.resolve(err(appError('INVALID_INPUT', 'Reserved durable task digest is invalid')));
     }
-    return this.launchWithDigest(request, requestDigest.toLowerCase());
+    return this.launchWithDigest(request, requestDigest.toLowerCase(), 'automation');
   }
 
   private async launchWithDigest(
     request: DurableShellLaunchRequest,
     requestDigest: string,
+    ownership: 'session' | 'automation',
   ): Promise<Result<Record<string, unknown>>> {
     if (!isSafeTaskId(request.taskId)) return err(appError('INVALID_INPUT', 'Durable task ID is invalid'));
     const existing = await this.readMetadata(request.taskId, false, 1);
     if (existing.ok) {
+      const storedOwner = metadataOwner(existing.value);
+      if (storedOwner.clientId !== request.owner.clientId || storedOwner.workspaceId !== request.owner.workspaceId
+        || ownership === 'session' && storedOwner.sessionId !== request.owner.sessionId) {
+        return err(appError('PERMISSION_DENIED', 'Durable task is not owned by this launch requester'));
+      }
       if (existing.value.request_digest !== requestDigest) {
         return err(appError('CONFLICT', 'Durable task ID is already used by another request', true));
       }
@@ -156,12 +191,37 @@ export class DurableShellTaskStore {
       return ok(await this.snapshotFromMetadata(reconciled));
     }
 
+    // macOS process-group cleanup is not a kernel-owned all-descendants fence.
+    // A new opaque command cannot be safely accepted until native containment exists.
+    if (this.platform === 'darwin') {
+      return err(appError('CONFLICT', 'macOS durable shell unavailable: escaped descendants cannot be kernel-contained'));
+    }
+    if (this.platform === 'win32' && this.windowsNativeAuthority === undefined) {
+      return err(appError('INTERNAL_ERROR', 'Trusted Windows native containment is unavailable; repair the installed helper before launching work', true));
+    }
+    if (this.platform !== 'win32') {
+      try {
+        const runtime = await readFile(this.posixProcessRuntime.modulePath);
+        if (!path.isAbsolute(this.posixProcessRuntime.modulePath)
+          || createHash('sha256').update(runtime).digest('hex') !== this.posixProcessRuntime.sha256) throw new Error('POSIX_RUNTIME_INTEGRITY');
+      } catch {
+        return err(appError('INTERNAL_ERROR', 'Trusted POSIX process runtime is unavailable; repair the installed runtime before launching work', true));
+      }
+    }
+    const taskDirectory = this.taskDirectory(request.taskId);
+    let nativeBinding: NativeAttemptBinding | undefined;
+    try {
+      nativeBinding = this.platform === 'win32' ? durableShellNativeBinding(request, requestDigest) : undefined;
+    } catch {
+      return err(appError('INVALID_INPUT', 'Native containment requires a registered workspace identity'));
+    }
     const startedAt = new Date().toISOString();
     const reservation = await this.activeIndex.reserve({
       mutationKind: request.mutationKind ?? 'opaque',
       taskId: request.taskId,
       requestDigest,
       ownerClientId: request.owner.clientId,
+      ...(nativeBinding === undefined ? {} : { nativeBinding, nativeReceiptPath: path.join(taskDirectory, 'containment.receipt.json') }),
       ...(request.owner.workspaceId === undefined ? {} : { ownerWorkspaceId: request.owner.workspaceId }),
       launchRecord: {
         version: 1,
@@ -176,6 +236,11 @@ export class DurableShellTaskStore {
     if (!reservation.value.created) {
       const concurrent = await this.readMetadata(request.taskId);
       if (concurrent.ok && concurrent.value.request_digest === requestDigest) {
+        const storedOwner = metadataOwner(concurrent.value);
+        if (storedOwner.clientId !== request.owner.clientId || storedOwner.workspaceId !== request.owner.workspaceId
+          || ownership === 'session' && storedOwner.sessionId !== request.owner.sessionId) {
+          return err(appError('PERMISSION_DENIED', 'Durable task is not owned by this launch requester'));
+        }
         const reconciled = await this.reconcile(concurrent.value);
         await this.releaseTerminalReservation(reconciled);
         return ok(await this.snapshotFromMetadata(reconciled));
@@ -184,19 +249,19 @@ export class DurableShellTaskStore {
     }
 
     let workerOwnsReservation = false;
-    const taskDirectory = this.taskDirectory(request.taskId);
     const deadlineAt = new Date(Date.now() + request.timeoutSeconds * 1000).toISOString();
     const metadataPath = path.join(taskDirectory, METADATA_FILENAME);
     const stdoutPath = path.join(taskDirectory, STDOUT_FILENAME);
     const stderrPath = path.join(taskDirectory, STDERR_FILENAME);
     const specPath = path.join(taskDirectory, SPEC_FILENAME);
     const metadata: DurableTaskMetadata = {
-      ...(this.platform === 'win32' ? { containment: 'windows_job_v1' as const } : {}),
-      version: 1,
+      ...(this.platform === 'win32' ? {} : { containment: 'posix_group_v1' as const }),
+      ...(nativeBinding === undefined ? {} : { containment: 'windows_job_v2' as const, containmentBinding: nativeBinding }),
+      version: 2,
       task_id: request.taskId,
       ...(request.commandFingerprint === undefined ? {} : { command_fingerprint: request.commandFingerprint }),
       request_digest: requestDigest,
-      state: 'running',
+      state: nativeBinding === undefined ? 'running' : 'starting',
       started_at: startedAt,
       include_stdout: request.includeStdout,
       include_stderr: request.includeStderr,
@@ -207,6 +272,11 @@ export class DurableShellTaskStore {
       ...(request.owner.workspaceId === undefined ? {} : { owner_workspace_id: request.owner.workspaceId }),
     };
     const spec: DurableWorkerSpec = {
+      ...(this.platform === 'win32' ? {} : { posix: {
+        moduleUrl: pathToFileURL(this.posixProcessRuntime.modulePath).href,
+        sha256: this.posixProcessRuntime.sha256,
+        cancelPath: path.join(taskDirectory, 'posix.cancel'),
+      } }),
       version: 1,
       taskId: request.taskId,
       executable: request.executable,
@@ -224,21 +294,22 @@ export class DurableShellTaskStore {
       stderrPath,
       requestDigest,
       activeMarkerPath: reservation.value.markerPath,
+      ...(request.mutationKind === 'repository_import' ? { electronRunAsNode: true } : {}),
+      ...(nativeBinding === undefined || this.windowsNativeAuthority === undefined ? {} : {
+        native: {
+          configuration: this.windowsNativeAuthority.configuration,
+          binding: nativeBinding,
+          directory: taskDirectory,
+          moduleUrl: pathToFileURL(this.windowsNativeAuthority.configuration.workerModulePath
+            ?? fileURLToPath(new URL('../../process/dist/index.js', import.meta.url))).href,
+        },
+      }),
     };
     try {
       await mkdir(taskDirectory, { recursive: true });
       await mkdir(this.rootDirectory, { recursive: true });
-      const contained = this.platform === 'win32' ? await prepareWindowsContainedLaunch({
-        directory: taskDirectory, executable: request.executable, args: request.arguments, cwd: request.cwd, timeoutMs: request.timeoutSeconds * 1000,
-        windowsVerbatimArguments: request.windowsVerbatimArguments === true,
-      }) : undefined;
-      const workerSpec: DurableWorkerSpec = contained === undefined ? spec : {
-        ...spec, executable: contained.executable, arguments: contained.args,
-        windowsVerbatimArguments: false,
-        containment: { receiptPath: contained.receiptPath, cancelPath: contained.cancelPath },
-      };
-      await writeFile(metadataPath, JSON.stringify(metadata), 'utf8');
-      await writeFile(specPath, JSON.stringify(workerSpec), 'utf8');
+      await writeMetadataAtomically(metadataPath, metadata);
+      await writeFile(specPath, JSON.stringify(spec), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
       const workerPath = await this.ensureWorkerScript();
       const worker = spawn(process.execPath, [workerPath, specPath], {
         // The durable worker only coordinates the real child process; it does not need
@@ -277,10 +348,18 @@ export class DurableShellTaskStore {
       metadata.exit_code = -1;
       metadata.error = `Durable task could not start: ${message}`;
       metadata.finished_at = new Date().toISOString();
-      await writeFile(metadataPath, JSON.stringify(metadata), 'utf8').catch(() => undefined);
+      if (this.platform !== 'win32' && !workerOwnsReservation) metadata.posix_launch_not_started = true;
+      if (!workerOwnsReservation && nativeBinding !== undefined && this.windowsNativeAuthority !== undefined) {
+        await this.windowsNativeAuthority.abortBeforeLaunch({ directory: taskDirectory, binding: nativeBinding }).catch(() => undefined);
+      }
+      await writeMetadataAtomically(metadataPath, metadata).catch(() => undefined);
       if (!workerOwnsReservation) await this.activeIndex.release(request.taskId, requestDigest);
       return err(appError('INTERNAL_ERROR', 'Durable task could not start', true));
     }
+  }
+
+  public admissionDiagnostics(): Promise<WriterAdmissionDiagnostics> {
+    return this.activeIndex.diagnostics();
   }
 
   public async list(owner?: CapabilityTaskOwner): Promise<Record<string, unknown>[]> {
@@ -291,7 +370,7 @@ export class DurableShellTaskStore {
     const hydrated = await mapWithConcurrency(taskIds, 16, async (taskId) => {
       const metadata = await this.readMetadata(taskId);
       if (!metadata.ok) return undefined;
-      if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(metadata.value), owner)) return undefined;
+      if (owner !== undefined && !capabilityTaskOwnerCanInspect(metadataOwner(metadata.value), owner)) return undefined;
       const reconciled = await this.reconcile(metadata.value);
       await this.releaseTerminalReservation(reconciled);
       return this.snapshotFromMetadata(reconciled, undefined, false);
@@ -308,12 +387,12 @@ export class DurableShellTaskStore {
     const page = await this.activeIndex.listLaunches({
       limit,
       ...(cursor === undefined ? {} : { cursor }),
-      accept: (record) => capabilityTaskOwnerMatches(launchRecordOwner(record), owner),
+      accept: (record) => capabilityTaskOwnerCanInspect(launchRecordOwner(record), owner),
     });
     if (!page.ok) return page;
     const hydrated = await mapWithConcurrency(page.value.records, 16, async (record) => {
       const metadata = await this.readMetadata(record.taskId);
-      if (!metadata.ok || !capabilityTaskOwnerMatches(metadataOwner(metadata.value), owner)) return undefined;
+      if (!metadata.ok || !capabilityTaskOwnerCanInspect(metadataOwner(metadata.value), owner)) return undefined;
       const reconciled = await this.reconcile(metadata.value);
       await this.releaseTerminalReservation(reconciled);
       return this.snapshotFromMetadata(reconciled, undefined, false);
@@ -325,7 +404,7 @@ export class DurableShellTaskStore {
   public async snapshot(taskId: string, tailLines?: number, owner?: CapabilityTaskOwner): Promise<Result<Record<string, unknown>>> {
     const metadata = await this.readMetadata(taskId);
     if (!metadata.ok) return metadata;
-    if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(metadata.value), owner)) {
+    if (owner !== undefined && !capabilityTaskOwnerCanInspect(metadataOwner(metadata.value), owner)) {
       return err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
     }
     const reconciled = await this.reconcile(metadata.value);
@@ -347,7 +426,7 @@ export class DurableShellTaskStore {
     if (metadataOwner(metadata.value).workspaceId !== workspaceId) {
       return err(appError('PERMISSION_DENIED', 'Task belongs to another or unknown workspace'));
     }
-    const reconciled = await this.reconcile(metadata.value);
+    const { metadata: reconciled } = projectTaskForGoal(await this.reconcile(metadata.value));
     await this.releaseTerminalReservation(reconciled);
     // Goal liveness/resource probes need identity and state, not entire retained
     // stdout/stderr. Avoid rereading large logs on each 15-second sample.
@@ -361,9 +440,12 @@ export class DurableShellTaskStore {
     if (metadataOwner(metadata.value).workspaceId !== workspaceId) {
       return err(appError('PERMISSION_DENIED', 'Task belongs to another or unknown workspace'));
     }
-    const reconciled = await this.reconcile(metadata.value);
+    const projection = projectTaskForGoal(await this.reconcile(metadata.value));
+    if (projection.kind === 'legacy_unverified') return err(appError('INVALID_INPUT', projection.reason));
+    const reconciled = projection.metadata;
     await this.releaseTerminalReservation(reconciled);
-    if (reconciled.state !== 'completed' || reconciled.exit_code !== 0 || !reconciled.include_stdout || reconciled.stdout_truncated === true) {
+    if (reconciled.state !== 'completed' || reconciled.exit_code !== 0 || !reconciled.include_stdout || reconciled.stdout_truncated === true
+      || (reconciled.containment === 'windows_job_v2' && reconciled.output_finalized !== true)) {
       return err(appError('INVALID_INPUT', 'Engineering evidence requires complete stdout from a successful terminal task'));
     }
     const filename = path.join(this.taskDirectory(taskId), STDOUT_FILENAME);
@@ -420,7 +502,11 @@ export class DurableShellTaskStore {
       return err(appError('PERMISSION_DENIED', 'Task belongs to another client or workspace'));
     }
 
-    const before = await this.reconcile(metadataResult.value);
+    const projection = projectTaskForGoal(await this.reconcile(metadataResult.value));
+    if (projection.kind === 'legacy_unverified') {
+      return ok({ matched: true, state: 'termination_unverified', detail: projection.reason });
+    }
+    const before = projection.metadata;
     if (isTerminal(before.state)) {
       await this.releaseTerminalReservation(before);
       return ok({ matched: true, state: 'already_terminal', detail: before.state });
@@ -436,11 +522,13 @@ export class DurableShellTaskStore {
   public async wait(taskId: string, seconds: number, tailLines?: number, owner?: CapabilityTaskOwner, refreshTerminalAfterDeadline = true): Promise<Result<Record<string, unknown>>> {
     const deadline = Date.now() + Math.max(0, seconds) * 1000;
     let snapshot = await this.snapshot(taskId, tailLines, owner);
-    while (snapshot.ok && snapshot.value.state === 'running' && Date.now() < deadline) {
+    // A live POSIX worker may report unverified while descendants are still
+    // draining; it must be polled, never mistaken for an authoritative terminal.
+    while (snapshot.ok && (isExecutingState(snapshot.value.state) || snapshot.value.state === 'termination_unverified') && Date.now() < deadline) {
       await delay(Math.min(100, Math.max(10, deadline - Date.now())));
       snapshot = await this.snapshot(taskId, tailLines, owner);
     }
-    if (!snapshot.ok || snapshot.value.state !== 'running' || !refreshTerminalAfterDeadline) return snapshot;
+    if (!snapshot.ok || !(isExecutingState(snapshot.value.state) || snapshot.value.state === 'termination_unverified') || !refreshTerminalAfterDeadline) return snapshot;
 
     // A slow host liveness probe can consume the wait budget after reading a
     // running snapshot while the worker persists its terminal state. Refresh
@@ -448,19 +536,40 @@ export class DurableShellTaskStore {
     // durable result instead of a stale running state.
     const latest = await this.readMetadata(taskId);
     if (!latest.ok || !isTerminal(latest.value.state)) return snapshot;
-    if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(latest.value), owner)) return snapshot;
-    await this.releaseTerminalReservation(latest.value);
-    return ok(await this.snapshotFromMetadata(latest.value, tailLines));
+    if (owner !== undefined && !capabilityTaskOwnerCanInspect(metadataOwner(latest.value), owner)) return snapshot;
+    const reconciled = await this.reconcile(latest.value);
+    await this.releaseTerminalReservation(reconciled);
+    return ok(await this.snapshotFromMetadata(reconciled, tailLines));
   }
 
   public async cancel(taskId: string, owner?: CapabilityTaskOwner): Promise<Result<Record<string, unknown>>> {
     const metadataResult = await this.readMetadata(taskId);
     if (!metadataResult.ok) return metadataResult;
-    if (owner !== undefined && !capabilityTaskOwnerMatches(metadataOwner(metadataResult.value), owner)) {
+    if (owner !== undefined && !capabilityTaskOwnerCanRecover(metadataOwner(metadataResult.value), owner)) {
       return err(appError('PERMISSION_DENIED', 'Task is not owned by this client session and workspace'));
     }
     let metadata = await this.reconcile(metadataResult.value);
+    if (metadata.containment === undefined) {
+      return ok(await this.snapshotFromMetadata({ ...metadata, state: 'termination_unverified',
+        error: 'Legacy task has no authenticated containment proof; cancellation cannot prove descendant termination' }));
+    }
     if (isTerminal(metadata.state)) {
+      await this.releaseTerminalReservation(metadata);
+      return ok(await this.snapshotFromMetadata(metadata));
+    }
+    if (metadata.containment === 'posix_group_v1') return this.cancelPosix(metadata);
+    if (metadata.containment === 'windows_job_v2') {
+      if (this.windowsNativeAuthority === undefined || metadata.containmentBinding === undefined) {
+        return ok(await this.snapshotFromMetadata({ ...metadata, state: 'termination_unverified', error: 'Native cancellation authority is unavailable' }));
+      }
+      await this.windowsNativeAuthority.cancel({ directory: this.taskDirectory(taskId), binding: metadata.containmentBinding });
+      const deadline = Date.now() + 2_000;
+      do {
+        const current = await this.readMetadata(taskId);
+        if (current.ok) metadata = await this.reconcile(current.value);
+        if (isTerminal(metadata.state)) break;
+        await delay(40);
+      } while (Date.now() < deadline);
       await this.releaseTerminalReservation(metadata);
       return ok(await this.snapshotFromMetadata(metadata));
     }
@@ -539,10 +648,17 @@ export class DurableShellTaskStore {
         return isFileNotFound(error) ? 'missing' : 'unknown';
       }
     }
-    if (isTerminal(metadata.value.state)) return 'terminal';
+    if (metadata.value.containment === undefined) return 'unknown';
     const reconciled = await this.reconcile(metadata.value);
-    if (isTerminal(reconciled.state)) return 'terminal';
-    return reconciled.state === 'running' ? 'active' : 'unknown';
+    if (isTerminal(reconciled.state)) {
+      if (reconciled.containment === 'windows_job_v2' && !await this.verifyNativeReservation({
+        taskId, requestDigest: reconciled.request_digest ?? '', ownerClientId: reconciled.owner_client_id ?? '',
+        ...(reconciled.owner_workspace_id === undefined ? {} : { ownerWorkspaceId: reconciled.owner_workspace_id }),
+        ...(reconciled.containmentBinding === undefined ? {} : { nativeBinding: reconciled.containmentBinding }),
+      })) return 'unknown';
+      return 'terminal';
+    }
+    return isExecutingState(reconciled.state) ? 'active' : 'unknown';
   }
 
   private async loadLaunchRecord(taskId: string): Promise<DurableTaskLaunchRecord | undefined> {
@@ -563,11 +679,57 @@ export class DurableShellTaskStore {
   }
 
   private async releaseTerminalReservation(metadata: DurableTaskMetadata): Promise<void> {
-    if (!isTerminal(metadata.state)) return;
+    if (!isTerminal(metadata.state) || metadata.containment === undefined) return;
+    if (metadata.containment === 'posix_group_v1') {
+      const canonical = await this.readMetadata(metadata.task_id, false, 1);
+      if (!canonical.ok || canonical.value.containment !== 'posix_group_v1'
+        || canonical.value.request_digest !== metadata.request_digest || canonical.value.state !== metadata.state
+        || canonical.value.exit_code !== metadata.exit_code || canonical.value.finished_at !== metadata.finished_at
+        || !await this.posixGroupIsEmpty(canonical.value)) return;
+    }
+    if (metadata.containment === 'windows_job_v1') return;
+    if (metadata.containment === 'windows_job_v2' && !await this.verifyNativeReservation({
+      taskId: metadata.task_id,
+      requestDigest: metadata.request_digest ?? '',
+      ownerClientId: metadata.owner_client_id ?? '',
+      ...(metadata.owner_workspace_id === undefined ? {} : { ownerWorkspaceId: metadata.owner_workspace_id }),
+      nativeReceiptPath: path.join(this.taskDirectory(metadata.task_id), 'containment.receipt.json'),
+      ...(metadata.containmentBinding === undefined ? {} : { nativeBinding: metadata.containmentBinding }),
+    })) return;
     await this.activeIndex.release(metadata.task_id, metadata.request_digest ?? null);
   }
 
+  private async verifyNativeReservation(reservation: DurableTaskReservation): Promise<boolean> {
+    const binding = reservation.nativeBinding;
+    if (this.windowsNativeAuthority === undefined || binding === undefined || binding.taskId !== reservation.taskId
+      || binding.reservationId !== reservation.taskId || binding.requestDigest !== reservation.requestDigest
+      || binding.ownerClientId !== reservation.ownerClientId || binding.workspaceId !== reservation.ownerWorkspaceId) return false;
+    const canonical = await this.readMetadata(reservation.taskId, false, 1);
+    if (!canonical.ok || canonical.value.containment !== 'windows_job_v2' || !isTerminal(canonical.value.state)
+      || !nativeBindingMatchesMetadata(canonical.value, binding)) return false;
+    let proof = await this.windowsNativeAuthority.inspect({ directory: this.taskDirectory(reservation.taskId), binding });
+    if (proof.state === 'termination_unknown' && canonical.value.state === 'failed' && canonical.value.exit_code === -1) {
+      const abortProof = await this.windowsNativeAuthority.abortBeforeLaunch({ directory: this.taskDirectory(reservation.taskId), binding });
+      if (abortProof.state === 'launch_not_started' || abortProof.state === 'terminal_verified') proof = abortProof;
+    }
+    if (proof.state === 'launch_not_started') return canonical.value.state === 'failed' && canonical.value.exit_code === -1;
+    return proof.state === 'terminal_verified' && canonical.value.state === nativeOutcomeState(proof.outcome, proof.exitCode)
+      && canonical.value.exit_code === proof.exitCode && typeof canonical.value.finished_at === 'string';
+  }
+
   private async reconcile(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
+    if (metadata.containment === undefined) return metadata;
+    if (metadata.containment === 'windows_job_v1') {
+      return { ...metadata, state: 'termination_unverified', error: 'Legacy native task has no authenticated termination proof; recovery must not replay it' };
+    }
+    if (metadata.containment === 'windows_job_v2') return this.reconcileNative(metadata);
+    if (metadata.containment === 'posix_group_v1') return this.reconcilePosix(metadata);
+    if (this.platform !== 'win32' && !isTerminal(metadata.state)) {
+      const unknown = { ...metadata, state: 'termination_unverified' as const,
+        error: 'Legacy POSIX task has no process-group proof; keep its reservation and never replay it' };
+      delete unknown.finished_at;
+      return unknown;
+    }
     if (metadata.state !== 'running' && metadata.state !== 'termination_unverified') return metadata;
     const workerPid = metadata.worker_pid;
     if (workerPid !== undefined) {
@@ -629,26 +791,129 @@ export class DurableShellTaskStore {
     const finalized = await this.awaitTerminalMetadata(current.task_id);
     if (finalized !== undefined) return finalized;
 
-    if (current.containment === 'windows_job_v1') {
-      const receipt = await readWindowsContainmentReceipt(path.join(this.taskDirectory(current.task_id), 'containment.receipt.json'));
-      current.state = receipt === undefined ? 'termination_unverified' : receipt.outcome === 'completed' ? (receipt.exitCode === 0 ? 'completed' : 'failed') : receipt.outcome;
-      if (receipt === undefined) {
-        current.error = 'Native containment termination could not be verified';
-        delete current.finished_at;
-      } else {
-        current.exit_code = receipt.exitCode;
-        current.finished_at = new Date().toISOString();
-        delete current.error;
-      }
-      await this.writeMetadata(current);
-      return current;
-    }
     current.state = 'failed';
     current.exit_code = current.exit_code ?? -1;
     current.error = current.error ?? 'Durable task worker exited before recording a final state';
     current.finished_at = current.finished_at ?? new Date().toISOString();
     await this.writeMetadata(current);
     return current;
+  }
+
+  private async posixGroupIsEmpty(metadata: DurableTaskMetadata): Promise<boolean> {
+    if (this.platform === 'darwin') return false;
+    if (metadata.posix_launch_not_started === true && metadata.child_pid === undefined) return true;
+    if (metadata.child_pid === undefined) return false;
+    return (await this.posixGroupInspector(metadata.child_pid, {
+      platform: this.platform,
+      ...(metadata.child_started_at === undefined ? {} : { expectedRootStartedAt: metadata.child_started_at }),
+    })).state === 'empty';
+  }
+
+  private async reconcilePosix(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
+    // The coordinator persists its PID asynchronously after reservation. A
+    // status read during this bounded bootstrap gap cannot infer owner loss.
+    // Preserve the live provisional state, and keep its writer reservation;
+    // when the grace expires without identity, recovery fails closed below.
+    const started = Date.parse(metadata.started_at);
+    if ((metadata.state === 'starting' || metadata.state === 'running')
+      && metadata.worker_pid === undefined && metadata.child_pid === undefined
+      && Number.isFinite(started) && Date.now() >= started
+      && Date.now() - started < PROCESS_IDENTITY_CAPTURE_GRACE_MS) return metadata;
+    const empty = await this.posixGroupIsEmpty(metadata);
+    if (empty && isTerminal(metadata.state)) return metadata;
+    const worker = metadata.worker_pid === undefined ? undefined : await probeProcessIdentity(metadata.worker_pid, this.platform);
+    const workerLive = worker !== undefined && (isTrackedProcessLive(worker, metadata.worker_started_at)
+      || identityCapturePendingForProbe(worker, metadata.worker_started_at, metadata.started_at));
+    if (workerLive && !isTerminal(metadata.state)) return metadata;
+    const unknown = (): DurableTaskMetadata => {
+      const result = { ...metadata, state: 'termination_unverified' as const,
+        error: 'POSIX group termination or worker ownership is unverified; the request must not be replayed' };
+      delete result.finished_at;
+      return result;
+    };
+    if (!empty || worker !== undefined && isUnverifiableTrackedProbe(worker, metadata.worker_started_at)) return unknown();
+    const latest = await this.readMetadata(metadata.task_id, false, 1);
+    if (!latest.ok || latest.value.request_digest !== metadata.request_digest) return unknown();
+    if (isTerminal(latest.value.state)) return latest.value;
+    const recovered: DurableTaskMetadata = { ...latest.value,
+      state: latest.value.posix_stop_target ?? 'failed', exit_code: -1,
+      finished_at: new Date().toISOString(), output_finalized: false,
+      error: 'POSIX process group is empty; coordinator exited without a finalized result',
+    };
+    await this.writeMetadata(recovered);
+    const canonical = await this.readMetadata(metadata.task_id, false, 1);
+    return canonical.ok ? canonical.value : unknown();
+  }
+
+  private async cancelPosix(metadata: DurableTaskMetadata): Promise<Result<Record<string, unknown>>> {
+    await writeFile(path.join(this.taskDirectory(metadata.task_id), 'posix.cancel'), 'cancel', { mode: 0o600 });
+    const worker = metadata.worker_pid === undefined ? undefined : await probeProcessIdentity(metadata.worker_pid, this.platform);
+    if (worker?.state === 'gone' && metadata.child_pid !== undefined && metadata.child_started_at !== undefined) {
+      metadata.posix_stop_target = 'cancelled';
+      await this.writeMetadata(metadata);
+      await new PosixProcessTree({ platform: this.platform, inspectGroup: this.posixGroupInspector })
+        .stopPid(metadata.child_pid, metadata.child_started_at).catch(() => undefined);
+    }
+    const deadline = Date.now() + 2_000;
+    do {
+      const current = await this.readMetadata(metadata.task_id);
+      if (current.ok) metadata = await this.reconcilePosix(current.value);
+      if (isTerminal(metadata.state)) break;
+      await delay(50);
+    } while (Date.now() < deadline);
+    await this.releaseTerminalReservation(metadata);
+    return ok(await this.snapshotFromMetadata(metadata));
+  }
+
+  private async reconcileNative(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
+    const binding = metadata.containmentBinding;
+    const unknown = (): DurableTaskMetadata => {
+      const unresolved = { ...metadata, state: 'termination_unverified' as const, error: 'Authenticated native termination proof is unavailable' };
+      delete unresolved.finished_at;
+      return unresolved;
+    };
+    if (this.windowsNativeAuthority === undefined || binding === undefined || !nativeBindingMatchesMetadata(metadata, binding)) return unknown();
+    let proof = await this.windowsNativeAuthority.inspect({ directory: this.taskDirectory(metadata.task_id), binding });
+    if (proof.state === 'running') return isTerminal(metadata.state) ? unknown() : { ...metadata, state: metadata.state === 'starting' ? 'running' : metadata.state };
+    if (proof.state === 'termination_unknown') {
+      const deadlinePassed = typeof metadata.deadline_at === 'string' && Date.now() > new Date(metadata.deadline_at).getTime();
+      const isUnverifiedState = metadata.state === 'termination_unverified';
+      if (metadata.state !== 'starting' && (isUnverifiedState || deadlinePassed) && metadata.worker_pid !== undefined) {
+        const worker = await probeProcessIdentity(metadata.worker_pid, this.platform);
+        const workerDead = worker.state === 'gone' || (worker.state === 'live' && metadata.worker_started_at !== undefined && worker.processStartedAt !== metadata.worker_started_at);
+        let childDead = true;
+        if (metadata.child_pid !== undefined && workerDead) {
+          const child = await probeProcessIdentity(metadata.child_pid, this.platform);
+          childDead = child.state === 'gone' || (child.state === 'live' && metadata.child_started_at !== undefined && child.processStartedAt !== metadata.child_started_at);
+        }
+        if (workerDead && childDead) {
+          const abortProof = await this.windowsNativeAuthority.abortBeforeLaunch({ directory: this.taskDirectory(metadata.task_id), binding });
+          if (abortProof.state === 'launch_not_started' || abortProof.state === 'terminal_verified') {
+            proof = abortProof;
+          }
+        }
+      }
+    }
+    if (proof.state === 'termination_unknown') return isTerminal(metadata.state) ? unknown() : metadata;
+    const expectedState = proof.state === 'launch_not_started' ? 'failed' : nativeOutcomeState(proof.outcome, proof.exitCode);
+    const expectedExitCode = proof.state === 'launch_not_started' ? -1 : proof.exitCode;
+    if (metadata.state === expectedState && metadata.exit_code === expectedExitCode && metadata.finished_at !== undefined) return metadata;
+    if (metadata.worker_pid !== undefined) {
+      const worker = await probeProcessIdentity(metadata.worker_pid, this.platform);
+      if (worker.state !== 'gone' && !(worker.state === 'live' && metadata.worker_started_at !== undefined
+        && worker.processStartedAt !== metadata.worker_started_at)) return metadata;
+    } else if (proof.state !== 'launch_not_started') {
+      return unknown();
+    }
+    const readback = await this.readMetadata(metadata.task_id);
+    if (!readback.ok || readback.value.containmentBinding === undefined || !nativeBindingMatchesMetadata(readback.value, binding)) return unknown();
+    const current = readback.value;
+    if (current.state === expectedState && current.exit_code === expectedExitCode && current.finished_at !== undefined) return current;
+    const finalized = { ...current, state: expectedState, exit_code: expectedExitCode,
+      finished_at: current.finished_at ?? new Date().toISOString() };
+    delete finalized.error;
+    await this.writeMetadata(finalized);
+    return finalized;
   }
 
   private async awaitTerminalMetadata(taskId: string): Promise<DurableTaskMetadata | undefined> {
@@ -762,8 +1027,11 @@ export class DurableShellTaskStore {
 async function writeMetadataAtomically(filename: string, metadata: DurableTaskMetadata): Promise<void> {
   const temporaryPath = `${filename}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
   try {
-    await writeFile(temporaryPath, JSON.stringify(metadata), 'utf8');
+    const serialized = JSON.stringify(metadata);
+    const handle = await open(temporaryPath, 'wx', 0o600);
+    try { await handle.writeFile(serialized, 'utf8'); await handle.sync(); } finally { await handle.close(); }
     await rename(temporaryPath, filename);
+    if (await readFile(filename, 'utf8') !== serialized) throw new Error('DURABLE_METADATA_READBACK_FAILED');
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
@@ -781,10 +1049,12 @@ async function readPublishedPid(filename: string): Promise<number | undefined> {
 function isMetadata(value: unknown): value is DurableTaskMetadata {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return record.version === 1
+  return (record.version === 1 || record.version === 2)
     && typeof record.task_id === 'string'
     && (record.request_digest === undefined || (typeof record.request_digest === 'string' && /^[a-f0-9]{64}$/i.test(record.request_digest)))
-    && typeof record.state === 'string'
+    && (isExecutingState(record.state) || record.state === 'termination_unverified' || isTerminalValue(record.state))
+    && (record.containment === undefined || record.containment === 'windows_job_v1' || record.containment === 'windows_job_v2' || record.containment === 'posix_group_v1')
+    && (record.containment !== 'windows_job_v2' || parseNativeAttemptBinding(record.containmentBinding) !== undefined)
     && typeof record.started_at === 'string'
     && typeof record.include_stdout === 'boolean'
     && typeof record.include_stderr === 'boolean'
@@ -802,6 +1072,15 @@ async function readPublishedStartedAt(filename: string): Promise<string | undefi
   } catch {
     return undefined;
   }
+}
+
+function projectTaskForGoal(reconciled: DurableTaskMetadata): GoalTaskProjection {
+  if (reconciled.containment !== undefined) return { kind: 'reconciled', metadata: reconciled };
+  const reason = 'Legacy task has no authenticated containment proof; historical completion cannot establish Goal termination';
+  const metadata: DurableTaskMetadata = { ...reconciled, state: 'termination_unverified', error: reason };
+  delete metadata.exit_code;
+  delete metadata.finished_at;
+  return { kind: 'legacy_unverified', metadata, reason };
 }
 
 function metadataOwner(metadata: DurableTaskMetadata): CapabilityTaskOwner {
@@ -838,6 +1117,19 @@ async function mapWithConcurrency<T, U>(
   await Promise.all(workers);
   return results;
 }
+
+function nativeOutcomeState(outcome: 'completed' | 'cancelled' | 'timed_out' | 'interrupted', exitCode: number): DurableShellTaskState {
+  return outcome === 'interrupted' ? 'failed' : outcome === 'completed' ? (exitCode === 0 ? 'completed' : 'failed') : outcome;
+}
+
+function nativeBindingMatchesMetadata(metadata: DurableTaskMetadata, binding: NativeAttemptBinding): boolean {
+  return binding.taskId === metadata.task_id && binding.reservationId === metadata.task_id
+    && binding.requestDigest === metadata.request_digest && binding.ownerClientId === metadata.owner_client_id
+    && binding.ownerSessionId === metadata.owner_session_id && binding.workspaceId === metadata.owner_workspace_id
+    && JSON.stringify(parseNativeAttemptBinding(metadata.containmentBinding)) === JSON.stringify(parseNativeAttemptBinding(binding));
+}
+
+function isExecutingState(state: unknown): boolean { return state === 'starting' || state === 'running'; }
 
 function isTerminal(state: DurableShellTaskState): boolean {
   return state === 'completed' || state === 'failed' || state === 'timed_out' || state === 'cancelled';
@@ -1097,6 +1389,7 @@ function delay(milliseconds: number): Promise<void> {
 
 const DURABLE_WORKER_SOURCE = String.raw`import { execFile, spawn } from 'node:child_process';
 import { readFile, writeFile, open, rename, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -1108,6 +1401,8 @@ if (!specPath) process.exit(64);
 const spec = JSON.parse(await readFile(specPath, 'utf8'));
 await unlink(specPath).catch(() => undefined);
 let metadata = JSON.parse(await readFile(spec.metadataPath, 'utf8'));
+metadata.version = 2;
+let persistenceQueue = Promise.resolve();
 metadata.worker_pid = process.pid;
 await persist();
 let stdoutBytes = 0;
@@ -1117,7 +1412,15 @@ const stderrHandle = await open(spec.stderrPath, 'a');
 let settled = false;
 let timer;
 let child;
+let nativeAuthority;
+let nativeInvocation;
+let posixRuntime;
+let posixControlTimer;
+let posixControlBusy = false;
+let posixRootExit;
+let posixPipesClosed = false;
 let stopTarget;
+let outputWriteFailed = false;
 const pendingWrites = new Set();
 
 function appendBounded(handle, chunk, stream) {
@@ -1134,7 +1437,7 @@ function appendBounded(handle, chunk, stream) {
   if (buffer.byteLength > remaining) metadata[stream + '_truncated'] = true;
   const pending = handle.write(slice);
   pendingWrites.add(pending);
-  void pending.then(() => pendingWrites.delete(pending), () => pendingWrites.delete(pending));
+  void pending.then(() => pendingWrites.delete(pending), () => { outputWriteFailed = true; pendingWrites.delete(pending); });
 }
 
 function isTransientMetadataIoError(error) {
@@ -1142,13 +1445,22 @@ function isTransientMetadataIoError(error) {
   return code === 'EACCES' || code === 'EPERM' || code === 'EBUSY' || code === 'EMFILE' || code === 'ENFILE';
 }
 
-async function persist() {
+function persist() {
+  const serialized = JSON.stringify(metadata);
+  const committed = persistenceQueue.catch(() => undefined).then(() => persistSnapshot(serialized));
+  persistenceQueue = committed;
+  return committed;
+}
+
+async function persistSnapshot(serialized) {
   for (let attempt = 0; attempt < METADATA_IO_RETRY_ATTEMPTS; attempt += 1) {
     const temporaryPath = spec.metadataPath + '.tmp.' + process.pid + '.' + Date.now() + '.' + Math.random().toString(16).slice(2);
     let retryDelayMs = 0;
     try {
-      await writeFile(temporaryPath, JSON.stringify(metadata), 'utf8');
+      const handle = await open(temporaryPath, 'wx', 0o600);
+      try { await handle.writeFile(serialized, 'utf8'); await handle.sync(); } finally { await handle.close(); }
       await rename(temporaryPath, spec.metadataPath);
+      if (await readFile(spec.metadataPath, 'utf8') !== serialized) throw new Error('DURABLE_METADATA_READBACK_FAILED');
       return;
     } catch (error) {
       if (attempt + 1 >= METADATA_IO_RETRY_ATTEMPTS || !isTransientMetadataIoError(error)) throw error;
@@ -1161,9 +1473,10 @@ async function persist() {
 }
 
 async function releaseReservation() {
+  if (spec.native || spec.posix) return;
   try {
     const marker = JSON.parse(await readFile(spec.activeMarkerPath, 'utf8'));
-    if (marker?.version !== 1 || marker.taskId !== spec.taskId || marker.requestDigest !== spec.requestDigest) return;
+    if ((marker?.version !== 1 && marker?.version !== 2) || marker.taskId !== spec.taskId || marker.requestDigest !== spec.requestDigest) return;
     await unlink(spec.activeMarkerPath);
   } catch {
     // A later warm reservation revalidates a stale marker against task.json.
@@ -1195,15 +1508,19 @@ async function processStartedAt(pid) {
 }
 
 async function stopTree(pid) {
-  if (spec.containment) {
-    await writeFile(spec.containment.cancelPath, 'cancel');
-    const deadline = Date.now() + 10000;
-    while (Date.now() < deadline) {
-      const receipt = await containmentReceipt();
-      if (receipt) return true;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    return false;
+  if (spec.native) {
+    if (!nativeAuthority) return false;
+    const proof = await nativeAuthority.cancel({ directory: spec.native.directory, binding: spec.native.binding });
+    return proof.state === 'terminal_verified' || proof.state === 'launch_not_started';
+  }
+  if (spec.posix) {
+    if (!posixRuntime) return false;
+    if ((await posixRuntime.inspectPosixProcessGroup(pid)).state === 'empty') return true;
+    if (!metadata.child_started_at) return false;
+    try {
+      await new posixRuntime.PosixProcessTree().stopPid(pid, metadata.child_started_at);
+      return (await posixRuntime.inspectPosixProcessGroup(pid, { expectedRootStartedAt: metadata.child_started_at })).state === 'empty';
+    } catch { return false; }
   }
   if (!processRunning(pid)) return true;
   if (!metadata.child_started_at || await processStartedAt(pid) !== metadata.child_started_at) return false;
@@ -1240,20 +1557,51 @@ async function stopTree(pid) {
 }
 
 async function containmentReceipt() {
-  if (!spec.containment) return undefined;
-  try {
-    const receipt = JSON.parse(await readFile(spec.containment.receiptPath, 'utf8'));
-    return receipt.kind === 'windows_job_v1' && receipt.activeProcesses === 0 && Number.isInteger(receipt.exitCode)
-      && ['completed', 'cancelled', 'timed_out'].includes(receipt.outcome) ? receipt : undefined;
-  } catch { return undefined; }
+  if (!spec.native || !nativeAuthority) return undefined;
+  const proof = await nativeAuthority.inspect({ directory: spec.native.directory, binding: spec.native.binding });
+  return proof.state === 'terminal_verified' || proof.state === 'launch_not_started' ? proof : undefined;
 }
 
 async function finish(state, exitCode, error) {
   if (settled) return;
+  if (spec.posix) {
+    if (!child?.pid) metadata.posix_launch_not_started = true;
+    else if (!posixRuntime || (await posixRuntime.inspectPosixProcessGroup(child.pid, {
+      expectedRootStartedAt: metadata.child_started_at,
+    })).state !== 'empty') {
+      if (metadata.state !== 'termination_unverified') {
+        metadata.state = 'termination_unverified';
+        metadata.error = 'POSIX process group remains live or unverified';
+        delete metadata.finished_at;
+        await persist();
+      }
+      return;
+    }
+    state = stopTarget ?? (posixRootExit === 0 ? 'completed' : 'failed');
+    exitCode = stopTarget ? -1 : posixRootExit ?? exitCode;
+    if (child?.pid && !posixPipesClosed) {
+      await new Promise((resolve) => {
+        const done = () => { clearTimeout(drainTimer); child.off('close', done); resolve(); };
+        const drainTimer = setTimeout(done, 1000);
+        child.once('close', done);
+      });
+      if (!posixPipesClosed) {
+        metadata.state = 'termination_unverified';
+        metadata.error = 'POSIX group is empty but inherited output pipes remain open';
+        delete metadata.finished_at;
+        await persist();
+        return;
+      }
+    }
+    if (settled) return;
+  }
   settled = true;
-  if (spec.containment && child && state !== 'termination_unverified') {
+  if (posixControlTimer) clearInterval(posixControlTimer);
+  if (spec.native && state !== 'termination_unverified') {
+    if (state === 'failed' && nativeAuthority) await nativeAuthority.abortBeforeLaunch({ directory: spec.native.directory, binding: spec.native.binding }).catch(() => undefined);
     const receipt = await containmentReceipt();
     if (!receipt) { state = 'termination_unverified'; error = 'Native containment has no verified terminal receipt'; }
+    else if (receipt.state === 'launch_not_started') { state = 'failed'; exitCode = -1; }
     else { state = receipt.outcome === 'completed' ? (receipt.exitCode === 0 ? 'completed' : 'failed') : receipt.outcome; exitCode = receipt.exitCode; }
   }
   settled = true;
@@ -1265,7 +1613,8 @@ async function finish(state, exitCode, error) {
   if (state === 'termination_unverified') delete metadata.finished_at;
   else metadata.finished_at = new Date().toISOString();
   await Promise.allSettled([...pendingWrites]);
-  await Promise.allSettled([stdoutHandle.close(), stderrHandle.close()]);
+  const outputClosed = await Promise.allSettled([stdoutHandle.close(), stderrHandle.close()]);
+  metadata.output_finalized = !outputWriteFailed && outputClosed.every((result) => result.status === 'fulfilled');
   const persisted = await persist().then(() => true, () => false);
   if (persisted && state !== 'termination_unverified') await releaseReservation();
 }
@@ -1273,19 +1622,45 @@ async function finish(state, exitCode, error) {
 try {
   const childEnvironment = { ...process.env };
   delete childEnvironment.ELECTRON_RUN_AS_NODE;
-  child = spawn(spec.executable, [...spec.arguments], {
+  if (spec.electronRunAsNode) childEnvironment.ELECTRON_RUN_AS_NODE = '1';
+  if (spec.posix) {
+    if (createHash('sha256').update(await readFile(new URL(spec.posix.moduleUrl))).digest('hex') !== spec.posix.sha256) {
+      throw new Error('POSIX_WORKER_RUNTIME_INTEGRITY_FAILED');
+    }
+    posixRuntime = await import(spec.posix.moduleUrl);
+  }
+  if (spec.native) {
+    if (spec.native.configuration.workerModuleSha256 !== undefined
+      && createHash('sha256').update(await readFile(new URL(spec.native.moduleUrl))).digest('hex') !== spec.native.configuration.workerModuleSha256) {
+      throw new Error('NATIVE_WORKER_RUNTIME_INTEGRITY_FAILED');
+    }
+    const nativeRuntime = await import(spec.native.moduleUrl);
+    nativeAuthority = nativeRuntime.createWindowsNativeAuthority(spec.native.configuration);
+    nativeInvocation = await nativeAuthority.prepare({
+      directory: spec.native.directory, binding: spec.native.binding,
+      executable: spec.executable, args: spec.arguments, cwd: spec.cwd, timeoutMs: spec.timeoutMs,
+      environment: childEnvironment, windowsVerbatimArguments: spec.windowsVerbatimArguments === true,
+    });
+  }
+  child = spawn(nativeInvocation?.executable ?? spec.executable, [...(nativeInvocation?.args ?? spec.arguments)], {
     cwd: spec.cwd,
-    env: childEnvironment,
+    env: nativeInvocation?.environment ?? childEnvironment,
     shell: false,
     detached: process.platform !== 'win32',
     windowsHide: true,
-    ...(spec.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: spec.windowsVerbatimArguments }),
+    ...(nativeInvocation || spec.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: spec.windowsVerbatimArguments }),
   });
   metadata.child_pid = child.pid;
   child.stdout?.on('data', (chunk) => { appendBounded(stdoutHandle, chunk, 'stdout'); });
   child.stderr?.on('data', (chunk) => { appendBounded(stderrHandle, chunk, 'stderr'); });
+  child.once('close', () => { posixPipesClosed = true; });
   child.once('error', (error) => { void finish('failed', -1, 'Local task failed to start: ' + error.message); });
   child.once('exit', (code) => {
+    if (spec.posix) {
+      posixRootExit = code ?? -1;
+      void finish(code === 0 ? 'completed' : 'failed', code ?? -1);
+      return;
+    }
     if (stopTarget || settled) return;
     if (timer) clearTimeout(timer);
     void (async () => {
@@ -1312,13 +1687,39 @@ try {
       await finish(code === 0 ? 'completed' : 'failed', code ?? -1);
     })();
   });
+  if (spec.posix) {
+    await persist();
+    posixControlTimer = setInterval(() => {
+      if (settled || posixControlBusy) return;
+      posixControlBusy = true;
+      void (async () => {
+        const cancelled = await readFile(spec.posix.cancelPath, 'utf8').then(() => true, () => false);
+        if (cancelled && !stopTarget) {
+          stopTarget = 'cancelled';
+          metadata.posix_stop_target = stopTarget;
+          await persist();
+          if (child?.pid) await stopTree(child.pid);
+        }
+        if (posixRootExit !== undefined || stopTarget) await finish(stopTarget ?? 'completed', posixRootExit ?? -1);
+      })().catch(() => undefined).finally(() => { posixControlBusy = false; });
+    }, 100);
+  }
+  if (nativeInvocation) {
+    const start = await nativeInvocation.connect(child);
+    if (!settled) {
+      if (start.state === 'running') metadata.state = 'running';
+      else if (start.state === 'terminal_verified' || start.state === 'launch_not_started') await finish('completed', 0);
+      else { metadata.state = 'termination_unverified'; metadata.error = start.reason; }
+    }
+  }
   metadata.child_started_at = child.pid ? await processStartedAt(child.pid) : null;
   if (metadata.child_started_at === null) delete metadata.child_started_at;
   if (!settled) await persist();
-  if (!settled) timer = setTimeout(() => {
+  if (!settled && !spec.native) timer = setTimeout(() => {
     void (async () => {
       if (settled || !child?.pid) return;
       stopTarget = 'timed_out';
+      if (spec.posix) { metadata.posix_stop_target = stopTarget; await persist(); }
       const stopped = await stopTree(child.pid);
       await finish(stopped ? 'timed_out' : 'termination_unverified', -1, stopped ? 'Local task timed out' : 'Local task timed out, but process termination could not be verified');
     })();
@@ -1327,6 +1728,20 @@ try {
   await finish('failed', -1, 'Local task failed to start: ' + (error instanceof Error ? error.message : String(error)));
 }
 `;
+
+export function durableShellNativeBinding(request: DurableShellLaunchRequest, requestDigest = durableShellRequestDigest(request)): NativeAttemptBinding {
+  if (request.owner.workspaceId === undefined) throw new Error('Native containment requires a workspace identity');
+  return {
+    taskId: request.taskId,
+    reservationId: request.taskId,
+    attemptId: request.taskId,
+    generation: 1,
+    requestDigest,
+    ownerClientId: request.owner.clientId,
+    ownerSessionId: request.owner.sessionId,
+    workspaceId: request.owner.workspaceId,
+  };
+}
 
 export function durableShellRequestDigest(request: DurableShellLaunchRequest): string {
   const canonicalRequest = {

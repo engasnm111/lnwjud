@@ -1,10 +1,26 @@
-# คู่มือใช้งาน lnwjud v5.8.7 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.9.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม source `v5.8.7`; public release `v5.8.7` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.8.7)
+คู่มือนี้อัปเดตตาม source `v5.9.0`; public release `v5.8.7` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.8.7)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว build จาก source `v5.8.1` รวม official OpenAI `tunnel-client v0.0.16` ที่ตรงกับ OS/architecture พร้อม SHA-256/provenance ส่วน release รุ่นก่อนหน้าอาจ bundle เวอร์ชันต่างกัน ให้ยึดหลักฐานของไฟล์ที่ดาวน์โหลดจริง
+
+## Auto Updater ใน Source v5.9.0 — ยังไม่พร้อมติดตั้งอัตโนมัติ
+
+สวิตช์ **Settings → General → ติดตั้งอัปเดตแบบไม่ต้องคลิก** มีค่าเริ่มต้น OFF แต่การเปิดสวิตช์ยังไม่ทำให้ Source v5.9.0 ติดตั้งอัตโนมัติได้ เส้นทางอัตโนมัติทุกแพ็กเกจยังปฏิเสธการติดตั้งระหว่างพัฒนาการตรวจแพ็กเกจ การหยุดรับงานทั่วทั้งระบบ การติดตั้งและเปิดใหม่ การตรวจสุขภาพ และ rollback การตรวจ/ดาวน์โหลดและการติดตั้งที่ผู้ใช้สั่งเป็นคนละขั้นตอน และยังอยู่ภายใต้สิทธิ์ OS
+
+ระบบกู้สถานะ updater ก่อนเริ่มเขียนข้อมูล และกักสถานะที่ยังพิสูจน์ไม่ได้ การติดตั้งที่ผู้ใช้สั่งจะรอให้งานเดิมจบโดยไม่บังคับปิดหลังห้าวินาที ลายเซ็นไฟล์อย่างเดียวไม่ยืนยันว่าระบบอัปเดตครบวงจรแล้ว ห้ามปล่อย Release จนทดสอบแพ็กเกจที่เซ็นจริง อัปเดต เปิดใหม่ ตรวจเวอร์ชัน/สุขภาพ และ rollback เมื่อจำลองความผิดพลาดผ่านครบ โดยไม่ข้าม UAC หรือสิทธิ์ OS
+
+## ข้อจำกัดและสถานะรับมอบ v5.9.0
+
+Issue #213–#217 และ #219 ยังไม่รับมอบครบทั้งชุด โดย #216 ยังขาด native containment ที่ควบคุม process ลูกซึ่งหลุด process group บน macOS ได้อย่างปลอดภัย ปัจจุบัน macOS จึงปฏิเสธ durable shell และ managed process writer ใหม่ก่อนเปิด process และเก็บ reservation ที่ยังพิสูจน์ไม่ได้ ส่วน Windows ยังต้องตรวจ installer และบริการจากโค้ดสุดท้าย ดู [สถานะรับมอบและหลักฐานตามรุ่น](codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md)
+
+## Ponytail สำหรับงานเขียนโค้ด (รวมใน Source v5.9.0)
+
+Source รุ่น v5.9.0 มี Skill แบบเอกสารของ [Ponytail v5.3.2](https://github.com/DietrichGebert/ponytail/releases/tag/v5.3.2) รุ่น Stable ล่าสุด ณ 21 ตุลาคม 2026 ครบ 6 รายการ ได้แก่ `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain` และ `ponytail-help` โดยตรึง Commit และ MIT License เพื่อให้ตรวจสอบแหล่งที่มาได้ ไม่ติดตั้ง Hook หรือสคริปต์ภายนอกโดยอัตโนมัติ
+
+โหมดเริ่มต้นคือ **OFF** ผู้ใช้เลือก Lite, Full หรือ Ultra ได้ผ่านการตั้งค่าที่รองรับ โดยลำดับการตั้งค่าคือ **Goal > Workspace > Global** โหมด Ponytail ไม่ข้าม Writer Lease หรือข้อบังคับความปลอดภัย การทดสอบการทำงานบนแพ็กเกจที่ติดตั้งยังเป็นส่วนหนึ่งของ Release Acceptance v5.9.0 และ **ไม่ได้ถือว่าผ่าน** เพียงเพราะมี Skill อยู่ใน Source อ่านรายละเอียดได้ใน [คู่มือ Ponytail](PONYTAIL.md)
 
 คู่มือ target ใหม่:
 
@@ -370,7 +386,7 @@ Live Logs ใช้ดูสถานะ realtime ของ:
 
 External MCP/Serena จะถูกปิดเมื่อ idle ตามค่าที่ตั้งไว้ โดยไม่ตัด call ที่กำลังทำงานอยู่. เมื่อปิดโปรแกรม, เปลี่ยน command, ปิดใช้งาน หรือลบ server ระบบจะ abort การเชื่อมต่อที่รออยู่และปิด process tree ที่ lnwjud เป็นเจ้าของ (process group บน macOS/Linux และ `taskkill /T /F` บน Windows). ถ้าตรวจไม่ได้จริงจะแสดง `termination_unverified` ใน `mcp_list` และ Doctor แทนการรายงานว่าสำเร็จ.
 
-การสร้างไฟล์ภาพ/ไฟล์ไบนารีจาก ChatGPT แล้วส่งเข้าโฟลเดอร์โดยตรงไม่ใช่ความสามารถอัตโนมัติของ MCP bridge: ใช้เครื่องมือสร้างภาพของ ChatGPT แล้วดาวน์โหลดไฟล์ จากนั้นให้ lnwjud `copy_file` ไปยังโฟลเดอร์ที่อนุญาต หรือใช้ `write_file` เฉพาะข้อความ UTF-8. lnwjud ไม่รับ file-id จากหน้า ChatGPT เพื่อเขียนลงดิสก์เองโดยไม่มีการสั่ง copy ที่ชัดเจน.
+การสร้างไฟล์ภาพ/ไฟล์ไบนารีจาก ChatGPT แล้วส่งเข้าโฟลเดอร์โดยตรงไม่ใช่ความสามารถอัตโนมัติของ MCP bridge: ใช้เครื่องมือสร้างภาพของ ChatGPT แล้วดาวน์โหลดไฟล์ จากนั้นให้ lnwjud `copy_file` ไปยังโฟลเดอร์ที่อนุญาต หรือใช้ `write_file` เฉพาะข้อความ UTF-8. lnwjud ไม่รับ file-id จากหน้า ChatGPT เพื่อเขียนลงดิสก์เองโดยไม่มีการสั่ง copy ที่ชัดเจน. **หมายเหตุ Issue #219:** `write_file` แบบ `mode: "create_new"` ป้องกันการเขียนทับไฟล์ปลายทาง แต่ยังใช้ไฟล์ชั่วคราวก่อนทำ hard link ไม่รับประกัน `fsync`, file/parent directory durability, ordered native inode/descriptor receipt หรือทราบผลแน่นอนเมื่อการเชื่อมต่อขาดหลังเริ่มเขียน; ข้อจำกัดบน macOS exFAT ยังไม่มีหลักฐานรับรอง อ่าน [สัญญาความสามารถ v5.9.0](architecture/FILE_PUBLICATION_CONTRACT_V5_9_0.md).
 
 ## 13. Doctor / Troubleshooting
 
@@ -447,8 +463,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.8.7.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.8.7.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.9.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

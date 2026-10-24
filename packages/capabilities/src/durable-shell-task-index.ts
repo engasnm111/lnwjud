@@ -1,14 +1,27 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { readWindowsContainmentReceipt } from '@lnwjud/process';
+import { parseNativeAttemptBinding, type NativeAttemptBinding } from '@lnwjud/process';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 
 export type ActiveTaskInspection = 'active' | 'terminal' | 'missing' | 'unknown';
 
 export type DurableMutationKind = 'opaque' | 'repository_import' | 'opaque_uncontained' | 'opaque_contained_process';
+type ReservationCapacityClass = 'durable_shell' | 'managed_writer';
+
+export interface WriterAdmissionDiagnostics {
+  readonly capacity_population: ReservationCapacityClass;
+  readonly durable_shell_limit: number;
+  readonly durable_shell_reservations: number;
+  readonly managed_writer_reservations: number;
+  readonly unresolved_reservations: number;
+  readonly unreadable_reservations: number;
+  readonly status_basis: 'held_reservations_not_process_liveness';
+  readonly exclusive_writer_blocked: boolean;
+}
 
 export interface DurableTaskReservation {
+  readonly capacityClass?: ReservationCapacityClass;
   readonly mutationKind?: DurableMutationKind;
   readonly taskId: string;
   readonly requestDigest: string;
@@ -16,6 +29,7 @@ export interface DurableTaskReservation {
   readonly ownerWorkspaceId?: string;
   /** Trusted native proof path; never accepted from MCP caller input. */
   readonly nativeReceiptPath?: string;
+  readonly nativeBinding?: NativeAttemptBinding;
   readonly launchRecord?: DurableTaskLaunchRecord;
 }
 
@@ -41,10 +55,13 @@ export interface DurableTaskLaunchPage {
 
 export interface DurableShellTaskIndexOptions {
   readonly maxConcurrentTasks: number;
+  readonly capacityClass?: ReservationCapacityClass;
   readonly inspectTask: (taskId: string) => Promise<ActiveTaskInspection>;
+  readonly verifyContainedTermination?: (reservation: DurableTaskReservation) => Promise<boolean>;
   readonly loadLaunchRecord?: (taskId: string) => Promise<DurableTaskLaunchRecord | undefined>;
   readonly now?: () => Date;
   readonly removeFile?: typeof rm;
+  readonly listActiveFiles?: (directory: string) => Promise<readonly string[]>;
 }
 
 export class DurableShellTaskIndex {
@@ -77,8 +94,12 @@ export class DurableShellTaskIndex {
   }
 
   public async reserve(input: DurableTaskReservation): Promise<Result<DurableTaskReservationResult>> {
-    if ((input.mutationKind !== undefined && input.mutationKind !== 'opaque' && input.mutationKind !== 'repository_import' && input.mutationKind !== 'opaque_uncontained' && input.mutationKind !== 'opaque_contained_process')
+    if ((input.capacityClass !== undefined && input.capacityClass !== 'durable_shell' && input.capacityClass !== 'managed_writer')
+      || (input.mutationKind !== undefined && input.mutationKind !== 'opaque' && input.mutationKind !== 'repository_import' && input.mutationKind !== 'opaque_uncontained' && input.mutationKind !== 'opaque_contained_process')
       || (input.mutationKind === 'opaque_contained_process' && (typeof input.nativeReceiptPath !== 'string' || !path.isAbsolute(input.nativeReceiptPath)))
+      || (input.nativeBinding !== undefined && (parseNativeAttemptBinding(input.nativeBinding) === undefined
+        || input.nativeBinding.reservationId !== input.taskId || input.nativeBinding.requestDigest !== input.requestDigest
+        || input.nativeBinding.ownerClientId !== input.ownerClientId || input.nativeBinding.workspaceId !== input.ownerWorkspaceId))
       || !isSafeTaskId(input.taskId)
       || !/^[a-f0-9]{64}$/i.test(input.requestDigest)
       || (input.launchRecord !== undefined && (!isLaunchRecord(input.launchRecord) || input.launchRecord.taskId !== input.taskId))) {
@@ -91,9 +112,19 @@ export class DurableShellTaskIndex {
         await this.ensureJournalUnlocked();
         const markers = await this.readMarkers();
         let activeTasks = 0;
+        let durableShellReservations = 0;
+        let managedWriterReservations = 0;
+        const capacityClass = input.capacityClass ?? this.options.capacityClass ?? 'durable_shell';
+        const count = (marker: MarkerRecord): void => {
+          const population = reservationCapacityClass(marker);
+          if (population === capacityClass) activeTasks += 1;
+          if (population === 'durable_shell') durableShellReservations += 1;
+          else managedWriterReservations += 1;
+        };
         for (const marker of markers) {
           if (marker.record?.taskId === input.taskId) {
             if (marker.record.requestDigest !== input.requestDigest || marker.record.mutationKind !== (input.mutationKind ?? 'opaque')
+              || reservationCapacityClass(marker.record) !== capacityClass
               || marker.record.ownerClientId !== input.ownerClientId
               || marker.record.ownerWorkspaceId !== input.ownerWorkspaceId) {
               return err(appError('CONFLICT', 'Durable task ID is already reserved for another request', true));
@@ -104,43 +135,46 @@ export class DurableShellTaskIndex {
             return err(appError('CONFLICT', 'A managed writer reservation is unreadable; resolve its state before launching another writer', true));
           }
           if (marker.record.mutationKind === 'opaque_contained_process') {
-            const native = marker.record.nativeReceiptPath === undefined
-              ? undefined : await readWindowsContainmentReceipt(marker.record.nativeReceiptPath);
-            if (native !== undefined) {
-              await rm(marker.path, { force: true }).catch(() => undefined);
+            if (await this.hasVerifiedNativeTermination(marker.record)) {
+              await this.removeMarker(marker.path);
               continue;
             }
             if (input.mutationKind === 'repository_import') {
-              return err(appError('CONFLICT', 'Unverified native process descendants block repository import', true));
+              return err({ ...appError('CONFLICT', 'Unverified native process descendants block repository import', true), details: { blocker_kind: marker.record.mutationKind, blocker_state: 'unverified', recovery_requirement: 'trusted_termination_evidence' } });
             }
-            activeTasks += 1;
+            count(marker.record);
+            continue;
+          }
+          if (marker.record.nativeBinding !== undefined && await this.hasVerifiedNativeTermination(marker.record)) {
+            await this.removeMarker(marker.path);
             continue;
           }
           const inspection = await this.options.inspectTask(marker.record.taskId).catch(() => 'unknown' as const);
-          if (inspection === 'terminal'
-            || (inspection === 'missing' && this.isAbandonedReservation(marker.record))) {
-            await rm(marker.path, { force: true }).catch(() => undefined);
+          if (inspection === 'terminal') {
+            await this.removeMarker(marker.path);
             continue;
           }
           if (input.mutationKind === 'repository_import' || marker.record.mutationKind === 'repository_import') {
-            return err(appError('CONFLICT', 'Repository import requires exclusive managed writer admission; a live or unresolved task holds it', true));
+            return err({ ...appError('CONFLICT', 'Repository import requires exclusive managed writer admission; a live or unresolved reservation holds it', true), details: { blocker_kind: marker.record.mutationKind, blocker_state: inspection, recovery_requirement: 'trusted_termination_evidence' } });
           }
-          activeTasks += 1;
+          count(marker.record);
         }
         if (activeTasks >= this.maxConcurrentTasks) {
-          return err(appError(
+          return err({ ...appError(
             'CONFLICT',
-            `Too many durable background tasks are already running (${activeTasks}/${this.maxConcurrentTasks}); inspect or stop existing tasks before starting another.`,
+            `Too many ${capacityClass === 'durable_shell' ? 'durable background tasks' : 'managed writer reservations'} hold capacity (${activeTasks}/${this.maxConcurrentTasks}); inspect admission diagnostics for live or unresolved reservations.`,
             true,
-          ));
+          ), details: { durable_shell_reservations: durableShellReservations, managed_writer_reservations: managedWriterReservations } });
         }
         const markerPath = this.markerPath(input.taskId);
         await atomicWriteJson(markerPath, {
-          version: 1,
+          version: 2,
           taskId: input.taskId,
           requestDigest: input.requestDigest,
           mutationKind: input.mutationKind ?? 'opaque',
+          capacityClass,
           ...(input.nativeReceiptPath === undefined ? {} : { nativeReceiptPath: input.nativeReceiptPath }),
+          ...(input.nativeBinding === undefined ? {} : { nativeBinding: input.nativeBinding }),
           ownerClientId: input.ownerClientId,
           ...(input.ownerWorkspaceId === undefined ? {} : { ownerWorkspaceId: input.ownerWorkspaceId }),
           reservedAt: this.now().toISOString(),
@@ -169,14 +203,53 @@ export class DurableShellTaskIndex {
       const markerPath = this.markerPath(taskId);
       const marker = await readMarker(markerPath);
       if (marker?.taskId !== taskId || marker.requestDigest !== requestDigest) return;
-      await rm(markerPath, { force: true });
+      if ((marker.mutationKind === 'opaque_contained_process' || marker.nativeBinding !== undefined)
+        && !await this.hasVerifiedNativeTermination(marker)) return;
+      await this.removeMarker(markerPath);
     }).catch(() => undefined);
   }
 
   public async hasReservation(taskId: string, requestDigest: string): Promise<boolean> {
     if (!isSafeTaskId(taskId) || !/^[a-f0-9]{64}$/i.test(requestDigest)) return false;
     const marker = await readMarker(this.markerPath(taskId));
-    return marker?.taskId === taskId && marker.requestDigest === requestDigest;
+    if (marker?.taskId === taskId && marker.requestDigest === requestDigest) return true;
+    try { await lstat(this.markerPath(taskId)); return true; }
+    catch (error: unknown) { return !isRecord(error) || error.code !== 'ENOENT'; }
+  }
+
+  public async diagnostics(): Promise<WriterAdmissionDiagnostics> {
+    await this.ensureDirectories();
+    return this.withLock(async () => {
+      await this.initializeUnlocked();
+      const markers = await this.readMarkers();
+      let durable = 0;
+      let managed = 0;
+      let unresolved = 0;
+      let unreadable = 0;
+      for (const marker of markers) {
+        if (marker.record === undefined) { unreadable += 1; unresolved += 1; continue; }
+        if (reservationCapacityClass(marker.record) === 'managed_writer') managed += 1;
+        else durable += 1;
+        unresolved += 1;
+      }
+      return {
+        capacity_population: this.options.capacityClass ?? 'durable_shell',
+        durable_shell_limit: this.maxConcurrentTasks,
+        durable_shell_reservations: durable, managed_writer_reservations: managed,
+        unresolved_reservations: unresolved, unreadable_reservations: unreadable,
+        status_basis: 'held_reservations_not_process_liveness', exclusive_writer_blocked: markers.length > 0,
+      };
+    });
+  }
+
+  private async removeMarker(filename: string): Promise<void> {
+    await this.removeFile(filename, { force: true });
+    try { await lstat(filename); }
+    catch (error: unknown) {
+      if (isRecord(error) && error.code === 'ENOENT') return;
+      throw error;
+    }
+    throw new Error('Durable writer reservation removal could not be verified');
   }
 
   public async listLaunches(options: {
@@ -213,18 +286,45 @@ export class DurableShellTaskIndex {
     await mkdir(this.activeDirectory, { recursive: true });
   }
 
+  private async hasVerifiedNativeTermination(marker: MarkerRecord): Promise<boolean> {
+    if (marker.requestDigest === null || marker.ownerClientId === undefined || marker.nativeReceiptPath === undefined || marker.nativeBinding === undefined
+      || this.options.verifyContainedTermination === undefined) return false;
+    try {
+      return await this.options.verifyContainedTermination({
+        taskId: marker.taskId,
+        requestDigest: marker.requestDigest,
+        ownerClientId: marker.ownerClientId,
+        ...(marker.ownerWorkspaceId === undefined ? {} : { ownerWorkspaceId: marker.ownerWorkspaceId }),
+        mutationKind: marker.mutationKind ?? 'opaque',
+        nativeReceiptPath: marker.nativeReceiptPath,
+        ...(marker.nativeBinding === undefined ? {} : { nativeBinding: marker.nativeBinding }),
+      });
+    } catch {
+      return false;
+    }
+  }
+
   private async initializeUnlocked(): Promise<void> {
-    if (await isReady(this.readyPath)) return;
+    const ready = await readJson(this.readyPath);
+    if (isReady(ready)) {
+      if (ready.markerFormatVersion === 2) return;
+      await this.upgradeLegacyMarkersUnlocked();
+      await atomicWriteJson(this.readyPath, { ...ready, markerFormatVersion: 2 });
+      return;
+    }
     await mkdir(this.activeDirectory, { recursive: true });
-    const entries = await readdir(this.rootDirectory, { withFileTypes: true }).catch(() => []);
+    await this.upgradeLegacyMarkersUnlocked();
+    const entries = await readdir(this.rootDirectory, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name === '.index') continue;
       const inspection = await this.options.inspectTask(entry.name).catch(() => 'unknown' as const);
       if (inspection !== 'active' && inspection !== 'unknown') continue;
       const markerPath = this.markerPath(entry.name);
-      if (await readMarker(markerPath) !== undefined) continue;
+      try { await lstat(markerPath); continue; } catch (error: unknown) {
+        if (typeof error === 'object' && error !== null && 'code' in error && error.code !== 'ENOENT') continue;
+      }
       await atomicWriteJson(markerPath, {
-        version: 1,
+        version: 2,
         taskId: entry.name,
         requestDigest: null,
         reservedAt: this.now().toISOString(),
@@ -235,8 +335,15 @@ export class DurableShellTaskIndex {
     await rm(this.readyPath, { force: true }).catch(() => undefined);
     await atomicWriteJson(this.readyPath, {
       version: 1,
+      markerFormatVersion: 2,
       readyAt: this.now().toISOString(),
     });
+  }
+
+  private async upgradeLegacyMarkersUnlocked(): Promise<void> {
+    for (const marker of await this.readMarkers()) {
+      if (marker.record?.version === 1) await atomicWriteJson(marker.path, { ...marker.record, version: 2 });
+    }
   }
 
   private async ensureJournalUnlocked(): Promise<void> {
@@ -250,7 +357,7 @@ export class DurableShellTaskIndex {
   private async rebuildJournalUnlocked(taskIds?: readonly string[]): Promise<void> {
     const launchRecords: DurableTaskLaunchRecord[] = [];
     if (this.options.loadLaunchRecord !== undefined) {
-      const ids = taskIds ?? (await readdir(this.rootDirectory, { withFileTypes: true }).catch(() => []))
+      const ids = taskIds ?? (await readdir(this.rootDirectory, { withFileTypes: true }))
         .filter((entry) => entry.isDirectory() && entry.name !== '.index')
         .map((entry) => entry.name);
       for (const taskId of ids) {
@@ -321,11 +428,11 @@ export class DurableShellTaskIndex {
   }
 
   private async readMarkers(): Promise<readonly MarkerRead[]> {
-    const entries = await readdir(this.activeDirectory, { withFileTypes: true }).catch(() => []);
+    const entries = await (this.options.listActiveFiles?.(this.activeDirectory) ?? readdir(this.activeDirectory));
     return Promise.all(entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .filter((entry) => entry.endsWith('.json'))
       .map(async (entry) => {
-        const markerPath = path.join(this.activeDirectory, entry.name);
+        const markerPath = path.join(this.activeDirectory, entry);
         const record = await readMarker(markerPath);
         return record === undefined
           ? { path: markerPath }
@@ -336,17 +443,6 @@ export class DurableShellTaskIndex {
   private markerPath(taskId: string): string {
     const filename = `${createHash('sha256').update(taskId).digest('hex')}.json`;
     return path.join(this.activeDirectory, filename);
-  }
-
-  private isAbandonedReservation(marker: MarkerRecord): boolean {
-    if (marker.mutationKind === 'opaque_uncontained' || marker.mutationKind === 'opaque_contained_process' || marker.mutationKind === 'repository_import'
-      || marker.legacy === true
-      || marker.launcherPid === undefined
-      || marker.launcherStartedAt === undefined
-      || marker.reservedAt === undefined) return false;
-    const reservedAt = Date.parse(marker.reservedAt);
-    if (!Number.isFinite(reservedAt) || this.now().getTime() - reservedAt < RESERVATION_RECLAIM_GRACE_MS) return false;
-    return isProcessProvenGone(marker.launcherPid);
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -404,13 +500,15 @@ export class DurableShellTaskIndex {
 }
 
 interface MarkerRecord {
-  readonly version: 1;
+  readonly capacityClass?: ReservationCapacityClass;
+  readonly version: 1 | 2;
   readonly taskId: string;
   readonly requestDigest: string | null;
   readonly mutationKind: DurableMutationKind;
   readonly ownerClientId?: string;
   readonly ownerWorkspaceId?: string;
   readonly nativeReceiptPath?: string;
+  readonly nativeBinding?: NativeAttemptBinding;
   readonly reservedAt?: string;
   readonly launcherPid?: number;
   readonly launcherStartedAt?: string;
@@ -426,7 +524,6 @@ const LOCK_RETRY_MS = 15;
 const LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 const LOCK_RELEASE_TIMEOUT_MS = 1_000;
 const LOCK_STALE_MS = 30_000;
-const RESERVATION_RECLAIM_GRACE_MS = 30_000;
 const MAX_PAGE_SIZE = 200;
 const JOURNAL_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_JOURNAL_LINE_BYTES = 16 * 1024;
@@ -443,29 +540,41 @@ function isSafeTaskId(value: string): boolean {
   return value.length > 0 && value.length <= 256 && !value.includes('\0') && !value.includes('/') && !value.includes('\\') && value !== '.' && value !== '..';
 }
 
-async function isReady(filename: string): Promise<boolean> {
-  const value = await readJson(filename);
+function isReady(value: unknown): value is Record<string, unknown> {
   return isRecord(value) && value.version === 1 && typeof value.readyAt === 'string' && Number.isFinite(Date.parse(value.readyAt));
 }
 
 async function readMarker(filename: string): Promise<MarkerRecord | undefined> {
   const value = await readJson(filename);
-  if (!isRecord(value) || value.version !== 1 || typeof value.taskId !== 'string') return undefined;
+  if (!isRecord(value) || value.version !== 1 && value.version !== 2 || typeof value.taskId !== 'string') return undefined;
+  if (value.capacityClass !== undefined && value.capacityClass !== 'durable_shell' && value.capacityClass !== 'managed_writer') return undefined;
   if (value.mutationKind !== undefined && value.mutationKind !== 'opaque' && value.mutationKind !== 'repository_import' && value.mutationKind !== 'opaque_uncontained' && value.mutationKind !== 'opaque_contained_process') return undefined;
   if (value.requestDigest !== null && (typeof value.requestDigest !== 'string' || !/^[a-f0-9]{64}$/i.test(value.requestDigest))) return undefined;
+  const nativeBinding = value.nativeBinding === undefined ? undefined : parseNativeAttemptBinding(value.nativeBinding);
+  if (value.nativeBinding !== undefined && (nativeBinding === undefined || nativeBinding.reservationId !== value.taskId
+    || nativeBinding.requestDigest !== value.requestDigest || nativeBinding.ownerClientId !== value.ownerClientId
+    || nativeBinding.workspaceId !== value.ownerWorkspaceId)) return undefined;
   return {
-    version: 1,
+    version: value.version,
     taskId: value.taskId,
+    ...(value.capacityClass === undefined ? {} : { capacityClass: value.capacityClass }),
     requestDigest: value.requestDigest,
     mutationKind: value.mutationKind === 'repository_import' ? 'repository_import' : value.mutationKind === 'opaque_uncontained' ? 'opaque_uncontained' : value.mutationKind === 'opaque_contained_process' ? 'opaque_contained_process' : 'opaque',
     ...(typeof value.ownerClientId === 'string' ? { ownerClientId: value.ownerClientId } : {}),
     ...(typeof value.ownerWorkspaceId === 'string' ? { ownerWorkspaceId: value.ownerWorkspaceId } : {}),
     ...(typeof value.nativeReceiptPath === 'string' && path.isAbsolute(value.nativeReceiptPath) ? { nativeReceiptPath: value.nativeReceiptPath } : {}),
+    ...(nativeBinding === undefined ? {} : { nativeBinding }),
     ...(typeof value.reservedAt === 'string' ? { reservedAt: value.reservedAt } : {}),
     ...(Number.isInteger(value.launcherPid) ? { launcherPid: Number(value.launcherPid) } : {}),
     ...(typeof value.launcherStartedAt === 'string' ? { launcherStartedAt: value.launcherStartedAt } : {}),
     ...(value.legacy === true ? { legacy: true } : {}),
   };
+}
+
+function reservationCapacityClass(marker: MarkerRecord): ReservationCapacityClass {
+  // Legacy managed markers lacked shell metadata. This classification changes
+  // only their budget, never their termination proof or exclusive writer fence.
+  return marker.capacityClass ?? (marker.taskId.startsWith('managed-writer-') || marker.taskId.startsWith('workspace-writer-probe-') ? 'managed_writer' : 'durable_shell');
 }
 
 async function readJson(filename: string): Promise<unknown> {

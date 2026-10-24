@@ -23,6 +23,12 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Setup .NET 8 containment compiler
+        if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: '8.0.x'
+
       - name: Install cosign for tunnel provenance verification
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
@@ -37,6 +43,9 @@ jobs:
       - name: Install dependencies
         shell: pwsh
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare trusted containment runtime
+        run: pnpm prepare:containment
 
       - name: Verify scheduled continuation contract
         shell: pwsh

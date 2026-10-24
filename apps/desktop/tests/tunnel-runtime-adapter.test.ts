@@ -1,14 +1,23 @@
 import type { ExecFileOptionsWithStringEncoding } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, open, readFile, readlink, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { WindowsNativeAuthority } from '@lnwjud/process';
 import { describe, expect, it, vi } from 'vitest';
+import { TunnelAliasRetirementJournal } from '../src/main/tunnel-runtime-alias-journal.js';
 import {
   TunnelRuntimeAdapter,
   parseNativeRuntimeStatus,
+  type TunnelRuntimeExecResult,
   type TunnelRuntimeExecutor,
 } from '../src/main/tunnel-runtime-adapter.js';
+
+const nativeTestHelper = process.env.LNWJUD_TUNNEL_TEST_HELPER ?? path.resolve('build/native-containment/lnwjud-containment.exe');
 
 function executor(responses: Readonly<Record<string, { stdout?: string; stderr?: string; error?: string }>>): TunnelRuntimeExecutor {
   return vi.fn(async (_executable: string, args: readonly string[], _options: ExecFileOptionsWithStringEncoding) => {
@@ -22,13 +31,150 @@ function executor(responses: Readonly<Record<string, { stdout?: string; stderr?:
 }
 
 describe('TunnelRuntimeAdapter', () => {
-  it('retires only a stopped stale alias and restores profile, health, log, and unrelated files', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stopped-alias-'));
+  it.each(['connect', 'stop', 'ensureSingleProcess'] as const)('refuses %s before any CLI or process mutation when pending retirement recovery conflicts', async (operation) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-recovery-entrypoint-'));
+    try {
+      await writeFile(path.join(root, '.lnwjud-stale-alias.json'), '{}');
+      const execute = vi.fn(async (): Promise<TunnelRuntimeExecResult> => ({ stdout: '{}', stderr: '' }));
+      const processGuard = vi.fn(async (): Promise<void> => undefined);
+      const adapter = new TunnelRuntimeAdapter({
+        clientPath: 'fixture.exe', profileDirectory: root, environment: { TUNNEL_CLIENT_STATE_DIR: root },
+        execute, processGuard,
+        clearStaleTunnelAlias: async (): Promise<void> => { throw new Error('TUNNEL_STALE_SNAPSHOT_CHANGED'); },
+      });
+      const result = operation === 'connect'
+        ? adapter.connect({ tunnelId: 'tunnel_newalias12345', mcpServerUrl: 'http://127.0.0.1:18765/mcp' })
+        : operation === 'stop'
+          ? adapter.stop('tunnel_newalias12345')
+          : adapter.ensureSingleProcess('tunnel_newalias12345', parseNativeRuntimeStatus('{"exists":false,"process_running":false}'));
+      await expect(result).rejects.toThrow('TUNNEL_STALE_SNAPSHOT_CHANGED');
+      expect(execute).not.toHaveBeenCalled();
+      expect(processGuard).not.toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('keeps recovery out of read-only status and runs it only from the explicit lifecycle hook', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-retirement-hook-'));
+    try {
+      await writeFile(path.join(root, '.lnwjud-stale-alias.json'), '{}');
+      const clearStaleTunnelAlias = vi.fn(async (): Promise<void> => undefined);
+      const adapter = new TunnelRuntimeAdapter({
+        clientPath: 'fixture.exe', profileDirectory: root,
+        environment: { TUNNEL_CLIENT_STATE_DIR: root }, clearStaleTunnelAlias,
+        execute: executor({ 'runtimes status lnwjud --json': { error: 'alias lnwjud is not known' } }),
+      });
+      await expect(adapter.status(true)).resolves.toMatchObject({ exists: false });
+      await adapter.capabilities();
+      expect(clearStaleTunnelAlias).not.toHaveBeenCalled();
+      await adapter.recoverStoppedAliasRetirement();
+      expect(clearStaleTunnelAlias).toHaveBeenCalledExactlyOnceWith({
+        recoveryOnly: true, stateRoot: root, alias: 'lnwjud', profileDirectory: root,
+      });
+      await rm(root, { recursive: true, force: true });
+      await adapter.recoverStoppedAliasRetirement();
+      expect(clearStaleTunnelAlias).toHaveBeenCalledTimes(1);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    { shape: 'missing', extra: {} },
+    { shape: 'contradictory', extra: { process_running: false, process: { running: true } } },
+  ])('refuses stale-record cleanup with $shape stopped evidence', async ({ extra }) => {
+    const commands: string[] = [];
+    const adapter = new TunnelRuntimeAdapter({
+      clientPath: 'fixture.exe', profileDirectory: 'profile', environment: {},
+      execute: async (_exe, args): Promise<TunnelRuntimeExecResult> => {
+        const command = args.join(' ');
+        commands.push(command);
+        if (command !== 'runtimes status lnwjud --json') throw new Error('Unsafe CLI operation');
+        return {
+          stdout: JSON.stringify({ tunnel_id: 'tunnel_oldalias12345', pid: 9832, ...extra }),
+          stderr: '',
+        };
+      },
+    });
+    await expect(adapter.retireStoppedAlias('tunnel_oldalias12345')).rejects.toThrow('active or its identity changed');
+    expect(commands).toEqual(['runtimes status lnwjud --json']);
+  });
+
+  it.runIf(process.platform === 'win32' && existsSync(path.resolve('build/tunnel-client/tunnel-client.exe'))
+    && existsSync(nativeTestHelper))(
+    'retires a real stopped native record with a reused live PID without terminating that unrelated process', async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-real-stopped-alias-'));
+      const profileDirectory = path.join(root, 'profile');
+      const stateDirectory = path.join(root, 'state');
+      await mkdir(profileDirectory);
+      await mkdir(stateDirectory);
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true, stdio: 'ignore' });
+      await once(child, 'spawn');
+      const childPid = child.pid;
+      if (childPid === undefined) throw new Error('Fixture child has no PID');
+      const childExit = once(child, 'exit');
+      try {
+        const profilePath = path.join(profileDirectory, 'lnwjud.yaml');
+        const profile = 'control_plane:\n  tunnel_id: tunnel_newalias12345\n';
+        await writeFile(profilePath, profile);
+        const alias = {
+          alias: 'lnwjud', tunnel_id: 'tunnel_oldalias12345', profile_name: 'lnwjud',
+          profile_dir: profileDirectory, profile_path: profilePath, config_path: profilePath,
+        };
+        const other = { alias: 'another-app', tunnel_id: 'tunnel_otherapp12345', unknown_field: ['preserve', 42] };
+        await writeFile(path.join(stateDirectory, 'aliases.yaml'), JSON.stringify({ lnwjud: alias, other }));
+        await writeFile(path.join(stateDirectory, 'processes.yaml'), JSON.stringify({
+          lnwjud: {
+            ...alias, mode: 'process', pid: childPid, pid_start_time: '1577836800000000000', pid_executable: process.execPath,
+            started_at: '2020-01-01T00:00:00Z', command: 'isolated stale identity fixture',
+          }, other,
+        }));
+        const helper = nativeTestHelper;
+        const pin = path.resolve('build/native-containment/lnwjud-containment-pin.node');
+        const authority = new WindowsNativeAuthority({
+          helper: { executable: helper, sha256: createHash('sha256').update(await readFile(helper)).digest('hex'), buildId: 'lnwjud-containment-v2' },
+          pin: { modulePath: pin, sha256: createHash('sha256').update(await readFile(pin)).digest('hex') },
+        });
+        const adapter = new TunnelRuntimeAdapter({
+          clientPath: path.resolve('build/tunnel-client/tunnel-client.exe'), profileDirectory,
+          environment: {
+            ...process.env, TUNNEL_CLIENT_STATE_DIR: stateDirectory,
+            TUNNEL_CLIENT_PROFILE_DIR: profileDirectory, TUNNEL_CLIENT_PROFILE: 'lnwjud',
+          },
+          processGuard: async (): Promise<void> => undefined,
+          clearStaleTunnelAlias: (request): Promise<void> => authority.clearStaleTunnelAlias(request),
+        });
+        await expect(adapter.status(true)).resolves.toMatchObject({ running: false, pid: childPid });
+        await expect(adapter.retireStoppedAlias('tunnel_oldalias12345')).resolves.toBeUndefined();
+        await expect(adapter.status(true)).resolves.toMatchObject({ exists: false });
+        expect(child.exitCode).toBeNull();
+        expect(process.kill(childPid, 0)).toBe(true);
+        await expect(readFile(profilePath, 'utf8')).resolves.toBe(profile);
+        expect(JSON.parse(await readFile(path.join(stateDirectory, 'aliases.yaml'), 'utf8'))).toEqual({ other });
+        expect(JSON.parse(await readFile(path.join(stateDirectory, 'processes.yaml'), 'utf8'))).toEqual({ other });
+      } finally {
+        child.kill();
+        await childExit;
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    { historyBytes: 12, durableRecovery: false },
+    { historyBytes: 12, durableRecovery: true },
+    { historyBytes: 42_873_930, durableRecovery: false },
+    { historyBytes: 42_873_930, durableRecovery: true },
+  ])('retires a stopped alias while preserving $historyBytes history bytes with durable recovery $durableRecovery', async ({ historyBytes, durableRecovery }) => {
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stopped-alias-'));
+    const root = path.join(temporaryRoot, 'profile');
     try {
       await mkdir(path.join(root, 'health'), { recursive: true });
       const profile = 'health:\n  url_file: health/lnwjud.url\n';
       await writeFile(path.join(root, 'lnwjud.yaml'), profile);
-      await writeFile(path.join(root, 'lnwjud-tunnel.log'), 'original-log');
+      const history = path.join(root, 'lnwjud-tunnel.log');
+      const historyData = Buffer.alloc(historyBytes, 0x61);
+      const historyHash = createHash('sha256').update(historyData).digest('hex');
+      await writeFile(history, historyData, { mode: 0o600 });
+      await utimes(history, new Date('2020-01-01T00:00:00Z'), new Date('2020-01-01T00:00:00Z'));
+      const historyBefore = await lstat(history);
       await writeFile(path.join(root, 'health', 'lnwjud.url'), 'http://127.0.0.1:7777');
       await writeFile(path.join(root, 'other.yaml'), 'must-stay');
       let removed = false;
@@ -43,21 +189,157 @@ describe('TunnelRuntimeAdapter', () => {
         if (command === 'runtimes rm lnwjud --json') {
           removed = true;
           await rm(path.join(root, 'lnwjud.yaml'));
-          await rm(path.join(root, 'lnwjud-tunnel.log'));
           await rm(path.join(root, 'health', 'lnwjud.url'));
           return { stdout: '{"removed":true}', stderr: '' };
         }
         throw new Error('Unexpected CLI command');
       };
-      const adapter = new TunnelRuntimeAdapter({ clientPath: 'fixture.exe', profileDirectory: root, environment: {}, execute });
+      const adapter = new TunnelRuntimeAdapter({
+        clientPath: 'fixture.exe', profileDirectory: root, environment: {}, execute,
+        ...(durableRecovery ? { recoveryDirectory: path.join(temporaryRoot, 'recovery') } : {}),
+      });
       await expect(adapter.retireStoppedAlias('tunnel_oldalias12345')).resolves.toBeUndefined();
       expect(commands).toContain('runtimes rm lnwjud --json');
       expect(commands).not.toContain('runtimes stop lnwjud --json');
       await expect(adapter.status(true)).resolves.toMatchObject({ exists: false });
       await expect(readFile(path.join(root, 'lnwjud.yaml'), 'utf8')).resolves.toBe(profile);
-      await expect(readFile(path.join(root, 'lnwjud-tunnel.log'), 'utf8')).resolves.toBe('original-log');
+      expect(createHash('sha256').update(await readFile(history)).digest('hex')).toBe(historyHash);
+      const historyAfter = await lstat(history);
+      expect(historyAfter.size).toBe(historyBytes);
+      expect(historyAfter.mode).toBe(historyBefore.mode);
+      expect(historyAfter.mtimeMs).toBe(historyBefore.mtimeMs);
+      expect(historyAfter.ino).toBe(historyBefore.ino);
       await expect(readFile(path.join(root, 'health', 'lnwjud.url'), 'utf8')).resolves.toBe('http://127.0.0.1:7777');
       await expect(readFile(path.join(root, 'other.yaml'), 'utf8')).resolves.toBe('must-stay');
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['directory', 'junction'])('leaves an unrelated history %s untouched during alias retirement', async (kind) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-history-shape-'));
+    try {
+      const profileDirectory = path.join(root, 'profile');
+      const history = path.join(profileDirectory, 'lnwjud-tunnel.log');
+      const historyDirectory = kind === 'directory' ? history : path.join(root, 'other-history');
+      await mkdir(profileDirectory);
+      await mkdir(historyDirectory);
+      if (kind === 'junction') await symlink(historyDirectory, history, 'junction');
+      await writeFile(path.join(historyDirectory, 'keep.txt'), 'unrelated-history');
+      await writeFile(path.join(profileDirectory, 'lnwjud.yaml'), 'tunnel_id: tunnel_oldalias12345\n');
+      const before = await lstat(history);
+      const originalLink = kind === 'junction' ? await readlink(history) : null;
+      let removed = false;
+      const adapter = new TunnelRuntimeAdapter({
+        clientPath: 'fixture.exe', profileDirectory, environment: {}, recoveryDirectory: path.join(root, 'recovery'),
+        execute: async (_exe, args): Promise<TunnelRuntimeExecResult> => {
+          const command = args.join(' ');
+          if (command === 'runtimes status lnwjud --json') {
+            if (removed) throw new Error('alias lnwjud is not known');
+            return { stdout: JSON.stringify({ tunnel_id: 'tunnel_oldalias12345', process_running: false }), stderr: '' };
+          }
+          if (command === 'runtimes rm lnwjud --json') {
+            removed = true;
+            await rm(path.join(profileDirectory, 'lnwjud.yaml'));
+            return { stdout: '{"removed":true}', stderr: '' };
+          }
+          throw new Error('Unexpected CLI command');
+        },
+      });
+      await expect(adapter.retireStoppedAlias('tunnel_oldalias12345')).resolves.toBeUndefined();
+      expect(removed).toBe(true);
+      const after = await lstat(history);
+      expect(after.isSymbolicLink()).toBe(kind === 'junction');
+      expect(after.ino).toBe(before.ino);
+      expect(after.mtimeMs).toBe(before.mtimeMs);
+      if (kind === 'junction') expect(await readlink(history)).toBe(originalLink);
+      await expect(readFile(path.join(historyDirectory, 'keep.txt'), 'utf8')).resolves.toBe('unrelated-history');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers a historical v1 history backup before retiring the alias', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-legacy-history-recovery-'));
+    try {
+      const profileDirectory = path.join(root, 'profile');
+      const recoveryDirectory = path.join(root, 'recovery');
+      const history = path.join(profileDirectory, 'lnwjud-tunnel.log');
+      await mkdir(profileDirectory);
+      await writeFile(path.join(profileDirectory, 'lnwjud.yaml'), 'tunnel_id: tunnel_oldalias12345\n');
+      await writeFile(history, 'historical-backed-up-history');
+      const journal = new TunnelAliasRetirementJournal(recoveryDirectory, profileDirectory);
+      await journal.prepare([{ file: history, data: Buffer.from('historical-backed-up-history'), mode: 0o600 }]);
+      await rm(history);
+      let removed = false;
+      const adapter = new TunnelRuntimeAdapter({
+        clientPath: 'fixture.exe', profileDirectory, recoveryDirectory, environment: {},
+        execute: async (_exe, args): Promise<TunnelRuntimeExecResult> => {
+          await expect(readFile(history, 'utf8')).resolves.toBe('historical-backed-up-history');
+          const command = args.join(' ');
+          if (command === 'runtimes status lnwjud --json') {
+            if (removed) throw new Error('alias lnwjud is not known');
+            return { stdout: JSON.stringify({ tunnel_id: 'tunnel_oldalias12345', process_running: false }), stderr: '' };
+          }
+          if (command === 'runtimes rm lnwjud --json') {
+            removed = true;
+            await rm(path.join(profileDirectory, 'lnwjud.yaml'));
+            return { stdout: '{"removed":true}', stderr: '' };
+          }
+          throw new Error('Unexpected CLI command');
+        },
+      });
+      await expect(adapter.retireStoppedAlias('tunnel_oldalias12345')).resolves.toBeUndefined();
+      expect(removed).toBe(true);
+      await expect(readFile(history, 'utf8')).resolves.toBe('historical-backed-up-history');
+      await expect(journal.recover()).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { artifact: 'lnwjud.yaml', bytes: 1024 * 1024 + 1 },
+    { artifact: 'lnwjud.runtime.secret', bytes: 16 * 1024 * 1024 + 1 },
+    { artifact: 'lnwjud.oauth.session.secret', bytes: 16 * 1024 * 1024 + 1 },
+    { artifact: 'health.url', bytes: 16 * 1024 * 1024 + 1 },
+  ])('refuses oversized affected $artifact before native removal', async ({ artifact, bytes }) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-affected-oversize-'));
+    try {
+      await writeFile(path.join(root, 'lnwjud.yaml'), 'health:\n  url_file: health.url\n');
+      const file = await open(path.join(root, artifact), 'w');
+      try { await file.truncate(bytes); } finally { await file.close(); }
+      const execute = executor({
+        'runtimes status lnwjud --json': { stdout: JSON.stringify({ tunnel_id: 'tunnel_oldalias12345', process_running: false }) },
+      });
+      const adapter = new TunnelRuntimeAdapter({ clientPath: 'fixture.exe', profileDirectory: root, environment: {}, execute });
+      await expect(adapter.retireStoppedAlias('tunnel_oldalias12345')).rejects.toThrow('oversized');
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(execute).mock.calls[0]?.[1]).toEqual(['runtimes', 'status', 'lnwjud', '--json']);
+      expect((await lstat(path.join(root, artifact))).size).toBe(bytes);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['lnwjud.yaml', 'lnwjud.runtime.secret', 'lnwjud.oauth.session.secret', 'health.url'])('refuses an affected %s junction before native removal', async (artifact) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-affected-junction-'));
+    try {
+      const profileDirectory = path.join(root, 'profile');
+      const outside = path.join(root, 'outside');
+      await mkdir(profileDirectory);
+      await mkdir(outside);
+      await writeFile(path.join(outside, 'keep.txt'), 'must-stay');
+      if (artifact !== 'lnwjud.yaml') await writeFile(path.join(profileDirectory, 'lnwjud.yaml'), 'health:\n  url_file: health.url\n');
+      await symlink(outside, path.join(profileDirectory, artifact), 'junction');
+      const execute = executor({
+        'runtimes status lnwjud --json': { stdout: JSON.stringify({ tunnel_id: 'tunnel_oldalias12345', process_running: false }) },
+      });
+      const adapter = new TunnelRuntimeAdapter({ clientPath: 'fixture.exe', profileDirectory, environment: {}, execute });
+      await expect(adapter.retireStoppedAlias('tunnel_oldalias12345')).rejects.toThrow(/unsafe|untrusted/);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(execute).mock.calls[0]?.[1]).toEqual(['runtimes', 'status', 'lnwjud', '--json']);
+      await expect(readFile(path.join(outside, 'keep.txt'), 'utf8')).resolves.toBe('must-stay');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

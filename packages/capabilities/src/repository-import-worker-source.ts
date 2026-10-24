@@ -4,6 +4,8 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const cp = require('node:child_process');
 const { TextDecoder } = require('node:util');
+const { createHash } = require('node:crypto');
+const { pathToFileURL } = require('node:url');
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const gitOptions = [
@@ -104,19 +106,33 @@ function privateGitEnvironment(spec) {
 
 async function main() {
   const spec = JSON.parse(await fsp.readFile(process.argv[2], 'utf8'));
-  if (!SHA.test(spec.commit) || !/^[a-zA-Z0-9_-]{1,64}$/.test(spec.requestId)
+  const { binding: ignoredBinding, manifestDigest: ignoredManifestDigest, ...manifestCore } = spec;
+  if (spec.version !== 2 || spec.requestDigest !== process.argv[3]
+    || spec.manifestDigest !== process.argv[4]
+    || createHash('sha256').update(JSON.stringify(manifestCore)).digest('hex') !== spec.manifestDigest
+    || createHash('sha256').update(JSON.stringify({ input: spec.originalInput })).digest('hex') !== spec.requestDigest
+    || spec.commit !== spec.originalInput.request.commit.toLowerCase()
+    || spec.url !== spec.originalInput.request.url || spec.destination !== spec.originalInput.request.destination
+    || !SHA.test(spec.commit) || !/^[a-zA-Z0-9_-]{1,64}$/.test(spec.requestId)
     || !path.win32.isAbsolute(spec.workspaceRoot) || !path.win32.isAbsolute(spec.stagePath)
     || !path.win32.isAbsolute(spec.privateHome)) throw Error('INVALID_INTERNAL_SPEC');
-  const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const psArgs = ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File'];
+  const { WindowsNativeAuthority } = await import(pathToFileURL(spec.processModule).href);
+  const authority = new WindowsNativeAuthority(spec.authorityConfig);
+  const control = async (command, request) => {
+    const directory = path.join(path.dirname(process.argv[2]), command);
+    const result = await authority.control({ directory, binding: spec.binding, command, request });
+    if (result.state !== 'control_verified') throw Error('IMPORT_NATIVE_CONTROL_UNVERIFIED');
+    const readback = await authority.inspectControl({ directory, binding: spec.binding, command });
+    if (readback.state !== 'control_verified' || JSON.stringify(readback.result) !== JSON.stringify(result.result)) throw Error('IMPORT_NATIVE_READBACK_UNVERIFIED');
+    return readback.result;
+  };
   const env = privateGitEnvironment(spec);
   await fsp.mkdir(spec.privateHome, { recursive: true, mode: 0o700 });
   const gitExecutable = path.win32.join(process.env.SystemDrive + '\\\\', 'Program Files', 'Git', 'cmd', 'git.exe');
   if (!fs.existsSync(gitExecutable)) throw Error('IMPORT_TRUSTED_GIT_UNAVAILABLE');
-  await run(powershell, [...psArgs, spec.stageAclPath, spec.stagePath], { cwd: spec.privateHome, env, timeoutMs: 15000 });
-  const stageIdentity = (await run(powershell,
-    [...psArgs, spec.stageIdentityPath, spec.anchorSourcePath, spec.workspaceRoot, spec.destination, spec.stagePath],
-    { cwd: spec.privateHome, env, timeoutMs: 15000 })).toString('utf8').trim();
+  const operation = { workspaceRoot: spec.workspaceRoot, destination: spec.destination, stagePath: spec.stagePath, commit: spec.commit, privateHome: spec.privateHome };
+  const prepared = await control('prepare_import', operation);
+  const stageIdentity = prepared.nativeIdentity;
   if (!/^[0-9A-F]{16}-[0-9A-F]{32}$/.test(stageIdentity)) throw Error('IMPORT_STAGE_IDENTITY_UNAVAILABLE');
   let published = false;
   try {
@@ -130,10 +146,7 @@ async function main() {
     await git(['-C',spec.stagePath,'checkout','--detach','--force',commit]);
     const head = (await git(['-C',spec.stagePath,'rev-parse','HEAD'])).toString('utf8').trim().toLowerCase();
     if (head !== spec.commit) throw Error('CHECKOUT_MISMATCH');
-    const marker = (await run(powershell, [...psArgs, spec.publisherPath, process.argv[2], stageIdentity],
-      { cwd: spec.privateHome, env, timeoutMs: 30000 })).toString('utf8');
-    if (!marker.includes('PUBLISHED_NATIVE_IDENTITY_VERIFIED')) throw Error('PUBLICATION_UNVERIFIED');
-    const evidence = JSON.parse(await fsp.readFile(spec.statePath, 'utf8'));
+    const evidence = await control('publish_import', { ...operation, expectedStageIdentity: stageIdentity });
     if (evidence.state !== 'published' || evidence.commit !== spec.commit
       || typeof evidence.nativeIdentity !== 'string') throw Error('IDENTITY_UNVERIFIED');
     published = true;

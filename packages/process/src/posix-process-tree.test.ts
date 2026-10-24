@@ -1,8 +1,47 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PosixProcessTree } from './posix-process-tree.js';
+import { PosixProcessTree, parsePosixProcessGroup, inspectPosixProcessGroup, classifyPosixGroupCompletion, type PosixProcessGroupObservation } from './posix-process-tree.js';
 import { createSpawnInvocationFactory, toSpawnInvocation } from './spawn-invocation.js';
 
 describe('portable process contracts', () => {
+  it('observes descendants after the root disappears and excludes zombies from live group proof', () => {
+    const table = '1 1 Ss Sun Oct 18 00:00:00 2026\n4243 4242 S Sun Oct 18 00:01:00 2026\n4244 4242 Z Sun Oct 18 00:01:00 2026';
+    expect(parsePosixProcessGroup(table, 4242)).toEqual({ state: 'live', livePids: [4243] });
+    expect(parsePosixProcessGroup(table.replace('4243 4242 S', '4243 4242 Z'), 4242)).toEqual({ state: 'empty' });
+  });
+
+  it('never treats an empty macOS process group as proof that escaped descendants terminated', async () => {
+    expect(classifyPosixGroupCompletion({ state: 'empty' }, 'darwin')).toEqual({
+      state: 'unknown', reason: 'darwin_escaped_descendants_not_contained',
+    });
+    expect(classifyPosixGroupCompletion({ state: 'empty' }, 'linux')).toEqual({ state: 'empty' });
+    const signal = vi.fn();
+    const tree = new PosixProcessTree({
+      platform: 'darwin', inspectGroup: async (): Promise<PosixProcessGroupObservation> => ({ state: 'empty' }), processKill: signal,
+    });
+    await expect(tree.stopPid(4242)).rejects.toThrow('identity');
+    expect(signal).not.toHaveBeenCalled();
+  });
+
+  it('keeps malformed, unreadable and reused group identities unknown', async () => {
+    expect(parsePosixProcessGroup('', 4242).state).toBe('unknown');
+    expect(parsePosixProcessGroup('1 1 Ss Sun Oct 18 00:00:00 2026\ntruncated', 4242).state).toBe('unknown');
+    expect(parsePosixProcessGroup('4242 4242 S Sun Oct 18 00:00:00 2026', 4242, '2000-01-01T00:00:00.000Z'))
+      .toMatchObject({ state: 'unknown', reason: 'root_identity_changed' });
+    expect(parsePosixProcessGroup('4242 5000 S Sun Oct 18 00:00:00 2026', 4242).state).toBe('unknown');
+    expect(await inspectPosixProcessGroup(4242, { platform: 'win32' })).toEqual({ state: 'unknown', reason: 'unsupported_platform' });
+  });
+
+  it('never signals an orphaned or reused group and accepts later observed zero', async () => {
+    let observation: PosixProcessGroupObservation = { state: 'live', livePids: [4243] };
+    const signal = vi.fn();
+    const tree = new PosixProcessTree({ platform: 'linux', processKill: signal, inspectGroup: async (): Promise<PosixProcessGroupObservation> => observation });
+    await expect(tree.stopPid(4242)).rejects.toThrow('identity');
+    observation = { state: 'unknown', reason: 'root_identity_changed' };
+    await expect(tree.stopPid(4242, '2026-10-18T00:00:00.000Z')).rejects.toThrow('identity');
+    expect(signal).not.toHaveBeenCalled();
+    observation = { state: 'empty' };
+    await expect(tree.stopPid(4242)).resolves.toBeUndefined();
+  });
   it('passes POSIX arguments literally without constructing a shell command', () => {
     expect(toSpawnInvocation('/usr/bin/tool', ['a&b', '$(touch should-not-run)', '"quoted"'], {}, 'linux')).toEqual({
       ok: true,

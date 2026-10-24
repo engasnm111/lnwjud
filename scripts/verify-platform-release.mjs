@@ -22,6 +22,7 @@ if (!['x64', 'arm64'].includes(architecture)) throw new Error(`Unsupported verif
 const sourceDirtyAtStart = await sourceTreeDirty();
 
 const checks = [
+  ['containment-runtime', 'corepack', ['pnpm@10.15.0', 'prepare:containment']],
   ['typecheck', 'corepack', ['pnpm@10.15.0', 'typecheck']],
   ['lint', 'corepack', ['pnpm@10.15.0', 'lint']],
   ['platform-contract', 'corepack', ['pnpm@10.15.0', 'exec', 'vitest', 'run', 'tests/integration/platform-composition.test.ts', 'tests/release/platform-support-contract.test.ts', 'tests/release/platform-docs-contract.test.ts', '--exclude=.worktrees/**', '--exclude=.superpowers/**']],

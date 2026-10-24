@@ -1,4 +1,4 @@
-﻿export const CAPABILITY_TASK_OWNER_METADATA_KEY = 'lnwjud.taskOwner.v1';
+export const CAPABILITY_TASK_OWNER_METADATA_KEY = 'lnwjud.taskOwner.v1';
 
 export const CAPABILITY_ACTIVE_WORKSPACE_ROOT_METADATA_KEY = 'lnwjud.activeWorkspaceRoot.v1';
 
@@ -36,6 +36,29 @@ export function legacyCapabilityTaskOwner(): CapabilityTaskOwner {
 export function capabilityTaskOwnerMatches(stored: CapabilityTaskOwner, requester: CapabilityTaskOwner): boolean {
   if (stored.clientId !== requester.clientId || stored.sessionId !== requester.sessionId) return false;
   if (requester.workspaceId !== undefined && stored.workspaceId !== requester.workspaceId) return false;
+  return true;
+}
+
+export function capabilityTaskOwnerCanInspect(stored: CapabilityTaskOwner, requester: CapabilityTaskOwner): boolean {
+  if (!httpSessionAllowsAccess(stored, requester)) return false;
+  if (stored.clientId !== requester.clientId) return false;
+  if (requester.workspaceId !== undefined && stored.workspaceId !== requester.workspaceId) return false;
+  return true;
+}
+
+export function capabilityTaskOwnerCanRecover(stored: CapabilityTaskOwner, requester: CapabilityTaskOwner): boolean {
+  if (!httpSessionAllowsAccess(stored, requester)) return false;
+  if (stored.clientId !== requester.clientId) return false;
+  if (requester.workspaceId !== undefined && stored.workspaceId !== requester.workspaceId) return false;
+  return true;
+}
+
+/** Protocol HTTP sessions are distinct trust principals even for one desktop transport.
+ * Long-lived non-HTTP same-client recovery remains available through existing owner rules. */
+function httpSessionAllowsAccess(stored: CapabilityTaskOwner, requester: CapabilityTaskOwner): boolean {
+  if (stored.sessionId.startsWith('http-') || requester.sessionId.startsWith('http-')) {
+    return stored.sessionId === requester.sessionId;
+  }
   return true;
 }
 

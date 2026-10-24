@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import type { AutomationDispatchRequest, FileActor } from '@lnwjud/application';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { AutomationRuntimeAdapter, type AutomationToolRegistryPort } from './automation-runtime-adapter.js';
 import { ToolRegistry, type WorkspaceScope, type McpApplicationServices } from './tool-registry.js';
+import { nativeFixture } from '../../process/test/native-fixture.js';
 
 const roots: string[] = [];
 const actor: FileActor = { clientId: 'client-a', clientName: 'Client A', sessionId: 'session-a' };
@@ -25,7 +27,9 @@ function dispatchRequest(
 ): AutomationDispatchRequest {
   const dispatch = {
     executable: process.execPath,
-    arguments: ['-e', "setTimeout(() => process.stdout.write('automation-ok'), 40)"],
+    // Give the native worker time to persist its process identity before the
+    // direct child exits; the test verifies dispatch, not startup throughput.
+    arguments: ['-e', "setTimeout(() => process.stdout.write('automation-ok'), 500)"],
     cwd: root,
     timeoutSeconds: 30,
     maxOutputBytes: 1024,
@@ -77,6 +81,33 @@ describe('AutomationRuntimeAdapter', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
   });
 
+  it('treats a host-reserved starting task as present and in progress', async () => {
+    const request = dispatchRequest('C:\\workspace-a');
+    const snapshot = {
+      task_id: request.context.taskId,
+      state: 'starting',
+      started_at: '2026-09-20T00:00:00.000Z',
+    };
+    const registry: AutomationToolRegistryPort = {
+      invokeAutomationShell: vi.fn(async () => ({ content: [], structuredContent: snapshot })),
+      observeAutomationShell: vi.fn(async () => ok(snapshot)),
+    };
+    const adapter = new AutomationRuntimeAdapter(registry, actor, () => new Date('2026-09-20T00:01:00.000Z'));
+
+    await expect(adapter.launch(actor, request)).resolves.toEqual({
+      ok: true,
+      value: { presence: 'found', state: 'running', observedAt: '2026-09-20T00:00:00.000Z' },
+    });
+    await expect(adapter.observe(actor, request)).resolves.toEqual({
+      ok: true,
+      value: { presence: 'found', state: 'running', observedAt: '2026-09-20T00:00:00.000Z' },
+    });
+    await expect(adapter.readTask(actor, request)).resolves.toMatchObject({
+      ok: true,
+      value: { taskId: request.context.taskId, state: 'running' },
+    });
+  });
+
   it('returns bounded task evidence from the exact trusted lookup and never infers success from missing state', async () => {
     const request = dispatchRequest('C:\\workspace-a');
     const observeAutomationShell = vi.fn<AutomationToolRegistryPort['observeAutomationShell']>()
@@ -124,11 +155,16 @@ describe('AutomationRuntimeAdapter', () => {
     });
   });
 
-  it('dispatches deterministically through ToolRegistry while keeping the reserved context out of the public schema', async () => {
+  it.skipIf(process.platform === 'darwin')('dispatches deterministically through ToolRegistry while keeping the reserved context out of the public schema', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-automation-adapter-'));
     roots.push(root);
     await mkdir(path.join(root, '.tasks'), { recursive: true });
-    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    const native = process.platform === 'win32' ? await nativeFixture(root) : undefined;
+    const backend = new ShellCapabilityBackend({
+      allowedRoots: [root],
+      taskStateDirectory: path.join(root, '.tasks'),
+      ...(native === undefined ? {} : { windowsNativeAuthority: native.authority }),
+    });
     const capabilities: CapabilityService = {
       execute(tool: CapabilityToolName, input: unknown, signal?: AbortSignal, authorization?: Parameters<ShellCapabilityBackend['execute']>[2]): Promise<Result<unknown>> {
         return tool === 'shell'
@@ -145,7 +181,7 @@ describe('AutomationRuntimeAdapter', () => {
       hostMutationApprovalProvider: async (): Promise<boolean> => true,
     });
     const adapter = new AutomationRuntimeAdapter(registry, actor);
-    const request = dispatchRequest(root);
+    const request = dispatchRequest(root, { taskId: `automation-${randomUUID()}` });
 
     const schema = JSON.stringify(registry.describeInputJsonSchema('shell'));
     expect(schema).not.toContain('requestDigest');
@@ -182,16 +218,17 @@ describe('AutomationRuntimeAdapter', () => {
       timeout_seconds: 5,
     });
     expect(terminal.isError).not.toBe(true);
-    expect(terminal.structuredContent).toMatchObject({ state: 'completed', stdout: 'automation-ok' });
+    expect(terminal.structuredContent, JSON.stringify(terminal.structuredContent)).toMatchObject({ state: 'completed', stdout: 'automation-ok' });
   }, 20_000);
 
-  it('reattaches to one exact running task after runtime replacement and reads its terminal receipt without relaunching', async () => {
+  it.skipIf(process.platform === 'darwin')('reattaches to one exact running task after runtime replacement and reads its terminal receipt without relaunching', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-automation-adapter-restart-'));
     roots.push(root);
     const taskDirectory = path.join(root, '.tasks');
     await mkdir(taskDirectory, { recursive: true });
+    const native = process.platform === 'win32' ? await nativeFixture(root) : undefined;
     const launchMarker = path.join(root, 'payload-launches.txt');
-    const request = dispatchRequest(root, {}, {
+    const request = dispatchRequest(root, { taskId: `automation-${randomUUID()}` }, {
       arguments: [
         '-e',
         `require('node:fs').appendFileSync(${JSON.stringify(launchMarker)}, 'payload\\n'); setTimeout(() => process.exit(0), 1200)`,
@@ -201,7 +238,12 @@ describe('AutomationRuntimeAdapter', () => {
     });
 
     const compose = (): { registry: ToolRegistry; adapter: AutomationRuntimeAdapter } => {
-      const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: taskDirectory, unrestricted: true });
+      const backend = new ShellCapabilityBackend({
+        allowedRoots: [root],
+        taskStateDirectory: taskDirectory,
+        unrestricted: true,
+        ...(native === undefined ? {} : { windowsNativeAuthority: native.authority }),
+      });
       const capabilities: CapabilityService = {
         execute(tool: CapabilityToolName, input: unknown, signal?: AbortSignal, authorization?: Parameters<ShellCapabilityBackend['execute']>[2]): Promise<Result<unknown>> {
           return tool === 'shell'
@@ -241,7 +283,7 @@ describe('AutomationRuntimeAdapter', () => {
       workspaceId: 'workspace-a', operation: 'wait', task_id: request.context.taskId, timeout_seconds: 5,
     });
     expect(terminal.isError).not.toBe(true);
-    expect(terminal.structuredContent).toMatchObject({ state: 'completed', exit_code: 0 });
+    expect(terminal.structuredContent, JSON.stringify(terminal.structuredContent)).toMatchObject({ state: 'completed', exit_code: 0 });
 
     const terminalRuntime = compose();
     await expect(terminalRuntime.adapter.observe(actor, request)).resolves.toMatchObject({

@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   modes: new Map<string, number>(),
   outputs: [] as string[],
   policyText: undefined as string | undefined,
+  containmentBundle: undefined as string | undefined,
 }));
 // Real fixture files, canonicalization and streamed hashes; simulate POSIX modes
 // on Windows and intercept only the hook's shared build output.
@@ -24,6 +25,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return metadata;
     },
     readFile: async (file: string, options?: Parameters<typeof actual.readFile>[1]): Promise<unknown> => {
+      if (file === path.resolve('apps/desktop/dist/main/main.js') && state.containmentBundle !== undefined) return state.containmentBundle;
       if (file === path.resolve('apps/desktop/build/macos-signing-policy.json')) {
         if (state.policyText === undefined) throw Object.assign(new Error('missing policy'), { code: 'ENOENT' });
         return state.policyText;
@@ -61,6 +63,7 @@ afterEach(async () => {
   state.modes.clear();
   state.outputs.length = 0;
   state.policyText = undefined;
+  state.containmentBundle = undefined;
 });
 
 async function fixture(platform: 'linux' | 'darwin', arch = 'x64'): Promise<{
@@ -86,6 +89,8 @@ async function fixture(platform: 'linux' | 'darwin', arch = 'x64'): Promise<{
     state.modes.set(file, mode);
   }
   for (const binary of binaries) await put(binary, 'binary fixture\n', 0o100755);
+  await put(`${resources}/native-containment/process-runtime.mjs`, 'export const runtimeFixture = true;\n');
+  state.containmentBundle = `var CONTAINMENT_RUNTIME_SHA256 = '${digest('export const runtimeFixture = true;\n')}';`;
   const manifest = {
     schemaVersion: 1, product: 'lnwjud', platform, arch, version: '1.0.0',
     assetSha256: 'a'.repeat(64), executableSha256: digest('binary fixture\n'),
@@ -118,7 +123,7 @@ describe.each(['linux', 'darwin'] as const)('%s packaged runtime hook', (platfor
     expect(state.outputs).toHaveLength(1);
     const result = JSON.parse(state.outputs[0]);
     expect(result).toMatchObject({ schemaVersion: 1, platform, arch, capabilityBridge: null });
-    expect(result.files).toHaveLength(11);
+    expect(result.files).toHaveLength(12);
     for (const file of result.files) {
       const bytes = await fs.readFile(path.join(f.bundle, file.relativePath));
       expect(file.sizeBytes).toBe(bytes.length);

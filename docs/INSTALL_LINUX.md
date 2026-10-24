@@ -33,6 +33,11 @@ not required for the packaged Desktop app or the packaged STDIO launcher.
 
 ## AppImage update recovery
 
+In the v5.9.0 development source, unattended installation is unavailable on
+every distribution. The AppImage path below describes user-requested
+installation and recovery, not accepted zero-click updating. DEB updates
+remain controlled by the package manager.
+
 AppImage users can use the built-in update path when launched through a real
 AppImage (`APPIMAGE` must identify a regular file). Before requesting native
 replacement, lnwjud makes a hard-linked backup beside the running AppImage

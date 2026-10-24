@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,103 @@ afterEach(async () => {
 });
 
 describe('DurableShellTaskIndex', () => {
+  it('upgrades mixed legacy markers in place while baseline readers fail closed to current records', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-v2-migration-'));
+    temporaryRoots.push(root);
+    const active = path.join(root, '.index', 'v1', 'active');
+    const oldTaskId = 'legacy-import';
+    const oldPath = path.join(active, createHash('sha256').update(oldTaskId).digest('hex') + '.json');
+    await mkdir(path.dirname(oldPath), { recursive: true });
+    await mkdir(path.join(root, oldTaskId));
+    const oldMarker = {
+      version: 1, taskId: oldTaskId, requestDigest: 'a'.repeat(64), mutationKind: 'repository_import',
+      ownerClientId: 'legacy-owner', ownerWorkspaceId: 'legacy-workspace', reservedAt: new Date().toISOString(),
+    };
+    await writeFile(oldPath, JSON.stringify(oldMarker));
+    await writeFile(path.join(root, '.index', 'v1', 'ready.json'), JSON.stringify({ version: 1, readyAt: new Date().toISOString() }));
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 10, inspectTask: async (): Promise<'unknown'> => 'unknown' });
+    await index.initialize();
+
+    const upgraded = JSON.parse(await readFile(oldPath, 'utf8')) as Record<string, unknown>;
+    expect(upgraded).toMatchObject({ ...oldMarker, version: 2 });
+    expect(JSON.parse(await readFile(path.join(root, '.index', 'v1', 'ready.json'), 'utf8')))
+      .toMatchObject({ version: 1, markerFormatVersion: 2 });
+    expect(upgraded.version).not.toBe(1);
+
+    const legacyReaderAccepts = (marker: Record<string, unknown>): boolean => marker.version === 1 && typeof marker.taskId === 'string';
+    expect(legacyReaderAccepts(upgraded)).toBe(false);
+    expect(await index.reserve({ taskId: 'new-import', requestDigest: 'b'.repeat(64), ownerClientId: 'new-owner', mutationKind: 'repository_import' }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  });
+
+  it('rebuilds an absent index with v2 quarantine markers for legacy tasks whose status is insufficient', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-rebuild-v2-'));
+    temporaryRoots.push(root);
+    await mkdir(path.join(root, 'legacy-terminal'));
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 10, inspectTask: async (): Promise<'unknown'> => 'unknown' });
+    await index.initialize();
+    const marker = path.join(root, '.index', 'v1', 'active', createHash('sha256').update('legacy-terminal').digest('hex') + '.json');
+    expect(JSON.parse(await readFile(marker, 'utf8')))
+      .toMatchObject({ version: 2, taskId: 'legacy-terminal', requestDigest: null, legacy: true });
+  });
+
+  it('keeps a vanished task root reserved until an independent terminal observation exists', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-vanished-root-'));
+    temporaryRoots.push(root);
+    const taskId = 'vanished-task';
+    const active = path.join(root, '.index', 'v1', 'active');
+    await mkdir(active, { recursive: true });
+    const marker = path.join(active, createHash('sha256').update(taskId).digest('hex') + '.json');
+    await writeFile(marker, JSON.stringify({ version: 1, taskId, requestDigest: 'c'.repeat(64), mutationKind: 'opaque',
+      reservedAt: new Date(Date.now() - 60_000).toISOString(), launcherPid: 2_147_483_646, launcherStartedAt: '2020-01-01T00:00:00.000Z' }));
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 10, inspectTask: async (): Promise<'missing'> => 'missing' });
+    expect(await index.reserve({ taskId: 'import', requestDigest: 'd'.repeat(64), ownerClientId: 'owner', mutationKind: 'repository_import' }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(JSON.parse(await readFile(marker, 'utf8'))).toMatchObject({ version: 2, taskId, requestDigest: 'c'.repeat(64) });
+  });
+
+  it('treats malformed JSON paths as active unknown reservations', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-malformed-path-'));
+    temporaryRoots.push(root);
+    const active = path.join(root, '.index', 'v1', 'active');
+    await mkdir(active, { recursive: true });
+    await mkdir(path.join(active, 'malformed.json'));
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 10, inspectTask: async (): Promise<'terminal'> => 'terminal' });
+    expect(await index.reserve({ taskId: 'new-import', requestDigest: 'e'.repeat(64), ownerClientId: 'owner', mutationKind: 'repository_import' }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  });
+
+  it('retains a contained writer after restart when only a shape-valid legacy receipt exists', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-untrusted-native-receipt-'));
+    temporaryRoots.push(root);
+    const nativeReceiptPath = path.join(root, 'copied.receipt.json');
+    const options = { maxConcurrentTasks: 10, inspectTask: async (): Promise<'terminal'> => 'terminal' };
+    const first = new DurableShellTaskIndex(root, options);
+    expect(await first.reserve({
+      taskId: 'native-writer', requestDigest: 'a'.repeat(64), ownerClientId: 'owner', ownerWorkspaceId: 'workspace',
+      mutationKind: 'opaque_contained_process', nativeReceiptPath,
+    })).toMatchObject({ ok: true });
+    await writeFile(nativeReceiptPath, JSON.stringify({ kind: 'windows_job_v1', activeProcesses: 0, exitCode: 0, outcome: 'completed' }));
+    const restarted = new DurableShellTaskIndex(root, options);
+    expect(await restarted.reserve({
+      taskId: 'import', requestDigest: 'b'.repeat(64), ownerClientId: 'owner', ownerWorkspaceId: 'workspace',
+      mutationKind: 'repository_import',
+    })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await restarted.hasReservation('native-writer', 'a'.repeat(64))).toBe(true);
+  });
+
+  it('does not release a contained writer from a caller notification without authenticated proof', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-native-release-proof-'));
+    temporaryRoots.push(root);
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 10, inspectTask: async (): Promise<'terminal'> => 'terminal' });
+    expect(await index.reserve({
+      taskId: 'native-writer', requestDigest: 'a'.repeat(64), ownerClientId: 'owner', ownerWorkspaceId: 'workspace',
+      mutationKind: 'opaque_contained_process', nativeReceiptPath: path.join(root, 'missing.receipt.json'),
+    })).toMatchObject({ ok: true });
+    await index.release('native-writer', 'a'.repeat(64));
+    expect(await index.hasReservation('native-writer', 'a'.repeat(64))).toBe(true);
+  });
+
   it('does not allow a different client or workspace to attach to another import reservation', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-owner-'));
     temporaryRoots.push(root);
@@ -214,10 +311,10 @@ describe('DurableShellTaskIndex', () => {
       error: { code: 'CONFLICT', recoverable: true },
     });
     expect(inspectTask).not.toHaveBeenCalled();
-    expect(await replacement.hasReservation(owner.taskId, owner.requestDigest)).toBe(false);
+    expect(await replacement.hasReservation(owner.taskId, owner.requestDigest)).toBe(true);
   });
 
-  it('reclaims a missing pre-metadata reservation only after its launcher is proven gone', async () => {
+  it('keeps a missing pre-metadata reservation until independent terminal proof exists', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-index-abandoned-'));
     temporaryRoots.push(root);
     const now = new Date('2026-09-20T10:00:00.000Z');
@@ -245,8 +342,8 @@ describe('DurableShellTaskIndex', () => {
       ownerWorkspaceId: 'workspace-a',
     });
 
-    expect(reserved).toMatchObject({ ok: true, value: { activeTasks: 1, created: true } });
-    await index.release('replacement-task', 'b'.repeat(64));
+    expect(reserved).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await readFile(path.join(root, '.index', 'v1', 'active', markerName), 'utf8')).toContain('abandoned-before-metadata');
   });
 
   it('bootstraps and pages the compact launch journal without hydrating filtered histories', async () => {

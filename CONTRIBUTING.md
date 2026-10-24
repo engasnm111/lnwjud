@@ -20,6 +20,12 @@ Required for source development:
 - Corepack
 - pnpm 10.15.0 (pinned by the repository)
 
+Windows x64 source builds also require the .NET 8 SDK and Visual Studio C++ x64
+build tools. `corepack pnpm@10.15.0 prepare:containment` builds the self-contained
+process helper, its N-API pin module and the trusted worker runtime before native
+tests. The N-API headers are pinned in the repository. Installed Setup/Portable
+users do not need these development compilers.
+
 Install dependencies from the repository root:
 
 ```powershell
@@ -76,5 +82,8 @@ A good pull request should include:
 - Tests run and their results.
 - Screenshots for meaningful desktop UI changes.
 - Migration or rollback notes when storage/schema behavior changes.
+
+The 5.9.0 native-process and Engineering-contract migration is documented in
+[the migration guide](docs/development/V5_9_MIGRATION.md).
 
 By contributing, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).

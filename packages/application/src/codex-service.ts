@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { appError, err, isApplicationAuthorized, ok, type GoalTaskCancellationObservation, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import { CodexAdapter, type CodexSandboxMode, type CodexStatus } from '@lnwjud/codex';
 import type { CodexRunAuditInput } from '@lnwjud/audit';
 import { DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
-import type { LogQuery, ManagedProcess, ProcessLogResult } from '@lnwjud/process';
+import { ProcessManager, type WindowsNativeAuthority, type ManagedProcessStart, type LogQuery, type ManagedProcess, type ProcessLogResult } from '@lnwjud/process';
+import type { ManagedWriterAdmissionPort } from './writer-admission.js';
 import { WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { FileActor } from './file-service.js';
 
@@ -11,7 +13,7 @@ export const MAX_CODEX_INSTRUCTION_BYTES = 256 * 1024;
 
 export interface CodexAdapterPort {
   status(): Promise<Result<CodexStatus>>;
-  start(cwd: string, instruction: string, signal?: AbortSignal, onCreated?: (process: ManagedProcess) => void, sandboxMode?: CodexSandboxMode): Promise<Result<ManagedProcess>>;
+  start(cwd: string, instruction: string, signal?: AbortSignal, onCreated?: (process: ManagedProcess) => void, sandboxMode?: CodexSandboxMode, containment?: Pick<ManagedProcessStart, 'containmentId' | 'nativeBinding'>, onVerifiedTermination?: () => void | Promise<void>): Promise<Result<ManagedProcess>>;
   statusProcess(processId: string): Result<ManagedProcess>;
   logs(processId: string, query: LogQuery): Result<ProcessLogResult>;
   stop(processId: string, autoRetry?: boolean): Promise<Result<void>>;
@@ -22,6 +24,9 @@ export interface CodexAuditPort {
 }
 
 export interface CodexServiceDependencies {
+  readonly writerAdmission?: ManagedWriterAdmissionPort;
+  readonly nativeContainmentRoot?: string;
+  readonly nativeAuthority?: WindowsNativeAuthority;
   readonly adapter?: CodexAdapterPort;
   readonly guard?: WorkspacePathGuard;
   readonly permissionEngine?: PermissionEngine;
@@ -61,9 +66,9 @@ export class CodexService {
 
   public constructor(
     private readonly workspaces: WorkspaceRepository,
-    dependencies: CodexServiceDependencies = {},
+    private readonly dependencies: CodexServiceDependencies = {},
   ) {
-    this.adapter = dependencies.adapter ?? new CodexAdapter();
+    this.adapter = dependencies.adapter ?? new CodexAdapter(undefined, new ProcessManager(undefined, undefined, undefined, undefined, dependencies.nativeContainmentRoot, dependencies.nativeAuthority));
     this.guard = dependencies.guard ?? new WorkspacePathGuard();
     this.permissionEngine = dependencies.permissionEngine ?? new DefaultPermissionEngine();
     this.profileProvider = dependencies.profileProvider ?? ((): PermissionProfile => dependencies.profile ?? permissionProfiles.balanced);
@@ -109,7 +114,26 @@ export class CodexService {
     const registerOwner = (process: ManagedProcess): void => {
       this.owners.set(codexTaskId, { actorId: actor.clientId, sessionId: actorSessionId(actor), workspaceId, processId: process.processId });
     };
-    const started = await this.adapter.start(root.value.realPath ?? root.value.absolutePath, instruction, signal, registerOwner, sandboxMode);
+    const containmentId = randomUUID();
+    const nativeRoot = this.dependencies.nativeContainmentRoot;
+    if (this.dependencies.writerAdmission !== undefined && process.platform === 'win32' && nativeRoot === undefined) {
+      return err(appError('CONFLICT', 'Windows native Codex containment is required while managed writer admission is enabled'));
+    }
+    const nativeReceiptPath = process.platform === 'win32' && nativeRoot !== undefined ? path.join(nativeRoot, containmentId, 'containment.receipt.json') : undefined;
+    const admission = await this.dependencies.writerAdmission?.enter({
+      actorClientId: actor.clientId, actorSessionId: actorSessionId(actor), workspaceId,
+      nativeTaskId: containmentId, kind: nativeReceiptPath === undefined ? 'uncontained_process' : 'contained_process',
+      ...(nativeReceiptPath === undefined ? {} : { nativeReceiptPath }),
+    });
+    if (admission !== undefined && !admission.ok) return admission;
+    let processCreated = false;
+    const started = await this.adapter.start(root.value.realPath ?? root.value.absolutePath, instruction, signal,
+      (process) => { processCreated = true; registerOwner(process); }, sandboxMode,
+      admission?.ok ? { containmentId, ...(admission.value.nativeBinding === undefined ? {} : { nativeBinding: admission.value.nativeBinding }) } : undefined,
+      async () => { if (admission?.ok) await admission.value.releaseAfterVerifiedTermination(); });
+    if (!started.ok && !processCreated && admission?.ok) {
+      await admission.value.abortBeforeLaunch?.().catch(() => undefined);
+    }
     if (!started.ok) return started;
     if (isAborted(signal)) {
       await this.adapter.stop(started.value.processId, true);

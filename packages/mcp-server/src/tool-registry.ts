@@ -72,14 +72,14 @@ import { capabilityTools } from './tools/capability-tools.js';
 import { fileTools } from './tools/file-tools.js';
 import { engineeringTools } from './tools/engineering-tools.js';
 import { gitTools } from './tools/git-tools.js';
-import { goalTools } from './tools/goal-tools.js';
+import { goalTools, GOAL_TOOL_NAMES } from './tools/goal-tools.js';
 import { observedMutationReceipt } from './task-mutation-receipt.js';
 import { workflowTools } from './tools/workflow-tools.js';
 import { mcpBridgeTools } from './tools/mcp-bridge-tools.js';
 import { processTools } from './tools/process-tools.js';
 import { sessionTools } from './tools/session-tools.js';
 import { searchTools } from './tools/search-tools.js';
-import { scheduledContinuationTools } from './tools/scheduled-continuation-tools.js';
+import { scheduledContinuationTools, SCHEDULED_CONTINUATION_TOOL_NAMES } from './tools/scheduled-continuation-tools.js';
 import { skillTools } from './tools/skill-tools.js';
 import { workspaceTools } from './tools/workspace-tools.js';
 import type { McpApplicationServices, McpInternalInvocationContext, McpToolContext, McpToolDefinition } from './tools/tool-types.js';
@@ -689,6 +689,7 @@ export class ToolRegistry {
       if (mutationDecision.kind !== 'read'
         && mutationFenceWorkspaceId !== undefined
         && !WORKSPACE_WRITER_LEASE_CONTROL_TOOLS.has(tool.name)
+        && !GOAL_AND_CONTINUATION_CONTROL_TOOLS.has(tool.name)
         && this.services.workspaceWriterLease !== undefined) {
         const admitted = await this.services.workspaceWriterLease.begin(
           mutationFenceWorkspaceId,
@@ -1372,6 +1373,7 @@ function normalizeActiveWorkspaceScopesProvider(options: ActiveWorkspaceScopeOpt
 const NATIVE_ACTIVE_SCOPE_TOOLS = new Set(['dom_cdp', 'office', 'audio', 'screen_record', ...OFFICE_SEMANTIC_TOOL_NAMES]);
 const COMMAND_EXECUTION_TOOLS = new Set(['shell', 'wsl_exec', 'process_start']);
 export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
+  'engineering_build_artifact', 'engineering_complete_build', 'engineering_upload_worker',
   'workspace_register', 'write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file',
   'restore_deleted_file', 'restore_checkpoint', 'lsp_rename', 'git', 'git_clone_safe', 'git_clone_cancel', 'shell', 'wsl_exec',
   'process_start', 'process_stop', 'project_dev', 'project_test', 'project_lint', 'project_typecheck', 'project_build',
@@ -1385,6 +1387,10 @@ export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
 const WORKSPACE_WRITER_LEASE_CONTROL_TOOLS = new Set([
   'workspace_writer_lease_acquire', 'workspace_writer_lease_status',
   'workspace_writer_lease_renew', 'workspace_writer_lease_release',
+]);
+const GOAL_AND_CONTINUATION_CONTROL_TOOLS = new Set<string>([
+  ...GOAL_TOOL_NAMES,
+  ...SCHEDULED_CONTINUATION_TOOL_NAMES,
 ]);
 const ENGINEERING_GUARDED_MUTATION_TOOLS = new Set([
   'write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'restore_deleted_file', 'restore_checkpoint',
@@ -1466,7 +1472,9 @@ function withEngineeringTaskEnvelope(tool: McpToolDefinition): McpToolDefinition
 }
 
 function withWorkspaceWriterLeaseEnvelope(tool: McpToolDefinition): McpToolDefinition {
-  if (WORKSPACE_WRITER_LEASE_CONTROL_TOOLS.has(tool.name) || (tool.permission === 'READ' && !SCHEDULED_CONTINUATION_FENCED_TOOLS.has(tool.name))) return tool;
+  if (WORKSPACE_WRITER_LEASE_CONTROL_TOOLS.has(tool.name)
+    || GOAL_AND_CONTINUATION_CONTROL_TOOLS.has(tool.name)
+    || (tool.permission === 'READ' && !SCHEDULED_CONTINUATION_FENCED_TOOLS.has(tool.name))) return tool;
   const extend = (schema: z.ZodObject): z.ZodObject =>
     schema.safeExtend({ writerLease: workspaceWriterLeaseProofSchema.optional() });
   const inputSchema = tool.inputSchema instanceof z.ZodObject
@@ -1499,6 +1507,7 @@ function readWorkspaceWriterLeaseProof(input: unknown): WorkspaceWriterLeaseProo
 }
 
 function withGoalLeaseEnvelope(tool: McpToolDefinition): McpToolDefinition {
+  if (['engineering_build_artifact', 'engineering_complete_build', 'engineering_upload_worker'].includes(tool.name)) return tool;
   if (!SCHEDULED_CONTINUATION_FENCED_TOOLS.has(tool.name)) return tool;
   const extendObjectSchema = (schema: z.ZodObject): z.ZodObject =>
     schema.safeExtend({ goalLease: goalLeaseProofSchema.optional() });
@@ -1842,7 +1851,7 @@ function summarizeMutationForApproval(toolName: string, input: unknown, activeWo
       lines.push(`launchCount = ${taskIds.length}`);
       if (taskIds.length > 0) lines.push(`taskIds = ${JSON.stringify(taskIds)}`);
     }
-    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.8.7 enforces read-only child sandboxes.');
+    lines.push('WARNING: this consumes explicitly enabled Codex quota; v5.9.0 enforces read-only child sandboxes.');
     return boundedApprovalSummary(lines);
   }
   const projectKind = projectCommandKind(toolName);

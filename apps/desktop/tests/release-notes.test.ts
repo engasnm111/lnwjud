@@ -11,13 +11,22 @@ describe('release notes registry', () => {
     expect(note?.categories.some((category) => category.items.length > 0)).toBe(true);
   });
 
-  it('shows all installed v5.8 patch notes newest-first without leaking v5.7 or later minors', () => {
+  it('includes the pinned Ponytail skills in v5.9.0 only', () => {
+    const items = releaseNotesForVersion('5.9.0')?.categories.flatMap((category) => category.items) ?? [];
+    expect(items.find((item) => item.id === 'ponytail-stable-skills')).toMatchObject({
+      titleKey: 'whatsNew.590.ponytail.title',
+      descriptionKey: 'whatsNew.590.ponytail.description',
+    });
+  });
+
+  it('shows only installed notes from each v5 release train', () => {
     expect(releaseNotesForSeries('5.8.3').map((note) => note.version)).toEqual(['5.8.3', '5.8.2', '5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.2').map((note) => note.version)).toEqual(['5.8.2', '5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.1').map((note) => note.version)).toEqual(['5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.0').map((note) => note.version)).toEqual(['5.8.0']);
     expect(releaseNotesForSeries('5.7.4').map((note) => note.version)).toEqual(['5.7.4', '5.7.3', '5.7.2', '5.7.1', '5.7.0']);
-    expect(releaseNotesForSeries('5.9.0')).toEqual([]);
+    expect(releaseNotesForSeries('5.8.7').map((note) => note.version)).toEqual(['5.8.7', '5.8.6', '5.8.5', '5.8.4', '5.8.3', '5.8.2', '5.8.1', '5.8.0']);
+    expect(releaseNotesForSeries('5.9.0').map((note) => note.version)).toEqual(['5.9.0']);
   });
 
   it('sorts version numbers numerically and resets at the next minor or major train', () => {

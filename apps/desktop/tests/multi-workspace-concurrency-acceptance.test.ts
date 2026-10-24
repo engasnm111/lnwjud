@@ -82,6 +82,14 @@ describe('multi-workspace concurrency acceptance', () => {
       const testB = await clientB.callTool({
         name: 'project_test', arguments: { workspaceId: workspaceB.id, userConfirmed: true },
       });
+      if (process.platform === 'darwin') {
+        // No macOS owner-loss-safe all-descendant fence exists yet: no child may launch.
+        expect(buildA.isError).toBe(true);
+        expect(testB.isError).toBe(true);
+        await expect(access(path.join(workspaceRootA, 'build.started'))).rejects.toThrow();
+        await expect(access(path.join(workspaceRootB, 'test.started'))).rejects.toThrow();
+        return;
+      }
       expect(buildA.isError).not.toBe(true);
       expect(testB.isError).not.toBe(true);
       const processA = stringField(buildA, 'processId');
@@ -366,7 +374,7 @@ async function waitForTerminalShellTask(
       arguments: { operation: 'wait', workspaceId, task_id: taskId, timeout_seconds: 2 },
     });
     const state = structuredRecord(response).state;
-    if (state !== 'running' && state !== 'queued') return response;
+    if (state !== 'starting' && state !== 'running' && state !== 'queued') return response;
   }
   throw new Error(`Timed out waiting for shell task ${taskId}`);
 }
