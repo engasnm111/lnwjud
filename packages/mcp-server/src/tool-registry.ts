@@ -722,7 +722,9 @@ export class ToolRegistry {
       });
       const execution = await this.executeWithinResponseBudget(
         tool,
-        approvalExecutionInput,
+        WORKSPACE_WRITER_LEASE_CONTROL_TOOLS.has(tool.name) && writerLease !== undefined
+          ? withWorkspaceWriterLeaseProof(approvalExecutionInput, writerLease)
+          : approvalExecutionInput,
         invocationAuthorization,
         parentSignal,
         goalLease === undefined ? undefined : goalLease.goalId,
@@ -1565,6 +1567,16 @@ function stripEngineeringTaskEnvelope(input: unknown): unknown {
 function stripWorkspaceWriterLeaseEnvelope(input: unknown): unknown {
   if (!isRecord(input) || !Object.prototype.hasOwnProperty.call(input, 'writerLease')) return input;
   return Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'writerLease'));
+}
+
+/**
+ * Workspace writer lease control tools own their proof: the invocation pipeline
+ * strips it from policy, approval and activity surfaces, and re-attaches the
+ * validated proof here so the handler receives exactly what the caller sent.
+ */
+function withWorkspaceWriterLeaseProof(input: unknown, proof: WorkspaceWriterLeaseProof): unknown {
+  if (!isRecord(input)) return input;
+  return { ...input, writerLease: proof };
 }
 
 function stripGoalLeaseEnvelope(input: unknown): unknown {

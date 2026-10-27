@@ -183,7 +183,7 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
   }
 
   public async renew(workspaceId: string, clientId: string, sessionId: string, proof: WorkspaceWriterLeaseProof, ttlSeconds: number): Promise<Result<{ expiresAt: string }>> {
-    if (!validIdentity(workspaceId, clientId, sessionId) || !validTtl(ttlSeconds)) return invalid();
+    if (!validIdentity(workspaceId, clientId, sessionId) || !validTtl(ttlSeconds) || !validProof(proof)) return invalid();
     try {
       return this.transaction((db) => {
         const row = this.row(db, workspaceId);
@@ -197,7 +197,7 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
   }
 
   public async release(workspaceId: string, clientId: string, sessionId: string, proof: WorkspaceWriterLeaseProof): Promise<Result<void>> {
-    if (!validIdentity(workspaceId, clientId, sessionId)) return invalid();
+    if (!validIdentity(workspaceId, clientId, sessionId) || !validProof(proof)) return invalid();
     const globalProbe = this.globalExclusion === undefined ? undefined
       : await this.globalExclusion.holdExclusiveProbe(workspaceId).catch(() => unavailable());
     if (globalProbe !== undefined && !globalProbe.ok) return globalProbe;
@@ -255,6 +255,18 @@ function matches(row: LeaseRow, clientId: string, sessionId: string, proof: Work
 }
 function validIdentity(...identities: string[]): boolean { return identities.every((v) => typeof v === 'string' && v.length > 0 && v.length <= 256); }
 function validTtl(value: number): boolean { return Number.isInteger(value) && value >= 30 && value <= 3600; }
+/** Reject missing or malformed proofs before the fenced transaction so a wiring or contract error surfaces as INVALID_INPUT, never as a fail-closed INTERNAL_ERROR. Shape mirrors the MCP proof schema (zod 4.2.0): leaseId matches z.string().uuid() (versions 1-8 with RFC 9562 variant bits, plus Nil and Max), leaseToken string 1..256, generation a nonnegative safe integer per z.number().int().nonnegative(). */
+function validProof(proof: unknown): proof is WorkspaceWriterLeaseProof {
+  if (typeof proof !== 'object' || proof === null) return false;
+  const candidate = proof as WorkspaceWriterLeaseProof;
+  return isUuid(candidate.leaseId) && validIdentity(candidate.leaseToken)
+    && Number.isSafeInteger(candidate.generation) && candidate.generation >= 0;
+}
+/** Mirrors the zod@4.2.0 uuid validation: version 1-8 with 8/9/a/b variant bits, or the Nil and Max UUIDs. */
+function isUuid(value: unknown): boolean {
+  return typeof value === 'string'
+    && /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/.test(value);
+}
 function processAlive(pid: number): 'alive' | 'dead' | 'unknown' {
   try { process.kill(pid, 0); return 'alive'; }
   catch (e) { return (e as NodeJS.ErrnoException).code === 'ESRCH' ? 'dead' : 'unknown'; }

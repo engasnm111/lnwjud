@@ -57,6 +57,73 @@ describe('durable multi-session workspace writer lease', () => {
     expect(await two.begin('workspace', 'client-two', 'session-two', 'next-call')).toMatchObject({ ok: true, value: { required: false } });
   });
 
+  it('answers release and renew with INVALID_INPUT for null, primitive or malformed proofs without touching lease state', async () => {
+    const { one } = await fixture();
+    const acquired = await one.acquire('workspace', 'owner', 'session', 600);
+    expect(acquired.ok).toBe(true);
+    if (!acquired.ok) return;
+    const before = await one.inspect('workspace');
+    const { leaseId, leaseToken, generation } = acquired.value;
+    const malformedProofs: unknown[] = [
+      null,
+      undefined,
+      'stale-token',
+      42,
+      true,
+      {},
+      [],
+      { leaseId, leaseToken },
+      { leaseId, leaseToken, generation: '1' },
+      { leaseId, leaseToken, generation: 1.5 },
+      { leaseId, leaseToken, generation: -1 },
+      { leaseId: 'not-a-uuid', leaseToken, generation },
+      { leaseId, leaseToken: '', generation },
+      { leaseId, leaseToken: 'x'.repeat(257), generation },
+      { leaseId, leaseToken: 42, generation },
+      { leaseId, leaseToken: null, generation },
+      { leaseId: '12345678-1234-0234-8234-123456789abc', leaseToken, generation },
+      { leaseId: '12345678-1234-9234-8234-123456789abc', leaseToken, generation },
+      { leaseId: '12345678-1234-a234-8234-123456789abc', leaseToken, generation },
+      { leaseId: '12345678-1234-f234-8234-123456789abc', leaseToken, generation },
+      { leaseId: '12345678-1234-4234-0234-123456789abc', leaseToken, generation },
+      { leaseId: '12345678-1234-4234-7234-123456789abc', leaseToken, generation },
+      { leaseId: '12345678-1234-4234-c234-123456789abc', leaseToken, generation },
+      { leaseId: '12345678-1234-4234-f234-123456789abc', leaseToken, generation },
+      { leaseId, leaseToken, generation: 2 ** 53 },
+      { leaseId, leaseToken, generation: -(2 ** 53) },
+      { leaseId, leaseToken, generation: 1e100 },
+    ];
+    for (const proof of malformedProofs) {
+      expect(await one.release('workspace', 'owner', 'session', proof as never))
+        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+      expect(await one.renew('workspace', 'owner', 'session', proof as never, 600))
+        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    }
+    expect(await one.inspect('workspace')).toEqual(before);
+  });
+
+  it('still routes shape-valid but mismatched proofs to the fencing conflict instead of input validation', async () => {
+    const { one } = await fixture();
+    const acquired = await one.acquire('workspace', 'owner', 'session', 600);
+    expect(acquired.ok).toBe(true);
+    if (!acquired.ok) return;
+    const shapeValidMismatches: unknown[] = [
+      { leaseId: acquired.value.leaseId.toUpperCase(), leaseToken: acquired.value.leaseToken, generation: acquired.value.generation },
+      { leaseId: '00000000-0000-0000-0000-000000000000', leaseToken: acquired.value.leaseToken, generation: acquired.value.generation },
+      { leaseId: 'ffffffff-ffff-ffff-ffff-ffffffffffff', leaseToken: acquired.value.leaseToken, generation: acquired.value.generation },
+      { leaseId: '018f3c44-9a1e-7cc0-9a1b-3d5e7f9a1b2c', leaseToken: acquired.value.leaseToken, generation: acquired.value.generation },
+      { leaseId: acquired.value.leaseId, leaseToken: acquired.value.leaseToken, generation: 2 ** 53 - 1 },
+      { leaseId: '00000000-0000-0000-0000-000000000000', leaseToken: acquired.value.leaseToken, generation: 0 },
+    ];
+    for (const proof of shapeValidMismatches) {
+      expect(await one.release('workspace', 'owner', 'session', proof as never))
+        .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+      expect(await one.renew('workspace', 'owner', 'session', proof as never, 600))
+        .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    }
+    expect(await one.inspect('workspace')).toMatchObject({ ok: true, value: { state: 'active', generation: acquired.value.generation } });
+  });
+
   it('rotates fencing generation on expiry, rejects stale proof and recovers a stopped owner', async () => {
     let time = 0;
     const { one, two } = await fixture(() => time);
