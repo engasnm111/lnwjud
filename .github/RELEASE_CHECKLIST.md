@@ -6,6 +6,8 @@ Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.
 
 ## v5.9.0 updater acceptance (blocking)
 
+**Evidence checkpoint (29 October 2026):** `dev` commit `df0f1edf79b9f8d49c22331a076bcaa0ededeaff` passed GitHub push CI `40882677336` and Draft PR CI `40882687632` and local Windows canonical checks. These are source/CI gates only. macOS #216 owner-loss-safe containment, production signing credentials and trusted root enrollment, native install effects, and signed end-to-end silent update/relaunch/health/rollback receipts remain unavailable. Do not merge/tag/publish v5.9.0 until those release-only gates have passed; do not change published v5.8.7 download links prematurely.
+
 - Do not tag or publish until signed installed-update acceptance passes on Windows x64, macOS arm64, and macOS x64. Each exact-run receipt must prove the user confirmed the exact target version once (`accepted: true`, `promptCount: 1`), then the package installed silently with zero interactive installer prompts/Next pages and the app relaunched automatically.
 - Each receipt must also bind the exact source SHA, CI run and attempt, package/feed digests, and signing identity; prove active work drained, Tunnel stopped and restored, exact installed version and health; and prove rollback to the prior healthy install after an injected update failure. Keep OS security authorization intact.
 - Unit tests, update metadata, signature checks, or an ordinary installer run do not satisfy this gate. The CI receipt producer and real signed end-to-end evidence must exist before release.
