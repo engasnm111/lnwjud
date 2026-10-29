@@ -1638,7 +1638,10 @@ internal static class NativeTests
 
     private static async Task<ServiceAttemptObservation> WaitForOutputReservationRelease(ServiceAttemptLedger ledger, ServiceAttemptIdentity identity, string callerSid)
     {
-        for (var retry = 0; retry < 200; retry++)
+        // The scenario permits up to 10 seconds of native process execution;
+        // retain a bounded 14-second deadline for terminal output persistence
+        // before classifying still-running native work as unverified.
+        for (var retry = 0; retry < 700; retry++)
         {
             var observation = ledger.Inspect(identity, callerSid);
             if (observation.Phase == ServiceAttemptPhase.TerminalVerified && !observation.ReservationHeld) return observation;
