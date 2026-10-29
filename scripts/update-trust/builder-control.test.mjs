@@ -10,7 +10,7 @@ import vm from 'node:vm';
 import { TextDecoder } from 'node:util';
 import { assertGeneratedChanges, builderContext, inspectSubjectDirectory, validateGeneratedIdentitySources, validateProvenance } from './builder-control.mjs';
 
-const workflow = await readFile(new URL('../../.github/workflows/update-package-builder.yml', import.meta.url), 'utf8');
+const workflow = (await readFile(new URL('../../.github/workflows/update-package-builder.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const bootstrap = workflow.split("node --input-type=module -e @'\n")[1]?.split("\n          '@")[0];
 const environment = () => ({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwjud', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main',
   GITHUB_REF_PROTECTED: 'true',

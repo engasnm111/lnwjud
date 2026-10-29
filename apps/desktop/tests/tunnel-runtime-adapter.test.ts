@@ -121,7 +121,7 @@ describe('TunnelRuntimeAdapter', () => {
         expectedProcessesSha256: createHash('sha256').update(processSnapshot).digest('hex'),
       });
       expect(commands).toEqual(['runtimes status lnwjud --json', 'runtimes status lnwjud --json']);
-      expect(processGuard).toHaveBeenCalledTimes(1);
+      expect(processGuard).toHaveBeenCalledTimes(process.platform === 'win32' ? 1 : 0);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

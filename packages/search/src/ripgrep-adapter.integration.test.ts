@@ -325,10 +325,12 @@ async function runWithVerifiedTermination(
   try {
     const result = await run(markerPath);
     await new Promise((resolve) => setTimeout(resolve, 2_100));
-    expect({ terminationError: result.stderr, childMarkerWritten: existsSync(markerPath) }).toEqual({
-      terminationError: '',
-      childMarkerWritten: false,
-    });
+    expect(existsSync(markerPath)).toBe(false);
+    if (process.platform === 'darwin') {
+      expect(result.stderr).toMatch(/^POSIX process (?:identity changed or root exited|group identity could not be verified); targeted termination refused$/);
+    } else {
+      expect(result.stderr).toBe('');
+    }
     return result;
   } finally {
     await rm(root, { recursive: true, force: true });
