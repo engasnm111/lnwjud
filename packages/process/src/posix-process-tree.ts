@@ -50,22 +50,28 @@ export function parsePosixProcessGroup(table: string, groupId: number, expectedR
   const seen = new Set<number>();
   let rootStartedAt: string | undefined;
   for (const line of lines) {
-    const row = /^\s*(\d+)\s+(\d+)\s+([A-Za-z<+NsXxLlEsWw-]+)\s+(.+?)\s*$/.exec(line);
-    if (row === null) return { state: 'unknown', reason: 'malformed_process_table' };
-    const pid = Number(row[1]);
-    const pgid = Number(row[2]);
-    const started = Date.parse(row[4]!);
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(pgid) || pgid < 0 || !Number.isFinite(started) || seen.has(pid)) {
+    // Only target-group rows need STAT/lstart identity evidence. macOS can
+    // emit partial metadata for unrelated processes; rejecting the entire
+    // table would leave a known owned child alive after a timeout.
+    const prefix = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (prefix === null) return { state: 'unknown', reason: 'malformed_process_table' };
+    const pid = Number(prefix[1]);
+    const pgid = Number(prefix[2]);
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(pgid) || pgid < 0 || seen.has(pid)) {
       return { state: 'unknown', reason: 'malformed_process_table' };
     }
     seen.add(pid);
+    if (pid !== groupId && pgid !== groupId) continue;
+    const evidence = /^([A-Za-z<+NsXxLlEsWw-]+)\s+(.+?)\s*$/.exec(prefix[3]!);
+    const started = evidence === null ? Number.NaN : Date.parse(evidence[2]!);
+    if (evidence === null || !Number.isFinite(started)) return { state: 'unknown', reason: 'malformed_process_table' };
     if (pid === groupId) {
       rootStartedAt = new Date(started).toISOString();
       if (pgid !== groupId || expectedRootStartedAt !== undefined && rootStartedAt !== expectedRootStartedAt) {
         return { state: 'unknown', reason: 'root_identity_changed' };
       }
     }
-    if (pgid === groupId && !row[3]!.startsWith('Z')) livePids.push(pid);
+    if (pgid === groupId && !evidence[1]!.startsWith('Z')) livePids.push(pid);
   }
   return livePids.length === 0 ? { state: 'empty' } : {
     state: 'live', livePids, ...(rootStartedAt === undefined ? {} : { rootStartedAt }),

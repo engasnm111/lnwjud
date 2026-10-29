@@ -46,6 +46,18 @@ describe('portable process contracts', () => {
     ]);
   });
 
+  it('ignores unrelated macOS process metadata while preserving strict target-group proof', () => {
+    const target = '4242 4242 Ss Sun Oct 18 00:00:00 2026';
+    const unrelated = '1 1 ?? unavailable';
+    expect(parsePosixProcessGroup(`${unrelated}\n${target}`, 4242)).toEqual({
+      state: 'live', livePids: [4242], rootStartedAt: new Date('Sun Oct 18 00:00:00 2026').toISOString(),
+    });
+    expect(parsePosixProcessGroup(`${unrelated}\n4242 4242 Ss unavailable`, 4242))
+      .toMatchObject({ state: 'unknown', reason: 'malformed_process_table' });
+    expect(parsePosixProcessGroup(`bad-prefix\n${target}`, 4242))
+      .toMatchObject({ state: 'unknown', reason: 'malformed_process_table' });
+  });
+
   it('keeps malformed, unreadable and reused group identities unknown', async () => {
     expect(parsePosixProcessGroup('', 4242).state).toBe('unknown');
     expect(parsePosixProcessGroup('1 1 Ss Sun Oct 18 00:00:00 2026\ntruncated', 4242).state).toBe('unknown');
