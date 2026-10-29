@@ -215,7 +215,19 @@ export class PosixProcessTree implements ProcessTreeTerminator {
 
   private async stopObservedGroup(pid: number, child?: ChildProcess, expectedStart?: string): Promise<void> {
     const inspect = this.inspectGroup!;
-    const initial = classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform, ...(expectedStart === undefined ? {} : { expectedRootStartedAt: expectedStart }) }), this.platform);
+    let initial = classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform, ...(expectedStart === undefined ? {} : { expectedRootStartedAt: expectedStart }) }), this.platform);
+    // The initial timeout can fire before a freshly spawned macOS child has a
+    // stable observable process-group identity. Retry only read-only probes;
+    // never signal an unknown/reused group or infer that missing means gone.
+    if (this.platform === 'darwin' && child !== undefined && expectedStart === undefined) {
+      const deadline = Date.now() + 500;
+      while (initial.state === 'unknown' && (initial.reason === 'process_table_unavailable'
+        || initial.reason === 'darwin_escaped_descendants_not_contained')
+        && child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 30));
+        initial = classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform }), this.platform);
+      }
+    }
     if (initial.state === 'empty') return;
     if (initial.state !== 'live' || initial.rootStartedAt === undefined
       || child !== undefined && (child.exitCode !== null || child.signalCode !== null)) {

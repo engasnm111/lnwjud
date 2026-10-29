@@ -325,7 +325,7 @@ async function runWithVerifiedTermination(
   try {
     const result = await run(markerPath);
     await new Promise((resolve) => setTimeout(resolve, 2_100));
-    expect(existsSync(markerPath)).toBe(false);
+    expect(existsSync(markerPath), `Timed-out process survived: ${JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr, timedOut: result.timedOut, stoppedEarly: result.stoppedEarly })}`).toBe(false);
     if (process.platform === 'darwin') {
       expect(result.stderr).toMatch(/^POSIX process (?:identity changed or root exited|group identity could not be verified); targeted termination refused$/);
     } else {
