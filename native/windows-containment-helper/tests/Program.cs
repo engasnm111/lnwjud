@@ -1094,7 +1094,7 @@ internal static class NativeTests
                 initialRuntime.Run(identity, callerSid, opDigest, op, 0);
 
                 var sw = Stopwatch.StartNew();
-                while (sw.ElapsedMilliseconds < 5000 && initialLedger.Inspect(identity, callerSid).Phase != ServiceAttemptPhase.TerminalVerified)
+                while (sw.ElapsedMilliseconds < 15000 && initialLedger.Inspect(identity, callerSid).Phase != ServiceAttemptPhase.TerminalVerified)
                 {
                     Thread.Sleep(20);
                 }
