@@ -520,6 +520,7 @@ describe('ShellCapabilityBackend', () => {
       terminator: {
         async stop(child): Promise<void> {
           const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+          child.kill();
           await closed;
           throw new Error('process-tree termination not verified');
         },
@@ -529,13 +530,17 @@ describe('ShellCapabilityBackend', () => {
     const running = backend.execute({
       operation: 'run',
       executable: process.execPath,
-      arguments: ['-e', 'setTimeout(() => {}, 100)'],
+      arguments: ['-e', 'setTimeout(() => {}, 3000)'],
       cwd: root,
       execution: 'foreground',
       userConfirmed: true,
       timeout_seconds: 5,
     }, controller.signal);
-    setTimeout(() => controller.abort(), 10);
+    await vi.waitFor(async () => {
+      const listed = await backend.execute({ operation: 'list' });
+      expect(listed).toMatchObject({ ok: true, value: { tasks: [{ state: 'running' }] } });
+    }, { timeout: 3000, interval: 10 });
+    controller.abort();
 
     const cancellation = await Promise.race([
       running.then((result) => ({ state: 'settled' as const, result })),
