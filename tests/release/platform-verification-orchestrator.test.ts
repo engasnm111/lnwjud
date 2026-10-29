@@ -55,6 +55,10 @@ describe('platform verification orchestrator', () => {
     expect(workflow).toContain('ubuntu-24.04-arm');
     expect(workflow).toContain('sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2');
     expect(workflow).toContain("cosign-release: 'v3.1.3'");
+    const nativeBuild = workflow.slice(workflow.indexOf('  native-package-verification:'), workflow.indexOf('  macos-26-package-compatibility:'));
+    expect(nativeBuild).not.toContain('run: pnpm prepare:containment');
+    expect(nativeBuild).not.toContain('run: pnpm prepare:update-worker');
+    // The verifier itself prepares the same runtime after recording clean source input.
     expect(workflow).toContain('verify:platform -- --package');
     expect(workflow).toContain('verify:macos-release');
     expect(workflow).toContain('verify:linux-release');
