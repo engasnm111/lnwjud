@@ -22,6 +22,30 @@ describe('portable process contracts', () => {
     expect(signal).not.toHaveBeenCalled();
   });
 
+  it('reprobes an unobserved newly spawned macOS group before sending any verified group signal', async () => {
+    const signals: Array<{ pid: number; signal: NodeJS.Signals | number }> = [];
+    const child = { exitCode: null, signalCode: null } as never;
+    let probes = 0;
+    const tree = new PosixProcessTree({
+      platform: 'darwin',
+      inspectGroup: async (): Promise<PosixProcessGroupObservation> => {
+        probes += 1;
+        return probes === 1
+          ? { state: 'empty' }
+          : { state: 'live', livePids: [4242], rootStartedAt: '2026-10-29T00:00:00.000Z' };
+      },
+      processKill: (pid, signal): void => { signals.push({ pid, signal }); },
+      termGraceMs: 5,
+      killGraceMs: 5,
+    });
+    await expect(tree.stop(child, 4242)).rejects.toThrow('could not be verified');
+    expect(probes).toBeGreaterThan(2);
+    expect(signals).toEqual([
+      { pid: -4242, signal: 'SIGTERM' },
+      { pid: -4242, signal: 'SIGKILL' },
+    ]);
+  });
+
   it('keeps malformed, unreadable and reused group identities unknown', async () => {
     expect(parsePosixProcessGroup('', 4242).state).toBe('unknown');
     expect(parsePosixProcessGroup('1 1 Ss Sun Oct 18 00:00:00 2026\ntruncated', 4242).state).toBe('unknown');
