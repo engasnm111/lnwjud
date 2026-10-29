@@ -854,6 +854,8 @@ describe('TunnelRuntimeAdapter', () => {
     });
     const adapter = new TunnelRuntimeAdapter({
       clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute,
+      // This test exercises status reconciliation, not OS process enumeration.
+      processGuard: vi.fn(async (): Promise<void> => undefined),
       stopVerifyAttempts: 3, stopVerifyIntervalMs: 0,
     });
 
@@ -870,6 +872,8 @@ describe('TunnelRuntimeAdapter', () => {
     });
     const adapter = new TunnelRuntimeAdapter({
       clientPath: 'client.exe', profileDirectory: 'profile', environment: {}, execute,
+      // This test exercises status reconciliation, not OS process enumeration.
+      processGuard: vi.fn(async (): Promise<void> => undefined),
       stopVerifyAttempts: 2, stopVerifyIntervalMs: 0,
     });
 
