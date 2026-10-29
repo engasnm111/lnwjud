@@ -1616,7 +1616,12 @@ async function finish(state, exitCode, error) {
   const outputClosed = await Promise.allSettled([stdoutHandle.close(), stderrHandle.close()]);
   metadata.output_finalized = !outputWriteFailed && outputClosed.every((result) => result.status === 'fulfilled');
   const persisted = await persist().then(() => true, () => false);
-  if (persisted && state !== 'termination_unverified') await releaseReservation();
+  if (persisted && state !== 'termination_unverified') {
+    await releaseReservation();
+    // Child containment and output handles are verified before persisting.
+    // Retire the POSIX coordinator even if an imported runtime still retains a handle.
+    if (spec.posix) process.exit(0);
+  }
 }
 
 try {
