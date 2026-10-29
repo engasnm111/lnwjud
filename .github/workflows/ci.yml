@@ -292,12 +292,9 @@ jobs:
         shell: bash
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare trusted containment runtime
-        run: pnpm prepare:containment
-
-      - name: Prepare trusted update worker
-        run: pnpm prepare:update-worker
-
+      # verify:platform records input source cleanliness before preparing native
+      # generated integrity files. Earlier preparation dirtied tracked files
+      # and caused provenance to fail macOS 26 exact-artifact verification.
       - name: Install Linux packaging and Electron smoke prerequisites
         if: matrix.platform == 'linux'
         shell: bash

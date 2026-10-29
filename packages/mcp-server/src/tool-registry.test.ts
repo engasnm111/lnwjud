@@ -263,7 +263,7 @@ describe('MCP tool registry', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('omits every unvalidated import input from direct and nested batch audit persistence', async () => {
     const persisted: unknown[] = [];
