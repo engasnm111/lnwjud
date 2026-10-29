@@ -31,6 +31,18 @@ describe('standardized GitHub release notes', () => {
     }
   });
 
+  it('reports only actual release-scope targets and manual installation in exact-version notes', async () => {
+    const { futureReleaseMetadata } = await import(releaseNotesModuleUrl);
+    const releaseScope = JSON.parse(await readFile(path.join(repositoryRoot, 'config/release-scope.json'), 'utf8')) as {
+      version: string; targets: string[]; deferredTargets: string[]; automaticUpdaterEnabled: boolean;
+    };
+    const entries = futureReleaseMetadata('a'.repeat(40), `v${releaseScope.version}`, releaseScope);
+    expect(entries.join(' ')).toContain('Windows x64, Linux x64, Linux arm64');
+    expect(entries.join(' ')).toContain('Automatic installation is disabled');
+    expect(entries.join(' ')).toContain('Targets held from this release: darwin-arm64, darwin-x64');
+    expect(entries.join(' ')).not.toContain('target-native Windows, macOS');
+  });
+
   it('classifies conventional entries into the three mandatory sections', async () => {
     const { normalizeReleaseNotesBody } = await import(releaseNotesModuleUrl);
     const sourceBody = `## What's Changed
