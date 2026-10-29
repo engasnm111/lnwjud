@@ -1,0 +1,165 @@
+{
+  "protocol": 1,
+  "limits": {
+    "envelopeBytes": 49152,
+    "payloadBytes": 32768,
+    "maxDepth": 12
+  },
+  "objects": {
+    "release": {
+      "fields": {
+        "product": {
+          "kind": "string",
+          "constant": "lnwjud"
+        },
+        "releaseId": {
+          "kind": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,128}$",
+          "maxLength": 128
+        },
+        "channel": {
+          "kind": "string",
+          "constant": "stable"
+        },
+        "platform": {
+          "kind": "string",
+          "pattern": "^(win32|darwin)$",
+          "maxLength": 6
+        },
+        "architecture": {
+          "kind": "string",
+          "pattern": "^(x64|arm64)$",
+          "maxLength": 5
+        },
+        "distribution": {
+          "kind": "string",
+          "pattern": "^(windows-nsis|macos-zip)$",
+          "maxLength": 12
+        },
+        "version": {
+          "kind": "string",
+          "format": "semver",
+          "maxLength": 32
+        },
+        "releaseSequence": {
+          "kind": "string",
+          "format": "positive-uint64",
+          "maxLength": 20
+        },
+        "source": {
+          "kind": "object",
+          "object": "source"
+        },
+        "buildEvidence": {
+          "kind": "object",
+          "object": "buildEvidence"
+        },
+        "artifact": {
+          "kind": "object",
+          "object": "identity"
+        },
+        "provenance": {
+          "kind": "object",
+          "object": "identity"
+        },
+        "compatibility": {
+          "kind": "object",
+          "object": "compatibility"
+        }
+      }
+    },
+    "source": {
+      "fields": {
+        "repository": {
+          "kind": "string",
+          "constant": "https://github.com/engasnm111/lnwjud"
+        },
+        "commit": {
+          "kind": "string",
+          "format": "sha1",
+          "maxLength": 40
+        },
+        "workflow": {
+          "kind": "string",
+          "pattern": "^\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml$",
+          "maxLength": 256
+        },
+        "ref": {
+          "kind": "string",
+          "pattern": "^refs/heads/[A-Za-z0-9._/-]+$",
+          "maxLength": 256
+        },
+        "runId": {
+          "kind": "string",
+          "format": "positive-uint64",
+          "maxLength": 20
+        },
+        "runAttempt": {
+          "kind": "string",
+          "format": "positive-uint64",
+          "maxLength": 20
+        }
+      }
+    },
+    "buildEvidence": {
+      "fields": {
+        "kind": {
+          "kind": "string",
+          "constant": "github-artifact-attestation-v1"
+        },
+        "artifactAttestationSha256": {
+          "kind": "string",
+          "format": "sha256",
+          "maxLength": 64
+        },
+        "provenanceAttestationSha256": {
+          "kind": "string",
+          "format": "sha256",
+          "maxLength": 64
+        },
+        "sourceTree": {
+          "kind": "string",
+          "constant": "clean"
+        }
+      }
+    },
+    "identity": {
+      "fields": {
+        "name": {
+          "kind": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,128}$",
+          "maxLength": 128
+        },
+        "sha256": {
+          "kind": "string",
+          "format": "sha256",
+          "maxLength": 64
+        },
+        "sizeBytes": {
+          "kind": "string",
+          "format": "positive-uint64",
+          "maxLength": 20
+        }
+      }
+    },
+    "compatibility": {
+      "fields": {
+        "migrationContractSha256": {
+          "kind": "string",
+          "format": "sha256",
+          "maxLength": 64
+        },
+        "workerContractSha256": {
+          "kind": "string",
+          "format": "sha256",
+          "maxLength": 64
+        },
+        "serviceContractSha256": {
+          "kind": "string",
+          "format": "sha256",
+          "maxLength": 64
+        }
+      }
+    }
+  }
+}

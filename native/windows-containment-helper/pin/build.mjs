@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-export function buildContainmentPin(outputDirectory) {
+export function buildContainmentPin(outputDirectory, testBuild = false) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Windows x64 build host required');
   const source = path.dirname(fileURLToPath(import.meta.url));
   const output = outputDirectory ?? path.resolve(source, '../artifacts/win-x64');
@@ -26,12 +26,13 @@ export function buildContainmentPin(outputDirectory) {
   }
   const quote = value => { if (/["%\r\n]/.test(value)) throw new Error('Unsupported build path'); return `"${value}"`; };
   const batch = path.join(output, 'build-pin.cmd');
-  const artifact = path.join(output, 'lnwjud-containment-pin.node');
+  const artifact = path.join(output, testBuild ? 'lnwjud-containment-pin-test.node' : 'lnwjud-containment-pin.node');
+  const input = path.join(source, testBuild ? 'pin-test.cc' : 'pin.cc');
   const clangCl = 'C:/Program Files/LLVM/bin/clang-cl.exe';
   const useLlvm = existsSync(clangCl) && existsSync(path.join(path.dirname(clangCl), 'lld-link.exe'));
   const compile = useLlvm
-    ? `${quote(clangCl)} /nologo /std:c++17 /EHsc /W4 /WX /O2 /MT /LD /I${quote(include)} ${quote(path.join(source, 'pin.cc'))} /Fo${quote(path.join(output, 'pin.obj'))} -fuse-ld=lld /link /OUT:${quote(artifact)} /IMPLIB:${quote(path.join(output, 'pin.lib'))} /INCREMENTAL:NO /Brepro /DYNAMICBASE /NXCOMPAT /GUARD:CF`
-    : `cl.exe /nologo /std:c++17 /EHsc /W4 /WX /O2 /MT /LD /I${quote(include)} ${quote(path.join(source, 'pin.cc'))} /Fo${quote(path.join(output, 'pin.obj'))} /link /OUT:${quote(artifact)} /IMPLIB:${quote(path.join(output, 'pin.lib'))} /INCREMENTAL:NO /Brepro /DYNAMICBASE /NXCOMPAT /GUARD:CF`;
+    ? `${quote(clangCl)} /nologo /std:c++17 /EHsc /W4 /WX /O2 /MT /LD /I${quote(include)} ${quote(input)} /Fo${quote(path.join(output, 'pin.obj'))} -fuse-ld=lld /link bcrypt.lib /OUT:${quote(artifact)} /IMPLIB:${quote(path.join(output, 'pin.lib'))} /INCREMENTAL:NO /Brepro /DYNAMICBASE /NXCOMPAT /GUARD:CF`
+    : `cl.exe /nologo /std:c++17 /EHsc /W4 /WX /O2 /MT /LD /I${quote(include)} ${quote(input)} /Fo${quote(path.join(output, 'pin.obj'))} /link bcrypt.lib /OUT:${quote(artifact)} /IMPLIB:${quote(path.join(output, 'pin.lib'))} /INCREMENTAL:NO /Brepro /DYNAMICBASE /NXCOMPAT /GUARD:CF`;
   writeFileSync(batch, [
     '@echo off',
     'set "VSCMD_SKIP_SENDTELEMETRY=1"',

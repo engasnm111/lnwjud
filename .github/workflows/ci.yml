@@ -128,6 +128,11 @@ jobs:
         shell: pwsh
         run: ./scripts/test-update-worker.ps1
 
+      - name: Test Windows update admission broker state machine
+        if: matrix.name == 'Windows'
+        shell: pwsh
+        run: dotnet run --project native/update-admission-broker/tests/UpdateAdmissionTests.csproj --configuration Debug
+
       - name: Run complete native unit and service acceptance suites
         shell: bash
         # The desktop suite runs in isolated shards below. Keep the remaining

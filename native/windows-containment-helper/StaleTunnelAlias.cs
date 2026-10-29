@@ -23,6 +23,9 @@ internal static class StaleTunnelAlias
     internal sealed record Request(string StateRoot, string Alias, string ProfileDirectory, bool RecoveryOnly = false,
         string? ExpectedTunnelId = null, int ExpectedPid = 0, string? ExpectedAliasesSha256 = null, string? ExpectedProcessesSha256 = null);
     internal sealed record Result(bool Recovered, string? AliasesSha256, string? ProcessesSha256);
+    internal sealed record StopRequest(string StateRoot, string Alias, string ProfileDirectory, string ClientPath,
+        string ExpectedTunnelId, int ExpectedPid, string ExpectedAliasesSha256, string ExpectedProcessesSha256);
+    internal sealed record StopResult(bool Stopped, bool AlreadyStopped, string AliasesSha256, string ProcessesSha256);
     private sealed record Journal(int Protocol, Request Binding, byte[] Aliases, byte[] Processes);
 #if NATIVE_CONTAINMENT_TESTS
     internal static Action<string>? TestFault { get; set; }
@@ -55,6 +58,9 @@ internal static class StaleTunnelAlias
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool QueryFullProcessImageName(SafeProcessHandle process, uint flags, StringBuilder path, ref uint length);
     [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateProcess(SafeProcessHandle process, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(SafeProcessHandle process, uint milliseconds);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "MoveFileExW")]
     private static extern bool ReplaceFile(string source, string destination, uint flags);
@@ -84,6 +90,39 @@ internal static class StaleTunnelAlias
         {
             var error = exception is IOException && exception.Message.StartsWith("TUNNEL_STALE_", StringComparison.Ordinal)
                 ? exception.Message : "TUNNEL_STALE_REFUSED";
+            response = new { ok = false, error };
+        }
+        await output.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(response, Json)).ConfigureAwait(false);
+        await output.FlushAsync().ConfigureAwait(false);
+        return exit;
+    }
+
+    internal static async Task<int> RunStopOwnedAsync(Stream input, Stream output)
+    {
+        object response;
+        var exit = 125;
+        try
+        {
+            using var bounded = new MemoryStream();
+            var buffer = new byte[4096];
+            int read;
+            while ((read = await input.ReadAsync(buffer).ConfigureAwait(false)) != 0)
+            {
+                if (bounded.Length + read > 32 * 1024) throw RefuseStop("REQUEST_INVALID");
+                bounded.Write(buffer, 0, read);
+            }
+            var bytes = bounded.ToArray();
+            ValidateJson(bytes);
+            var request = JsonSerializer.Deserialize<StopRequest>(bytes, Json) ?? throw RefuseStop("REQUEST_INVALID");
+            var result = await StopOwnedAsync(request).ConfigureAwait(false);
+            response = new { ok = true, stopped = result.Stopped, alreadyStopped = result.AlreadyStopped,
+                aliasesSha256 = result.AliasesSha256, processesSha256 = result.ProcessesSha256 };
+            exit = 0;
+        }
+        catch (Exception exception)
+        {
+            var error = exception is IOException && exception.Message.StartsWith("TUNNEL_STOP_", StringComparison.Ordinal)
+                ? exception.Message : "TUNNEL_STOP_REFUSED";
             response = new { ok = false, error };
         }
         await output.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(response, Json)).ConfigureAwait(false);
@@ -173,6 +212,142 @@ internal static class StaleTunnelAlias
                 || !ReadState(processesPath).AsSpan().SequenceEqual(newProcesses)) throw Refuse("READBACK_CHANGED");
             File.Delete(journalPath);
             return new Result(recovering, Hash(newAliases), Hash(newProcesses));
+        }
+        finally { stateLock.Unlock(0, 1); }
+    }
+
+    internal static async Task<StopResult> StopOwnedAsync(StopRequest request)
+    {
+        if (!OperatingSystem.IsWindows() || request.Alias != "lnwjud"
+            || !Path.IsPathFullyQualified(request.StateRoot) || !Path.IsPathFullyQualified(request.ProfileDirectory)
+            || !Path.IsPathFullyQualified(request.ClientPath) || request.ExpectedPid < 0
+            || String.IsNullOrWhiteSpace(request.ExpectedTunnelId) || request.ExpectedTunnelId.Length > 135
+            || !ValidHash(request.ExpectedAliasesSha256) || !ValidHash(request.ExpectedProcessesSha256))
+            throw RefuseStop("REQUEST_INVALID");
+
+        var root = Path.GetFullPath(request.StateRoot);
+        var profile = Path.GetFullPath(request.ProfileDirectory);
+        var client = Path.GetFullPath(request.ClientPath);
+        using var rootPin = PinnedDirectory.Open(root);
+        Directory.CreateDirectory(Path.Combine(root, "locks"));
+        using var locksPin = PinnedDirectory.Open(Path.Combine(root, "locks"));
+        using var stateLock = OpenRegular(Path.Combine(root, "locks", "state.lock"), write: true, share: 3, create: true);
+        var deadline = Environment.TickCount64 + 5000;
+        while (true)
+        {
+            try { stateLock.Lock(0, 1); break; }
+            catch (IOException exception) when ((exception.HResult & 0xffff) == 33 && Environment.TickCount64 < deadline)
+            { await Task.Delay(25).ConfigureAwait(false); }
+            catch (IOException) { throw RefuseStop("LOCK_UNAVAILABLE"); }
+        }
+
+        try
+        {
+            var aliasesPath = Path.Combine(root, "aliases.yaml");
+            var processesPath = Path.Combine(root, "processes.yaml");
+            if (File.Exists(Path.Combine(root, JournalName))) throw RefuseStop("RECOVERY_PENDING");
+            var aliasesBytes = ReadState(aliasesPath);
+            var processesBytes = ReadState(processesPath);
+            if (Hash(aliasesBytes) != request.ExpectedAliasesSha256 || Hash(processesBytes) != request.ExpectedProcessesSha256)
+                throw RefuseStop("SNAPSHOT_CHANGED");
+
+            var aliases = ParseMap(aliasesBytes);
+            var processes = ParseMap(processesBytes);
+            if (aliases[request.Alias] is not JsonObject alias
+                || Text(alias, "tunnel_id") != request.ExpectedTunnelId
+                || !SamePath(Text(alias, "profile_dir"), profile))
+                throw RefuseStop("IDENTITY_CHANGED");
+
+            if (processes[request.Alias] is not JsonObject process)
+            {
+                if (request.ExpectedPid != 0) throw RefuseStop("IDENTITY_CHANGED");
+                return new StopResult(true, true, Hash(aliasesBytes), Hash(processesBytes));
+            }
+            if (Text(process, "alias") != request.Alias || Text(process, "tunnel_id") != request.ExpectedTunnelId
+                || !SamePath(Text(process, "profile_dir"), profile))
+                throw RefuseStop("IDENTITY_CHANGED");
+
+            var mode = Text(process, "mode");
+            var pid = process["pid"]?.GetValue<int>() ?? 0;
+            if (mode == "stopped")
+            {
+                if (pid != 0 || request.ExpectedPid != 0) throw RefuseStop("IDENTITY_CHANGED");
+                return new StopResult(true, true, Hash(aliasesBytes), Hash(processesBytes));
+            }
+            if (mode != "process" || pid <= 0 || pid == Environment.ProcessId
+                || (request.ExpectedPid != 0 && pid != request.ExpectedPid))
+                throw RefuseStop("IDENTITY_CHANGED");
+
+            var started = Text(process, "pid_start_time");
+            var executable = Text(process, "pid_executable");
+            if (!long.TryParse(started, NumberStyles.None, CultureInfo.InvariantCulture, out var start) || start <= 0
+                || !Path.IsPathFullyQualified(executable.Trim()) || !SamePath(executable, client))
+                throw RefuseStop("PROCESS_IDENTITY_INCOMPLETE");
+
+            if (!ReadState(aliasesPath).AsSpan().SequenceEqual(aliasesBytes)
+                || !ReadState(processesPath).AsSpan().SequenceEqual(processesBytes))
+                throw RefuseStop("SNAPSHOT_CHANGED");
+
+            var alreadyStopped = false;
+            using (var processPin = OpenProcess(0x00101001, false, (uint)pid))
+            {
+                if (processPin.IsInvalid)
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error != 87) throw RefuseStop("PROCESS_UNVERIFIED");
+                    alreadyStopped = true;
+                }
+                else
+                {
+                    var state = WaitForSingleObject(processPin, 0);
+                    if (state == 0) alreadyStopped = true;
+                    else if (state != 258) throw RefuseStop("PROCESS_UNVERIFIED");
+                    else
+                    {
+                        if (!GetProcessTimes(processPin, out var creation, out _, out _, out _))
+                            throw RefuseStop("PROCESS_UNVERIFIED");
+                        var image = new StringBuilder(32768);
+                        var length = (uint)image.Capacity;
+                        if (!QueryFullProcessImageName(processPin, 0, image, ref length))
+                            throw RefuseStop("PROCESS_UNVERIFIED");
+                        var actualStart = checked((creation - 116444736000000000L) * 100).ToString(CultureInfo.InvariantCulture);
+                        if (actualStart != started || !SamePath(image.ToString(), executable) || !SamePath(image.ToString(), client))
+                            throw RefuseStop("PROCESS_IDENTITY_CHANGED");
+
+                        Fault("before-stop");
+                        if (!ReadState(aliasesPath).AsSpan().SequenceEqual(aliasesBytes)
+                            || !ReadState(processesPath).AsSpan().SequenceEqual(processesBytes))
+                            throw RefuseStop("SNAPSHOT_CHANGED");
+
+                        if (!TerminateProcess(processPin, 1))
+                        {
+                            if (WaitForSingleObject(processPin, 10_000) != 0)
+                                throw RefuseStop("SIGNAL_FAILED");
+                        }
+                        else if (WaitForSingleObject(processPin, 10_000) != 0)
+                        {
+                            throw RefuseStop("WAIT_TIMEOUT");
+                        }
+                    }
+                }
+            }
+
+            if (!ReadState(aliasesPath).AsSpan().SequenceEqual(aliasesBytes)
+                || !ReadState(processesPath).AsSpan().SequenceEqual(processesBytes))
+                throw RefuseStop("SNAPSHOT_CHANGED");
+
+            process["mode"] = "stopped";
+            process["session_name"] = "";
+            process["tmux_socket"] = "";
+            process["pid"] = 0;
+            process["pid_start_time"] = "";
+            process["pid_executable"] = "";
+            var newProcesses = JsonSerializer.SerializeToUtf8Bytes(processes);
+            Publish(root, processesPath, newProcesses);
+            if (!ReadState(aliasesPath).AsSpan().SequenceEqual(aliasesBytes)
+                || !ReadState(processesPath).AsSpan().SequenceEqual(newProcesses))
+                throw RefuseStop("READBACK_CHANGED");
+            return new StopResult(true, alreadyStopped, Hash(aliasesBytes), Hash(newProcesses));
         }
         finally { stateLock.Unlock(0, 1); }
     }
@@ -303,5 +478,6 @@ internal static class StaleTunnelAlias
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(second.Trim())), StringComparison.OrdinalIgnoreCase);
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     private static bool ValidHash(string? value) => value is { Length: 64 } && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+    private static IOException RefuseStop(string code) => new("TUNNEL_STOP_" + code);
     private static IOException Refuse(string code) => new("TUNNEL_STALE_" + code);
 }

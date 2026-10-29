@@ -723,7 +723,9 @@ export class ToolRegistry {
       });
       const execution = await this.executeWithinResponseBudget(
         tool,
-        approvalExecutionInput,
+        WORKSPACE_WRITER_LEASE_CONTROL_TOOLS.has(tool.name) && writerLease !== undefined && isRecord(approvalExecutionInput)
+          ? { ...approvalExecutionInput, writerLease }
+          : approvalExecutionInput,
         invocationAuthorization,
         parentSignal,
         goalLease === undefined ? undefined : goalLease.goalId,
@@ -781,6 +783,9 @@ export class ToolRegistry {
         describeStructuredResultDetail(sanitizedDiagnostic),
       );
       return response;
+    } finally {
+      await workspaceWriterLeaseEnd?.().catch(() => undefined);
+      await fencedMutationEnd?.().catch(() => undefined);
     }
   }
 

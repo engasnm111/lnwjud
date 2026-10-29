@@ -7,6 +7,7 @@ import {
   isFreshTunnelSetup,
   isTunnelConfigured,
   isTunnelRunning,
+  tunnelControlAvailability,
   readGuidedTunnelSetupState,
   writeGuidedTunnelSetupState,
 } from '../src/renderer/features/onboarding/guided-tunnel-setup-state.js';
@@ -106,6 +107,67 @@ describe('guided tunnel setup state', () => {
     expect(isTunnelConfigured(pristineTunnel({ hasApiKey: true }))).toBe(false);
     expect(isTunnelRunning(pristineTunnel({ state: 'running', source: 'external', hasApiKey: true, profileExists: true }))).toBe(true);
     expect(isTunnelRunning(pristineTunnel({ state: 'running', source: 'desktop', hasApiKey: true, profileExists: true }))).toBe(true);
+  });
+
+  it('keeps Stop available and blocks Start when a persistent alias may still be active', () => {
+    const staleAlias = pristineTunnel({
+      persistent: {
+        enabled: true,
+        tunnelIdMasked: 'tunnel_0123********cdef',
+        runtimeAlias: 'lnwjud',
+        runtimeAliasActive: true,
+        mode: 'native-managed',
+        state: 'running',
+        healthy: null,
+        ready: null,
+        pollHealthy: null,
+        reconnectCount: 0,
+        lastConnectedAt: null,
+        lastReconnectAt: null,
+        nextReconnectAt: null,
+        lastErrorCode: null,
+        clientVersion: null,
+        localMcpUrl: null,
+        uiUrl: null,
+        readyBeforeRetire: false,
+        strictZeroDowntime: false,
+        capabilityEvidence: null,
+      },
+    });
+    const idle = { startPending: false, stopPending: false };
+
+    expect(tunnelControlAvailability(staleAlias, idle).startDisabled).toBe(true);
+    expect(tunnelControlAvailability(pristineTunnel({
+      persistent: { ...staleAlias.persistent!, state: 'stopped' },
+    }), idle).startDisabled).toBe(true);
+    expect(tunnelControlAvailability(staleAlias, idle).stopDisabled).toBe(false);
+    expect(tunnelControlAvailability(pristineTunnel({ state: 'starting', persistent: staleAlias.persistent }), idle).stopDisabled).toBe(false);
+    expect(tunnelControlAvailability(pristineTunnel({
+      persistent: { ...staleAlias.persistent!, state: 'starting' },
+    }), idle).stopDisabled).toBe(false);
+    expect(tunnelControlAvailability(pristineTunnel({
+      ...staleAlias,
+      persistent: {
+        ...staleAlias.persistent!,
+        runtimeAliasActive: false,
+        state: 'error',
+      },
+    }), idle).stopDisabled).toBe(false);
+    expect(tunnelControlAvailability(pristineTunnel(), idle).stopDisabled).toBe(true);
+  });
+
+  it('allows Stop to interrupt Start while preventing duplicate Starts', () => {
+    expect(tunnelControlAvailability(pristineTunnel(), { startPending: true, stopPending: false })).toEqual({
+      startDisabled: true,
+      stopDisabled: false,
+    });
+  });
+
+  it('locks both actions while Stop is already pending', () => {
+    expect(tunnelControlAvailability(pristineTunnel({ state: 'running' }), { startPending: false, stopPending: true })).toEqual({
+      startDisabled: true,
+      stopDisabled: true,
+    });
   });
 
   it('changes the launch signature only when real prerequisites or runtime liveness change', () => {

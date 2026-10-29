@@ -118,6 +118,42 @@ internal sealed class ContainedProcess : IDisposable
     internal static ContainedProcess Start(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null) =>
         StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName);
 
+    internal sealed class LaunchOwnership
+    {
+        private ContainedProcess? instance;
+        private bool zero;
+        internal void Attach(ContainedProcess value)
+        {
+            if (instance is not null) throw new InvalidOperationException("LAUNCH_ALREADY_OWNED");
+            instance = value;
+        }
+        internal bool CancelAndObserveZero(TimeSpan limit)
+        {
+            if (instance is null || zero) return true;
+            var timer = Stopwatch.StartNew();
+            do
+            {
+                try
+                {
+                    if (instance.job == 0 || instance.ActiveProcesses == 0) { zero = true; return true; }
+                }
+                catch { }
+                try { instance.Cancel(); } catch { }
+                Thread.Sleep(10);
+            } while (timer.Elapsed < limit);
+            return false;
+        }
+        internal void ReleaseAfterZero()
+        {
+            if (instance is not null && !zero) throw new InvalidOperationException("LAUNCH_CLEANUP_UNPROVED");
+            instance?.Dispose();
+        }
+    }
+
+    internal static ContainedProcess Start(string executable, string[] arguments, string cwd,
+        IReadOnlyDictionary<string, string> environment, nint standardOutput, nint standardError, LaunchOwnership ownership) =>
+        StartCore(0, executable, arguments, cwd, false, environment, standardOutput, standardError, null, null, null, ownership);
+
     internal static ContainedProcess StartAsUser(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null)
     {
         if (primaryToken == 0 || primaryToken == -1) throw new IOException("CONTAINMENT_CALLER_TOKEN_INVALID");
@@ -126,10 +162,11 @@ internal sealed class ContainedProcess : IDisposable
         return StartCore(primaryToken, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName);
     }
 
-    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName)
+    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName, LaunchOwnership? ownership = null)
     {
         if (!Path.IsPathFullyQualified(executable) || !Path.IsPathFullyQualified(cwd)) throw new IOException("CONTAINMENT_ABSOLUTE_PATH_REQUIRED");
         var instance = new ContainedProcess();
+        ownership?.Attach(instance);
         ProcessInfo child = default;
         nint attributes = 0, jobList = 0, handles = 0, input = 0, output = 0, error = 0, environmentBlock = 0;
         bool initialized = false;
@@ -167,14 +204,17 @@ internal sealed class ContainedProcess : IDisposable
             var startup = new StartupEx { Startup = new Startup { Size = (uint)Marshal.SizeOf<StartupEx>(), Flags = 0x100, Input = input, Output = output, Error = error, Desktop = 0 }, Attributes = attributes };
             var environmentText = string.Join('\0', environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(pair => pair.Key + "=" + pair.Value)) + "\0\0";
             environmentBlock = Marshal.StringToHGlobalUni(environmentText);
+#if NATIVE_CONTAINMENT_TESTS
+            Fault?.Invoke("before_process_create", 0);
+#endif
             var created = primaryToken == 0
                 ? CreateProcess(executable, command, 0, 0, true, CreateSuspended | ExtendedStartup | UnicodeEnvironment | CreateNoWindow, environmentBlock, cwd, ref startup, out child)
                 : CreateProcessAsUser(primaryToken, executable, command, 0, 0, true, CreateSuspended | ExtendedStartup | UnicodeEnvironment | CreateNoWindow, environmentBlock, cwd, ref startup, out child);
             Check(created, "CREATE_PROCESS");
+            instance.process = child.Process; instance.ProcessId = child.ProcessId;
 #if NATIVE_CONTAINMENT_TESTS
             Fault?.Invoke("after_create_before_membership", child.ProcessId);
 #endif
-            instance.process = child.Process; instance.ProcessId = child.ProcessId;
             Check(IsProcessInJob(child.Process, instance.job, out var contained) && contained, "JOB_MEMBERSHIP");
 #if NATIVE_CONTAINMENT_TESTS
             Fault?.Invoke("before_resume", child.ProcessId);
@@ -191,10 +231,16 @@ internal sealed class ContainedProcess : IDisposable
                 throw new OperationCanceledException();
             }
             beforeResume?.Invoke(child.ProcessId);
+#if NATIVE_CONTAINMENT_TESTS
+            Fault?.Invoke("after_registration_before_resume", child.ProcessId);
+#endif
             Check(ResumeThread(child.Thread) == 1, "RESUME");
+#if NATIVE_CONTAINMENT_TESTS
+            Fault?.Invoke("after_resume_before_reply", child.ProcessId);
+#endif
             return instance;
         }
-        catch { instance.Dispose(); throw; }
+        catch { if (ownership is null) instance.Dispose(); throw; }
         finally
         {
             if (child.Thread != 0) CloseHandle(child.Thread);
@@ -203,7 +249,17 @@ internal sealed class ContainedProcess : IDisposable
             foreach (var allocation in new[] { attributes, jobList, handles, environmentBlock }) if (allocation != 0) Marshal.FreeHGlobal(allocation);
         }
     }
-    internal uint ActiveProcesses { get { Check(QueryInformationJobObject(job, 1, out var info, (uint)Marshal.SizeOf<Accounting>(), 0), "JOB_QUERY"); return info.ActiveProcesses; } }
+    internal uint ActiveProcesses
+    {
+        get
+        {
+#if NATIVE_CONTAINMENT_TESTS
+            Fault?.Invoke("before_job_query", ProcessId);
+#endif
+            Check(QueryInformationJobObject(job, 1, out var info, (uint)Marshal.SizeOf<Accounting>(), 0), "JOB_QUERY");
+            return info.ActiveProcesses;
+        }
+    }
     internal int ExitCode { get { Check(GetExitCodeProcess(process, out var code), "EXIT_CODE"); return unchecked((int)code); } }
     internal void Cancel()
     {

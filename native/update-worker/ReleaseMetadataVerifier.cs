@@ -165,6 +165,13 @@ internal static class ReleaseMetadataVerifier
 
     private static SignedRelease Authenticate(ReadOnlySpan<byte> envelope, ReleaseTrustPolicy policy, ReleaseSchema schema)
     {
+        var (payload, root, payloadDigest) = AuthenticatePayload(envelope, policy, schema, Domain);
+        return new SignedRelease(payload, root, ReleaseTrustPolicy.Hash(envelope), payloadDigest);
+    }
+
+    internal static (JsonElement Payload, ReleaseRoot Root, string PayloadDigest) AuthenticatePayload(ReadOnlySpan<byte> envelope,
+        ReleaseTrustPolicy policy, ReleaseSchema schema, ReadOnlySpan<byte> domain, string payloadName = "payload")
+    {
         using var outer = ReleaseJson.Parse(envelope, schema.EnvelopeBytes, schema.Depth);
         schema.Validate("envelope", outer.RootElement);
         var keyId = ReleaseValues.Text(outer.RootElement, "keyId");
@@ -173,11 +180,23 @@ internal static class ReleaseMetadataVerifier
         var payload = ReleaseValues.Base64(ReleaseValues.Text(outer.RootElement, "payload"));
         var signature = ReleaseValues.Base64(ReleaseValues.Text(outer.RootElement, "signature"));
         if (payload.Length > schema.PayloadBytes || signature.Length != 64) throw new Refusal("RELEASE_SIGNATURE_INVALID");
-        var signed = new byte[Domain.Length + payload.Length]; Domain.CopyTo(signed, 0); payload.CopyTo(signed, Domain.Length);
+        var signed = new byte[domain.Length + payload.Length]; domain.CopyTo(signed); payload.CopyTo(signed.AsSpan(domain.Length));
         using var key = ECDsa.Create(); key.ImportSubjectPublicKeyInfo(root.Spki, out var consumed);
         if (consumed != root.Spki.Length || !key.VerifyData(signed, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation)) throw new Refusal("RELEASE_SIGNATURE_INVALID");
-        using var decoded = ReleaseJson.Parse(payload, schema.PayloadBytes, schema.Depth); schema.Validate("payload", decoded.RootElement);
-        return new SignedRelease(decoded.RootElement, root, ReleaseTrustPolicy.Hash(envelope), ReleaseTrustPolicy.Hash(payload));
+        using var decoded = ReleaseJson.Parse(payload, schema.PayloadBytes, schema.Depth); schema.Validate(payloadName, decoded.RootElement);
+        return (decoded.RootElement.Clone(), root, ReleaseTrustPolicy.Hash(payload));
+    }
+
+    internal static SignedRelease AuthenticateInitial(byte[] envelope, ReleaseTrustPolicy policy, ReleaseSchema schema, ReleaseTimeObservation time)
+    {
+        if (!policy.Configured) throw new Refusal("RELEASE_TRUST_UNCONFIGURED");
+        if (!time.Usable || time.UnixSeconds > 253402300799) throw new Refusal("RELEASE_TIME_UNAVAILABLE");
+        var release = Authenticate(envelope, policy, schema);
+        ValidateDomain(release, policy);
+        ValidateTime(release, policy, time.UnixSeconds);
+        if (release.Text("platform") != "win32" || release.Text("architecture") != "x64"
+            || release.Text("distribution") != "windows-nsis") throw new Refusal("RELEASE_TARGET_UNSUPPORTED");
+        return release;
     }
 
     private static void ValidateDomain(SignedRelease release, ReleaseTrustPolicy policy)
@@ -185,12 +204,15 @@ internal static class ReleaseMetadataVerifier
         var payload = release.Payload;
         if (payload.GetProperty("policyRevision").GetInt32() != policy.Revision) throw new Refusal("RELEASE_POLICY_REVISION_MISMATCH");
         var source = payload.GetProperty("source");
-        if (!policy.Sources.Contains(new ReleaseSourceAuthority(ReleaseValues.Text(source, "repository"), ReleaseValues.Text(source, "workflow"), ReleaseValues.Text(source, "ref")))) throw new Refusal("RELEASE_SOURCE_UNTRUSTED");
-        CheckIdentity(release.Artifact, release.Text("version"), release.Provenance, policy);
+        _ = policy.SelectSource(ReleaseValues.Text(source, "repository"), ReleaseValues.Text(source, "workflow"), ReleaseValues.Text(source, "ref"));
+        var platform = release.Text("platform");
+        var architecture = release.Text("architecture");
+        var distribution = release.Text("distribution");
+        CheckIdentity(release.Artifact, ExpectedArtifactName(platform, architecture, distribution, release.Text("version")), release.Provenance, policy);
         var previous = payload.GetProperty("previous");
         var previousArtifact = SignedRelease.Identity(previous.GetProperty("artifact"));
         var previousProvenance = SignedRelease.Identity(previous.GetProperty("provenance"));
-        CheckIdentity(previousArtifact, ReleaseValues.Text(previous, "version"), previousProvenance, policy);
+        CheckIdentity(previousArtifact, ExpectedArtifactName(platform, architecture, distribution, ReleaseValues.Text(previous, "version")), previousProvenance, policy);
         var recovery = payload.GetProperty("recoveryAuthorization");
         if (ReleaseValues.Text(recovery, "candidateArtifactSha256") != release.Artifact.Sha256
             || ReleaseValues.Number(recovery, "candidateReleaseSequence") != release.Number("releaseSequence")
@@ -200,9 +222,15 @@ internal static class ReleaseMetadataVerifier
             || ReleaseValues.Number(recovery, "expiresAt") > release.Number("expiresAt")
             || ReleaseValues.Number(recovery, "expiresAt") <= release.Number("issuedAt")) throw new Refusal("RELEASE_RECOVERY_BINDING_INVALID");
     }
-    private static void CheckIdentity(ReleaseArtifact artifact, string version, ReleaseArtifact provenance, ReleaseTrustPolicy policy)
+    internal static string ExpectedArtifactName(string platform, string architecture, string distribution, string version)
     {
-        if (artifact.Name != "lnwjud-Setup-" + version + ".exe" || provenance.Name != "PROVENANCE.json"
+        if (platform == "win32" && architecture == "x64" && distribution == "windows-nsis") return "lnwjud-Setup-" + version + ".exe";
+        if (platform == "darwin" && architecture is "x64" or "arm64" && distribution == "macos-zip") return $"lnwjud-{version}-{architecture}.zip";
+        throw new Refusal("RELEASE_TARGET_UNSUPPORTED");
+    }
+    internal static void CheckIdentity(ReleaseArtifact artifact, string expectedName, ReleaseArtifact provenance, ReleaseTrustPolicy policy)
+    {
+        if (artifact.Name != expectedName || provenance.Name != "PROVENANCE.json"
             || artifact.SizeBytes > policy.MaximumPackage || provenance.SizeBytes > policy.MaximumProvenance) throw new Refusal("RELEASE_ARTIFACT_IDENTITY_INVALID");
     }
     private static void CheckUpgrade(SignedRelease current, RetainedInstallationBaseline baseline)
@@ -227,6 +255,9 @@ internal static class ReleaseMetadataVerifier
         ValidateDomain(original, policy); ValidateTime(original, policy, baseline.AcceptedAt);
         var previous = candidate.Payload.GetProperty("previous");
         if (original.Text("version") != baseline.Version || original.Number("releaseSequence") != baseline.Sequence
+            || original.Text("platform") != candidate.Text("platform")
+            || original.Text("architecture") != candidate.Text("architecture")
+            || original.Text("distribution") != candidate.Text("distribution")
             || original.Artifact != baseline.Artifact || original.Provenance != baseline.Provenance || original.Contracts != baseline.Contracts
             || ReleaseValues.Text(previous, "version") != baseline.Version || ReleaseValues.Number(previous, "releaseSequence") != baseline.Sequence
             || ReleaseValues.Text(previous, "envelopeSha256") != baseline.EnvelopeSha256

@@ -28,7 +28,7 @@ export async function authenticatePrevious(payload, paths, policy, now) {
   return previous;
 }
 
-export async function publishEnvelope(filename, bytes) {
+export async function publishEnvelope(filename, bytes, beforePublish = () => {}) {
   const destination = path.resolve(filename);
   const directory = path.dirname(destination);
   if (await realpath(directory) !== directory) refuse('RELEASE_OUTPUT_INVALID');
@@ -38,6 +38,7 @@ export async function publishEnvelope(filename, bytes) {
     const file = await open(temporary, 'wx', 0o600);
     created = true;
     try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
+    beforePublish();
     await link(temporary, destination);
   } finally {
     if (created) await unlink(temporary);

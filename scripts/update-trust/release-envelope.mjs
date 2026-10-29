@@ -4,7 +4,15 @@ import { Buffer } from 'node:buffer';
 import { URL } from 'node:url';
 import { TextDecoder } from 'node:util';
 
-export const schema = JSON.parse(readFileSync(new URL('../../config/update-release-schema.json', import.meta.url), 'utf8'));
+function freezeSchema(value) {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) freezeSchema(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export const schema = freezeSchema(JSON.parse(readFileSync(new URL('../../config/update-release-schema.json', import.meta.url), 'utf8')));
 export const domain = Buffer.from('lnwjud-update-release-v1\0', 'ascii');
 export const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 export function refuse(code) { throw new Error(code); }
@@ -90,7 +98,7 @@ export function parseStrictJson(bytes, maximum, maxDepth = schema.limits.maxDept
 }
 
 export function canonicalBase64(text, maximum) {
-  if (typeof text !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text)) refuse('RELEASE_SCHEMA_INVALID');
+  if (typeof text !== 'string' || text.length === 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text)) refuse('RELEASE_SCHEMA_INVALID');
   const bytes = Buffer.from(text, 'base64');
   if (bytes.length > maximum || bytes.toString('base64') !== text) refuse('RELEASE_SCHEMA_INVALID');
   return bytes;
@@ -102,14 +110,14 @@ function decimal(text, maximum, positive = false) {
   return number <= maximum && (!positive || number > 0n);
 }
 
-export function validateShape(value, name) {
-  const descriptor = schema.objects[name];
+export function validateShape(value, name, definition = schema) {
+  const descriptor = definition.objects[name];
   if (descriptor === undefined || value === null || typeof value !== 'object' || Array.isArray(value)) refuse('RELEASE_SCHEMA_INVALID');
   const fields = descriptor.fields;
   if (Object.keys(value).length !== Object.keys(fields).length || Object.keys(value).some(key => !Object.hasOwn(fields, key))) refuse('RELEASE_SCHEMA_INVALID');
   for (const [key, rule] of Object.entries(fields)) {
     const item = value[key];
-    if (rule.kind === 'object') { validateShape(item, rule.object); continue; }
+    if (rule.kind === 'object') { validateShape(item, rule.object, definition); continue; }
     if (rule.kind === 'integer') {
       if (!Number.isSafeInteger(item) || rule.min !== undefined && item < rule.min || rule.max !== undefined && item > rule.max) refuse('RELEASE_SCHEMA_INVALID');
     } else if (rule.kind === 'string') {
@@ -117,7 +125,7 @@ export function validateShape(value, name) {
         || rule.pattern !== undefined && !new RegExp(rule.pattern).test(item)) refuse('RELEASE_SCHEMA_INVALID');
       switch (rule.format) {
         case undefined: break;
-        case 'base64': canonicalBase64(item, schema.limits.payloadBytes); break;
+        case 'base64': canonicalBase64(item, definition.limits.payloadBytes); break;
         case 'sha1': if (!/^[a-f0-9]{40}$/.test(item)) refuse('RELEASE_SCHEMA_INVALID'); break;
         case 'sha256': if (!/^[a-f0-9]{64}$/.test(item)) refuse('RELEASE_SCHEMA_INVALID'); break;
         case 'positive-uint64': if (!decimal(item, 18446744073709551615n, true)) refuse('RELEASE_SCHEMA_INVALID'); break;
@@ -173,7 +181,7 @@ export function requireConfigured(policy) {
   }
 }
 
-function rootKey(policy, keyId, now, historical = false) {
+export function rootKey(policy, keyId, now, historical = false) {
   const roots = policy.roots.filter(root => root.keyId === keyId);
   if (roots.length !== 1) refuse('RELEASE_KEY_UNTRUSTED');
   const root = roots[0];
@@ -203,8 +211,10 @@ export function validateRelationships(payload, policy, now) {
   if (issued !== BigInt(payload.notBefore) || expiry <= issued || now < issued || now >= expiry
     || issued > now + BigInt(policy.limits.maximumFutureSkewSeconds)
     || expiry - issued > BigInt(policy.limits.maximumValiditySeconds)) refuse('RELEASE_TIME_INVALID');
-  if (payload.artifact.name !== `lnwjud-Setup-${payload.version}.exe` || payload.provenance.name !== 'PROVENANCE.json'
-    || payload.previous.artifact.name !== `lnwjud-Setup-${payload.previous.version}.exe` || payload.previous.provenance.name !== 'PROVENANCE.json'
+  const artifactName = expectedArtifactName(payload.platform, payload.architecture, payload.distribution, payload.version);
+  const previousArtifactName = expectedArtifactName(payload.platform, payload.architecture, payload.distribution, payload.previous.version);
+  if (payload.artifact.name !== artifactName || payload.provenance.name !== 'PROVENANCE.json'
+    || payload.previous.artifact.name !== previousArtifactName || payload.previous.provenance.name !== 'PROVENANCE.json'
     || [payload.artifact, payload.previous.artifact].some(identity => BigInt(identity.sizeBytes) > BigInt(policy.limits.maximumPackageBytes))
     || [payload.provenance, payload.previous.provenance].some(identity => BigInt(identity.sizeBytes) > BigInt(policy.limits.maximumProvenanceBytes))) refuse('RELEASE_ARTIFACT_INVALID');
   const currentVersion = payload.version.split('.').map(BigInt);
@@ -217,6 +227,13 @@ export function validateRelationships(payload, policy, now) {
     || recovery.previousEnvelopeSha256 !== payload.previous.envelopeSha256
     || recovery.previousArtifactSha256 !== payload.previous.artifact.sha256 || recovery.previousProvenanceSha256 !== payload.previous.provenance.sha256
     || BigInt(recovery.expiresAt) > expiry || BigInt(recovery.expiresAt) <= now) refuse('RELEASE_RECOVERY_INVALID');
+}
+
+export function expectedArtifactName(platform, architecture, distribution, version) {
+  if (platform === 'win32' && architecture === 'x64' && distribution === 'windows-nsis') return `lnwjud-Setup-${version}.exe`;
+  if (platform === 'darwin' && (architecture === 'x64' || architecture === 'arm64') && distribution === 'macos-zip')
+    return `lnwjud-${version}-${architecture}.zip`;
+  refuse('RELEASE_TARGET_UNSUPPORTED');
 }
 
 export function authenticateEnvelope(bytes, policy, now) {

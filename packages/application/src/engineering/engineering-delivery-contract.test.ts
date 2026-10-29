@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { symlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_ENGINEERING_HARNESS_SETTINGS } from '@lnwjud/shared';
@@ -29,6 +30,57 @@ describe('host delivery contract', () => {
     expect(after.state).toBe('present');
     expect(after).not.toEqual(before);
     expect(JSON.stringify(after)).not.toContain('private-');
+  });
+  it('excludes ignored environment files and generated output directories from source identity', async () => {
+    const root = await fixture();
+    execFileSync('git', ['init', root], { windowsHide: true });
+    await writeFile(path.join(root, '.gitignore'), '.env.local\n.local-artifacts/\n.pnpm-store/\nbin/\n');
+    await writeFile(path.join(root, '.env.local'), 'private-before');
+    for (const directory of ['.local-artifacts', '.pnpm-store', 'bin']) {
+      await mkdir(path.join(root, directory), { recursive: true });
+      await writeFile(path.join(root, directory, 'generated.bin'), 'output-before');
+    }
+
+    const before = await observeSourceSnapshot(root);
+    expect(before.state).toBe('present');
+    await writeFile(path.join(root, '.env.local'), 'private-after');
+    for (const directory of ['.local-artifacts', '.pnpm-store', 'bin']) {
+      await writeFile(path.join(root, directory, 'generated.bin'), 'output-after');
+    }
+    expect(await observeSourceSnapshot(root)).toEqual(before);
+
+    const noGitRoot = await fixture();
+    await writeFile(path.join(noGitRoot, '.env.local'), 'private-before');
+    const noGitBefore = await observeSourceSnapshot(noGitRoot, false);
+    expect(noGitBefore.state).toBe('present');
+    await writeFile(path.join(noGitRoot, '.env.local'), 'private-after');
+    expect(await observeSourceSnapshot(noGitRoot, false)).toEqual(noGitBefore);
+  });
+  it('does not follow ignored symlinks into external local state', async () => {
+    const root = await fixture();
+    const external = await mkdtemp(path.join(tmpdir(), 'engineering-external-'));
+    roots.push(external);
+    execFileSync('git', ['init', root], { windowsHide: true });
+    await writeFile(path.join(root, '.gitignore'), 'external-link\n');
+    await writeFile(path.join(external, 'private.json'), 'before');
+    await symlink(external, path.join(root, 'external-link'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    const before = await observeSourceSnapshot(root);
+    expect(before.state).toBe('present');
+    await writeFile(path.join(external, 'private.json'), 'after');
+    expect(await observeSourceSnapshot(root)).toEqual(before);
+  });
+  it('binds tracked files deleted from the working tree as explicit tombstones', async () => {
+    const root = await fixture();
+    execFileSync('git', ['init', root], { windowsHide: true });
+    execFileSync('git', ['add', 'worker.js', 'wrangler.toml'], { cwd: root, windowsHide: true });
+    const before = await observeSourceSnapshot(root);
+    expect(before.state).toBe('present');
+
+    await rm(path.join(root, 'worker.js'));
+    const after = await observeSourceSnapshot(root);
+    expect(after.state).toBe('present');
+    expect(after).not.toEqual(before);
   });
   it('requires CI by default and justifies N/A only for explicit local policy plus observed absence', async () => {
     const facts = await observeEngineeringCapabilities(await fixture());

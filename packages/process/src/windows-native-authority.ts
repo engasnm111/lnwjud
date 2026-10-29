@@ -32,6 +32,16 @@ export type StaleTunnelAliasCleanupRequest = StaleTunnelAliasCleanupLocation & (
   readonly expectedAliasesSha256: string;
   readonly expectedProcessesSha256: string;
 });
+export interface StopOwnedTunnelRequest {
+  readonly stateRoot: string;
+  readonly alias: 'lnwjud';
+  readonly profileDirectory: string;
+  readonly clientPath: string;
+  readonly expectedTunnelId: string;
+  readonly expectedPid: number;
+  readonly expectedAliasesSha256: string;
+  readonly expectedProcessesSha256: string;
+}
 export type NativeProcessObservation =
   | { readonly state: 'launch_not_started'; readonly binding: NativeAttemptBinding }
   | { readonly state: 'running'; readonly binding: NativeAttemptBinding; readonly targetPid: number }
@@ -140,6 +150,57 @@ export class WindowsNativeAuthority {
       if (typeof result.processesSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(result.processesSha256)
         || typeof result.aliasesSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(result.aliasesSha256)) {
         throw new Error('TUNNEL_STALE_RESPONSE_INVALID');
+      }
+    } finally {
+      if (!complete) child.kill();
+      pinned.close();
+    }
+  }
+
+  /** Stops only the positively identified lnwjud alias process through the pinned local helper. */
+  public async stopOwnedTunnel(request: StopOwnedTunnelRequest): Promise<void> {
+    if (process.platform !== 'win32') throw new Error('TUNNEL_STOP_WINDOWS_REQUIRED');
+    if (request.alias !== 'lnwjud' || !path.isAbsolute(request.stateRoot) || !path.isAbsolute(request.profileDirectory)
+      || !path.isAbsolute(request.clientPath) || !/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(request.expectedTunnelId)
+      || !Number.isSafeInteger(request.expectedPid) || request.expectedPid <= 0
+      || !/^[a-f0-9]{64}$/i.test(request.expectedAliasesSha256) || !/^[a-f0-9]{64}$/i.test(request.expectedProcessesSha256)) {
+      throw new Error('TUNNEL_STOP_REQUEST_INVALID');
+    }
+    const payload = Buffer.from(JSON.stringify(request), 'utf8');
+    if (payload.length > 16 * 1024) throw new Error('TUNNEL_STOP_REQUEST_TOO_LARGE');
+    const pinned = await pinVerifiedHelper(this.configuration);
+    const child = spawn(this.configuration.helper.executable, ['stop-owned-tunnel'], {
+      windowsHide: true, shell: false, env: helperEnvironment(), stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let complete = false;
+    try {
+      const output: Buffer[] = [];
+      let outputBytes = 0;
+      let overflow = false;
+      child.stdout.on('data', (chunk: Buffer) => {
+        outputBytes += chunk.length;
+        if (outputBytes > 16 * 1024) { overflow = true; child.kill(); return; }
+        output.push(Buffer.from(chunk));
+      });
+      child.stderr.resume();
+      const completion = childCompletion(child, 20_000);
+      child.stdin.on('error', (): void => undefined);
+      child.stdin.end(payload);
+      const exitCode = await completion;
+      complete = true;
+      if (overflow || outputBytes === 0) throw new Error('TUNNEL_STOP_RESPONSE_INVALID');
+      const result: unknown = JSON.parse(Buffer.concat(output).toString('utf8'));
+      if (!isRecord(result)) throw new Error('TUNNEL_STOP_RESPONSE_INVALID');
+      if (exitCode !== 0 || result.ok !== true) {
+        throw new Error(typeof result.error === 'string' && /^TUNNEL_STOP_[A-Z_]+$/.test(result.error)
+          ? result.error : 'TUNNEL_STOP_REFUSED');
+      }
+      if (result.stopped !== true
+        || typeof result.aliasesSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(result.aliasesSha256)
+        || result.aliasesSha256.toLowerCase() !== request.expectedAliasesSha256.toLowerCase()
+        || typeof result.processesSha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(result.processesSha256)
+        || result.processesSha256.toLowerCase() === request.expectedProcessesSha256.toLowerCase()) {
+        throw new Error('TUNNEL_STOP_RESPONSE_INVALID');
       }
     } finally {
       if (!complete) child.kill();

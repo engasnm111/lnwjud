@@ -31,13 +31,14 @@ const baseDashboard: DashboardSnapshot = {
   appVersion: '4.6.1',
 };
 
-function render(dashboard: DashboardSnapshot, locale: 'th' | 'en' = 'en'): string {
+function render(dashboard: DashboardSnapshot, locale: 'th' | 'en' = 'en', tunnelStartPending = false): string {
   return renderToStaticMarkup(createElement(ControlCenterPage, {
     dashboard,
     locale,
     workspaces: [],
     mcpBusy: false,
     tunnelBusy: false,
+    tunnelStartPending,
     onRefresh: async () => undefined,
     onStopMcp: async () => undefined,
     onRestartMcp: async () => undefined,
@@ -56,16 +57,20 @@ function render(dashboard: DashboardSnapshot, locale: 'th' | 'en' = 'en'): strin
 }
 
 describe('Security Overview', () => {
-  it('locks both Tunnel controls while a runtime is starting and restores the valid action afterward', () => {
+  it('keeps Start locked while starting but allows Stop to cancel it', () => {
     const configuredTunnel = {
       ...baseDashboard.tunnel,
       hasApiKey: true,
       runtimeCredentialAvailable: true,
       profileExists: true,
     };
-    const starting = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'starting' } });
+    const starting = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'starting' } }, 'en', true);
     expect(starting).toMatch(/<button(?=[^>]*disabled="")[^>]*>Start Tunnel<\/button>/);
-    expect(starting).toMatch(/<button(?=[^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
+    expect(starting).toMatch(/<button(?![^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
+
+    const pendingBeforeStatusRefresh = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'stopped' } }, 'en', true);
+    expect(pendingBeforeStatusRefresh).toMatch(/<button(?=[^>]*disabled="")[^>]*>Start Tunnel<\/button>/);
+    expect(pendingBeforeStatusRefresh).toMatch(/<button(?![^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
 
     const running = render({ ...baseDashboard, tunnel: { ...configuredTunnel, state: 'running' } });
     expect(running).toMatch(/<button(?=[^>]*disabled="")[^>]*>Start Tunnel<\/button>/);

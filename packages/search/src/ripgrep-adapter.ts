@@ -101,12 +101,12 @@ export class DirectProcessRunner implements ProcessRunner {
       };
       const abort = (): void => requestStop('timeout');
       const captureStdout = (chunk: Buffer): void => {
+        if (stoppedEarly || timedOut) return;
         const observer = options.stopAfterStdoutLine;
         if (observer === undefined) {
           stdoutBytes = appendBounded(stdoutChunks, stdoutBytes, chunk);
           return;
         }
-        if (stoppedEarly || timedOut) return;
         stdoutLinePending += chunk.toString('utf8');
         if (Buffer.byteLength(stdoutLinePending, 'utf8') > MAX_PROCESS_LOG_BYTES) {
           requestStop('early');

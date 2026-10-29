@@ -142,14 +142,27 @@ describe('TunnelController concurrent start', () => {
     });
     tunnelLockMocks.acquire.mockResolvedValue({ acquired: true, owner, release: releaseLock });
     let markDoctorEntered!: () => void;
-    let completeDoctor!: () => void;
+    let completeDoctor!: (error?: Error) => void;
+    let doctorSignal: AbortSignal | undefined;
+    let doctorSettled = false;
     const doctorEntered = new Promise<void>((resolve) => { markDoctorEntered = resolve; });
     childProcessMocks.execFile.mockImplementation((...args: unknown[]) => {
       const commandArgs = Array.isArray(args[1]) ? args[1] : [];
       const callback = args.at(-1);
       if (typeof callback !== 'function') throw new Error('Tunnel-client callback was not provided');
       if (commandArgs.includes('doctor')) {
-        completeDoctor = (): void => callback(null, '', '');
+        const options = args[2] as { signal?: AbortSignal };
+        doctorSignal = options.signal;
+        completeDoctor = (error?: Error): void => {
+          if (doctorSettled) return;
+          doctorSettled = true;
+          callback(error ?? null, '', '');
+        };
+        doctorSignal?.addEventListener('abort', () => {
+          const aborted = new Error('The operation was aborted');
+          aborted.name = 'AbortError';
+          completeDoctor(aborted);
+        }, { once: true });
         markDoctorEntered();
       } else {
         queueMicrotask(() => callback(new Error('unsupported fixture command'), '', ''));
@@ -170,11 +183,10 @@ describe('TunnelController concurrent start', () => {
 
     const starting = controller.start();
     await doctorEntered;
-    const stopping = controller.stop();
-    await Promise.resolve();
-    completeDoctor();
+    const stopping = controller.stopFromUser();
 
     try {
+      expect(doctorSignal?.aborted).toBe(true);
       const [startStatus, stopStatus] = await Promise.all([starting, stopping]);
       expect(childProcessMocks.spawn).not.toHaveBeenCalled();
       expect(startStatus).toMatchObject({ state: 'stopped', source: 'desktop' });
@@ -186,6 +198,8 @@ describe('TunnelController concurrent start', () => {
       expect(releaseLock).toHaveBeenCalledTimes(1);
       expect(await readTunnelLock(profileDir)).toBeNull();
     } finally {
+      if (!doctorSettled) completeDoctor();
+      await Promise.allSettled([starting, stopping]);
       await controller.stopOwned();
     }
   });

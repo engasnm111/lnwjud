@@ -166,6 +166,7 @@ internal sealed class WindowsStoreIO : IDisposable
 
     internal NativeFile? Read(string name)
     {
+        if (!IsRecordName(name)) throw new Refusal("STORE_NAME_INVALID");
         SafeFileHandle handle;
         try { handle = OpenFile(Path.Combine(root, name), GenericRead, 3); }
         catch (FileNotFoundException) { return null; }
@@ -187,9 +188,14 @@ internal sealed class WindowsStoreIO : IDisposable
     }
 
     internal void Stage(byte[] bytes)
+        => Stage("journal.pending.json", bytes);
+
+    internal void Stage(string name, byte[] bytes)
     {
+        if (name is not ("journal.pending.json" or "transaction.pending.json" or "active-slot.pending.json"))
+            throw new Refusal("STORE_NAME_INVALID");
         if (bytes.Length > MaximumJournalBytes) throw new Refusal("JOURNAL_TOO_LARGE");
-        using var handle = OpenFile(Path.Combine(root, "journal.pending.json"), GenericRead | GenericWrite, 1, WriteThrough);
+        using var handle = OpenFile(Path.Combine(root, name), GenericRead | GenericWrite, 1, WriteThrough);
         RandomAccess.Write(handle, bytes, 0);
         if (!FlushFileBuffers(handle)) throw new Refusal("JOURNAL_FLUSH_FAILED");
         var readback = new byte[bytes.Length];
@@ -197,15 +203,28 @@ internal sealed class WindowsStoreIO : IDisposable
     }
 
     internal void PublishStage(string expectedPredecessor)
+        => PublishStage("journal.pending.json", "journal.json", expectedPredecessor);
+
+    internal void PublishStage(string stageName, string targetName, string expectedPredecessor)
     {
-        var previous = Read("journal.json");
+        if (!IsStagePair(stageName, targetName)) throw new Refusal("STORE_NAME_INVALID");
+        if (expectedPredecessor != "none" && !Wire.Digest(expectedPredecessor)) throw new Refusal("JOURNAL_CAS_CONFLICT");
+        var previous = Read(targetName);
         if ((previous?.Digest ?? "none") != expectedPredecessor) throw new Refusal("JOURNAL_CAS_CONFLICT");
-        var staged = Read("journal.pending.json") ?? throw new Refusal("JOURNAL_STAGE_MISSING");
-        if (!MoveFileExW(Path.Combine(root, "journal.pending.json"), Path.Combine(root, "journal.json"), 9))
+        var staged = Read(stageName) ?? throw new Refusal("JOURNAL_STAGE_MISSING");
+        if (!MoveFileExW(Path.Combine(root, stageName), Path.Combine(root, targetName), 9))
             throw new Refusal("JOURNAL_PUBLICATION_FAILED");
-        var published = Read("journal.json") ?? throw new Refusal("JOURNAL_READBACK_MISSING");
+        var published = Read(targetName) ?? throw new Refusal("JOURNAL_READBACK_MISSING");
         if (published.Identity != staged.Identity || published.Digest != staged.Digest) throw new Refusal("JOURNAL_READBACK_CHANGED");
     }
+
+    private static bool IsRecordName(string name) => name is "journal.json" or "journal.pending.json"
+        or "transaction.json" or "transaction.pending.json" or "active-slot.json" or "active-slot.pending.json";
+
+    private static bool IsStagePair(string stageName, string targetName) => (stageName, targetName) is
+        ("journal.pending.json", "journal.json") or
+        ("transaction.pending.json", "transaction.json") or
+        ("active-slot.pending.json", "active-slot.json");
 
     internal static ProcessOwner CurrentOwner()
     {

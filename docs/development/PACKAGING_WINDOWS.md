@@ -1,12 +1,15 @@
 # Windows packaging
 
 **v5.9.0 acceptance:** Local packaging does not publish a release or prove the
-automatic updater. Unattended installation is currently unavailable on every
-distribution. The normal `latest.yml`/`portable.yml` feeds below preserve
-distribution selection for checking, downloading and user-requested installs;
-they do not establish package authority, global drain, health or trusted
-rollback. A fresh final-source installer/service matrix and real signed updater
-acceptance are required before release. Earlier installed candidates and
+automatic updater. The current source keeps automatic updates unavailable
+until the native authority, enrolled package trust, work admission, independent
+health checks, and trusted application/data rollback are implemented and pass
+signed acceptance. The requested user flow confirms the exact target version
+once, waits for active work, stops the enrolled Tunnel, installs without more
+installer clicks, and relaunches. `latest.yml` and `portable.yml` identify
+separate Windows package streams; they do not establish update authority or
+acceptance. A fresh final-source installer/service matrix and real signed
+updater tests are required before release. Earlier installed candidates and
 checks are recorded in the [acceptance ledger](../codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
 
 The lnwjud desktop package is built with Electron and packaged for **Windows 10/11 x64** as both an NSIS installer and a single-file portable executable. The graphical Electron application carries its own Electron runtime; a separate system Node installation is not required merely to open the dashboard.
@@ -58,10 +61,10 @@ For Windows x64 Native Pin compilation, `pin/build.mjs` uses installed LLVM `cla
 - `deleteAppDataOnUninstall: false`; uninstalling the application does **not** automatically remove lnwjud user data.
 - NSIS renames electron-builder's generated uninstaller to the stable user-facing `uninstall.exe` and rewrites `UninstallString` / `QuietUninstallString` for the active per-user or per-machine install mode so Windows Settings and upgrades keep using the correct path.
 - Portable mode launches without installation but intentionally uses the same per-user lnwjud data/settings location as the installed build. It is portable as an executable, not a "keep every setting beside the EXE" mode.
-- Installer auto-update remains on electron-builder's normal `latest.yml` channel and installs `lnwjud-Setup-<version>.exe`.
-- Portable auto-update uses a separate generated `portable.yml` channel and downloads only `lnwjud-Portable-<version>.exe`.
-- Portable downloads are verified by electron-updater against the SHA-512/size in `portable.yml`, then replaced in place only after the running process exits. The helper keeps a rollback backup, restores it on replacement failure, restarts the exact outer Portable path, and cleans itself up.
-- The updater never crosses distribution types: an installed user remains on Setup/NSIS updates and a Portable user remains on Portable EXE updates.
+- The package build generates `latest.yml` for Setup and `portable.yml` for Portable. The app uses the matching stream and asks the user once to confirm the exact displayed target version before it queues installation.
+- After confirmation, the installer runs silently without Next pages or further installer interaction, and the app relaunches. The wait-for-work and Tunnel-stop handoff is source-tested, but a successful signed update/restart/health/rollback on an installed copy is still required for updater acceptance.
+- The current Portable replacement helper has file-replacement recovery logic, but that does not prove the complete signed update, restart, health, and trusted rollback flow. Do not claim Portable updater acceptance from packaging or unit tests.
+- Setup and Portable use separate package streams. The updater does not claim acceptance across either stream until a signed package update is tested on an installed copy.
 - Installer and Portable intentionally continue to share the same per-user lnwjud settings/data location.
 - The Windows capability bridge is copied as an extra resource.
 - `resources/native-containment/` carries the trusted runtime bundle `process-runtime.mjs`; Windows additionally packages the self-contained `lnwjud-containment.exe`, hash-pinned `lnwjud-containment-pin.node`, and schema-versioned `manifest.json`. The desktop package runs `prepare-containment-runtime.mjs` before compiling the app so these hashes are embedded in the host bundle and verified again against packaged files.
@@ -111,7 +114,7 @@ lnwjud-Setup-<version>.exe
 lnwjud-Portable-<version>.exe
 ```
 
-The NSIS installer produces its blockmap plus `latest.yml`. Portable has its own `portable.yml` and is an auto-updater target through the dedicated Portable channel; it is never installed through NSIS during a Portable update.
+The NSIS installer produces its blockmap plus `latest.yml`. Portable has its own `portable.yml`. These files preserve package-specific update metadata; they do not prove that installation, restart, health checks, or rollback work end to end.
 
 ## Clean-machine smoke
 

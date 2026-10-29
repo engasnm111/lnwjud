@@ -11,25 +11,28 @@ internal static class ReleaseMetadataTests
     private static readonly ReleaseSchema Schema = ReleaseSchema.Embedded();
     private static void Check(bool value, string message) { assertions++; if (!value) throw new Exception(message); }
     private static string Digest(char character) => new(character, 64);
-    private static JsonObject Identity(string version, char hash, string size = "1000") => new()
-    { ["name"] = "lnwjud-Setup-" + version + ".exe", ["sha256"] = Digest(hash), ["sizeBytes"] = size };
+    private static string ArtifactName(string version, string platform, string architecture) =>
+        platform == "win32" ? "lnwjud-Setup-" + version + ".exe" : $"lnwjud-{version}-{architecture}.zip";
+    private static JsonObject Identity(string version, char hash, string platform, string architecture, string size = "1000") => new()
+    { ["name"] = ArtifactName(version, platform, architecture), ["sha256"] = Digest(hash), ["sizeBytes"] = size };
     private static JsonObject Provenance(char hash) => new() { ["name"] = "PROVENANCE.json", ["sha256"] = Digest(hash), ["sizeBytes"] = "200" };
     private static JsonObject Payload(string version, ulong sequence, string previousVersion, ulong previousSequence,
-        string previousEnvelope, char artifact, char provenance, char previousArtifact, char previousProvenance, ulong issued, ulong expires) => new()
+        string previousEnvelope, char artifact, char provenance, char previousArtifact, char previousProvenance, ulong issued, ulong expires,
+        string platform, string architecture, string distribution) => new()
     {
         ["protocol"] = 1, ["product"] = "lnwjud", ["policyRevision"] = 1, ["releaseId"] = "release-" + version,
-        ["channel"] = "stable", ["platform"] = "win32", ["architecture"] = "x64", ["distribution"] = "windows-nsis",
+        ["channel"] = "stable", ["platform"] = platform, ["architecture"] = architecture, ["distribution"] = distribution,
         ["version"] = version, ["releaseSequence"] = Wire.Decimal(sequence), ["issuedAt"] = Wire.Decimal(issued), ["notBefore"] = Wire.Decimal(issued), ["expiresAt"] = Wire.Decimal(expires),
         ["source"] = new JsonObject { ["repository"] = "https://github.com/engasnm111/lnwjud", ["commit"] = new string('a', 40), ["workflow"] = ".github/workflows/ci.yml", ["ref"] = "refs/heads/main", ["runId"] = "123", ["runAttempt"] = "1" },
         ["buildEvidence"] = new JsonObject { ["kind"] = "github-artifact-attestation-v1", ["artifactAttestationSha256"] = Digest('1'), ["provenanceAttestationSha256"] = Digest('2'), ["sourceTree"] = "clean" },
-        ["artifact"] = Identity(version, artifact), ["provenance"] = Provenance(provenance),
-        ["previous"] = new JsonObject { ["version"] = previousVersion, ["releaseSequence"] = Wire.Decimal(previousSequence), ["envelopeSha256"] = previousEnvelope, ["artifact"] = Identity(previousVersion, previousArtifact), ["provenance"] = Provenance(previousProvenance) },
+        ["artifact"] = Identity(version, artifact, platform, architecture), ["provenance"] = Provenance(provenance),
+        ["previous"] = new JsonObject { ["version"] = previousVersion, ["releaseSequence"] = Wire.Decimal(previousSequence), ["envelopeSha256"] = previousEnvelope, ["artifact"] = Identity(previousVersion, previousArtifact, platform, architecture), ["provenance"] = Provenance(previousProvenance) },
         ["compatibility"] = new JsonObject { ["migrationContractSha256"] = Digest('f'), ["workerContractSha256"] = Digest('f'), ["serviceContractSha256"] = Digest('f') },
         ["recoveryAuthorization"] = new JsonObject { ["purpose"] = "failed-candidate-only", ["candidateArtifactSha256"] = Digest(artifact), ["candidateReleaseSequence"] = Wire.Decimal(sequence), ["previousEnvelopeSha256"] = previousEnvelope,
             ["previousArtifactSha256"] = Digest(previousArtifact), ["previousProvenanceSha256"] = Digest(previousProvenance), ["expiresAt"] = Wire.Decimal(expires), ["maximumAttempts"] = 1 }
     };
 
-    private sealed class Fixture : IDisposable
+    internal sealed class Fixture : IDisposable
     {
         internal readonly ECDsa Key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         internal readonly JsonObject Policy;
@@ -37,8 +40,12 @@ internal static class ReleaseMetadataTests
         internal readonly JsonObject Offer;
         internal ReleaseTrustSnapshot Snapshot = new(4, 6, 100, Now - 1000, new HashSet<string>(StringComparer.Ordinal));
         internal readonly ReleaseTimeObservation Time = new(true, Now);
-        internal Fixture()
+        private readonly string platform;
+        private readonly string architecture;
+        private readonly string distribution;
+        internal Fixture(string platform = "win32", string architecture = "x64", string distribution = "windows-nsis")
         {
+            this.platform = platform; this.architecture = architecture; this.distribution = distribution;
             var spki = Key.ExportSubjectPublicKeyInfo();
             Policy = new JsonObject
             {
@@ -52,12 +59,12 @@ internal static class ReleaseMetadataTests
                 ["verifier"] = new JsonObject { ["version"] = "2.102.0", ["sha256"] = Digest('6'), ["filename"] = "gh.exe" },
                 ["limits"] = new JsonObject { ["maximumValiditySeconds"] = "86400", ["maximumFutureSkewSeconds"] = "300", ["maximumPackageBytes"] = "2147483648", ["maximumProvenanceBytes"] = "1048576" }
             };
-            var original = Payload("5.9.0", 100, "5.8.0", 99, Digest('5'), 'b', 'c', '3', '4', Now - 100_000, Now - 50_000);
+            var original = Payload("5.9.0", 100, "5.8.0", 99, Digest('5'), 'b', 'c', '3', '4', Now - 100_000, Now - 50_000, platform, architecture, distribution);
             var originalEnvelope = Sign(original);
             Baseline = new RetainedInstallationBaseline(originalEnvelope, ReleaseTrustPolicy.Hash(originalEnvelope), "5.9.0", 100,
-                new ReleaseArtifact("lnwjud-Setup-5.9.0.exe", Digest('b'), 1000), new ReleaseArtifact("PROVENANCE.json", Digest('c'), 200),
+                new ReleaseArtifact(ArtifactName("5.9.0", platform, architecture), Digest('b'), 1000), new ReleaseArtifact("PROVENANCE.json", Digest('c'), 200),
                 new ReleaseContracts(Digest('f'), Digest('f'), Digest('f')), Now - 90_000, Digest('7'));
-            Offer = Payload("5.9.1", 101, "5.9.0", 100, Baseline.EnvelopeSha256, 'd', 'e', 'b', 'c', Now - 100, Now + 1000);
+            Offer = Payload("5.9.1", 101, "5.9.0", 100, Baseline.EnvelopeSha256, 'd', 'e', 'b', 'c', Now - 100, Now + 1000, platform, architecture, distribution);
         }
         internal byte[] Sign(JsonObject payload) => SignBytes(Wire.Encode(payload));
         internal byte[] SignBytes(byte[] payload, string domain = "lnwjud-update-release-v1\0", DSASignatureFormat format = DSASignatureFormat.IeeeP1363FixedFieldConcatenation)
@@ -74,6 +81,18 @@ internal static class ReleaseMetadataTests
     {
         assertions = 0;
         using var fixture = new Fixture();
+        foreach (var mutation in new Action<JsonObject>[] {
+            p => p["authorities"]!.AsArray().Add(p["authorities"]![0]!.DeepClone()),
+            p => p["authorities"]![0]!["builderDigest"] = "not-a-digest",
+            p => p["authorities"]![0]!["buildConfigUri"] = "https://github.com/other/repository",
+            p => p["authorities"]![0]!["builderWorkflowUri"] = "https://example.com/builder",
+            p => p["verifier"]!["version"] = "latest"
+        })
+        {
+            var policy = (JsonObject)fixture.Policy.DeepClone(); mutation(policy);
+            var refused = false; try { _ = ReleaseTrustPolicy.Parse(Wire.Encode(policy)); } catch (Refusal) { refused = true; }
+            Check(refused, "strict authority/verifier policy rejects ambiguous or malformed configuration");
+        }
         var accepted = fixture.Verify();
         Check(accepted is ReleaseMetadataVerification.Authenticated, "metadata positive " + accepted);
         var metadata = ((ReleaseMetadataVerification.Authenticated)accepted).Metadata;
@@ -81,15 +100,35 @@ internal static class ReleaseMetadataTests
         var before = fixture.Snapshot.Digest;
         _ = fixture.Verify(); Check(fixture.Snapshot.Digest == before, "verification never mutates trust floor");
         Check(fixture.Verify(policy: ReleaseTrustPolicy.Embedded()) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" }, "production embedded roots empty");
+        Check(EnrollmentPreflight.VerifyPackage("not-an-absolute-path", ReleaseTrustPolicy.Embedded(), Schema, fixture.Time)
+            is EnrollmentPreflightResult.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" }, "enrollment preflight refuses empty policy before opening a package");
+        RunEnrollment(fixture);
         Check(ReleaseMetadataVerifier.VerifyOffer(fixture.Sign(fixture.Offer), ReleaseTrustPolicy.Parse(Wire.Encode(fixture.Policy)), Schema, null, fixture.Snapshot, fixture.Time)
             is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUSTED_BASELINE_UNAVAILABLE" }, "missing installed baseline refuses");
         Check(fixture.Verify(time: new(false, Now)) is ReleaseMetadataVerification.Refused, "unknown clock");
         Check(fixture.Verify(time: new(true, Now - 2000)) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_CLOCK_ROLLBACK" }, "clock rollback");
-        Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 101 }) is ReleaseMetadataVerification.Refused, "replay floor");
+        Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 99 }) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_STATE_INVALID" }, "replay floor cannot fall below committed baseline");
+        Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 100 }) is ReleaseMetadataVerification.Authenticated, "next candidate advances from committed baseline");
+        Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 101 }) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_REPLAY_OR_DOWNGRADE" }, "accepted sequence cannot be reoffered after rollback");
         Check(fixture.Verify(snapshot: fixture.Snapshot with { FailedCandidateDigests = new HashSet<string> { Digest('d') } }) is ReleaseMetadataVerification.Refused, "failed candidate quarantine");
         Check(fixture.Verify(baseline: fixture.Baseline with { NativeAcceptanceReceiptSha256 = "" }) is ReleaseMetadataVerification.Refused, "unsigned baseline missing native receipt");
         Check(fixture.Verify(baseline: fixture.Baseline with { EnvelopeSha256 = Digest('0') }) is ReleaseMetadataVerification.Refused, "retained original envelope exact digest");
         Check(fixture.Verify(fixture.SignBytes(Encoding.UTF8.GetBytes(" \n" + fixture.Offer.ToJsonString() + "\n"))) is ReleaseMetadataVerification.Authenticated, "verify exact payload bytes rather than reserialized JSON");
+
+        using (var macArm = new Fixture("darwin", "arm64", "macos-zip"))
+        {
+            Check(macArm.Verify() is ReleaseMetadataVerification.Authenticated, "macOS arm64 updater artifact identity accepted");
+            var windowsArtifact = (JsonObject)macArm.Offer.DeepClone();
+            windowsArtifact["artifact"]!["name"] = "lnwjud-Setup-5.9.1.exe";
+            Check(macArm.Verify(macArm.Sign(windowsArtifact)) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_ARTIFACT_IDENTITY_INVALID" }, "cross-target Windows package refused for macOS");
+            var wrongDistribution = (JsonObject)macArm.Offer.DeepClone();
+            wrongDistribution["distribution"] = "windows-nsis";
+            Check(macArm.Verify(macArm.Sign(wrongDistribution)) is ReleaseMetadataVerification.Refused, "macOS NSIS distribution refused");
+        }
+        using (var macX64 = new Fixture("darwin", "x64", "macos-zip"))
+            Check(macX64.Verify() is ReleaseMetadataVerification.Authenticated, "macOS x64 updater artifact identity accepted");
+        using (var macBaseline = new Fixture("darwin", "arm64", "macos-zip"))
+            Check(fixture.Verify(baseline: macBaseline.Baseline) is ReleaseMetadataVerification.Refused, "baseline from another update target refused");
 
         foreach (var mutate in new Action<JsonObject>[] {
             node => node["platform"] = "darwin", node => node["architecture"] = "arm64", node => node["channel"] = "preview",
@@ -121,6 +160,131 @@ internal static class ReleaseMetadataTests
         return assertions;
     }
 
+    private static void RunEnrollment(Fixture fixture)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lnwjud-enrollment-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var installer = Encoding.UTF8.GetBytes("ephemeral fixture installer");
+            var provenance = Encoding.UTF8.GetBytes("ephemeral fixture provenance");
+            var artifactName = ArtifactName("5.9.1", "win32", "x64");
+            var artifactHash = ReleaseTrustPolicy.Hash(installer);
+            var provenanceHash = ReleaseTrustPolicy.Hash(provenance);
+            var release = (JsonObject)fixture.Offer.DeepClone();
+            release["artifact"] = new JsonObject { ["name"] = artifactName, ["sha256"] = artifactHash, ["sizeBytes"] = Wire.Decimal((ulong)installer.Length) };
+            release["provenance"] = new JsonObject { ["name"] = "PROVENANCE.json", ["sha256"] = provenanceHash, ["sizeBytes"] = Wire.Decimal((ulong)provenance.Length) };
+            release["recoveryAuthorization"]!["candidateArtifactSha256"] = artifactHash;
+            var releaseBytes = fixture.Sign(release);
+            var layout = new JsonObject
+            {
+                ["protocol"] = 1, ["product"] = "lnwjud", ["policyRevision"] = 1,
+                ["releaseId"] = release["releaseId"]!.DeepClone(), ["channel"] = "stable", ["platform"] = "win32",
+                ["architecture"] = "x64", ["distribution"] = "windows-nsis", ["version"] = "5.9.1",
+                ["releaseSequence"] = "101", ["releaseEnvelopeSha256"] = ReleaseTrustPolicy.Hash(releaseBytes),
+                ["source"] = release["source"]!.DeepClone(), ["artifact"] = release["artifact"]!.DeepClone(),
+                ["provenance"] = release["provenance"]!.DeepClone(),
+                ["layout"] = new JsonObject
+                {
+                    ["stableLauncher"] = Image("lnwjud.exe", '1'),
+                    ["stableService"] = Image("native/lnwjud-containment.exe", '2'),
+                    ["slotApplication"] = Image("slots/A/lnwjud.exe", '3'),
+                    ["slotManifest"] = Image("slots/A/manifest.json", '4')
+                }
+            };
+            var policy = ReleaseTrustPolicy.Parse(Wire.Encode(fixture.Policy));
+            void Put(JsonObject value, byte[]? envelope = null)
+            {
+                File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.ReleaseFile), envelope ?? fixture.Sign(value));
+                File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile), fixture.SignBytes(Wire.Encode(layout), "lnwjud-enrollment-layout-v1\0"));
+            }
+            EnrollmentPreflightResult Verify() => EnrollmentPreflight.VerifyPackage(directory, policy, Schema, fixture.Time);
+            File.WriteAllBytes(Path.Combine(directory, artifactName), installer);
+            File.WriteAllBytes(Path.Combine(directory, "PROVENANCE.json"), provenance);
+            Put(release, releaseBytes);
+            var authenticated = Verify();
+            Check(authenticated is EnrollmentPreflightResult.Authenticated { ReleaseId: "release-5.9.1" }, "detached signed metadata and pinned package authenticate without a baseline: " + authenticated);
+            Check(fixture.Verify(fixture.Sign(release), baseline: fixture.Baseline with { NativeAcceptanceReceiptSha256 = "" })
+                is ReleaseMetadataVerification.Refused, "enrollment does not relax ordinary offer baseline");
+            File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile), fixture.Sign(layout));
+            Check(Verify() is EnrollmentPreflightResult.Refused, "release signature cannot authenticate enrollment domain");
+            Put(release, releaseBytes);
+            var missingSignature = JsonNode.Parse(File.ReadAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile)))!.AsObject();
+            missingSignature.Remove("signature");
+            File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile), Wire.Encode(missingSignature));
+            Check(Verify() is EnrollmentPreflightResult.Refused, "missing enrollment signature refused");
+            Put(release, releaseBytes);
+            var tamperedSignature = JsonNode.Parse(File.ReadAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile)))!.AsObject();
+            tamperedSignature["signature"] = Convert.ToBase64String(new byte[64]);
+            File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile), Wire.Encode(tamperedSignature));
+            Check(Verify() is EnrollmentPreflightResult.Refused, "tampered enrollment signature refused");
+            Put(release, releaseBytes);
+            var wrongBinding = (JsonObject)layout.DeepClone();
+            wrongBinding["releaseEnvelopeSha256"] = Digest('a');
+            File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile), fixture.SignBytes(Wire.Encode(wrongBinding), "lnwjud-enrollment-layout-v1\0"));
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "ENROLLMENT_RELEASE_BINDING_INVALID" }, "signed release envelope digest binds layout");
+            void RefuseLayout(Action<JsonObject> change, string message)
+            {
+                var changed = (JsonObject)layout.DeepClone(); change(changed);
+                File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile), fixture.SignBytes(Wire.Encode(changed), "lnwjud-enrollment-layout-v1\0"));
+                Check(Verify() is EnrollmentPreflightResult.Refused, message);
+            }
+            RefuseLayout(value => value["source"]!["ref"] = "refs/heads/dev", "layout source must equal authenticated release source");
+            RefuseLayout(value => value["policyRevision"] = 2, "layout policy revision must match embedded policy");
+            RefuseLayout(value => value["layout"]!["slotApplication"]!["path"] = "../evil.exe", "traversal role refused");
+            RefuseLayout(value => value["layout"]!["slotApplication"]!["path"] = "C:/evil.exe", "absolute role refused");
+            RefuseLayout(value => value["layout"]!["slotApplication"]!["path"] = "slots/A/file.exe:stream", "ADS role refused");
+            RefuseLayout(value => value["layout"]!["slotApplication"]!["path"] = "slots/A/file. ", "trailing alias role refused");
+            RefuseLayout(value => value["layout"]!["slotApplication"]!["path"] = "NUL/file.exe", "reserved device role refused");
+            RefuseLayout(value => value["layout"]!["slotApplication"]!["path"] = "SLOTS/a/MANIFEST.JSON", "case-insensitive duplicate role path refused");
+            RefuseLayout(value => value["extra"] = true, "extra layout field refused");
+            RefuseLayout(value => value["layout"]!["slotApplication"] = new JsonArray(), "array in fixed role refused");
+            var duplicatePayload = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(Wire.Encode(layout))
+                .Replace("\"protocol\":1,", "\"protocol\":1,\"protocol\":1,", StringComparison.Ordinal));
+            File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.LayoutFile), fixture.SignBytes(duplicatePayload, "lnwjud-enrollment-layout-v1\0"));
+            Check(Verify() is EnrollmentPreflightResult.Refused, "duplicate signed payload field refused");
+            Put(release, releaseBytes);
+            File.WriteAllBytes(Path.Combine(directory, artifactName), Encoding.UTF8.GetBytes("changed fixture installer"));
+            Check(Verify() is EnrollmentPreflightResult.Refused, "installer size mismatch refused");
+            File.WriteAllBytes(Path.Combine(directory, artifactName), installer);
+            File.WriteAllBytes(Path.Combine(directory, artifactName), Encoding.UTF8.GetBytes(new string('x', installer.Length)));
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "ENROLLMENT_ARTIFACT_DIGEST_MISMATCH" }, "installer digest mismatch refused");
+            File.WriteAllBytes(Path.Combine(directory, artifactName), installer);
+            File.WriteAllBytes(Path.Combine(directory, "PROVENANCE.json"), Encoding.UTF8.GetBytes(new string('x', provenance.Length)));
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "ENROLLMENT_ARTIFACT_DIGEST_MISMATCH" }, "provenance digest mismatch refused");
+            File.Delete(Path.Combine(directory, "PROVENANCE.json"));
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "ENROLLMENT_PACKAGE_FILE_MISSING" }, "missing fixed provenance refused");
+            File.WriteAllBytes(Path.Combine(directory, "PROVENANCE.json"), provenance);
+            File.Delete(Path.Combine(directory, artifactName));
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "ENROLLMENT_PACKAGE_FILE_MISSING" }, "missing signed installer refused");
+            File.WriteAllBytes(Path.Combine(directory, artifactName), installer);
+            File.Delete(Path.Combine(directory, EnrollmentPreflight.LayoutFile));
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "ENROLLMENT_PACKAGE_FILE_MISSING" }, "missing fixed enrollment sidecar refused");
+            Put(release, releaseBytes);
+            File.Delete(Path.Combine(directory, EnrollmentPreflight.ReleaseFile));
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "ENROLLMENT_PACKAGE_FILE_MISSING" }, "missing fixed release sidecar refused");
+            Put(release, releaseBytes);
+            var wrongTarget = (JsonObject)release.DeepClone(); wrongTarget["platform"] = "darwin";
+            Put(wrongTarget);
+            Check(Verify() is EnrollmentPreflightResult.Refused, "wrong release target refused");
+            Put(release, releaseBytes);
+            var wrongSource = (JsonObject)release.DeepClone(); wrongSource["source"]!["ref"] = "refs/heads/dev";
+            Put(wrongSource);
+            Check(Verify() is EnrollmentPreflightResult.Refused { Reason: "RELEASE_SOURCE_UNTRUSTED" }, "untrusted release source refused");
+            Put(release, releaseBytes);
+            Check(EnrollmentPreflight.VerifyPackage(directory, policy, Schema, new ReleaseTimeObservation(false, Now))
+                is EnrollmentPreflightResult.Refused { Reason: "RELEASE_TIME_UNAVAILABLE" }, "unusable time refused");
+            Check(EnrollmentPreflight.VerifyPackage(directory, policy, Schema, new ReleaseTimeObservation(true, Now + 1_001))
+                is EnrollmentPreflightResult.Refused { Reason: "RELEASE_TIME_INVALID" }, "expired release refused");
+            File.WriteAllBytes(Path.Combine(directory, EnrollmentPreflight.ReleaseFile), fixture.SignBytes(Wire.Encode(release), "lnwjud-enrollment-layout-v1\0"));
+            Check(Verify() is EnrollmentPreflightResult.Refused, "enrollment signature cannot authenticate release domain");
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    private static JsonObject Image(string path, char hash) => new()
+    { ["path"] = path, ["sha256"] = Digest(hash), ["sizeBytes"] = "1" };
+
     private static void EncodingAndCrypto(Fixture fixture)
     {
         var encoded = fixture.Sign(fixture.Offer);
@@ -151,7 +315,10 @@ internal static class ReleaseMetadataTests
         foreach (var mutate in new Action<JsonObject>[] {
             node => node["roots"]![0]!["revoked"] = true, node => node["roots"]![0]!["allowHistoricalRecovery"] = false,
             node => node["roots"]![0]!["roles"] = new JsonArray("release"), node => node["roots"]![0]!["notBefore"] = Wire.Decimal(Now + 1),
-            node => node["roots"]![0]!["expiresAt"] = Wire.Decimal(Now), node => node["authorities"]![0]!["ref"] = "refs/heads/dev"
+            node => node["roots"]![0]!["expiresAt"] = Wire.Decimal(Now), node => {
+                node["authorities"]![0]!["ref"] = "refs/heads/dev";
+                node["authorities"]![0]!["buildConfigUri"] = "https://github.com/engasnm111/lnwjud/.github/workflows/ci.yml@refs/heads/dev";
+            }
         })
         {
             var changed = (JsonObject)fixture.Policy.DeepClone(); mutate(changed);

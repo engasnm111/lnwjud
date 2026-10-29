@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Collections.Frozen;
+using System.Text.RegularExpressions;
 
 namespace Lnwjud.UpdateWorker;
 
@@ -20,7 +21,10 @@ internal sealed class ReleaseRoot
         NotBefore = notBefore; ExpiresAt = expiresAt; Revoked = revoked; AllowHistoricalRecovery = allowHistoricalRecovery;
     }
 }
-internal sealed record ReleaseSourceAuthority(string Repository, string Workflow, string Ref);
+internal sealed record ReleaseSourceAuthority(string Repository, string Workflow, string Ref,
+    string BuilderWorkflowUri, string BuilderDigest, string BuildConfigUri, string BuildConfigDigestRule,
+    string Issuer, string RunnerEnvironment);
+internal sealed record ReleaseVerifier(string Filename, string Version, string Sha256);
 
 internal sealed class ReleaseTrustPolicy
 {
@@ -33,6 +37,11 @@ internal sealed class ReleaseTrustPolicy
     internal ulong MaximumPackage { get; }
     internal ulong MaximumProvenance { get; }
     internal bool Configured { get; }
+    internal ReleaseVerifier? Verifier { get; }
+
+    internal ReleaseSourceAuthority SelectSource(string repository, string workflow, string reference) =>
+        Sources.SingleOrDefault(source => source.Repository == repository && source.Workflow == workflow && source.Ref == reference)
+        ?? throw new Refusal("RELEASE_SOURCE_UNTRUSTED");
 
     private ReleaseTrustPolicy(byte[] bytes)
     {
@@ -65,7 +74,17 @@ internal sealed class ReleaseTrustPolicy
                 || ReleaseValues.Text(authority, "issuer") != "https://token.actions.githubusercontent.com"
                 || ReleaseValues.Text(authority, "runnerEnvironment") != "github-hosted"
                 || ReleaseValues.Text(authority, "buildConfigDigestRule") != "source-commit") throw new Refusal("RELEASE_POLICY_INVALID");
-            sources.Add(new ReleaseSourceAuthority(ReleaseValues.Text(authority, "repository"), ReleaseValues.Text(authority, "workflow"), ReleaseValues.Text(authority, "ref")));
+            var source = new ReleaseSourceAuthority(ReleaseValues.Text(authority, "repository"), ReleaseValues.Text(authority, "workflow"), ReleaseValues.Text(authority, "ref"),
+                ReleaseValues.Text(authority, "builderWorkflowUri"), ReleaseValues.Text(authority, "builderDigest"), ReleaseValues.Text(authority, "buildConfigUri"),
+                ReleaseValues.Text(authority, "buildConfigDigestRule"), ReleaseValues.Text(authority, "issuer"), ReleaseValues.Text(authority, "runnerEnvironment"));
+            if (!Regex.IsMatch(source.Workflow, @"\A\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\z")
+                || !Regex.IsMatch(source.Ref, @"\Arefs/heads/[A-Za-z0-9._/-]+\z")
+                || !Regex.IsMatch(source.BuilderDigest, @"\A[a-f0-9]{40}\z")
+                || !Regex.IsMatch(source.BuilderWorkflowUri, @"\Ahttps://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml@[A-Za-z0-9._/-]+\z")
+                || source.BuildConfigUri != $"{source.Repository}/{source.Workflow}@{source.Ref}"
+                || sources.Any(item => item.Repository == source.Repository && item.Workflow == source.Workflow && item.Ref == source.Ref))
+                throw new Refusal("RELEASE_POLICY_INVALID");
+            sources.Add(source);
         }
         Sources = sources.AsReadOnly();
         var verifier = value.GetProperty("verifier");
@@ -73,7 +92,8 @@ internal sealed class ReleaseTrustPolicy
         {
             Fields(verifier, "version", "sha256", "filename");
             if (!Wire.Digest(ReleaseValues.Text(verifier, "sha256")) || ReleaseValues.Text(verifier, "filename") is not ("gh" or "gh.exe")
-                || ReleaseValues.Text(verifier, "version").Length is < 1 or > 64) throw new Refusal("RELEASE_POLICY_INVALID");
+                || !Regex.IsMatch(ReleaseValues.Text(verifier, "version"), @"\A[0-9]+\.[0-9]+\.[0-9]+\z")) throw new Refusal("RELEASE_POLICY_INVALID");
+            Verifier = new ReleaseVerifier(ReleaseValues.Text(verifier, "filename"), ReleaseValues.Text(verifier, "version"), ReleaseValues.Text(verifier, "sha256"));
         }
         Configured = roots.Count > 0 && sources.Count > 0 && verifier.ValueKind != JsonValueKind.Null;
     }

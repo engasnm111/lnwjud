@@ -102,7 +102,9 @@ export class SharedManagedWriterAdmission {
       taskId: id,
       capacityClass: 'managed_writer',
       requestDigest: digest,
-      mutationKind: input.kind === 'uncontained_process' ? 'opaque_uncontained' : input.kind === 'contained_process' ? 'opaque_contained_process' : 'opaque',
+      mutationKind: input.kind === 'synchronous_mutation'
+        ? 'synchronous_mutation'
+        : input.kind === 'uncontained_process' ? 'opaque_uncontained' : 'opaque_contained_process',
       ...(input.nativeReceiptPath === undefined ? {} : { nativeReceiptPath: input.nativeReceiptPath }),
       ...(nativeBinding === undefined ? {} : { nativeBinding }),
       ownerClientId: input.actorClientId,

@@ -8,19 +8,20 @@ export interface NativeMessages {
   readonly updaterUnavailablePackagedOnly: string;
   readonly updaterUnavailablePlatform: string;
   readonly updaterUnavailableMacosUnsigned: string;
-  readonly updaterAutomaticWindowsUnavailable: string;
-  readonly updaterAutomaticMacosUnavailable: string;
-  readonly updaterAutomaticDistributionUnavailable: string;
+  readonly updaterUnavailableTransactionAuthority: string;
+  readonly updaterAuthorityChecking: string;
   readonly updaterCheckTitle: string;
   readonly updaterUnavailable: string;
   readonly updaterAlreadyChecking: string;
   readonly updaterChecking: string;
   readonly updaterCheckFailed: string;
   readonly updaterInstallWaiting: string;
-  readonly updaterTunnelStopTitle: string;
-  readonly updaterTunnelStopMessage: string;
-  readonly updaterTunnelStopDetail: string;
-  readonly updaterTunnelStopConfirm: string;
+  readonly updaterInstallConfirmTitle: string;
+  updaterInstallConfirmMessage(version: string): string;
+  readonly updaterInstallConfirmDetail: string;
+  readonly updaterInstallConfirm: string;
+  readonly updaterInstallFailedTitle: string;
+  readonly updaterInstallFailedMessage: string;
   readonly updaterTunnelStopFailedTitle: string;
   readonly updaterTunnelStopFailedMessage: string;
   readonly updaterAvailableTitle: string;
@@ -63,19 +64,20 @@ const th: NativeMessages = {
   updaterUnavailablePackagedOnly: 'ระบบอัปเดตทำงานในแอปที่ติดตั้งจาก Release',
   updaterUnavailablePlatform: 'รูปแบบการติดตั้งนี้ให้ระบบปฏิบัติการจัดการอัปเดตเอง จึงปิดการอัปเดตอัตโนมัติของ lnwjud',
   updaterUnavailableMacosUnsigned: 'macOS เวอร์ชันนี้ใช้ลายเซ็น ad-hoc ที่อัปเดตข้ามเวอร์ชันไม่ได้ กรุณาดาวน์โหลดจาก GitHub Releases แล้วติดตั้งทับด้วยตนเอง (ข้อมูลเดิมไม่ถูกลบ)',
-  updaterAutomaticWindowsUnavailable: 'รุ่นนี้ยังไม่พร้อมติดตั้งอัปเดต Windows อัตโนมัติ คุณยังติดตั้งอัปเดตที่ดาวน์โหลดแล้วด้วยตนเองได้',
-  updaterAutomaticMacosUnavailable: 'รุ่นนี้ยังไม่พร้อมติดตั้งอัปเดต macOS อัตโนมัติ คุณยังติดตั้งอัปเดตที่ดาวน์โหลดแล้วด้วยตนเองได้',
-  updaterAutomaticDistributionUnavailable: 'แพ็กเกจนี้ไม่รองรับการติดตั้งอัปเดตอัตโนมัติ โปรดอัปเดตด้วยวิธีที่แพ็กเกจรองรับ',
+  updaterUnavailableTransactionAuthority: 'การอัปเดตอัตโนมัติยังใช้ไม่ได้ เพราะเครื่องนี้ยังไม่มีตัวติดตั้งที่ยืนยันแพ็กเกจ กู้คืนข้อมูล และเปิดแอปใหม่ได้อย่างปลอดภัย',
+  updaterAuthorityChecking: 'กำลังตรวจสอบว่าระบบอัปเดตติดตั้งและกู้คืนได้อย่างปลอดภัยหรือไม่…',
   updaterCheckTitle: 'ตรวจอัปเดต - lnwjud',
   updaterUnavailable: 'การตรวจอัปเดตจะทำงานเมื่อใช้แอปที่ติดตั้งจาก Release แล้ว',
   updaterAlreadyChecking: 'กำลังตรวจอัปเดตอยู่ กรุณารอผลการตรวจสอบ',
   updaterChecking: 'กำลังตรวจหาเวอร์ชันใหม่…',
   updaterCheckFailed: 'ไม่สามารถตรวจอัปเดตได้',
-  updaterInstallWaiting: 'หยุด Secure Tunnel แล้ว กำลังปิดงานที่ค้างอยู่ จากนั้น lnwjud จะปิดและติดตั้งอัปเดตให้อัตโนมัติ…',
-  updaterTunnelStopTitle: 'หยุด Secure Tunnel เพื่อติดตั้งอัปเดต',
-  updaterTunnelStopMessage: 'ต้องหยุด Secure Tunnel ชั่วคราวก่อนติดตั้งอัปเดต',
-  updaterTunnelStopDetail: 'การเชื่อมต่อ ChatGPT จะหยุดชั่วคราวระหว่างติดตั้ง หลังเปิด lnwjud เวอร์ชันใหม่ โปรแกรมจะใช้ Tunnel ID และ Key เดิมเพื่อเชื่อมต่อกลับอัตโนมัติ',
-  updaterTunnelStopConfirm: 'หยุด Tunnel และติดตั้งต่อ',
+  updaterInstallWaiting: 'รอให้งานที่กำลังทำเสร็จ จากนั้น lnwjud จะหยุด Secure Tunnel ติดตั้งอัปเดต และเปิดแอปใหม่อัตโนมัติ…',
+  updaterInstallConfirmTitle: 'ยืนยันการติดตั้งอัปเดต',
+  updaterInstallConfirmMessage: (version) => `lnwjud เวอร์ชัน v${version} พร้อมติดตั้งแล้ว ต้องการติดตั้งตอนนี้หรือไม่?`,
+  updaterInstallConfirmDetail: 'หลังยืนยัน lnwjud จะรอให้งานที่กำลังทำเสร็จ หยุด Secure Tunnel ติดตั้งโดยไม่ต้องกด Next ในตัวติดตั้ง แล้วเปิดแอปใหม่อัตโนมัติ',
+  updaterInstallConfirm: 'ติดตั้งและเปิดใหม่',
+  updaterInstallFailedTitle: 'ติดตั้งอัปเดตไม่สำเร็จ',
+  updaterInstallFailedMessage: 'lnwjud ยังเปิดอยู่ การติดตั้งอัปเดตไม่สำเร็จ คุณสามารถลองใหม่ได้จากป้ายเวอร์ชัน',
   updaterTunnelStopFailedTitle: 'ยังหยุด Secure Tunnel ไม่สำเร็จ',
   updaterTunnelStopFailedMessage: 'ยังติดตั้งอัปเดตไม่ได้ เพราะไม่สามารถยืนยันได้ว่า Secure Tunnel หยุดทำงานแล้ว กรุณาลองอีกครั้ง',
   updaterAvailableTitle: 'พบอัปเดต - lnwjud',
@@ -118,19 +120,20 @@ const en: NativeMessages = {
   updaterUnavailablePackagedOnly: 'Updates are available in an installed Release build',
   updaterUnavailablePlatform: 'This installation format is updated by the operating system package manager; lnwjud automatic updates are disabled.',
   updaterUnavailableMacosUnsigned: 'This macOS build has an ad-hoc signature incompatible with in-place updates. Download from GitHub Releases and manually replace the app; your data is preserved.',
-  updaterAutomaticWindowsUnavailable: 'Automatic Windows installation is unavailable for this build. You can install the downloaded update manually.',
-  updaterAutomaticMacosUnavailable: 'Automatic macOS installation is unavailable for this build. You can install the downloaded update manually.',
-  updaterAutomaticDistributionUnavailable: 'This distribution does not support automatic installation. Use its supported manual update method.',
+  updaterUnavailableTransactionAuthority: 'Automatic updates are unavailable because this installation does not have a verified installer that can authenticate the package, restore data, and relaunch safely.',
+  updaterAuthorityChecking: 'Checking whether the update system can install and recover safely…',
   updaterCheckTitle: 'Check for Updates - lnwjud',
   updaterUnavailable: 'Update checks are available after installing a Release build',
   updaterAlreadyChecking: 'An update check is already running. Please wait for it to finish.',
   updaterChecking: 'Checking for a newer version…',
   updaterCheckFailed: 'Unable to check for updates',
-  updaterInstallWaiting: 'Secure Tunnel is stopped. Finishing any in-flight work, then lnwjud will close and install the update automatically…',
-  updaterTunnelStopTitle: 'Stop Secure Tunnel to Install Update',
-  updaterTunnelStopMessage: 'Secure Tunnel must stop temporarily before the update can be installed.',
-  updaterTunnelStopDetail: 'ChatGPT connections will pause during installation. When the new lnwjud version opens, it will reuse the same Tunnel ID and key and reconnect automatically.',
-  updaterTunnelStopConfirm: 'Stop Tunnel and Install',
+  updaterInstallWaiting: 'Waiting for current work to finish. lnwjud will then stop Secure Tunnel, install the update, and reopen automatically…',
+  updaterInstallConfirmTitle: 'Confirm Update Installation',
+  updaterInstallConfirmMessage: (version) => `lnwjud version v${version} is ready. Install this update now?`,
+  updaterInstallConfirmDetail: 'After you confirm, lnwjud will wait for current work to finish, stop Secure Tunnel, install without requiring any installer clicks, and reopen automatically.',
+  updaterInstallConfirm: 'Install and Reopen',
+  updaterInstallFailedTitle: 'Update Installation Failed',
+  updaterInstallFailedMessage: 'lnwjud is still open because the update could not be installed. Try again from the version badge.',
   updaterTunnelStopFailedTitle: 'Secure Tunnel Did Not Stop',
   updaterTunnelStopFailedMessage: 'The update cannot be installed yet because lnwjud could not confirm that Secure Tunnel stopped. Please try again.',
   updaterAvailableTitle: 'Update Available - lnwjud',
@@ -175,15 +178,13 @@ export function localizedUpdateStatusMessage(status: UpdateStatus, locale: UiLoc
   switch (status.phase) {
     case 'unavailable':
       if (status.message === th.updaterUnavailableMacosUnsigned || status.message === en.updaterUnavailableMacosUnsigned) return messages.updaterUnavailableMacosUnsigned;
+      if (status.message === th.updaterUnavailableTransactionAuthority || status.message === en.updaterUnavailableTransactionAuthority) return messages.updaterUnavailableTransactionAuthority;
       if (status.message === th.updaterUnavailablePlatform || status.message === en.updaterUnavailablePlatform) return messages.updaterUnavailablePlatform;
       return messages.updaterUnavailablePackagedOnly;
     case 'checking': return messages.updaterChecking;
     case 'available': return version === null ? messages.updaterChecking : messages.updateAvailableStatus(version);
     case 'downloading': return messages.updateDownloadingStatus(version, status.progressPercent);
     case 'ready':
-      for (const key of ['updaterAutomaticWindowsUnavailable', 'updaterAutomaticMacosUnavailable', 'updaterAutomaticDistributionUnavailable'] as const) {
-        if (status.message === th[key] || status.message === en[key]) return messages[key];
-      }
       return version === null ? status.message : messages.updateReadyStatus(version);
     case 'installing': return messages.updaterInstallWaiting;
     case 'up-to-date': return messages.updateCurrentStatus(status.currentVersion);

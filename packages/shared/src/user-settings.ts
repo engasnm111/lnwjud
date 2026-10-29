@@ -23,7 +23,6 @@ export const USER_SETTING_KEYS = Object.freeze({
   updateCheckOnStartup: 'update_check_on_startup',
   updateIntervalMinutes: 'update_interval_minutes',
   updateAutoDownload: 'update_auto_download',
-  updateSilentInstall: 'update_silent_install',
   closeBehavior: 'close_behavior',
   launchAtStartup: 'launch_at_startup',
   startMinimized: 'start_minimized',

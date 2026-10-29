@@ -1,8 +1,8 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { NativeUpdateBootstrapClient, parseUpdateWorkerReply } from '../src/main/native-update-client.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { hasVerifiedAutomaticUpdateAuthority, NativeUpdateBootstrapClient, parseUpdateWorkerReply, type NativeUpdateCapability } from '../src/main/native-update-client.js';
 import { UPDATE_WORKER_BUILD_ID } from '../src/main/update-worker-integrity.generated.js';
 
 const installationId = '1'.repeat(64);
@@ -32,6 +32,29 @@ async function unavailableAuthority(): Promise<{ client: NativeUpdateBootstrapCl
 }
 
 describe('native update bootstrap boundary', () => {
+  it('enables automatic installation only for a fully verified Windows transaction authority', () => {
+    const ready: NativeUpdateCapability = {
+      kind: 'available', platform: 'win32', architecture: 'x64', authorityEnrollment: 'verified',
+      packageAuthentication: 'verified', consentBinding: 'version-and-predecessor',
+      applicationDataActivation: 'atomic', independentHealthCheck: 'verified', rollback: 'verified',
+      tunnelRestoration: 'verified', silentInstall: true, automaticRelaunch: true,
+    };
+    expect(hasVerifiedAutomaticUpdateAuthority(ready)).toBe(true);
+    expect(hasVerifiedAutomaticUpdateAuthority({ kind: 'unavailable', reason: 'TRANSACTION_BOOTSTRAP_ONLY' })).toBe(false);
+    expect(hasVerifiedAutomaticUpdateAuthority(null)).toBe(false);
+    expect(hasVerifiedAutomaticUpdateAuthority(undefined)).toBe(false);
+
+    for (const field of [
+      'authorityEnrollment', 'packageAuthentication', 'consentBinding', 'applicationDataActivation',
+      'independentHealthCheck', 'rollback', 'tunnelRestoration', 'silentInstall', 'automaticRelaunch',
+    ]) {
+      expect(hasVerifiedAutomaticUpdateAuthority({ ...ready, [field]: false })).toBe(false);
+      const incomplete: Record<string, unknown> = { ...ready };
+      delete incomplete[field];
+      expect(hasVerifiedAutomaticUpdateAuthority(incomplete)).toBe(false);
+    }
+  });
+
   it('rejects a safe-start response for a different installation or request', () => {
     const value = reply({ kind: 'none', safeToStart: true });
     expect(() => parseUpdateWorkerReply(value, { installationId: '4'.repeat(64), requestId })).toThrow('UPDATE_WORKER_RESPONSE_INVALID');
@@ -52,6 +75,60 @@ describe('native update bootstrap boundary', () => {
       { kind: 'none', safeToStart: false },
     ]) {
       expect(() => parseUpdateWorkerReply(reply(result), { installationId, requestId })).toThrow('UPDATE_WORKER_RESPONSE_INVALID');
+    }
+  });
+
+  it('returns a parsed verified capability through the public client method', async () => {
+    const parsed = parseUpdateWorkerReply(reply({
+      kind: 'capabilities', platform: 'windows', architecture: 'x64', automaticInstallation: 'available',
+      authorityEnrollment: 'verified', packageAuthentication: 'verified', consentBinding: 'version-and-predecessor',
+      applicationDataActivation: 'atomic', independentHealthCheck: 'verified', rollback: 'verified',
+      tunnelRestoration: 'verified', silentInstall: true, automaticRelaunch: true,
+    }), { installationId, requestId });
+    const { client } = await unavailableAuthority();
+    const worker = client as unknown as {
+      invoke: (command: 'recover' | 'capabilities') => Promise<Record<string, unknown>>;
+    };
+    const invoke = vi.spyOn(worker, 'invoke').mockResolvedValue(parsed);
+
+    await expect(client.automaticCapability()).resolves.toEqual({
+      kind: 'available', platform: 'win32', architecture: 'x64', authorityEnrollment: 'verified',
+      packageAuthentication: 'verified', consentBinding: 'version-and-predecessor',
+      applicationDataActivation: 'atomic', independentHealthCheck: 'verified', rollback: 'verified',
+      tunnelRestoration: 'verified', silentInstall: true, automaticRelaunch: true,
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith('capabilities');
+  });
+
+  it('accepts only a complete target-bound verified updater capability from the pinned worker', () => {
+    const ready = {
+      kind: 'capabilities', platform: 'windows', architecture: 'x64', automaticInstallation: 'available',
+      authorityEnrollment: 'verified', packageAuthentication: 'verified', consentBinding: 'version-and-predecessor',
+      applicationDataActivation: 'atomic', independentHealthCheck: 'verified', rollback: 'verified',
+      tunnelRestoration: 'verified', silentInstall: true, automaticRelaunch: true,
+    } as const;
+    expect(parseUpdateWorkerReply(reply(ready), { installationId, requestId })).toEqual({
+      kind: 'available', platform: 'win32', architecture: 'x64', authorityEnrollment: 'verified',
+      packageAuthentication: 'verified', consentBinding: 'version-and-predecessor',
+      applicationDataActivation: 'atomic', independentHealthCheck: 'verified', rollback: 'verified',
+      tunnelRestoration: 'verified', silentInstall: true, automaticRelaunch: true,
+    });
+
+    for (const invalid of [
+      { ...ready, platform: 'linux' },
+      { ...ready, authorityEnrollment: 'unverified' },
+      { ...ready, packageAuthentication: 'unverified' },
+      { ...ready, consentBinding: 'version' },
+      { ...ready, applicationDataActivation: 'non-atomic' },
+      { ...ready, independentHealthCheck: 'self-reported' },
+      { ...ready, rollback: 'unverified' },
+      { ...ready, tunnelRestoration: 'unverified' },
+      { ...ready, silentInstall: false },
+      { ...ready, automaticRelaunch: false },
+      { ...ready, unboundExtraField: true },
+    ]) {
+      expect(() => parseUpdateWorkerReply(reply(invalid), { installationId, requestId })).toThrow('UPDATE_WORKER_RESPONSE_INVALID');
     }
   });
 

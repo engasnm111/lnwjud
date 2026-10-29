@@ -84,7 +84,13 @@ internal sealed class ServiceAttemptLedger
     internal ServiceAttemptLedger() { }
 
     internal static string GlobalReservationKey { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "lnwjud-containment", "managed-writers");
+#if NATIVE_CONTAINMENT_TESTS
+        Path.GetFullPath(Path.GetTempPath()),
+#else
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+#endif
+        "lnwjud-containment",
+        "managed-writers");
 
     internal string? ImportStoreDirectory { get; }
     internal string? OutputStoreDirectory => persistence?.OutputStoreDirectory;

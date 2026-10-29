@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Lnwjud.UpdateWorker;
 
 namespace Lnwjud.Containment;
 
@@ -23,8 +24,12 @@ internal static class Program
             using var executablePin = new FileStream(Environment.ProcessPath ?? throw new IOException("HELPER_PATH_UNAVAILABLE"), FileMode.Open, FileAccess.Read, FileShare.Read);
             if (args.Length == 1 && args[0] == "clear-stale-tunnel-alias")
                 return await StaleTunnelAlias.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput()).ConfigureAwait(false);
+            if (args.Length == 1 && args[0] == "stop-owned-tunnel")
+                return await StaleTunnelAlias.RunStopOwnedAsync(Console.OpenStandardInput(), Console.OpenStandardOutput()).ConfigureAwait(false);
             if (args.Length == 2 && args[0] == "service-rpc") return await RunServiceRpcAsync(args[1]).ConfigureAwait(false);
             if (args.Length == 2 && args[0] == "service-watch") return await WindowsContainmentServiceClient.RunWatcherAsync(args[1], Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.OpenStandardError()).ConfigureAwait(false);
+            if (args.Length == 2 && args[0] == "service-enroll-preflight") return RunEnrollmentPreflight(args[1]);
+            if (args.Length == 2 && args[0] == "service-enroll-attestation-preflight") return RunEnrollmentAttestationPreflight(args[1]);
 #if !NATIVE_CONTAINMENT_TESTS
             if (args.Length == 1 && args[0] == "service") { WindowsContainmentService.Run(); return 0; }
             if (args.Length == 1 && args[0] == "service-install") { WindowsContainmentServiceInstaller.Install(); return 0; }
@@ -54,6 +59,47 @@ internal static class Program
 #endif
         }
         catch { Console.Error.WriteLine("NATIVE_CONTAINMENT_UNRESOLVED"); return 125; }
+    }
+
+    private static int RunEnrollmentPreflight(string directory)
+    {
+        var result = EnrollmentPreflight.VerifyPackage(directory, ReleaseTrustPolicy.Embedded(), ReleaseSchema.Embedded(),
+            new ReleaseTimeObservation(true, (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        if (result is EnrollmentPreflightResult.Refused refused)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new { status = "refused", readyToEnroll = false, reason = refused.Reason }));
+            return 2;
+        }
+        var metadata = (EnrollmentPreflightResult.Authenticated)result;
+        Console.WriteLine(JsonSerializer.Serialize(new { status = "metadata_authenticated", readyToEnroll = false,
+            reason = "ENROLLMENT_ACCEPTANCE_UNAVAILABLE", metadata.ReleaseId, metadata.Version,
+            metadata.ReleaseEnvelopeSha256, metadata.LayoutEnvelopeSha256, metadata.PolicySha256 }));
+        return 0;
+    }
+
+    private static int RunEnrollmentAttestationPreflight(string directory)
+    {
+        var result = EnrollmentAttestationPreflight.VerifyPackage(directory, ReleaseTrustPolicy.Embedded(), ReleaseSchema.Embedded(),
+            new ReleaseTimeObservation(true, (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        if (result is AttestationPreflightResult.Held held)
+        {
+            try { Console.WriteLine(JsonSerializer.Serialize(new { status = "refused", readyToEnroll = false, cleanupPending = true, reason = "RELEASE_ATTESTATION_CLEANUP_PENDING" })); }
+            finally
+            {
+                while (!held.Owner.TryFinishCleanup(TimeSpan.FromSeconds(10))) Thread.Sleep(100);
+            }
+            return 2;
+        }
+        if (result is AttestationPreflightResult.Refused refused)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new { status = "refused", readyToEnroll = false, reason = refused.Reason }));
+            return 2;
+        }
+        var metadata = ((AttestationPreflightResult.Authenticated)result).Metadata;
+        Console.WriteLine(JsonSerializer.Serialize(new { status = "artifact_attestations_authenticated", readyToEnroll = false,
+            reason = "ENROLLMENT_ACCEPTANCE_UNAVAILABLE", metadata.ReleaseId, metadata.Version,
+            metadata.ReleaseEnvelopeSha256, metadata.LayoutEnvelopeSha256, metadata.PolicySha256 }));
+        return 0;
     }
 
     private static async Task<int> RunServiceRpcAsync(string expectedSha256)

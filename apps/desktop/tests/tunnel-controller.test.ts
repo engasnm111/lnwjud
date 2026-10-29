@@ -1089,14 +1089,23 @@ describe('TunnelController lifecycle', () => {
       await expect(controller.start()).resolves.toMatchObject({ state: 'starting', message: 'Fixture connect failure' });
       expect(connect).toHaveBeenCalledOnce();
     }
+    // The UI Stop button uses stopFromUser(); strict stop() is reserved for reconciliation.
+    const performOperation = operation === 'stop'
+      ? (): ReturnType<TunnelController['stopFromUser']> => controller.stopFromUser()
+      : (): ReturnType<TunnelController['prepareFactoryReset']> => controller.prepareFactoryReset();
     if (evidence === 'verified') {
-      await controller[operation]();
-      expect(retireStoppedAlias).toHaveBeenCalledExactlyOnceWith('tunnel_oldalias12345');
+      await performOperation();
+      if (operation === 'prepareFactoryReset') {
+        expect(retireStoppedAlias).toHaveBeenCalledExactlyOnceWith('tunnel_oldalias12345');
+      } else {
+        expect(retireStoppedAlias).not.toHaveBeenCalled();
+        expect(exists).toBe(true);
+      }
     } else {
-      await expect(controller[operation]()).rejects.toThrow(evidence === 'foreign' ? 'identity mismatch' : 'safe cleanup could not be verified');
+      await expect(performOperation()).rejects.toThrow(evidence === 'foreign' ? 'identity mismatch' : 'process liveness is not verified as stopped');
       expect(retireStoppedAlias).not.toHaveBeenCalled();
     }
-    expect(ensureSingleProcess).toHaveBeenCalledWith('tunnel_newalias12345', historicalStatus);
+    expect(ensureSingleProcess).toHaveBeenCalledWith('tunnel_oldalias12345', historicalStatus);
     if (!failedStart) expect(stop).not.toHaveBeenCalled();
     await controller.shutdownForDesktopExit();
   });
@@ -1263,6 +1272,181 @@ describe('TunnelController lifecycle', () => {
     await expect(controller.prepareFactoryReset()).rejects.toThrow('ownership is not verified');
     expect(stop).not.toHaveBeenCalled();
     expect(retireStoppedAlias).not.toHaveBeenCalled();
+  });
+
+  it('stops and retires the owned live alias during factory reset when saved Tunnel ID is stale', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-reset-owned-mismatch-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture');
+    const capabilities: TunnelRuntimeCapabilities = {
+      clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+      pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+    };
+    let aliasExists = true;
+    let aliasStopped = false;
+    let ownerPath: string | null = clientPath;
+    const status = vi.fn(async () => ({
+      processStateEvidence: aliasStopped ? 'stopped' as const : 'running' as const,
+      exists: aliasExists,
+      running: !aliasStopped,
+      healthy: aliasStopped ? null : true,
+      ready: aliasStopped ? null : true,
+      pollHealthy: aliasStopped ? null : true,
+      tunnelId: aliasExists ? 'tunnel_oldalias12345' : null,
+      mcpServerUrl: null,
+      pid: aliasStopped || !aliasExists ? null : 99992,
+      uiUrl: null,
+      message: null,
+    }));
+    const stop = vi.fn(async () => {
+      aliasStopped = true;
+      return status();
+    });
+    const stopOwnedTunnelForUser = vi.fn(async () => {
+      aliasStopped = true;
+      return status();
+    });
+    const retireStoppedAlias = vi.fn(async () => { aliasExists = false; });
+    const adapter: TunnelRuntimeReconcilerAdapter = {
+      runtimeAlias: (): string => 'lnwjud',
+      capabilities: vi.fn(async () => capabilities),
+      status,
+      connect: vi.fn(async () => { throw new Error('Unexpected connect'); }),
+      stop,
+      stopOwnedTunnelForUser,
+      retireStoppedAlias,
+    };
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getTunnelId: (): string => 'tunnel_newalias12345',
+      setTunnelId: (): void => undefined,
+      getRuntimeOwnerPath: (): string | null => ownerPath,
+      setRuntimeOwnerPath: (value): void => { ownerPath = value || null; },
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      isExternalTunnelRunning: async (): Promise<boolean> => false,
+    });
+
+    await expect(controller.prepareFactoryReset()).resolves.toBeUndefined();
+
+    expect(stopOwnedTunnelForUser).toHaveBeenCalledExactlyOnceWith('tunnel_oldalias12345');
+    expect(stop).not.toHaveBeenCalled();
+    expect(retireStoppedAlias).toHaveBeenCalledExactlyOnceWith('tunnel_oldalias12345');
+    expect(aliasExists).toBe(false);
+  });
+
+  it('keeps concurrent user and strict stop intents separate when saved Tunnel ID is stale', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-user-stop-mismatch-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture');
+    const capabilities: TunnelRuntimeCapabilities = {
+      clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+      pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+    };
+    let aliasStopped = false;
+    let ownerPath: string | null = clientPath;
+    const status = vi.fn(async () => ({
+      processStateEvidence: aliasStopped ? 'stopped' as const : 'running' as const,
+      exists: true, running: !aliasStopped, healthy: aliasStopped ? null : true, ready: aliasStopped ? null : true,
+      pollHealthy: aliasStopped ? null : true, tunnelId: 'tunnel_oldalias12345', mcpServerUrl: null,
+      pid: aliasStopped ? null : 99993, uiUrl: null, message: null,
+    }));
+    const stop = vi.fn(async () => {
+      aliasStopped = true;
+      return status();
+    });
+    const stopOwnedTunnelForUser = vi.fn(async () => {
+      aliasStopped = true;
+      return status();
+    });
+    const retireStoppedAlias = vi.fn();
+    const adapter = {
+      runtimeAlias: (): string => 'lnwjud',
+      capabilities: vi.fn(async () => capabilities),
+      status,
+      connect: vi.fn(async () => { throw new Error('Unexpected connect'); }),
+      stop,
+      stopOwnedTunnelForUser,
+      retireStoppedAlias,
+    };
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getTunnelId: (): string => 'tunnel_newalias12345',
+      setTunnelId: (): void => undefined,
+      getRuntimeOwnerPath: (): string | null => ownerPath,
+      setRuntimeOwnerPath: (value): void => { ownerPath = value || null; },
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      isExternalTunnelRunning: async (): Promise<boolean> => false,
+    });
+
+    const strictStop = controller.stop();
+    const userStop = controller.stopFromUser();
+
+    await expect(strictStop).rejects.toThrow('different Tunnel ID');
+    await expect(userStop).resolves.toMatchObject({ state: 'stopped' });
+    expect(stopOwnedTunnelForUser).toHaveBeenCalledExactlyOnceWith('tunnel_oldalias12345');
+    expect(stop).not.toHaveBeenCalled();
+    expect(retireStoppedAlias).not.toHaveBeenCalled();
+    expect(aliasStopped).toBe(true);
+    expect(ownerPath).toBeNull();
+  });
+
+  it('stops the verified app-owned Tunnel for an update without changing the saved desired state', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-tunnel-update-stop-mismatch-'));
+    temporaryRoots.push(dataPath);
+    isolateTunnelProfile(dataPath);
+    const clientPath = path.join(dataPath, 'tunnel-client.exe');
+    await writeFile(clientPath, 'fixture');
+    const capabilities: TunnelRuntimeCapabilities = {
+      clientVersion: 'fixture', nativeRuntimes: true, managedConnect: true, healthProbe: true,
+      pollHealthGate: true, readyBeforeRetire: false, strictZeroDowntime: false, evidence: 'fixture',
+    };
+    let aliasStopped = false;
+    let ownerPath: string | null = clientPath;
+    let desiredState: 'running' | 'stopped' = 'running';
+    const status = vi.fn(async () => ({
+      processStateEvidence: aliasStopped ? 'stopped' as const : 'running' as const,
+      exists: true, running: !aliasStopped, healthy: aliasStopped ? null : true, ready: aliasStopped ? null : true,
+      pollHealthy: aliasStopped ? null : true, tunnelId: 'tunnel_oldalias12345', mcpServerUrl: null,
+      pid: aliasStopped ? null : 99993, uiUrl: null, message: null,
+    }));
+    const stopOwnedTunnelForUser = vi.fn(async () => {
+      aliasStopped = true;
+      return status();
+    });
+    const adapter = {
+      runtimeAlias: (): string => 'lnwjud',
+      capabilities: vi.fn(async () => capabilities),
+      status,
+      connect: vi.fn(async () => { throw new Error('Unexpected connect'); }),
+      stop: vi.fn(async () => { throw new Error('The configured Tunnel ID must not be used'); }),
+      stopOwnedTunnelForUser,
+    };
+    const controller = new TunnelController({
+      getClientPath: (): string => clientPath,
+      setClientPath: (): void => undefined,
+      getDataPath: (): string => dataPath,
+      getTunnelId: (): string => 'tunnel_newalias12345',
+      setTunnelId: (): void => undefined,
+      getRuntimeOwnerPath: (): string | null => ownerPath,
+      setRuntimeOwnerPath: (value): void => { ownerPath = value || null; },
+      getRuntimeDesiredState: (): 'running' | 'stopped' => desiredState,
+      setRuntimeDesiredState: (value): void => { desiredState = value; },
+      createRuntimeAdapter: (): TunnelRuntimeReconcilerAdapter => adapter,
+      isExternalTunnelRunning: async (): Promise<boolean> => false,
+    });
+
+    await expect(controller.stopForUpdate()).resolves.toMatchObject({ state: 'stopped' });
+    expect(stopOwnedTunnelForUser).toHaveBeenCalledExactlyOnceWith('tunnel_oldalias12345');
+    expect(desiredState).toBe('running');
+    expect(ownerPath).toBeNull();
   });
 
   it('refuses to stop a persisted native alias when it reports a different Tunnel ID', async () => {

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -44,24 +45,75 @@ internal static class ReleaseJson
 internal sealed class ReleaseSchema
 {
     private readonly JsonElement schema;
+    private readonly string sourceDigest;
     internal ReleaseSchema(byte[] bytes)
     {
-        using var document = ReleaseJson.Parse(bytes, 65_536);
+        if (bytes.Length > 65_536) throw new Refusal("RELEASE_SCHEMA_INVALID");
+        var snapshot = bytes.ToArray();
+        using var document = ReleaseJson.Parse(snapshot, 65_536);
         schema = document.RootElement.Clone();
+        sourceDigest = ReleaseTrustPolicy.Hash(Wire.Utf8.GetBytes(Wire.Utf8.GetString(snapshot).Replace("\r\n", "\n", StringComparison.Ordinal)));
         if (schema.GetProperty("protocol").GetInt32() != 1) throw new Refusal("RELEASE_SCHEMA_UNSUPPORTED");
     }
     internal static ReleaseSchema Embedded() => new(ReleaseJson.Resource("update-release-schema.json"));
+    internal static ReleaseSchema Identity() => new(ReleaseJson.Resource("update-release-identity-v1.json"));
+    internal static ReleaseSchema AuthorizationV2()
+    {
+        var value = new ReleaseSchema(ReleaseJson.Resource("update-release-authorization-v2.json"));
+        if (value.sourceDigest != "ad9d956016199f1519bf0b4ff0e784991ddd49ca239614021882b064eb802ab6")
+            throw new Refusal("RELEASE_AUTHORIZATION_SCHEMA_VERSION_MISMATCH");
+        return value;
+    }
     internal int EnvelopeBytes => schema.GetProperty("limits").GetProperty("envelopeBytes").GetInt32();
     internal int PayloadBytes => schema.GetProperty("limits").GetProperty("payloadBytes").GetInt32();
     internal int Depth => schema.GetProperty("limits").GetProperty("maxDepth").GetInt32();
+    internal byte[] EncodeReleaseIdentity(ReadOnlySpan<byte> bytes)
+    {
+        if (sourceDigest != "35349e5d31e1cab882e18c5c4808d8f65a6ca6a21200d3f0ea78507bb8e47458")
+            throw new Refusal("RELEASE_IDENTITY_SCHEMA_VERSION_MISMATCH");
+        using var document = ReleaseJson.Parse(bytes, PayloadBytes, Depth);
+        var release = document.RootElement;
+        Validate("release", release);
+        using var output = new MemoryStream();
+        output.Write(Wire.Utf8.GetBytes("lnwjud-update-release-identity-v1\0"));
+        EncodeIdentityObject(output, "release", release);
+        return output.ToArray();
+    }
+    private void EncodeIdentityObject(Stream output, string name, JsonElement value)
+    {
+        var fields = schema.GetProperty("objects").GetProperty(name).GetProperty("fields").EnumerateObject()
+            .OrderBy(field => field.Name, StringComparer.Ordinal).ToArray();
+        output.WriteByte((byte)'O'); WriteIdentityCount(output, fields.Length);
+        foreach (var field in fields)
+        {
+            WriteIdentityText(output, field.Name);
+            var descriptor = field.Value;
+            var item = value.GetProperty(field.Name);
+            var kind = descriptor.GetProperty("kind").GetString();
+            if (kind == "object") EncodeIdentityObject(output, descriptor.GetProperty("object").GetString()!, item);
+            else if (kind == "string") { output.WriteByte((byte)'S'); WriteIdentityText(output, item.GetString()!); }
+            else throw new Refusal("RELEASE_SCHEMA_UNSUPPORTED");
+        }
+    }
+    private static void WriteIdentityText(Stream output, string value)
+    {
+        var bytes = Wire.Utf8.GetBytes(value);
+        WriteIdentityCount(output, bytes.Length); output.Write(bytes);
+    }
+    private static void WriteIdentityCount(Stream output, int value)
+    {
+        Span<byte> bytes = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32BigEndian(bytes, checked((uint)value)); output.Write(bytes);
+    }
     internal void Validate(string name, JsonElement value)
     {
         if (value.ValueKind != JsonValueKind.Object) throw new Refusal("RELEASE_SCHEMA_INVALID");
         var fields = schema.GetProperty("objects").GetProperty(name).GetProperty("fields");
         if (value.EnumerateObject().Count() != fields.EnumerateObject().Count()) throw new Refusal("RELEASE_SCHEMA_INVALID");
+        var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in value.EnumerateObject())
         {
-            if (!fields.TryGetProperty(property.Name, out var descriptor)) throw new Refusal("RELEASE_SCHEMA_INVALID");
+            if (!names.Add(property.Name) || !fields.TryGetProperty(property.Name, out var descriptor)) throw new Refusal("RELEASE_SCHEMA_INVALID");
             ValidateValue(descriptor, property.Value);
         }
     }
@@ -80,7 +132,7 @@ internal sealed class ReleaseSchema
         }
         if (kind != "string" || value.ValueKind != JsonValueKind.String) throw new Refusal("RELEASE_SCHEMA_INVALID");
         var text = value.GetString()!;
-        if (text.Any(c => c > 127) || descriptor.TryGetProperty("maxLength", out var length) && text.Length > length.GetInt32()) throw new Refusal("RELEASE_SCHEMA_INVALID");
+        if (text.Any(c => c < ' ' || c > '~') || descriptor.TryGetProperty("maxLength", out var length) && text.Length > length.GetInt32()) throw new Refusal("RELEASE_SCHEMA_INVALID");
         if (descriptor.TryGetProperty("constant", out var expected) && text != expected.GetString()) throw new Refusal("RELEASE_SCHEMA_INVALID");
         if (descriptor.TryGetProperty("pattern", out var pattern))
         {

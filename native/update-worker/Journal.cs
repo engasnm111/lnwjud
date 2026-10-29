@@ -70,11 +70,18 @@ internal sealed record Journal(ulong Generation, ulong Revision, string Previous
 internal sealed class UpdateWorkerCore : IDisposable
 {
     private readonly WindowsStoreIO io;
+    private readonly UpdateTransactionStore transactions;
     private readonly string installationId;
     private readonly ProcessOwner owner = WindowsStoreIO.CurrentOwner();
     private readonly Action<string>? boundary;
     internal UpdateWorkerCore(string root, string installationId, Action<string>? boundary = null)
-    { io = new WindowsStoreIO(root); this.installationId = installationId; this.boundary = boundary; }
+    {
+        if (!Wire.Digest(installationId)) throw new Refusal("UPDATE_TRANSACTION_IDENTITY_MISMATCH");
+        io = new WindowsStoreIO(root);
+        this.installationId = installationId;
+        this.boundary = boundary;
+        transactions = new UpdateTransactionStore(io, installationId);
+    }
 
     internal JsonObject Execute(Command command)
     {
@@ -85,6 +92,42 @@ internal sealed class UpdateWorkerCore : IDisposable
             if (file is not null) current = Journal.Decode(file.Bytes, installationId);
             if (command.Name == "capabilities") return Reply(command.RequestId, current, new JsonObject
             { ["kind"] = "capabilities", ["platform"] = "windows", ["architecture"] = "x64", ["automaticInstallation"] = "unavailable", ["reason"] = "TRANSACTION_BOOTSTRAP_ONLY" });
+            var transactionStage = io.Read("transaction.pending.json");
+            var selectionStage = io.Read("active-slot.pending.json");
+            if (transactionStage is not null || selectionStage is not null)
+            {
+                if (command.Name != "recover")
+                    return Held(command.RequestId, current, "UPDATE_TRANSACTION_PUBLICATION_PENDING");
+                _ = transactions.RecoverPublications();
+                transactionStage = io.Read("transaction.pending.json");
+                selectionStage = io.Read("active-slot.pending.json");
+                if (transactionStage is not null || selectionStage is not null)
+                    return Held(command.RequestId, current, "UPDATE_TRANSACTION_PUBLICATION_PENDING");
+            }
+
+            var transactionFile = io.Read("transaction.json");
+            if (transactionFile is not null)
+            {
+                var transaction = UpdateTransactionJournal.Decode(transactionFile.Bytes, installationId);
+                if (!transactionFile.Bytes.AsSpan().SequenceEqual(transaction.Encode()) || transactionFile.Digest != transaction.Digest)
+                    return Held(command.RequestId, current, "UPDATE_TRANSACTION_NONCANONICAL");
+                if (!transaction.SafeToStart)
+                    return Held(command.RequestId, current, "UPDATE_TRANSACTION_PENDING");
+
+                var selectionFile = io.Read("active-slot.json");
+                if (selectionFile is null)
+                    return Held(command.RequestId, current, "UPDATE_SLOT_SELECTION_MISSING");
+                var selection = SlotSelection.Decode(selectionFile.Bytes, installationId);
+                if (!selectionFile.Bytes.AsSpan().SequenceEqual(selection.Encode()) || selectionFile.Digest != selection.Digest)
+                    return Held(command.RequestId, current, "UPDATE_SLOT_SELECTION_NONCANONICAL");
+                var expectedSlot = transaction.Phase == UpdateTransactionPhase.Committed
+                    ? transaction.CandidateSlot : transaction.PreviousSlot;
+                var expectedSlotDigest = transaction.Phase == UpdateTransactionPhase.Committed
+                    ? transaction.CandidateSlotDigest : transaction.PreviousSlotDigest;
+                if (selection.Generation != transaction.Generation || selection.TransactionId != transaction.TransactionId
+                    || selection.Slot != expectedSlot || selection.SlotDigest != expectedSlotDigest)
+                    return Held(command.RequestId, current, "UPDATE_SLOT_SELECTION_CONFLICT");
+            }
             var pending = io.Read("journal.pending.json");
             if (pending is not null)
             {
@@ -170,5 +213,5 @@ internal sealed class UpdateWorkerCore : IDisposable
     internal static JsonObject Envelope(string installationId, string? id, string? generation, string? revision, JsonObject result) => new()
     { ["protocol"] = 1, ["buildId"] = Wire.BuildId, ["installationId"] = installationId, ["requestId"] = id,
         ["generation"] = generation, ["revision"] = revision, ["result"] = result };
-    public void Dispose() => io.Dispose();
+    public void Dispose() { transactions.Dispose(); io.Dispose(); }
 }

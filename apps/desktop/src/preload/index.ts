@@ -403,7 +403,6 @@ function userSettings(value: unknown): UserSettings {
     updateCheckOnStartup: booleanField(value, 'updateCheckOnStartup'),
     updateIntervalMinutes: integerField(value, 'updateIntervalMinutes'),
     updateAutoDownload: booleanField(value, 'updateAutoDownload'),
-    updateSilentInstall: value.updateSilentInstall === undefined ? false : booleanField(value, 'updateSilentInstall'),
     closeBehavior,
     launchAtStartup: booleanField(value, 'launchAtStartup'),
     startMinimized: booleanField(value, 'startMinimized'),

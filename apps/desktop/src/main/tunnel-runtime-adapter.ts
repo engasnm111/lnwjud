@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import { existsSync, statSync } from 'node:fs';
-import type { StaleTunnelAliasCleanupRequest } from '@lnwjud/process';
+import type { StaleTunnelAliasCleanupRequest, StopOwnedTunnelRequest } from '@lnwjud/process';
 import { lstat, mkdir, open as openFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { request as httpRequest } from 'node:http';
@@ -46,11 +46,16 @@ export interface TunnelRuntimeAdapterOptions {
   readonly sleep?: (delayMs: number) => Promise<void>;
   readonly processGuard?: (request: LocalTunnelRuntimeGuardRequest) => Promise<void>;
   readonly clearStaleTunnelAlias?: (request: StaleTunnelAliasCleanupRequest) => Promise<void>;
+  readonly stopOwnedTunnel?: (request: StopOwnedTunnelRequest) => Promise<void>;
 }
 
 export interface NativeRuntimeConnectRequest {
   readonly tunnelId: string;
   readonly mcpServerUrl: string;
+}
+
+export interface TunnelRuntimeUserStopCapability {
+  stopOwnedTunnelForUser(tunnelId: string): Promise<NativeTunnelRuntimeStatus>;
 }
 
 export class TunnelRuntimeAdapter {
@@ -372,6 +377,45 @@ export class TunnelRuntimeAdapter {
       if (attempt + 1 < attempts && intervalMs > 0) await sleep(intervalMs);
     }
     throw new Error(`Tunnel runtime ${this.alias} is still running after stop`);
+  }
+
+  /** Stops the verified live alias through native process identity proof for an explicit user request. */
+  public async stopOwnedTunnelForUser(tunnelId: string): Promise<NativeTunnelRuntimeStatus> {
+    await this.recoverStoppedAliasRetirement();
+    const expectedTunnelId = tunnelId.trim();
+    if (this.alias !== TUNNEL_RUNTIME_ALIAS || !/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(expectedTunnelId)) {
+      throw new Error('TUNNEL_STOP_IDENTITY_UNVERIFIED');
+    }
+    const before = await this.status(true);
+    if (!before.exists || !before.running || before.processStateEvidence !== 'running'
+      || before.tunnelId !== expectedTunnelId || before.pid === null || before.pid <= 0) {
+      throw new Error('TUNNEL_STOP_IDENTITY_UNVERIFIED');
+    }
+    if (this.options.stopOwnedTunnel === undefined) throw new Error('TUNNEL_STOP_NATIVE_AUTHORITY_UNAVAILABLE');
+
+    const stateRoot = resolveNativeTunnelStateRoot(this.options.environment);
+    const [aliases, processes] = await Promise.all([
+      readBoundedRuntimeMetadata(path.join(stateRoot, 'aliases.yaml')),
+      readBoundedRuntimeMetadata(path.join(stateRoot, 'processes.yaml')),
+    ]);
+    await this.options.stopOwnedTunnel({
+      stateRoot,
+      alias: TUNNEL_RUNTIME_ALIAS,
+      profileDirectory: path.resolve(this.options.profileDirectory),
+      clientPath: path.resolve(this.options.clientPath),
+      expectedTunnelId,
+      expectedPid: before.pid,
+      expectedAliasesSha256: createHash('sha256').update(aliases).digest('hex'),
+      expectedProcessesSha256: createHash('sha256').update(processes).digest('hex'),
+    });
+
+    const stopped = await this.status(true);
+    if (!stopped.exists || stopped.tunnelId !== expectedTunnelId || stopped.running || stopped.pid !== null
+      || stopped.processStateEvidence !== 'stopped') {
+      throw new Error('TUNNEL_STOP_POSTCONDITION_UNVERIFIED');
+    }
+    await this.ensureSingleProcess(expectedTunnelId, stopped);
+    return stopped;
   }
 
   private async capture(args: readonly string[], timeout: number): Promise<{ readonly ok: boolean; readonly stdout: string; readonly stderr: string }> {

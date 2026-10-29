@@ -50,6 +50,32 @@ test('disposable signature authenticates exact bytes and empty production policy
   assert.throws(() => authenticateEnvelope(fixture.bytes, loadProductionPolicy(), 1800000000n), /RELEASE_TRUST_UNCONFIGURED/);
 });
 
+test('authenticated target tuple binds platform, architecture, distribution and artifact names', () => {
+  for (const architecture of ['x64', 'arm64']) {
+    const fixture = disposableFixture();
+    fixture.payload.platform = 'darwin'; fixture.payload.architecture = architecture; fixture.payload.distribution = 'macos-zip';
+    fixture.payload.artifact.name = `lnwjud-${fixture.payload.version}-${architecture}.zip`;
+    fixture.payload.previous.artifact.name = `lnwjud-${fixture.payload.previous.version}-${architecture}.zip`;
+    const bytes = signAuthenticatedPayload(fixture.payload, fixture.policy, 'disposable-test-only', fixture.privateBytes, 1800000000n);
+    assert.equal(authenticateEnvelope(bytes, fixture.policy, 1800000000n).payload.artifact.name, fixture.payload.artifact.name);
+  }
+
+  for (const [platform, architecture, distribution] of [
+    ['win32', 'arm64', 'windows-nsis'], ['darwin', 'x64', 'windows-nsis'], ['win32', 'x64', 'macos-zip'],
+  ]) {
+    const fixture = disposableFixture();
+    fixture.payload.platform = platform; fixture.payload.architecture = architecture; fixture.payload.distribution = distribution;
+    const bytes = rawEnvelope(fixture, Buffer.from(JSON.stringify(fixture.payload)));
+    assert.throws(() => authenticateEnvelope(bytes, fixture.policy, 1800000000n), /RELEASE_TARGET_UNSUPPORTED/);
+  }
+
+  const wrongArtifact = disposableFixture();
+  wrongArtifact.payload.platform = 'darwin'; wrongArtifact.payload.distribution = 'macos-zip';
+  wrongArtifact.payload.artifact.name = 'lnwjud-Setup-2.0.0.exe';
+  const wrongBytes = rawEnvelope(wrongArtifact, Buffer.from(JSON.stringify(wrongArtifact.payload)));
+  assert.throws(() => authenticateEnvelope(wrongBytes, wrongArtifact.policy, 1800000000n), /RELEASE_ARTIFACT_INVALID/);
+});
+
 test('shared persisted Node-to-native public byte fixtures authenticate and malformed bytes refuse', async () => {
   const fixture = JSON.parse(await readFile(new URL('../../tests/fixtures/update-release/metadata-v1.json', import.meta.url), 'utf8'));
   for (const encoded of [fixture.candidateEnvelope, fixture.baselineEnvelope])
@@ -66,7 +92,7 @@ test('strict parser rejects UTF8, BOM, size, depth and noncanonical base64', () 
   for (const bytes of [Buffer.from([0xff]), Buffer.from([0xef, 0xbb, 0xbf, 123, 125]), Buffer.alloc(32769)])
     assert.throws(() => parseStrictJson(bytes, 32768));
   assert.throws(() => parseStrictJson(Buffer.from('['.repeat(14) + '0' + ']'.repeat(14)), 32768));
-  for (const text of ['AB==', 'YQ', 'YQ==\n', 'YQ-_']) assert.throws(() => canonicalBase64(text, 32768));
+  for (const text of ['', 'AB==', 'YQ', 'YQ==\n', 'YQ-_']) assert.throws(() => canonicalBase64(text, 32768));
 });
 
 test('generic GitHub JSON accepts paired emoji while signed payload identifiers remain ASCII', () => {

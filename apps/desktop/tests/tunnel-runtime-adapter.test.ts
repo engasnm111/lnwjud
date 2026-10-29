@@ -1,5 +1,5 @@
 import type { ExecFileOptionsWithStringEncoding } from 'node:child_process';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
@@ -73,6 +73,74 @@ describe('TunnelRuntimeAdapter', () => {
       await rm(root, { recursive: true, force: true });
       await adapter.recoverStoppedAliasRetirement();
       expect(clearStaleTunnelAlias).toHaveBeenCalledTimes(1);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('stops a verified live alias through the native user capability and verifies the stopped status', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-user-native-stop-'));
+    try {
+      const aliasSnapshot = Buffer.from('{"lnwjud":{"tunnel_id":"tunnel_oldalias12345"}}');
+      const processSnapshot = Buffer.from('{"lnwjud":{"pid":9832,"mode":"process"}}');
+      await writeFile(path.join(root, 'aliases.yaml'), aliasSnapshot);
+      await writeFile(path.join(root, 'processes.yaml'), processSnapshot);
+      const commands: string[] = [];
+      let statusCalls = 0;
+      const execute: TunnelRuntimeExecutor = async (_executable, args): Promise<TunnelRuntimeExecResult> => {
+        const command = args.join(' ');
+        commands.push(command);
+        if (command !== 'runtimes status lnwjud --json') throw new Error('User native Stop must not use alias-only CLI stop');
+        statusCalls += 1;
+        return {
+          stdout: JSON.stringify({
+            alias: 'lnwjud', tunnel_id: 'tunnel_oldalias12345', process_running: statusCalls === 1,
+            ...(statusCalls === 1 ? { pid: 9832 } : {}),
+          }),
+          stderr: '',
+        };
+      };
+      const stopOwnedTunnel = vi.fn(async (): Promise<void> => undefined);
+      const processGuard = vi.fn(async (): Promise<void> => undefined);
+      const clientPath = path.resolve('fixture.exe');
+      const adapter = new TunnelRuntimeAdapter({
+        clientPath, profileDirectory: root, environment: { TUNNEL_CLIENT_STATE_DIR: root },
+        execute, processGuard, stopOwnedTunnel,
+      });
+
+      await expect(adapter.stopOwnedTunnelForUser('tunnel_oldalias12345')).resolves.toMatchObject({
+        exists: true, running: false, tunnelId: 'tunnel_oldalias12345', pid: null, processStateEvidence: 'stopped',
+      });
+
+      expect(stopOwnedTunnel).toHaveBeenCalledExactlyOnceWith({
+        stateRoot: root,
+        alias: 'lnwjud',
+        profileDirectory: path.resolve(root),
+        clientPath,
+        expectedTunnelId: 'tunnel_oldalias12345',
+        expectedPid: 9832,
+        expectedAliasesSha256: createHash('sha256').update(aliasSnapshot).digest('hex'),
+        expectedProcessesSha256: createHash('sha256').update(processSnapshot).digest('hex'),
+      });
+      expect(commands).toEqual(['runtimes status lnwjud --json', 'runtimes status lnwjud --json']);
+      expect(processGuard).toHaveBeenCalledTimes(1);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('fails closed without the native user-stop capability and never calls alias-only stop', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-user-native-stop-unavailable-'));
+    try {
+      const commands: string[] = [];
+      const execute: TunnelRuntimeExecutor = async (_executable, args): Promise<TunnelRuntimeExecResult> => {
+        const command = args.join(' ');
+        commands.push(command);
+        if (command !== 'runtimes status lnwjud --json') throw new Error('Unexpected mutation command');
+        return { stdout: JSON.stringify({ alias: 'lnwjud', tunnel_id: 'tunnel_oldalias12345', process_running: true, pid: 9832 }), stderr: '' };
+      };
+      const adapter = new TunnelRuntimeAdapter({
+        clientPath: 'fixture.exe', profileDirectory: root, environment: { TUNNEL_CLIENT_STATE_DIR: root }, execute,
+      });
+
+      await expect(adapter.stopOwnedTunnelForUser('tunnel_oldalias12345')).rejects.toThrow('TUNNEL_STOP_NATIVE_AUTHORITY_UNAVAILABLE');
+      expect(commands).toEqual(['runtimes status lnwjud --json']);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -152,6 +220,66 @@ describe('TunnelRuntimeAdapter', () => {
       } finally {
         child.kill();
         await childExit;
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32' && existsSync(nativeTestHelper)
+    && existsSync(path.resolve('build/native-containment/lnwjud-containment-pin.node')))(
+    'routes the pinned native authority stop protocol to one identity-matched isolated process', async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-native-owned-stop-integration-'));
+      const stateDirectory = path.join(root, 'state');
+      const profileDirectory = path.join(root, 'profile');
+      await mkdir(stateDirectory);
+      await mkdir(profileDirectory);
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true, stdio: 'ignore' });
+      let childExit: ReturnType<typeof once> | null = null;
+      try {
+        await once(child, 'spawn');
+        if (child.pid === undefined) throw new Error('Owned-stop fixture child has no PID');
+        childExit = once(child, 'exit');
+        const fileTime = BigInt(execFileSync('powershell.exe', [
+          '-NoProfile', '-NonInteractive', '-Command',
+          `[System.Diagnostics.Process]::GetProcessById(${child.pid}).StartTime.ToUniversalTime().ToFileTimeUtc()`,
+        ], { encoding: 'utf8', windowsHide: true }).trim());
+        const processStartTime = ((fileTime - 116444736000000000n) * 100n).toString();
+        const tunnelId = 'tunnel_ownedstop12345';
+        const alias = { alias: 'lnwjud', tunnel_id: tunnelId, profile_dir: profileDirectory };
+        const aliasBytes = Buffer.from(JSON.stringify({ lnwjud: alias }));
+        const processBytes = Buffer.from(JSON.stringify({ lnwjud: {
+          ...alias, mode: 'process', pid: child.pid, pid_start_time: processStartTime,
+          pid_executable: process.execPath, session_name: '', tmux_socket: '',
+        } }));
+        await writeFile(path.join(stateDirectory, 'aliases.yaml'), aliasBytes);
+        await writeFile(path.join(stateDirectory, 'processes.yaml'), processBytes);
+        const helper = nativeTestHelper;
+        const pin = path.resolve('build/native-containment/lnwjud-containment-pin.node');
+        const authority = new WindowsNativeAuthority({
+          helper: { executable: helper, sha256: createHash('sha256').update(await readFile(helper)).digest('hex'), buildId: 'lnwjud-containment-v2' },
+          pin: { modulePath: pin, sha256: createHash('sha256').update(await readFile(pin)).digest('hex') },
+        });
+
+        await authority.stopOwnedTunnel({
+          stateRoot: stateDirectory,
+          alias: 'lnwjud',
+          profileDirectory,
+          clientPath: process.execPath,
+          expectedTunnelId: tunnelId,
+          expectedPid: child.pid,
+          expectedAliasesSha256: createHash('sha256').update(aliasBytes).digest('hex'),
+          expectedProcessesSha256: createHash('sha256').update(processBytes).digest('hex'),
+        });
+        await childExit;
+
+        expect(child.exitCode).not.toBeNull();
+        expect(JSON.parse(await readFile(path.join(stateDirectory, 'aliases.yaml'), 'utf8'))).toEqual({ lnwjud: alias });
+        expect(JSON.parse(await readFile(path.join(stateDirectory, 'processes.yaml'), 'utf8'))).toMatchObject({
+          lnwjud: { alias: 'lnwjud', tunnel_id: tunnelId, mode: 'stopped', pid: 0, pid_start_time: '', pid_executable: '' },
+        });
+      } finally {
+        if (child.exitCode === null) child.kill();
+        if (childExit !== null) await childExit;
         await rm(root, { recursive: true, force: true });
       }
     },

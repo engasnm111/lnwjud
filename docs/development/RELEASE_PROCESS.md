@@ -53,6 +53,23 @@ system is never evidence for another.
     the in-app What's New registry, with Thai and English text. README and
     GitHub Release notes do not populate the in-app modal. The Desktop release
     notes test must fail when the current package version has no in-app entry.
+11. Do not tag or publish until the exact successful `main` CI run and attempt
+    produce and validate signed updater acceptance receipts for Windows x64,
+    macOS arm64, and macOS x64. Each receipt must bind the exact `main` SHA,
+    workflow run ID and attempt, package and feed digests, and signing identity.
+    It must prove exactly one accepted confirmation of the exact target version,
+    followed by silent installation with zero interactive installer prompts or
+    Next pages, while retaining OS security authorization. It must also prove
+    installation over an older signed build, automatic restart,
+    exact resulting version and health, Tunnel restoration, and rollback to
+    the previous healthy build after an injected update failure, followed by
+    another health check and Tunnel restoration. Missing, duplicate, stale-run,
+    unsigned, manually authored, or verifier-only receipts fail this gate. A
+    build, unit test, update-feed check, or ordinary installer run is not
+    updater acceptance. The current release verifier rejects every structurally
+    valid updater receipt because an authenticated producer and independent
+    observation verifier are not implemented yet. Do not remove this hold until
+    those components and the real target-native acceptance are verified.
 
 ## Post-publication documentation synchronization
 

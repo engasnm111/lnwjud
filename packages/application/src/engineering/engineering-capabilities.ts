@@ -6,8 +6,12 @@ import type { EngineeringArtifactRole, EngineeringCapabilityFacts, EngineeringFa
 
 const MAX_FILES = 4096;
 const MAX_BYTES = 64 * 1024 * 1024;
-const EXCLUDED_DIRECTORIES = new Set(['.git', '.codegraph', '.audit', '.worktrees', 'node_modules', '.next', '.turbo', '.parcel-cache', 'dist', 'build', 'coverage']);
+const EXCLUDED_DIRECTORIES = new Set(['.git', '.codegraph', '.audit', '.worktrees', '.local-artifacts', '.pnpm-store', '.cache', '.tmp', 'node_modules', '.next', '.turbo', '.parcel-cache', 'dist', 'build', 'bin', 'coverage', 'test-results', 'playwright-report', 'diagnostics']);
 const hash = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
+function isSensitiveSourcePath(relative: string): boolean {
+  const name = path.basename(relative).toLowerCase();
+  return name === '.env' || (name.startsWith('.env.') && !['.env.example', '.env.sample', '.env.template'].includes(name));
+}
 function failure(error: unknown): EngineeringFact<never> {
   return { state: 'unreadable', reasonCode: error instanceof Error && error.message === 'SOURCE_UNSTABLE' ? 'SOURCE_UNSTABLE' : 'BOUNDED_READ_FAILED' };
 }
@@ -130,7 +134,10 @@ export async function observeSourceSnapshot(rootPath: string, gitProject?: boole
           if (Date.now() > deadline || files.length > MAX_FILES) throw new Error('SOURCE_LIMIT');
           if (entry.isSymbolicLink()) throw new Error('SOURCE_REPARSE');
           if (entry.isDirectory()) { if (!EXCLUDED_DIRECTORIES.has(entry.name)) await walk(path.join(dir, entry.name)); }
-          else files.push(path.relative(root, path.join(dir, entry.name)).split(path.sep).join('/'));
+          else {
+            const relative = path.relative(root, path.join(dir, entry.name)).split(path.sep).join('/');
+            if (!isSensitiveSourcePath(relative)) files.push(relative);
+          }
         }
       };
       if (useGit) {
@@ -138,16 +145,19 @@ export async function observeSourceSnapshot(rootPath: string, gitProject?: boole
           git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']),
           git(root, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z']),
         ]);
-        files.push(...visible.split('\0').filter(Boolean));
+        files.push(...visible.split('\0').filter((relative) => relative.length > 0 && !isSensitiveSourcePath(relative)));
         for (const entry of ignored.split('\0').filter(Boolean)) {
           const relative = entry.replace(/[\\/]+$/, '');
-          if (relative.length === 0 || relative.split(/[\\/]/).some((part) => EXCLUDED_DIRECTORIES.has(part))) continue;
+          if (relative.length === 0 || isSensitiveSourcePath(relative) || relative.split(/[\\/]/).some((part) => EXCLUDED_DIRECTORIES.has(part))) continue;
           const absolute = path.resolve(root, relative);
           if (!inside(root, absolute)) throw new Error('SOURCE_OUTSIDE');
           const metadata = await lstat(absolute);
-          if (metadata.isSymbolicLink()) throw new Error('SOURCE_REPARSE');
-          if (metadata.isDirectory()) await walk(absolute);
-          else if (metadata.isFile()) files.push(relative);
+          // Ignored symlinks may point to user-owned state outside the project; never follow them.
+          if (metadata.isSymbolicLink()) continue;
+          // Ignored directories commonly hold user state, secrets, caches, or generated output.
+          // Bind explicit ignored file inputs, but never recursively read an ignored directory.
+          if (metadata.isDirectory()) continue;
+          if (metadata.isFile()) files.push(relative);
           else throw new Error('SOURCE_TYPE');
         }
       } else await walk(root);
@@ -158,14 +168,24 @@ export async function observeSourceSnapshot(rootPath: string, gitProject?: boole
       for (const relative of unique) {
         if (Date.now() > deadline) throw new Error('SOURCE_LIMIT');
         const file = path.resolve(root, relative);
-        if (!inside(root, file) || !inside(root, await realpath(file))) throw new Error('SOURCE_OUTSIDE');
-        const before = await lstat(file);
+        if (!inside(root, file)) throw new Error('SOURCE_OUTSIDE');
+        let before: Awaited<ReturnType<typeof lstat>>;
+        try {
+          before = await lstat(file);
+        } catch (error) {
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+            digest.update(JSON.stringify([relative, 'deleted']));
+            continue;
+          }
+          throw error;
+        }
         if (!before.isFile() || before.isSymbolicLink()) throw new Error('SOURCE_REPARSE');
+        if (!inside(root, await realpath(file))) throw new Error('SOURCE_OUTSIDE');
         bytes += before.size;
         if (bytes > MAX_BYTES) throw new Error('SOURCE_LIMIT');
         const content = await readFile(file);
         const after = await lstat(file);
-        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after.ino) throw new Error('SOURCE_UNSTABLE');
+        if (!after.isFile() || after.isSymbolicLink() || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after.ino) throw new Error('SOURCE_UNSTABLE');
         digest.update(JSON.stringify([relative, content.length, hash(content)]));
       }
       return { digest: digest.digest('hex'), fileCount: unique.length };

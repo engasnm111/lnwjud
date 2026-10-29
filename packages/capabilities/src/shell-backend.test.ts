@@ -511,6 +511,45 @@ describe('ShellCapabilityBackend', () => {
     expect(stops).toBe(1);
   });
 
+  it('returns an unverified state when a foreground abort races an unverified process close', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({
+      allowedRoots: [root],
+      maxSynchronousWaitSeconds: 1,
+      terminator: {
+        async stop(child): Promise<void> {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+          await closed;
+          throw new Error('process-tree termination not verified');
+        },
+      },
+    });
+    const controller = new AbortController();
+    const running = backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', 'setTimeout(() => {}, 100)'],
+      cwd: root,
+      execution: 'foreground',
+      userConfirmed: true,
+      timeout_seconds: 5,
+    }, controller.signal);
+    setTimeout(() => controller.abort(), 10);
+
+    const cancellation = await Promise.race([
+      running.then((result) => ({ state: 'settled' as const, result })),
+      delayForTest(500).then(() => ({ state: 'pending' as const })),
+    ]);
+    expect(cancellation.state).toBe('settled');
+    if (cancellation.state === 'settled') {
+      expect(cancellation.result).toMatchObject({
+        ok: true,
+        value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+      });
+    }
+  });
+
   it('does not spawn after cancellation wins during executable resolution', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);
@@ -557,14 +596,16 @@ describe('ShellCapabilityBackend', () => {
     expect(stops).toBe(0);
   });
 
-  it('retains an explicit unverified state when the root closes after termination rejection', async () => {
+  it('returns an explicit unverified state when the root closes during failed termination', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);
     const backend = new ShellCapabilityBackend({
       allowedRoots: [root],
       terminator: {
         async stop(child): Promise<void> {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
           setTimeout(() => child.kill(), 20);
+          await closed;
           throw new Error('termination not verified');
         },
       },
@@ -601,7 +642,17 @@ describe('ShellCapabilityBackend', () => {
       },
     });
     if (statusAfterFailure.ok) expect(statusAfterFailure.value).not.toHaveProperty('finished_at');
-    await expect(Promise.race([cancelling.then(() => 'settled'), delayForTest(30).then(() => 'pending')])).resolves.toBe('pending');
+    const cancellation = await Promise.race([
+      cancelling.then((result) => ({ state: 'settled' as const, result })),
+      delayForTest(250).then(() => ({ state: 'pending' as const })),
+    ]);
+    expect(cancellation.state).toBe('settled');
+    if (cancellation.state === 'settled') {
+      expect(cancellation.result).toMatchObject({
+        ok: true,
+        value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+      });
+    }
   });
 
   it('retains an explicit unverified state when the root closes before termination rejection', async () => {
@@ -643,7 +694,17 @@ describe('ShellCapabilityBackend', () => {
       value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
     });
     if (statusAfterFailure.ok) expect(statusAfterFailure.value).not.toHaveProperty('finished_at');
-    await expect(Promise.race([cancelling.then(() => 'settled'), delayForTest(30).then(() => 'pending')])).resolves.toBe('pending');
+    const cancellation = await Promise.race([
+      cancelling.then((result) => ({ state: 'settled' as const, result })),
+      delayForTest(250).then(() => ({ state: 'pending' as const })),
+    ]);
+    expect(cancellation.state).toBe('settled');
+    if (cancellation.state === 'settled') {
+      expect(cancellation.result).toMatchObject({
+        ok: true,
+        value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+      });
+    }
   });
 
   it('allows a termination-unverified task to be safely re-verified', async () => {
@@ -687,7 +748,10 @@ describe('ShellCapabilityBackend', () => {
       ok: true,
       value: { state: 'cancelled' },
     });
-    await expect(firstCancellation).resolves.toMatchObject({ ok: true, value: { state: 'cancelled' } });
+    await expect(firstCancellation).resolves.toMatchObject({
+      ok: true,
+      value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+    });
     expect(attempts).toBe(2);
   });
 

@@ -346,6 +346,81 @@ describe('DurableShellTaskIndex', () => {
     expect(await readFile(path.join(root, '.index', 'v1', 'active', markerName), 'utf8')).toContain('abandoned-before-metadata');
   });
 
+  it('reclaims an in-process mutation reservation only after its owner process is proven gone', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-stale-sync-writer-'));
+    temporaryRoots.push(root);
+    const taskId = 'managed-writer-stale-sync';
+    const active = path.join(root, '.index', 'v1', 'active');
+    const markerPath = path.join(active, `${createHash('sha256').update(taskId).digest('hex')}.json`);
+    await mkdir(active, { recursive: true });
+    await writeFile(markerPath, JSON.stringify({
+      version: 2,
+      taskId,
+      requestDigest: 'c'.repeat(64),
+      mutationKind: 'synchronous_mutation',
+      capacityClass: 'managed_writer',
+      ownerClientId: 'old-client',
+      ownerWorkspaceId: 'workspace',
+      reservedAt: '2026-09-20T09:58:00.000Z',
+      launcherPid: 4242,
+      launcherStartedAt: '2026-09-20T09:00:00.000Z',
+    }), 'utf8');
+
+    const isProcessProvenGone = vi.fn((pid: number) => pid === 4242);
+    const index = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10,
+      inspectTask: async (): Promise<'missing'> => 'missing',
+      isProcessProvenGone,
+    });
+    await index.initialize();
+
+    expect(isProcessProvenGone).toHaveBeenCalledWith(4242);
+    expect(await index.hasReservation(taskId, 'c'.repeat(64))).toBe(false);
+  });
+
+  it('reports held reservation blockers without exposing task or workspace identities', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-blocker-diagnostics-'));
+    temporaryRoots.push(root);
+    const taskId = 'managed-writer-diagnostic-private-id';
+    const active = path.join(root, '.index', 'v1', 'active');
+    const markerPath = path.join(active, `${createHash('sha256').update(taskId).digest('hex')}.json`);
+    await mkdir(active, { recursive: true });
+    await writeFile(markerPath, JSON.stringify({
+      version: 2,
+      taskId,
+      requestDigest: 'd'.repeat(64),
+      mutationKind: 'synchronous_mutation',
+      capacityClass: 'managed_writer',
+      ownerClientId: 'private-client',
+      ownerWorkspaceId: 'private-workspace',
+      reservedAt: '2026-09-20T09:58:00.000Z',
+      launcherPid: 4343,
+      launcherStartedAt: '2026-09-20T09:00:00.000Z',
+    }), 'utf8');
+    const index = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10,
+      inspectTask: async (): Promise<'missing'> => 'missing',
+      isProcessProvenGone: (): boolean => false,
+    });
+
+    const diagnostics = await index.diagnostics();
+
+    expect(diagnostics).toMatchObject({
+      unresolved_reservations: 1,
+      managed_writer_reservations: 1,
+      blockers: [{
+        reservation_id: createHash('sha256').update(taskId).digest('hex'),
+        mutation_kind: 'synchronous_mutation',
+        capacity_class: 'managed_writer',
+        state: 'held',
+        recovery_requirement: 'owner_process_termination',
+      }],
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain(taskId);
+    expect(JSON.stringify(diagnostics)).not.toContain('private-workspace');
+    expect(JSON.stringify(diagnostics)).not.toContain('private-client');
+  });
+
   it('bootstraps and pages the compact launch journal without hydrating filtered histories', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-index-journal-'));
     temporaryRoots.push(root);

@@ -218,7 +218,38 @@ describe('AutomationRuntimeAdapter', () => {
       timeout_seconds: 5,
     });
     expect(terminal.isError).not.toBe(true);
-    expect(terminal.structuredContent, JSON.stringify(terminal.structuredContent)).toMatchObject({ state: 'completed', stdout: 'automation-ok' });
+    let nativeDiagnostic: string | undefined;
+    if (terminal.structuredContent?.state !== 'completed' && native !== undefined) {
+      const taskDirectory = path.join(root, '.tasks', request.context.taskId);
+      const metadata = JSON.parse(await readFile(path.join(taskDirectory, 'task.json'), 'utf8')) as {
+        state?: string;
+        error?: string;
+        worker_pid?: number;
+        child_pid?: number;
+        output_finalized?: boolean;
+        containmentBinding?: Parameters<typeof native.authority.inspect>[0]['binding'];
+      };
+      const proof = metadata.containmentBinding === undefined
+        ? undefined
+        : await native.authority.inspect({ directory: taskDirectory, binding: metadata.containmentBinding });
+      nativeDiagnostic = JSON.stringify({
+        metadata: {
+          state: metadata.state,
+          error: metadata.error,
+          workerPidPresent: metadata.worker_pid !== undefined,
+          childPidPresent: metadata.child_pid !== undefined,
+          outputFinalized: metadata.output_finalized,
+        },
+        proof: proof === undefined ? undefined : {
+          state: proof.state,
+          reason: proof.state === 'termination_unknown' ? proof.reason : undefined,
+          outcome: proof.state === 'terminal_verified' ? proof.outcome : undefined,
+          exitCode: proof.state === 'terminal_verified' ? proof.exitCode : undefined,
+        },
+      });
+    }
+    expect(terminal.structuredContent, `${JSON.stringify(terminal.structuredContent)} native=${nativeDiagnostic ?? 'not available'}`)
+      .toMatchObject({ state: 'completed', stdout: 'automation-ok' });
   }, 20_000);
 
   it.skipIf(process.platform === 'darwin')('reattaches to one exact running task after runtime replacement and reads its terminal receipt without relaunching', async () => {

@@ -1,6 +1,6 @@
 # Install lnwjud on macOS
 
-**v5.9.0 development status:** The published version remains v5.8.7. This guide describes a packaging target, not a released or accepted v5.9.0 build. Automatic installation is unavailable while the native transaction, global work admission, health and rollback are completed and tested. Developer ID signing alone does not enable it. New macOS durable shell and managed process writers are temporarily refused before spawn because Issue #216 still lacks accepted escaped-descendant containment. See the [acceptance ledger](codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
+**v5.9.0 development status:** The published version remains v5.8.7. This guide describes a packaging target, not a released or accepted v5.9.0 build. Automatic updates are unavailable in the current source on every target, including macOS. The requested flow requires one confirmation of the exact version, then a safe work drain, Tunnel stop, silent installation without more installer clicks, relaunch, health verification, and trusted rollback. The native authority and signed end-to-end acceptance are incomplete; Developer ID signing alone does not prove them. New macOS durable shell and managed process writers are temporarily refused before spawn because Issue #216 still lacks accepted escaped-descendant containment. See the [acceptance ledger](codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
 
 This guide covers the v5.9.0 native macOS release target. macOS 13 or newer is
 supported on both Apple silicon (`arm64`) and Intel (`x64`). The package is
@@ -44,13 +44,19 @@ to v5.8.2 cannot alter the signature embedded in the already-installed app.
    [GitHub Releases](https://github.com/engasnm111/lnwjud/releases).
 3. Replace `/Applications/lnwjud.app` with the downloaded app. Do not delete
    lnwjud's user data, settings or Keychain items.
-4. Open the new app. An ad-hoc-signed release intentionally disables in-app
-   auto-install and displays instructions for manually downloading future versions.
+4. Open the new app. Older ad-hoc-signed builds require a manual first
+   migration because their Squirrel.Mac designated requirement is tied to the
+   old CDHash. Eligible consistently signed builds show the exact target
+   version and ask for confirmation once. The current v5.9.0 source does not
+   enable that update handoff. If it becomes available after native authority
+   and signed acceptance are complete, it must install without further
+   installer clicks, relaunch, verify health, and support trusted rollback.
+   OS security authorization remains in force.
 
 Future in-place macOS updates require consistently signed **Developer ID
 Application** builds (same designated requirement across releases), plus
 matching Apple code signing and notarization credentials in protected CI.
-These signing prerequisites do not replace the unfinished transaction,
+These signing prerequisites do not prove the update flow's transaction,
 maintenance, migration, health and trusted rollback requirements.
 A developer certificate cannot retroactively enable seamless updates from
 older ad-hoc builds; the first migration must still be manual.

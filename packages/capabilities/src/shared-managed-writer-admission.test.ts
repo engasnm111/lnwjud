@@ -97,7 +97,14 @@ describe('SharedManagedWriterAdmission authenticated release', () => {
     }
     const synchronous = await admission.enter({ actorClientId: 'owner', workspaceId: 'workspace', kind: 'synchronous_mutation' });
     expect(synchronous.ok).toBe(true);
-    if (synchronous.ok) await synchronous.value.releaseAfterVerifiedTermination();
+    if (synchronous.ok) {
+      const activeDirectory = path.join(f.taskDirectory, '.index', 'v1', 'active');
+      const [markerName] = await readdir(activeDirectory);
+      expect(markerName).toBeDefined();
+      const marker = JSON.parse(await readFile(path.join(activeDirectory, markerName!), 'utf8')) as Record<string, unknown>;
+      expect(marker).toMatchObject({ mutationKind: 'synchronous_mutation', launcherPid: process.pid });
+      await synchronous.value.releaseAfterVerifiedTermination();
+    }
     const probe = await admission.holdExclusiveProbe('workspace');
     expect(probe.ok).toBe(true);
     if (probe.ok) await probe.value.releaseAfterVerifiedTermination();

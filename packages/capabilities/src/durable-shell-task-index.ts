@@ -6,8 +6,17 @@ import { appError, err, ok, type Result } from '@lnwjud/domain';
 
 export type ActiveTaskInspection = 'active' | 'terminal' | 'missing' | 'unknown';
 
-export type DurableMutationKind = 'opaque' | 'repository_import' | 'opaque_uncontained' | 'opaque_contained_process';
+export type DurableMutationKind = 'opaque' | 'repository_import' | 'synchronous_mutation' | 'opaque_uncontained' | 'opaque_contained_process';
 type ReservationCapacityClass = 'durable_shell' | 'managed_writer';
+
+export interface WriterAdmissionBlocker {
+  /** SHA-256 task identity; raw task, client, and workspace IDs stay private. */
+  readonly reservation_id: string;
+  readonly mutation_kind: DurableMutationKind | 'unreadable';
+  readonly capacity_class: ReservationCapacityClass | 'unknown';
+  readonly state: 'held' | 'unreadable';
+  readonly recovery_requirement: 'owner_process_termination' | 'trusted_termination_evidence' | 'independent_terminal_observation' | 'manual_review';
+}
 
 export interface WriterAdmissionDiagnostics {
   readonly capacity_population: ReservationCapacityClass;
@@ -16,6 +25,7 @@ export interface WriterAdmissionDiagnostics {
   readonly managed_writer_reservations: number;
   readonly unresolved_reservations: number;
   readonly unreadable_reservations: number;
+  readonly blockers: readonly WriterAdmissionBlocker[];
   readonly status_basis: 'held_reservations_not_process_liveness';
   readonly exclusive_writer_blocked: boolean;
 }
@@ -62,6 +72,8 @@ export interface DurableShellTaskIndexOptions {
   readonly now?: () => Date;
   readonly removeFile?: typeof rm;
   readonly listActiveFiles?: (directory: string) => Promise<readonly string[]>;
+  /** Injectable only for deterministic proof tests; production defaults to ESRCH-only proof. */
+  readonly isProcessProvenGone?: (pid: number) => boolean;
 }
 
 export class DurableShellTaskIndex {
@@ -73,6 +85,7 @@ export class DurableShellTaskIndex {
   private readonly maxConcurrentTasks: number;
   private readonly now: () => Date;
   private readonly removeFile: typeof rm;
+  private readonly processProvenGone: (pid: number) => boolean;
 
   public constructor(
     private readonly rootDirectory: string,
@@ -86,6 +99,7 @@ export class DurableShellTaskIndex {
     this.maxConcurrentTasks = normalizeMaximum(options.maxConcurrentTasks);
     this.now = options.now ?? ((): Date => new Date());
     this.removeFile = options.removeFile ?? rm;
+    this.processProvenGone = options.isProcessProvenGone ?? isProcessProvenGone;
   }
 
   public async initialize(): Promise<void> {
@@ -95,7 +109,7 @@ export class DurableShellTaskIndex {
 
   public async reserve(input: DurableTaskReservation): Promise<Result<DurableTaskReservationResult>> {
     if ((input.capacityClass !== undefined && input.capacityClass !== 'durable_shell' && input.capacityClass !== 'managed_writer')
-      || (input.mutationKind !== undefined && input.mutationKind !== 'opaque' && input.mutationKind !== 'repository_import' && input.mutationKind !== 'opaque_uncontained' && input.mutationKind !== 'opaque_contained_process')
+      || (input.mutationKind !== undefined && input.mutationKind !== 'opaque' && input.mutationKind !== 'repository_import' && input.mutationKind !== 'synchronous_mutation' && input.mutationKind !== 'opaque_uncontained' && input.mutationKind !== 'opaque_contained_process')
       || (input.mutationKind === 'opaque_contained_process' && (typeof input.nativeReceiptPath !== 'string' || !path.isAbsolute(input.nativeReceiptPath)))
       || (input.nativeBinding !== undefined && (parseNativeAttemptBinding(input.nativeBinding) === undefined
         || input.nativeBinding.reservationId !== input.taskId || input.nativeBinding.requestDigest !== input.requestDigest
@@ -226,17 +240,42 @@ export class DurableShellTaskIndex {
       let managed = 0;
       let unresolved = 0;
       let unreadable = 0;
+      const blockers: WriterAdmissionBlocker[] = [];
       for (const marker of markers) {
-        if (marker.record === undefined) { unreadable += 1; unresolved += 1; continue; }
-        if (reservationCapacityClass(marker.record) === 'managed_writer') managed += 1;
+        if (marker.record === undefined) {
+          unreadable += 1;
+          unresolved += 1;
+          blockers.push({
+            reservation_id: path.basename(marker.path, '.json'),
+            mutation_kind: 'unreadable',
+            capacity_class: 'unknown',
+            state: 'unreadable',
+            recovery_requirement: 'manual_review',
+          });
+          continue;
+        }
+        const capacityClass = reservationCapacityClass(marker.record);
+        if (capacityClass === 'managed_writer') managed += 1;
         else durable += 1;
         unresolved += 1;
+        blockers.push({
+          reservation_id: createHash('sha256').update(marker.record.taskId).digest('hex'),
+          mutation_kind: marker.record.mutationKind,
+          capacity_class: capacityClass,
+          state: 'held',
+          recovery_requirement: marker.record.mutationKind === 'synchronous_mutation'
+            ? 'owner_process_termination'
+            : marker.record.mutationKind === 'opaque_uncontained' || marker.record.mutationKind === 'opaque_contained_process' || marker.record.nativeBinding !== undefined
+              ? 'trusted_termination_evidence'
+              : 'independent_terminal_observation',
+        });
       }
       return {
         capacity_population: this.options.capacityClass ?? 'durable_shell',
         durable_shell_limit: this.maxConcurrentTasks,
         durable_shell_reservations: durable, managed_writer_reservations: managed,
         unresolved_reservations: unresolved, unreadable_reservations: unreadable,
+        blockers,
         status_basis: 'held_reservations_not_process_liveness', exclusive_writer_blocked: markers.length > 0,
       };
     });
@@ -307,8 +346,12 @@ export class DurableShellTaskIndex {
   private async initializeUnlocked(): Promise<void> {
     const ready = await readJson(this.readyPath);
     if (isReady(ready)) {
-      if (ready.markerFormatVersion === 2) return;
+      if (ready.markerFormatVersion === 2) {
+        await this.reclaimTerminatedSynchronousMutationsUnlocked();
+        return;
+      }
       await this.upgradeLegacyMarkersUnlocked();
+      await this.reclaimTerminatedSynchronousMutationsUnlocked();
       await atomicWriteJson(this.readyPath, { ...ready, markerFormatVersion: 2 });
       return;
     }
@@ -332,12 +375,23 @@ export class DurableShellTaskIndex {
       });
     }
     await this.rebuildJournalUnlocked(entries.filter((entry) => entry.isDirectory() && entry.name !== '.index').map((entry) => entry.name));
+    await this.reclaimTerminatedSynchronousMutationsUnlocked();
     await rm(this.readyPath, { force: true }).catch(() => undefined);
     await atomicWriteJson(this.readyPath, {
       version: 1,
       markerFormatVersion: 2,
       readyAt: this.now().toISOString(),
     });
+  }
+
+  private async reclaimTerminatedSynchronousMutationsUnlocked(): Promise<void> {
+    for (const marker of await this.readMarkers()) {
+      const record = marker.record;
+      if (record === undefined || record.mutationKind !== 'synchronous_mutation' || record.launcherPid === undefined) continue;
+      let ownerGone = false;
+      try { ownerGone = this.processProvenGone(record.launcherPid); } catch { /* Unknown liveness retains the blocker. */ }
+      if (ownerGone) await this.removeMarker(marker.path);
+    }
   }
 
   private async upgradeLegacyMarkersUnlocked(): Promise<void> {
@@ -548,7 +602,7 @@ async function readMarker(filename: string): Promise<MarkerRecord | undefined> {
   const value = await readJson(filename);
   if (!isRecord(value) || value.version !== 1 && value.version !== 2 || typeof value.taskId !== 'string') return undefined;
   if (value.capacityClass !== undefined && value.capacityClass !== 'durable_shell' && value.capacityClass !== 'managed_writer') return undefined;
-  if (value.mutationKind !== undefined && value.mutationKind !== 'opaque' && value.mutationKind !== 'repository_import' && value.mutationKind !== 'opaque_uncontained' && value.mutationKind !== 'opaque_contained_process') return undefined;
+  if (value.mutationKind !== undefined && value.mutationKind !== 'opaque' && value.mutationKind !== 'repository_import' && value.mutationKind !== 'synchronous_mutation' && value.mutationKind !== 'opaque_uncontained' && value.mutationKind !== 'opaque_contained_process') return undefined;
   if (value.requestDigest !== null && (typeof value.requestDigest !== 'string' || !/^[a-f0-9]{64}$/i.test(value.requestDigest))) return undefined;
   const nativeBinding = value.nativeBinding === undefined ? undefined : parseNativeAttemptBinding(value.nativeBinding);
   if (value.nativeBinding !== undefined && (nativeBinding === undefined || nativeBinding.reservationId !== value.taskId
@@ -559,7 +613,7 @@ async function readMarker(filename: string): Promise<MarkerRecord | undefined> {
     taskId: value.taskId,
     ...(value.capacityClass === undefined ? {} : { capacityClass: value.capacityClass }),
     requestDigest: value.requestDigest,
-    mutationKind: value.mutationKind === 'repository_import' ? 'repository_import' : value.mutationKind === 'opaque_uncontained' ? 'opaque_uncontained' : value.mutationKind === 'opaque_contained_process' ? 'opaque_contained_process' : 'opaque',
+    mutationKind: value.mutationKind === 'repository_import' ? 'repository_import' : value.mutationKind === 'synchronous_mutation' ? 'synchronous_mutation' : value.mutationKind === 'opaque_uncontained' ? 'opaque_uncontained' : value.mutationKind === 'opaque_contained_process' ? 'opaque_contained_process' : 'opaque',
     ...(typeof value.ownerClientId === 'string' ? { ownerClientId: value.ownerClientId } : {}),
     ...(typeof value.ownerWorkspaceId === 'string' ? { ownerWorkspaceId: value.ownerWorkspaceId } : {}),
     ...(typeof value.nativeReceiptPath === 'string' && path.isAbsolute(value.nativeReceiptPath) ? { nativeReceiptPath: value.nativeReceiptPath } : {}),

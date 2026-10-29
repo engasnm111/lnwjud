@@ -3,8 +3,12 @@
   ${if} $installMode == "all"
     ExecWait '"$INSTDIR\resources\native-containment\lnwjud-containment.exe" service-install' $0
     ${if} $0 != 0
+      IfSilent silentInstallFailure 0
       MessageBox MB_ICONSTOP|MB_OK "Windows containment service installation failed (exit code $0). lnwjud requires this protected service for managed tasks."
       Abort
+      silentInstallFailure:
+        SetErrorLevel $0
+        Abort
     ${endIf}
   ${endIf}
 
@@ -34,8 +38,12 @@
   ${if} $installMode == "all"
     ExecWait '"$INSTDIR\resources\native-containment\lnwjud-containment.exe" service-uninstall' $0
     ${if} $0 != 0
+      IfSilent silentUninstallFailure 0
       MessageBox MB_ICONSTOP|MB_OK "Windows containment service removal failed (exit code $0). The application files were left in place."
       Abort
+      silentUninstallFailure:
+        SetErrorLevel $0
+        Abort
     ${endIf}
   ${endIf}
   Delete "$SMPROGRAMS\lnwjud.lnk"

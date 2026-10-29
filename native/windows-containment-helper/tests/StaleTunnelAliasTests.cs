@@ -169,7 +169,127 @@ internal static class StaleTunnelAliasTests
         }
         var cli = Environment.GetEnvironmentVariable("LNWJUD_TUNNEL_CLIENT_TEST_PATH");
         if (!String.IsNullOrEmpty(cli)) TestCliLock(cli);
+        TestStopOwned();
         Console.WriteLine("STALE_TUNNEL_ALIAS_RETIRED_NO_SIGNALS");
+    }
+
+    private static void TestStopOwned()
+    {
+        using (var stopped = new Fixture())
+        using (var child = StartSleepingChild())
+        {
+            var request = CreateStopRequest(stopped, child);
+            var result = StaleTunnelAlias.StopOwnedAsync(request).GetAwaiter().GetResult();
+            if (!result.Stopped || !child.WaitForExit(5000)) throw new Exception("Identity-bound Stop did not terminate its owned process");
+            var aliases = JsonNode.Parse(File.ReadAllBytes(stopped.Aliases))!.AsObject();
+            if (aliases["lnwjud"]?["tunnel_id"]?.GetValue<string>() != "test-tunnel"
+                || aliases["unrelated"]?.ToJsonString() != stopped.Sibling.ToJsonString())
+                throw new Exception("Identity-bound Stop changed the persistent alias or unrelated alias metadata");
+            var process = JsonNode.Parse(File.ReadAllBytes(stopped.Processes))!["lnwjud"]!.AsObject();
+            if (process["mode"]?.GetValue<string>() != "stopped" || process["pid"]?.GetValue<int>() != 0
+                || process["pid_start_time"]?.GetValue<string>() != "" || process["pid_executable"]?.GetValue<string>() != "")
+                throw new Exception("Identity-bound Stop did not persist the official stopped process state");
+        }
+
+        using (var mismatch = new Fixture())
+        using (var child = StartSleepingChild())
+        {
+            var request = CreateStopRequest(mismatch, child) with { ExpectedTunnelId = "tunnel_other_12345678" };
+            StopRefused(request, "TUNNEL_STOP_IDENTITY_CHANGED");
+            if (child.HasExited) throw new Exception("Tunnel ID mismatch signalled the process");
+            child.Kill(entireProcessTree: true);
+            child.WaitForExit();
+        }
+
+        using (var raced = new Fixture())
+        using (var child = StartSleepingChild())
+        {
+            var request = CreateStopRequest(raced, child);
+            var originalAliases = File.ReadAllBytes(raced.Aliases);
+            StaleTunnelAlias.TestFault = point =>
+            {
+                if (point != "before-stop") return;
+                var aliases = JsonNode.Parse(File.ReadAllBytes(raced.Aliases))!;
+                aliases["lnwjud"]!["tunnel_id"] = "tunnel_replaced_12345678";
+                File.WriteAllBytes(raced.Aliases, JsonSerializer.SerializeToUtf8Bytes(aliases));
+            };
+            try
+            {
+                try { _ = StaleTunnelAlias.StopOwnedAsync(request).GetAwaiter().GetResult(); throw new Exception("Stop ignored a changed alias snapshot"); }
+                catch (IOException error) when (error.Message == "TUNNEL_STOP_SNAPSHOT_CHANGED") { }
+            }
+            finally
+            {
+                StaleTunnelAlias.TestFault = null;
+                File.WriteAllBytes(raced.Aliases, originalAliases);
+            }
+            if (child.HasExited) throw new Exception("Concurrent alias replacement signalled the process");
+            child.Kill(entireProcessTree: true);
+            child.WaitForExit();
+        }
+
+        using (var locked = new Fixture())
+        using (var child = StartSleepingChild())
+        {
+            var request = CreateStopRequest(locked, child);
+            using var owner = new FileStream(Path.Combine(locked.Root, "locks", "state.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            owner.Lock(0, 1);
+            var pending = StaleTunnelAlias.StopOwnedAsync(request);
+            if (pending.IsCompleted || child.HasExited) throw new Exception("Identity-bound Stop ignored the pinned client's state lock");
+            owner.Unlock(0, 1);
+            pending.GetAwaiter().GetResult();
+            if (!child.WaitForExit(5000)) throw new Exception("Identity-bound Stop did not resume after the state lock was released");
+        }
+
+        using (var gone = new Fixture())
+        using (var child = StartSleepingChild())
+        {
+            var request = CreateStopRequest(gone, child);
+            child.Kill(entireProcessTree: true);
+            child.WaitForExit();
+            var result = StaleTunnelAlias.StopOwnedAsync(request).GetAwaiter().GetResult();
+            if (!result.Stopped || JsonNode.Parse(File.ReadAllBytes(gone.Aliases))!["lnwjud"] is null)
+                throw new Exception("Identity-bound Stop did not safely reconcile an already-exited process");
+        }
+        Console.WriteLine("TUNNEL_STOP_IDENTITY_BOUND_TO_ALIAS_AND_TUNNEL_ID");
+    }
+
+    private static Process StartSleepingChild()
+    {
+        var launch = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+        launch.ArgumentList.Add("sleep");
+        launch.ArgumentList.Add("30000");
+        return Process.Start(launch) ?? throw new Exception("Isolated sleeping process did not start");
+    }
+
+    private static StaleTunnelAlias.StopRequest CreateStopRequest(Fixture fixture, Process child)
+    {
+        _ = fixture.Write(116444736000000001L);
+        var record = JsonNode.Parse(File.ReadAllBytes(fixture.Processes))!;
+        record["lnwjud"]!["pid"] = child.Id;
+        record["lnwjud"]!["pid_start_time"] = checked((child.StartTime.ToUniversalTime().ToFileTimeUtc() - 116444736000000000L) * 100)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        record["lnwjud"]!["pid_executable"] = Environment.ProcessPath;
+        File.WriteAllBytes(fixture.Processes, JsonSerializer.SerializeToUtf8Bytes(record));
+        return new StaleTunnelAlias.StopRequest(fixture.Root, "lnwjud", fixture.Root, Environment.ProcessPath!,
+            "test-tunnel", child.Id, Fixture.Hash(fixture.Aliases), Fixture.Hash(fixture.Processes));
+    }
+
+    private static void StopRefused(StaleTunnelAlias.StopRequest request, string expected)
+    {
+        var aliases = Path.Combine(request.StateRoot, "aliases.yaml");
+        var processes = Path.Combine(request.StateRoot, "processes.yaml");
+        var beforeAliases = File.ReadAllBytes(aliases);
+        var beforeProcesses = File.ReadAllBytes(processes);
+        try { _ = StaleTunnelAlias.StopOwnedAsync(request).GetAwaiter().GetResult(); }
+        catch (IOException error) when (error.Message == expected)
+        {
+            if (!beforeAliases.AsSpan().SequenceEqual(File.ReadAllBytes(aliases))
+                || !beforeProcesses.AsSpan().SequenceEqual(File.ReadAllBytes(processes)))
+                throw new Exception("Refused identity-bound Stop changed runtime metadata");
+            return;
+        }
+        throw new Exception("Identity-bound Stop did not refuse " + expected);
     }
 
     private static void TestCliLock(string cli)

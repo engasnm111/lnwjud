@@ -31,6 +31,34 @@ export function isTunnelRunning(tunnel: TunnelStatus): boolean {
   return isTunnelConfigured(tunnel) && tunnel.state === 'running';
 }
 
+export interface TunnelActionActivity {
+  readonly startPending: boolean;
+  readonly stopPending: boolean;
+}
+
+export interface TunnelControlAvailability {
+  readonly startDisabled: boolean;
+  readonly stopDisabled: boolean;
+}
+
+export function tunnelControlAvailability(
+  tunnel: TunnelStatus,
+  activity: TunnelActionActivity,
+): TunnelControlAvailability {
+  const persistentAliasMayBeActive = tunnel.persistent !== null
+    && (tunnel.persistent.runtimeAliasActive === true || tunnel.persistent.state !== 'stopped');
+  const runtimeMayBeActive = tunnel.state !== 'stopped' || persistentAliasMayBeActive;
+
+  return {
+    startDisabled: activity.startPending
+      || activity.stopPending
+      || tunnel.state === 'starting'
+      || tunnel.state === 'running'
+      || persistentAliasMayBeActive,
+    stopDisabled: activity.stopPending || (!activity.startPending && !runtimeMayBeActive),
+  };
+}
+
 export function guidedTunnelPrerequisiteSignature(tunnel: TunnelStatus): string {
   const runtime = isTunnelRunning(tunnel) ? 'running' : 'not-running';
   return `${tunnelRuntimeCredentialAvailable(tunnel) ? 'key' : 'no-key'}:${tunnel.profileExists ? 'profile' : 'no-profile'}:${runtime}`;

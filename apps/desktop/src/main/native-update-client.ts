@@ -18,10 +18,42 @@ export type UpdateStartupDisposition =
   | { readonly kind: 'ready' }
   | { readonly kind: 'held'; readonly reason: string };
 
-export type NativeUpdateCapability = {
+export interface VerifiedAutomaticUpdateAuthority {
+  readonly kind: 'available';
+  readonly platform: 'win32';
+  readonly architecture: 'x64';
+  readonly authorityEnrollment: 'verified';
+  readonly packageAuthentication: 'verified';
+  readonly consentBinding: 'version-and-predecessor';
+  readonly applicationDataActivation: 'atomic';
+  readonly independentHealthCheck: 'verified';
+  readonly rollback: 'verified';
+  readonly tunnelRestoration: 'verified';
+  readonly silentInstall: true;
+  readonly automaticRelaunch: true;
+}
+
+export type NativeUpdateCapability = VerifiedAutomaticUpdateAuthority | {
   readonly kind: 'unavailable';
   readonly reason: string;
 };
+
+export function hasVerifiedAutomaticUpdateAuthority(
+  capability: unknown,
+): capability is VerifiedAutomaticUpdateAuthority {
+  if (!record(capability) || capability.kind !== 'available') return false;
+  return capability.platform === 'win32'
+    && capability.architecture === 'x64'
+    && capability.authorityEnrollment === 'verified'
+    && capability.packageAuthentication === 'verified'
+    && capability.consentBinding === 'version-and-predecessor'
+    && capability.applicationDataActivation === 'atomic'
+    && capability.independentHealthCheck === 'verified'
+    && capability.rollback === 'verified'
+    && capability.tunnelRestoration === 'verified'
+    && capability.silentInstall === true
+    && capability.automaticRelaunch === true;
+}
 
 interface NativePin { close(): void }
 interface PinModule { pinExecutable(filename: string): unknown }
@@ -97,9 +129,38 @@ export function parseUpdateWorkerReply(value: unknown, expected: { installationI
     throw new Error('UPDATE_WORKER_RESPONSE_INVALID');
   }
   const result = value.result;
-  if (result.kind === 'capabilities' && fields(result, ['kind', 'platform', 'architecture', 'automaticInstallation', 'reason'])
-    && result.platform === 'windows' && result.architecture === 'x64'
-    && result.automaticInstallation === 'unavailable' && result.reason === 'TRANSACTION_BOOTSTRAP_ONLY') return result;
+  if (result.kind === 'capabilities') {
+    if (fields(result, ['kind', 'platform', 'architecture', 'automaticInstallation', 'reason'])
+      && result.platform === 'windows' && result.architecture === 'x64'
+      && result.automaticInstallation === 'unavailable' && result.reason === 'TRANSACTION_BOOTSTRAP_ONLY') {
+      return { kind: 'unavailable', reason: 'TRANSACTION_BOOTSTRAP_ONLY' };
+    }
+    if (fields(result, [
+      'kind', 'platform', 'architecture', 'automaticInstallation', 'authorityEnrollment', 'packageAuthentication',
+      'consentBinding', 'applicationDataActivation', 'independentHealthCheck', 'rollback', 'tunnelRestoration',
+      'silentInstall', 'automaticRelaunch',
+    ])
+      && result.platform === 'windows' && result.architecture === 'x64' && result.automaticInstallation === 'available'
+      && result.authorityEnrollment === 'verified' && result.packageAuthentication === 'verified'
+      && result.consentBinding === 'version-and-predecessor' && result.applicationDataActivation === 'atomic'
+      && result.independentHealthCheck === 'verified' && result.rollback === 'verified' && result.tunnelRestoration === 'verified'
+      && result.silentInstall === true && result.automaticRelaunch === true) {
+      return {
+        kind: 'available',
+        platform: 'win32',
+        architecture: 'x64',
+        authorityEnrollment: 'verified',
+        packageAuthentication: 'verified',
+        consentBinding: 'version-and-predecessor',
+        applicationDataActivation: 'atomic',
+        independentHealthCheck: 'verified',
+        rollback: 'verified',
+        tunnelRestoration: 'verified',
+        silentInstall: true,
+        automaticRelaunch: true,
+      };
+    }
+  }
   if (result.kind === 'none' && fields(result, ['kind', 'safeToStart']) && result.safeToStart === true && value.generation !== null) return result;
   if (result.kind === 'recovered' && result.safeToStart === true && result.reason === 'PREAUTH_OWNER_RECOVERED'
     && fields(result, ['kind', 'reason', 'safeToStart', 'transactionId', 'phase'])
@@ -139,7 +200,8 @@ export class NativeUpdateBootstrapClient {
   public async automaticCapability(): Promise<NativeUpdateCapability> {
     try {
       const result = await this.invoke('capabilities');
-      return { kind: 'unavailable', reason: result.kind === 'capabilities' ? 'TRANSACTION_BOOTSTRAP_ONLY' : symbolicReason(result) };
+      if (hasVerifiedAutomaticUpdateAuthority(result)) return result;
+      return { kind: 'unavailable', reason: symbolicReason(result) };
     } catch { return { kind: 'unavailable', reason: 'UPDATE_WORKER_UNAVAILABLE' }; }
   }
 

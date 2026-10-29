@@ -31,7 +31,7 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
           { id: 'writer-lease-orphan-recovery', titleKey: 'whatsNew.590.recovery.title', descriptionKey: 'whatsNew.590.recovery.description', badge: 'fixed', tags: ['Goal', 'writer lease', 'fencing', 'continuation'] },
           { id: 'native-service-pipe-access', titleKey: 'whatsNew.590.pipeAccess.title', descriptionKey: 'whatsNew.590.pipeAccess.description', badge: 'fixed', tags: ['Windows', 'native service', 'IPC'] },
           { id: 'repository-import-publication', titleKey: 'whatsNew.590.import.title', descriptionKey: 'whatsNew.590.import.description', badge: 'improved', tags: ['Git import', 'publication identity', 'recovery'] },
-          { id: 'update-recovery-and-availability', titleKey: 'whatsNew.590.updater.title', descriptionKey: 'whatsNew.590.updater.description', badge: 'improved', tags: ['Updates', 'startup recovery', 'manual installation'] },
+          { id: 'update-recovery-and-availability', titleKey: 'whatsNew.590.updater.title', descriptionKey: 'whatsNew.590.updater.description', badge: 'improved', tags: ['Updates', 'handoff recovery', 'acceptance gate'] },
           { id: 'file-publication-limits', titleKey: 'whatsNew.590.publication.title', descriptionKey: 'whatsNew.590.publication.description', badge: 'improved', tags: ['write_file', 'documentation', 'durability'] },
         ],
       },
@@ -41,7 +41,7 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
         items: [
           { id: 'engineering-gate-applicability', titleKey: 'whatsNew.590.engineering.title', descriptionKey: 'whatsNew.590.engineering.description', badge: 'improved', tags: ['Engineering Harness', 'applicability', 'evidence', 'readiness'] },
           { id: 'wsl-workspace-paths', titleKey: 'whatsNew.590.wsl.title', descriptionKey: 'whatsNew.590.wsl.description', badge: 'fixed', tags: ['WSL', 'workspace', 'UNC'] },
-          { id: 'managed-writer-capacity', titleKey: 'whatsNew.590.capacity.title', descriptionKey: 'whatsNew.590.capacity.description', badge: 'fixed', tags: ['macOS', 'Linux', 'reservations', 'diagnostics'] },
+          { id: 'managed-writer-capacity', titleKey: 'whatsNew.590.capacity.title', descriptionKey: 'whatsNew.590.capacity.description', badge: 'fixed', tags: ['macOS', 'Linux', 'reservations', 'recovery', 'diagnostics'] },
           { id: 'native-tooling-intent', titleKey: 'whatsNew.590.nativeTools.title', descriptionKey: 'whatsNew.590.nativeTools.description', badge: 'fixed', tags: ['Engineering Harness', 'platform intent'] },
           { id: 'dashboard-unresolved-startup', titleKey: 'whatsNew.590.startup.title', descriptionKey: 'whatsNew.590.startup.description', badge: 'fixed', tags: ['Dashboard', 'startup', 'IPC'] },
           { id: 'tunnel-stop-history', titleKey: 'whatsNew.590.tunnelStop.title', descriptionKey: 'whatsNew.590.tunnelStop.description', badge: 'fixed', tags: ['Tunnel', 'Stop', 'history'] },

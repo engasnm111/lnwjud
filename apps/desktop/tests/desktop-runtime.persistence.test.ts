@@ -821,11 +821,15 @@ describe('DesktopRuntime persistence', () => {
     temporaryRoots.push(rawDataRoot);
     const dataRoot = await realpath(rawDataRoot);
 
+    const legacySettingsDatabase = new SqliteDatabase(path.join(dataRoot, 'lnwjud.sqlite'));
+    new SqliteSettingsRepository(legacySettingsDatabase).set('update_silent_install', 'true');
+    legacySettingsDatabase.close();
+
     const firstRuntime = createDesktopRuntime(dataRoot);
     try {
       const initial = firstRuntime.getUserSettings();
       expect(initial.eccEnabled).toBe(false);
-      expect(initial.updateSilentInstall).toBe(false);
+      expect(initial).not.toHaveProperty('updateSilentInstall');
       expect(initial.tunnelAutoReconnect).toBe(false);
       const next = {
         ...initial,
@@ -843,7 +847,6 @@ describe('DesktopRuntime persistence', () => {
         updateCheckOnStartup: false,
         updateIntervalMinutes: 120,
         updateAutoDownload: false,
-        updateSilentInstall: true,
         closeBehavior: 'quit' as const,
         launchAtStartup: true,
         startMinimized: true,
@@ -899,7 +902,6 @@ describe('DesktopRuntime persistence', () => {
           updateCheckOnStartup: false,
           updateIntervalMinutes: 120,
           updateAutoDownload: false,
-          updateSilentInstall: true,
           closeBehavior: 'quit',
           launchAtStartup: true,
           startMinimized: true,

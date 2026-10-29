@@ -376,8 +376,6 @@ export interface UserSettings {
   readonly updateCheckOnStartup: boolean;
   readonly updateIntervalMinutes: number;
   readonly updateAutoDownload: boolean;
-  /** Opt-in unattended installation only after verified idle and stopped tunnel; never bypass OS trust. */
-  readonly updateSilentInstall: boolean;
   readonly closeBehavior: CloseBehavior;
   readonly launchAtStartup: boolean;
   readonly startMinimized: boolean;

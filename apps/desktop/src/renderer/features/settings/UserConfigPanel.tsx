@@ -27,6 +27,7 @@ interface UserConfigPanelProps {
   readonly selectedWorkspace?: { readonly id: string; readonly displayName: string } | null;
   readonly engineeringStatus?: DashboardEngineeringHarnessStatus;
   readonly section: UserConfigSection | null;
+  readonly updatesUnavailable?: boolean;
   readonly unrestricted: boolean;
   readonly onUnrestrictedChange: (enabled: boolean) => Promise<boolean>;
   readonly onSave: (settings: UserSettings) => Promise<boolean>;
@@ -57,7 +58,6 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   updateCheckOnStartup: true,
   updateIntervalMinutes: 30,
   updateAutoDownload: true,
-  updateSilentInstall: false,
   closeBehavior: 'tray',
   launchAtStartup: false,
   startMinimized: false,
@@ -67,7 +67,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
-export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, selectedWorkspace = null, engineeringStatus, section, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, embedded = false }: UserConfigPanelProps): ReactElement {
+export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, selectedWorkspace = null, engineeringStatus, section, updatesUnavailable = false, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, embedded = false }: UserConfigPanelProps): ReactElement {
   const t = createTranslator(locale);
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
   const persistedSettingsFingerprint = JSON.stringify(effectiveSettings);
@@ -235,6 +235,7 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
       {section === 'general' ? (
         <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.applicationBehavior')}>
           <SettingsCardHeading icon="⚙" title={t('userConfig.applicationBehavior')} subtitle={t('userConfig.applicationBehaviorSubtitle')} />
+          {updatesUnavailable ? <StatusMessage tone="warning" role="note" prefix="⚠️ ">{t('userConfig.updaterUnavailable')}</StatusMessage> : null}
           <div className="setting-grid two-col">
             <div className="setting-field">
               <label className="field-label" htmlFor="close-behavior">{t('userConfig.closeBehavior')}</label>
@@ -243,15 +244,14 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
                 <option value="quit">{t('userConfig.quit')}</option>
               </FormSelect>
             </div>
-            <NumberField label={t('userConfig.updateInterval')} value={draft.updateIntervalMinutes} min={5} max={1440} onChange={(value) => patch({ updateIntervalMinutes: value })} />
+            <NumberField label={t('userConfig.updateInterval')} value={draft.updateIntervalMinutes} min={5} max={1440} disabled={updatesUnavailable} onChange={(value) => patch({ updateIntervalMinutes: value })} />
           </div>
           <div className="switch-grid">
             <SettingSwitch checked={draft.launchAtStartup} label={t('userConfig.launchAtStartup')} description={t('userConfig.launchAtStartupDesc')} onChange={(value) => patch({ launchAtStartup: value })} />
             <SettingSwitch checked={draft.startMinimized} label={t('userConfig.startMinimized')} description={t('userConfig.startMinimizedDesc')} onChange={(value) => patch({ startMinimized: value })} />
-            <SettingSwitch checked={draft.updateAutoCheck} label={t('userConfig.autoUpdateCheck')} description={t('userConfig.autoUpdateCheckDesc')} onChange={(value) => patch({ updateAutoCheck: value })} />
-            <SettingSwitch checked={draft.updateCheckOnStartup} label={t('userConfig.checkOnStartup')} description={t('userConfig.checkOnStartupDesc')} onChange={(value) => patch({ updateCheckOnStartup: value })} />
-            <SettingSwitch checked={draft.updateAutoDownload} label={t('userConfig.autoDownload')} description={t('userConfig.autoDownloadDesc')} onChange={(value) => patch({ updateAutoDownload: value })} />
-            <SettingSwitch checked={draft.updateSilentInstall} label={t('userConfig.silentInstall')} description={t('userConfig.silentInstallDesc')} onChange={(value) => patch({ updateSilentInstall: value, ...(value ? { updateAutoCheck: true, updateAutoDownload: true } : {}) })} />
+            <SettingSwitch checked={draft.updateAutoCheck} label={t('userConfig.autoUpdateCheck')} description={t('userConfig.autoUpdateCheckDesc')} disabled={updatesUnavailable} onChange={(value) => patch({ updateAutoCheck: value })} />
+            <SettingSwitch checked={draft.updateCheckOnStartup} label={t('userConfig.checkOnStartup')} description={t('userConfig.checkOnStartupDesc')} disabled={updatesUnavailable} onChange={(value) => patch({ updateCheckOnStartup: value })} />
+            <SettingSwitch checked={draft.updateAutoDownload} label={t('userConfig.autoDownload')} description={t('userConfig.autoDownloadDesc')} disabled={updatesUnavailable} onChange={(value) => patch({ updateAutoDownload: value })} />
           </div>
         </section>
       ) : null}
@@ -617,8 +617,8 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
   );
 }
 
-function NumberField({ label, value, min, max, onChange }: { readonly label: string; readonly value: number; readonly min: number; readonly max: number; readonly onChange: (value: number) => void }): ReactElement {
-  return <div className="setting-field"><label className="field-label">{label}</label><FormInput type="number" value={value} min={min} max={max} onChange={(event) => onChange(clampNumber(event.target.value, value, min, max))} /></div>;
+function NumberField({ label, value, min, max, disabled = false, onChange }: { readonly label: string; readonly value: number; readonly min: number; readonly max: number; readonly disabled?: boolean; readonly onChange: (value: number) => void }): ReactElement {
+  return <div className="setting-field"><label className="field-label">{label}</label><FormInput type="number" value={value} min={min} max={max} disabled={disabled} onChange={(event) => onChange(clampNumber(event.target.value, value, min, max))} /></div>;
 }
 
 function Decision({ label, value, onChange }: { readonly label: string; readonly value: PermissionDecisionSetting; readonly onChange: (value: PermissionDecisionSetting) => void }): ReactElement {

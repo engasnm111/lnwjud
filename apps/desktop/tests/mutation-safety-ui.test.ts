@@ -52,7 +52,7 @@ const dashboard: DashboardSnapshot = {
   appVersion: APP_VERSION,
 };
 
-function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'general' | 'security' | 'mcp' | 'tunnel' = 'security'): string {
+function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapshot> = {}, section: 'general' | 'security' | 'mcp' | 'tunnel' = 'security', tunnelStartPending = false): string {
   return renderToStaticMarkup(createElement(SettingsPage, {
     locale,
     initialSection: section,
@@ -78,6 +78,7 @@ function settingsMarkup(locale: 'th' | 'en', overrides: Partial<DashboardSnapsho
     onConfigureTunnelProfile: async (): Promise<string> => '',
     onStartTunnel: noop,
     onStopTunnel: noop,
+    tunnelStartPending,
   }));
 }
 
@@ -111,7 +112,7 @@ function recoveryMarkup(locale: 'th' | 'en'): string {
 }
 
 describe('mutation safety UI contract', () => {
-  it('disables persistent Tunnel actions in Settings while a runtime is starting', () => {
+  it('keeps Stop available in Settings to cancel a Tunnel that is starting', () => {
     const markup = settingsMarkup('en', {
       tunnel: {
         ...EMPTY_TUNNEL_STATUS,
@@ -126,9 +127,9 @@ describe('mutation safety UI contract', () => {
           readyBeforeRetire: false, strictZeroDowntime: false, capabilityEvidence: null,
         },
       },
-    }, 'tunnel');
+    }, 'tunnel', true);
     expect(markup).toMatch(/<button(?=[^>]*disabled="")(?=[^>]*btn-save-gold)[^>]*>Reconnect same Tunnel<\/button>/);
-    expect(markup).toMatch(/<button(?=[^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
+    expect(markup).toMatch(/<button(?![^>]*disabled="")[^>]*>Stop Tunnel<\/button>/);
   });
 
   it('renders the actual 5.9.0 application version', () => {

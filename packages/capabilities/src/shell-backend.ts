@@ -127,6 +127,7 @@ const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_TIMEOUT_SECONDS = 604_800;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const FOREGROUND_CANCELLATION_RETRY_MS = 250;
+const FOREGROUND_CANCELLATION_MAX_RETRIES = 3;
 
 export class ShellCapabilityBackend implements CapabilityBackend {
   private readonly tasks = new Map<string, ShellTaskRecord>();
@@ -455,14 +456,14 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     if (record.state === 'running' || record.state === 'termination_unverified') {
       const targetState = record.terminationTarget ?? 'cancelled';
       let verified = await this.tryTerminate(record, targetState);
-      while (!verified && autoRetry) {
-        if (record.child.exitCode !== null || record.child.signalCode !== null) {
-          await record.completion;
-        }
+      let retries = 0;
+      while (!verified && autoRetry && retries < FOREGROUND_CANCELLATION_MAX_RETRIES) {
+        if (record.child.exitCode !== null || record.child.signalCode !== null) break;
         await delay(FOREGROUND_CANCELLATION_RETRY_MS);
+        retries += 1;
+        if (record.child.exitCode !== null || record.child.signalCode !== null) break;
         verified = await this.tryTerminate(record, targetState);
       }
-      if (!verified) await record.completion;
     }
     return ok(this.snapshot(record));
   }

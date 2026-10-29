@@ -24,7 +24,27 @@ internal static class NativeTests
             switch (args[0])
             {
                 case "noop": return 0;
+                case "enrollment-ownership": EnrollmentAttestationTests.Ownership(); return 0;
+                case "enrollment-attestation": EnrollmentAttestationTests.Adapter(); return 0;
+                case "enrollment-attestation-timeout": EnrollmentAttestationTests.Adapter(true); return 0;
+                case "enrollment-production-assembly": EnrollmentAttestationTests.ProductionAssembly(args[1]); return 0;
+                case "version":
+                case "attestation": return EnrollmentAttestationTests.Verifier(args);
+                case "installed-client-boundary-hold": Thread.Sleep(30_000); return 0;
+                case "installed-updater-prerequisites": return InstalledUpdaterAuthorityFixture.Prerequisites();
+                case "installed-client-boundary-test": return InstalledUpdaterAuthorityFixture.ClientBoundaryTests();
+                case "installed-updater-authority": return InstalledUpdaterAuthorityFixture.Run(args);
+                case "installed-updater-service": return InstalledUpdaterAuthorityFixture.Service(args);
+                case "installed-updater-client": return InstalledUpdaterAuthorityFixture.Client(args);
+                case "installed-updater-child": return InstalledUpdaterAuthorityFixture.Child(args);
+                case "updater-crash-authority": return UpdaterCrashBoundaryFixture.RunAuthority(args);
+                case "updater-crash-child": return UpdaterCrashBoundaryFixture.RunChild(args);
+                case "updater-crash-boundaries": UpdaterCrashBoundaryFixture.RunSuite(); return 0;
                 case "pipe-acl": ServicePipeSecurityTests.Run(); return 0;
+                case "authenticated-pipe-caller": TestAuthenticatedPipeCallerCapture(); return 0;
+                case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
+                case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
+                case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
                 case "stale-tunnel-alias": StaleTunnelAliasTests.Run(); return 0;
                 case "endpoint-probe":
                     if (args.Length != 2) throw new ArgumentException("Expected installed service executable path");
@@ -115,6 +135,34 @@ internal static class NativeTests
                     TestOutputStoreRetention();
                     Console.WriteLine("PASS service output cursors, restart, bounds, corruption, owner binding and persistence failure");
                     return 0;
+                case "import-timeout-tests":
+                {
+                    var timeoutRoot = Path.Combine(Path.GetTempPath(), "lnwjud-native-import-timeout-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(timeoutRoot);
+                    try
+                    {
+                        TestServiceImportTimeoutFence(timeoutRoot).GetAwaiter().GetResult();
+                        Console.WriteLine("PASS isolated native import timeout fence");
+                        return 0;
+                    }
+                    finally
+                    {
+                        var absolute = Path.GetFullPath(timeoutRoot);
+                        var temporary = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                        if (!absolute.StartsWith(temporary, StringComparison.OrdinalIgnoreCase)
+                            || !Path.GetFileName(absolute).StartsWith("lnwjud-native-import-timeout-", StringComparison.Ordinal))
+                            throw new Exception("Refusing import timeout test cleanup outside its temporary root");
+                        Directory.Delete(absolute, true);
+                    }
+                }
+                case "service-restart-tests":
+                    TestServiceRestartAndJobReconciliation();
+                    Console.WriteLine("PASS isolated service restart reconciliation");
+                    return 0;
+                case "inline-process-tests":
+                    break;
+                case "pipe-session-tests":
+                    break;
                 case "output-pattern":
                     Console.Write("ก😀" + new string('x', 300_000));
                     Console.Error.Write(new string('e', 300_000));
@@ -137,9 +185,13 @@ internal static class NativeTests
                     throw new Exception("Crash injection was not reached");
             }
         }
+        var inlineOnly = args.Length == 1 && args[0] == "inline-process-tests";
+        var pipeSessionOnly = args.Length == 1 && args[0] == "pipe-session-tests";
         var root = Path.Combine(Path.GetTempPath(), "lnwjud-native-fault-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         try
         {
+            if (!inlineOnly && !pipeSessionOnly)
+            {
             if (!WindowsContainmentServiceClient.ShouldWaitForOutput(ServiceAttemptPhase.Prepared)
                 || !WindowsContainmentServiceClient.ShouldWaitForOutput(ServiceAttemptPhase.DispatchCommitted)
                 || WindowsContainmentServiceClient.ShouldWaitForOutput(ServiceAttemptPhase.LaunchNotStarted)
@@ -174,6 +226,11 @@ internal static class NativeTests
             Console.WriteLine("PASS crash recovery keeps unknown reservations and persists terminal release");
             TestServiceRestartAndJobReconciliation();
             Console.WriteLine("PASS service restart reconciles dead jobs, preserves live descendants, and cancels cleanly");
+            UpdaterCrashBoundaryFixture.RunSuite();
+            Console.WriteLine("PASS disposable updater authority crash-boundary fixture");
+            }
+            if (!inlineOnly)
+            {
             TestServicePipeRefusesPreexistingInstance();
             ServicePipeSecurityTests.Run();
             StaleTunnelAliasTests.Run();
@@ -192,6 +249,9 @@ internal static class NativeTests
             Console.WriteLine("PASS authenticated service import RPC retains its transaction through native process completion");
             TestProfileKeyIsNotExported();
             Console.WriteLine("PASS receipt authority is not exported to the caller");
+            }
+            if (!pipeSessionOnly)
+            {
             var breakaway = ContainedProcess.Capture(Executable, ["breakaway"], root, EnvironmentBlock, 5000, 1024);
             if (breakaway != "BREAKAWAY_REFUSED") throw new Exception("Breakaway test failed");
             Console.WriteLine("PASS explicit CREATE_BREAKAWAY_FROM_JOB refused");
@@ -257,6 +317,7 @@ internal static class NativeTests
                 Thread.Sleep(300);
                 if (File.Exists(marker)) throw new Exception("Target escaped creation-time Job on helper crash");
                 Console.WriteLine("PASS helper crash " + stage + " does not resume or leak target execution");
+            }
             }
             return 0;
         }
@@ -644,8 +705,9 @@ internal static class NativeTests
     private static void TestSharedWriterImportPromotion()
     {
         var ledger = new ServiceAttemptLedger();
-        var first = NewServiceAttemptRequest("shared-first", ServiceAttemptLedger.GlobalReservationKey) with { Shared = true };
-        var second = NewServiceAttemptRequest("shared-second", ServiceAttemptLedger.GlobalReservationKey) with { Shared = true };
+        var reservationKey = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "lnwjud-shared-writer-" + Guid.NewGuid().ToString("N")));
+        var first = NewServiceAttemptRequest("shared-first", reservationKey) with { Shared = true };
+        var second = NewServiceAttemptRequest("shared-second", reservationKey) with { Shared = true };
         ledger.Prepare(first);
         ledger.Prepare(second);
         ledger.TryCommitDispatch(first.Identity, first.AuthenticatedCallerSid, first.OperationDigest);
@@ -654,14 +716,14 @@ internal static class NativeTests
         ledger.AbortBeforeLaunch(second);
         ledger.Release(second.Identity, second.AuthenticatedCallerSid);
         ledger.AcquireImportReservation(first.Identity, first.AuthenticatedCallerSid);
-        ExpectFailure<IOException>(() => ledger.Prepare(NewServiceAttemptRequest("blocked-by-import", ServiceAttemptLedger.GlobalReservationKey) with { Shared = true }), "WRITER_RESERVATION_BUSY");
+        ExpectFailure<IOException>(() => ledger.Prepare(NewServiceAttemptRequest("blocked-by-import", reservationKey) with { Shared = true }), "WRITER_RESERVATION_BUSY");
         ledger.RecordTerminal(first.Identity, first.AuthenticatedCallerSid, ServiceProcessOutcome.Completed, 0, 0);
         if (ledger.Release(first.Identity, first.AuthenticatedCallerSid) != ReservationRelease.Retained)
             throw new Exception("Native process completion released an unfinished import");
         ledger.CompleteImportReservation(first.Identity, first.AuthenticatedCallerSid);
         if (ledger.Inspect(first.Identity, first.AuthenticatedCallerSid).ReservationHeld)
             throw new Exception("Completed import did not release a previously verified terminal process");
-        ledger.Prepare(NewServiceAttemptRequest("admitted-after-import", ServiceAttemptLedger.GlobalReservationKey) with { Shared = true });
+        ledger.Prepare(NewServiceAttemptRequest("admitted-after-import", reservationKey) with { Shared = true });
     }
 
     private static void TestServiceImportTransactions(string root)
@@ -1696,7 +1758,7 @@ internal static class NativeTests
         }
     }
 
-    private static async Task<System.Text.Json.JsonDocument> SendServiceRpcAsync(string pipeName, byte[] payload)
+    internal static async Task<System.Text.Json.JsonDocument> SendServiceRpcAsync(string pipeName, byte[] payload)
     {
         using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -1759,16 +1821,22 @@ internal static class NativeTests
     {
         var directory = Path.Combine(Path.GetTempPath(), "lnwjud-native-key-export-" + Guid.NewGuid().ToString("N"));
         var original = Console.Out;
+        var originalError = Console.Error;
         using var captured = new StringWriter();
+        using var capturedError = new StringWriter();
         try
         {
             Console.SetOut(captured);
+            Console.SetError(capturedError);
             var exitCode = Program.Main(["profile-key", directory]).GetAwaiter().GetResult();
-            if (exitCode == 0 || captured.ToString().Length != 0) throw new Exception("Helper exported receipt authority to the caller");
+            var error = capturedError.ToString().TrimEnd('\r', '\n');
+            if (exitCode != 125 || captured.ToString().Length != 0 || error != "NATIVE_CONTAINMENT_UNRESOLVED")
+                throw new Exception("Helper profile-key refusal did not fail closed without exporting authority");
         }
         finally
         {
             Console.SetOut(original);
+            Console.SetError(originalError);
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
         }
     }

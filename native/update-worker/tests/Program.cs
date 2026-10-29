@@ -15,11 +15,61 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "metadata-unit") { _ = ReleaseMetadataTests.Run(); return 0; }
+        if (args.Length == 1 && args[0] == "build-evidence") { ReleaseBuildEvidenceTests.Run(); return 0; }
+        if (args.Length == 2 && args[0] == "identity-tests") { _ = ReleaseIdentityTests.Run(args[1]); return 0; }
+        if (args.Length == 2 && args[0] == "authorization-v2-tests") { _ = ReleaseAuthorizationV2Tests.Run(args[1]); return 0; }
         if (args.Length == 2 && args[0] == "metadata-tests")
         {
             _ = ReleaseMetadataTests.Run();
+            _ = ReleaseBuildEvidenceTests.Run();
             _ = ReleaseMetadataTests.RunInterop(args[1]);
+            _ = ReleaseIdentityTests.Run(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, "release-identity-v1.json"));
+            _ = ReleaseAuthorizationV2Tests.Run(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!, "authorization-v2.json"));
             return 0;
+        }
+        if (args.Length == 4 && args[0] == "transaction-crash-child")
+        {
+            using var store = new UpdateTransactionStore(args[1], Installation, boundary =>
+            {
+                if (boundary != args[3]) return;
+                Console.WriteLine("BOUNDARY"); Console.Out.Flush(); Console.In.ReadLine();
+                Environment.Exit(91);
+            });
+            var snapshot = store.RecoverPublications();
+            switch (args[2])
+            {
+                case "quiesce-intent":
+                {
+                    var current = snapshot.Transaction ?? throw new Exception("transaction missing");
+                    _ = store.PersistTransaction(current.Advance(UpdateTransactionPhase.QuiesceIntent,
+                        current.Digest, WindowsStoreIO.CurrentOwner()), current.Digest);
+                    break;
+                }
+                case "quiesced":
+                {
+                    var current = snapshot.Transaction ?? throw new Exception("transaction missing");
+                    _ = store.PersistTransaction(current.Advance(UpdateTransactionPhase.Quiesced,
+                        current.Digest, WindowsStoreIO.CurrentOwner()), current.Digest);
+                    break;
+                }
+                case "select-candidate":
+                {
+                    var current = snapshot.Transaction ?? throw new Exception("transaction missing");
+                    var selection = snapshot.Selection ?? throw new Exception("slot selection missing");
+                    _ = store.SelectCandidate(current, current.Digest, selection.Digest, WindowsStoreIO.CurrentOwner());
+                    break;
+                }
+                case "select-previous":
+                {
+                    var current = snapshot.Transaction ?? throw new Exception("transaction missing");
+                    var selection = snapshot.Selection ?? throw new Exception("slot selection missing");
+                    _ = store.SelectPrevious(current, current.Digest, selection.Digest, WindowsStoreIO.CurrentOwner());
+                    break;
+                }
+                default: throw new Exception("transaction crash child action invalid");
+            }
+            return 92;
         }
         if (args.Length > 0 && args[0] == "crash-child")
         {
@@ -38,7 +88,14 @@ internal static class Program
         DefaultOwnerProbe();
         assertions += StoreCreationTests.Run();
         assertions += ReleaseMetadataTests.Run();
+        assertions += ReleaseBuildEvidenceTests.Run();
+        assertions += UpdateTransactionJournalTests.Run();
+        assertions += UpdateTransactionStoreTests.Run();
         assertions += ReleaseMetadataTests.RunInterop(metadataFixture);
+        assertions += ReleaseIdentityTests.Run(Path.Combine(Path.GetDirectoryName(metadataFixture)!, "release-identity-v1.json"));
+        assertions += ReleaseAuthorizationV2Tests.Run(Path.Combine(Path.GetDirectoryName(metadataFixture)!, "authorization-v2.json"));
+        await TransactionStoreHoldsStartup();
+        await TransactionStoreRecoversPublication();
         await OwnershipAndProtocol();
         foreach (var boundary in new[] { "stage-flushed", "publication-readback", "preauth-committed" }) await CrashRecovery(boundary);
         await TerminalStageRecovery();
@@ -118,6 +175,101 @@ internal static class Program
             Process.Dispose();
         }
     }
+    private static async Task TransactionStoreHoldsStartup()
+    {
+        var root = Root();
+        var owner = WindowsStoreIO.CurrentOwner();
+        var initial = SlotSelection.Create(Installation, 1, 1, "none", owner,
+            Guid.NewGuid().ToString("D"), "A", new string('a', 64),
+            DataGeneration.Create("a1111111-1111-4111-8111-111111111111", new string('1', 64)));
+        var transaction = UpdateTransactionJournal.Create(initial, "none", owner, "transaction-hold", "release-6-0-0",
+            1, new string('e', 64), "6.0.0", new string('b', 64),
+            DataGeneration.Create("b2222222-2222-4222-8222-222222222222", new string('2', 64)), new TunnelSnapshot(false, false, null),
+            Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        using (var store = new UpdateTransactionStore(root, Installation))
+        {
+            store.InitializeSelection(initial);
+            _ = store.PersistTransaction(transaction, "none");
+        }
+
+        var transactionPath = Path.Combine(root, "transaction.json");
+        File.WriteAllText(transactionPath, "\r\n" + File.ReadAllText(transactionPath) + "\r\n");
+        var nonCanonicalTransaction = File.ReadAllBytes(transactionPath);
+        using var child = new Child(root);
+        var result = await child.Send(CommandLine("recover"));
+        var response = result["result"] as JsonObject;
+        Check(Kind(result) == "held" && response?["safeToStart"]?.GetValue<bool>() == false
+            && Reason(result) == "UPDATE_TRANSACTION_NONCANONICAL", "noncanonical A/B transaction holds startup safeToStart="
+            + (response?["safeToStart"]?.ToJsonString() ?? "unknown") + " " + Describe(result));
+        Check(File.ReadAllBytes(transactionPath).SequenceEqual(nonCanonicalTransaction), "noncanonical A/B transaction preserved");
+    }
+
+    private static async Task TransactionStoreRecoversPublication()
+    {
+        var root = Root();
+        var owner = WindowsStoreIO.CurrentOwner();
+        var selection = SlotSelection.Create(Installation, 1, 1, "none", owner,
+            Guid.NewGuid().ToString("D"), "A", new string('a', 64),
+            DataGeneration.Create("a1111111-1111-4111-8111-111111111111", new string('1', 64)));
+        var candidateReady = UpdateTransactionJournal.Create(selection, "none", owner, "transaction-recovery",
+            "release-6-0-0", 1, new string('e', 64), "6.0.0", new string('b', 64),
+            DataGeneration.Create("b2222222-2222-4222-8222-222222222222", new string('2', 64)),
+            new TunnelSnapshot(false, false, null), Guid.NewGuid().ToString("D"),
+            Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+        using (var store = new UpdateTransactionStore(root, Installation))
+        {
+            store.InitializeSelection(selection);
+            _ = store.PersistTransaction(candidateReady, "none");
+        }
+
+        var staged = candidateReady.Advance(UpdateTransactionPhase.QuiesceIntent, candidateReady.Digest, owner);
+        var pendingPath = Path.Combine(root, "transaction.pending.json");
+        var transactionPath = Path.Combine(root, "transaction.json");
+        var selectionPath = Path.Combine(root, "active-slot.json");
+        using (var io = new WindowsStoreIO(root)) io.Stage("transaction.pending.json", staged.Encode());
+        var pendingBytes = File.ReadAllBytes(pendingPath);
+        var publishedBytes = File.ReadAllBytes(transactionPath);
+        var selectionBytes = File.ReadAllBytes(selectionPath);
+        JsonObject status;
+        JsonObject recovered;
+        JsonObject repeated;
+        bool statusPreservedBytes;
+        bool publicationRemoved;
+        bool selectionUnchanged;
+        UpdateTransactionJournal recoveredTransaction;
+        byte[] transactionAfterRecovery;
+
+        using (var child = new Child(root))
+        {
+            status = await child.Send(CommandLine("status"));
+            statusPreservedBytes = File.ReadAllBytes(pendingPath).SequenceEqual(pendingBytes)
+                && File.ReadAllBytes(transactionPath).SequenceEqual(publishedBytes);
+
+            recovered = await child.Send(CommandLine("recover"));
+            publicationRemoved = !File.Exists(pendingPath);
+            var recoveredBytes = File.ReadAllBytes(transactionPath);
+            recoveredTransaction = UpdateTransactionJournal.Decode(recoveredBytes, Installation);
+            selectionUnchanged = File.ReadAllBytes(selectionPath).SequenceEqual(selectionBytes);
+            transactionAfterRecovery = recoveredBytes;
+
+            repeated = await child.Send(CommandLine("recover"));
+        }
+
+        var result = recovered["result"] as JsonObject;
+        Check(Kind(status) == "held" && Reason(status) == "UPDATE_TRANSACTION_PUBLICATION_PENDING",
+            "status holds a pending transaction publication");
+        Check(statusPreservedBytes, "status preserves pending and published transaction bytes");
+        Check(Kind(recovered) == "held" && result?["safeToStart"]?.GetValue<bool>() == false
+            && Reason(recovered) == "UPDATE_TRANSACTION_PENDING",
+            "recovery publishes a valid staged transition but holds before update effects: " + Describe(recovered));
+        Check(publicationRemoved, "recovery removes the resolved transaction staging file");
+        Check(recoveredTransaction == staged, "recovery publishes the exact canonical transaction successor");
+        Check(selectionUnchanged, "transaction publication recovery leaves the active slot unchanged");
+        Check(Kind(repeated) == "held" && Reason(repeated) == "UPDATE_TRANSACTION_PENDING"
+            && File.ReadAllBytes(transactionPath).SequenceEqual(transactionAfterRecovery),
+            "repeated recovery is idempotent and remains held");
+    }
+
     private static async Task OwnershipAndProtocol()
     {
         var root = Root();

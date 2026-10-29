@@ -87,6 +87,9 @@ internal static class WindowsContainmentService
 #if NATIVE_CONTAINMENT_TESTS
     internal static Task RunPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken, bool useCurrentUserTestLauncher = false) =>
         RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher);
+
+    internal static Task RunAuthenticatedTestPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken) =>
+        RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher: false, useCurrentUserTestPipeSecurity: true);
 #endif
 
     private static Task RunProductionPipeServerAsync(ServiceEndpointIdentity.ProductionServiceAuthority authority, ServiceAttemptLedger ledger, CancellationToken cancellationToken)
@@ -96,7 +99,7 @@ internal static class WindowsContainmentService
         return RunPipeServerCoreAsync(PipeName, ledger, cancellationToken, false);
     }
 
-    private static async Task RunPipeServerCoreAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken, bool useCurrentUserTestLauncher)
+    private static async Task RunPipeServerCoreAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken, bool useCurrentUserTestLauncher, bool useCurrentUserTestPipeSecurity = false)
     {
         ArgumentNullException.ThrowIfNull(ledger);
         var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher);
@@ -115,7 +118,7 @@ internal static class WindowsContainmentService
                 }
 
 #if NATIVE_CONTAINMENT_TESTS
-                var pipe = useCurrentUserTestLauncher
+                var pipe = useCurrentUserTestLauncher || useCurrentUserTestPipeSecurity
                     ? ServicePipeSecurity.CreateCurrentUserTestServer(pipeName, firstInstance)
                     : ServicePipeSecurity.CreateServer(pipeName, firstInstance);
 #else
