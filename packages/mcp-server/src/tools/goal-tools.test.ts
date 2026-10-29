@@ -105,6 +105,8 @@ describe('durable goal MCP tools', () => {
         source: 'host_observed', observedAt: '2026-09-28T00:00:00.000Z', workspaceId: 'workspace-1',
         commit: '33e1419', command: 'git diff --check', runId: 'host-task-1', exitCode: 0,
         conclusion: 'passed', artifact: 'diff-check.log',
+        sourceDigest: 'a'.repeat(64), artifactDigest: 'b'.repeat(64),
+        contractDigest: 'c'.repeat(64), observationId: 'observation-1',
       } },
       { gateId: 'docs_impact', status: 'not_applicable', reason: 'No documentation change is needed.' },
     ];

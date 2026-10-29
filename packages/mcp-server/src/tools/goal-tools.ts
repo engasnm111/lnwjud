@@ -663,6 +663,10 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
             ...(update.evidence.exitCode === undefined ? {} : { exitCode: update.evidence.exitCode }),
             ...(update.evidence.conclusion === undefined ? {} : { conclusion: update.evidence.conclusion }),
             ...(update.evidence.artifact === undefined ? {} : { artifact: update.evidence.artifact }),
+            ...(update.evidence.sourceDigest === undefined ? {} : { sourceDigest: update.evidence.sourceDigest }),
+            ...(update.evidence.artifactDigest === undefined ? {} : { artifactDigest: update.evidence.artifactDigest }),
+            ...(update.evidence.contractDigest === undefined ? {} : { contractDigest: update.evidence.contractDigest }),
+            ...(update.evidence.observationId === undefined ? {} : { observationId: update.evidence.observationId }),
           } }),
         })) }),
         ...(input.engineeringReviewFindings === undefined ? {} : { engineeringReviewFindings: input.engineeringReviewFindings.map((finding) => ({
