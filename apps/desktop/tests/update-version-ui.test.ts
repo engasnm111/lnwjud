@@ -1,8 +1,40 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { OperatorUpdateIntent } from '../src/renderer/operator-update-intent.js';
 
 describe('titlebar update notification', () => {
+  it('advances a Settings-initiated update only once and never installs from ordinary update status events', () => {
+    const intent = new OperatorUpdateIntent();
+    expect(intent.onStatus({ phase: 'ready' })).toBe('none');
+    intent.start();
+    expect(intent.onStatus({ phase: 'checking' })).toBe('none');
+    expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
+    expect(intent.onStatus({ phase: 'available' })).toBe('none');
+    expect(intent.onStatus({ phase: 'downloading' })).toBe('none');
+    expect(intent.onStatus({ phase: 'ready' })).toBe('confirm-install');
+    expect(intent.onStatus({ phase: 'ready' })).toBe('none');
+    intent.start();
+    expect(intent.onStatus({ phase: 'unavailable' })).toBe('none');
+    expect(intent.onStatus({ phase: 'ready' })).toBe('none');
+    intent.start();
+    expect(intent.onStatus({ phase: 'error' })).toBe('none');
+    expect(intent.onStatus({ phase: 'ready' })).toBe('none');
+  });
+
+  it('routes Settings General operator test through native update status without opening Releases', async () => {
+    const root = path.resolve(import.meta.dirname, '..');
+    const app = await readFile(path.join(root, 'src/renderer/App.tsx'), 'utf8');
+    const settings = await readFile(path.join(root, 'src/renderer/features/settings/SettingsPage.tsx'), 'utf8');
+    const userConfig = await readFile(path.join(root, 'src/renderer/features/settings/UserConfigPanel.tsx'), 'utf8');
+    expect(app).toContain('onTestNativeUpdate={handleOperatorUpdateTest}');
+    expect(app).toContain('advanceOperatorUpdate(status)');
+    expect(settings).toContain('onTestNativeUpdate={props.onTestNativeUpdate}');
+    expect(settings).not.toContain("onOpenExternalSetupPage('lnwjud_releases')");
+    expect(userConfig).toContain('void testNativeUpdate()');
+    expect(userConfig).toContain('updateStatus?.message');
+  });
+
   it('turns the top-left version chip into an update action with visual states', async () => {
     const root = path.resolve(import.meta.dirname, '..');
     const shell = await readFile(path.join(root, 'src', 'renderer', 'features', 'shell', 'AppShell.tsx'), 'utf8');

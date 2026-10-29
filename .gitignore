@@ -101,6 +101,7 @@ docs/development/*
 !docs/development/RELEASE_CHECKLIST.md
 !docs/development/WINDOWS_DEFENDER_FALSE_POSITIVE.md
 !docs/development/SCHEDULED_CONTINUATION_CAPABILITY_EVIDENCE.md
+!docs/development/WINDOWS_DESKTOP_RUNTIME_IDENTITY.md
 !docs/NATIVE_PROVIDER_DEVELOPMENT.md
 !docs/INSTALL_MACOS.md
 !docs/INSTALL_LINUX.md
