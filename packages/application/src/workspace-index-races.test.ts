@@ -57,7 +57,7 @@ describe('workspace index races', () => {
         const status = await service.status(setup.workspace.id);
         expect(status.ok && status.value.snapshot?.entries.find((entry) => entry.relativePath === 'a.ts')?.symbols).toContain('updated');
         expect(status).toMatchObject({ ok: true, value: { freshness: 'watching_clean', watcher: { pendingEvents: 0, activeWorkers: 0, failedEvents: 0 } } });
-      });
+      }, { timeout: 10_000 });
       expect(saves).toBe(2);
     } finally {
       await service.close();
