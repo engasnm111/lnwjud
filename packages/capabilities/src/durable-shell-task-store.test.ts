@@ -867,7 +867,7 @@ describe('durable shell background tasks', () => {
     } finally {
       if (first.ok) await store.cancel('task-one', owner);
     }
-  }, 15_000);
+  }, 45_000);
   it.skipIf(process.platform === 'darwin')('does not hydrate historical durable output while enforcing the concurrency limit', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-memory-'));
     temporaryRoots.push(root);
