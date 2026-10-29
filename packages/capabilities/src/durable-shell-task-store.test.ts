@@ -704,20 +704,34 @@ describe('durable shell background tasks', () => {
     if (!terminal.ok) return;
     const workerPid = Number((terminal.value as Record<string, unknown>).worker_pid);
     expect(Number.isInteger(workerPid)).toBe(true);
-    await expect.poll(() => {
-      try {
-        process.kill(workerPid, 0);
-        return true;
-      } catch {
-        return false;
+    await expect.poll(async () => {
+      if (process.platform === 'win32') {
+        try {
+          process.kill(workerPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
       }
-    }, { timeout: 2000, interval: 50 }).toBe(false);
+      // A POSIX zombie is already exited even if kill(pid, 0) still succeeds.
+      // Probe process state using the same identity semantics as the durable store.
+      const output = await promisify(execFile)('ps', [
+        '-p', String(workerPid), '-o', 'lstart=', '-o', 'stat=',
+      ], { timeout: 3_500 }).then(
+        ({ stdout }) => stdout,
+        (error: unknown) => {
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return '';
+          throw error;
+        },
+      );
+      return parsePosixProcessProbe(output).state !== 'gone';
+    }, { timeout: 10_000, interval: 100 }).toBe(false);
 
     await expect(backend.execute({ operation: 'status', task_id: taskId })).resolves.toMatchObject({
       ok: true,
       value: { state: 'completed', exit_code: 0, stdout: 'fast', durable: true },
     });
-  }, 15_000);
+  }, 30_000);
 
   it.skipIf(process.platform === 'darwin')('retains Windows containment until a detached descendant closes inherited stdio', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-shell-'));
