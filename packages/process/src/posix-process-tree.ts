@@ -231,7 +231,9 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     if (initial.state === 'empty') return;
     if (initial.state !== 'live' || initial.rootStartedAt === undefined
       || child !== undefined && (child.exitCode !== null || child.signalCode !== null)) {
-      throw new Error('POSIX process group identity could not be verified; targeted termination refused');
+      const observation = initial.state === 'unknown' ? initial.reason
+        : initial.state === 'live' ? 'missing_root_start_identity_or_exited_child' : 'empty_group';
+      throw new Error(`POSIX process group identity could not be verified (${observation}); targeted termination refused`);
     }
     const expectedRootStartedAt = initial.rootStartedAt;
     for (const [signal, grace] of [['SIGTERM', this.termGraceMs], ['SIGKILL', this.killGraceMs]] as const) {
