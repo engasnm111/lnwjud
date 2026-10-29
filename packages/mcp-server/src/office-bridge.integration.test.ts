@@ -60,7 +60,7 @@ describe.skipIf(process.platform !== 'win32')('Windows Office bridge boundary in
     const { stdout, stderr } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { timeout: 30_000, windowsHide: true, maxBuffer: 1024 * 1024 });
     expect(stderr).toBe('');
     expect(stdout).toContain('PowerPoint borrowed/created ownership, bounded contention and abandoned-lock recovery passed.');
-  });
+  }, 45_000);
 });
 
 describe.skipIf(process.platform !== 'win32' || process.env.LNWJUD_RUN_OFFICE_COM_ACCEPTANCE !== '1')('Windows Office disposable COM artifact acceptance', () => {
