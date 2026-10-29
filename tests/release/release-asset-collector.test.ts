@@ -47,25 +47,17 @@ describe('release asset collector', () => {
       for (const name of [
         `lnwjud-Setup-${version}.exe`,
         `lnwjud-Portable-${version}.exe`,
-        `lnwjud-${version}-arm64.dmg`,
-        `lnwjud-${version}-arm64.zip`,
-        `lnwjud-${version}-x64.dmg`,
-        `lnwjud-${version}-x64.zip`,
         `lnwjud-${version}-x64.AppImage`,
         `lnwjud-${version}-arm64.AppImage`,
         'latest-linux.yml',
         'latest-linux-arm64.yml',
-        'latest-mac.yml',
         'RELEASE_MANIFEST.json',
         'SHA256SUMS.txt',
-        'PROVENANCE-darwin-arm64.json',
         'SHA256SUMS-linux-arm64.txt',
       ]) {
         expect(assetNames.has(name), name).toBe(true);
       }
-      const macManifest = await readFile(path.join(assetsDirectory, 'latest-mac.yml'), 'utf8');
-      expect(macManifest).toContain(`lnwjud-${version}-arm64.zip`);
-      expect(macManifest).toContain(`lnwjud-${version}-x64.zip`);
+      expect(assetNames.has('latest-mac.yml')).toBe(false);
       for (const name of assetNames) {
         if (!/^SHA256SUMS(?:-.+)?\.txt$/.test(name)) continue;
         const sums = await readFile(path.join(assetsDirectory, name), 'utf8');
@@ -82,7 +74,8 @@ describe('release asset collector', () => {
         targets?: Array<{ platform?: string; arch?: string }>;
       };
       expect(releaseManifest.sourceCommit).toBe(commit);
-      expect(releaseManifest.targets).toHaveLength(5);
+      expect(releaseManifest.targets).toHaveLength(3);
+      expect(releaseManifest.targets?.every((target) => target.platform !== 'darwin')).toBe(true);
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }

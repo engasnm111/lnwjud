@@ -53,7 +53,7 @@ system is never evidence for another.
     the in-app What's New registry, with Thai and English text. README and
     GitHub Release notes do not populate the in-app modal. The Desktop release
     notes test must fail when the current package version has no in-app entry.
-11. Do not tag or publish until the exact successful `main` CI run and attempt
+11. For releases that advertise **automatic update installation**, do not tag or publish until the exact successful `main` CI run and attempt
     produce and validate signed updater acceptance receipts for Windows x64,
     macOS arm64, and macOS x64. Each receipt must bind the exact `main` SHA,
     workflow run ID and attempt, package and feed digests, and signing identity.
@@ -68,8 +68,10 @@ system is never evidence for another.
     build, unit test, update-feed check, or ordinary installer run is not
     updater acceptance. The current release verifier rejects every structurally
     valid updater receipt because an authenticated producer and independent
-    observation verifier are not implemented yet. Do not remove this hold until
-    those components and the real target-native acceptance are verified.
+    observation verifier are not implemented yet. Do not enable or advertise automatic updates until
+    those components and real target-native acceptance are verified.
+
+**Manual-only v5.9.0 exception:** This release does not advertise or enable automatic installation. The version-locked `config/release-scope.json` permits only Windows x64 and Linux x64/arm64; macOS is withheld pending Issue #216. `scripts/verify-manual-release-scope.mjs` requires a fail-closed Desktop updater and empty update authority enrollment. Exact-main security/packaging tests, artifact provenance/hashes, and protected PRs remain mandatory. Genuine signed installation, restart and rollback receipts remain mandatory before any **future release enables** unattended updates; this manual mode does not treat self-reported fixtures as valid receipts.
 
 ## Post-publication documentation synchronization
 

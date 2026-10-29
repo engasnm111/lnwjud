@@ -32,6 +32,7 @@ interface UserConfigPanelProps {
   readonly onUnrestrictedChange: (enabled: boolean) => Promise<boolean>;
   readonly onSave: (settings: UserSettings) => Promise<boolean>;
   readonly onInstallPdfProvider: () => Promise<PdfProviderInstallResult>;
+  readonly onOpenManualUpdates?: () => Promise<void>;
   readonly embedded?: boolean;
 }
 
@@ -67,7 +68,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
-export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, selectedWorkspace = null, engineeringStatus, section, updatesUnavailable = false, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, embedded = false }: UserConfigPanelProps): ReactElement {
+export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, selectedWorkspace = null, engineeringStatus, section, updatesUnavailable = false, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, onOpenManualUpdates, embedded = false }: UserConfigPanelProps): ReactElement {
   const t = createTranslator(locale);
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
   const persistedSettingsFingerprint = JSON.stringify(effectiveSettings);
@@ -82,6 +83,7 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
   const [pdfInstallBusy, setPdfInstallBusy] = useState(false);
   const [pdfInstallMessage, setPdfInstallMessage] = useState<string | null>(null);
   const [pdfInstallError, setPdfInstallError] = useState<string | null>(null);
+  const [manualUpdateError, setManualUpdateError] = useState<string | null>(null);
   const [unrestrictedMessage, setUnrestrictedMessage] = useState<string | null>(null);
   const engineering = draft.engineeringHarness ?? DEFAULT_USER_SETTINGS.engineeringHarness!;
   const selectedEngineeringOverride = selectedWorkspace === null
@@ -206,6 +208,15 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
     }
   }
 
+  async function openManualUpdates(): Promise<void> {
+    setManualUpdateError(null);
+    try {
+      await onOpenManualUpdates?.();
+    } catch (cause: unknown) {
+      setManualUpdateError(cause instanceof Error ? cause.message : t('userConfig.manualUpdateOpenFailed'));
+    }
+  }
+
   async function save(): Promise<void> {
     const invalid = draft.extensions.extraMcpServers.find((server) => server.name.trim().length === 0 || server.command.trim().length === 0);
     if (invalid !== undefined) {
@@ -236,6 +247,13 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
         <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.applicationBehavior')}>
           <SettingsCardHeading icon="⚙" title={t('userConfig.applicationBehavior')} subtitle={t('userConfig.applicationBehaviorSubtitle')} />
           {updatesUnavailable ? <StatusMessage tone="warning" role="note" prefix="⚠️ ">{t('userConfig.updaterUnavailable')}</StatusMessage> : null}
+          {onOpenManualUpdates === undefined ? null : (
+            <div className="setting-field">
+              <ActionButton type="button" onClick={() => { void openManualUpdates(); }}>{t('userConfig.manualUpdateAction')}</ActionButton>
+              <p className="hint">{t('userConfig.manualUpdateHint')}</p>
+              {manualUpdateError === null ? null : <StatusMessage tone="warning">{manualUpdateError}</StatusMessage>}
+            </div>
+          )}
           <div className="setting-grid two-col">
             <div className="setting-field">
               <label className="field-label" htmlFor="close-behavior">{t('userConfig.closeBehavior')}</label>

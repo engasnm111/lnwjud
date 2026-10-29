@@ -1125,7 +1125,7 @@ export interface ConfigureTunnelProfileRequest {
   readonly tunnelId: string;
 }
 
-export type ExternalSetupTarget = 'openai_tunnels' | 'openai_api_keys' | 'chatgpt_plugins' | 'ngrok_authtoken' | 'ngrok_download';
+export type ExternalSetupTarget = 'openai_tunnels' | 'openai_api_keys' | 'chatgpt_plugins' | 'ngrok_authtoken' | 'ngrok_download' | 'lnwjud_releases';
 
 export const EXTERNAL_SETUP_URLS: Readonly<Record<ExternalSetupTarget, string>> = Object.freeze({
   openai_tunnels: 'https://platform.openai.com/settings/organization/tunnels',
@@ -1133,6 +1133,7 @@ export const EXTERNAL_SETUP_URLS: Readonly<Record<ExternalSetupTarget, string>> 
   chatgpt_plugins: 'https://chatgpt.com/plugins',
   ngrok_authtoken: 'https://dashboard.ngrok.com/get-started/your-authtoken',
   ngrok_download: 'https://ngrok.com/download',
+  lnwjud_releases: 'https://github.com/engasnm111/lnwjud/releases',
 });
 
 export interface OpenExternalSetupPageRequest {

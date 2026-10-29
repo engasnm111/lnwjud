@@ -2231,7 +2231,14 @@ async function installDownloadedUpdate(runtime: DesktopRuntime, offer: Downloade
   );
 }
 
+// v5.9.0 manual-only: no unattended update transactions on installed hosts.
+const MANUAL_RELEASE_ONLY = true;
+
 async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
+  if (MANUAL_RELEASE_ONLY) {
+    patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailableTransactionAuthority, canInstall: false });
+    return;
+  }
   if (!app.isPackaged) {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePackagedOnly, canInstall: false });
     return;

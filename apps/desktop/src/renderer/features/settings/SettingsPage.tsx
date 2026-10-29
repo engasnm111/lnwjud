@@ -697,6 +697,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               engineeringStatus={props.dashboard.engineeringHarnessStatus}
               section={userConfigSection}
               updatesUnavailable={props.updatesUnavailable ?? false}
+              onOpenManualUpdates={() => props.onOpenExternalSetupPage('lnwjud_releases')}
               unrestricted={props.dashboard.unrestricted}
               onUnrestrictedChange={props.onUnrestrictedChange}
               onSave={props.onUserSettingsChange}

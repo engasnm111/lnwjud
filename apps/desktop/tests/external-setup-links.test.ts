@@ -9,6 +9,8 @@ describe('external setup links', () => {
     );
     expect(resolveExternalSetupUrl('openai_api_keys')).toBe('https://platform.openai.com/api-keys');
     expect(resolveExternalSetupUrl('chatgpt_plugins')).toBe('https://chatgpt.com/plugins');
+    expect(resolveExternalSetupUrl('lnwjud_releases')).toBe('https://github.com/engasnm111/lnwjud/releases');
+    expect(parseOpenExternalSetupPageRequest({ target: 'lnwjud_releases' })).toEqual({ target: 'lnwjud_releases' });
     expect(Object.values(EXTERNAL_SETUP_URLS).every((value) => new URL(value).protocol === 'https:')).toBe(true);
     expect(new URL(EXTERNAL_SETUP_URLS.openai_tunnels).hostname).toBe('platform.openai.com');
     expect(new URL(EXTERNAL_SETUP_URLS.openai_api_keys).hostname).toBe('platform.openai.com');

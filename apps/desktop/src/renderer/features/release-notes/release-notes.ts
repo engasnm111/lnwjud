@@ -32,6 +32,7 @@ const RELEASE_NOTES: readonly ReleaseNote[] = [
           { id: 'native-service-pipe-access', titleKey: 'whatsNew.590.pipeAccess.title', descriptionKey: 'whatsNew.590.pipeAccess.description', badge: 'fixed', tags: ['Windows', 'native service', 'IPC'] },
           { id: 'repository-import-publication', titleKey: 'whatsNew.590.import.title', descriptionKey: 'whatsNew.590.import.description', badge: 'improved', tags: ['Git import', 'publication identity', 'recovery'] },
           { id: 'update-recovery-and-availability', titleKey: 'whatsNew.590.updater.title', descriptionKey: 'whatsNew.590.updater.description', badge: 'improved', tags: ['Updates', 'handoff recovery', 'acceptance gate'] },
+          { id: 'manual-update-in-settings', titleKey: 'whatsNew.590.manualUpdates.title', descriptionKey: 'whatsNew.590.manualUpdates.description', badge: 'new', tags: ['Settings', 'manual update', 'Windows', 'Linux'] },
           { id: 'file-publication-limits', titleKey: 'whatsNew.590.publication.title', descriptionKey: 'whatsNew.590.publication.description', badge: 'improved', tags: ['write_file', 'documentation', 'durability'] },
         ],
       },

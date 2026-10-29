@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   publish-release:
-    name: Publish Verified Cross-Platform Release
+    name: Publish Verified Windows/Linux Manual-Install Release
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -37,6 +37,9 @@ jobs:
             echo "Release tag must match package.json version. Expected $expected_tag but got ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
+
+      - name: Verify manual-install release scope and fail-closed updater
+        run: node scripts/verify-manual-release-scope.mjs
 
       - name: Generate and validate user-facing release notes
         shell: bash
@@ -113,8 +116,6 @@ jobs:
 
           declare -a targets=(
             "win32-x64|windows-release-$sha"
-            "darwin-arm64|native-darwin-arm64-$sha"
-            "darwin-x64|native-darwin-x64-$sha"
             "linux-x64|native-linux-x64-$sha"
             "linux-arm64|native-linux-arm64-$sha"
           )
@@ -125,18 +126,6 @@ jobs:
             gh run download "$run_id" --repo "$repository" --name "$artifact_name" --dir "$staging_directory/$key"
           done
 
-          updater_receipt_targets=(
-            "win32-x64|signed-update-e2e-win32-x64-$sha-run-$run_id-attempt-$run_attempt"
-            "darwin-arm64|signed-update-e2e-darwin-arm64-$sha-run-$run_id-attempt-$run_attempt"
-            "darwin-x64|signed-update-e2e-darwin-x64-$sha-run-$run_id-attempt-$run_attempt"
-          )
-          for target in "${updater_receipt_targets[@]}"; do
-            key="${target%%|*}"
-            artifact_name="${target#*|}"
-            receipt_directory="$staging_directory/$key/updater-acceptance"
-            mkdir -p "$receipt_directory"
-            gh run download "$run_id" --repo "$repository" --name "$artifact_name" --dir "$receipt_directory"
-          done
           {
             printf 'LNWJUD_RELEASE_CI_RUN_ID=%s\n' "$run_id"
             printf 'LNWJUD_RELEASE_CI_RUN_ATTEMPT=%s\n' "$run_attempt"
@@ -158,8 +147,6 @@ jobs:
 
           declare -a targets=(
             "win32-x64|win32|x64"
-            "darwin-arm64|darwin|arm64"
-            "darwin-x64|darwin|x64"
             "linux-x64|linux|x64"
             "linux-arm64|linux|arm64"
           )
@@ -171,27 +158,12 @@ jobs:
               exit 1
             fi
             installer_directory="$(dirname "${provenance_files[0]}")"
-            acceptance_file=''
-            require_update_acceptance='0'
-            if [[ "$platform" == win32 || "$platform" == darwin ]]; then
-              acceptance_directory="$staging_directory/$key/updater-acceptance"
-              mapfile -t acceptance_files < <(find "$acceptance_directory" -type f -name update-acceptance.json -print)
-              if [[ "${#acceptance_files[@]}" -ne 1 ]]; then
-                echo "Expected one update-acceptance.json for $key from CI run $LNWJUD_RELEASE_CI_RUN_ID attempt $LNWJUD_RELEASE_CI_RUN_ATTEMPT, found ${#acceptance_files[@]}" >&2
-                exit 1
-              fi
-              acceptance_file="${acceptance_files[0]}"
-              require_update_acceptance='1'
-            fi
             LNWJUD_RELEASE_INSTALLER_DIRECTORY="$installer_directory" \
             LNWJUD_RELEASE_PLATFORM="$platform" \
             LNWJUD_RELEASE_ARCH="$arch" \
             LNWJUD_EXPECTED_COMMIT_SHA="$sha" \
             LNWJUD_REQUIRE_CLEAN_PROVENANCE='1' \
-            LNWJUD_REQUIRE_UPDATE_ACCEPTANCE="$require_update_acceptance" \
-            LNWJUD_UPDATE_ACCEPTANCE_FILE="$acceptance_file" \
-            LNWJUD_UPDATE_ACCEPTANCE_RUN_ID="$LNWJUD_RELEASE_CI_RUN_ID" \
-            LNWJUD_UPDATE_ACCEPTANCE_RUN_ATTEMPT="$LNWJUD_RELEASE_CI_RUN_ATTEMPT" \
+            LNWJUD_REQUIRE_UPDATE_ACCEPTANCE='0' \
               node apps/desktop/scripts/verify-release-evidence.mjs
           done
 

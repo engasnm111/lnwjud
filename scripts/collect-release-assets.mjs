@@ -17,13 +17,21 @@ if (!/^[0-9a-f]{40}$/i.test(expectedCommit)) throw new Error(`Invalid release co
 await assertRegularDirectory(stagingDirectory, 'Release staging directory');
 await prepareEmptyAssetsDirectory(assetsDirectory);
 
-const targets = [
+const targetCatalog = [
   { key: 'win32-x64', platform: 'win32', arch: 'x64' },
   { key: 'darwin-arm64', platform: 'darwin', arch: 'arm64' },
   { key: 'darwin-x64', platform: 'darwin', arch: 'x64' },
   { key: 'linux-x64', platform: 'linux', arch: 'x64' },
   { key: 'linux-arm64', platform: 'linux', arch: 'arm64' },
 ];
+const releaseScope = JSON.parse(await readFile(path.join(repositoryRoot, 'config', 'release-scope.json'), 'utf8'));
+if (releaseScope.schemaVersion !== 1 || releaseScope.version !== version || releaseScope.installationMode !== 'manual'
+  || releaseScope.automaticUpdaterEnabled !== false || !Array.isArray(releaseScope.targets)
+  || releaseScope.targets.length !== 3
+  || JSON.stringify(releaseScope.targets) !== JSON.stringify(['win32-x64', 'linux-x64', 'linux-arm64'])) {
+  throw new Error('Release target scope must be the explicit v5.9.0 manual-install Windows/Linux policy');
+}
+const targets = targetCatalog.filter((target) => releaseScope.targets.includes(target.key));
 
 const targetEvidence = [];
 const macManifests = [];
@@ -106,9 +114,7 @@ for (const target of targets) {
   });
 }
 
-if (macManifests.length !== 2) throw new Error('Both macOS arm64 and x64 update manifests are required');
-const mergedMacManifest = mergeMacUpdateManifests(macManifests, version);
-await writeFile(path.join(assetsDirectory, 'latest-mac.yml'), mergedMacManifest, 'utf8');
+if (macManifests.length !== 0) throw new Error('Manual-only v5.9.0 release must not publish macOS update manifests or binaries');
 
 const payloadFiles = (await listDirectRegularFiles(assetsDirectory))
   .filter((name) => name !== 'RELEASE_MANIFEST.json' && name !== 'SHA256SUMS.txt')
@@ -289,7 +295,7 @@ function parseMacUpdateManifest(text, fileName, target) {
   return { files, releaseDate: releaseDateMatch ? unquoteYamlScalar(releaseDateMatch[1]) : new Date(0).toISOString() };
 }
 
-function mergeMacUpdateManifests(manifests, releaseVersion) {
+export function mergeMacUpdateManifests(manifests, releaseVersion) {
   const files = manifests
     .flatMap(({ manifest }) => manifest.files)
     .sort((left, right) => left.url.localeCompare(right.url));

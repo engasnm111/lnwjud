@@ -30,24 +30,24 @@ type AcceptanceFixture = {
 };
 
 describe('automatic updater release gate', () => {
-  it('requires attempt-bound updater receipts from the exact successful CI run for every auto-update platform', async () => {
+  it('keeps the current manual-install release separate from the future authenticated auto-update receipt contract', async () => {
     const workflow = await readFile(releaseWorkflowUrl, 'utf8');
 
     expect(workflow).toContain('--json databaseId,attempt,headSha,status,conclusion');
     expect(workflow).toContain('candidate_id candidate_attempt candidate_status candidate_conclusion');
     expect(workflow).toContain('run_attempt="$candidate_attempt"');
-    expect(workflow).toContain('signed-update-e2e-win32-x64-$sha-run-$run_id-attempt-$run_attempt');
-    expect(workflow).toContain('signed-update-e2e-darwin-arm64-$sha-run-$run_id-attempt-$run_attempt');
-    expect(workflow).toContain('signed-update-e2e-darwin-x64-$sha-run-$run_id-attempt-$run_attempt');
-    expect(workflow).toContain('gh run download "$run_id" --repo "$repository" --name "$artifact_name" --dir "$receipt_directory"');
+    expect(workflow).not.toContain('signed-update-e2e-win32-x64-$sha-run-$run_id-attempt-$run_attempt');
+    expect(workflow).not.toContain('signed-update-e2e-darwin-arm64-$sha-run-$run_id-attempt-$run_attempt');
+    expect(workflow).not.toContain('signed-update-e2e-darwin-x64-$sha-run-$run_id-attempt-$run_attempt');
+    expect(workflow).toContain('node scripts/verify-manual-release-scope.mjs');
     expect(workflow).toContain("printf 'LNWJUD_RELEASE_CI_RUN_ID=%s\\n' \"$run_id\"");
     expect(workflow).toContain("printf 'LNWJUD_RELEASE_CI_RUN_ATTEMPT=%s\\n' \"$run_attempt\"");
-    expect(workflow).toContain('if [[ "$platform" == win32 || "$platform" == darwin ]]; then');
-    expect(workflow).toContain('Expected one update-acceptance.json for $key');
-    expect(workflow).toContain('LNWJUD_REQUIRE_UPDATE_ACCEPTANCE="$require_update_acceptance"');
-    expect(workflow).toContain('LNWJUD_UPDATE_ACCEPTANCE_FILE="$acceptance_file"');
-    expect(workflow).toContain('LNWJUD_UPDATE_ACCEPTANCE_RUN_ID="$LNWJUD_RELEASE_CI_RUN_ID"');
-    expect(workflow).toContain('LNWJUD_UPDATE_ACCEPTANCE_RUN_ATTEMPT="$LNWJUD_RELEASE_CI_RUN_ATTEMPT"');
+    expect(workflow).not.toContain('if [[ "$platform" == win32 || "$platform" == darwin ]]; then');
+    expect(workflow).not.toContain('Expected one update-acceptance.json for $key');
+    expect(workflow).toContain("LNWJUD_REQUIRE_UPDATE_ACCEPTANCE='0'");
+    expect(workflow).not.toContain('LNWJUD_UPDATE_ACCEPTANCE_FILE="$acceptance_file"');
+    expect(workflow).not.toContain('LNWJUD_UPDATE_ACCEPTANCE_RUN_ID="$LNWJUD_RELEASE_CI_RUN_ID"');
+    expect(workflow).not.toContain('LNWJUD_UPDATE_ACCEPTANCE_RUN_ATTEMPT="$LNWJUD_RELEASE_CI_RUN_ATTEMPT"');
   });
 
   it.each([
