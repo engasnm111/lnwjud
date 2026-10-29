@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   publish-release:
-    name: Publish Verified Cross-Platform Release
+    name: Publish Verified Windows/Linux Manual-Install Release
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -37,6 +37,9 @@ jobs:
             echo "Release tag must match package.json version. Expected $expected_tag but got ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
+
+      - name: Verify manual-install release scope and fail-closed updater
+        run: node scripts/verify-manual-release-scope.mjs
 
       - name: Generate and validate user-facing release notes
         shell: bash
@@ -69,13 +72,14 @@ jobs:
               --branch main \
               --event "$event" \
               --limit 20 \
-              --json databaseId,headSha,status,conclusion \
-              --jq ".[] | select(.headSha == \"$sha\") | [.databaseId, .status, (.conclusion // \"\")] | @tsv" | sed -n '1p'
+              --json databaseId,attempt,headSha,status,conclusion \
+              --jq ".[] | select(.headSha == \"$sha\") | [.databaseId, .attempt, .status, (.conclusion // \"\")] | @tsv" | sed -n '1p'
           }
 
           # Tag pushes can race protected main CI. Wait for that exact-SHA run
           # instead of creating a false-red Release before CI has finished.
           run_id=""
+          run_attempt=""
           ci_wait_deadline=$((SECONDS + 3600))
           while [[ -z "$run_id" ]]; do
             candidate="$(find_ci_run push)"
@@ -84,16 +88,21 @@ jobs:
             fi
 
             if [[ -n "$candidate" ]]; then
-              IFS=$'\t' read -r candidate_id candidate_status candidate_conclusion <<< "$candidate"
+              IFS=$'\t' read -r candidate_id candidate_attempt candidate_status candidate_conclusion <<< "$candidate"
               if [[ "$candidate_status" == "completed" ]]; then
                 if [[ "$candidate_conclusion" == "success" ]]; then
+                  if [[ ! "$candidate_attempt" =~ ^[1-9][0-9]*$ ]]; then
+                    echo "Exact-commit CI run $candidate_id has an invalid attempt number." >&2
+                    exit 1
+                  fi
                   run_id="$candidate_id"
+                  run_attempt="$candidate_attempt"
                   break
                 fi
                 echo "Exact-commit CI run $candidate_id completed with conclusion '$candidate_conclusion'; refusing release." >&2
                 exit 1
               fi
-              echo "Waiting for exact-commit CI run $candidate_id ($candidate_status) for $sha..."
+              echo "Waiting for exact-commit CI run $candidate_id attempt $candidate_attempt ($candidate_status) for $sha..."
             else
               echo "Waiting for main CI to appear for exact commit $sha..."
             fi
@@ -107,8 +116,6 @@ jobs:
 
           declare -a targets=(
             "win32-x64|windows-release-$sha"
-            "darwin-arm64|native-darwin-arm64-$sha"
-            "darwin-x64|native-darwin-x64-$sha"
             "linux-x64|native-linux-x64-$sha"
             "linux-arm64|native-linux-arm64-$sha"
           )
@@ -118,7 +125,12 @@ jobs:
             mkdir -p "$staging_directory/$key"
             gh run download "$run_id" --repo "$repository" --name "$artifact_name" --dir "$staging_directory/$key"
           done
-          echo "Using successful CI run $run_id for exact commit $sha"
+
+          {
+            printf 'LNWJUD_RELEASE_CI_RUN_ID=%s\n' "$run_id"
+            printf 'LNWJUD_RELEASE_CI_RUN_ATTEMPT=%s\n' "$run_attempt"
+          } >> "$GITHUB_ENV"
+          echo "Using successful CI run $run_id attempt $run_attempt for exact commit $sha"
 
       - name: Prepare source-bound Windows bridge verification metadata
         # Recreate only deterministic verification inputs, never rebuild packages.
@@ -135,8 +147,6 @@ jobs:
 
           declare -a targets=(
             "win32-x64|win32|x64"
-            "darwin-arm64|darwin|arm64"
-            "darwin-x64|darwin|x64"
             "linux-x64|linux|x64"
             "linux-arm64|linux|arm64"
           )
@@ -153,6 +163,7 @@ jobs:
             LNWJUD_RELEASE_ARCH="$arch" \
             LNWJUD_EXPECTED_COMMIT_SHA="$sha" \
             LNWJUD_REQUIRE_CLEAN_PROVENANCE='1' \
+            LNWJUD_REQUIRE_UPDATE_ACCEPTANCE='0' \
               node apps/desktop/scripts/verify-release-evidence.mjs
           done
 

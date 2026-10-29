@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <AssemblyName>lnwjud-containment</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup><Compile Remove="tests/**/*.cs;ProfileKey.cs" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../update-worker/Protocol.cs" Link="UpdateWorker/Protocol.cs" />
+    <Compile Include="../update-worker/ReleaseSchema.cs" Link="UpdateWorker/ReleaseSchema.cs" />
+    <Compile Include="../update-worker/ReleaseTrustPolicy.cs" Link="UpdateWorker/ReleaseTrustPolicy.cs" />
+    <Compile Include="../update-worker/ReleaseMetadataVerifier.cs" Link="UpdateWorker/ReleaseMetadataVerifier.cs" />
+    <Compile Include="../update-worker/ReleaseAuthorizationV2.cs" Link="UpdateWorker/ReleaseAuthorizationV2.cs" />
+    <Compile Include="../update-worker/EnrollmentPreflight.cs" Link="UpdateWorker/EnrollmentPreflight.cs" />
+    <Compile Include="../update-worker/ReleaseBuildEvidence.cs" Link="UpdateWorker/ReleaseBuildEvidence.cs" />
+    <EmbeddedResource Include="../../config/update-release-schema.json" LogicalName="Lnwjud.UpdateWorker.update-release-schema.json" />
+    <EmbeddedResource Include="../../config/update-release-identity-v1.json" LogicalName="Lnwjud.UpdateWorker.update-release-identity-v1.json" />
+    <EmbeddedResource Include="../../config/update-release-authorization-v2.json" LogicalName="Lnwjud.UpdateWorker.update-release-authorization-v2.json" />
+    <EmbeddedResource Include="../../config/update-release-policy.json" LogicalName="Lnwjud.UpdateWorker.update-release-policy.json" />
+    <EmbeddedResource Include="../../config/update-enrollment-schema.json" LogicalName="Lnwjud.UpdateWorker.update-enrollment-schema.json" />
+  </ItemGroup>
+</Project>

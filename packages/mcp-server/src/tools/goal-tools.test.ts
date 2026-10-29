@@ -19,7 +19,7 @@ describe('durable goal MCP tools', () => {
     const context = { actor, contextEconomy: new ContextEconomyRuntime(), services: {} } as McpToolContext;
     const byName = new Map(goalTools(context).map((entry) => [entry.name, entry]));
     expect([...byName.keys()]).toEqual([
-      'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
+      'recover_blocked_goal', 'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
       'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure',
       'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
       'checkpoint_goal', 'checkpoint_goal_engineering', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',

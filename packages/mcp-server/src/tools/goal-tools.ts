@@ -83,6 +83,10 @@ const engineeringGateEvidence = z.object({
   exitCode: z.number().int().optional(),
   conclusion: z.string().min(1).max(256).optional(),
   artifact: z.string().min(1).max(1024).optional(),
+  sourceDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  artifactDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  contractDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  observationId: z.string().min(1).max(256).optional(),
 }).strict();
 const engineeringGateUpdate = z.object({
   gateId: z.string().min(1).max(128),
@@ -237,6 +241,7 @@ const listGoalsSchema = z.object({
 }).strict();
 
 export const GOAL_TOOL_NAMES = [
+  'recover_blocked_goal',
   'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
   'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure',
   'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
@@ -306,6 +311,14 @@ async function loadGoalProjectInstructions(context: McpToolContext, workspaceId:
 
 export function goalTools(context: McpToolContext): McpToolDefinition[] {
   const tools: McpToolDefinition[] = [
+    defineTool({
+      name: 'recover_blocked_goal',
+      description: 'Explicitly recover the same terminal blocked Engineering goal after host policy/source reassessment and prior-writer liveness checks. Requires user confirmation, owner identity and current revision. Acquires a fresh lease; never reopens completed/cancelled/superseded goals or creates schedules.',
+      permission: 'WRITE',
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: z.object({ goalId, expectedRevision: z.number().int().min(0), reason: z.string().min(1).max(1024), userConfirmed: z.boolean().optional(), leaseSeconds: z.number().int().min(MIN_GOAL_LEASE_SECONDS).max(MAX_GOAL_LEASE_SECONDS).optional() }).strict(),
+      handler: async (input) => context.services.goals?.recoverBlockedGoal === undefined ? missingService() : context.services.goals.recoverBlockedGoal(context.actor, { goalId: input.goalId, expectedRevision: input.expectedRevision, reason: input.reason, userConfirmed: input.userConfirmed === true, ...(input.leaseSeconds === undefined ? {} : { leaseSeconds: input.leaseSeconds }) }),
+    }),
     defineTool({
       name: 'run_goal',
       description: 'Immediate-return durable goal create/resume and lease acquisition. Every invocation re-reads workspace AGENTS.md when present and returns it as projectInstructionsPreflight so repository rules are available before subsequent work; the preflight is never cached. Invoke run_goal before the first mutation of any non-trivial multi-step change. For an active rolling goal whose prior worker died, stale-lease recovery still requires trustworthy runtime liveness and rotates the lease generation. Unfinished goals default to scheduledContinuation=auto: the client must load/follow the bundled lnwjud-scheduled-continuation skill and maintain exactly one Native ChatGPT hourly recurring watchdog with cloud execution requested. New v4.53 goals reuse the same native task ID across ordinary hourly wakes; checkpoints and collisions never imply per-wake successor creation or recurrence retiming. Historical v4.52 occurrence=once rows are migrated compatibly and must not overlap a new recurring watchdog. Continue useful work without waiting for the user to type continue/ทำต่อ. The leased worker is work-conserving: a milestone checkpoint is not a turn boundary, a transient tool/task-observation failure is not a handoff signal, and a safely reacquirable lease expiry should be recovered with the same goalKey so useful work continues in the same host turn. A concrete fixable failure discovered during CI, tests, code scanning, packaging, release validation, or another tool is the next unit of work; diagnose, repair, and validate it in the same host turn while safe useful actions remain instead of stopping to report it. A truthful native create failure or Resource not found is scheduler transport degradation only: keep the durable goal active and continue the current leased worker rather than terminalizing the work, and never substitute another scheduler. Stop scheduling only when the goal is terminal or scheduling is explicitly disabled. Native ChatGPT task operations remain host-owned through the Scheduled Task surface exposed to the chat; this tool never claims that a task was created and never substitutes browser/DOM automation, Windows Task Scheduler, cron, or shell timers.',

@@ -20,6 +20,7 @@ export interface TunnelRuntimeCapabilities {
 }
 
 export interface NativeTunnelRuntimeStatus {
+  readonly processStateEvidence?: 'running' | 'stopped' | 'unknown';
   readonly exists: boolean;
   readonly running: boolean;
   readonly healthy: boolean | null;

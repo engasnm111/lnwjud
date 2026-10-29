@@ -58,6 +58,9 @@ export interface EngineeringHarnessSettings {
   readonly profile: EngineeringProfile;
   readonly applyTo: EngineeringApplyTo;
   readonly autoProjectAssessment: boolean;
+  readonly hostedCi?: 'required' | 'local_only';
+  readonly allowNoGit?: boolean;
+  readonly workerTarget?: { readonly accountId: string; readonly worker: string; readonly environment: string; readonly trafficPercent: number };
   readonly custom?: {
     readonly analysis: 'focused' | 'cross_file';
     readonly review: 'risk_based' | 'always';
@@ -211,9 +214,11 @@ export function parseEngineeringHarnessSettings(value: string | null | undefined
     || !isEngineeringProfile(parsed.profile)
     || !isEngineeringApplyTo(parsed.applyTo)
     || typeof parsed.autoProjectAssessment !== 'boolean'
-    || !hasOnlyKeys(parsed, ['schemaVersion', 'enabled', 'profile', 'applyTo', 'autoProjectAssessment', 'custom'])) {
+    || !hasOnlyKeys(parsed, ['schemaVersion', 'enabled', 'profile', 'applyTo', 'autoProjectAssessment', 'custom', 'hostedCi', 'allowNoGit', 'workerTarget'])) {
     return { settings: DEFAULT_ENGINEERING_HARNESS_SETTINGS, diagnostic: 'invalid_shape' };
   }
+  if ((parsed.hostedCi !== undefined && parsed.hostedCi !== 'required' && parsed.hostedCi !== 'local_only') || (parsed.allowNoGit !== undefined && typeof parsed.allowNoGit !== 'boolean')) return { settings: DEFAULT_ENGINEERING_HARNESS_SETTINGS, diagnostic: 'invalid_shape' };
+  if (parsed.workerTarget !== undefined && !isEngineeringWorkerTarget(parsed.workerTarget)) return { settings: DEFAULT_ENGINEERING_HARNESS_SETTINGS, diagnostic: 'invalid_shape' };
   const custom = parsed.custom === undefined ? undefined : parseEngineeringCustomSettings(parsed.custom);
   if (custom === null) {
     return { settings: DEFAULT_ENGINEERING_HARNESS_SETTINGS, diagnostic: 'invalid_shape' };
@@ -225,6 +230,9 @@ export function parseEngineeringHarnessSettings(value: string | null | undefined
       profile: parsed.profile,
       applyTo: parsed.applyTo,
       autoProjectAssessment: parsed.autoProjectAssessment,
+      ...(parsed.hostedCi === undefined ? {} : { hostedCi: parsed.hostedCi }),
+      ...(parsed.allowNoGit === undefined ? {} : { allowNoGit: parsed.allowNoGit }),
+      ...(parsed.workerTarget === undefined || !isEngineeringWorkerTarget(parsed.workerTarget) ? {} : { workerTarget: parsed.workerTarget }),
       ...(custom === undefined ? {} : { custom }),
     },
     diagnostic: null,
@@ -238,6 +246,9 @@ export function serializeEngineeringHarnessSettings(value: EngineeringHarnessSet
     profile: isEngineeringProfile(value.profile) ? value.profile : DEFAULT_ENGINEERING_HARNESS_SETTINGS.profile,
     applyTo: isEngineeringApplyTo(value.applyTo) ? value.applyTo : DEFAULT_ENGINEERING_HARNESS_SETTINGS.applyTo,
     autoProjectAssessment: value.autoProjectAssessment === true,
+    ...(value.hostedCi === undefined ? {} : { hostedCi: value.hostedCi }),
+    ...(value.allowNoGit === undefined ? {} : { allowNoGit: value.allowNoGit }),
+    ...(value.workerTarget === undefined ? {} : { workerTarget: value.workerTarget }),
     ...(value.custom === undefined ? {} : { custom: value.custom }),
   });
 }
@@ -305,4 +316,12 @@ function parseDecision(value: unknown, fallback: PermissionDecisionSetting): Per
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function isEngineeringWorkerTarget(value: unknown): value is NonNullable<EngineeringHarnessSettings['workerTarget']> {
+  return isRecord(value) && hasOnlyKeys(value, ['accountId', 'worker', 'environment', 'trafficPercent'])
+    && typeof value.accountId === 'string' && /^[a-f0-9]{32}$/i.test(value.accountId)
+    && typeof value.worker === 'string' && /^[a-zA-Z0-9_-]{1,63}$/.test(value.worker)
+    && typeof value.environment === 'string' && /^[a-zA-Z0-9_-]{1,63}$/.test(value.environment)
+    && typeof value.trafficPercent === 'number' && Number.isFinite(value.trafficPercent) && value.trafficPercent > 0 && value.trafficPercent <= 100;
 }

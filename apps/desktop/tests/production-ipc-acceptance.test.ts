@@ -104,7 +104,8 @@ describe('production desktop IPC acceptance', () => {
     expect(services.stopMcp).toHaveBeenCalledOnce();
     expect(services.startTunnel).toHaveBeenCalledOnce();
     expect(services.getTunnelStatus).toHaveBeenCalledOnce();
-    expect(services.stopTunnel).toHaveBeenCalledOnce();
+    expect(services.stopTunnelFromUser).toHaveBeenCalledOnce();
+    expect(services.stopTunnel).not.toHaveBeenCalled();
   });
 
   it('routes and validates Remote MCP transport selection through production IPC', async () => {
@@ -311,6 +312,10 @@ function desktopServices(): DesktopIpcServices {
       return tunnelStatus;
     }),
     stopTunnel: vi.fn(async () => {
+      tunnelStatus = stoppedTunnel;
+      return tunnelStatus;
+    }),
+    stopTunnelFromUser: vi.fn(async () => {
       tunnelStatus = stoppedTunnel;
       return tunnelStatus;
     }),

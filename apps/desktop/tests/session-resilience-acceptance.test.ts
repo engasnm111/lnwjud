@@ -38,28 +38,21 @@ afterEach(async () => {
 });
 
 describe('session resilience acceptance', () => {
-  it('keeps the bundled production MCP stdio entrypoint alive across sequential calls and an error on a non-E workspace', async () => {
+  it('keeps the compiled production MCP stdio entrypoint alive across sequential calls and an error on a non-E workspace', async () => {
     const root = await nonEDriveTemporaryDirectory();
     expect(path.parse(root).root.toUpperCase()).not.toBe('E:\\');
     const workspace = path.join(root, 'workspace');
     const dataPath = path.join(root, 'data');
-    const bundlePath = path.join(root, 'lnwjud-mcp-stdio.cjs');
+    const stdioEntrypoint = path.join(repositoryRoot, 'apps', 'cli', 'dist', 'bin', 'mcp-stdio.js');
     await mkdir(workspace, { recursive: true });
-    await build({
-      entryPoints: [path.join(repositoryRoot, 'apps', 'cli', 'src', 'bin', 'mcp-stdio.ts')],
-      outfile: bundlePath,
-      bundle: true,
-      platform: 'node',
-      format: 'cjs',
-      target: 'node24',
-      logLevel: 'silent',
-    });
+    await access(stdioEntrypoint);
 
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [bundlePath, '--workspace', workspace],
+      args: [stdioEntrypoint, '--workspace', workspace],
       env: {
         ...process.env,
+        LNWJUD_CHECKPOINT_KEY_BASE64: Buffer.alloc(32, 0x47).toString('base64'),
         LNWJUD_DATA_PATH: dataPath,
         LNWJUD_RESET_WORKSPACES: '1',
         LNWJUD_CONFIRM_RESET_WORKSPACES: 'DELETE-REGISTERED-WORKSPACES',
@@ -74,7 +67,12 @@ describe('session resilience acceptance', () => {
       { versionNegotiation: { mode: { pin: '2026-07-28' } } },
     );
     try {
-      await client.connect(transport);
+      try {
+        await client.connect(transport);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Production MCP STDIO startup failed: ${message}\n${diagnostics}`, { cause: error });
+      }
       const tools = await client.listTools();
       expect(tools.tools.length).toBeGreaterThan(0);
       expect(tools.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
@@ -120,6 +118,7 @@ describe('session resilience acceptance', () => {
     await writeFile(fakeClient, `@echo invoked>"${sentinel}"\r\n@exit /b 99\r\n`, 'utf8');
 
     const desktopOwner = await currentOwner();
+    const freshDesktopOwner = (): TunnelLockOwner => ({ ...desktopOwner, acquiredAt: new Date().toISOString() });
     const desktop = await acquireTunnelLock({ profileDirectory, owner: desktopOwner });
     expect(desktop.acquired).toBe(true);
     if (!desktop.acquired) return;
@@ -134,7 +133,7 @@ describe('session resilience acceptance', () => {
     const holder = await startPowerShellHolder(profileDirectory, path.join(root, 'release-holder'));
     try {
       expect(holder.acquired).toBe(true);
-      const desktopLoser = await acquireTunnelLock({ profileDirectory, owner: await currentOwner() });
+      const desktopLoser = await acquireTunnelLock({ profileDirectory, owner: freshDesktopOwner() });
       expect(desktopLoser).toEqual({ acquired: false, owner: expect.objectContaining({ pid: holder.pid }) });
       await expect(access(sentinel)).rejects.toThrow();
     } finally {
@@ -142,10 +141,10 @@ describe('session resilience acceptance', () => {
       await waitForExit(holder.child);
     }
 
-    const afterRelease = await acquireTunnelLock({ profileDirectory, owner: await currentOwner() });
+    const afterRelease = await acquireTunnelLock({ profileDirectory, owner: freshDesktopOwner() });
     expect(afterRelease.acquired).toBe(true);
     if (afterRelease.acquired) expect(await afterRelease.release()).toBe(true);
-  }, process.env.CI ? 30_000 : 15_000);
+  }, 30_000);
 
   it.runIf(process.platform === 'win32')('uses the same critical section across a TypeScript stale reclaim and PowerShell publisher', async () => {
     const root = await temporaryDirectory();

@@ -20,9 +20,10 @@ describe('MVP release verification gate', () => {
       }
       const workflow = await readFile(path.join(repositoryRoot, '.github/workflows/release.yml'), 'utf8');
       const preparation = workflow.split('- name: Verify each downloaded release evidence bundle')[0] ?? '';
-      for (const command of preparation.matchAll(/^\s+run: node ([\w/.-]+)\s*$/gm)) {
-        await promisify(execFile)(process.execPath, [path.join(root, command[1] ?? '')], { cwd: root, windowsHide: true });
-      }
+      // This isolated checkout exercises only the bridge generator; policy checks
+      // run against a complete, exact-version release checkout in their own gate.
+      expect(preparation).toContain('run: node apps/desktop/scripts/write-capability-integrity.mjs');
+      await promisify(execFile)(process.execPath, [path.join(root, 'apps/desktop/scripts/write-capability-integrity.mjs')], { cwd: root, windowsHide: true });
       const { verifyCapabilityBridgeArtifacts } = await import('../../apps/desktop/scripts/verify-capability-bridge-artifacts.mjs');
       const identity = await verifyCapabilityBridgeArtifacts({
         sourcePath: path.join(root, 'packages/capabilities/src/windows-capability-bridge.ps1'),
@@ -240,8 +241,8 @@ describe('MVP release verification gate', () => {
     expect(release).toContain('candidate="$(find_ci_run workflow_dispatch)"');
     expect(release).toContain('gh run download');
     expect(release).toContain('windows-release-$sha');
-    expect(release).toContain('native-darwin-arm64-$sha');
-    expect(release).toContain('native-darwin-x64-$sha');
+    expect(release).not.toContain('native-darwin-arm64-$sha');
+    expect(release).not.toContain('native-darwin-x64-$sha');
     expect(release).toContain('native-linux-x64-$sha');
     expect(release).toContain('native-linux-arm64-$sha');
     expect(release).toContain('ci_wait_deadline=$((SECONDS + 3600))');

@@ -1,4 +1,8 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import os from 'node:os';
+import { existsSync, statSync } from 'node:fs';
+import type { StaleTunnelAliasCleanupRequest, StopOwnedTunnelRequest } from '@lnwjud/process';
 import { lstat, mkdir, open as openFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { request as httpRequest } from 'node:http';
@@ -41,11 +45,17 @@ export interface TunnelRuntimeAdapterOptions {
   readonly stopVerifyIntervalMs?: number;
   readonly sleep?: (delayMs: number) => Promise<void>;
   readonly processGuard?: (request: LocalTunnelRuntimeGuardRequest) => Promise<void>;
+  readonly clearStaleTunnelAlias?: (request: StaleTunnelAliasCleanupRequest) => Promise<void>;
+  readonly stopOwnedTunnel?: (request: StopOwnedTunnelRequest) => Promise<void>;
 }
 
 export interface NativeRuntimeConnectRequest {
   readonly tunnelId: string;
   readonly mcpServerUrl: string;
+}
+
+export interface TunnelRuntimeUserStopCapability {
+  stopOwnedTunnelForUser(tunnelId: string): Promise<NativeTunnelRuntimeStatus>;
 }
 
 export class TunnelRuntimeAdapter {
@@ -133,6 +143,7 @@ export class TunnelRuntimeAdapter {
     const tunnelId = request.tunnelId.trim();
     if (!/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(tunnelId)) throw new Error('Tunnel ID is invalid');
     const mcpServerUrl = request.mcpServerUrl.trim();
+    await this.recoverStoppedAliasRetirement();
     const result = await this.capture([
       'runtimes', 'connect',
       '--alias', this.alias,
@@ -154,6 +165,7 @@ export class TunnelRuntimeAdapter {
   }
 
   public async ensureSingleProcess(tunnelId: string, status: NativeTunnelRuntimeStatus): Promise<void> {
+    await this.recoverStoppedAliasRetirement();
     if (process.platform !== 'win32') return;
     try {
       if (status.running && status.pid === null) throw new Error('Managed tunnel PID is missing; refusing to retire local runtimes without an authoritative owner');
@@ -172,22 +184,41 @@ export class TunnelRuntimeAdapter {
 
   /**
    * Remove only a confirmed stopped lnwjud local alias. The official v0.0.16
-   * "runtimes rm" also removes the profile/log/health files, so snapshot and
-   * restore the exact owned files before reporting success. It never deletes
-   * the remote tunnel, never calls "stop", and never targets another alias.
+   * "runtimes rm" also removes profile and health files, so snapshot and restore
+   * those owned files. It leaves the shared Desktop history log untouched and
+   * never deletes the remote tunnel, calls "stop", or targets another alias.
    */
   public async retireStoppedAlias(expectedTunnelId: string): Promise<void> {
     if (this.alias !== TUNNEL_RUNTIME_ALIAS || !/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(expectedTunnelId)) {
       throw new Error('Cannot verify the dedicated lnwjud native runtime alias');
     }
+    await this.recoverStoppedAliasRetirement();
     const journal = this.options.recoveryDirectory === undefined
       ? null : new TunnelAliasRetirementJournal(this.options.recoveryDirectory, this.options.profileDirectory);
     // Recover a prior interrupted local removal before trusting profile identity.
     await journal?.recover();
     const status = await this.status(true);
     if (!status.exists) return;
-    if (status.running || status.pid !== null || status.tunnelId !== expectedTunnelId) {
+    if (status.processStateEvidence !== 'stopped' || status.running || status.tunnelId !== expectedTunnelId) {
       throw new Error('Native Tunnel alias is active or its identity changed; refusing local alias removal');
+    }
+    if (status.pid !== null) {
+      if (this.options.clearStaleTunnelAlias === undefined) {
+        throw new Error('Safe stopped Tunnel record cleanup is unavailable; refusing to stop a historical PID');
+      }
+      const stateRoot = resolveNativeTunnelStateRoot(this.options.environment);
+      const [aliases, processes] = await Promise.all([
+        readBoundedRuntimeMetadata(path.join(stateRoot, 'aliases.yaml')),
+        readBoundedRuntimeMetadata(path.join(stateRoot, 'processes.yaml')),
+      ]);
+      await this.options.clearStaleTunnelAlias({
+        stateRoot, alias: 'lnwjud', expectedTunnelId, expectedPid: status.pid,
+        profileDirectory: path.resolve(this.options.profileDirectory),
+        expectedAliasesSha256: createHash('sha256').update(aliases).digest('hex'),
+        expectedProcessesSha256: createHash('sha256').update(processes).digest('hex'),
+      });
+      if ((await this.status(true)).exists) throw new Error('Native Tunnel alias remains after stopped-record cleanup');
+      return;
     }
     const directory = path.resolve(this.options.profileDirectory);
     const dirStat = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
@@ -199,7 +230,6 @@ export class TunnelRuntimeAdapter {
     }
     const paths = [
       path.join(directory, 'lnwjud.yaml'),
-      path.join(directory, 'lnwjud-tunnel.log'),
       path.join(directory, 'lnwjud.runtime.secret'),
       path.join(directory, 'lnwjud.oauth.session.secret'),
     ];
@@ -258,7 +288,7 @@ export class TunnelRuntimeAdapter {
     }
     // Revalidate immediately before invoking the destructive local CLI operation.
     const recheck = await this.status(true);
-    if (!recheck.exists || recheck.running || recheck.pid !== null || recheck.tunnelId !== expectedTunnelId) {
+    if (!recheck.exists || recheck.processStateEvidence !== 'stopped' || recheck.running || recheck.pid !== null || recheck.tunnelId !== expectedTunnelId) {
       throw new Error('Native Tunnel alias changed before local removal; refusing');
     }
     // Manifest and backups must be persisted before CLI can delete local files.
@@ -302,7 +332,19 @@ export class TunnelRuntimeAdapter {
     if (failure !== null) throw failure;
   }
 
+  public async recoverStoppedAliasRetirement(): Promise<void> {
+    const stateRoot = resolveNativeTunnelStateRoot(this.options.environment);
+    if (!existsSync(path.join(stateRoot, '.lnwjud-stale-alias.json'))) return;
+    if (this.options.clearStaleTunnelAlias === undefined || this.alias !== TUNNEL_RUNTIME_ALIAS) {
+      throw new Error('Stopped Tunnel alias recovery requires the verified native metadata helper');
+    }
+    await this.options.clearStaleTunnelAlias({
+      recoveryOnly: true, stateRoot, alias: 'lnwjud', profileDirectory: path.resolve(this.options.profileDirectory),
+    });
+  }
+
   public async stop(tunnelId?: string): Promise<NativeTunnelRuntimeStatus> {
+    await this.recoverStoppedAliasRetirement();
     const expectedTunnelId = tunnelId ?? this.lastStatus?.tunnelId ?? null;
     const before = await this.status(true);
     if (!before.exists) {
@@ -337,6 +379,45 @@ export class TunnelRuntimeAdapter {
     throw new Error(`Tunnel runtime ${this.alias} is still running after stop`);
   }
 
+  /** Stops the verified live alias through native process identity proof for an explicit user request. */
+  public async stopOwnedTunnelForUser(tunnelId: string): Promise<NativeTunnelRuntimeStatus> {
+    await this.recoverStoppedAliasRetirement();
+    const expectedTunnelId = tunnelId.trim();
+    if (this.alias !== TUNNEL_RUNTIME_ALIAS || !/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(expectedTunnelId)) {
+      throw new Error('TUNNEL_STOP_IDENTITY_UNVERIFIED');
+    }
+    const before = await this.status(true);
+    if (!before.exists || !before.running || before.processStateEvidence !== 'running'
+      || before.tunnelId !== expectedTunnelId || before.pid === null || before.pid <= 0) {
+      throw new Error('TUNNEL_STOP_IDENTITY_UNVERIFIED');
+    }
+    if (this.options.stopOwnedTunnel === undefined) throw new Error('TUNNEL_STOP_NATIVE_AUTHORITY_UNAVAILABLE');
+
+    const stateRoot = resolveNativeTunnelStateRoot(this.options.environment);
+    const [aliases, processes] = await Promise.all([
+      readBoundedRuntimeMetadata(path.join(stateRoot, 'aliases.yaml')),
+      readBoundedRuntimeMetadata(path.join(stateRoot, 'processes.yaml')),
+    ]);
+    await this.options.stopOwnedTunnel({
+      stateRoot,
+      alias: TUNNEL_RUNTIME_ALIAS,
+      profileDirectory: path.resolve(this.options.profileDirectory),
+      clientPath: path.resolve(this.options.clientPath),
+      expectedTunnelId,
+      expectedPid: before.pid,
+      expectedAliasesSha256: createHash('sha256').update(aliases).digest('hex'),
+      expectedProcessesSha256: createHash('sha256').update(processes).digest('hex'),
+    });
+
+    const stopped = await this.status(true);
+    if (!stopped.exists || stopped.tunnelId !== expectedTunnelId || stopped.running || stopped.pid !== null
+      || stopped.processStateEvidence !== 'stopped') {
+      throw new Error('TUNNEL_STOP_POSTCONDITION_UNVERIFIED');
+    }
+    await this.ensureSingleProcess(expectedTunnelId, stopped);
+    return stopped;
+  }
+
   private async capture(args: readonly string[], timeout: number): Promise<{ readonly ok: boolean; readonly stdout: string; readonly stderr: string }> {
     try {
       const result = await this.execute(this.options.clientPath, args, {
@@ -357,6 +438,45 @@ export class TunnelRuntimeAdapter {
 async function defaultExecutor(executable: string, args: readonly string[], options: ExecFileOptionsWithStringEncoding): Promise<TunnelRuntimeExecResult> {
   const result = await execFileAsync(executable, [...args], options);
   return { stdout: String(result.stdout ?? ''), stderr: String(result.stderr ?? '') };
+}
+
+function resolveNativeTunnelStateRoot(environment: NodeJS.ProcessEnv): string {
+  const configured = environment.TUNNEL_CLIENT_STATE_DIR?.trim();
+  if (configured) return path.resolve(configured);
+  const home = environment.HOME?.trim() || os.homedir();
+  const legacy = [
+    ...(environment.CODEX_HOME?.trim() ? [path.join(environment.CODEX_HOME.trim(), 'tunnel-mcp')] : []),
+    path.join(home, '.codex', 'tunnel-mcp'), path.join(home, '.tunnel-client'),
+  ];
+  for (const candidate of legacy) {
+    try { if (statSync(candidate).isDirectory()) return path.resolve(candidate); } catch { continue; }
+  }
+  if (environment.XDG_STATE_HOME?.trim()) return path.resolve(environment.XDG_STATE_HOME.trim(), 'tunnel-client');
+  return process.platform === 'darwin'
+    ? path.join(home, 'Library', 'Application Support', 'tunnel-client')
+    : path.join(home, '.local', 'state', 'tunnel-client');
+}
+
+async function readBoundedRuntimeMetadata(filename: string): Promise<Buffer> {
+  const maximum = 1024 * 1024;
+  const pathMetadata = await lstat(filename);
+  if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink() || pathMetadata.nlink !== 1) {
+    throw new Error('Tunnel runtime metadata must be an ordinary private file');
+  }
+  const file = await openFile(filename, 'r');
+  try {
+    const metadata = await file.stat();
+    if (!metadata.isFile() || metadata.size > maximum) throw new Error('Tunnel runtime metadata is unsafe or oversized');
+    const bytes = Buffer.alloc(maximum + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const result = await file.read(bytes, length, bytes.length - length, null);
+      if (result.bytesRead === 0) break;
+      length += result.bytesRead;
+    }
+    if (length > maximum) throw new Error('Tunnel runtime metadata is oversized');
+    return bytes.subarray(0, length);
+  } finally { await file.close(); }
 }
 
 async function delay(delayMs: number): Promise<void> {
@@ -539,6 +659,7 @@ export function parseNativeRuntimeStatus(stdout: string, stderr = ''): NativeTun
   const text = stdout.trim();
   if (text.length === 0) {
     return {
+      processStateEvidence: 'unknown',
       exists: true,
       running: false,
       healthy: null,
@@ -556,6 +677,7 @@ export function parseNativeRuntimeStatus(stdout: string, stderr = ''): NativeTun
     parsed = JSON.parse(text);
   } catch {
     return {
+      processStateEvidence: 'unknown',
       exists: true,
       running: /\brunning\b/i.test(text) && !/\bnot running\b/i.test(text),
       healthy: wordBoolean(text, 'healthy'),
@@ -570,6 +692,7 @@ export function parseNativeRuntimeStatus(stdout: string, stderr = ''): NativeTun
   }
   const flat = flattenJson(parsed);
   return {
+    processStateEvidence: nativeProcessStateEvidence(flat),
     exists: pickBoolean(flat, ['exists', 'known']) ?? true,
     running: pickBoolean(flat, ['process.running', 'runtime.running', 'running', 'process_running']) ?? inferRunning(flat),
     healthy: pickBoolean(flat, ['health.healthy', 'healthy', 'health.live', 'healthz.live', 'health_ok']),
@@ -583,6 +706,20 @@ export function parseNativeRuntimeStatus(stdout: string, stderr = ''): NativeTun
     healthUrlFile: pickString(flat, ['health_url_file', 'process.health_url_file', 'local.health.path']),
     message: pickString(flat, ['message', 'error', 'status_message']) ?? normalizedCliMessage(stderr),
   };
+}
+
+function nativeProcessStateEvidence(flat: ReadonlyMap<string, unknown>): 'running' | 'stopped' | 'unknown' {
+  const evidence = new Set<boolean>();
+  for (const key of ['process.running', 'runtime.running', 'running', 'process_running', 'local.process_running']) {
+    const value = pickBoolean(flat, [key]);
+    if (value !== null) evidence.add(value);
+  }
+  if (evidence.size === 1) return evidence.has(true) ? 'running' : 'stopped';
+  if (evidence.size > 1) return 'unknown';
+  const state = pickString(flat, ['runtime_state', 'local.runtime_state', 'runtime.state', 'process.state', 'state']);
+  if (state !== null && /^(stopped|dead|exited)$/i.test(state)) return 'stopped';
+  if (state !== null && /^(running|connected|ready)$/i.test(state)) return 'running';
+  return 'unknown';
 }
 
 function missingRuntime(message: string | null): NativeTunnelRuntimeStatus {

@@ -359,6 +359,14 @@ export interface CreateGoalContextCapsuleRecordRequest {
 }
 
 export interface RecordGoalDeliveryReceiptRequest {
+  readonly createOnly?: boolean;
+  readonly mutationFence?: {
+    readonly ownerClientId: string;
+    readonly ownerSessionId: string;
+    readonly leaseTokenHash: string;
+    readonly leaseGeneration: number;
+    readonly expectedRevision: number;
+  };
   readonly id: string;
   readonly goalId: string;
   readonly channel: string;
@@ -369,7 +377,22 @@ export interface RecordGoalDeliveryReceiptRequest {
   readonly now: string;
 }
 
+export interface RecoverBlockedGoalRecordRequest {
+  readonly goalId: string;
+  readonly checkpointId: string;
+  readonly ownerClientId: string;
+  readonly ownerSessionId: string;
+  readonly expectedRevision: number;
+  readonly reason: string;
+  readonly engineering: EngineeringGoalMetadata;
+  readonly recoveryEvidence: GoalLeaseRecoveryEvidence;
+  readonly leaseTokenHash: string;
+  readonly leaseSeconds: number;
+  readonly now: string;
+}
+
 export interface GoalRepository {
+  recoverBlocked?(request: RecoverBlockedGoalRecordRequest): Promise<GoalRecord>;
   acquire(request: AcquireGoalRecordRequest): Promise<AcquireGoalRecordResult>;
   getById(goalId: string): Promise<GoalRecord | null>;
   getByKey(workspaceId: string, goalKey: string): Promise<GoalRecord | null>;

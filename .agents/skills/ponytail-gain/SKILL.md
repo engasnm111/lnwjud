@@ -1,36 +1,41 @@
 ---
 name: ponytail-gain
 description: >
-  Show ponytail's measured impact as a compact scoreboard: less code, less
-  cost, more speed, from the benchmark medians. One-shot display, not a
-  persistent mode, and not a per-repo number. Trigger: /ponytail-gain,
-  "ponytail gain", "what does ponytail save", "show ponytail impact",
-  "ponytail scoreboard".
+  Show ponytail's measured savings (code, cost, speed) from the benchmark.
+  One-shot display. Use for /ponytail-gain, "what does ponytail save",
+  "ponytail impact".
 ---
+
+For lnwjud, first read [repository integration](../ponytail/references/lnwjud.md). It controls activation, source discovery, and host-specific guidance below.
 
 # Ponytail Gain
 
 Display this scoreboard when invoked. One-shot: do NOT change mode, write flag
 files, or persist anything.
 
-The figures are the published benchmark medians (5 everyday tasks: email
-validator, debounce, CSV sum, countdown timer, rate limiter; three models:
-Haiku, Sonnet, Opus). They are measured, not computed from the current repo.
-Source: `benchmarks/` and the README.
+The figures are the published agentic benchmark of Ponytail 5: headless Claude
+Code (Opus 5.5, default effort) on 39 tasks (feature tickets in a real FastAPI +
+React repo, bug fixes, security and privacy cases, small apps), 5 runs each,
+against the same agent without the skill. 18 of the tasks have hidden checks
+for correctness and safety. Each figure is the geometric mean of the per-task
+medians. They are measured, not computed from the current repo.
+Source: [upstream benchmark](https://github.com/DietrichGebert/ponytail/blob/16352ac229eb08a9598dcae48fe9f2b342567d86/benchmarks/results/2026-10-07-agentic.md) and [README](https://github.com/DietrichGebert/ponytail/blob/16352ac229eb08a9598dcae48fe9f2b342567d86/README.md). Attribute these as upstream-reported results; this update does not reproduce the benchmark.
 
 ## Scoreboard
 
-Render plain ASCII bars. The bar length shows the measured range; the label
-carries the exact figure:
+Render plain ASCII bars. The bar length shows ponytail as a share of the
+no-skill baseline; the label carries the exact figure:
 
 ```
-  ponytail gain                     benchmark median · 5 tasks · 3 models
+  ponytail gain           benchmark · 39 tasks × 5 runs · Opus 5.5
 
-  Lines of code   no-skill  ████████████████████  100%
-                  ponytail  ██▌·················    6–20%   ▼ 80–94%
-  Cost            no-skill  ████████████████████  100%
-                  ponytail  █████▌··············   23–53%  ▼ 47–77%
-  Speed           ponytail  ▸ 3–6× faster
+  no-skill        ████████████████████  100%
+  Lines of code   █████████···········   47%   ▼ 53%
+  Output tokens   ███████████·········   55%   ▼ 45%
+  Cost            ███████████████·····   74%   ▼ 26%
+  Time            ████████████········   59%   ▼ 41%
+  Hidden checks passed   97%  (no-skill 96%)
+  Tests where the logic needs one   98%  (no-skill 68%)
 
   This repo:  /ponytail-debt  (shortcuts you deferred)
               /ponytail-audit (what's still cuttable)
@@ -38,7 +43,7 @@ carries the exact figure:
 
 ## Honesty boundary
 
-These are benchmark medians, not this repo. NEVER print a per-repo savings
+These are benchmark averages, not this repo. NEVER print a per-repo savings
 number ("you saved X lines/tokens here"): the unbuilt version was never
 written, so there is no real baseline to subtract from in a live repo. The
 only real per-repo figures come from `/ponytail-debt` (a counted ledger), and
@@ -47,4 +52,3 @@ this card points there instead of inventing one.
 ## Boundaries
 
 One-shot display. Edits nothing, changes no mode.
-"stop ponytail" or "normal mode": revert.

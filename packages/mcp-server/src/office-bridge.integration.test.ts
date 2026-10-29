@@ -19,9 +19,11 @@ describe.skipIf(process.platform !== 'win32')('Windows Office bridge boundary in
       const bytes = await readFile(scriptPath);
       const bridge = new PowerShellWindowsCapabilityBridge({ scriptPath, expectedScriptSha256: createHash('sha256').update(bytes).digest('hex'), expectedScriptSizeBytes: bytes.length });
       const app = "ไทย 😀 O'Brien $(Get-Process)";
-      await expect(bridge.execute({ capability: 'office', input: { app, action: 'status', timeout_seconds: 20 } })).resolves.toMatchObject({ ok: false, error: { message: `Windows native capability failed: Unsupported office app: ${app}` } });
+      // Hosted Windows CI sometimes cold-starts PowerShell beyond 60s under load;
+      // never accept PROCESS_TIMEOUT instead of the exact Unicode error.
+      await expect(bridge.execute({ capability: 'office', input: { app, action: 'status', timeout_seconds: 120 } })).resolves.toMatchObject({ ok: false, error: { message: `Windows native capability failed: Unsupported office app: ${app}` } });
     } finally { await rm(root, { recursive: true, force: true }); }
-  }, 30_000);
+  }, 145_000);
   it('preserves Thai and supplementary characters through the actual process boundary without COM dispatch', async () => {
     const scriptPath = fileURLToPath(new URL('../../capabilities/src/windows-capability-bridge.ps1', import.meta.url));
     const bridge = new PowerShellWindowsCapabilityBridge({ scriptPath });
@@ -58,7 +60,7 @@ describe.skipIf(process.platform !== 'win32')('Windows Office bridge boundary in
     const { stdout, stderr } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { timeout: 30_000, windowsHide: true, maxBuffer: 1024 * 1024 });
     expect(stderr).toBe('');
     expect(stdout).toContain('PowerPoint borrowed/created ownership, bounded contention and abandoned-lock recovery passed.');
-  });
+  }, 45_000);
 });
 
 describe.skipIf(process.platform !== 'win32' || process.env.LNWJUD_RUN_OFFICE_COM_ACCEPTANCE !== '1')('Windows Office disposable COM artifact acceptance', () => {

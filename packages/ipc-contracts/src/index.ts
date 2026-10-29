@@ -2,7 +2,7 @@ import type { WorkflowPrepareRequest, WorkflowTemplate, WorkflowDraft, CallHisto
 export type * from './workflow-contracts.js';
 
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.8.7';
+export const APP_VERSION = '5.9.0';
 
 export interface WorkflowChoicesRequest {
   readonly workspaceId: string;
@@ -335,6 +335,9 @@ export interface EngineeringHarnessSettings {
   readonly profile: EngineeringProfile;
   readonly applyTo: EngineeringApplyTo;
   readonly autoProjectAssessment: boolean;
+  readonly hostedCi?: 'required' | 'local_only';
+  readonly allowNoGit?: boolean;
+  readonly workerTarget?: { readonly accountId: string; readonly worker: string; readonly environment: string; readonly trafficPercent: number };
   readonly custom?: {
     readonly analysis: 'focused' | 'cross_file';
     readonly review: 'risk_based' | 'always';
@@ -883,7 +886,7 @@ export interface DashboardEngineeringHarnessStatus {
     readonly gates: readonly {
       readonly id: string;
       readonly title: string;
-      readonly applicability: 'required' | 'optional' | 'not_applicable';
+      readonly applicability: 'required' | 'optional' | 'not_applicable' | 'unresolved';
       readonly status: 'pending' | 'running' | 'passed' | 'failed' | 'blocked' | 'not_applicable' | 'stale';
       readonly reason: string;
       readonly evidenceSource?: 'host_observed' | 'user_attested';
@@ -1122,7 +1125,7 @@ export interface ConfigureTunnelProfileRequest {
   readonly tunnelId: string;
 }
 
-export type ExternalSetupTarget = 'openai_tunnels' | 'openai_api_keys' | 'chatgpt_plugins' | 'ngrok_authtoken' | 'ngrok_download';
+export type ExternalSetupTarget = 'openai_tunnels' | 'openai_api_keys' | 'chatgpt_plugins' | 'ngrok_authtoken' | 'ngrok_download' | 'lnwjud_releases';
 
 export const EXTERNAL_SETUP_URLS: Readonly<Record<ExternalSetupTarget, string>> = Object.freeze({
   openai_tunnels: 'https://platform.openai.com/settings/organization/tunnels',
@@ -1130,6 +1133,7 @@ export const EXTERNAL_SETUP_URLS: Readonly<Record<ExternalSetupTarget, string>> 
   chatgpt_plugins: 'https://chatgpt.com/plugins',
   ngrok_authtoken: 'https://dashboard.ngrok.com/get-started/your-authtoken',
   ngrok_download: 'https://ngrok.com/download',
+  lnwjud_releases: 'https://github.com/engasnm111/lnwjud/releases',
 });
 
 export interface OpenExternalSetupPageRequest {

@@ -30,7 +30,25 @@ export interface WorkspaceWriterLeaseStatus {
   readonly ownerClientId?: string;
   readonly expiresAt?: string;
   readonly activeCalls: number;
+  /** Last fenced activity (acquire, admitted call, heartbeat, end, renew). */
+  readonly lastActivityAt?: string;
+  /** Earliest time a same-client recovery may fence an idle owner. */
+  readonly staleRecoveryEligibleAt?: string;
 }
+/** Abandonment evidence used by scheduled claims and explicit recovery alike. */
+export interface WorkspaceWriterLeaseAbandonment {
+  readonly state: 'unleased' | 'active' | 'expired';
+  readonly generation: number;
+  readonly live: boolean;
+  readonly reason: 'unleased' | 'live_invocation' | 'foreign_client' | 'unknown_activity' | 'within_stale_grace' | 'idle_beyond_grace' | 'expired';
+}
+export interface WorkspaceWriterLeaseRevocation {
+  readonly revoked: boolean;
+  readonly previousGeneration: number;
+  readonly generation: number;
+}
+/** Bounded stale-heartbeat grace from the scheduled-continuation contract. */
+export const WORKSPACE_WRITER_STALE_GRACE_MS = 60_000;
 
 interface LeaseRow {
   workspace_id: string;
@@ -53,6 +71,8 @@ export interface WorkspaceWriterLeasePort {
   end(workspaceId: string, callId: string, generation: number): Promise<void>;
   renew(workspaceId: string, ownerClientId: string, ownerSessionId: string, proof: WorkspaceWriterLeaseProof, ttlSeconds: number): Promise<Result<{ expiresAt: string }>>;
   release(workspaceId: string, ownerClientId: string, ownerSessionId: string, proof: WorkspaceWriterLeaseProof): Promise<Result<void>>;
+  assessAbandonment?(workspaceId: string, clientId: string): Promise<Result<WorkspaceWriterLeaseAbandonment>>;
+  revokeAbandoned?(workspaceId: string, clientId: string): Promise<Result<WorkspaceWriterLeaseRevocation>>;
 }
 
 export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
@@ -87,9 +107,8 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
         if (row?.lease_id !== null && row?.lease_id !== undefined && row.expires_at > now) {
           // Explicit same-client recovery revokes an idle session. Generation fencing
           // prevents any previous proof from authorizing later mutations.
-          if (!recoverAbandonedSameClient || row.owner_client_id !== clientId
-            || row.owner_session_id === sessionId || row.last_activity_at <= 0
-            || now - row.last_activity_at < 60_000) {
+          // Same-session recovery is allowed too: the caller may have lost its proof.
+          if (!recoverAbandonedSameClient || !idleSameClientOwner(row, clientId, now)) {
             return conflict('Workspace writer lease is active; same-client idle recovery is not eligible');
           }
         }
@@ -107,6 +126,50 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
           expires_at=excluded.expires_at,last_activity_at=excluded.last_activity_at`)
           .run(workspaceId, generation, leaseId, digest(leaseToken), clientId, sessionId, expiry, now);
         return ok({ leaseId, leaseToken, generation, expiresAt: new Date(expiry).toISOString() });
+      });
+    } catch { return unavailable(); }
+    finally {
+      if (globalProbe?.ok === true) await globalProbe.value.releaseAfterVerifiedTermination().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Read-only abandonment assessment shared with scheduled-continuation claims.
+   * `live` is true while an owner may still be working: an unexpired lease whose
+   * owner is another client, has unknown activity, or was active within the
+   * stale-heartbeat grace, or any lease with a live/unprovable pinned invocation.
+   * An unleased workspace is never live here (unleased writers are not owners).
+   */
+  public async assessAbandonment(workspaceId: string, clientId: string): Promise<Result<WorkspaceWriterLeaseAbandonment>> {
+    if (!validIdentity(workspaceId, clientId)) return invalid();
+    try {
+      return this.database((db) => ok(this.abandonment(db, workspaceId, clientId)));
+    } catch { return unavailable(); }
+  }
+
+  /**
+   * Atomically fence an abandoned lease back to unleased with a rotated generation.
+   * The decision and the update happen in one IMMEDIATE transaction, so two
+   * claimants cannot both observe and revoke the same generation, and a live
+   * owner is never revoked. Every proof of the previous generation is rejected.
+   */
+  public async revokeAbandoned(workspaceId: string, clientId: string): Promise<Result<WorkspaceWriterLeaseRevocation>> {
+    if (!validIdentity(workspaceId, clientId)) return invalid();
+    const globalProbe = this.globalExclusion === undefined ? undefined
+      : await this.globalExclusion.holdExclusiveProbe(workspaceId).catch(() => unavailable());
+    if (globalProbe !== undefined && !globalProbe.ok) return globalProbe;
+    try {
+      return this.transaction((db) => {
+        const assessed = this.abandonment(db, workspaceId, clientId);
+        if (assessed.live) return conflict('Workspace writer lease owner is live or its inactivity cannot be proved');
+        if (assessed.state === 'unleased') return ok({ revoked: false, previousGeneration: assessed.generation, generation: assessed.generation });
+        if (!this.clearVerifiedDeadCalls(db, workspaceId)) return conflict('Prior writer invocation is live or its termination cannot be proved');
+        const generation = assessed.generation + 1;
+        const changed = db.prepare(`UPDATE workspace_writer_leases SET generation=?,lease_id=NULL,token_hash=NULL,
+          owner_client_id=NULL,owner_session_id=NULL,expires_at=0,last_activity_at=? WHERE workspace_id=? AND generation=?`)
+          .run(generation, this.now(), workspaceId, assessed.generation);
+        if (Number(changed.changes) !== 1) return conflict('Workspace writer lease changed during recovery');
+        return ok({ revoked: true, previousGeneration: assessed.generation, generation });
       });
     } catch { return unavailable(); }
     finally {
@@ -133,6 +196,10 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
           activeCalls: calls.length,
           ...(row.owner_client_id === null ? {} : { ownerClientId: row.owner_client_id }),
           ...(row.lease_id === null ? {} : { expiresAt: new Date(row.expires_at).toISOString() }),
+          ...(row.lease_id === null || row.last_activity_at <= 0 ? {} : {
+            lastActivityAt: new Date(row.last_activity_at).toISOString(),
+            staleRecoveryEligibleAt: new Date(row.last_activity_at + WORKSPACE_WRITER_STALE_GRACE_MS).toISOString(),
+          }),
         });
       });
     } catch { return unavailable(); }
@@ -216,6 +283,28 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
     }
   }
 
+  private abandonment(db: DatabaseSync, workspaceId: string, clientId: string): WorkspaceWriterLeaseAbandonment {
+    const row = this.row(db, workspaceId);
+    const calls = this.calls(db, workspaceId);
+    if (row === undefined || row.lease_id === null) {
+      // An unleased in-flight mutation is still a live writer; a scheduled
+      // claimant must not mistake missing lease ownership for idle workspace.
+      if (calls.some((call) => processAlive(call.pid) !== 'dead')) {
+        return { state: 'unleased', generation: row?.generation ?? 0, live: true, reason: 'live_invocation' };
+      }
+      return { state: 'unleased', generation: row?.generation ?? 0, live: false, reason: 'unleased' };
+    }
+    const now = this.now();
+    const state = row.expires_at > now ? 'active' as const : 'expired' as const;
+    const base = { state, generation: row.generation };
+    if (this.calls(db, workspaceId).some((call) => processAlive(call.pid) !== 'dead')) return { ...base, live: true, reason: 'live_invocation' };
+    if (state === 'expired') return { ...base, live: false, reason: 'expired' };
+    if (row.owner_client_id !== clientId) return { ...base, live: true, reason: 'foreign_client' };
+    if (row.last_activity_at <= 0) return { ...base, live: true, reason: 'unknown_activity' };
+    if (!idleSameClientOwner(row, clientId, now)) return { ...base, live: true, reason: 'within_stale_grace' };
+    return { ...base, live: false, reason: 'idle_beyond_grace' };
+  }
+
   private row(db: DatabaseSync, workspaceId: string): LeaseRow | undefined {
     return db.prepare('SELECT * FROM workspace_writer_leases WHERE workspace_id=?').get(workspaceId) as unknown as LeaseRow | undefined;
   }
@@ -248,6 +337,11 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
 }
 
 function digest(token: string): string { return createHash('sha256').update(token).digest('hex'); }
+/** Same client, known activity, and no fenced activity for the full stale grace. */
+function idleSameClientOwner(row: LeaseRow, clientId: string, now: number): boolean {
+  return row.owner_client_id === clientId && row.last_activity_at > 0
+    && now - row.last_activity_at >= WORKSPACE_WRITER_STALE_GRACE_MS;
+}
 function matches(row: LeaseRow, clientId: string, sessionId: string, proof: WorkspaceWriterLeaseProof): boolean {
   if (row.lease_id !== proof.leaseId || row.owner_client_id !== clientId || row.owner_session_id !== sessionId
     || row.generation !== proof.generation || row.token_hash === null || !proof.leaseToken) return false;

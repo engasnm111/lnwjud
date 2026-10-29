@@ -19,10 +19,10 @@ describe('native main-process i18n', () => {
     }, 'en')).toContain('ad-hoc');
     expect(nativeMessages('th').shutdownBlockedTitle).toContain('ยังทำงานอยู่');
     expect(nativeMessages('en').shutdownBlockedTitle).toBe('lnwjud is still running');
-    expect(nativeMessages('th').updaterTunnelStopConfirm).toContain('ติดตั้งต่อ');
-    expect(nativeMessages('en').updaterTunnelStopConfirm).toBe('Stop Tunnel and Install');
-    expect(nativeMessages('th').updaterTunnelStopDetail).toContain('Tunnel ID และ Key เดิม');
-    expect(nativeMessages('en').updaterTunnelStopDetail).toContain('same Tunnel ID and key');
+    expect(nativeMessages('th').updaterInstallConfirmMessage('5.9.0')).toContain('v5.9.0');
+    expect(nativeMessages('en').updaterInstallConfirmMessage('5.9.0')).toContain('v5.9.0');
+    expect(nativeMessages('th').updaterInstallConfirmDetail).toContain('ไม่ต้องกด Next');
+    expect(nativeMessages('en').updaterInstallConfirmDetail).toContain('without requiring any installer clicks');
   });
 
   it('keeps Thai native UI literals out of main and tray orchestration files', async () => {
@@ -34,5 +34,27 @@ describe('native main-process i18n', () => {
     expect(tray).not.toMatch(/[ก-๙]/u);
     expect(main).toContain("from './native-i18n.js'");
     expect(tray).toContain("from './native-i18n.js'");
+  });
+
+  it('explains the complete post-consent update sequence in both locales', () => {
+    const thai = nativeMessages('th');
+    const english = nativeMessages('en');
+    expect(thai.updaterInstallConfirmMessage('5.9.0')).toContain('5.9.0');
+    expect(thai.updaterInstallConfirmDetail).toContain('หยุด Secure Tunnel');
+    expect(thai.updaterInstallConfirmDetail).toContain('เปิดแอปใหม่อัตโนมัติ');
+    expect(english.updaterInstallConfirmMessage('5.9.0')).toContain('5.9.0');
+    expect(english.updaterInstallConfirmDetail).toContain('stop Secure Tunnel');
+    expect(english.updaterInstallConfirmDetail).toContain('reopen automatically');
+  });
+
+  it('keeps a missing native updater authority visibly unavailable in either locale', () => {
+    const thai = nativeMessages('th');
+    const english = nativeMessages('en');
+    const status: UpdateStatus = {
+      phase: 'unavailable', currentVersion: '5.9.0', availableVersion: null, progressPercent: null,
+      lastCheckedAt: null, message: thai.updaterUnavailableTransactionAuthority, canInstall: false,
+    };
+    expect(localizedUpdateStatusMessage(status, 'th')).toBe(thai.updaterUnavailableTransactionAuthority);
+    expect(localizedUpdateStatusMessage(status, 'en')).toBe(english.updaterUnavailableTransactionAuthority);
   });
 });

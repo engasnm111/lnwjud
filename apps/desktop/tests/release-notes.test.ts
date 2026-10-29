@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { releaseNotesForSeries, releaseNotesForVersion, type ReleaseNote } from '../src/renderer/features/release-notes/release-notes.js';
+import { en, th } from '../src/renderer/i18n/messages.js';
 
 describe('release notes registry', () => {
   it('contains non-empty in-app notes for the current Desktop version', async () => {
@@ -11,13 +12,45 @@ describe('release notes registry', () => {
     expect(note?.categories.some((category) => category.items.length > 0)).toBe(true);
   });
 
-  it('shows all installed v5.8 patch notes newest-first without leaking v5.7 or later minors', () => {
+  it('includes the pinned Ponytail skills in v5.9.0 only', () => {
+    const items = releaseNotesForVersion('5.9.0')?.categories.flatMap((category) => category.items) ?? [];
+    expect(items.find((item) => item.id === 'ponytail-stable-skills')).toMatchObject({
+      titleKey: 'whatsNew.590.ponytail.title',
+      descriptionKey: 'whatsNew.590.ponytail.description',
+    });
+  });
+
+  it('documents stale alias Start safety in Thai and English for v5.9.0', () => {
+    const item = releaseNotesForVersion('5.9.0')?.categories.flatMap((category) => category.items)
+      .find((entry) => entry.id === 'tunnel-stale-alias-recovery');
+    if (item === undefined) throw new Error('Missing stale Tunnel alias note for v5.9.0');
+
+    expect(th[item.descriptionKey]).toContain('ปุ่ม Start จะปิดไว้จนกว่าจะยืนยันได้ว่า persistent alias หยุดแล้ว');
+    expect(en[item.descriptionKey]).toContain('Start stays disabled until the persistent alias is confirmed stopped');
+  });
+
+  it('documents bounded writer-reservation recovery and keeps the updater release gate explicit', () => {
+    const items = releaseNotesForVersion('5.9.0')?.categories.flatMap((category) => category.items) ?? [];
+    const capacity = items.find((entry) => entry.id === 'managed-writer-capacity');
+    const updater = items.find((entry) => entry.id === 'update-recovery-and-availability');
+    if (capacity === undefined || updater === undefined) throw new Error('Missing v5.9.0 safety notes');
+
+    expect(th[capacity.descriptionKey]).toContain('เฉพาะเมื่อยืนยันได้ว่า owner process จบแล้ว');
+    expect(th[capacity.descriptionKey]).toContain('ไม่เปิดเผย task/client/workspace ID');
+    expect(en[capacity.descriptionKey]).toContain('only after confirming its recorded owner process is gone');
+    expect(en[capacity.descriptionKey]).toContain('Unknown and opaque process reservations remain held');
+    expect(th[updater.descriptionKey]).toContain('ยังห้ามปล่อย v5.9.0');
+    expect(en[updater.descriptionKey]).toContain('v5.9.0 must not ship');
+  });
+
+  it('shows only installed notes from each v5 release train', () => {
     expect(releaseNotesForSeries('5.8.3').map((note) => note.version)).toEqual(['5.8.3', '5.8.2', '5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.2').map((note) => note.version)).toEqual(['5.8.2', '5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.1').map((note) => note.version)).toEqual(['5.8.1', '5.8.0']);
     expect(releaseNotesForSeries('5.8.0').map((note) => note.version)).toEqual(['5.8.0']);
     expect(releaseNotesForSeries('5.7.4').map((note) => note.version)).toEqual(['5.7.4', '5.7.3', '5.7.2', '5.7.1', '5.7.0']);
-    expect(releaseNotesForSeries('5.9.0')).toEqual([]);
+    expect(releaseNotesForSeries('5.8.7').map((note) => note.version)).toEqual(['5.8.7', '5.8.6', '5.8.5', '5.8.4', '5.8.3', '5.8.2', '5.8.1', '5.8.0']);
+    expect(releaseNotesForSeries('5.9.0').map((note) => note.version)).toEqual(['5.9.0']);
   });
 
   it('sorts version numbers numerically and resets at the next minor or major train', () => {

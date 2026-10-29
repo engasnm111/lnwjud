@@ -38,7 +38,7 @@ export function createHttpRequestScope(options: HttpRequestScopeOptions): McpReq
   const baggage = boundedBaggageHeader(options.request?.headers.get('baggage'));
   return {
     sessionId: protocolSessionId === undefined
-      ? normalizeInternalSessionId(options.fallbackSessionId)
+      ? `http-${fingerprint(normalizeInternalSessionId(options.fallbackSessionId))}`
       : `http-${fingerprint(protocolSessionId)}`,
     transport: 'http',
     ...(protocolSessionId === undefined ? {} : { protocolSessionId }),

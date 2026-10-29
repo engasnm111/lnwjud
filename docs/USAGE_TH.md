@@ -1,10 +1,26 @@
-# คู่มือใช้งาน lnwjud v5.8.7 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.9.0 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม source `v5.8.7`; public release `v5.8.7` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.8.7)
+คู่มือนี้อัปเดตตาม source `v5.9.0`; public release `v5.8.7` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.8.7)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว build จาก source `v5.8.1` รวม official OpenAI `tunnel-client v0.0.16` ที่ตรงกับ OS/architecture พร้อม SHA-256/provenance ส่วน release รุ่นก่อนหน้าอาจ bundle เวอร์ชันต่างกัน ให้ยึดหลักฐานของไฟล์ที่ดาวน์โหลดจริง
+
+## Auto Updater v5.9.0: ยังปิดไว้จนกว่าจะผ่าน acceptance
+
+Auto updater ใน source build v5.9.0 ยังปิดอยู่แบบ fail-closed จึงยังตรวจ ดาวน์โหลด หรือติดตั้งอัปเดตจากแอปไม่ได้ รูปแบบที่ต้องการคือให้ผู้ใช้ยืนยันเลขเวอร์ชันเป้าหมายครั้งเดียว จากนั้นรอให้งานจบ หยุด Tunnel ที่ตรวจสอบ owner ได้ ติดตั้งโดยไม่ต้องกด installer เพิ่ม แล้วเปิดแอปใหม่เอง ตัวเลือก **Settings → General → ติดตั้งอัปเดตแบบไม่ต้องคลิก** จะไม่ข้ามการยืนยันเวอร์ชันหรือสิทธิ์ความปลอดภัยของระบบปฏิบัติการ
+
+native transaction authority, การลงทะเบียนแพ็กเกจ, การสลับ app/data แบบ atomic, การตรวจสุขภาพหลังเปิดใหม่ และ rollback พร้อมคืน Tunnel ยังไม่ครบและไม่มี signed end-to-end acceptance ที่ยืนยันการติดตั้งจริง จึงห้ามเปิด updater หรือปล่อย Release จนกว่าจะทดสอบอัปเดตและ rollback บนแพ็กเกจที่เซ็นแล้วผ่านครบ ห้ามข้าม UAC หรือสิทธิ์ OS
+
+## ข้อจำกัดและสถานะรับมอบ v5.9.0
+
+Issue #213–#217 และ #219 ยังไม่รับมอบครบทั้งชุด โดย #216 ยังขาด native containment ที่ควบคุม process ลูกซึ่งหลุด process group บน macOS ได้อย่างปลอดภัย ปัจจุบัน macOS จึงปฏิเสธ durable shell และ managed process writer ใหม่ก่อนเปิด process และเก็บ reservation ที่ยังพิสูจน์ไม่ได้ ส่วน Windows ยังต้องตรวจ installer และบริการจากโค้ดสุดท้าย ดู [สถานะรับมอบและหลักฐานตามรุ่น](codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md)
+
+## Ponytail สำหรับงานเขียนโค้ด (รวมใน Source v5.9.0)
+
+Source รุ่น v5.9.0 มี Skill แบบเอกสารของ [Ponytail v5.3.2](https://github.com/DietrichGebert/ponytail/releases/tag/v5.3.2) รุ่น Stable ล่าสุด ณ 21 ตุลาคม 2026 ครบ 6 รายการ ได้แก่ `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain` และ `ponytail-help` โดยตรึง Commit และ MIT License เพื่อให้ตรวจสอบแหล่งที่มาได้ ไม่ติดตั้ง Hook หรือสคริปต์ภายนอกโดยอัตโนมัติ
+
+โหมดเริ่มต้นคือ **OFF** ผู้ใช้เลือก Lite, Full หรือ Ultra ได้ผ่านการตั้งค่าที่รองรับ โดยลำดับการตั้งค่าคือ **Goal > Workspace > Global** โหมด Ponytail ไม่ข้าม Writer Lease หรือข้อบังคับความปลอดภัย การทดสอบการทำงานบนแพ็กเกจที่ติดตั้งยังเป็นส่วนหนึ่งของ Release Acceptance v5.9.0 และ **ไม่ได้ถือว่าผ่าน** เพียงเพราะมี Skill อยู่ใน Source อ่านรายละเอียดได้ใน [คู่มือ Ponytail](PONYTAIL.md)
 
 คู่มือ target ใหม่:
 
@@ -69,17 +85,15 @@ Portable ของ lnwjud หมายถึง **ตัวโปรแกรม
 
 หน้า Doctor จะแจ้งเตือนว่า “ยังไม่มี Project” แต่ไม่ล็อกหน้าแอป: เปิด **Projects** หรือกด **Add Project** จาก Doctor แล้วเพิ่ม path ได้ทันที. ถ้าเพิ่มไม่สำเร็จ ข้อความ path จะยังอยู่เพื่อแก้และลองใหม่. ถ้า Dashboard/Workspace bootstrap บางส่วนล้ม โปรแกรมจะแสดง error พร้อม **Retry** แทนการค้างที่ Loading. Doctor ตรวจ identity ของ MCP ที่ port ตั้งค่าไว้ จึงแยกได้ว่า listener นั้นเป็น lnwjud หรือโปรแกรมอื่น.
 
-### Auto Update แยกตามชนิดที่ใช้อยู่
+### ตรวจและติดตั้งอัปเดตตามชนิดแพ็กเกจ
 
-- ถ้ากำลังใช้ **Installer** โปรแกรมจะอ่าน `latest.yml` และดาวน์โหลด/ติดตั้ง `lnwjud-Setup-<version>.exe` รุ่นใหม่
-- ถ้ากำลังใช้ **Portable** โปรแกรมจะอ่าน `portable.yml` และดาวน์โหลด `lnwjud-Portable-<version>.exe` รุ่นใหม่เท่านั้น
-- macOS ใช้ `latest-mac.yml` ซึ่งรวม zip ของ Intel และ Apple silicon แล้วเลือกไฟล์ตามสถาปัตยกรรมของเครื่อง
-- Linux AppImage ใช้ `latest-linux.yml` สำหรับ x64 และ `latest-linux-arm64.yml` สำหรับ arm64; DEB ยังคงให้ package manager จัดการ
-- Portable updater จะรอให้โปรแกรมเดิมปิด, สำรอง EXE เดิม, วาง EXE ใหม่ทับ **path เดิมที่ผู้ใช้เปิดอยู่**, เปิดโปรแกรมใหม่ และ rollback กลับ EXE เดิมถ้าการ replace ล้มเหลว
-- Auto Update จะ **ไม่เปลี่ยนชนิดให้เอง**: Portable จะไม่กลายเป็น Installer และ Installer จะไม่ถูกเปลี่ยนเป็น Portable
-- ไฟล์ update ถูกตรวจตาม SHA-512/size ใน update manifest ก่อนเข้าสู่ขั้นตอน install/replace
+- Windows Setup และ Portable ใช้ metadata คนละไฟล์ คือ `latest.yml` และ `portable.yml` ตามลำดับ ไฟล์เหล่านี้แยกช่องทางของแพ็กเกจ แต่ไม่ได้ยืนยันว่าติดตั้งอัปเดตอัตโนมัติได้
+- macOS ใช้ `latest-mac.yml` และ Linux AppImage ใช้ `latest-linux.yml` สำหรับ x64 กับ `latest-linux-arm64.yml` สำหรับ arm64 ส่วน DEB ใช้ package manager
+- ค่า **ตรวจอัปเดตอัตโนมัติ** และ **ดาวน์โหลดอัปเดตอัตโนมัติ** ควบคุมการตรวจและดาวน์โหลด ไม่ได้สั่งติดตั้ง
+- เมื่อตัวอัปเดตดาวน์โหลดเสร็จแล้ว ให้กด version badge เพื่อสั่งติดตั้งด้วยตนเอง หากแพ็กเกจนั้นรองรับการติดตั้ง
+- การติดตั้งอัตโนมัติยังปิดอยู่ทุกแพ็กเกจ และการอัปเดตที่เซ็นจริง การเปิดโปรแกรมใหม่ การตรวจสุขภาพ และ rollback ยังไม่ผ่านการรับมอบ ห้ามถือว่าการสร้าง metadata หรือการดาวน์โหลดเป็นผลทดสอบครบวงจร
 
-ดังนั้นผู้ใช้เลือกแบบไหนตอนดาวน์โหลดครั้งแรก ก็จะได้รับ update ของแบบนั้นต่อไป ข้อมูล/Settings ต่อผู้ใช้ Windows ยังคงใช้ชุดเดิมตามปกติ
+ข้อมูลและ Settings ต่อผู้ใช้ Windows ใช้ชุดเดิมทั้ง Installer และ Portable
 
 ## 3A. Remote MCP ผ่าน ngrok + OAuth (ค่าเริ่มต้น/รองรับผู้ใช้เดิม)
 
@@ -174,7 +188,7 @@ OAuth จะเปิดให้กด Sign in เฉพาะเมื่อ p
 5. lnwjud จะสร้าง/ซ่อม profile ของตัวเองและชี้ Tunnel ไปยัง Desktop loopback MCP เช่น `http://127.0.0.1:<port>/mcp`
 6. ถ้ายังไม่เชื่อม ให้กด **Reconnect Tunnel เดิม** ใน Settings หรือ **Start Tunnel** จากหน้า Home
 
-`Persistent Tunnel Identity` มีหน้าที่จำ Tunnel ID เดิม และ **ไม่ใช่คำสั่งให้ runtime ต้องเปิดตลอดเวลา**. lnwjud เก็บ desired Run/Stop state แยกจาก identity: เมื่อผู้ใช้กด **Stop Tunnel** จะบันทึกสถานะ `stopped`, ปิด reconnect supervisor/timer, หยุด runtime และตรวจยืนยันการหยุดผ่าน `tunnel-client.exe` ที่เป็น owner จริง. สถานะ Stop นี้คงอยู่แม้ปิด/เปิด lnwjud ใหม่ และ Automatic reconnect จะไม่เปิด tunnel กลับเองจนกว่าผู้ใช้จะกด **Start Tunnel** อีกครั้ง. ถ้าโปรแกรมปิดผิดปกติระหว่าง Stop แล้ว runtime เดิมยังรอดอยู่ การเปิดครั้งถัดไปจะ reconcile desired `stopped` และพยายามหยุด owner เดิมต่อแทนการเปิด client ใหม่ซ้อน.
+`Persistent Tunnel Identity` มีหน้าที่จำ Tunnel ID เดิม และ **ไม่ใช่คำสั่งให้ runtime ต้องเปิดตลอดเวลา**. lnwjud เก็บ desired Run/Stop state แยกจาก identity: เมื่อผู้ใช้กด **Stop Tunnel** จะบันทึกสถานะ `stopped`, ปิด reconnect supervisor/timer, หยุด runtime และตรวจยืนยันการหยุดผ่าน `tunnel-client.exe` ที่เป็น owner จริง. หากสถานะรวมแสดงว่าหยุดแล้ว แต่ persistent alias ยัง active หรือยังไม่ยืนยันว่าหยุด ปุ่ม Stop ยังคงใช้ได้. เมื่อ ID ในตั้งค่าเก่า บน Windows การกด Stop, การส่งต่องานติดตั้งอัปเดตหลังผู้ใช้ยืนยัน และ Factory Reset หลังยืนยัน อาจใช้ Tunnel ID ปัจจุบันของ alias ได้เมื่อ native helper ที่ pin ไว้ตรวจ owner ของแอป, alias ID/PID และ process identity ภายใต้ state lock ของ client แล้วเท่านั้น. การ reconcile อัตโนมัติยังปฏิเสธเมื่อ ID ไม่ตรง; บนแพลตฟอร์มที่ไม่มีเส้นทาง native นี้ ระบบหยุดแบบ fail-closed. ระหว่าง Start ค้างที่ Doctor ผู้ใช้ยังกด **Stop Tunnel** ได้ ระบบยกเลิก Doctor และรอ process จบก่อน controller ตรวจ owner และหยุด runtime. สถานะ Stop นี้คงอยู่แม้ปิด/เปิด lnwjud ใหม่ และ Automatic reconnect จะไม่เปิด tunnel กลับเองจนกว่าผู้ใช้จะกด **Start Tunnel** อีกครั้ง. ถ้าโปรแกรมปิดผิดปกติระหว่าง Stop แล้ว runtime เดิมยังรอดอยู่ การเปิดครั้งถัดไปจะ reconcile desired `stopped` และพยายามหยุด owner เดิมต่อแทนการเปิด client ใหม่ซ้อน.
 
 เมื่อเปิดโปรแกรม หาก Tunnel เคยตั้งค่าและ Start ไว้แล้ว และ **Persistent Tunnel Runtime** ยังเปิดอยู่ lnwjud จะเริ่ม Tunnel ให้อัตโนมัติ; ผู้ใช้ใหม่ยังต้องตั้งค่าและกด Start ครั้งแรกเอง และหากผู้ใช้กด Stop โปรแกรมจะจำสถานะหยุดข้ามการเปิดโปรแกรมจนกว่าจะกด Start Tunnel อีกครั้ง.
 
@@ -370,7 +384,7 @@ Live Logs ใช้ดูสถานะ realtime ของ:
 
 External MCP/Serena จะถูกปิดเมื่อ idle ตามค่าที่ตั้งไว้ โดยไม่ตัด call ที่กำลังทำงานอยู่. เมื่อปิดโปรแกรม, เปลี่ยน command, ปิดใช้งาน หรือลบ server ระบบจะ abort การเชื่อมต่อที่รออยู่และปิด process tree ที่ lnwjud เป็นเจ้าของ (process group บน macOS/Linux และ `taskkill /T /F` บน Windows). ถ้าตรวจไม่ได้จริงจะแสดง `termination_unverified` ใน `mcp_list` และ Doctor แทนการรายงานว่าสำเร็จ.
 
-การสร้างไฟล์ภาพ/ไฟล์ไบนารีจาก ChatGPT แล้วส่งเข้าโฟลเดอร์โดยตรงไม่ใช่ความสามารถอัตโนมัติของ MCP bridge: ใช้เครื่องมือสร้างภาพของ ChatGPT แล้วดาวน์โหลดไฟล์ จากนั้นให้ lnwjud `copy_file` ไปยังโฟลเดอร์ที่อนุญาต หรือใช้ `write_file` เฉพาะข้อความ UTF-8. lnwjud ไม่รับ file-id จากหน้า ChatGPT เพื่อเขียนลงดิสก์เองโดยไม่มีการสั่ง copy ที่ชัดเจน.
+การสร้างไฟล์ภาพ/ไฟล์ไบนารีจาก ChatGPT แล้วส่งเข้าโฟลเดอร์โดยตรงไม่ใช่ความสามารถอัตโนมัติของ MCP bridge: ใช้เครื่องมือสร้างภาพของ ChatGPT แล้วดาวน์โหลดไฟล์ จากนั้นให้ lnwjud `copy_file` ไปยังโฟลเดอร์ที่อนุญาต หรือใช้ `write_file` เฉพาะข้อความ UTF-8. lnwjud ไม่รับ file-id จากหน้า ChatGPT เพื่อเขียนลงดิสก์เองโดยไม่มีการสั่ง copy ที่ชัดเจน. **หมายเหตุ Issue #219:** `write_file` แบบ `mode: "create_new"` ป้องกันการเขียนทับไฟล์ปลายทาง แต่ยังใช้ไฟล์ชั่วคราวก่อนทำ hard link ไม่รับประกัน `fsync`, file/parent directory durability, ordered native inode/descriptor receipt หรือทราบผลแน่นอนเมื่อการเชื่อมต่อขาดหลังเริ่มเขียน; ข้อจำกัดบน macOS exFAT ยังไม่มีหลักฐานรับรอง อ่าน [สัญญาความสามารถ v5.9.0](architecture/FILE_PUBLICATION_CONTRACT_V5_9_0.md).
 
 ## 13. Doctor / Troubleshooting
 
@@ -447,8 +461,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.8.7.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.8.7.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.0.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.9.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

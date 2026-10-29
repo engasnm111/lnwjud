@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appError, err, ok } from '@lnwjud/domain';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { ToolRegistry, type McpApplicationServices } from './tool-registry.js';
@@ -10,6 +10,88 @@ function activeFence(): ReturnType<typeof ok> {
 }
 
 describe('scheduled continuation mutation fence', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  function admittedProcessFixture(): {
+    goalMutationFence: Record<'inspectWorkspaceFence' | 'begin' | 'heartbeat' | 'end', ReturnType<typeof vi.fn>>;
+    workspaceWriterLease: Record<'begin' | 'heartbeat' | 'end', ReturnType<typeof vi.fn>>;
+    start: ReturnType<typeof vi.fn>;
+    invoke: () => ReturnType<ToolRegistry['invoke']>;
+  } {
+    const goalMutationFence = {
+      inspectWorkspaceFence: vi.fn().mockResolvedValue(activeFence()),
+      begin: vi.fn().mockResolvedValue(ok({ leaseGeneration: 2 })),
+      heartbeat: vi.fn().mockResolvedValue(undefined),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const workspaceWriterLease = {
+      begin: vi.fn().mockResolvedValue(ok({ required: true, generation: 3 })),
+      heartbeat: vi.fn().mockResolvedValue(undefined),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const start = vi.fn().mockResolvedValue(ok({ processId: 'process-1' }));
+    const registry = new ToolRegistry({ goalMutationFence, workspaceWriterLease, process: { start } } as unknown as McpApplicationServices, actor, {
+      authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+      maxToolDurationMs: 100,
+    });
+    const invoke = (): ReturnType<ToolRegistry['invoke']> => registry.invoke('process_start', {
+      workspaceId: 'workspace-1', executable: 'node', args: ['--version'],
+      goalLease: { goalId: 'goal-1', leaseToken: 'lease-token', leaseGeneration: 2 },
+    });
+    return { goalMutationFence, workspaceWriterLease, start, invoke };
+  }
+
+  it('ends the admitted goal fence when writer admission returns a conflict', async () => {
+    vi.useFakeTimers();
+    const fixture = admittedProcessFixture();
+    fixture.workspaceWriterLease.begin.mockResolvedValue(err(appError('CONFLICT', 'Writer is already owned', true)));
+    const response = await fixture.invoke();
+    expect(response.structuredContent).toMatchObject({ error: { code: 'CONFLICT', message: 'Writer is already owned' } });
+    expect(fixture.goalMutationFence.begin).toHaveBeenCalledOnce();
+    expect(fixture.start).not.toHaveBeenCalled();
+    expect(fixture.workspaceWriterLease.end).not.toHaveBeenCalled();
+    expect(fixture.goalMutationFence.end).toHaveBeenCalledExactlyOnceWith(fixture.goalMutationFence.begin.mock.calls[0]![2]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fixture.goalMutationFence.heartbeat).not.toHaveBeenCalled();
+    expect(fixture.goalMutationFence.end).toHaveBeenCalledOnce();
+  });
+
+  it('ends the admitted goal fence exactly once when writer admission throws', async () => {
+    vi.useFakeTimers();
+    const fixture = admittedProcessFixture();
+    fixture.workspaceWriterLease.begin.mockRejectedValue(new Error('Writer admission failed'));
+    expect((await fixture.invoke()).isError).toBe(true);
+    expect(fixture.start).not.toHaveBeenCalled();
+    expect(fixture.goalMutationFence.end).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fixture.goalMutationFence.heartbeat).not.toHaveBeenCalled();
+    expect(fixture.goalMutationFence.end).toHaveBeenCalledOnce();
+  });
+
+  it('keeps pending execution fenced after the response budget until actual settlement', async () => {
+    vi.useFakeTimers();
+    const fixture = admittedProcessFixture();
+    let settle!: () => void;
+    fixture.start.mockImplementation(() => new Promise((resolve) => { settle = (): void => resolve(ok({ processId: 'process-1' })); }));
+    const invocation = fixture.invoke();
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await invocation).structuredContent).toMatchObject({ error: { code: 'PROCESS_TIMEOUT' } });
+    expect(fixture.start).toHaveBeenCalledOnce();
+    expect(fixture.goalMutationFence.end).not.toHaveBeenCalled();
+    expect(fixture.workspaceWriterLease.end).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(fixture.goalMutationFence.heartbeat).toHaveBeenCalledTimes(2);
+    expect(fixture.workspaceWriterLease.heartbeat).toHaveBeenCalledTimes(2);
+    settle();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.goalMutationFence.end).toHaveBeenCalledOnce();
+    expect(fixture.workspaceWriterLease.end).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fixture.goalMutationFence.heartbeat).toHaveBeenCalledTimes(2);
+    expect(fixture.workspaceWriterLease.heartbeat).toHaveBeenCalledTimes(2);
+    expect(fixture.goalMutationFence.end).toHaveBeenCalledOnce();
+  });
+
   it('blocks file mutation without the current goalLease proof before the file handler executes', async (): Promise<void> => {
     const inspectWorkspaceFence = vi.fn().mockResolvedValue(activeFence());
     const writeFile = vi.fn().mockResolvedValue(ok({ path: 'src/file.ts', bytesWritten: 1 }));

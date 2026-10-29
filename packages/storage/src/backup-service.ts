@@ -6,6 +6,7 @@ import { backup, DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { isForeignAbsolutePath } from '@lnwjud/workspace';
 import type { SqliteDatabase } from './database.js';
 import { withSqliteLifecycleLockSync } from './sqlite-lifecycle-lock.js';
+import { configureGoalContractConnection } from './goal-contract-compatibility.js';
 
 export type BackupReason = 'daily' | 'manual' | 'pre-update' | 'pre-migration';
 
@@ -501,6 +502,7 @@ function sanitizeCrossHostDatabase(filename: string, context: CrossHostRestoreCo
     hostCompatibility: 'cross_host' as const,
   };
   try {
+    configureGoalContractConnection(database);
     database.exec('PRAGMA foreign_keys = ON;');
     database.exec('BEGIN IMMEDIATE;');
     database.exec(`
@@ -694,6 +696,7 @@ function writeRestoreNotice(database: DatabaseSync, notice: BackupRestoreNotice)
 function appendRestoreNotice(databaseFilename: string, original: BackupRestoreNotice, quarantinedItems: readonly string[]): void {
   const database = new DatabaseSync(databaseFilename);
   try {
+    configureGoalContractConnection(database);
     const notice: BackupRestoreNotice = {
       ...original,
       incomplete: quarantinedItems.length > 0,
@@ -938,6 +941,7 @@ function parseRestoreMarker(raw: string): RestoreMarker {
 function validateDatabase(filename: string): void {
   const database = new DatabaseSync(filename, { readOnly: true });
   try {
+    configureGoalContractConnection(database);
     const row = database.prepare('PRAGMA quick_check;').get();
     if (!isRecord(row) || !Object.values(row).includes('ok')) throw new Error('SQLite backup integrity check failed');
   } finally {

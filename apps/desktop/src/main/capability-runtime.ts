@@ -15,7 +15,7 @@ import {
   MacosProcessBridge,
   type NativeHostProcessBridge,
 } from '@lnwjud/capabilities';
-import { createProcessTreeTerminator } from '@lnwjud/process';
+import { createProcessTreeTerminator, type WindowsNativeAuthority } from '@lnwjud/process';
 import type { DashboardSnapshot } from '@lnwjud/ipc-contracts';
 import { DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS } from '@lnwjud/shared';
 import { createElectronNativeCapabilityBackends, type ElectronNativeCapabilityApi } from './electron-native-capability-backend.js';
@@ -34,6 +34,8 @@ export function createLocalCapabilityRuntime(
   configuredRootsProvider: () => readonly string[] = () => [],
   synchronousWaitSecondsProvider: () => number = () => DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS,
   nativeApi?: ElectronNativeCapabilityApi,
+  windowsNativeAuthority?: WindowsNativeAuthority,
+  posixProcessRuntime?: { readonly modulePath: string; readonly sha256: string },
 ): LocalCapabilityRuntime {
   const bridgeSizeBytes = capabilityBridgeExpectedSizeBytes();
   const ocrPath = windowsOcrHelperPath();
@@ -49,6 +51,8 @@ export function createLocalCapabilityRuntime(
   const runtime = createPlatformCapabilitySet({
     platform: process.platform,
     dataPath,
+    ...(windowsNativeAuthority === undefined ? {} : { windowsNativeAuthority }),
+    ...(posixProcessRuntime === undefined ? {} : { posixProcessRuntime }),
     workspaceRootsProvider,
     unrestricted,
     configuredRootsProvider: () => [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider()],

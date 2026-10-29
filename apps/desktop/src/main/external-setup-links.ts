@@ -10,6 +10,7 @@ const externalSetupTargets = new Set<ExternalSetupTarget>([
   'chatgpt_plugins',
   'ngrok_authtoken',
   'ngrok_download',
+  'lnwjud_releases',
 ]);
 
 export function parseOpenExternalSetupPageRequest(payload: unknown): OpenExternalSetupPageRequest {

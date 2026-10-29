@@ -6,6 +6,9 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-artifacts.mjs';
 import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
+import { validateContainmentEvidence } from './verify-containment-artifacts.mjs';
+import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
+import { readUpdateAcceptanceReceipt, verifyUpdateAcceptanceForRelease } from './verify-update-acceptance.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
@@ -96,6 +99,24 @@ if (provenance.platform === 'win32') {
 const provenanceHash = await sha256File(provenancePath);
 if (sums.get('PROVENANCE.json') !== provenanceHash) throw new Error('PROVENANCE.json SHA-256 mismatch');
 
+if (process.env.LNWJUD_REQUIRE_UPDATE_ACCEPTANCE === '1') {
+  if (!['win32', 'darwin'].includes(provenance.platform)) {
+    throw new Error('Updater acceptance is required only for supported Windows and macOS targets');
+  }
+  const acceptancePath = process.env.LNWJUD_UPDATE_ACCEPTANCE_FILE?.trim();
+  if (!acceptancePath) throw new Error('Updater acceptance receipt path is required for this release target');
+  const receipt = await readUpdateAcceptanceReceipt(acceptancePath);
+  const acceptance = verifyUpdateAcceptanceForRelease(receipt, {
+    provenance,
+    expectedRunId: process.env.LNWJUD_UPDATE_ACCEPTANCE_RUN_ID?.trim(),
+    expectedRunAttempt: process.env.LNWJUD_UPDATE_ACCEPTANCE_RUN_ATTEMPT?.trim(),
+    expectedCommit: expectedCommit ?? provenance.source.commit,
+  });
+  process.stdout.write(
+    `Updater acceptance verified for ${acceptance.platform}/${acceptance.arch}, CI run ${acceptance.runId} attempt ${acceptance.runAttempt}\\n`,
+  );
+}
+
 const requiredRuntime = requiredRuntimePaths(provenance.platform, provenance.arch);
 if (!Array.isArray(provenance.runtime)) throw new Error('Provenance runtime list is missing');
 for (const runtime of provenance.runtime) {
@@ -110,6 +131,8 @@ for (const runtime of provenance.runtime) {
   }
 }
 if (requiredRuntime.size > 0) throw new Error(`Runtime provenance is incomplete: ${[...requiredRuntime].join(', ')}`);
+validateContainmentEvidence(provenance.containment, provenance.runtime, provenance.platform);
+validateUpdateWorkerEvidence(provenance.updateWorker, provenance.runtime, provenance.platform);
 if (macSigning) {
   const rootExecutable = provenance.runtime.find((entry) => entry.relativePath === 'Contents/MacOS/lnwjud');
   validateMacosSigningPolicyEvidence(macSigning.policy, {
@@ -155,6 +178,12 @@ function requiredRuntimePaths(platform, arch) {
     ? [
       'lnwjud.exe',
       'lnwjud-mcp-stdio.cmd',
+      'resources/native-containment/lnwjud-containment.exe',
+      'resources/native-containment/lnwjud-containment-pin.node',
+      'resources/native-containment/manifest.json',
+      'resources/native-containment/process-runtime.mjs',
+      'resources/update-worker/lnwjud-update-worker.exe',
+      'resources/update-worker/manifest.json',
       'resources/windows-capability-bridge.ps1',
       'resources/windows-capability-bridge.sha256',
       'resources/windows-capability-bridge.integrity.json',
@@ -171,6 +200,7 @@ function requiredRuntimePaths(platform, arch) {
     : platform === 'darwin'
       ? ['Contents/MacOS/lnwjud', 'Contents/Resources/lnwjud-mcp-stdio', 'Contents/Resources/runtime-tools/ripgrep/rg', 'Contents/Resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'Contents/Resources/tunnel-client/tunnel-client', 'Contents/Resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `Contents/Resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `Contents/Resources/tunnel-client/${tunnelPrefix}.spdx.json`, `Contents/Resources/tunnel-client/tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`, `Contents/Resources/native-host/macos/${provenance.arch}/lnwjud-macos-host`, `Contents/Resources/native-host/macos/${provenance.arch}/NATIVE_HOST.json`]
       : ['lnwjud', 'lnwjud-mcp-stdio', 'resources/runtime-tools/ripgrep/rg', 'resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'resources/tunnel-client/tunnel-client', 'resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `resources/tunnel-client/${tunnelPrefix}.spdx.json`, `resources/tunnel-client/tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`, `resources/native-host/linux/${provenance.arch}/lnwjud-linux-host`, `resources/native-host/linux/${provenance.arch}/NATIVE_HOST.json`];
+  if (platform !== 'win32') paths.push(`${platform === 'darwin' ? 'Contents/Resources' : 'resources'}/native-containment/process-runtime.mjs`);
   return new Set(paths);
 }
 

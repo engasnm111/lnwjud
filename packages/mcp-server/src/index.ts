@@ -26,3 +26,6 @@ export * from './tools/tool-types.js';
 
 export * from './request-scope.js';
 export * from './dap-session-service.js';
+
+export * from './engineering-delivery-observations.js';
+export * from './engineering-build-capture.js';

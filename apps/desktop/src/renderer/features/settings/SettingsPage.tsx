@@ -6,7 +6,7 @@ import { createTranslator, type Translator } from '../../i18n/index.js';
 import { tunnelRuntimeCredentialAvailable } from '../../tunnel-auth-readiness.js';
 import { tunnelAuthPresentation } from '../../tunnel-auth-presentation.js';
 import { GuidedTunnelSetup } from '../onboarding/GuidedTunnelSetup.js';
-import { isTunnelRunning } from '../onboarding/guided-tunnel-setup-state.js';
+import { isTunnelRunning, tunnelControlAvailability } from '../onboarding/guided-tunnel-setup-state.js';
 import { EmptyState, PageHeading, SettingsCardHeading, StatusMessage , ActionButton, FormInput, FormTextarea } from '../ui/UiPrimitives.js';
 import { SettingsSelect as FormSelect } from '../ui/SettingsSelect.js';
 import { PonytailPolicyEditor } from './PonytailPolicyEditor.js';
@@ -40,6 +40,9 @@ interface SettingsPageProps {
   readonly onStartTunnel: () => Promise<TunnelStatus>;
   readonly onStopTunnel: () => Promise<void>;
   readonly tunnelBusy?: boolean;
+  readonly tunnelStartPending?: boolean;
+  readonly tunnelStopPending?: boolean;
+  readonly updatesUnavailable?: boolean;
   readonly onBeginTunnelOAuthLogin: () => Promise<TunnelOAuthLoginStatus>;
   readonly onGetTunnelOAuthLoginStatus: () => Promise<TunnelOAuthLoginStatus>;
   readonly onCancelTunnelOAuthLogin: () => Promise<TunnelOAuthLoginStatus>;
@@ -87,7 +90,13 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   const [tunnelId, setTunnelId] = useState('');
   const [localTunnelBusy, setLocalTunnelBusy] = useState(false);
   const tunnelBusy = props.tunnelBusy === true || localTunnelBusy;
-  const tunnelControlsLocked = tunnelBusy || props.dashboard.tunnel.state === 'starting';
+  const tunnelAvailability = tunnelControlAvailability(props.dashboard.tunnel, {
+    startPending: props.tunnelStartPending === true,
+    stopPending: props.tunnelStopPending === true,
+  });
+  const tunnelControlsLocked = tunnelBusy
+    || props.dashboard.tunnel.state === 'starting'
+    || props.dashboard.tunnel.persistent?.state === 'starting';
   const [tunnelMessage, setTunnelMessage] = useState<string | null>(null);
   const [remoteMcpAuthtoken, setRemoteMcpAuthtoken] = useState('');
   const [remoteMcpPublicOrigin, setRemoteMcpPublicOrigin] = useState(remoteMcp.configuredPublicOrigin ?? '');
@@ -312,14 +321,13 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
   }
 
   async function stopPersistentTunnel(): Promise<void> {
-    setLocalTunnelBusy(true);
     setTunnelMessage(null);
     try {
       await props.onStopTunnel();
       setTunnelMessage(t('settingsPage.tunnelStopped'));
     } catch (cause: unknown) {
       setTunnelMessage(cause instanceof Error ? cause.message : t('settingsPage.tunnelStopFailed'));
-    } finally { setLocalTunnelBusy(false); }
+    }
   }
 
   async function beginOAuthLogin(): Promise<void> {
@@ -688,6 +696,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               selectedWorkspace={props.dashboard.selectedWorkspace}
               engineeringStatus={props.dashboard.engineeringHarnessStatus}
               section={userConfigSection}
+              updatesUnavailable={props.updatesUnavailable ?? false}
+              onOpenManualUpdates={() => props.onOpenExternalSetupPage('lnwjud_releases')}
               unrestricted={props.dashboard.unrestricted}
               onUnrestrictedChange={props.onUnrestrictedChange}
               onSave={props.onUserSettingsChange}
@@ -917,8 +927,8 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                   {props.dashboard.tunnel.auth?.message === null || props.dashboard.tunnel.auth?.message === undefined ? null : <p className="hint">{props.dashboard.tunnel.auth.message}</p>}
                   <div className="inline-actions">
                     {!props.dashboard.tunnel.auth?.authReady ? <ActionButton type="button" className="btn-save-gold" disabled={oauthBusy || props.dashboard.tunnel.oauth?.available !== true} onClick={() => { void beginOAuthLogin(); }}>{t('settingsPage.signInOauth')}</ActionButton> : null}
-                    <ActionButton type="button" disabled={tunnelControlsLocked || !guidedTunnelConfigured || props.dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>{t(tunnelPresentation.startKey)}</ActionButton>
-                    <ActionButton type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>{t(tunnelPresentation.stopKey)}</ActionButton>
+                    <ActionButton type="button" disabled={tunnelControlsLocked || !guidedTunnelConfigured || tunnelAvailability.startDisabled} onClick={() => { void props.onStartTunnel(); }}>{t(tunnelPresentation.startKey)}</ActionButton>
+                    <ActionButton type="button" disabled={tunnelAvailability.stopDisabled} onClick={() => { void props.onStopTunnel().catch(() => undefined); }}>{t(tunnelPresentation.stopKey)}</ActionButton>
                   </div>
                 </section>
               ) : (
@@ -989,7 +999,7 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
                       ? t('settingsPage.zeroDowntimeProven')
                       : t('settingsPage.zeroDowntimeUnproven')}
                   </div>
-                  <div className="inline-actions"><ActionButton type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void reconnectSameTunnel(); }}>{t('settingsPage.reconnectSameTunnel')}</ActionButton><ActionButton type="button" disabled={tunnelControlsLocked || props.dashboard.tunnel.state === 'stopped'} onClick={() => { void stopPersistentTunnel(); }}>{t('settingsPage.stopTunnel')}</ActionButton></div>
+                  <div className="inline-actions"><ActionButton type="button" className="btn-save-gold" disabled={tunnelControlsLocked} onClick={() => { void reconnectSameTunnel(); }}>{t('settingsPage.reconnectSameTunnel')}</ActionButton><ActionButton type="button" disabled={tunnelAvailability.stopDisabled} onClick={() => { void stopPersistentTunnel(); }}>{t('settingsPage.stopTunnel')}</ActionButton></div>
                   {props.dashboard.tunnel.persistent.capabilityEvidence === null ? null : <p className="hint">{props.dashboard.tunnel.persistent.capabilityEvidence}</p>}
                 </div>
               )}

@@ -1,3 +1,7 @@
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Result } from '@lnwjud/domain';
 import type { ExecutableResolver } from './executable-resolver.js';
@@ -7,21 +11,22 @@ describe('RipgrepAdapter', () => {
   it('terminates an over-budget ripgrep process and reports a timed-out partial result', async () => {
     const runner = new DirectProcessRunner();
 
-    const result = await runner.run(
+    const result = await runWithVerifiedTermination((markerPath) => runner.run(
       process.execPath,
-      ['-e', "setTimeout(() => process.stdout.write('late'), 2_000)"],
+      ['-e', "setTimeout(() => { require('node:fs').writeFileSync(process.argv[1], 'survived'); process.stdout.write('late'); }, 2_000)", markerPath],
       process.cwd(),
       { timeoutMs: 40 },
-    );
+    ));
 
     expect(result.timedOut).toBe(true);
     expect(result.stdout).not.toContain('late');
-  });
+  }, 15_000);
 
   it('stops a high-volume child after enough stdout lines without retaining the full stream', async () => {
     const runner = new DirectProcessRunner();
     let observed = 0;
     const script = [
+      "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'survived'), 2_000);",
       "let i = 0;",
       "const write = () => {",
       "  while (i < 200000 && process.stdout.write(`line-${i++}\\n`)) {}",
@@ -30,36 +35,36 @@ describe('RipgrepAdapter', () => {
       "write();",
     ].join(' ');
 
-    const result = await runner.run(process.execPath, ['-e', script], process.cwd(), {
+    const result = await runWithVerifiedTermination((markerPath) => runner.run(process.execPath, ['-e', script, markerPath], process.cwd(), {
       timeoutMs: 5_000,
       stopAfterStdoutLine: () => {
         observed += 1;
         return observed > 100;
       },
-    });
+    }));
 
     expect(result.stoppedEarly).toBe(true);
     expect(result.timedOut).not.toBe(true);
     expect(observed).toBeGreaterThan(100);
     expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThan(1024 * 1024);
-  });
+  }, 15_000);
 
   it('terminates a ripgrep child when the MCP invocation is aborted', async () => {
     const runner = new DirectProcessRunner();
     const controller = new AbortController();
     const abortTimer = setTimeout(() => controller.abort(), 30);
 
-    const result = await runner.run(
+    const result = await runWithVerifiedTermination((markerPath) => runner.run(
       process.execPath,
-      ['-e', "setTimeout(() => process.stdout.write('late'), 2_000)"],
+      ['-e', "setTimeout(() => { require('node:fs').writeFileSync(process.argv[1], 'survived'); process.stdout.write('late'); }, 2_000)", markerPath],
       process.cwd(),
       { timeoutMs: 1_000, signal: controller.signal },
-    );
+    ));
     clearTimeout(abortTimer);
 
     expect(result.timedOut).toBe(true);
     expect(result.stdout).not.toContain('late');
-  });
+  }, 15_000);
 
   it('passes the invocation abort signal to process-backed text search', async () => {
     const controller = new AbortController();
@@ -311,3 +316,23 @@ describe('RipgrepAdapter', () => {
     });
   });
 });
+
+async function runWithVerifiedTermination(
+  run: (markerPath: string) => Promise<ProcessRunResult>,
+): Promise<ProcessRunResult> {
+  const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-search-process-stop-'));
+  const markerPath = path.join(root, 'survived');
+  try {
+    const result = await run(markerPath);
+    await new Promise((resolve) => setTimeout(resolve, 2_100));
+    expect(existsSync(markerPath)).toBe(false);
+    if (process.platform === 'darwin') {
+      expect(result.stderr).toMatch(/^POSIX process (?:identity changed or root exited|group identity could not be verified); targeted termination refused$/);
+    } else {
+      expect(result.stderr).toBe('');
+    }
+    return result;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}

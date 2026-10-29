@@ -1,5 +1,17 @@
 # Windows packaging
 
+**v5.9.0 acceptance:** Local packaging does not publish a release or prove the
+automatic updater. The current source keeps automatic updates unavailable
+until the native authority, enrolled package trust, work admission, independent
+health checks, and trusted application/data rollback are implemented and pass
+signed acceptance. The requested user flow confirms the exact target version
+once, waits for active work, stops the enrolled Tunnel, installs without more
+installer clicks, and relaunches. `latest.yml` and `portable.yml` identify
+separate Windows package streams; they do not establish update authority or
+acceptance. A fresh final-source installer/service matrix and real signed
+updater tests are required before release. Earlier installed candidates and
+checks are recorded in the [acceptance ledger](../codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
+
 The lnwjud desktop package is built with Electron and packaged for **Windows 10/11 x64** as both an NSIS installer and a single-file portable executable. The graphical Electron application carries its own Electron runtime; a separate system Node installation is not required merely to open the dashboard.
 
 The packaged MCP stdio launcher is self-contained: `lnwjud-mcp-stdio.cmd` launches the packaged Electron host with `--mcp-stdio`. No private Node executable or generated CJS bundle is shipped, and installed users do not need a separate system Node.js installation for stdio MCP or OpenAI Secure MCP Tunnel.
@@ -14,7 +26,7 @@ The current release target is x64 only. Windows 7/8/8.1 and 32-bit Windows are n
 
 Windows 10 and Windows 11 use different renderer compatibility defaults. `platform-compatibility.ts` recognizes NT build 10240+ as Windows 10 and build 22000+ as Windows 11. Windows 10 disables Electron hardware acceleration before `app.whenReady()` so older Intel/AMD/NVIDIA drivers use software rendering; Windows 11 keeps hardware acceleration enabled. This does not weaken `sandbox`, `contextIsolation`, or `webSecurity`.
 
-Product-internal Windows plumbing uses built-in `powershell.exe` rather than requiring PowerShell 7. Runtime child launches use `windowsHide: true`. Durable shell workers have a default global cap of 16 active tasks per runtime process and `ProcessManager` has a default cap of 24 active managed processes, preventing an unbounded child/conhost fan-out when multiple chats/projects submit work concurrently.
+Product-internal Windows plumbing uses built-in `powershell.exe` where required, without requiring PowerShell 7. Managed process containment uses the protected native service rather than a PowerShell launcher. Runtime child launches use `windowsHide: true`. Durable shell has a default 16-job budget shared through its disk index. Managed-writer reservations have a separate budget while retaining the same exclusive import fence. `ProcessManager` has a default cap of 24 active managed processes. Task-list admission counts describe held reservations, not process liveness.
 
 ## Build
 
@@ -25,29 +37,40 @@ corepack pnpm@10.15.0 install --frozen-lockfile
 corepack pnpm@10.15.0 package:windows
 ```
 
-The package script rebuilds the workspace, generates the current MCP stdio bundle/launcher, writes both Windows executables to `apps/desktop/dist/installers/`, writes update metadata for both distribution channels, and finishes by generating and verifying `SHA256SUMS.txt` plus `PROVENANCE.json`. Provenance records the exact Git commit, tracked-tree dirty state, release artifact hashes, and critical packaged runtime hashes without storing signing secrets.
+For an installable **validation candidate only** when the currently installed Native Service is broken, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-v590-test-installer.ps1` on the Windows developer machine. This builds Setup/Portable and runs local native/unit/typecheck checks but **defers**, not passes, installed-service tests. After installing the candidate as **all users**, run the script with `-RequireInstalledService` and independently verify Native Service shell/process launch plus authenticated zero-active Job termination. A local `RUNNING` service state and matching image SHA256 do not establish that acceptance. On 2026-10-21, an installed candidate recovered Writer Lease generation 42 but `shell` hit `PIPE_LAUNCH_SESSION_CHANGE_FAILED` during token session normalization, while `process_start` returned `INTERNAL_ERROR`. The rebuilt candidate was installed, and its installed `manifest.json` matches workspace SHA256 declarations (helper `35b88b51e7572bd0b27ca862fe1ee01580731fc05c1316e406989e524a146aae`); independent executable-byte hashing was unavailable. Fresh `shell` launches still exit `-1` without output and `process_start` returns `INTERNAL_ERROR`. Numeric Win32 diagnostics and pre-dispatch abort handling are present in source, but installed native launch and authenticated termination have not passed. Do not change PowerShell policy, force-clear reservation markers, claim a green gate or publish v5.9.0 on this evidence alone.
+
+The package script rebuilds the workspace, prepares the first-party Windows containment helper, pin module, manifest and runtime bundle, and updates the compiled integrity pins before the application build. It prepares the target-native stdio launcher, writes both Windows executables to `apps/desktop/dist/installers/`, writes update metadata for both distribution channels, and finishes by generating and verifying `SHA256SUMS.txt` plus `PROVENANCE.json`. Provenance records the exact Git commit, tracked-tree dirty state, release artifact hashes, and critical packaged runtime hashes without storing signing secrets.
+
+For Windows x64 Native Pin compilation, `pin/build.mjs` uses installed LLVM `clang-cl.exe` with `lld-link.exe` when both are present under `C:/Program Files/LLVM/bin`; otherwise it retains the MSVC compiler fallback. Both paths keep `/Brepro` and the pinned Node N-API headers, and the produced addon and helper are always SHA-256 bound in `manifest.json` and the generated TypeScript integrity constants. This is a build-tool choice, not an exception to native Job Object zero-active-process proof: MSVC 14.51 can leave a `vctip.exe` telemetry process active after linking even with `VSCMD_SKIP_SENDTELEMETRY=1`, so a `timed_out` native wrapper is not a passing build gate. On 2026-10-22, the LLVM path reproducibly produced Pin SHA-256 `2bce3428ad0e69b4fd28ff7c827ee45296f4ac7d5b520a7cc17ecb7da0d39e5c` in two builds; a separate process loaded its Node N-API export, and the scoped native wrapper completed with exit code zero. Hosted CI and official release evidence must still be established independently.
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v5.8.7 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v5.9.0 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
-- Installer is per-user (`perMachine: false`).
+- NSIS defaults to all-users installation (`selectPerMachineByDefault: true`) while keeping the install-mode page available for users who need per-user mode.
+- All-users installs register the LocalSystem Windows containment service from `resources/native-containment/lnwjud-containment.exe` with `service-install`; the service is stopped and removed before its installed image is removed. Its image, `manifest.json`, and `lnwjud-containment-pin.node` are hash-checked and protected from user writes.
+- ACL validation distinguishes read/execute grants from mutation grants. Normal Program Files and Authenticated Users read/execute permissions are permitted; untrusted effective write, delete, permission-change and ownership grants remain refused. Installer and service-store regressions exercise this distinction. An early local 5.9.0 test installer incorrectly treated read/execute as write and failed service installation with exit125. Replace that test installer with the rebuilt package; changing Program Files permissions or PowerShell policy is not a repair.
+- A fresh service store is created with its protected SYSTEM and Administrators ACL already applied. It does not inherit ProgramData's user-write grants before validation. An existing store with untrusted mutation rights, including descendant-only grants, is refused before its permissions or persisted state can be changed.
+- Per-user and Portable builds do not register that machine service. They require an installed protected service with the exact matching package hash. Without one, native managed operations fail closed.
+- To migrate an existing per-user installation, run Setup and select all-users. If the installer retains the previous per-user scope, uninstall that copy while choosing to keep user data, then install again and select all-users. This does not change PowerShell Execution Policy.
 - User-selectable installer directory (`allowToChangeInstallationDirectory: true`).
 - Branded `build/icon.ico` for the application, installer, and uninstaller.
 - `signAndEditExecutable: true` for executable metadata/icon editing.
 - `deleteAppDataOnUninstall: false`; uninstalling the application does **not** automatically remove lnwjud user data.
 - NSIS renames electron-builder's generated uninstaller to the stable user-facing `uninstall.exe` and rewrites `UninstallString` / `QuietUninstallString` for the active per-user or per-machine install mode so Windows Settings and upgrades keep using the correct path.
 - Portable mode launches without installation but intentionally uses the same per-user lnwjud data/settings location as the installed build. It is portable as an executable, not a "keep every setting beside the EXE" mode.
-- Installer auto-update remains on electron-builder's normal `latest.yml` channel and installs `lnwjud-Setup-<version>.exe`.
-- Portable auto-update uses a separate generated `portable.yml` channel and downloads only `lnwjud-Portable-<version>.exe`.
-- Portable downloads are verified by electron-updater against the SHA-512/size in `portable.yml`, then replaced in place only after the running process exits. The helper keeps a rollback backup, restores it on replacement failure, restarts the exact outer Portable path, and cleans itself up.
-- The updater never crosses distribution types: an installed user remains on Setup/NSIS updates and a Portable user remains on Portable EXE updates.
+- The package build generates `latest.yml` for Setup and `portable.yml` for Portable. The app uses the matching stream and asks the user once to confirm the exact displayed target version before it queues installation.
+- After confirmation, the installer runs silently without Next pages or further installer interaction, and the app relaunches. The wait-for-work and Tunnel-stop handoff is source-tested, but a successful signed update/restart/health/rollback on an installed copy is still required for updater acceptance.
+- The current Portable replacement helper has file-replacement recovery logic, but that does not prove the complete signed update, restart, health, and trusted rollback flow. Do not claim Portable updater acceptance from packaging or unit tests.
+- Setup and Portable use separate package streams. The updater does not claim acceptance across either stream until a signed package update is tested on an installed copy.
 - Installer and Portable intentionally continue to share the same per-user lnwjud settings/data location.
 - The Windows capability bridge is copied as an extra resource.
+- `resources/native-containment/` carries the trusted runtime bundle `process-runtime.mjs`; Windows additionally packages the self-contained `lnwjud-containment.exe`, hash-pinned `lnwjud-containment-pin.node`, and schema-versioned `manifest.json`. The desktop package runs `prepare-containment-runtime.mjs` before compiling the app so these hashes are embedded in the host bundle and verified again against packaged files.
 - The generated `lnwjud-mcp-stdio.cmd` has one canonical packaged copy beside `lnwjud.exe` for local stdio use. POSIX packages use the matching executable shell launcher. The package also includes the hash-bound native Windows secret migrator for one-time legacy data migration; no PowerShell secret runtime is shipped.
 - Pinned ripgrep is shipped under `resources/runtime-tools/ripgrep`; both Desktop and the stdio launcher resolve this private `rg.exe` before any system PATH copy.
+- The six pinned Ponytail skills are sourced from upstream stable `v5.3.2` (tag commit `16352ac229eb08a9598dcae48fe9f2b342567d86`); each skill ships an MIT `LICENSE` and `SOURCE.md` and must pass the exact packaged-binary inventory and provenance checks in [Ponytail integration](../PONYTAIL.md). Older static source checks do not prove a newly installed helper or package works.
 - The repository's `lnwjud-scheduled-continuation` skill plus the six pinned Ponytail skills (`ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`) are shipped as sibling directories under `resources/agent-skills` in both Setup/NSIS and Portable. Their source-qualified bundled identities remain distinct from same-name machine-global or active-workspace Cursor, Claude, Agents, Codex, Codex-plugin, GitHub workspace, or configured skill roots; Native Ponytail activation accepts only the exact bundled primary/review identities.
 - The launcher never falls back to a system Node runtime; a missing packaged Electron executable fails closed.
 - Generated stdio runtime files are ignored by Git and must be regenerated from source for each build/release.
@@ -72,12 +95,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v5.8.7:
+For v5.9.0:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.8.7.exe
-apps/desktop/dist/installers/lnwjud-Setup-5.8.7.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-5.8.7.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.0.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-5.9.0.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt
@@ -91,7 +114,7 @@ lnwjud-Setup-<version>.exe
 lnwjud-Portable-<version>.exe
 ```
 
-The NSIS installer produces its blockmap plus `latest.yml`. Portable has its own `portable.yml` and is an auto-updater target through the dedicated Portable channel; it is never installed through NSIS during a Portable update.
+The NSIS installer produces its blockmap plus `latest.yml`. Portable has its own `portable.yml`. These files preserve package-specific update metadata; they do not prove that installation, restart, health checks, or rollback work end to end.
 
 ## Clean-machine smoke
 

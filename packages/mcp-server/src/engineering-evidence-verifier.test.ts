@@ -7,6 +7,40 @@ import { engineeringCommandFingerprint } from '@lnwjud/shared';
 import { RuntimeEngineeringEvidenceVerifier, createEngineeringArtifactVerifier, createEngineeringSourceStateProvider, type EngineeringSourceState } from './engineering-evidence-verifier.js';
 
 describe('RuntimeEngineeringEvidenceVerifier', () => {
+  it('loads exact workflow jobs from the bounded GitHub Actions API pages', async () => {
+    const module = await import('./engineering-evidence-verifier.js');
+    const createJobsProvider = Reflect.get(module, 'createEngineeringGithubJobsProvider');
+    expect(createJobsProvider).toBeTypeOf('function');
+
+    const calls: Array<{ cwd: string; args: readonly string[] }> = [];
+    const commit = 'cbb9ac40cc6d1acfd0f66a0a2d62c25a8f3a1264';
+    const runId = '36568935961';
+    const runner = async (cwd: string, args: readonly string[]): Promise<string> => {
+      calls.push({ cwd, args });
+      if (args[0] === 'repo') return JSON.stringify({ nameWithOwner: 'owner/repo' });
+      const page = Number(args[1]?.match(/[?&]page=(\d+)/)?.[1]);
+      const jobs = page === 1
+        ? Array.from({ length: 100 }, (_, index) => ({
+            run_id: Number(runId), head_sha: commit, status: 'completed', conclusion: 'success', labels: [`ubuntu-${index}`],
+          }))
+        : [{ run_id: Number(runId), head_sha: commit, status: 'completed', conclusion: 'success', labels: ['windows-latest'] }];
+      return JSON.stringify({ total_count: 101, jobs });
+    };
+    const workspaceRoot = join(tmpdir(), 'lnwjud-gh-jobs-fixture');
+    const provider = createJobsProvider(async () => workspaceRoot, runner);
+
+    const result = await provider('workspace-1', runId);
+    expect(calls.map((call) => call.args)).toHaveLength(3);
+    expect(result?.runId).toBe(runId);
+    expect(result?.jobs).toHaveLength(101);
+    expect(result?.jobs[100]).toMatchObject({ runId, headSha: commit, labels: ['windows-latest'] });
+    expect(calls).toEqual([
+      { cwd: workspaceRoot, args: ['repo', 'view', '--json', 'nameWithOwner'] },
+      { cwd: workspaceRoot, args: ['api', 'repos/owner/repo/actions/runs/36568935961/jobs?per_page=100&page=1'] },
+      { cwd: workspaceRoot, args: ['api', 'repos/owner/repo/actions/runs/36568935961/jobs?per_page=100&page=2'] },
+    ]);
+  });
+
   it('reads the current tracked source SHA and cleanliness through bounded read-only Git commands', async () => {
     const commit = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     const runGit = vi.fn(async (_workspaceId: string, args: readonly string[]) => args[0] === 'rev-parse'
@@ -16,7 +50,7 @@ describe('RuntimeEngineeringEvidenceVerifier', () => {
 
     await expect(sourceState('workspace-1')).resolves.toEqual({ commit, clean: false });
     expect(runGit).toHaveBeenCalledWith('workspace-1', ['rev-parse', 'HEAD']);
-    expect(runGit).toHaveBeenCalledWith('workspace-1', ['status', '--porcelain=v1', '--untracked-files=no']);
+    expect(runGit).toHaveBeenCalledWith('workspace-1', ['status', '--porcelain=v1', '--untracked-files=all']);
   });
 
   it('verifies only fresh non-empty package artifacts contained by the workspace root', async () => {
@@ -157,19 +191,30 @@ describe('RuntimeEngineeringEvidenceVerifier', () => {
       command_fingerprint: engineeringCommandFingerprint(taskId === 'ci' ? ciCommand : platformCommand),
       stdout: JSON.stringify({
         headSha: commit, status: 'completed', conclusion: 'success',
-        jobs: ['Windows', 'macOS', 'Linux'].map((name) => ({
-          name: `Native Platform Contract (${name})`, status: 'completed', conclusion: 'success',
-        })),
+        // `gh run view --json jobs` does not include runner labels. The API
+        // provider below supplies the independently fetched job records.
+        jobs: ['build (windows-latest)', 'build (macos-15)', 'build (ubuntu-24.04)']
+          .map((name) => ({ name, status: 'completed', conclusion: 'success' })),
       }),
+    }));
+    const githubJobs = vi.fn(async (_workspaceId: string, runId: string) => ({
+      runId,
+      jobs: [
+        { runId, headSha: commit, status: 'completed', conclusion: 'success', labels: ['windows-latest'] },
+        { runId, headSha: commit, status: 'completed', conclusion: 'success', labels: ['macos-15'] },
+        { runId, headSha: commit, status: 'completed', conclusion: 'success', labels: ['ubuntu-24.04'] },
+      ],
     }));
     const verifier = new RuntimeEngineeringEvidenceVerifier({
       shell: { statusForGoalLiveness, statusForGoalEvidence },
       sourceState: async (): Promise<EngineeringSourceState> => ({ commit, clean: true }),
+      githubJobs,
     });
     const base = { source: 'host_observed' as const, workspaceId: 'workspace-1',
       observedAt: '2026-10-11T00:00:00Z', exitCode: 0, commit, conclusion: 'success' };
     await expect(verifier.verify('workspace-1', { ...base, runId: 'ci', command: ciCommand }, 'exact_sha_ci')).resolves.toBe(true);
     await expect(verifier.verify('workspace-1', { ...base, runId: 'platform', command: platformCommand }, 'cross_platform')).resolves.toBe(true);
+    expect(githubJobs).toHaveBeenCalledWith('workspace-1', '36568935961');
     expect(statusForGoalEvidence).toHaveBeenCalledTimes(2);
     expect(statusForGoalLiveness).not.toHaveBeenCalled();
     await expect(verifier.verify('workspace-1', { ...base, runId: 'ci', command: ciCommand,
@@ -207,31 +252,30 @@ describe('RuntimeEngineeringEvidenceVerifier', () => {
   it('accepts complete exact-SHA hosted platform matrix proof and rejects partial platform evidence', async () => {
     const commit = 'cbb9ac40cc6d1acfd0f66a0a2d62c25a8f3a1264';
     const command = 'gh run view 36568935961 --json "headSha,status,conclusion,jobs"';
-    const completeOutput = JSON.stringify({
-      headSha: commit,
-      status: 'completed',
-      conclusion: 'success',
+    const cliOutput = JSON.stringify({
+      headSha: commit, status: 'completed', conclusion: 'success',
       jobs: [
-        { name: 'Native Platform Contract (Windows)', status: 'completed', conclusion: 'success' },
-        { name: 'Native Platform Contract (macOS)', status: 'completed', conclusion: 'success' },
-        { name: 'Native Platform Contract (Linux)', status: 'completed', conclusion: 'success' },
+        { name: 'check (windows-latest)', status: 'completed', conclusion: 'success' },
+        { name: 'check (macos-15)', status: 'completed', conclusion: 'success' },
+        { name: 'check (ubuntu-24.04)', status: 'completed', conclusion: 'success' },
       ],
     });
-    const partialOutput = JSON.stringify({
-      headSha: commit,
-      status: 'completed',
-      conclusion: 'success',
-      jobs: [
-        { name: 'Native Platform Contract (Windows)', status: 'completed', conclusion: 'success' },
-      ],
-    });
-    const shell = { statusForGoalLiveness: vi.fn(async (_workspaceId: string, taskId: string) => ok({
+    const shell = { statusForGoalEvidence: vi.fn(async () => ok({
       state: 'completed', exit_code: 0, command_fingerprint: engineeringCommandFingerprint(command),
-      stdout: taskId === 'complete-matrix' ? completeOutput : partialOutput,
+      stdout: cliOutput,
     })) };
+    const completeJobs = [
+      { runId: '36568935961', headSha: commit, status: 'completed', conclusion: 'success', labels: ['windows-2022'] },
+      { runId: '36568935961', headSha: commit, status: 'completed', conclusion: 'success', labels: ['macos-15'] },
+      { runId: '36568935961', headSha: commit, status: 'completed', conclusion: 'success', labels: ['ubuntu-24.04'] },
+    ];
+    const githubJobs = vi.fn()
+      .mockResolvedValueOnce({ runId: '36568935961', jobs: completeJobs })
+      .mockResolvedValueOnce({ runId: '36568935961', jobs: [completeJobs[0]] });
     const verifier = new RuntimeEngineeringEvidenceVerifier({
       shell,
       sourceState: async (): Promise<EngineeringSourceState> => ({ commit, clean: true }),
+      githubJobs,
     });
     const base = {
       source: 'host_observed' as const, observedAt: '2026-09-30T00:00:00Z', workspaceId: 'workspace-1',
@@ -242,6 +286,33 @@ describe('RuntimeEngineeringEvidenceVerifier', () => {
       .resolves.toBe(true);
     await expect(verifier.verify('workspace-1', { ...base, runId: 'partial-matrix' }, 'cross_platform', ['win32', 'linux']))
       .resolves.toBe(false);
+    expect(githubJobs).toHaveBeenNthCalledWith(1, 'workspace-1', '36568935961');
+    expect(githubJobs).toHaveBeenNthCalledWith(2, 'workspace-1', '36568935961');
+  });
+
+  it('rejects GitHub job evidence from a different run or source commit', async () => {
+    const commit = 'cbb9ac40cc6d1acfd0f66a0a2d62c25a8f3a1264';
+    const command = 'gh run view 36568935961 --json "headSha,status,conclusion,jobs"';
+    const shell = { statusForGoalEvidence: vi.fn(async () => ok({
+      state: 'completed', exit_code: 0, command_fingerprint: engineeringCommandFingerprint(command),
+      stdout: JSON.stringify({ headSha: commit, status: 'completed', conclusion: 'success', jobs: [] }),
+    })) };
+    const job = { runId: '36568935961', headSha: commit, status: 'completed', conclusion: 'success', labels: ['windows-latest'] };
+    const githubJobs = vi.fn()
+      .mockResolvedValueOnce({ runId: 'another-run', jobs: [job] })
+      .mockResolvedValueOnce({ runId: '36568935961', jobs: [{ ...job, headSha: 'a'.repeat(40) }] });
+    const verifier = new RuntimeEngineeringEvidenceVerifier({
+      shell,
+      sourceState: async (): Promise<EngineeringSourceState> => ({ commit, clean: true }),
+      githubJobs,
+    });
+    const evidence = {
+      source: 'host_observed' as const, observedAt: '2026-09-30T00:00:00Z', workspaceId: 'workspace-1',
+      command, exitCode: 0, commit, conclusion: 'success', runId: 'terminal-shell-task',
+    };
+
+    await expect(verifier.verify('workspace-1', evidence, 'cross_platform', ['win32'])).resolves.toBe(false);
+    await expect(verifier.verify('workspace-1', evidence, 'cross_platform', ['win32'])).resolves.toBe(false);
   });
 
   it('rejects historical exact-SHA CI or package proof when the current tracked source is dirty or at another commit', async () => {

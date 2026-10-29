@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   GoalStateError,
-  mayMarkEngineeringGateNotApplicable,
-  requiresHostObservedEngineeringEvidence,
+  evaluateGoalReadiness,
+  parseEngineeringDeliveryContract,
+  parseEngineeringGateDecision,
+  type RecoverBlockedGoalRecordRequest,
   type AcquireGoalRecordRequest,
   type AcquireGoalRecordResult,
   type BeginGoalFencedMutationRequest,
@@ -536,6 +538,36 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
     });
   }
 
+  public async recoverBlocked(request: RecoverBlockedGoalRecordRequest): Promise<GoalRecord> {
+    return this.transaction(() => {
+      const current = this.requireById(request.goalId);
+      this.assertOwner(current, request.ownerClientId);
+      if (current.status !== 'blocked') throw new GoalStateError('terminal', 'Only terminal blocked goals support explicit recovery');
+      if (current.revision !== request.expectedRevision) throw new GoalStateError('conflict', 'Goal revision is stale');
+      if (this.selectLiveScheduledContinuation(current.id) !== undefined) throw new GoalStateError('precondition', 'Verify scheduled continuation cleanup before blocked goal recovery');
+      const observation = request.recoveryEvidence;
+      const age = Date.parse(request.now) - Date.parse(observation.observedAt);
+      if (!observation.trustworthy || !Number.isFinite(age) || age < 0 || age > 30_000
+        || observation.leaseGeneration !== current.leaseGeneration || observation.leaseActivitySeq !== current.leaseActivitySeq
+        || observation.liveFencedCallCount !== 0) throw new GoalStateError('precondition', 'Blocked goal recovery requires fresh host liveness proof');
+      const historicalTasks = current.checkpoints.flatMap((checkpoint) => checkpoint.trackedTasks ?? legacyTrackedTasks(checkpoint.activeTaskIds)).filter((task) => task.role === 'blocking_job');
+      if (historicalTasks.some((task) => !observation.blockingTaskStates.some((state) => state.taskId === task.taskId && state.provider === task.provider && (state.state === 'terminal' || state.state === 'absent')))) throw new GoalStateError('precondition', 'Blocked goal recovery has live or unknown prior writers');
+      if (request.reason.trim().length === 0 || request.reason.length > 1024) throw new GoalStateError('precondition', 'Blocked goal recovery requires a bounded reason');
+      const revision = current.revision + 1;
+      const changed = this.database.connection.prepare(`UPDATE goals SET status = 'active', revision = ?, engineering_metadata_json = ?, current_phase = 'recovered',
+        lease_owner_client_id = ?, lease_owner_session_id = ?, lease_token_hash = ?, lease_duration_seconds = ?, lease_generation = lease_generation + 1, lease_activity_seq = 0,
+        lease_heartbeat_at = ?, lease_expires_at = ?, updated_at = ?, terminal_summary = NULL, terminal_evidence_json = NULL, terminal_at = NULL
+        WHERE id = ? AND revision = ? AND status = 'blocked' AND lease_generation = ? AND lease_activity_seq = ?`).run(
+        revision, JSON.stringify(request.engineering), request.ownerClientId, request.ownerSessionId, request.leaseTokenHash, request.leaseSeconds,
+        request.now, addSeconds(request.now, request.leaseSeconds), request.now, current.id, request.expectedRevision, observation.leaseGeneration, observation.leaseActivitySeq,
+      );
+      if (Number(changed.changes) !== 1) throw new GoalStateError('conflict', 'Blocked goal recovery lost the compare-and-swap race');
+      this.insertCheckpoint({ id: request.checkpointId, goalId: current.id, revision, currentPhase: 'recovered', summary: `Explicit blocked goal recovery: ${request.reason}`, stepUpdates: [],
+        nextAction: current.nextAction, blockers: current.blockers, evidence: [{ kind: 'note', value: 'Host checked owner, revision, source contract and prior writer liveness; no schedule was created.' }], activeTaskIds: [], trackedTasks: [], createdAt: request.now });
+      return this.requireById(current.id);
+    });
+  }
+
   public async validateFinish(request: FinishGoalRecordRequest): Promise<void> {
     this.transaction(() => {
       const current = this.requireById(request.goalId);
@@ -723,7 +755,15 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
   public async recordDeliveryReceipt(request: RecordGoalDeliveryReceiptRequest): Promise<GoalDeliveryReceipt> {
     return this.transaction(() => {
       const goal = this.requireById(request.goalId);
+      if (request.mutationFence !== undefined) {
+        const fence = request.mutationFence;
+        this.assertMutableLease(goal, fence.ownerClientId, fence.ownerSessionId, fence.leaseTokenHash, fence.expectedRevision, request.now);
+        if (goal.leaseGeneration !== fence.leaseGeneration || goal.userIntentRevision !== request.basedOnUserIntentRevision) {
+          throw new GoalStateError('conflict', 'Delivery receipt mutation fence is stale');
+        }
+      }
       const existing = this.selectDeliveryReceipt(request.id);
+      if (request.createOnly === true && existing !== undefined) throw new GoalStateError('conflict', 'Delivery receipt identity is already reserved');
       if (existing === undefined) {
         if (request.state !== 'reserved') throw new GoalStateError('conflict', 'A delivery receipt must begin in reserved state');
         if (request.basedOnUserIntentRevision !== goal.userIntentRevision) throw new GoalStateError('conflict', 'Delivery receipt is based on stale user intent');
@@ -2859,51 +2899,8 @@ function parseGoalPonytailMode(value: string): GoalPonytailMode {
 
 function assertCompletionReady(goal: GoalRecord, status: FinishGoalRecordRequest['status']): void {
   if (status !== 'completed') return;
-  const unfinishedSteps = goal.plan.steps.filter((step) => step.status !== 'completed');
-  if (unfinishedSteps.length > 0) {
-    throw new GoalStateError(
-      'precondition',
-      `Goal cannot be completed while plan steps remain unfinished: ${unfinishedSteps.map((step) => step.id).join(', ')}`,
-    );
-  }
-  const incompleteCriteria = goal.acceptanceCriteria.filter((criterion) => criterion.status !== 'completed');
-  if (incompleteCriteria.length > 0) {
-    throw new GoalStateError(
-      'precondition',
-      `Goal cannot be completed while acceptance criteria remain unfinished: ${incompleteCriteria.map((criterion) => criterion.id).join(', ')}`,
-    );
-  }
-  if (goal.engineering !== undefined) {
-    const unresolvedGates = goal.engineering.gates.filter((gate) => {
-      if (gate.status === 'passed') return gate.evidence === undefined;
-      if (gate.status === 'not_applicable') return gate.reason.trim().length === 0 || !mayMarkEngineeringGateNotApplicable(gate);
-      return gate.applicability === 'required';
-    });
-    if (unresolvedGates.length > 0) {
-      throw new GoalStateError(
-        'precondition',
-        `Engineering goal cannot be completed while required gates are unresolved: ${unresolvedGates.map((gate) => `${gate.id}:${gate.status}`).join(', ')}`,
-      );
-    }
-    const unobservedGates = goal.engineering.gates.filter((gate) => gate.status === 'passed' && requiresHostObservedEngineeringEvidence(gate.id) && gate.evidence?.source !== 'host_observed');
-    if (unobservedGates.length > 0) {
-      throw new GoalStateError(
-        'precondition',
-        `Engineering goal cannot be completed without host-observed evidence for gates: ${unobservedGates.map((gate) => gate.id).join(', ')}`,
-      );
-    }
-    const blockingFindings = (goal.engineering.reviewFindings ?? []).filter((finding) => finding.severity === 'blocking' && (finding.state === 'open' || finding.state === 'validated'));
-    if (blockingFindings.length > 0) {
-      throw new GoalStateError(
-        'precondition',
-        `Engineering goal cannot be completed while blocking review findings remain unresolved: ${blockingFindings.map((finding) => finding.id).join(', ')}`,
-      );
-    }
-    const invalidRejectedFindings = (goal.engineering.reviewFindings ?? []).filter((finding) => finding.state === 'rejected' && finding.reason.trim().length === 0);
-    if (invalidRejectedFindings.length > 0) throw new GoalStateError('precondition', 'Rejected Engineering review findings require a recorded reason');
-  }
-  if (goal.blockers.length > 0) throw new GoalStateError('precondition', 'Goal cannot be completed while durable blockers remain');
-  if (goal.activeTaskIds.length > 0) throw new GoalStateError('precondition', 'Goal cannot be completed while blocking tasks remain tracked');
+  const readiness = evaluateGoalReadiness(goal);
+  if (!readiness.ready) throw new GoalStateError('precondition', readiness.reasons.map((reason) => reason.message).join('; '));
 }
 
 function trackedTasksAtCancellation(goal: GoalRecord): readonly GoalTrackedTask[] {
@@ -3061,7 +3058,7 @@ function parseIterationPolicy(serialized: string): GoalIterationPolicy {
 
 function parseEngineeringGoalMetadata(serialized: string): EngineeringGoalMetadata {
   const value = parseJson(serialized, 'engineering goal metadata');
-  if (!isRecord(value) || value.schemaVersion !== 1) throw corrupt('Engineering goal metadata is invalid');
+  if (!isRecord(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2)) throw corrupt('Engineering goal metadata version is unsupported');
   const primaryTaskKind = value.primaryTaskKind;
   if (!['feature','bugfix','refactor','review','incident','release','maintenance','docs','unknown'].includes(String(primaryTaskKind))) throw corrupt('Engineering task kind is invalid');
   const riskTier = value.riskTier;
@@ -3079,11 +3076,22 @@ function parseEngineeringGoalMetadata(serialized: string): EngineeringGoalMetada
       || typeof entry.reason !== 'string' || entry.reason.length > 1024) throw corrupt('Engineering gate is invalid');
     if (gateIds.has(entry.id)) throw corrupt('Engineering gate ids are duplicated');
     gateIds.add(entry.id);
-    if (!['required','optional','not_applicable'].includes(String(entry.applicability))) throw corrupt('Engineering gate applicability is invalid');
+    if (!['required','optional','not_applicable','unresolved'].includes(String(entry.applicability))) throw corrupt('Engineering gate applicability is invalid');
     if (!['pending','running','passed','failed','blocked','not_applicable','stale'].includes(String(entry.status))) throw corrupt('Engineering gate status is invalid');
     if (!Number.isInteger(entry.basedOnUserIntentRevision) || Number(entry.basedOnUserIntentRevision) < 0) throw corrupt('Engineering gate intent revision is invalid');
     if (entry.checkCommand !== undefined && (typeof entry.checkCommand !== 'string' || entry.checkCommand.trim().length === 0 || entry.checkCommand.length > 2048)) {
       throw corrupt('Engineering gate check command is invalid');
+    }
+    let requiredPlatforms: EngineeringGoalMetadata['gates'][number]['requiredPlatforms'];
+    if (entry.requiredPlatforms !== undefined) {
+      if (!Array.isArray(entry.requiredPlatforms) || entry.requiredPlatforms.length === 0
+        || entry.requiredPlatforms.length > 3 || new Set(entry.requiredPlatforms).size !== entry.requiredPlatforms.length) {
+        throw corrupt('Engineering gate required platforms are invalid');
+      }
+      requiredPlatforms = entry.requiredPlatforms.map((platform: unknown) => {
+        if (platform === 'win32' || platform === 'darwin' || platform === 'linux') return platform;
+        throw corrupt('Engineering gate required platforms are invalid');
+      });
     }
     let evidence: EngineeringGoalMetadata['gates'][number]['evidence'];
     if (entry.evidence !== undefined) {
@@ -3098,6 +3106,12 @@ function parseEngineeringGoalMetadata(serialized: string): EngineeringGoalMetada
       const runId = evidenceValue.runId;
       const conclusion = evidenceValue.conclusion;
       const artifact = evidenceValue.artifact;
+      const sourceDigest = evidenceValue.sourceDigest;
+      const artifactDigest = evidenceValue.artifactDigest;
+      const contractDigest = evidenceValue.contractDigest;
+      const observationId = evidenceValue.observationId;
+      for (const value of [sourceDigest, artifactDigest, contractDigest]) if (value !== undefined && (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value))) throw corrupt('Engineering evidence digest is invalid');
+      if (observationId !== undefined && (typeof observationId !== 'string' || observationId.length === 0 || observationId.length > 256)) throw corrupt('Engineering observation reference is invalid');
       const evidenceStringLimits: Readonly<Record<string, number>> = { commit: 256, command: 2048, runId: 256, conclusion: 256, artifact: 1024 };
       for (const [key, candidate] of Object.entries({ commit, command, runId, conclusion, artifact })) {
         if (candidate !== undefined && (typeof candidate !== 'string' || candidate.trim().length === 0 || candidate.length > (evidenceStringLimits[key] ?? 1024))) {
@@ -3115,16 +3129,22 @@ function parseEngineeringGoalMetadata(serialized: string): EngineeringGoalMetada
         ...(evidenceValue.exitCode === undefined ? {} : { exitCode: Number(evidenceValue.exitCode) }),
         ...(typeof conclusion === 'string' ? { conclusion } : {}),
         ...(typeof artifact === 'string' ? { artifact } : {}),
+        ...(typeof sourceDigest === 'string' ? { sourceDigest } : {}),
+        ...(typeof artifactDigest === 'string' ? { artifactDigest } : {}),
+        ...(typeof contractDigest === 'string' ? { contractDigest } : {}),
+        ...(typeof observationId === 'string' ? { observationId } : {}),
       };
     }
     return {
       id: entry.id,
       title: entry.title,
-      applicability: entry.applicability as 'required' | 'optional' | 'not_applicable',
+      applicability: entry.applicability as EngineeringGoalMetadata['gates'][number]['applicability'],
+      ...(entry.decision === undefined ? {} : { decision: parseEngineeringGateDecision(entry.decision) }),
       status: entry.status as EngineeringGoalMetadata['gates'][number]['status'],
       reason: entry.reason,
       basedOnUserIntentRevision: Number(entry.basedOnUserIntentRevision),
       ...(typeof entry.checkCommand === 'string' ? { checkCommand: entry.checkCommand } : {}),
+      ...(requiredPlatforms === undefined ? {} : { requiredPlatforms }),
       ...(evidence === undefined ? {} : { evidence }),
     };
   });
@@ -3152,7 +3172,8 @@ function parseEngineeringGoalMetadata(serialized: string): EngineeringGoalMetada
     });
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: value.schemaVersion,
+    ...(value.schemaVersion === 2 ? { contract: parseEngineeringDeliveryContract(value.contract) } : {}),
     primaryTaskKind: primaryTaskKind as EngineeringGoalMetadata['primaryTaskKind'],
     riskTier: riskTier as EngineeringGoalMetadata['riskTier'],
     policyDigest: value.policyDigest,

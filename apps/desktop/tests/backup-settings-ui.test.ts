@@ -77,6 +77,84 @@ describe('Backup settings UI', () => {
     expect(markup).toContain('Restore</button>');
   });
 
+  it('keeps the Settings persistent Stop available while a Start is pending', () => {
+    const tunnel = {
+      ...EMPTY_TUNNEL_STATUS,
+      state: 'starting',
+      hasApiKey: true,
+      runtimeCredentialAvailable: true,
+      profileExists: true,
+      persistent: {
+        enabled: true,
+        tunnelIdMasked: 'tunnel…1234',
+        runtimeAlias: 'lnwjud',
+        mode: 'native-managed',
+        state: 'starting',
+        healthy: null,
+        ready: null,
+        pollHealthy: null,
+        reconnectCount: 0,
+        lastConnectedAt: null,
+        lastReconnectAt: null,
+        nextReconnectAt: null,
+        lastErrorCode: null,
+        clientVersion: null,
+        localMcpUrl: null,
+        uiUrl: null,
+        readyBeforeRetire: false,
+        strictZeroDowntime: false,
+        capabilityEvidence: null,
+      },
+    };
+    const oauthStatus = { state: 'idle' as const, available: false, providerId: null, authorizationUrl: null, message: 'OAuth unavailable' };
+    const props = {
+      locale: 'en' as const,
+      initialSection: 'tunnel' as const,
+      dashboard: { ...dashboard, tunnel },
+      onLocaleChange: noop,
+      onFactoryReset: async () => ({ accepted: false }),
+      onPermissionProfileChange: noop,
+      onUnrestrictedChange: async () => false,
+      onDestructiveDeletePolicyChange: noop,
+      onStdioPolicyChange: async () => false,
+      onCreateBackup: noop,
+      onScheduleRestoreBackup: async () => true,
+      onRestoreRecoveryItem: noop,
+      onRestoreCheckpoint: noop,
+      onSaveTunnelApiKey: noop,
+      onSetTunnelClientPath: noop,
+      onUserSettingsChange: async () => false,
+      ponytailPolicyContext: null,
+      ponytailPolicyBusy: false,
+      ponytailPolicyError: null,
+      onWorkspacePonytailModeChange: noop,
+      onGoalPonytailModeChange: noop,
+      onInstallPdfProvider: async () => ({} as never),
+      onChooseTunnelClientPath: async () => null,
+      onConfigureTunnelProfile: async () => '',
+      onStartTunnel: async () => tunnel,
+      onStopTunnel: noop,
+      tunnelBusy: true,
+      tunnelStartPending: true,
+      tunnelStopPending: false,
+      onBeginTunnelOAuthLogin: async () => oauthStatus,
+      onGetTunnelOAuthLoginStatus: async () => oauthStatus,
+      onCancelTunnelOAuthLogin: async () => oauthStatus,
+      onSwitchTunnelAuthToLegacy: async () => tunnel,
+      onLogoutTunnelOAuth: async () => tunnel,
+      onOpenExternalSetupPage: noop,
+      onRefresh: noop,
+      guidedTunnelSetupOpen: false,
+      onGuidedTunnelSetupOpenChange: () => undefined,
+      onGuidedTunnelLocalComplete: () => undefined,
+    } as unknown as Parameters<typeof SettingsPage>[0];
+    const markup = renderToStaticMarkup(createElement(SettingsPage, props));
+    const stopButton = markup.match(/<button[^>]*>[^<]*Stop Tunnel[^<]*<\/button>/i);
+
+    expect(stopButton).not.toBeNull();
+    expect(stopButton?.[0]).not.toMatch(/disabled=""/);
+  });
+
   it('disables restore while local MCP or Secure Tunnel is active', () => {
     const markup = renderToStaticMarkup(createElement(SettingsPage, {
       locale: 'en',
@@ -169,5 +247,77 @@ describe('Backup settings UI', () => {
     expect(markup).toContain('DISABLED');
     expect(markup).toContain('ECC is installed but disabled');
     expect(markup).toContain('Enable ECC');
+  });
+
+  it('disables only automatic-update settings while the updater is unavailable and preserves saved preferences', () => {
+    const render = (locale: 'th' | 'en', updatesUnavailable: boolean): string => {
+      const oauthStatus = { state: 'idle' as const, available: false, providerId: null, authorizationUrl: null, message: null };
+      const props = {
+        locale,
+        initialSection: 'general' as const,
+        dashboard,
+        updatesUnavailable,
+        onLocaleChange: noop,
+        onFactoryReset: async () => ({ accepted: false }),
+        onPermissionProfileChange: noop,
+        onUnrestrictedChange: async () => false,
+        onDestructiveDeletePolicyChange: noop,
+        onStdioPolicyChange: async () => false,
+        onCreateBackup: noop,
+        onScheduleRestoreBackup: async () => true,
+        onRestoreRecoveryItem: noop,
+        onRestoreCheckpoint: noop,
+        onSaveTunnelApiKey: noop,
+        onSetTunnelClientPath: noop,
+        onUserSettingsChange: async () => false,
+        ponytailPolicyContext: null,
+        ponytailPolicyBusy: false,
+        ponytailPolicyError: null,
+        onWorkspacePonytailModeChange: noop,
+        onGoalPonytailModeChange: noop,
+        onInstallPdfProvider: async () => ({} as never),
+        onChooseTunnelClientPath: async () => null,
+        onConfigureTunnelProfile: async () => '',
+        onStartTunnel: async () => EMPTY_TUNNEL_STATUS,
+        onStopTunnel: noop,
+        onBeginTunnelOAuthLogin: async () => oauthStatus,
+        onGetTunnelOAuthLoginStatus: async () => oauthStatus,
+        onCancelTunnelOAuthLogin: async () => oauthStatus,
+        onSwitchTunnelAuthToLegacy: async () => EMPTY_TUNNEL_STATUS,
+        onLogoutTunnelOAuth: async () => EMPTY_TUNNEL_STATUS,
+        onOpenExternalSetupPage: noop,
+        onRefresh: noop,
+        guidedTunnelSetupOpen: false,
+        onGuidedTunnelSetupOpenChange: () => undefined,
+        onGuidedTunnelLocalComplete: () => undefined,
+      } as unknown as Parameters<typeof SettingsPage>[0];
+      return renderToStaticMarkup(createElement(SettingsPage, props));
+    };
+
+    const unavailableMarkup = render('en', true);
+    const switches = (markup: string): string[] => [...markup.matchAll(/<button(?=[^>]*role="switch")[^>]*>[\s\S]*?<\/button>/g)].map(([button]) => button);
+    const unavailableSwitches = switches(unavailableMarkup);
+    const disabledFor = (controls: readonly string[], label: string): boolean => {
+      const control = controls.find((button) => button.includes(label));
+      expect(control).toBeDefined();
+      return /disabled=""/.test(control ?? '');
+    };
+
+    expect(unavailableMarkup).toContain('Automatic updates are unavailable in this build. Your saved preferences are unchanged.');
+    expect(unavailableMarkup).toMatch(/<input(?=[^>]*type="number")(?=[^>]*value="30")(?=[^>]*disabled="")[^>]*>/);
+    expect([
+      disabledFor(unavailableSwitches, 'Start with the host'),
+      disabledFor(unavailableSwitches, 'Start minimized'),
+      disabledFor(unavailableSwitches, 'Automatic update checks'),
+      disabledFor(unavailableSwitches, 'Check on startup'),
+      disabledFor(unavailableSwitches, 'Automatic update download'),
+    ]).toEqual([false, false, true, true, true]);
+    expect(unavailableSwitches.filter((button) => button.includes('Automatic update')).every((button) => button.includes('aria-checked="true"'))).toBe(true);
+
+    const configurableMarkup = render('en', false);
+    expect(configurableMarkup).not.toContain('Automatic updates are unavailable in this build.');
+    expect(switches(configurableMarkup).some((button) => button.includes('disabled=""'))).toBe(false);
+    expect(configurableMarkup).toMatch(/<input(?=[^>]*type="number")(?=[^>]*value="30")(?![^>]*disabled="")[^>]*>/);
+    expect(render('th', true)).toContain('ระบบอัปเดตอัตโนมัติไม่พร้อมใช้งานในบิลด์นี้ ค่าที่บันทึกไว้ยังคงเดิม');
   });
 });

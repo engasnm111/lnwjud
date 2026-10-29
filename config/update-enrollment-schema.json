@@ -1,0 +1,53 @@
+{
+  "protocol": 1,
+  "limits": { "envelopeBytes": 32768, "payloadBytes": 16384, "maxDepth": 8 },
+  "objects": {
+    "envelope": { "fields": {
+      "protocol": { "kind": "integer", "constant": 1 },
+      "keyId": { "kind": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$", "maxLength": 64 },
+      "payload": { "kind": "string", "format": "base64", "maxLength": 21848 },
+      "signature": { "kind": "string", "format": "base64", "maxLength": 88 }
+    } },
+    "payload": { "fields": {
+      "protocol": { "kind": "integer", "constant": 1 },
+      "product": { "kind": "string", "constant": "lnwjud" },
+      "policyRevision": { "kind": "integer", "min": 1 },
+      "releaseId": { "kind": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$", "maxLength": 128 },
+      "channel": { "kind": "string", "constant": "stable" },
+      "platform": { "kind": "string", "constant": "win32" },
+      "architecture": { "kind": "string", "constant": "x64" },
+      "distribution": { "kind": "string", "constant": "windows-nsis" },
+      "version": { "kind": "string", "format": "semver", "maxLength": 32 },
+      "releaseSequence": { "kind": "string", "format": "positive-uint64", "maxLength": 20 },
+      "releaseEnvelopeSha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "source": { "kind": "object", "object": "source" },
+      "artifact": { "kind": "object", "object": "identity" },
+      "provenance": { "kind": "object", "object": "identity" },
+      "layout": { "kind": "object", "object": "layout" }
+    } },
+    "source": { "fields": {
+      "repository": { "kind": "string", "constant": "https://github.com/engasnm111/lnwjud" },
+      "commit": { "kind": "string", "format": "sha1", "maxLength": 40 },
+      "workflow": { "kind": "string", "pattern": "^\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml$", "maxLength": 256 },
+      "ref": { "kind": "string", "pattern": "^refs/heads/[A-Za-z0-9._/-]+$", "maxLength": 256 },
+      "runId": { "kind": "string", "format": "positive-uint64", "maxLength": 20 },
+      "runAttempt": { "kind": "string", "format": "positive-uint64", "maxLength": 20 }
+    } },
+    "identity": { "fields": {
+      "name": { "kind": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$", "maxLength": 128 },
+      "sha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "sizeBytes": { "kind": "string", "format": "positive-uint64", "maxLength": 20 }
+    } },
+    "layout": { "fields": {
+      "stableLauncher": { "kind": "object", "object": "image" },
+      "stableService": { "kind": "object", "object": "image" },
+      "slotApplication": { "kind": "object", "object": "image" },
+      "slotManifest": { "kind": "object", "object": "image" }
+    } },
+    "image": { "fields": {
+      "path": { "kind": "string", "maxLength": 240 },
+      "sha256": { "kind": "string", "format": "sha256", "maxLength": 64 },
+      "sizeBytes": { "kind": "string", "format": "positive-uint64", "maxLength": 20 }
+    } }
+  }
+}

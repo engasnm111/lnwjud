@@ -115,7 +115,7 @@ Default 20 commits, max 100. Structured hashes/authors/dates/subjects.
 
 Permission: WRITE; modifying.
 
-Writes UTF-8 text. Create checkpoint entry before overwrite. Refuse secret target unless explicit allowed policy permits.
+Writes UTF-8 text. Explicit `mode: "create_new"` or `overwriteExisting: false` uses a temporary sibling and hard-link publication, refusing a pre-existing final pathname even under Full. Create checkpoint entry before overwrite. Refuse secret target unless explicit allowed policy permits. **No native inode receipt, file/parent fsync, durable crash-ack or exactly-one-physical-file guarantee is exposed.** See [v5.9.0 candidate publication scope](../architecture/FILE_PUBLICATION_CONTRACT_V5_9_0.md) (Issue #219).
 
 ## 12. apply_patch
 

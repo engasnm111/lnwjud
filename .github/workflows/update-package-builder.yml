@@ -1,0 +1,158 @@
+name: Immutable Windows Update Package Builder
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  resolve-control:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      builder_sha: ${{ steps.resolve.outputs.builder_sha }}
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.16.0'
+      - id: resolve
+        name: Resolve the actual immutable called workflow
+        shell: pwsh
+        run: |
+          $resolution = node --input-type=module -e @'
+          (async () => {
+            const e = process.env;
+            const fail = () => { throw new Error('UPDATE_BUILDER_CONTEXT_REFUSED'); };
+            const repository = 'engasnm111/lnwjud';
+            if (e.GITHUB_ACTIONS !== 'true' || e.GITHUB_REPOSITORY !== repository || e.GITHUB_EVENT_NAME !== 'push'
+              || e.GITHUB_REF !== 'refs/heads/main' || e.GITHUB_REF_PROTECTED !== 'true'
+              || e.GITHUB_WORKFLOW_REF !== repository + '/.github/workflows/ci.yml@refs/heads/main'
+              || !/^[a-f0-9]{40}$/.test(e.GITHUB_SHA) || !/^[1-9][0-9]{0,19}$/.test(e.GITHUB_RUN_ID)
+              || !/^[1-9][0-9]{0,19}$/.test(e.GITHUB_RUN_ATTEMPT)) fail();
+            const response = await fetch('https://api.github.com/repos/' + repository + '/actions/runs/' + e.GITHUB_RUN_ID + '/attempts/' + e.GITHUB_RUN_ATTEMPT,
+              { redirect: 'error', signal: AbortSignal.timeout(30000), headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2026-03-10' } });
+            if (!response.ok || response.body === null) fail();
+            const chunks = []; let length = 0;
+            for await (const chunk of response.body) { length += chunk.length; if (length > 1048576) fail(); chunks.push(chunk); }
+            const run = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+            if (String(run.id) !== e.GITHUB_RUN_ID || String(run.run_attempt) !== e.GITHUB_RUN_ATTEMPT || run.event !== 'push'
+              || run.head_sha !== e.GITHUB_SHA || run.head_branch !== 'main' || run.path !== '.github/workflows/ci.yml'
+              || run.repository?.full_name !== repository || !Array.isArray(run.referenced_workflows)) fail();
+            const prefix = repository + '/.github/workflows/update-package-builder.yml@';
+            const references = run.referenced_workflows.filter(item => typeof item?.path === 'string' && item.path.startsWith(prefix));
+            if (references.length !== 1 || !/^[a-f0-9]{40}$/.test(references[0].sha)
+              || references[0].path !== prefix + references[0].sha
+              || Object.hasOwn(references[0], 'ref') && references[0].ref !== references[0].sha) fail();
+            process.stdout.write('builder_sha=' + references[0].sha + '\n');
+          })().catch(() => { process.stderr.write('UPDATE_BUILDER_CONTEXT_REFUSED\n'); process.exitCode = 1; });
+          '@
+          if ($LASTEXITCODE -ne 0) { throw 'UPDATE_BUILDER_CONTEXT_REFUSED' }
+          $resolution | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+  build-package:
+    needs: resolve-control
+    runs-on: windows-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ needs.resolve-control.outputs.builder_sha }}
+          path: _trusted-builder
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          path: _source
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.16.0'
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: '8.0.426'
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: 'v3.1.3'
+      - name: Build and validate unsigned metadata subjects without signing credentials
+        shell: pwsh
+        env:
+          LNWJUD_BUILDER_SHA: ${{ needs.resolve-control.outputs.builder_sha }}
+          LNWJUD_COSIGN_PATH: cosign
+        run: node _trusted-builder/scripts/update-trust/builder-control.mjs build
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: update-package-subjects-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _subject-output/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  attest-package:
+    needs: [resolve-control, build-package]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ needs.resolve-control.outputs.builder_sha }}
+          path: _trusted-builder
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.16.0'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.build-package.outputs.artifact_id }}
+          path: _incoming
+          merge-multiple: true
+          digest-mismatch: error
+      - id: subjects
+        name: Validate downloaded subjects as data with immutable control code
+        shell: pwsh
+        env:
+          LNWJUD_BUILDER_SHA: ${{ needs.resolve-control.outputs.builder_sha }}
+        run: node _trusted-builder/scripts/update-trust/builder-control.mjs inspect
+      - id: artifact-attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ steps.subjects.outputs.artifact_name }}
+          subject-digest: sha256:${{ steps.subjects.outputs.artifact_sha256 }}
+      - id: provenance-attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: PROVENANCE.json
+          subject-digest: sha256:${{ steps.subjects.outputs.provenance_sha256 }}
+      - name: Retain exact generated bundles after subject readback
+        shell: pwsh
+        env:
+          LNWJUD_BUILDER_SHA: ${{ needs.resolve-control.outputs.builder_sha }}
+          LNWJUD_ARTIFACT_BUNDLE: ${{ steps.artifact-attestation.outputs.bundle-path }}
+          LNWJUD_PROVENANCE_BUNDLE: ${{ steps.provenance-attestation.outputs.bundle-path }}
+          LNWJUD_EXPECTED_ARTIFACT_SHA256: ${{ steps.subjects.outputs.artifact_sha256 }}
+          LNWJUD_EXPECTED_PROVENANCE_SHA256: ${{ steps.subjects.outputs.provenance_sha256 }}
+        run: node _trusted-builder/scripts/update-trust/builder-control.mjs bundles
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: update-package-attested-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _incoming/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

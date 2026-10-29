@@ -29,6 +29,8 @@ export interface PlatformWindowsCapabilityOptions {
 }
 
 export interface PlatformCapabilitySetOptions {
+  readonly windowsNativeAuthority?: import('@lnwjud/process').WindowsNativeAuthority;
+  readonly posixProcessRuntime?: { readonly modulePath: string; readonly sha256: string };
   readonly platform?: NodeJS.Platform;
   readonly dataPath: string;
   readonly workspaceRootsProvider: () => Promise<readonly string[]>;
@@ -70,6 +72,8 @@ export function createPlatformCapabilitySet(options: PlatformCapabilitySetOption
     allowedRootsProvider: capabilityRootsProvider,
     unrestricted,
     taskStateDirectory: path.join(options.dataPath, 'background-tasks'),
+    ...(options.windowsNativeAuthority === undefined ? {} : { windowsNativeAuthority: options.windowsNativeAuthority }),
+    ...(options.posixProcessRuntime === undefined ? {} : { posixProcessRuntime: options.posixProcessRuntime }),
     ...(options.synchronousWaitSecondsProvider === undefined ? {} : { maxSynchronousWaitSecondsProvider: options.synchronousWaitSecondsProvider }),
   });
   const browserProtocol = new NodeBrowserCdpProtocol({ platform, profileDir: path.join(options.dataPath, 'browser-profile') });

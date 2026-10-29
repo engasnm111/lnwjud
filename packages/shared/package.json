@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/shared",
-  "version": "5.8.7",
+  "version": "5.9.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -23,6 +23,13 @@
       "import": {
         "development": "./src/text-list.ts",
         "default": "./dist/text-list.js"
+      }
+    },
+    "./user-settings": {
+      "types": "./src/user-settings.ts",
+      "import": {
+        "development": "./src/user-settings.ts",
+        "default": "./dist/user-settings.js"
       }
     }
   },

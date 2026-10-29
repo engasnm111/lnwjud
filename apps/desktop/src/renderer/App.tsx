@@ -67,7 +67,11 @@ export function App(): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [mcpBusy, setMcpBusy] = useState(false);
-  const [tunnelBusy, setTunnelBusy] = useState(false);
+  const [tunnelStartPending, setTunnelStartPending] = useState(false);
+  const [tunnelStopPending, setTunnelStopPending] = useState(false);
+  const tunnelStartOperationRef = useRef<Promise<TunnelStatus> | null>(null);
+  const tunnelStopOperationRef = useRef<Promise<void> | null>(null);
+  const tunnelBusy = tunnelStartPending || tunnelStopPending;
   const [locale, setLocale] = useState<UiLocale>('th');
   const [logLines, setLogLines] = useState<readonly LogLine[]>([]);
   const [logSessions, setLogSessions] = useState<readonly LogSessionSummary[]>([]);
@@ -612,15 +616,26 @@ export function App(): ReactElement {
     }
   }
 
-  async function startTunnelWithStatus(): Promise<TunnelStatus> {
-    setTunnelBusy(true);
-    try {
-      const status = await window.lnwjud.startTunnel();
-      await refresh();
-      return status;
-    } finally {
-      setTunnelBusy(false);
+  function startTunnelWithStatus(): Promise<TunnelStatus> {
+    if (tunnelStopOperationRef.current !== null) {
+      return Promise.reject(new Error('Tunnel cannot start while Stop is in progress'));
     }
+    if (tunnelStartOperationRef.current !== null) return tunnelStartOperationRef.current;
+
+    setTunnelStartPending(true);
+    const operation = Promise.resolve()
+      .then(async () => {
+        const status = await window.lnwjud.startTunnel();
+        await refresh();
+        return status;
+      })
+      .finally(() => {
+        if (tunnelStartOperationRef.current !== operation) return;
+        tunnelStartOperationRef.current = null;
+        setTunnelStartPending(false);
+      });
+    tunnelStartOperationRef.current = operation;
+    return operation;
   }
 
   async function startTunnel(): Promise<void> {
@@ -631,16 +646,26 @@ export function App(): ReactElement {
     }
   }
 
-  async function stopTunnel(): Promise<void> {
-    try {
-      setTunnelBusy(true);
-      await window.lnwjud.stopTunnel();
-      await refresh();
-    } catch (cause: unknown) {
-      setError(errorMessage(cause, t('error.tunnelStop')));
-    } finally {
-      setTunnelBusy(false);
-    }
+  function stopTunnel(): Promise<void> {
+    if (tunnelStopOperationRef.current !== null) return tunnelStopOperationRef.current;
+
+    setTunnelStopPending(true);
+    const operation = Promise.resolve()
+      .then(async () => {
+        await window.lnwjud.stopTunnel();
+        await refresh();
+      })
+      .catch((cause: unknown) => {
+        setError(errorMessage(cause, t('error.tunnelStop')));
+        throw cause;
+      })
+      .finally(() => {
+        if (tunnelStopOperationRef.current !== operation) return;
+        tunnelStopOperationRef.current = null;
+        setTunnelStopPending(false);
+      });
+    tunnelStopOperationRef.current = operation;
+    return operation;
   }
 
   async function beginTunnelOAuthLogin(): Promise<TunnelOAuthLoginStatus> {
@@ -962,6 +987,8 @@ export function App(): ReactElement {
           locale={locale}
           mcpBusy={mcpBusy}
           tunnelBusy={tunnelBusy}
+          tunnelStartPending={tunnelStartPending}
+          tunnelStopPending={tunnelStopPending}
           onRefresh={refresh}
           onStopMcp={stopMcp}
           onRestartMcp={restartMcp}
@@ -1041,6 +1068,7 @@ export function App(): ReactElement {
         <SettingsPage
           locale={locale}
           dashboard={dashboard}
+          updatesUnavailable={updateStatus?.phase === 'unavailable'}
           onLocaleChange={changeLocale}
           onFactoryReset={factoryReset}
           onPermissionProfileChange={setPermissionProfile}
@@ -1065,6 +1093,8 @@ export function App(): ReactElement {
           onStartTunnel={startTunnelWithStatus}
           onStopTunnel={stopTunnel}
           tunnelBusy={tunnelBusy}
+          tunnelStartPending={tunnelStartPending}
+          tunnelStopPending={tunnelStopPending}
           onBeginTunnelOAuthLogin={beginTunnelOAuthLogin}
           onGetTunnelOAuthLoginStatus={getTunnelOAuthLoginStatus}
           onCancelTunnelOAuthLogin={cancelTunnelOAuthLogin}

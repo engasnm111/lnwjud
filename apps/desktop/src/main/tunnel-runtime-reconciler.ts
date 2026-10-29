@@ -24,6 +24,7 @@ export interface TunnelRuntimeReconcilerAdapter {
   ensureSingleProcess?(tunnelId: string, status: NativeTunnelRuntimeStatus): Promise<void>;
   /** Retire only the verified stopped lnwjud alias; never stop an unknown process. */
   retireStoppedAlias?(tunnelId: string): Promise<void>;
+  recoverStoppedAliasRetirement?(): Promise<void>;
 }
 
 export interface TunnelRuntimeReconcilerOptions {

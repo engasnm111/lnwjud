@@ -113,7 +113,29 @@ describe('checked workflows through registered tools', () => {
     expect(registry.listInFlight()).toHaveLength(0);
   });
 
-  it('defaults to preview and launches the real controlled benchmark only when dryRun is false', async () => {
+  // macOS 26.1 lacks kernel-owned containment for escaped descendants.
+  // Exercise its denial explicitly; the real-launch recipes below are
+  // applicable only on hosts with enforceable process-writer containment.
+  it.skipIf(process.platform !== 'darwin')('denies macOS recipe benchmark execution before starting a child', async () => {
+    const fixture = await createFixture();
+    const registry = new ToolRegistry(fixture.services, actor, fixture.options);
+    const result = await registry.invoke('recipe_run', {
+      name: 'release-check', workspaceId: fixture.workspace.id, dryRun: false,
+    });
+    expect(result.structuredContent).toMatchObject({
+      status: 'failed', executed: true, sideEffectsStarted: 'unknown',
+      steps: [
+        { tool: 'git_context', status: 'completed' },
+        { tool: 'regression_report', status: 'completed' },
+        { tool: 'benchmark_run', status: 'failed',
+          response: { structuredContent: { error: { code: 'CONFLICT', message: expect.stringContaining('macOS process writer containment') } } } },
+      ],
+    });
+    expect(await fixture.process.list(actor, fixture.workspace.id)).toMatchObject({ ok: true, value: [] });
+    await expect(readFile(path.join(fixture.directory, 'benchmark-result.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.skipIf(process.platform === 'darwin')('defaults to preview and launches the real controlled benchmark only when dryRun is false', async () => {
     const fixture = await createFixture();
     const registry = new ToolRegistry(fixture.services, actor, fixture.options);
     const input = { name: 'release-check', workspaceId: fixture.workspace.id, prompt: 'fixture' };
@@ -154,7 +176,7 @@ describe('checked workflows through registered tools', () => {
     expect(await fixture.process.list(actor, fixture.workspace.id)).toMatchObject({ ok: true, value: [] });
   });
 
-  it('keeps Full Bypass recipe children fenced and hands the current proof to checked benchmark dispatch', async () => {
+  it.skipIf(process.platform === 'darwin')('keeps Full Bypass recipe children fenced and hands the current proof to checked benchmark dispatch', async () => {
     const fixture = await createFixture();
     const fence = createFence();
     const registry = new ToolRegistry({ ...fixture.services, goalMutationFence: fence }, actor, fixture.options);

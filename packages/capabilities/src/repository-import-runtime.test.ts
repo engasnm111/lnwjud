@@ -1,210 +1,151 @@
-import { mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { repositoryImportStageAclScript, repositoryImportVerifyPublishedScript } from './repository-import-scripts.js';
-import { windowsRepositoryImportAnchorSource } from './windows-repository-import-anchor.js';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { DurableShellTaskStore } from './durable-shell-task-store.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { WindowsNativeAuthority } from '@lnwjud/process';
+import { DurableShellTaskStore, durableShellNativeBinding } from './durable-shell-task-store.js';
 import { SecureRepositoryImportRuntime } from './repository-import-runtime.js';
+import { repositoryImportWorkerSource } from './repository-import-worker-source.js';
 
-describe('repository import crash recovery', () => {
-  it.skipIf(process.platform !== 'win32')('atomically refuses racing stage creators instead of adopting a foreign directory', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-stage-'));
+const owner = { clientId: 'client', sessionId: 'session', workspaceId: 'workspace' };
+const requestId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const taskId = 'repository-import-' + requestId;
+const commit = 'a'.repeat(40);
+const identity = '0123456789ABCDEF-0123456789ABCDEF0123456789ABCDEF';
+const binding = { taskId, reservationId: taskId, attemptId: taskId, generation: 1, requestDigest: 'b'.repeat(64), ownerClientId: owner.clientId, ownerSessionId: owner.sessionId, workspaceId: owner.workspaceId };
+
+async function fixture(version = 2): Promise<{
+  root: string; directory: string; manifest: Record<string, unknown>;
+  inspectControl: ReturnType<typeof vi.fn>; control: ReturnType<typeof vi.fn>; runtime: SecureRepositoryImportRuntime;
+}> {
+  // Hosted Windows runners can expose the TEMP parent through an 8.3 alias.
+  // The production import correctly refuses noncanonical workspace roots.
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-recovery-')));
+  const directory = path.join(root, 'repository-imports', requestId); await mkdir(directory, { recursive: true });
+  const originalInput = { request: { workspaceId: owner.workspaceId, requestId, url: 'https://example.invalid/repo.git', destination: 'published', commit }, owner, workspaceRoot: root };
+  const requestDigest = createHash('sha256').update(JSON.stringify({ input: originalInput })).digest('hex');
+  const core = { version, requestId, owner, commit, workspaceRoot: root, destination: 'published', url: originalInput.request.url, requestDigest, originalInput };
+  const manifestDigest = createHash('sha256').update(JSON.stringify(core)).digest('hex');
+  const actualBinding = durableShellNativeBinding({
+    mutationKind: 'repository_import', taskId, executable: process.execPath,
+    arguments: [path.join(directory, 'worker.cjs'), path.join(directory, 'spec.json'), requestDigest, manifestDigest], cwd: directory,
+    timeoutSeconds: 900, maxOutputBytes: 4096, includeStdout: true, includeStderr: false, owner,
+  });
+  const manifest = { ...core, manifestDigest, binding: actualBinding };
+  await writeFile(path.join(directory, 'spec.json'), JSON.stringify(manifest));
+  const inspectControl = vi.fn().mockResolvedValue({ state: 'termination_unknown', binding, reason: 'missing' });
+  const control = vi.fn().mockResolvedValue({ state: 'termination_unknown', binding, reason: 'missing' });
+  const authority = { inspectControl, control, config: {} } as unknown as WindowsNativeAuthority;
+  return { root, directory, manifest, inspectControl, control, runtime: new SecureRepositoryImportRuntime(root, authority) };
+}
+function proof(state: 'prepared' | 'published' = 'published'): {
+  state: string; binding: typeof binding; command: string;
+  result: { version: number; state: 'prepared' | 'published'; nativeIdentity: string; commit: string };
+} {
+  return { state: 'control_verified', binding, command: state === 'prepared' ? 'prepare_import' : 'publish_import', result: { version: 2, state, nativeIdentity: identity, commit } };
+}
+
+afterEach(() => vi.restoreAllMocks());
+describe('authenticated repository import recovery', () => {
+  it('keeps launch admission starting until native acknowledgement instead of reporting failure', async () => {
+    const f = await fixture();
     try {
-      const script = path.join(root, 'create-stage.ps1');
-      const stage = path.join(root, 'stage');
-      await writeFile(script, repositoryImportStageAclScript);
-      const powershell = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-      const execute = (): Promise<{ stdout: string; stderr: string }> => promisify(execFile)(powershell, [
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, stage,
-      ], { timeout: 30000, windowsHide: true });
-      const contenders = await Promise.allSettled(Array.from({ length: 4 }, execute));
-      expect(contenders.filter((entry) => entry.status === 'fulfilled')).toHaveLength(1);
-      expect(contenders.filter((entry) => entry.status === 'rejected')).toHaveLength(3);
-      expect((await stat(stage)).isDirectory()).toBe(true);
-      await expect(execute()).rejects.toThrow();
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
-  }, 60000);
-
-
-  it.skipIf(process.platform !== 'win32')('revalidates NTFS identity after a published destination is replaced', async () => {
-    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-native-readback-')));
-    const requestId = '77777777-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-    const taskId = 'repository-import-' + requestId;
-    const owner = { clientId: 'identity-client', sessionId: 'identity-session', workspaceId: 'identity-workspace' };
-    const commit = 'c'.repeat(40);
+      vi.spyOn(DurableShellTaskStore.prototype, 'snapshot').mockResolvedValue({ ok: true, value: { state: 'starting' } });
+      expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: true, value: { state: 'starting' } });
+      expect(f.inspectControl).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+  it('leaves legacy unsigned publication unresolved without replay or native inspection', async () => {
+    const f = await fixture(1);
     try {
-      const workspaceRoot = path.join(root, 'workspace');
-      const stage = path.join(root, 'stage');
-      await mkdir(workspaceRoot);
-      await mkdir(stage);
-      const folder = path.join(root, 'repository-imports', requestId);
-      await mkdir(folder, { recursive: true });
-      const source = path.join(folder, 'anchor.cs');
-      const publishedVerifier = path.join(folder, 'verify-published.ps1');
-      const publisher = path.join(folder, 'publish-for-test.ps1');
-      const statePath = path.join(folder, 'publication.json');
-      await writeFile(source, windowsRepositoryImportAnchorSource);
-      await writeFile(publishedVerifier, repositoryImportVerifyPublishedScript);
-      await writeFile(publisher, [
-        'param([string]$Source,[string]$Workspace,[string]$Stage)',
-        '$ErrorActionPreference = "Stop"',
-        'Add-Type -Path $Source',
-        '$anchor=[RepositoryImportAnchor]::new($Workspace,"dest")',
-        'try {$identity=$anchor.PrepareStage($Stage);$anchor.Publish();Write-Output $identity} finally {$anchor.Dispose()}',
-      ].join('\n'));
-      const powershell = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-      const native = (await promisify(execFile)(powershell, [
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', publisher, source, workspaceRoot, stage,
-      ], { timeout: 30000, windowsHide: true })).stdout.trim();
-      expect(native).toMatch(/^[A-F0-9]{16}-[A-F0-9]{32}$/);
-      await writeFile(path.join(folder, 'spec.json'), JSON.stringify({
-        version: 1, requestId, owner, commit, workspaceRoot, anchorSourcePath: source,
-        destination: 'dest', statePath,
-      }));
-      await writeFile(statePath, JSON.stringify({ version: 1, state: 'published', commit, nativeIdentity: native }));
-      const store = new DurableShellTaskStore(path.join(root, 'background-tasks'));
-      const launch = await store.launch({
-        mutationKind: 'repository_import', taskId, executable: process.execPath,
-        arguments: ['-e', 'process.exit(0)'], cwd: root, timeoutSeconds: process.env.CI ? 90 : 15,
-        maxOutputBytes: 256, includeStdout: false, includeStderr: false, owner,
-      });
-      expect(launch.ok).toBe(true);
-      await expect.poll(async (): Promise<string> => {
-        const observed = await store.snapshot(taskId);
-        return observed.ok ? String(observed.value.state) : 'unknown';
-      }, { timeout: process.env.CI ? 90000 : 12000 }).toBe('completed');
-      const runtime = new SecureRepositoryImportRuntime(root);
-      expect(await runtime.status({ taskId, owner })).toMatchObject({
-        ok: true, value: { state: 'completed', native_identity: native },
-      });
-      await rename(path.join(workspaceRoot, 'dest'), path.join(workspaceRoot, 'original'));
-      await mkdir(path.join(workspaceRoot, 'dest'));
-      expect(await runtime.status({ taskId, owner })).toMatchObject({
-        ok: true, value: { state: 'unresolved' },
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
-  }, process.env.CI ? 220000 : 65000);
+      const launch = vi.spyOn(DurableShellTaskStore.prototype, 'launch');
+      const snapshot = vi.spyOn(DurableShellTaskStore.prototype, 'snapshot');
+      expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: true, value: { state: 'unresolved', detail: expect.stringContaining('Legacy') } });
+      expect(snapshot).not.toHaveBeenCalled(); expect(launch).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
 
-  it('does not trust a published receipt when the live native destination is absent', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-stale-receipt-'));
-    const requestId = 'ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-    const taskId = 'repository-import-' + requestId;
-    const owner = { clientId: 'stale-client', sessionId: 'stale-session', workspaceId: 'stale-workspace' };
-    const commit = 'b'.repeat(40);
+  it('never trusts a shape-compatible unsigned receipt even after worker success', async () => {
+    const f = await fixture();
     try {
-      const store = new DurableShellTaskStore(path.join(root, 'background-tasks'));
-      const launch = await store.launch({
-        mutationKind: 'repository_import', taskId, executable: process.execPath,
-        arguments: ['-e', 'process.exit(0)'], cwd: root, timeoutSeconds: process.env.CI ? 90 : 15,
-        maxOutputBytes: 256, includeStdout: false, includeStderr: false, owner,
-      });
-      expect(launch.ok).toBe(true);
-      await expect.poll(async (): Promise<string> => {
-        const observed = await store.snapshot(taskId);
-        return observed.ok ? String(observed.value.state) : 'unknown';
-      }, { timeout: process.env.CI ? 90000 : 12000 }).toBe('completed');
-      const folder = path.join(root, 'repository-imports', requestId);
-      const statePath = path.join(folder, 'publication.json');
-      await mkdir(folder, { recursive: true });
-      await writeFile(path.join(folder, 'spec.json'), JSON.stringify({
-        version: 1, requestId, owner, commit,
-        destination: 'absent', workspaceRoot: root, statePath,
-      }));
-      await writeFile(statePath, JSON.stringify({
-        version: 1, state: 'published', commit,
-        nativeIdentity: '0123456789ABCDEF-0123456789ABCDEF0123456789ABCDEF',
-      }));
-      const result = await new SecureRepositoryImportRuntime(root).status({ taskId, owner });
-      expect(result).toMatchObject({
-        ok: true, value: { state: 'unresolved', detail: 'Native publication proof is incomplete' },
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
-  }, process.env.CI ? 130000 : 30000);
+      vi.spyOn(DurableShellTaskStore.prototype, 'snapshot').mockResolvedValue({ ok: true, value: { state: 'completed', exit_code: 0 } });
+      await writeFile(path.join(f.directory, 'publication.json'), JSON.stringify(proof().result));
+      expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: true, value: { state: 'unresolved', detail: 'Native publication proof is incomplete' } });
+      expect(f.control).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
 
-  it.skipIf(process.platform !== 'win32')('fails closed on a failed worker with an existing destination even without a native receipt', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-missing-receipt-'));
-    const requestId = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-    const taskId = 'repository-import-' + requestId;
-    const owner = { clientId: 'no-receipt-client', sessionId: 'no-receipt-session', workspaceId: 'no-receipt-workspace' };
-    const commit = 'd'.repeat(40);
+  it('keeps a stopped worker unresolved if authenticated preparation may precede a crashed rename', async () => {
+    const f = await fixture();
     try {
-      const taskStore = new DurableShellTaskStore(path.join(root, 'background-tasks'));
-      const launch = await taskStore.launch({
-        mutationKind: 'repository_import', taskId, executable: process.execPath,
-        arguments: ['-e', 'process.exit(7)'], cwd: root,
-        timeoutSeconds: process.env.CI ? 90 : 15, maxOutputBytes: 256, includeStdout: false,
-        includeStderr: false, owner,
-      });
-      expect(launch.ok).toBe(true);
-      await expect.poll(async () => {
-        const current = await taskStore.snapshot(taskId);
-        return current.ok ? current.value.state : 'unknown';
-      }, { timeout: process.env.CI ? 90000 : 12000 }).toBe('failed');
-      const folder = path.join(root, 'repository-imports', requestId);
-      await mkdir(folder, { recursive: true });
-      await writeFile(path.join(folder, 'spec.json'), JSON.stringify({
-        version: 1, requestId, owner, commit, workspaceRoot: root,
-        destination: 'ambiguous-destination', statePath: path.join(folder, 'missing-publication.json'),
-      }));
-      await mkdir(path.join(root, 'ambiguous-destination'));
-      const runtime = new SecureRepositoryImportRuntime(root);
-      expect(await runtime.status({ taskId, owner })).toMatchObject({
-        ok: true, value: { state: 'unresolved', detail: expect.stringContaining('Destination exists') },
-      });
-      await rm(path.join(root, 'ambiguous-destination'), { recursive: true });
-      expect(await runtime.status({ taskId, owner })).toMatchObject({
-        ok: true, value: { state: 'failed' },
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
-  }, process.env.CI ? 130000 : 30000);
+      vi.spyOn(DurableShellTaskStore.prototype, 'snapshot').mockResolvedValue({ ok: true, value: { state: 'failed', exit_code: 7 } });
+      f.inspectControl.mockImplementation(async (input: { command: string }) => input.command === 'prepare_import' ? proof('prepared') : { state: 'termination_unknown' });
+      expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: true, value: { state: 'unresolved', detail: expect.stringContaining('publication may have occurred') } });
+      expect(f.control).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
 
-  it('reports unresolved when a failed worker has a prepared native receipt', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-prepared-'));
-    const requestId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-    const taskId = 'repository-import-' + requestId;
-    const owner = { clientId: 'crash-client', sessionId: 'crash-session', workspaceId: 'crash-workspace' };
-    const commit = 'a'.repeat(40);
+  it.skipIf(process.platform !== 'win32')('requires authenticated live native identity and successful worker cessation before completion', async () => {
+    const f = await fixture();
     try {
-      const taskStore = new DurableShellTaskStore(path.join(root, 'background-tasks'));
-      const launch = await taskStore.launch({
-        mutationKind: 'repository_import', taskId, executable: process.execPath,
-        arguments: ['-e', 'process.exit(7)'], cwd: root,
-        timeoutSeconds: process.env.CI ? 90 : 15, maxOutputBytes: 256, includeStdout: false,
-        includeStderr: false, owner,
-      });
-      expect(launch.ok).toBe(true);
-      await expect.poll(async () => {
-        const current = await taskStore.snapshot(taskId);
-        return current.ok ? current.value.state : 'unknown';
-      }, { timeout: process.env.CI ? 90000 : 12000 }).toBe('failed');
-      const folder = path.join(root, 'repository-imports', requestId);
-      const statePath = path.join(folder, 'publication.json');
-      await mkdir(folder, { recursive: true });
-      await writeFile(path.join(folder, 'spec.json'), JSON.stringify({
-        version: 1, requestId, owner, commit, destination: 'safe-import', statePath,
-      }));
-      await writeFile(statePath, JSON.stringify({
-        version: 1, state: 'prepared', commit,
-        nativeIdentity: '0123456789ABCDEF-0123456789ABCDEF0123456789ABCDEF',
-      }));
-      const runtime = new SecureRepositoryImportRuntime(root);
-      const status = await runtime.status({ taskId, owner });
-      expect(status).toMatchObject({
-        ok: true, value: { state: 'unresolved', detail: expect.stringContaining('publication') },
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
-    }
-  }, process.env.CI ? 130000 : 30000);
+      const snapshot = vi.spyOn(DurableShellTaskStore.prototype, 'snapshot').mockResolvedValue({ ok: true, value: { state: 'completed', exit_code: 0 } });
+      f.inspectControl.mockResolvedValue(proof()); f.control.mockResolvedValue(proof());
+      expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: true, value: { state: 'completed', native_identity: identity } });
+      f.control.mockResolvedValue({ ...proof(), result: { ...proof().result, nativeIdentity: '0'.repeat(16) + '-' + '0'.repeat(32) } });
+      expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: true, value: { state: 'unresolved' } });
+      snapshot.mockResolvedValue({ ok: true, value: { state: 'termination_unverified' } });
+      f.control.mockClear();
+      expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: true, value: { state: 'unresolved' } });
+      expect(f.control).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('does not expose another owner manifest', async () => {
+    const f = await fixture();
+    try {
+      expect(await f.runtime.status({ taskId, owner: { ...owner, sessionId: 'other' } })).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('rejects a manifest whose receipt binding is copied from another attempt or owner', async () => {
+    const f = await fixture();
+    try {
+      for (const changed of [{ attemptId: 'other' }, { reservationId: 'other' }, { ownerSessionId: 'other' }, { workspaceId: 'other' }, { generation: 2 }]) {
+        await writeFile(path.join(f.directory, 'spec.json'), JSON.stringify({ ...f.manifest, binding: { ...binding, ...changed } }));
+        expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+      }
+      expect(f.inspectControl).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('rejects changed manifest content before trusting any publication or launching a helper', async () => {
+    const f = await fixture();
+    try {
+      for (const changed of [{ destination: 'foreign' }, { workspaceRoot: f.root + '-foreign' }, { url: 'https://example.invalid/other.git' }, { stagePath: 'C:\\foreign' }, { processModule: 'C:\\foreign.js' }]) {
+        await writeFile(path.join(f.directory, 'spec.json'), JSON.stringify({ ...f.manifest, ...changed }));
+        expect(await f.runtime.status({ taskId, owner })).toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+      }
+      expect(f.inspectControl).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(process.platform !== 'win32')('observes a repeated request without cloning or publishing again after interrupted admission', async () => {
+    const f = await fixture();
+    try {
+      const input = { request: { workspaceId: owner.workspaceId, requestId, url: 'https://example.invalid/repo.git', destination: 'published', commit }, owner, workspaceRoot: f.root };
+      const requestDigest = createHash('sha256').update(JSON.stringify({ input })).digest('hex');
+      await writeFile(path.join(f.directory, 'spec.json'), JSON.stringify({ ...f.manifest, requestDigest }));
+      vi.spyOn(DurableShellTaskStore.prototype, 'snapshot').mockResolvedValue({ ok: false, error: { code: 'PROCESS_NOT_FOUND', message: 'missing', recoverable: false } });
+      const launch = vi.spyOn(DurableShellTaskStore.prototype, 'launch');
+      expect(await f.runtime.start(input)).toMatchObject({ ok: true, value: { state: 'unresolved' } });
+      expect(launch).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('removes executable PowerShell control assets from the worker and verifies durable authenticated readback', () => {
+    expect(repositoryImportWorkerSource).not.toMatch(/powershell|ExecutionPolicy|Bypass|stage-acl\.ps1|publish\.ps1/i);
+    expect(repositoryImportWorkerSource).toContain('authority.inspectControl');
+    expect(repositoryImportWorkerSource).toContain("JSON.stringify({ input: spec.originalInput })");
+  });
 });

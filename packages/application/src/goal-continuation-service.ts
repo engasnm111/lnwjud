@@ -1,6 +1,11 @@
+import type { EngineeringPreparationService } from './engineering/engineering-preparation-service.js';
+import { reconcileEngineeringMetadata, sameEngineeringMetadataContract, engineeringMetadataCheckpointDetails } from './engineering/engineering-reconciliation.js';
+import { engineeringGoalMetadata } from './engineering/engineering-workflow.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   GoalStateError,
+  evaluateGoalReadiness,
+  type GoalReadiness,
   appError,
   err,
   mayMarkEngineeringGateNotApplicable,
@@ -285,6 +290,7 @@ export interface PendingScheduledTaskCleanup {
 }
 
 export interface GoalSnapshot {
+  readonly readiness?: GoalReadiness;
   readonly goalId: string;
   readonly goalKey: string;
   readonly workspaceId: string;
@@ -359,10 +365,12 @@ export interface EngineeringGateEvidenceVerifier {
     evidence: EngineeringGateEvidence,
     gateId: string,
     requiredPlatforms?: readonly ('win32' | 'darwin' | 'linux')[],
+    contract?: import('@lnwjud/domain').EngineeringDeliveryContract,
   ): Promise<boolean>;
 }
 
 export interface GoalContinuationServiceOptions {
+  readonly engineeringPreparation?: Pick<EngineeringPreparationService, 'prepare'>;
   readonly now?: () => Date;
   readonly engineeringEvidenceVerifier?: EngineeringGateEvidenceVerifier;
   readonly scheduledContinuations?: Pick<ScheduledContinuationRepository, 'markGoalFinishedForScheduledContinuation' | 'getLiveScheduledContinuation'>;
@@ -372,6 +380,7 @@ export interface GoalContinuationServiceOptions {
 }
 
 export class GoalContinuationService {
+  private readonly engineeringPreparation: GoalContinuationServiceOptions['engineeringPreparation'];
   private readonly now: () => Date;
   private readonly engineeringEvidenceVerifier: EngineeringGateEvidenceVerifier | undefined;
   private readonly scheduledContinuations: Pick<ScheduledContinuationRepository, 'markGoalFinishedForScheduledContinuation' | 'getLiveScheduledContinuation'> | undefined;
@@ -390,6 +399,7 @@ export class GoalContinuationService {
     this.workerLiveness = options.workerLiveness;
     this.taskCancellation = options.taskCancellation;
     this.requestCancellation = options.requestCancellation;
+    this.engineeringPreparation = options.engineeringPreparation;
   }
 
   public async runGoal(actor: FileActor, request: RunGoalRequest): Promise<Result<RunGoalResult>> {
@@ -464,7 +474,8 @@ export class GoalContinuationService {
         ...(recoveryEvidence === undefined ? {} : { recoveryEvidence }),
         now: this.now().toISOString(),
       });
-      const base = toRunSnapshot(acquired.goal);
+      const reconciled = acquired.acquired ? await this.reconcileEngineeringGoal(actor, acquired.goal, leaseToken) : acquired.goal;
+      const base = toRunSnapshot(reconciled);
       return ok({
         ...base,
         acquired: acquired.acquired,
@@ -475,6 +486,31 @@ export class GoalContinuationService {
     } catch (error: unknown) {
       return this.mapError(error);
     }
+  }
+
+  public async recoverBlockedGoal(actor: FileActor, request: { readonly goalId: string; readonly expectedRevision: number; readonly reason: string; readonly userConfirmed: boolean; readonly leaseSeconds?: number }): Promise<Result<RunGoalResult>> {
+    try {
+      if (request.userConfirmed !== true) return err(appError('PERMISSION_DENIED', 'Explicit user confirmation is required for blocked goal recovery.'));
+      const current = await this.goals.getById(requiredBounded(request.goalId, 'goalId', 128));
+      if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
+      if (current.ownerClientId !== stableOwnerClientId(actor)) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
+      if (current.status !== 'blocked') return err(appError('CONFLICT', 'Only terminal blocked goals support explicit recovery.'));
+      if (current.revision !== request.expectedRevision) return err(appError('CONFLICT', 'Goal revision is stale'));
+      if (current.engineering === undefined || this.engineeringPreparation === undefined || this.workerLiveness === undefined || this.goals.recoverBlocked === undefined) return err(appError('CONFLICT', 'Host contract reassessment and liveness observation are required for recovery.'));
+      const prepared = await this.engineeringPreparation.prepare(current.workspaceId, current.objective, current.engineering.scopedPath);
+      if (!prepared.ok || !prepared.value.policy.enabled || prepared.value.workflow.contract?.sourceDigest === undefined) return err(appError('CONFLICT', 'Recovery requires enabled trusted policy and a stable readable source identity.'));
+      const historical = current.checkpoints.flatMap((checkpoint) => checkpoint.trackedTasks ?? legacyTrackedTasks(checkpoint.activeTaskIds));
+      const tasks = [...new Map(historical.filter((task) => task.role === 'blocking_job').map((task) => [`${task.provider}:${task.taskId}`, task])).values()];
+      const observed = await this.workerLiveness.observe(current.id, tasks);
+      const engineering = reconcileEngineeringMetadata(current.engineering, prepared.value.policy.policyDigest, prepared.value.workflow, current.userIntentRevision, current.engineering.scopedPath);
+      const leaseToken = createLeaseToken();
+      const goal = await this.goals.recoverBlocked({ goalId: current.id, checkpointId: randomUUID(), ownerClientId: stableOwnerClientId(actor), ownerSessionId: stableOwnerSessionId(actor), expectedRevision: request.expectedRevision,
+        reason: safeText(request.reason, 1024, 'recovery reason'), engineering, leaseTokenHash: hashLeaseToken(leaseToken), leaseSeconds: normalizeLeaseSeconds(request.leaseSeconds), now: this.now().toISOString(),
+        recoveryEvidence: { trustworthy: observed.trustworthy, observedAt: observed.observedAt, leaseGeneration: observed.leaseGeneration, leaseActivitySeq: observed.leaseActivitySeq, liveFencedCallCount: observed.liveFencedCallCount,
+          blockingTaskStates: observed.blockingTaskStates ?? observed.activeTaskStates?.map((task) => ({ ...task, provider: 'legacy_auto' as const })) ?? [] },
+      });
+      return ok({ ...toRunSnapshot(goal), acquired: true, leaseToken });
+    } catch (error: unknown) { return this.mapError(error); }
   }
 
   public async getGoal(actor: FileActor, request: GetGoalRequest): Promise<Result<GoalSnapshot>> {
@@ -789,6 +825,16 @@ export class GoalContinuationService {
       if (current === null) return err(appError('INVALID_INPUT', 'Goal was not found'));
       if (current.ownerClientId !== ownerClientId) return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
       if (!Number.isInteger(request.expectedRevision) || request.expectedRevision < 0) return err(appError('INVALID_INPUT', 'expectedRevision is invalid'));
+      if (request.status === 'completed' && current.engineering !== undefined && this.engineeringPreparation !== undefined) {
+        assertLeaseSnapshot(current, actor, request.leaseToken, this.now().toISOString());
+        if (current.revision !== request.expectedRevision) return err(appError('CONFLICT', 'Goal revision is stale'));
+        const reconciled = await this.reconcileEngineeringGoal(actor, current, request.leaseToken);
+        if (reconciled.revision !== current.revision) return err(appError('CONFLICT', 'Engineering contract changed; read the current Goal and validate its stale or unresolved gates.'));
+      }
+      if (request.status === 'completed' && current.engineering?.contract !== undefined) {
+        const identity = current.engineering.gates.find((gate) => gate.id === 'source_identity');
+        if (identity?.evidence === undefined || this.engineeringEvidenceVerifier === undefined || !(await this.engineeringEvidenceVerifier.verify(current.workspaceId, identity.evidence, 'source_identity', undefined, current.engineering.contract))) return err(appError('ENGINEERING_SOURCE_CHANGED', 'Current source identity could not be verified; reassess the existing Goal before completion.', true));
+      }
       const trackedTasks = current.trackedTasks ?? legacyTrackedTasks(current.activeTaskIds);
       const now = this.now().toISOString();
       const finishRequest = {
@@ -1046,6 +1092,9 @@ export class GoalContinuationService {
 
   private mapError(error: unknown): Result<never> {
     if (error instanceof GoalStateError) {
+      for (const code of ['ENGINEERING_APPLICABILITY_UNRESOLVED', 'ENGINEERING_EVIDENCE_REJECTED', 'ENGINEERING_SOURCE_CHANGED'] as const) {
+        if (error.message.startsWith(`${code}:`)) return err(appError(code, redactSensitiveText(error.message.slice(code.length + 1).trim()), true));
+      }
       switch (error.reason) {
         case 'owner_mismatch': return err(appError('PERMISSION_DENIED', 'Goal belongs to another client'));
         case 'lease_invalid': return err(appError('CONFLICT', `Goal lease is no longer valid (${error.message}); read the latest goal and reacquire or claim the scheduled continuation before retrying`, true));
@@ -1088,6 +1137,25 @@ export class GoalContinuationService {
         ? failedGoalTaskCancellation(task.taskId, message, task.provider)
         : skippedGoalTaskCancellation(task));
     }
+  }
+
+  private async reconcileEngineeringGoal(actor: FileActor, goal: GoalRecord, leaseToken: string): Promise<GoalRecord> {
+    if (goal.engineering === undefined || this.engineeringPreparation === undefined) return goal;
+    const prepared = await this.engineeringPreparation.prepare(goal.workspaceId, goal.objective, goal.engineering.scopedPath);
+    if (!prepared.ok) throw new GoalStateError('precondition', 'Engineering reassessment is unavailable; verify workspace access and retry.');
+    if (!prepared.value.policy.enabled) return goal;
+    const next = engineeringGoalMetadata(prepared.value.policy.policyDigest, prepared.value.workflow, goal.engineering.scopedPath);
+    if (goal.engineering.policyDigest === next.policyDigest && sameEngineeringMetadataContract(goal.engineering, next)) return goal;
+    const engineering = reconcileEngineeringMetadata(goal.engineering, prepared.value.policy.policyDigest, prepared.value.workflow, goal.userIntentRevision, goal.engineering.scopedPath);
+    const details = engineeringMetadataCheckpointDetails(goal.engineering, engineering, goal.checkpoints.at(-1)?.resumeContext);
+    return this.goals.checkpoint({
+      checkpointId: randomUUID(), goalId: goal.id, ownerClientId: stableOwnerClientId(actor), ownerSessionId: stableOwnerSessionId(actor),
+      leaseTokenHash: hashLeaseToken(leaseToken), expectedRevision: goal.revision, expectedUserIntentRevision: goal.userIntentRevision,
+      plan: goal.plan, currentPhase: goal.currentPhase, summary: 'Host reconciled Engineering applicability and source contract.', stepUpdates: [],
+      nextAction: goal.nextAction, blockers: goal.blockers, evidence: details.evidence, activeTaskIds: goal.activeTaskIds,
+      trackedTasks: goal.trackedTasks ?? legacyTrackedTasks(goal.activeTaskIds), resumeContext: details.resumeContext, engineering,
+      ponytailMode: goal.ponytailMode ?? null, releaseLease: false, now: this.now().toISOString(),
+    });
   }
 
   private async cancelInFlightRequests(goalId: string): Promise<GoalRequestCancellationResult> {
@@ -1208,6 +1276,8 @@ async function applyEngineeringGateUpdates(
     if (update.status === 'not_applicable' && !mayMarkEngineeringGateNotApplicable(current)) {
       throw new Error(`required engineering gate cannot be marked not_applicable: ${gateId}`);
     }
+    if (update.status === 'passed' && current.applicability === 'unresolved') throw new GoalStateError('precondition', 'ENGINEERING_APPLICABILITY_UNRESOLVED: Reassess capability and trusted policy before submitting proof.');
+    if (update.status === 'passed' && engineering.contract !== undefined && (update.evidence?.contractDigest !== engineering.contract.digest || update.evidence.sourceDigest !== engineering.contract.sourceDigest)) throw new GoalStateError('precondition', 'ENGINEERING_SOURCE_CHANGED: Evidence must bind the current source and contract digest.');
     if (update.status === 'passed' && current.checkCommand !== undefined && update.evidence?.command !== current.checkCommand) {
       throw new Error(`engineering gate requires its declared check command: ${gateId}`);
     }
@@ -1217,7 +1287,7 @@ async function applyEngineeringGateUpdates(
     if (update.evidence !== undefined) {
       if (update.evidence.workspaceId !== workspaceId) throw new Error('engineering gate evidence workspace does not match the goal');
       if (update.evidence.source === 'host_observed') {
-        if (update.status === 'passed' && (update.evidence.command === undefined || update.evidence.runId === undefined)) {
+        if (update.status === 'passed' && ((update.evidence.command === undefined || update.evidence.runId === undefined) && update.evidence.observationId === undefined && gateId !== 'source_identity')) {
           throw new Error('host-observed passed engineering evidence requires a command and host runId');
         }
         if (update.evidence.command !== undefined) {
@@ -1226,8 +1296,8 @@ async function applyEngineeringGateUpdates(
           if (update.evidence.exitCode !== undefined && observed.exitCode !== update.evidence.exitCode) throw new Error('engineering gate evidence exit code does not match the observed command');
         }
         if (update.status === 'passed') {
-          if (evidenceVerifier === undefined || !(await evidenceVerifier.verify(workspaceId, update.evidence, gateId, current.requiredPlatforms))) {
-            throw new Error('host-observed engineering evidence could not be verified against the host task runtime');
+          if (evidenceVerifier === undefined || !(await evidenceVerifier.verify(workspaceId, update.evidence, gateId, current.requiredPlatforms, engineering.contract))) {
+            throw new GoalStateError('precondition', 'ENGINEERING_EVIDENCE_REJECTED: Host proof is missing, stale, nonterminal, or bound to different source, artifact, or deployment target. Read the gate contract and supply a current host observation.');
           }
         }
       }
@@ -1294,6 +1364,7 @@ function toRunSnapshot(goal: GoalRecord): Omit<RunGoalResult, 'acquired' | 'leas
 
 function toSnapshot(goal: GoalRecord): GoalSnapshot {
   return {
+    readiness: evaluateGoalReadiness(goal),
     goalId: goal.id,
     goalKey: goal.goalKey,
     workspaceId: goal.workspaceId,

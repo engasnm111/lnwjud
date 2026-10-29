@@ -1,5 +1,5 @@
 import { Redactor } from '@lnwjud/audit';
-import type { GoalRecord } from '@lnwjud/domain';
+import { evaluateGoalReadiness, type GoalRecord } from '@lnwjud/domain';
 import type { McpServerListItem } from '@lnwjud/extensions';
 import type { WatcherGoalSnapshot, WatcherSnapshot } from './watcher-server.js';
 
@@ -11,17 +11,17 @@ function safeText(value: string, limit: number): string {
 
 /** A completed checklist is ready for explicit finalization, not a terminal goal. */
 export function watcherGoalFromRecord(goal: GoalRecord, workspaceName: string): WatcherGoalSnapshot {
-  const completionReady = goal.plan.steps.length > 0
-    && goal.plan.steps.every((step) => step.status === 'completed')
-    && goal.acceptanceCriteria.every((criterion) => criterion.status === 'completed')
-    && goal.blockers.length === 0
-    && goal.activeTaskIds.length === 0;
+  const readiness = evaluateGoalReadiness(goal);
+  const completionReady = goal.plan.steps.length > 0 && readiness.ready;
+  const engineeringBlockers = readiness.reasons.filter((reason) =>
+    reason.code === 'ENGINEERING_PROOF_REQUIRED' || reason.code === 'BLOCKING_REVIEW_FINDINGS').map((reason) => reason.message);
+  const blockers = [...goal.blockers, ...engineeringBlockers];
   return {
     id: goal.id,
     key: safeText(goal.goalKey, 128),
-    status: goal.blockers.length > 0 ? 'blocked' : completionReady ? 'idle' : 'waiting',
+    status: blockers.length > 0 ? 'blocked' : completionReady ? 'idle' : 'waiting',
     currentTask: safeText(goal.nextAction, 500),
-    blockers: goal.blockers.map((blocker) => safeText(blocker, 300)),
+    blockers: blockers.map((blocker) => safeText(blocker, 300)),
     milestones: goal.plan.steps.map((step) => ({ id: step.id, title: safeText(step.title, 300), status: step.status })),
     workspaceId: goal.workspaceId,
     workspaceName,
@@ -34,7 +34,7 @@ export function watcherGoalFromRecord(goal: GoalRecord, workspaceName: string): 
       title: safeText(criterion.title, 300),
       status: criterion.status,
     })),
-    activeTaskCount: goal.activeTaskIds.length,
+    activeTaskCount: readiness.blockingTaskIds.length,
     createdAt: goal.createdAt,
     updatedAt: goal.updatedAt,
     ...(goal.checkpoints.at(-1) === undefined ? {} : { lastCheckpointAt: goal.checkpoints.at(-1)!.createdAt }),

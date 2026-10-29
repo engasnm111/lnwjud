@@ -1,45 +1,156 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
-import { confirmTunnelStopForUpdate, UpdateDownloadedDialogController, UpdateInstallCoordinator, updateInstallNeedsTunnelStopConfirmation, updateReadyDialogOptions, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
+import { installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe('downloaded update installation', () => {
-  it('makes Later the default response in the update-ready dialog', () => {
-    expect(updateReadyDialogOptions('4.0.2')).toMatchObject({
-      buttons: ['Restart Now', 'Later'],
-      defaultId: 1,
-      cancelId: 1,
+  const offer: DownloadedUpdateOffer = { generation: 1, version: '4.0.2', artifactIdentity: 'sha256:offer-1' };
+
+  it('asks the user to confirm the exact downloaded version before queuing installation', async () => {
+    const confirmVersion = vi.fn(async (): Promise<boolean> => true);
+    const queueInstall = vi.fn(() => true);
+    const controller = new UpdateInstallConsentController({
+      getCurrentOffer: (): DownloadedUpdateOffer => offer,
+      hasPendingInstall: (): boolean => false,
+      confirmVersion,
+      queueInstall,
     });
+
+    await expect(controller.requestInstall()).resolves.toBe(true);
+    expect(confirmVersion).toHaveBeenCalledExactlyOnceWith('4.0.2');
+    expect(queueInstall).toHaveBeenCalledExactlyOnceWith(offer);
   });
 
-  it('requires explicit confirmation before installing while Secure Tunnel is running', async () => {
-    const confirmStop = vi.fn(async (): Promise<boolean> => false);
-    await expect(confirmTunnelStopForUpdate({
-      getTunnelStatus: async () => tunnelStatus('running'),
-      confirmStop,
-    })).resolves.toBe(false);
-    expect(confirmStop).toHaveBeenCalledOnce();
+  it('does not queue any install when the user declines', async () => {
+    const queueInstall = vi.fn(() => true);
+    const controller = new UpdateInstallConsentController({
+      getCurrentOffer: (): DownloadedUpdateOffer => offer,
+      hasPendingInstall: (): boolean => false,
+      confirmVersion: async (): Promise<boolean> => false,
+      queueInstall,
+    });
+
+    await expect(controller.requestInstall()).resolves.toBe(false);
+    expect(queueInstall).not.toHaveBeenCalled();
   });
 
-  it('does not prompt for tunnel stop when the tunnel is already stopped', async () => {
-    const confirmStop = vi.fn(async (): Promise<boolean> => true);
-    await expect(confirmTunnelStopForUpdate({
-      getTunnelStatus: async () => tunnelStatus('stopped'),
-      confirmStop,
-    })).resolves.toBe(true);
-    expect(confirmStop).not.toHaveBeenCalled();
+  it('starts the installer only after the pre-update backup completes', async () => {
+    const events: string[] = [];
+    const createBackup = vi.fn(async (): Promise<void> => { events.push('backup'); });
+    const startInstall = vi.fn(async (): Promise<void> => { events.push('install'); });
+
+    await installAfterPreUpdateBackup(createBackup, startInstall);
+
+    expect(events).toEqual(['backup', 'install']);
   });
 
-  it('fails safe to confirmation when tunnel status cannot be verified', async () => {
-    const confirmStop = vi.fn(async (): Promise<boolean> => true);
-    await expect(confirmTunnelStopForUpdate({
-      getTunnelStatus: async () => { throw new Error('probe failed'); },
-      confirmStop,
-    })).resolves.toBe(true);
-    expect(confirmStop).toHaveBeenCalledOnce();
+  it('does not start the installer when the required pre-update backup fails', async () => {
+    const backupError = new Error('disk full');
+    const createBackup = vi.fn(async (): Promise<void> => { throw backupError; });
+    const startInstall = vi.fn(async (): Promise<void> => undefined);
+
+    await expect(installAfterPreUpdateBackup(createBackup, startInstall)).rejects.toBe(backupError);
+    expect(createBackup).toHaveBeenCalledOnce();
+    expect(startInstall).not.toHaveBeenCalled();
+  });
+
+  it('routes a failed pre-update backup through Tunnel recovery before installer handoff', async () => {
+    const backupError = new Error('disk full');
+    const createBackup = vi.fn(async (): Promise<void> => { throw backupError; });
+    const startInstall = vi.fn(async (): Promise<void> => undefined);
+    const restoreTunnel = vi.fn(async (): Promise<void> => undefined);
+    const recovery = new UpdateTunnelRecovery();
+    recovery.rememberRunningTunnel(restoreTunnel);
+    let signalErrorHandled: () => void = () => undefined;
+    const errorHandled = new Promise<void>((resolve) => { signalErrorHandled = resolve; });
+    const onInstallError = vi.fn(async (error: unknown): Promise<void> => {
+      expect(error).toBe(backupError);
+      await recovery.restoreAfterFailure();
+      signalErrorHandled();
+    });
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      install: async (): Promise<void> => installAfterPreUpdateBackup(createBackup, startInstall),
+      onInstallError,
+      quietPeriodMs: 0,
+      pollIntervalMs: 1,
+    });
+
+    coordinator.requestInstall(offer);
+    await errorHandled;
+
+    expect(startInstall).not.toHaveBeenCalled();
+    expect(onInstallError).toHaveBeenCalledOnce();
+    expect(restoreTunnel).toHaveBeenCalledOnce();
+  });
+
+  it('restores a previously running Tunnel once when an update handoff fails', async () => {
+    const recovery = new UpdateTunnelRecovery();
+    const restore = vi.fn(async () => undefined);
+    recovery.rememberRunningTunnel(restore);
+
+    await expect(recovery.restoreAfterFailure()).resolves.toBeNull();
+    await expect(recovery.restoreAfterFailure()).resolves.toBeNull();
+
+    expect(restore).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces simultaneous Tunnel recovery requests and reports a restore failure', async () => {
+    const completion = deferred<void>();
+    const recovery = new UpdateTunnelRecovery();
+    const restore = vi.fn(() => completion.promise);
+    recovery.rememberRunningTunnel(restore);
+
+    const first = recovery.restoreAfterFailure();
+    const second = recovery.restoreAfterFailure();
+    await Promise.resolve();
+    expect(restore).toHaveBeenCalledOnce();
+    completion.resolve(undefined);
+    await expect(Promise.all([first, second])).resolves.toEqual([null, null]);
+
+    const failedRecovery = new UpdateTunnelRecovery();
+    failedRecovery.rememberRunningTunnel(async () => { throw new Error('Tunnel restart failed'); });
+    await expect(failedRecovery.restoreAfterFailure()).resolves.toBe('Tunnel restart failed');
+  });
+
+  it('requires fresh consent when a same-version download replaces the offered artifact', async () => {
+    let currentOffer: DownloadedUpdateOffer = offer;
+    const queueInstall = vi.fn(() => true);
+    const controller = new UpdateInstallConsentController({
+      getCurrentOffer: (): DownloadedUpdateOffer => currentOffer,
+      hasPendingInstall: (): boolean => false,
+      confirmVersion: async (): Promise<boolean> => {
+        currentOffer = { ...offer, generation: 2, artifactIdentity: 'sha256:offer-2' };
+        return true;
+      },
+      queueInstall,
+    });
+
+    await expect(controller.requestInstall()).resolves.toBe(false);
+    expect(queueInstall).not.toHaveBeenCalled();
+  });
+
+  it('coalesces simultaneous tray and renderer confirmations', async () => {
+    const confirmation = deferred<boolean>();
+    const confirmVersion = vi.fn(() => confirmation.promise);
+    const queueInstall = vi.fn(() => true);
+    const controller = new UpdateInstallConsentController({
+      getCurrentOffer: (): DownloadedUpdateOffer => offer,
+      hasPendingInstall: (): boolean => false,
+      confirmVersion,
+      queueInstall,
+    });
+
+    const first = controller.requestInstall();
+    const second = controller.requestInstall();
+    expect(await second).toBe(false);
+    confirmation.resolve(true);
+    await expect(first).resolves.toBe(true);
+    expect(confirmVersion).toHaveBeenCalledExactlyOnceWith('4.0.2');
+    expect(queueInstall).toHaveBeenCalledExactlyOnceWith(offer);
   });
 
   it('detects a surviving persistent runtime even when the top-level tunnel state is stale', () => {
@@ -60,7 +171,7 @@ describe('downloaded update installation', () => {
       quietPeriodMs: 20,
     });
 
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     await vi.advanceTimersByTimeAsync(200);
 
     expect(install).not.toHaveBeenCalled();
@@ -78,7 +189,7 @@ describe('downloaded update installation', () => {
       quietPeriodMs: 20,
     });
 
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     active = 0;
     await vi.advanceTimersByTimeAsync(29);
     expect(install).not.toHaveBeenCalled();
@@ -98,7 +209,7 @@ describe('downloaded update installation', () => {
       quietPeriodMs: 30,
     });
 
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     await vi.advanceTimersByTimeAsync(10);
     active = 1;
     await vi.advanceTimersByTimeAsync(10);
@@ -121,7 +232,7 @@ describe('downloaded update installation', () => {
       pollIntervalMs: 10,
       quietPeriodMs: 30,
     });
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     await vi.advanceTimersByTimeAsync(0);
     revision += 2;
     await vi.advanceTimersByTimeAsync(39);
@@ -144,7 +255,7 @@ describe('downloaded update installation', () => {
       quietPeriodMs: 20,
     });
 
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     await vi.advanceTimersByTimeAsync(100);
     expect(install).not.toHaveBeenCalled();
 
@@ -167,7 +278,7 @@ describe('downloaded update installation', () => {
       pollIntervalMs: 10,
       quietPeriodMs: 20,
     });
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     await vi.advanceTimersByTimeAsync(100);
     expect(install).not.toHaveBeenCalled();
     shared = { state: 'available', activeCallCount: 0, revision: 1 };
@@ -187,7 +298,7 @@ describe('downloaded update installation', () => {
       pollIntervalMs: 10,
       quietPeriodMs: 30,
     });
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     await vi.advanceTimersByTimeAsync(20);
     expect(install).not.toHaveBeenCalled();
     shared = { state: 'available', activeCallCount: 0, revision: 2 };
@@ -217,7 +328,7 @@ describe('downloaded update installation', () => {
       quietPeriodMs: 20,
     });
 
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     await vi.advanceTimersByTimeAsync(0);
     expect(sharedActivitySnapshot).toHaveBeenCalledTimes(1);
 
@@ -230,19 +341,67 @@ describe('downloaded update installation', () => {
     expect(sharedActivitySnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it('forces installation after a bounded grace period once the user has confirmed an update', async () => {
+  it('waits for trustworthy shared activity while Secure Tunnel is active', async () => {
     vi.useFakeTimers();
+    let shared: UpdateSharedActivitySnapshot = { state: 'missing' };
     const install = vi.fn();
     const coordinator = new UpdateInstallCoordinator({
-      activeCallCount: (): number => 1,
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<boolean> => true,
+      sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => shared,
       install,
-      maxWaitMs: 50,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(install).not.toHaveBeenCalled();
+    shared = { state: 'available', activeCallCount: 1, revision: 1 };
+    await vi.advanceTimersByTimeAsync(50);
+    expect(install).not.toHaveBeenCalled();
+    shared = { state: 'available', activeCallCount: 0, revision: 2 };
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledOnce();
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('keeps the attempt pending until the installer handoff settles', async () => {
+    vi.useFakeTimers();
+    const handoff = deferred<void>();
+    const install = vi.fn(() => handoff.promise);
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    expect(coordinator.requestInstall(offer)).toBe(true);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(install).toHaveBeenCalledOnce();
+    expect(coordinator.hasPendingInstall()).toBe(true);
+    expect(coordinator.requestInstall({ ...offer, generation: 2 })).toBe(false);
+    handoff.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(coordinator.hasPendingInstall()).toBe(false);
+  });
+
+  it('preserves active work after manual confirmation and waits for a full idle window', async () => {
+    vi.useFakeTimers();
+    let active = 1;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => active,
+      install,
       pollIntervalMs: 10,
       quietPeriodMs: 20,
     });
 
-    coordinator.requestInstall();
-    await vi.advanceTimersByTimeAsync(49);
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(install).not.toHaveBeenCalled();
+    expect(coordinator.hasPendingInstall()).toBe(true);
+    active = 0;
+    await vi.advanceTimersByTimeAsync(29);
     expect(install).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
 
@@ -260,74 +419,13 @@ describe('downloaded update installation', () => {
       quietPeriodMs: 20,
     });
 
-    coordinator.requestInstall();
+    coordinator.requestInstall(offer);
     coordinator.cancel();
     await vi.advanceTimersByTimeAsync(100);
 
     expect(install).not.toHaveBeenCalled();
   });
 
-  it('suppresses duplicate downloaded events while the dialog is open', async () => {
-    const dialogResult = deferred<{ response: number }>();
-    const showDialog = vi.fn(() => dialogResult.promise);
-    const requestInstall = vi.fn();
-    const lifecycle = new UpdateDownloadedDialogController({
-      showDialog,
-      requestInstall,
-      hasPendingInstall: (): boolean => false,
-    });
-
-    const first = lifecycle.handle('4.0.2');
-    await expect(lifecycle.handle('4.0.2')).resolves.toBe(false);
-    expect(showDialog).toHaveBeenCalledOnce();
-    dialogResult.resolve({ response: 1 });
-    await first;
-    expect(requestInstall).not.toHaveBeenCalled();
-  });
-
-  it('suppresses downloaded events while an idle install request is pending', async () => {
-    const showDialog = vi.fn(async () => ({ response: 1 }));
-    const lifecycle = new UpdateDownloadedDialogController({
-      showDialog,
-      requestInstall: vi.fn(),
-      hasPendingInstall: (): boolean => true,
-    });
-
-    await expect(lifecycle.handle('4.0.2')).resolves.toBe(false);
-    expect(showDialog).not.toHaveBeenCalled();
-  });
-
-  it('remembers a version after Later so only a new version can reopen in the session', async () => {
-    const showDialog = vi.fn(async (): Promise<{ response: number }> => ({ response: 1 }));
-    const lifecycle = new UpdateDownloadedDialogController({ showDialog, requestInstall: vi.fn(), hasPendingInstall: (): boolean => false });
-
-    await expect(lifecycle.handle('4.0.2')).resolves.toBe(true);
-    await expect(lifecycle.handle('4.0.2')).resolves.toBe(false);
-    await expect(lifecycle.handle('4.0.3')).resolves.toBe(true);
-
-    expect(showDialog).toHaveBeenCalledTimes(2);
-  });
-
-  it('clears the dialog guard in finally after rejection so a later event can show', async () => {
-    const onError = vi.fn();
-    const showDialog = vi.fn()
-      .mockRejectedValueOnce(new Error('dialog unavailable'))
-      .mockResolvedValueOnce({ response: 0 });
-    const requestInstall = vi.fn();
-    const lifecycle = new UpdateDownloadedDialogController({
-      showDialog,
-      requestInstall,
-      hasPendingInstall: (): boolean => false,
-      onError,
-    });
-
-    await expect(lifecycle.handle('4.0.2')).resolves.toBe(true);
-    await expect(lifecycle.handle('4.0.2')).resolves.toBe(true);
-
-    expect(showDialog).toHaveBeenCalledTimes(2);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'dialog unavailable' }));
-    expect(requestInstall).toHaveBeenCalledOnce();
-  });
 });
 
 function tunnelStatus(state: TunnelStatus['state']): TunnelStatus {

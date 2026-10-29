@@ -1,10 +1,5 @@
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
 
-export interface UpdateTunnelStopConfirmationOptions {
-  readonly getTunnelStatus: () => Promise<TunnelStatus>;
-  readonly confirmStop: () => Promise<boolean>;
-}
-
 export function updateInstallNeedsTunnelStopConfirmation(status: TunnelStatus): boolean {
   if (status.state === 'running' || status.state === 'starting') return true;
   const persistent = status.persistent;
@@ -13,24 +8,87 @@ export function updateInstallNeedsTunnelStopConfirmation(status: TunnelStatus): 
   return persistent.state === 'starting' || persistent.state === 'running' || persistent.state === 'reconnecting';
 }
 
-export async function confirmTunnelStopForUpdate(options: UpdateTunnelStopConfirmationOptions): Promise<boolean> {
-  try {
-    const status = await options.getTunnelStatus();
-    if (!updateInstallNeedsTunnelStopConfirmation(status)) return true;
-  } catch {
-    // Fail safe: if the tunnel status cannot be verified, require explicit user
-    // consent before the installer attempts to stop it.
-  }
-  return options.confirmStop();
+export interface DownloadedUpdateOffer {
+  readonly generation: number;
+  readonly version: string;
+  readonly artifactIdentity: string;
 }
 
-export interface UpdateReadyDialogOptions {
-  readonly type: 'info';
-  readonly title: string;
-  readonly message: string;
-  readonly buttons: ['Restart Now', 'Later'];
-  readonly defaultId: 1;
-  readonly cancelId: 1;
+export async function installAfterPreUpdateBackup(
+  createBackup: () => Promise<unknown>,
+  startInstall: () => Promise<void>,
+): Promise<void> {
+  await createBackup();
+  await startInstall();
+}
+
+export interface UpdateInstallConsentControllerOptions {
+  readonly getCurrentOffer: () => DownloadedUpdateOffer | null;
+  readonly hasPendingInstall: () => boolean;
+  readonly confirmVersion: (version: string) => Promise<boolean>;
+  readonly queueInstall: (offer: DownloadedUpdateOffer) => boolean;
+}
+
+/** One native confirmation grants one in-memory attempt for one downloaded artifact. */
+export class UpdateInstallConsentController {
+  private promptPending = false;
+
+  public constructor(private readonly options: UpdateInstallConsentControllerOptions) {}
+
+  public async requestInstall(): Promise<boolean> {
+    if (this.promptPending || this.options.hasPendingInstall()) return false;
+    const offer = this.options.getCurrentOffer();
+    if (offer === null) return false;
+
+    this.promptPending = true;
+    try {
+      if (!await this.options.confirmVersion(offer.version)) return false;
+      const currentOffer = this.options.getCurrentOffer();
+      if (!sameDownloadedOffer(offer, currentOffer)) return false;
+      return this.options.queueInstall(offer);
+    } finally {
+      this.promptPending = false;
+    }
+  }
+}
+
+/** Restores the pre-update Tunnel state once when the install handoff fails. */
+export class UpdateTunnelRecovery {
+  private restoreRunningTunnel: (() => void | Promise<void>) | null = null;
+  private restoration: Promise<string | null> | null = null;
+
+  public rememberRunningTunnel(restore: () => void | Promise<void>): void {
+    if (this.restoreRunningTunnel !== null || this.restoration !== null) return;
+    this.restoreRunningTunnel = restore;
+  }
+
+  public restoreAfterFailure(): Promise<string | null> {
+    if (this.restoration !== null) return this.restoration;
+    const restore = this.restoreRunningTunnel;
+    this.restoreRunningTunnel = null;
+    if (restore === null) return Promise.resolve(null);
+
+    const restoration = (async (): Promise<string | null> => {
+      try {
+        await restore();
+        return null;
+      } catch (error: unknown) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    })();
+    this.restoration = restoration;
+    void restoration.finally(() => {
+      if (this.restoration === restoration) this.restoration = null;
+    });
+    return restoration;
+  }
+}
+
+function sameDownloadedOffer(left: DownloadedUpdateOffer, right: DownloadedUpdateOffer | null): boolean {
+  return right !== null
+    && left.generation === right.generation
+    && left.version === right.version
+    && left.artifactIdentity === right.artifactIdentity;
 }
 
 export interface UpdateInstallCoordinatorOptions {
@@ -38,9 +96,8 @@ export interface UpdateInstallCoordinatorOptions {
   readonly activityRevision?: () => number;
   readonly tunnelRunning?: () => Promise<boolean | 'unverifiable'>;
   readonly sharedActivitySnapshot?: () => Promise<UpdateSharedActivitySnapshot>;
-  readonly install: () => void;
-  /** Optional bounded grace period after explicit install confirmation. When reached, proceed even if stale activity never drains. */
-  readonly maxWaitMs?: number;
+  readonly install: (offer: DownloadedUpdateOffer) => void | Promise<void>;
+  readonly onInstallError?: (error: unknown) => void | Promise<void>;
   readonly quietPeriodMs?: number;
   readonly pollIntervalMs?: number;
 }
@@ -49,66 +106,19 @@ export type UpdateSharedActivitySnapshot =
   | { readonly state: 'available'; readonly activeCallCount: number; readonly revision: number; readonly ownerKey?: string }
   | { readonly state: 'missing' | 'stale' | 'unverifiable'; readonly reason?: string };
 
-export interface UpdateDownloadedDialogControllerOptions {
-  readonly showDialog: (options: UpdateReadyDialogOptions) => Promise<{ readonly response: number }>;
-  readonly requestInstall: () => void;
-  readonly hasPendingInstall: () => boolean;
-  readonly onShow?: (version: string) => void;
-  readonly onError?: (error: unknown) => void;
-}
-
 const DEFAULT_QUIET_PERIOD_MS = 1_500;
 const DEFAULT_POLL_INTERVAL_MS = 250;
-
-export function updateReadyDialogOptions(version: string): UpdateReadyDialogOptions {
-  return {
-    type: 'info',
-    title: 'Update Ready - lnwjud',
-    message: `Version v${version} has been downloaded. Restart lnwjud now to install?`,
-    buttons: ['Restart Now', 'Later'],
-    defaultId: 1,
-    cancelId: 1,
-  };
-}
-
-export class UpdateDownloadedDialogController {
-  private dialogPending = false;
-  private readonly handledVersions = new Set<string>();
-
-  public constructor(private readonly options: UpdateDownloadedDialogControllerOptions) {}
-
-  public async handle(version: string): Promise<boolean> {
-    if (this.dialogPending || this.options.hasPendingInstall() || this.handledVersions.has(version)) return false;
-    this.dialogPending = true;
-    try {
-      this.options.onShow?.(version);
-      const result = await this.options.showDialog(updateReadyDialogOptions(version));
-      this.handledVersions.add(version);
-      while (this.handledVersions.size > 20) {
-        const oldest = this.handledVersions.values().next().value;
-        if (oldest === undefined) break;
-        this.handledVersions.delete(oldest);
-      }
-      if (result.response === 0) this.options.requestInstall();
-      return true;
-    } catch (error: unknown) {
-      this.options.onError?.(error);
-      return true;
-    } finally {
-      this.dialogPending = false;
-    }
-  }
-}
 
 export class UpdateInstallCoordinator {
   private readonly quietPeriodMs: number;
   private readonly pollIntervalMs: number;
   private pending = false;
+  private handoffPending = false;
+  private offer: DownloadedUpdateOffer | null = null;
   private shutdown = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quietUntil = 0;
   private quietRevision = '';
-  private forceInstallAt = 0;
   private evaluating = false;
 
   public constructor(private readonly options: UpdateInstallCoordinatorOptions) {
@@ -116,30 +126,27 @@ export class UpdateInstallCoordinator {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   }
 
-  public requestInstall(): void {
-    if (this.shutdown || this.pending) return;
+  public requestInstall(offer: DownloadedUpdateOffer): boolean {
+    if (this.shutdown || this.pending || this.handoffPending) return false;
     this.pending = true;
-    const maxWaitMs = this.options.maxWaitMs;
-    this.forceInstallAt = maxWaitMs !== undefined && Number.isFinite(maxWaitMs) && maxWaitMs >= 0
-      ? Date.now() + maxWaitMs
-      : 0;
+    this.offer = offer;
     void this.evaluate();
+    return true;
   }
 
   public cancel(): void {
     this.shutdown = true;
     this.pending = false;
-    this.forceInstallAt = 0;
+    this.offer = null;
     this.clearTimer();
   }
 
   public hasPendingInstall(): boolean {
-    return this.pending;
+    return this.pending || this.handoffPending;
   }
 
   private async evaluate(): Promise<void> {
     if (!this.pending || this.shutdown || this.evaluating) return;
-    if (this.maybeForceInstall()) return;
     this.evaluating = true;
     let activity: { readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string };
     try {
@@ -160,7 +167,6 @@ export class UpdateInstallCoordinator {
 
   private async waitForQuietPeriod(): Promise<void> {
     if (!this.pending || this.shutdown) return;
-    if (this.maybeForceInstall()) return;
     // Poll the existing tracker throughout the quiet period so a short call
     // that starts and ends inside the interval restarts the quiet clock.
     const activity = await this.observeActivity();
@@ -171,8 +177,25 @@ export class UpdateInstallCoordinator {
     }
     const remaining = this.quietUntil - Date.now();
     if (remaining <= 0) {
+      const offer = this.offer;
+      if (offer === null) {
+        this.pending = false;
+        return;
+      }
       this.pending = false;
-      this.options.install();
+      this.offer = null;
+      this.handoffPending = true;
+      try {
+        await this.options.install(offer);
+      } catch (error: unknown) {
+        try {
+          await this.options.onInstallError?.(error);
+        } catch (handlerError: unknown) {
+          console.error(`Update installation error handler failed: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}`);
+        }
+      } finally {
+        this.handoffPending = false;
+      }
       return;
     }
     this.schedule(Math.min(this.pollIntervalMs, remaining), () => { void this.waitForQuietPeriod(); });
@@ -209,15 +232,6 @@ export class UpdateInstallCoordinator {
 
   private sampleLocalActivity(): LocalActivityObservation {
     return { activeCount: this.options.activeCallCount(), revision: this.options.activityRevision?.() ?? 0 };
-  }
-
-  private maybeForceInstall(): boolean {
-    if (!this.pending || this.shutdown || this.forceInstallAt <= 0 || Date.now() < this.forceInstallAt) return false;
-    this.pending = false;
-    this.forceInstallAt = 0;
-    this.clearTimer();
-    this.options.install();
-    return true;
   }
 
   private schedule(delayMs: number, action: () => void): void {

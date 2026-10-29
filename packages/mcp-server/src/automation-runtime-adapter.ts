@@ -88,7 +88,9 @@ function taskEvidenceFromSnapshot(
     return err(appError('CONFLICT', 'Automation shell returned a different durable task identity', true));
   }
   const rawState = typeof value.state === 'string' ? value.state : 'unknown';
-  const state = rawState === 'running'
+  const state = rawState === 'starting'
+    ? 'running'
+    : rawState === 'running'
     || rawState === 'completed'
     || rawState === 'failed'
     || rawState === 'cancelled'
@@ -136,7 +138,7 @@ function observationFromSnapshot(
   }
   const observedAt = timestamp(value.finished_at) ?? timestamp(value.started_at) ?? now().toISOString();
   const state = typeof value.state === 'string' ? value.state : undefined;
-  if (state === 'running') return ok({ presence: 'found', state: 'running', observedAt });
+  if (state === 'starting' || state === 'running') return ok({ presence: 'found', state: 'running', observedAt });
   if (state === 'completed') {
     return ok({ presence: 'found', state: 'completed', observedAt, terminalState: terminalState(value, state) });
   }

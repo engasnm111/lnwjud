@@ -65,6 +65,7 @@ export function createRuntimeSuccessServices(calls: string[]): McpApplicationSer
     workspaceQuery: serviceProxy('workspaceQuery', calls, () => ({ entries: [] })),
     projectSnapshot: serviceProxy('projectSnapshot', calls, () => ({ workspaceId: 'workspace-1', files: 1 })),
     project: serviceProxy('project', calls, () => ({ kind: 'node', packageManager: 'pnpm' })),
+    engineeringCapture: serviceProxy('engineeringCapture', calls, () => ({ observationId: 'build-smoke', processId: 'process-1' })),
     engineeringPreparation: serviceProxy('engineeringPreparation', calls, (_method, args) => {
       const objective = typeof args[1] === 'string' ? args[1] : 'Fix the auth persistence bug';
       return {

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -35,6 +36,8 @@ import {
 import { AuditService, decodeActivityTargetReference } from '@lnwjud/audit';
 import {
   createPlatformCapabilitySet,
+  createHostWindowsNativeAuthority,
+  createHostPosixProcessRuntime,
   SharedManagedWriterAdmission,
   SqliteWorkspaceWriterLease,
   SecureRepositoryImportRuntime,
@@ -50,7 +53,8 @@ import {
   createLocalExtensionsService,
   type ExtensionsService,
 } from '@lnwjud/extensions';
-import { DapSessionService, OfficeDataWorkflowService, ActivityTracker, RuntimeEngineeringEvidenceVerifier, createEngineeringArtifactVerifier, createEngineeringSourceStateProvider, RuntimeGoalManagedTaskStateReader, SharedActivitySnapshotLease, composeActivitySinks, createFileActivitySink, currentSharedActivityOwner, mcpActivityLogPath, type ActivitySink, type ActivitySinkEvent, type McpApplicationServices, type WorkspaceScope } from '@lnwjud/mcp-server';
+import { DapSessionService, OfficeDataWorkflowService, ActivityTracker, RuntimeEngineeringEvidenceVerifier, createEngineeringArtifactVerifier, createEngineeringSourceStateProvider, createEngineeringGithubJobsProvider, RuntimeGoalManagedTaskStateReader, SharedActivitySnapshotLease, composeActivitySinks, createFileActivitySink, currentSharedActivityOwner, mcpActivityLogPath, type ActivitySink, type ActivitySinkEvent, type McpApplicationServices, type WorkspaceScope } from '@lnwjud/mcp-server';
+import { EngineeringBuildCaptureService, LocalEngineeringObservationProvider, CloudflareEngineeringObservationProvider, createEngineeringReceiptArtifactVerifier } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
 import {
   AesGcmCheckpointCipher,
@@ -155,10 +159,12 @@ export function createStdioMcpRuntime(
     globalSettingsProvider: (): EngineeringHarnessSettings => parseEngineeringHarnessSettings(settingsRepository.get(USER_SETTING_KEYS.engineeringHarnessSettings)).settings,
     workspaceOverrideProvider: (workspaceId): EngineeringHarnessWorkspaceOverride | undefined => parseEngineeringHarnessWorkspaceOverrides(settingsRepository.get(USER_SETTING_KEYS.engineeringHarnessWorkspaceOverrides))[workspaceId],
   });
-  const writerAdmission = new SharedManagedWriterAdmission(path.join(dataPath, 'background-tasks'));
+  const nativeAuthority = createHostWindowsNativeAuthority(dataPath);
+  const writerAdmission = new SharedManagedWriterAdmission(path.join(dataPath, 'background-tasks'), nativeAuthority);
   const workspaceWriterLease = new SqliteWorkspaceWriterLease(path.join(dataPath, 'workspace-writer-leases.sqlite'), Date.now, writerAdmission);
   const processService = new ProcessService(workspaceRepository, {
     writerAdmission,
+    ...(nativeAuthority === undefined ? {} : { nativeAuthority }),
     nativeContainmentRoot: path.join(dataPath, 'native-managed-processes'),
     projectService,
     profileProvider,
@@ -182,7 +188,7 @@ export function createStdioMcpRuntime(
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot: path.join(dataPath, 'recovery-trash'),
   });
-  const gitService = new GitService(workspaceRepository, undefined, undefined, { writerAdmission, nativeContainmentRoot: path.join(dataPath, 'native-managed-git') });
+  const gitService = new GitService(workspaceRepository, undefined, undefined, { writerAdmission, nativeContainmentRoot: path.join(dataPath, 'native-managed-git'), ...(nativeAuthority === undefined ? {} : { nativeAuthority }) });
   const workspaceQuery = new WorkspaceQueryService(workspaceRepository, pathGuard);
   const extensions = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
@@ -191,6 +197,9 @@ export function createStdioMcpRuntime(
     idleTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpIdleTimeoutMs), DEFAULT_MCP_IDLE_TIMEOUT_MS, 30_000, 24 * 60 * 60_000),
   });
   const codexService = new CodexService(workspaceRepository, {
+    writerAdmission,
+    nativeContainmentRoot: path.join(dataPath, 'native-managed-codex'),
+    ...(nativeAuthority === undefined ? {} : { nativeAuthority }),
     auditService,
     profileProvider,
   });
@@ -203,7 +212,7 @@ export function createStdioMcpRuntime(
     if (roots.length === 0) return [workspace.realRootPath];
     return roots;
   }, effectiveUnrestricted, options.strictAllowedRoots, () => parsePathList(settingsRepository.get(USER_SETTING_KEYS.capabilityRoots)),
-  () => parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.shellSynchronousWaitSeconds), DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS));
+  () => parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.shellSynchronousWaitSeconds), DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS), nativeAuthority);
   const taskCancellation = new GoalTaskCancellationService([
     { provider: 'process', cancelForGoal: processService.cancelForGoal.bind(processService) },
     { provider: 'codex', cancelForGoal: codexService.cancelForGoal.bind(codexService) },
@@ -220,21 +229,42 @@ export function createStdioMcpRuntime(
   const actor: FileActor = { clientId: 'cli-mcp-stdio', clientName: 'lnwjud cli MCP' };
   const engineeringSourceState = createEngineeringSourceStateProvider(async (workspaceId, args) => gitService.run(actor, { workspaceId, args }));
   const engineeringArtifactVerifier = createEngineeringArtifactVerifier(async (workspaceId) => (await workspaceRepository.get(workspaceId))?.realRootPath);
+  const engineeringWorkspaceRoot = async (workspaceId: string): Promise<string | undefined> => (await workspaceRepository.get(workspaceId))?.realRootPath;
+  const engineeringGithubJobs = createEngineeringGithubJobsProvider(engineeringWorkspaceRoot);
+  const engineeringReceipt = (workspaceId: string, observationId: string): ReturnType<EngineeringBuildCaptureService['resolveReceipt']> => engineeringCapture.resolveReceipt(workspaceId, observationId);
+  const verifyEngineeringArtifact = createEngineeringReceiptArtifactVerifier(engineeringWorkspaceRoot);
+  const cloudflareToken = (): string | undefined => process.env.CLOUDFLARE_API_TOKEN;
   const goalService = new GoalContinuationService(workspaceRepository, goalRepository, {
+    engineeringPreparation: engineeringPreparationService,
     engineeringEvidenceVerifier: new RuntimeEngineeringEvidenceVerifier({
       process: processService,
       shell: capabilityRuntime.shell,
       sourceState: engineeringSourceState,
       artifactVerifier: engineeringArtifactVerifier,
+      workspaceRoot: engineeringWorkspaceRoot,
+      githubJobs: engineeringGithubJobs,
+      deliveryObservations: [
+        new LocalEngineeringObservationProvider(engineeringReceipt, verifyEngineeringArtifact),
+        new CloudflareEngineeringObservationProvider({ receipt: engineeringReceipt, token: cloudflareToken, verifyArtifact: verifyEngineeringArtifact }),
+      ],
     }),
     scheduledContinuations: goalRepository,
     workerLiveness: goalMutationFence,
     taskCancellation,
     requestCancellation,
   });
+  const engineeringCapture = new EngineeringBuildCaptureService({
+    goals: goalService,
+    receipts: goalRepository,
+    process: processService,
+    workspaceRoot: engineeringWorkspaceRoot,
+    signingKey: (): Buffer => createHmac('sha256', checkpointKey).update('lnwjud-engineering-build-receipts-v1').digest(),
+    cloudflareToken,
+  });
   const scheduledContinuationService = new ScheduledContinuationService(goalRepository, {
     workerLiveness: goalMutationFence,
     automationResumes: automationRepository,
+    workspaceWriterFence: workspaceWriterLease,
   });
   const sharedActivityLease = createSharedActivityLease(process.env.TUNNEL_CLIENT_PROFILE_DIR);
   const activityReady = sharedActivityLease.then(async (lease) => lease?.initialize());
@@ -279,6 +309,7 @@ export function createStdioMcpRuntime(
   });
   const debugSessions = new DapSessionService();
   const services: McpApplicationServices = {
+    engineeringCapture,
     platform: process.platform,
     runtimeStatePath: path.join(dataPath, 'upgrade-runtime.json'),
     runtimeTiming: () => ({
@@ -317,7 +348,7 @@ export function createStdioMcpRuntime(
     search: new SearchService(workspaceRepository),
     workspaceIndex,
     git: gitService,
-    repositoryImport: new RepositoryImportService(workspaceRepository, new SecureRepositoryImportRuntime(dataPath)),
+    repositoryImport: new RepositoryImportService(workspaceRepository, new SecureRepositoryImportRuntime(dataPath, nativeAuthority)),
     process: processService,
     codex: codexService,
     agentSwarm: agentSwarmService,
@@ -400,6 +431,7 @@ function createStdioCapabilityService(
   strictAllowedRoots?: readonly string[],
   configuredRootsProvider: () => readonly string[] = () => [],
   synchronousWaitSecondsProvider: () => number = () => DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS,
+  windowsNativeAuthority?: import('@lnwjud/process').WindowsNativeAuthority,
 ): StdioCapabilityRuntime {
   const bridgeSizeBytes = capabilityBridgeExpectedSizeBytes();
   const ocrPath = windowsOcrHelperPath();
@@ -414,6 +446,8 @@ function createStdioCapabilityService(
   const runtime = createPlatformCapabilitySet({
     platform: process.platform,
     dataPath,
+    ...(windowsNativeAuthority === undefined ? {} : { windowsNativeAuthority }),
+    posixProcessRuntime: createHostPosixProcessRuntime(),
     workspaceRootsProvider,
     unrestricted,
     configuredRootsProvider: () => strictAllowedRoots ?? [...readCapabilityRoots(process.env.LNWJUD_CAPABILITY_ROOTS), ...configuredRootsProvider(), restrictedRoot],

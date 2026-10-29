@@ -152,6 +152,88 @@ describe('MCP tool registry', () => {
     }
   });
 
+  it('does not block goal lifecycle tools (claim_scheduled_continuation, run_goal) behind workspace writer lease', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-mcp-goal-tools-unblocked-'));
+    try {
+      const lease = new SqliteWorkspaceWriterLease(path.join(root, 'leases.sqlite'));
+      // Pre-acquire an active writer lease with a different session ID
+      const priorLease = await lease.acquire('workspace-a', actor.clientId, 'dead-worker-session', 600);
+      expect(priorLease.ok).toBe(true);
+
+      const claimCalled = vi.fn(async () => ok({
+        outcome: 'recurring_acquired' as const,
+        continuation: { continuationId: 'cont-1', goalId: 'goal-1', status: 'scheduled' } as never,
+        goal: { goalId: 'goal-1', status: 'active', revision: 1 } as never,
+        leaseToken: 'token-123',
+        leaseGeneration: 1,
+        acquisition: 'normal' as const,
+        runKey: 'run-key-1',
+        nextRequiredAction: 'continue_work_with_existing_recurring_watchdog' as const,
+        currentWakeMayReturn: false as const,
+      }));
+      const runGoalCalled = vi.fn(async () => ok({
+        goalId: 'goal-1',
+        goalKey: 'gk-1',
+        revision: 1,
+        status: 'active' as const,
+        acquired: true,
+        leaseToken: 'lease-token-1',
+        leaseGeneration: 1,
+        leaseExpiresAt: new Date(Date.now() + 600_000).toISOString(),
+        plan: { steps: [] },
+      }));
+
+      const registry = new ToolRegistry({
+        workspaceWriterLease: lease,
+        scheduledContinuations: {
+          claimScheduledContinuation: claimCalled,
+          getScheduledContinuation: async () => null,
+        } as never,
+        goals: { runGoal: runGoalCalled } as never,
+        file: {
+          readFile: async () => err(appError('FILE_NOT_FOUND', 'not found')),
+          editFile: async () => ok({ path: 'file.ts', replacements: 1, bytesWritten: 1 }),
+        } as never,
+      }, actor, {
+        sessionId: 'new-chat-wake-session',
+        profileProvider: (): typeof permissionProfiles.full => permissionProfiles.full,
+        authorizationModeProvider: (): 'full_bypass' => 'full_bypass',
+      });
+
+      // 1. claim_scheduled_continuation must succeed and reach service, NOT be rejected by writer lease
+      const claimResult = await registry.invoke('claim_scheduled_continuation', {
+        continuationId: 'cont-1',
+        workspaceId: 'workspace-a',
+        goalId: 'goal-1',
+      });
+      expect(claimResult.isError).not.toBe(true);
+      expect(claimCalled).toHaveBeenCalledTimes(1);
+
+      // 2. run_goal must succeed and reach service, NOT be rejected by writer lease
+      const runResult = await registry.invoke('run_goal', {
+        workspaceId: 'workspace-a',
+        goalKey: 'gk-1',
+        objective: 'Test unblocked run_goal',
+      });
+      expect(runResult.isError).not.toBe(true);
+      expect(runGoalCalled).toHaveBeenCalledTimes(1);
+
+      // 3. BUT actual workspace mutation (edit_file) WITHOUT writer lease proof is still blocked by writer lease!
+      const editResult = await registry.invoke('edit_file', {
+        workspaceId: 'workspace-a',
+        path: 'file.ts',
+        oldText: 'a',
+        newText: 'b',
+      });
+      expect(editResult.isError).toBe(true);
+      expect(editResult).toMatchObject({
+        structuredContent: { error: { code: 'CONFLICT' } },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('fences workspace indexing mutations as well as file writes across independent clients', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-writer-lease-index-'));
     try {
@@ -317,7 +399,7 @@ describe('MCP tool registry', () => {
   it('returns the exact deterministic tool order', () => {
     const registry = new ToolRegistry({}, actor);
     expect(registry.list().map((tool) => tool.name)).toEqual([
-      'workspace_list', 'workspace_path_preflight', 'workspace_writer_lease_acquire', 'workspace_writer_lease_status', 'workspace_writer_lease_renew', 'workspace_writer_lease_release', 'workspace_register', 'workspace_info', 'workspace_tree', 'project_snapshot', 'engineering_prepare_task', 'engineering_start_task', 'engineering_get_status', 'read_file', 'read_files',
+      'workspace_list', 'workspace_path_preflight', 'workspace_writer_lease_acquire', 'workspace_writer_lease_status', 'workspace_writer_lease_renew', 'workspace_writer_lease_release', 'workspace_register', 'workspace_info', 'workspace_tree', 'project_snapshot', 'engineering_prepare_task', 'engineering_start_task', 'engineering_get_status', 'engineering_build_artifact', 'engineering_complete_build', 'engineering_upload_worker', 'read_file', 'read_files',
       'search_files', 'search_text', 'git_status', 'git_diff', 'git_log', 'git_clone_safe', 'git_clone_status', 'git_clone_cancel', 'git', 'write_file',
       'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file', 'list_recovery_items', 'restore_deleted_file', 'list_checkpoints', 'restore_checkpoint', 'process_start', 'process_list', 'process_status',
       'process_logs', 'process_stop', 'project_dev', 'project_test', 'project_lint',
@@ -331,7 +413,7 @@ describe('MCP tool registry', () => {
       'read_file_page', 'read_file_page_continue',
       'workspace_index', 'workspace_index_status', 'workspace_index_watch', 'workspace_index_stop',
       'session_handoff', 'verify_incremental',
-      'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
+      'recover_blocked_goal', 'run_goal', 'get_goal', 'get_goal_plan', 'update_goal_plan', 'update_goal_acceptance', 'revise_goal_intent',
       'create_context_capsule', 'get_context_capsule', 'list_context_capsules', 'context_pressure', 'record_delivery_receipt', 'list_delivery_receipts', 'advance_goal_iteration',
       'checkpoint_goal', 'checkpoint_goal_engineering', 'finish_goal', 'cancel_goal', 'reconcile_goals', 'list_goals',
       'resource_snapshot', 'call_history', 'goal_result', 'workflow_templates', 'workflow_prepare', 'workflow_start',

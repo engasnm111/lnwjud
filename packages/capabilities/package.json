@@ -1,6 +1,6 @@
 {
   "name": "@lnwjud/capabilities",
-  "version": "5.8.7",
+  "version": "5.9.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -20,7 +20,7 @@
   "scripts": {
     "test": "vitest run --fileParallelism=false",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --outDir dist"
+    "build": "node ../../apps/desktop/scripts/prepare-containment-runtime.mjs && tsc --outDir dist"
   },
   "license": "MIT"
 }

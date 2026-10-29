@@ -41,6 +41,124 @@ describe('engineering workflow routing', () => {
     ]));
   });
 
+  it.each([
+    ['Review using native tools', 'Review the native application'],
+    ['Review using native read tools', 'Review the native module'],
+    ['Review using native read-only tools', 'Review the native bridge'],
+    ['Review using native tooling', 'Review the native host'],
+    ['Review using platform-native tools', 'Review the native platform integration'],
+    ['Review native', 'Review the native provider'],
+  ])('distinguishes tool use from native component claims: %s', (tooling, component) => {
+    const toolPlan = planEngineeringWorkflow(tooling, assessment());
+    expect(toolPlan.primaryTaskKind).toBe('review');
+    expect(toolPlan.deliveryScope).toBe('local');
+    expect(toolPlan.riskTier).toBe('low');
+    expect(classifyEngineeringRisk(tooling).tier).toBe(toolPlan.riskTier);
+    expect(toolPlan.gates.map((gate) => gate.id)).not.toContain('cross_platform');
+
+    const componentPlan = planEngineeringWorkflow(component, assessment());
+    expect(componentPlan.primaryTaskKind).toBe('review');
+    expect(componentPlan.deliveryScope).toBe('local');
+    expect(componentPlan.riskTier).toBe('high');
+    expect(classifyEngineeringRisk(component).tier).toBe(componentPlan.riskTier);
+    expect(componentPlan.gates.find((gate) => gate.id === 'cross_platform')).toMatchObject({
+      requiredPlatforms: ['win32', 'darwin', 'linux'], applicability: 'required',
+    });
+  });
+
+  it.each([
+    { objective: 'Fix native macOS application startup using native tools', platforms: ['darwin'], risk: 'high' },
+    { objective: 'Fix the native Windows bridge using native read tools', platforms: ['win32'], risk: 'high' },
+    { objective: 'Fix Linux startup using native tooling', platforms: ['linux'], risk: 'medium' },
+    { objective: 'Fix cross-platform startup using native read tools', platforms: ['win32', 'darwin', 'linux'], risk: 'high' },
+    { objective: 'Fix native tools and the native module', platforms: ['win32', 'darwin', 'linux'], risk: 'high' },
+    { objective: 'Fix native cross-platform clipboard provider', platforms: ['win32', 'darwin', 'linux'], risk: 'high' },
+  ])('preserves explicit and mixed platform claims: $objective', ({ objective, platforms, risk }) => {
+    const planned = planEngineeringWorkflow(objective, assessment());
+    expect(planned.primaryTaskKind).toBe('bugfix');
+    expect(planned.deliveryScope).toBe('local');
+    expect(planned.riskTier).toBe(risk);
+    expect(classifyEngineeringRisk(objective).tier).toBe(planned.riskTier);
+    expect(planned.gates.find((gate) => gate.id === 'cross_platform')).toMatchObject({
+      requiredPlatforms: platforms, applicability: 'required',
+    });
+  });
+
+  it('preserves unrelated risk triggers when native wording describes tools', () => {
+    const planned = planEngineeringWorkflow('Fix auth token persistence using native read tools', assessment());
+    expect(planned.primaryTaskKind).toBe('bugfix');
+    expect(planned.deliveryScope).toBe('local');
+    expect(planned.riskTier).toBe('high');
+    expect(classifyEngineeringRisk('Fix auth token persistence using native read tools').tier).toBe('high');
+    expect(planned.gates.map((gate) => gate.id)).toEqual(expect.arrayContaining([
+      'integration', 'restart_persistence', 'security_review', 'independent_review',
+    ]));
+    expect(planned.gates.map((gate) => gate.id)).not.toContain('cross_platform');
+  });
+
+  it.each([
+    { objective: 'Fix native clipboard provider', platforms: ['win32', 'darwin', 'linux'] },
+    { objective: 'Fix the native clipboard-provider', platforms: ['win32', 'darwin', 'linux'] },
+    { objective: 'Fix the native macOS clipboard provider', platforms: ['darwin'] },
+    { objective: 'Fix the native Linux filesystem provider', platforms: ['linux'] },
+    { objective: 'Fix native tools; then fix the native clipboard provider', platforms: ['win32', 'darwin', 'linux'] },
+  ])('retains native obligations for qualified components: $objective', ({ objective, platforms }) => {
+    const planned = planEngineeringWorkflow(objective, assessment());
+    expect(planned.primaryTaskKind).toBe('bugfix');
+    expect(planned.deliveryScope).toBe('local');
+    expect(planned.riskTier).toBe('high');
+    expect(classifyEngineeringRisk(objective).tier).toBe('high');
+    expect(planned.gates.map((gate) => gate.id)).toEqual(expect.arrayContaining(['integration', 'independent_review']));
+    expect(planned.gates.find((gate) => gate.id === 'cross_platform')).toMatchObject({ requiredPlatforms: platforms });
+  });
+
+  it.each([
+    { targets: 'Windows/macOS', platforms: ['win32', 'darwin'] },
+    { targets: 'Windows/Linux', platforms: ['win32', 'linux'] },
+    { targets: 'Windows / Mac OS / Linux', platforms: ['win32', 'darwin', 'linux'] },
+  ])('distinguishes native components from tools with an OS list: $targets', ({ targets, platforms }) => {
+    const component = `Fix native ${targets} clipboard provider`;
+    const componentPlan = planEngineeringWorkflow(component, assessment());
+    expect(componentPlan.riskTier).toBe('high');
+    expect(classifyEngineeringRisk(component).tier).toBe('high');
+    expect(componentPlan.gates.map((gate) => gate.id)).toEqual(expect.arrayContaining(['integration', 'independent_review']));
+    expect(componentPlan.gates.find((gate) => gate.id === 'cross_platform')).toMatchObject({ requiredPlatforms: platforms });
+
+    const tooling = `Fix behavior using native ${targets} read tools; inspect the clipboard provider`;
+    const toolingPlan = planEngineeringWorkflow(tooling, assessment());
+    expect(toolingPlan.riskTier).toBe('medium');
+    expect(classifyEngineeringRisk(tooling).tier).toBe('medium');
+    expect(toolingPlan.gates.map((gate) => gate.id)).not.toContain('integration');
+    expect(toolingPlan.gates.map((gate) => gate.id)).not.toContain('independent_review');
+    expect(toolingPlan.gates.find((gate) => gate.id === 'cross_platform')).toMatchObject({ requiredPlatforms: platforms });
+  });
+
+  it.each([
+    'Fix behavior using native read tools and inspect the app',
+    'Fix behavior using native tools; inspect the clipboard provider',
+    'Fix behavior using native read-only tooling, then inspect the module',
+    'Fix behavior using native\nInspect the app',
+    'Fix behavior using native read/tools; inspect the app',
+  ])('does not carry native tool wording into unrelated component clauses: %s', (objective) => {
+    const planned = planEngineeringWorkflow(objective, assessment());
+    expect(planned.riskTier).toBe('medium');
+    expect(classifyEngineeringRisk(objective).tier).toBe('medium');
+    expect(planned.gates.map((gate) => gate.id)).not.toContain('integration');
+    expect(planned.gates.map((gate) => gate.id)).not.toContain('independent_review');
+    expect(planned.gates.map((gate) => gate.id)).not.toContain('cross_platform');
+  });
+
+  it.each(['Fix behavior using native read tools', 'Fix the native macOS application'])('preserves explicit project platform precedence: %s', (objective) => {
+    const planned = planEngineeringWorkflow(objective, {
+      ...assessment(),
+      projectProfile: { engineering: { requiredPlatforms: ['win32', 'linux'] } },
+    });
+    expect(planned.gates.find((gate) => gate.id === 'cross_platform')).toMatchObject({
+      requiredPlatforms: ['win32', 'linux'], applicability: 'required',
+    });
+    expect(planned.gates.find((gate) => gate.id === 'cross_platform')?.reason).toContain('Project profile');
+  });
+
   it('does not silently broaden delivery beyond the request', () => {
     expect(inferDeliveryScope('Fix locally and validate')).toBe('local');
     expect(inferDeliveryScope('Fix and open a PR')).toBe('pull_request');

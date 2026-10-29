@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.8.7';
+export const APP_VERSION = '5.9.0';
 export { engineeringCommandFingerprint, formatEngineeringCommand } from './engineering-command.js';
 export { isUnrestricted, unrestrictedFromEnv, unrestrictedFromSetting, UNRESTRICTED_SETTING_KEY, type ProcessEnvLike } from './unrestricted.js';
 
@@ -56,3 +56,5 @@ export { USER_SETTING_KEYS, DEFAULT_MCP_CALL_TIMEOUT_MS, DEFAULT_MCP_IDLE_TIMEOU
 export { DEFAULT_PONYTAIL_MODE, parsePonytailMode, parsePonytailModeOverride, workspacePonytailMode, normalizeProjectProfile, resolvePonytailPolicy, type PonytailMode, type PonytailModeOverride, type PonytailPolicySource, type ResolvedPonytailPolicy } from './ponytail-policy.js';
 export { projectEngineeringSettings, parseProjectEngineeringSettings, type ProjectEngineeringMode, type ProjectEngineeringProfile, type EngineeringCommandKind, type EngineeringRequiredPlatform, type ProjectEngineeringSettings } from './engineering-policy.js';
 export { DEFAULT_TOOL_AVAILABILITY_SNAPSHOT, parseToolAvailabilitySnapshot, serializeToolAvailabilitySnapshot, toolUserPreference, resolveEffectiveToolAvailability, type ToolAvailabilitySnapshot, type ToolAvailabilityOverride, type ToolAvailabilityReason, type ToolUserPreference, type EffectiveToolAvailability } from './tool-availability.js';
+
+export { isEngineeringWorkerTarget } from './user-settings.js';

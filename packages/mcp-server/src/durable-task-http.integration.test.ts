@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { startMcpHttp, type McpHttpServerHandle } from './http.js';
 import { createProtocolHttpRequestScope } from './request-scope.js';
+import { nativeFixture } from '../../process/test/native-fixture.js';
 
 const metadataSchema = z.object({ owner_client_id: z.string(), owner_session_id: z.string(), owner_workspace_id: z.string() });
 const launchRecordSchema = z.object({ taskId: z.string(), ownerClientId: z.string(), ownerSessionId: z.string(), ownerWorkspaceId: z.string() });
@@ -40,17 +41,23 @@ const cases: Array<{ protocol: 'modern' | 'legacy'; launchTool: 'shell' | 'task_
 ];
 
 describe('durable task ownership over HTTP', () => {
-  it.each(cases)('$protocol $launchTool preserves outputs and ownership across provider replacement', async ({ protocol, launchTool }) => {
+  it.skipIf(process.platform === 'darwin').each(cases)('$protocol $launchTool preserves outputs and ownership across provider replacement', async ({ protocol, launchTool }) => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-owned-http-'));
     const rootA = path.join(directory, 'a');
     const rootB = path.join(directory, 'b');
     const taskDirectory = path.join(directory, 'tasks');
     await Promise.all([mkdir(rootA), mkdir(rootB)]);
+    const native = process.platform === 'win32' ? await nativeFixture(directory) : undefined;
     const readyPath = path.join(rootA, 'ready.flag');
     const releasePath = path.join(rootA, 'release.flag');
     const fixturePath = path.join(rootA, 'fixture.mjs');
     await writeFile(fixturePath, fixtureSource, 'utf8');
-    const makeBackend = (): ShellCapabilityBackend => new ShellCapabilityBackend({ allowedRoots: [rootA, rootB], taskStateDirectory: taskDirectory, autoWaitSeconds: 0 });
+    const makeBackend = (): ShellCapabilityBackend => new ShellCapabilityBackend({
+      allowedRoots: [rootA, rootB],
+      taskStateDirectory: taskDirectory,
+      autoWaitSeconds: 0,
+      ...(native === undefined ? {} : { windowsNativeAuthority: native.authority }),
+    });
     let backend = makeBackend();
     const owners: CapabilityTaskOwner[] = [];
     const options = {

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,8 +7,17 @@ import { automationShellRequestDigest, ok, type Result } from '@lnwjud/domain';
 import { engineeringCommandFingerprint, formatEngineeringCommand } from '@lnwjud/shared';
 import { ShellCapabilityBackend, withAutomationShellDispatchContext } from './shell-backend.js';
 import { CAPABILITY_TASK_OWNER_METADATA_KEY } from './task-ownership.js';
+import { nativeFixture } from '../../process/test/native-fixture.js';
+import { createHostPosixProcessRuntime } from './host-native-authority.js';
+import type { ShellCapabilityOptions } from './shell-backend.js';
 
 const temporaryRoots: string[] = [];
+
+async function durableBackend(root: string, taskStateDirectory = path.join(root, '.tasks')): Promise<ShellCapabilityBackend> {
+  const options: ShellCapabilityOptions = { allowedRoots: [root], taskStateDirectory, posixProcessRuntime: createHostPosixProcessRuntime() };
+  if (process.platform === 'win32') return new ShellCapabilityBackend({ ...options, windowsNativeAuthority: (await nativeFixture(root)).authority });
+  return new ShellCapabilityBackend(options);
+}
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, {
@@ -35,13 +45,13 @@ describe('ShellCapabilityBackend', () => {
       .resolves.toMatchObject({ ok: true, value: { command_fingerprint: expected } });
   });
 
-  it('persists durable trusted task observations across backend reopen', async () => {
+  it.skipIf(process.platform === 'darwin')('persists durable trusted task observations across backend reopen', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-evidence-'));
     temporaryRoots.push(root);
     const owner = { metadata: { [CAPABILITY_TASK_OWNER_METADATA_KEY]: { clientId: 'client-1', sessionId: 'session-1', workspaceId: 'workspace-1' } } };
     const expected = engineeringCommandFingerprint(formatEngineeringCommand(process.execPath, ['--version']));
     const taskStateDirectory = path.join(root, '.tasks');
-    const durable = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
+    const durable = await durableBackend(root, taskStateDirectory);
     const durableRun = await durable.execute({ operation: 'run', executable: process.execPath, arguments: ['--version'], cwd: root,
       execution: 'background', userConfirmed: true, ...owner });
     expect(durableRun).toMatchObject({ ok: true, value: { task_id: expect.any(String) } });
@@ -49,7 +59,7 @@ describe('ShellCapabilityBackend', () => {
     const taskId = String(durableRun.value.task_id);
     const waited = await durable.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 15, ...owner });
     expect(waited).toMatchObject({ ok: true, value: { state: 'completed', exit_code: 0 } });
-    const reopened = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
+    const reopened = await durableBackend(root, taskStateDirectory);
     await expect(reopened.statusForGoalLiveness('workspace-1', taskId))
       .resolves.toMatchObject({ ok: true, value: { state: 'completed', command_fingerprint: expected } });
   }, 20_000);
@@ -57,7 +67,7 @@ describe('ShellCapabilityBackend', () => {
   it('rejects a public run request that tries to select a reserved task ID', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-public-id-'));
     temporaryRoots.push(root);
-    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    const backend = await durableBackend(root);
     await expect(backend.execute({
       operation: 'run',
       task_id: 'automation-forged',
@@ -68,11 +78,11 @@ describe('ShellCapabilityBackend', () => {
     })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
   });
 
-  it('launches a reserved automation task exactly once and fails closed on digest, owner, and legacy collisions', async () => {
+  it.skipIf(process.platform === 'darwin')('launches a reserved automation task exactly once and fails closed on digest, owner, and legacy collisions', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-automation-'));
     temporaryRoots.push(root);
     const taskStateDirectory = path.join(root, '.tasks');
-    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
+    const backend = await durableBackend(root, taskStateDirectory);
     const ownerMetadata = {
       [CAPABILITY_TASK_OWNER_METADATA_KEY]: { clientId: 'client-a', sessionId: 'session-a', workspaceId: 'workspace-a' },
     };
@@ -86,7 +96,7 @@ describe('ShellCapabilityBackend', () => {
       includeStderr: true,
       windowsVerbatimArguments: false,
     };
-    const taskId = 'automation-reserved-task';
+    const taskId = 'automation-reserved-task-' + randomUUID();
     const requestDigest = automationShellRequestDigest({ taskId, ownerClientId: 'client-a', workspaceId: 'workspace-a', dispatch });
     const context = {
       runId: 'run-a', milestoneId: 'build', attemptId: 'attempt-a', taskId, requestDigest,
@@ -444,7 +454,7 @@ describe('ShellCapabilityBackend', () => {
     expect(result).toMatchObject({ ok: true, value: { stdout: 'one\ntwo\nthree' } });
   });
 
-  it('returns a running task instead of blocking an MCP call past the synchronous wait budget', async () => {
+  it.skipIf(process.platform === 'darwin')('returns a running task instead of blocking an MCP call past the synchronous wait budget', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);
     const backend = new ShellCapabilityBackend({ allowedRoots: [root], maxSynchronousWaitSeconds: 0.05 });
@@ -501,6 +511,50 @@ describe('ShellCapabilityBackend', () => {
     expect(stops).toBe(1);
   });
 
+  it('returns an unverified state when a foreground abort races an unverified process close', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
+    temporaryRoots.push(root);
+    const backend = new ShellCapabilityBackend({
+      allowedRoots: [root],
+      maxSynchronousWaitSeconds: 1,
+      terminator: {
+        async stop(child): Promise<void> {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+          child.kill();
+          await closed;
+          throw new Error('process-tree termination not verified');
+        },
+      },
+    });
+    const controller = new AbortController();
+    const running = backend.execute({
+      operation: 'run',
+      executable: process.execPath,
+      arguments: ['-e', 'setTimeout(() => {}, 3000)'],
+      cwd: root,
+      execution: 'foreground',
+      userConfirmed: true,
+      timeout_seconds: 5,
+    }, controller.signal);
+    await vi.waitFor(async () => {
+      const listed = await backend.execute({ operation: 'list' });
+      expect(listed).toMatchObject({ ok: true, value: { tasks: [{ state: 'running' }] } });
+    }, { timeout: 3000, interval: 10 });
+    controller.abort();
+
+    const cancellation = await Promise.race([
+      running.then((result) => ({ state: 'settled' as const, result })),
+      delayForTest(500).then(() => ({ state: 'pending' as const })),
+    ]);
+    expect(cancellation.state).toBe('settled');
+    if (cancellation.state === 'settled') {
+      expect(cancellation.result).toMatchObject({
+        ok: true,
+        value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+      });
+    }
+  });
+
   it('does not spawn after cancellation wins during executable resolution', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);
@@ -547,14 +601,16 @@ describe('ShellCapabilityBackend', () => {
     expect(stops).toBe(0);
   });
 
-  it('retains an explicit unverified state when the root closes after termination rejection', async () => {
+  it('returns an explicit unverified state when the root closes during failed termination', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);
     const backend = new ShellCapabilityBackend({
       allowedRoots: [root],
       terminator: {
         async stop(child): Promise<void> {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
           setTimeout(() => child.kill(), 20);
+          await closed;
           throw new Error('termination not verified');
         },
       },
@@ -591,7 +647,17 @@ describe('ShellCapabilityBackend', () => {
       },
     });
     if (statusAfterFailure.ok) expect(statusAfterFailure.value).not.toHaveProperty('finished_at');
-    await expect(Promise.race([cancelling.then(() => 'settled'), delayForTest(30).then(() => 'pending')])).resolves.toBe('pending');
+    const cancellation = await Promise.race([
+      cancelling.then((result) => ({ state: 'settled' as const, result })),
+      delayForTest(250).then(() => ({ state: 'pending' as const })),
+    ]);
+    expect(cancellation.state).toBe('settled');
+    if (cancellation.state === 'settled') {
+      expect(cancellation.result).toMatchObject({
+        ok: true,
+        value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+      });
+    }
   });
 
   it('retains an explicit unverified state when the root closes before termination rejection', async () => {
@@ -633,7 +699,17 @@ describe('ShellCapabilityBackend', () => {
       value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
     });
     if (statusAfterFailure.ok) expect(statusAfterFailure.value).not.toHaveProperty('finished_at');
-    await expect(Promise.race([cancelling.then(() => 'settled'), delayForTest(30).then(() => 'pending')])).resolves.toBe('pending');
+    const cancellation = await Promise.race([
+      cancelling.then((result) => ({ state: 'settled' as const, result })),
+      delayForTest(250).then(() => ({ state: 'pending' as const })),
+    ]);
+    expect(cancellation.state).toBe('settled');
+    if (cancellation.state === 'settled') {
+      expect(cancellation.result).toMatchObject({
+        ok: true,
+        value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+      });
+    }
   });
 
   it('allows a termination-unverified task to be safely re-verified', async () => {
@@ -677,11 +753,14 @@ describe('ShellCapabilityBackend', () => {
       ok: true,
       value: { state: 'cancelled' },
     });
-    await expect(firstCancellation).resolves.toMatchObject({ ok: true, value: { state: 'cancelled' } });
+    await expect(firstCancellation).resolves.toMatchObject({
+      ok: true,
+      value: { state: 'termination_unverified', error: 'Process termination could not be verified' },
+    });
     expect(attempts).toBe(2);
   });
 
-  it('caps shell wait calls so polling cannot hold the MCP connection open indefinitely', async () => {
+  it.skipIf(process.platform === 'darwin')('caps shell wait calls so polling cannot hold the MCP connection open indefinitely', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-'));
     temporaryRoots.push(root);
     const backend = new ShellCapabilityBackend({ allowedRoots: [root], maxSynchronousWaitSeconds: 0.05 });
@@ -836,14 +915,14 @@ describe('ShellCapabilityBackend unrestricted', () => {
     expect(result).toMatchObject({ ok: true, value: { dry_run: true } });
   });
 
-  it('persists durable task ownership and rejects another session in the same workspace', async () => {
+  it.skipIf(process.platform === 'darwin')('persists durable task ownership, allows cross-session inspection for the same client, and rejects foreign clients or workspaces', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-owner-'));
     temporaryRoots.push(root);
     const taskStateDirectory = path.join(root, '.tasks');
-    const owner = (sessionId: string): { metadata: Record<string, unknown> } => ({
-      metadata: { [CAPABILITY_TASK_OWNER_METADATA_KEY]: { clientId: 'client-1', sessionId, workspaceId: 'workspace-1' } },
+    const owner = (sessionId: string, clientId = 'client-1', workspaceId = 'workspace-1'): { metadata: Record<string, unknown> } => ({
+      metadata: { [CAPABILITY_TASK_OWNER_METADATA_KEY]: { clientId, sessionId, workspaceId } },
     });
-    const backendA = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
+    const backendA = await durableBackend(root, taskStateDirectory);
     const started = await backendA.execute({
       operation: 'run', executable: process.execPath, arguments: ['-e', 'setTimeout(() => {}, 5000)'],
       cwd: root, execution: 'background', timeout_seconds: 10, userConfirmed: true, ...owner('session-a'),
@@ -852,19 +931,26 @@ describe('ShellCapabilityBackend unrestricted', () => {
     if (!started.ok) return;
     const taskId = String(started.value.task_id);
 
-    const backendB = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
-    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b') })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
-    await expect(backendB.execute({ operation: 'list', ...owner('session-b') })).resolves.toMatchObject({ ok: true, value: { tasks: [] } });
-    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-a') })).resolves.toMatchObject({ ok: true });
+    const backendB = await durableBackend(root, taskStateDirectory);
+    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b') })).resolves.toMatchObject({ ok: true });
+    const sessionBList = await backendB.execute({ operation: 'list', ...owner('session-b') });
+    expect(sessionBList).toMatchObject({ ok: true, value: { tasks: expect.arrayContaining([expect.objectContaining({ task_id: taskId })]) } });
+
+    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b', 'foreign-client') })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    await expect(backendB.execute({ operation: 'list', ...owner('session-b', 'foreign-client') })).resolves.toMatchObject({ ok: true, value: { tasks: [] } });
+
+    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b', 'client-1', 'foreign-workspace') })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
     await expect(backendB.cancelForGoal('client-1', 'workspace-1', taskId))
       .resolves.toMatchObject({ ok: true, value: { matched: true } });
   }, 15_000);
 
-  it('paginates durable history before in-memory tasks and rejects malformed cursors', async () => {
+  it.skipIf(process.platform === 'darwin')('paginates durable foreground and background history and rejects malformed cursors', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-pages-'));
     temporaryRoots.push(root);
-    const backend = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory: path.join(root, '.tasks') });
+    const backend = await durableBackend(root);
+    const owner = { metadata: { [CAPABILITY_TASK_OWNER_METADATA_KEY]: { clientId: 'history-client', sessionId: 'history-session', workspaceId: 'history-workspace' } } };
     const durable = await backend.execute({
+      ...owner,
       operation: 'run',
       executable: process.execPath,
       arguments: ['-e', "process.stdout.write('durable')"],
@@ -876,39 +962,40 @@ describe('ShellCapabilityBackend unrestricted', () => {
     expect(durable).toMatchObject({ ok: true, value: { task_id: expect.any(String) } });
     if (!durable.ok) return;
     const durableTaskId = String(durable.value.task_id);
-    await expect(backend.execute({ operation: 'wait', task_id: durableTaskId, timeout_seconds: 5 }))
+    await expect(backend.execute({ ...owner, operation: 'wait', task_id: durableTaskId, timeout_seconds: 5 }))
       .resolves.toMatchObject({ ok: true, value: { state: 'completed' } });
 
-    const memory = await backend.execute({
+    const foreground = await backend.execute({
+      ...owner,
       operation: 'run',
       executable: process.execPath,
-      arguments: ['-e', "process.stdout.write('memory')"],
+      arguments: ['-e', "process.stdout.write('foreground')"],
       cwd: root,
       execution: 'foreground',
       timeout_seconds: 30,
       userConfirmed: true,
     });
-    expect(memory).toMatchObject({ ok: true, value: { task_id: expect.any(String), state: 'completed' } });
-    if (!memory.ok) return;
-    const memoryTaskId = String(memory.value.task_id);
+    expect(foreground).toMatchObject({ ok: true, value: { task_id: expect.any(String), state: 'completed', durable: true } });
+    if (!foreground.ok) return;
+    const foregroundTaskId = String(foreground.value.task_id);
 
-    const first = await backend.execute({ operation: 'list', limit: 1 });
+    const first = await backend.execute({ ...owner, operation: 'list', limit: 1 });
     expect(first).toMatchObject({
       ok: true,
-      value: { tasks: [{ task_id: durableTaskId }], next_cursor: expect.any(String) },
+      value: { tasks: [{ task_id: foregroundTaskId }], next_cursor: expect.any(String) },
     });
     if (!first.ok) return;
-    const second = await backend.execute({ operation: 'list', limit: 1, cursor: String(first.value.next_cursor) });
-    expect(second).toMatchObject({ ok: true, value: { tasks: [{ task_id: memoryTaskId }] } });
-    await expect(backend.execute({ operation: 'list', limit: 1, cursor: 'malformed' })).resolves.toMatchObject({
+    const second = await backend.execute({ ...owner, operation: 'list', limit: 1, cursor: String(first.value.next_cursor) });
+    expect(second).toMatchObject({ ok: true, value: { tasks: [{ task_id: durableTaskId }] } });
+    await expect(backend.execute({ ...owner, operation: 'list', limit: 1, cursor: 'malformed' })).resolves.toMatchObject({
       ok: false,
       error: { code: 'INVALID_INPUT' },
     });
-    await expect(backend.execute({ operation: 'list' })).resolves.toMatchObject({
+    await expect(backend.execute({ ...owner, operation: 'list' })).resolves.toMatchObject({
       ok: true,
       value: { tasks: expect.arrayContaining([
         expect.objectContaining({ task_id: durableTaskId }),
-        expect.objectContaining({ task_id: memoryTaskId }),
+        expect.objectContaining({ task_id: foregroundTaskId }),
       ]) },
     });
   }, 20_000);

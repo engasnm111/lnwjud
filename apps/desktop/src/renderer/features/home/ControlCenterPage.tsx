@@ -5,6 +5,7 @@ import { formatDateTime } from '../../date-time.js';
 import { createTranslator } from '../../i18n/index.js';
 import { tunnelRuntimeCredentialAvailable } from '../../tunnel-auth-readiness.js';
 import { tunnelAuthPresentation } from '../../tunnel-auth-presentation.js';
+import { tunnelControlAvailability } from '../onboarding/guided-tunnel-setup-state.js';
 import { settleWorkspaceAdd, type AddWorkspaceAction } from '../workspaces/workspace-add.js';
 import { SearchableSelect } from '../../components/ui/SearchableSelect.js';
 import { AgentPrism } from './AgentPrism.js';
@@ -15,6 +16,8 @@ interface ControlCenterPageProps {
   readonly locale: UiLocale;
   readonly mcpBusy: boolean;
   readonly tunnelBusy: boolean;
+  readonly tunnelStartPending?: boolean;
+  readonly tunnelStopPending?: boolean;
   readonly onRefresh: () => Promise<void>;
   readonly onStopMcp: () => Promise<void>;
   readonly onRestartMcp: () => Promise<void>;
@@ -42,7 +45,10 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
   const activeProjects = props.workspaces.filter((workspace) => activeWorkspaceIds.has(workspace.id));
   const tunnelCredentialAvailable = tunnelRuntimeCredentialAvailable(dashboard.tunnel);
   const tunnelPresentation = tunnelAuthPresentation(dashboard.tunnel);
-  const tunnelControlsLocked = props.tunnelBusy || dashboard.tunnel.state === 'starting';
+  const tunnelAvailability = tunnelControlAvailability(dashboard.tunnel, {
+    startPending: props.tunnelStartPending === true,
+    stopPending: props.tunnelStopPending === true,
+  });
   const remoteMcp = dashboard.remoteMcp ?? { ...EMPTY_REMOTE_MCP_STATUS, localMcpUrl: dashboard.mcp.url };
 
   const remoteMcpOnline = remoteMcp.state === 'running';
@@ -236,10 +242,10 @@ export function ControlCenterPage(props: ControlCenterPageProps): ReactElement {
                 </div>
               )}
               <div className="inline-actions">
-                <ActionButton type="button" disabled={tunnelControlsLocked || !tunnelCredentialAvailable || dashboard.tunnel.state === 'running'} onClick={() => { void props.onStartTunnel(); }}>
+                <ActionButton type="button" disabled={props.tunnelBusy || tunnelAvailability.startDisabled || !tunnelCredentialAvailable} onClick={() => { void props.onStartTunnel(); }}>
                   {t(tunnelPresentation.startKey)}
                 </ActionButton>
-                <ActionButton type="button" disabled={tunnelControlsLocked || dashboard.tunnel.state === 'stopped'} onClick={() => { void props.onStopTunnel(); }}>
+                <ActionButton type="button" disabled={tunnelAvailability.stopDisabled} onClick={() => { void props.onStopTunnel().catch(() => undefined); }}>
                   {t(tunnelPresentation.stopKey)}
                 </ActionButton>
               </div>

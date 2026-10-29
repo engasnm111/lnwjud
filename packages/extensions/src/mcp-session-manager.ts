@@ -438,7 +438,8 @@ export function createDefaultMcpClientFactory(
       await client.connect(transport, signal === undefined ? undefined : { signal });
     } catch (error: unknown) {
       const pid = transport.pid;
-      if (pid !== null && getStopPid(processTreeTerminator) !== undefined) {
+      // A macOS SDK stdio child is not a detached process group.
+      if (process.platform !== 'darwin' && pid !== null && getStopPid(processTreeTerminator) !== undefined) {
         await getStopPid(processTreeTerminator)?.(pid).catch(() => undefined);
       }
       await client.close().catch(() => undefined);
@@ -478,7 +479,11 @@ export function createDefaultMcpClientFactory(
         if (closing !== undefined) return closing;
         const attempt = (async (): Promise<void> => {
           let firstError: unknown;
-          if (pid !== null && getStopPid(processTreeTerminator) !== undefined) {
+          // macOS SDK stdio children are direct processes, not session/group
+          // leaders. Do not signal an unrelated process group with -pid.
+          // Closing the transport proves only direct-child shutdown, never
+          // escaped descendants; macOS managed workspace writers stay denied.
+          if (process.platform !== 'darwin' && pid !== null && getStopPid(processTreeTerminator) !== undefined) {
             try {
               await getStopPid(processTreeTerminator)?.(pid);
             } catch (error: unknown) {
@@ -487,6 +492,7 @@ export function createDefaultMcpClientFactory(
           }
           try {
             await client.close();
+            if (process.platform === 'darwin' && pid !== null) await waitForMacMcpDirectChildExit(pid);
           } catch (error: unknown) {
             firstError ??= error;
           }
@@ -504,6 +510,20 @@ export function createDefaultMcpClientFactory(
     };
     },
   };
+}
+
+async function waitForMacMcpDirectChildExit(pid: number): Promise<void> {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED');
+  const deadline = Date.now() + 3_000;
+  do {
+    try { process.kill(pid, 0); }
+    catch (error: unknown) {
+      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return;
+      throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED', { cause: error });
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  } while (Date.now() < deadline);
+  throw new Error('MCP_CHILD_TERMINATION_UNVERIFIED');
 }
 
 export const defaultMcpClientFactory: McpClientFactory = createDefaultMcpClientFactory();

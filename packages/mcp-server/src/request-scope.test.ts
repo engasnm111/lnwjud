@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAPABILITY_TASK_OWNER_METADATA_KEY } from '@lnwjud/capabilities';
+import { CAPABILITY_TASK_OWNER_METADATA_KEY, capabilityTaskOwnerCanInspect, capabilityTaskOwnerCanRecover, readCapabilityTaskOwner } from '@lnwjud/capabilities';
 import { actorForRequestScope, createHttpRequestScope, createProtocolHttpRequestScope, createStdioRequestScope, withCapabilityOwnerMetadata } from './request-scope.js';
 
 describe('MCP request scope', () => {
@@ -17,7 +17,10 @@ describe('MCP request scope', () => {
 
   it('uses a stable endpoint fallback only when HTTP has no protocol session', () => {
     const request = new Request('http://127.0.0.1/mcp');
-    expect(createHttpRequestScope({ request, fallbackSessionId: 'endpoint-a' }).sessionId).toBe('endpoint-a');
+    const owner = createHttpRequestScope({ request, fallbackSessionId: 'endpoint-a' });
+    expect(owner.sessionId).toMatch(/^http-[a-f0-9]+$/);
+    expect(createHttpRequestScope({ request, fallbackSessionId: 'endpoint-a' }).sessionId).toBe(owner.sessionId);
+    expect(createHttpRequestScope({ request, fallbackSessionId: 'endpoint-b' }).sessionId).not.toBe(owner.sessionId);
   });
 
   it('captures bounded W3C trace headers and redacts sensitive baggage members', () => {
@@ -31,6 +34,23 @@ describe('MCP request scope', () => {
       traceState: 'vendor=opaque',
       baggage: 'tenant=acme,api_key=[redacted],region=apac',
     });
+  });
+
+  it('does not leak status, output or cancellation between HTTP sessions sharing a host client', () => {
+    const hostActor = { clientId: 'same-host-client', clientName: 'desktop' };
+    const owned = readCapabilityTaskOwner(withCapabilityOwnerMetadata({ workspaceId: 'workspace' },
+      actorForRequestScope(hostActor, createProtocolHttpRequestScope('first-protocol-session'))));
+    const other = readCapabilityTaskOwner(withCapabilityOwnerMetadata({ workspaceId: 'workspace' },
+      actorForRequestScope(hostActor, createProtocolHttpRequestScope('other-protocol-session'))));
+    expect(capabilityTaskOwnerCanInspect(owned, owned)).toBe(true);
+    expect(capabilityTaskOwnerCanRecover(owned, owned)).toBe(true);
+    expect(capabilityTaskOwnerCanInspect(owned, other)).toBe(false);
+    expect(capabilityTaskOwnerCanRecover(owned, other)).toBe(false);
+    const stdioOwned = { clientId: hostActor.clientId, sessionId: 'stdio-one', workspaceId: 'workspace' };
+    const stdioReopened = { ...stdioOwned, sessionId: 'stdio-two' };
+    expect(capabilityTaskOwnerCanInspect(stdioOwned, stdioReopened)).toBe(true);
+    expect(capabilityTaskOwnerCanRecover(stdioOwned, stdioReopened)).toBe(true);
+    expect(capabilityTaskOwnerCanInspect(owned, stdioReopened)).toBe(false);
   });
 
   it('overwrites spoofed task ownership metadata with the trusted scoped actor', () => {

@@ -821,10 +821,15 @@ describe('DesktopRuntime persistence', () => {
     temporaryRoots.push(rawDataRoot);
     const dataRoot = await realpath(rawDataRoot);
 
+    const legacySettingsDatabase = new SqliteDatabase(path.join(dataRoot, 'lnwjud.sqlite'));
+    new SqliteSettingsRepository(legacySettingsDatabase).set('update_silent_install', 'true');
+    legacySettingsDatabase.close();
+
     const firstRuntime = createDesktopRuntime(dataRoot);
     try {
       const initial = firstRuntime.getUserSettings();
       expect(initial.eccEnabled).toBe(false);
+      expect(initial).not.toHaveProperty('updateSilentInstall');
       expect(initial.tunnelAutoReconnect).toBe(false);
       const next = {
         ...initial,
@@ -1004,11 +1009,20 @@ describe('DesktopRuntime persistence', () => {
           },
         });
         expect(Date.now() - shellStartedAt).toBeLessThan(4_000);
+        if (process.platform === 'darwin') {
+          // Durable shell refuses a new process writer before launch on macOS.
+          expect(shellResponse.isError).toBe(true);
+          return;
+        }
         expect(shellResponse.isError).not.toBe(true);
-        expect(shellResponse.structuredContent).toMatchObject({ state: 'running', task_id: expect.any(String) });
+        expect(shellResponse.structuredContent).toMatchObject({
+          state: expect.stringMatching(/^(?:starting|running)$/),
+          task_id: expect.any(String),
+        });
         const shellTaskId = (shellResponse.structuredContent as { task_id: string }).task_id;
         let shellResult = shellResponse;
-        for (let attempt = 0; attempt < 140 && shellResult.structuredContent?.state === 'running'; attempt += 1) {
+        const shellDeadline = Date.now() + 20_000;
+        while (Date.now() < shellDeadline && (shellResult.structuredContent?.state === 'starting' || shellResult.structuredContent?.state === 'running')) {
           await new Promise((resolve) => setTimeout(resolve, 50));
           shellResult = await client.callTool({ name: 'shell', arguments: { operation: 'result', task_id: shellTaskId } });
         }

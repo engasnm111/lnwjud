@@ -41,3 +41,6 @@ export * from './engineering/engineering-policy.js';
 export * from './engineering/engineering-project-assessment.js';
 export * from './engineering/engineering-preparation-service.js';
 export * from './engineering/engineering-workflow.js';
+
+export * from './engineering/engineering-reconciliation.js';
+export * from './engineering/engineering-capabilities.js';

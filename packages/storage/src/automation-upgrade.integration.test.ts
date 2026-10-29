@@ -113,9 +113,9 @@ describe('019_native_automation migration', () => {
       });
       const snapshot = await backup.create('manual');
       snapshotId = snapshot.id;
-      expect(snapshot.dataSchemaVersion).toBe(24);
-      expect(upgraded.connection.prepare("SELECT id FROM schema_migrations WHERE id = '024_audit_call_history_paging'").get())
-        .toEqual({ id: '024_audit_call_history_paging' });
+      expect(snapshot.dataSchemaVersion).toBe(25);
+      expect(upgraded.connection.prepare("SELECT id FROM schema_migrations WHERE id = '025_goal_contract_compatibility'").get())
+        .toEqual({ id: '025_goal_contract_compatibility' });
       await backup.scheduleRestore(snapshot.id);
     } finally {
       upgraded.close();

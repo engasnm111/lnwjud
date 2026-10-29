@@ -1,6 +1,6 @@
 {
   "name": "lnwjud",
-  "version": "5.8.7",
+  "version": "5.9.0",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "engines": {
@@ -18,7 +18,7 @@
     "test:release": "corepack pnpm@10.15.0 -r --workspace-concurrency=1 --if-present test",
     "test:acceptance": "corepack pnpm@10.15.0 --filter @lnwjud/desktop exec vitest run --config vitest.config.ts --fileParallelism=false tests/session-resilience-acceptance.test.ts tests/production-ipc-acceptance.test.ts tests/multi-workspace-concurrency-acceptance.test.ts tests/tunnel-continuity-acceptance.test.ts tests/tunnel-tool-catalog-continuity.test.ts tests/tunnel-doctor-diagnostics.test.ts",
     "test:integration": "vitest run tests/integration/mcp-development-flow.test.ts tests/integration/codex-review-flow.test.ts tests/integration/process-writer-admission.test.ts --exclude=.local-artifacts/** --exclude=.worktrees/** --exclude=.superpowers/** --exclude=.kilo/**",
-    "test:packaging": "vitest run tests/packaging/desktop-packaging.test.ts tests/packaging/native-automation-isolation.test.ts tests/packaging/application-storage-seam.test.ts tests/packaging/tunnel-stdio-layout.test.ts tests/packaging/windows-trust-evidence.test.ts tests/packaging/macos-trust-evidence.test.ts tests/packaging/macos-signing-policy.test.ts tests/packaging/linux-trust-evidence.test.ts tests/packaging/av-sensitive-secret-code.test.ts tests/packaging/capture-packaged-runtime-evidence.test.ts --exclude=.local-artifacts/** --exclude=.worktrees/** --exclude=.superpowers/** --exclude=.kilo/**",
+    "test:packaging": "vitest run tests/packaging/desktop-packaging.test.ts tests/packaging/native-automation-isolation.test.ts tests/packaging/application-storage-seam.test.ts tests/packaging/tunnel-stdio-layout.test.ts tests/packaging/windows-trust-evidence.test.ts tests/packaging/macos-trust-evidence.test.ts tests/packaging/macos-signing-policy.test.ts tests/packaging/linux-trust-evidence.test.ts tests/packaging/av-sensitive-secret-code.test.ts tests/packaging/capture-packaged-runtime-evidence.test.ts tests/packaging/containment-runtime.test.ts tests/packaging/update-worker-runtime.test.ts --exclude=.local-artifacts/** --exclude=.worktrees/** --exclude=.superpowers/** --exclude=.kilo/**",
     "test:release-gate": "vitest run tests/release/release-gate.test.ts tests/release/platform-verification-orchestrator.test.ts tests/release/release-notes.test.ts tests/release/release-asset-collector.test.ts --exclude=.local-artifacts/** --exclude=.worktrees/** --exclude=.superpowers/** --exclude=.kilo/**",
     "benchmark:baseline": "node scripts/benchmark-mcp.mjs",
     "package:windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
@@ -34,7 +34,12 @@
     "desktop": "corepack pnpm@10.15.0 --filter @lnwjud/desktop electron:install && corepack pnpm@10.15.0 --filter @lnwjud/desktop build && corepack pnpm@10.15.0 --filter @lnwjud/desktop exec electron ./dist/main/main.js",
     "start": "corepack pnpm@10.15.0 desktop",
     "docs:tools": "corepack pnpm@10.15.0 --filter @lnwjud/mcp-server... build && node scripts/generate-tool-catalog.mjs",
-    "docs:tools:check": "corepack pnpm@10.15.0 --filter @lnwjud/mcp-server... build && node scripts/generate-tool-catalog.mjs --check"
+    "docs:tools:check": "corepack pnpm@10.15.0 --filter @lnwjud/mcp-server... build && node scripts/generate-tool-catalog.mjs --check",
+    "prepare:containment": "node apps/desktop/scripts/prepare-containment-runtime.mjs",
+    "prepare:update-worker": "node apps/desktop/scripts/prepare-update-worker.mjs",
+    "test:update-worker": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-update-worker.ps1",
+    "test:update-release-metadata": "node --test native/windows-containment-helper/pin/archive-snapshot-fault.test.mjs native/windows-containment-helper/pin/archive-snapshot.test.mjs scripts/update-trust/signing-archive-spool.test.mjs scripts/update-trust/signing-artifact-download.test.mjs scripts/update-trust/release-envelope.test.mjs scripts/update-trust/release-identity.test.mjs scripts/update-trust/release-authorization-v2.test.mjs scripts/update-trust/signing-verification-manifest.test.mjs scripts/update-trust/signing-workflow-diagnostic.test.mjs scripts/update-trust/signing-files-diagnostic.test.mjs scripts/update-trust/pinned-verifier.test.mjs scripts/update-trust/builder-control.test.mjs",
+    "test:update-worker-trust": "node apps/desktop/scripts/verify-built-update-worker.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.33.0",

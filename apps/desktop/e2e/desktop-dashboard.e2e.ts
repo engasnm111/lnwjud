@@ -68,6 +68,8 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
     // Keep the update controls accessible; their CSS dimensions are not a workflow contract.
     await expect(page.locator('button.titlebar-version')).toBeEnabled();
     await expect(page.locator('button.titlebar-whats-new')).toBeEnabled();
+    const originalViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    await page.setViewportSize({ width: originalViewport.width, height: 480 });
     await page.locator('button.titlebar-whats-new').click();
     const whatsNew = page.getByRole('dialog', { name: /มีอะไรใหม่ใน|What.s new in/ });
     await expect(whatsNew).toBeVisible();
@@ -78,9 +80,14 @@ test('control center auto-starts MCP and supports project + doctor journey', asy
       : `v${installedVersion.split('.')[0]}.`;
     expect(versionTitles[0]).toBe(`v${installedVersion}`);
     expect(versionTitles.every((title) => title.startsWith(seriesPrefix))).toBe(true);
-    await expect.poll(() => whatsNew.locator('.whats-new-scroll').evaluate((container) => container.scrollHeight > container.clientHeight)).toBe(true);
+    const whatsNewScroll = whatsNew.locator('.whats-new-scroll');
+    await expect(whatsNewScroll).toHaveCSS('overflow-y', 'auto');
+    await expect.poll(() => whatsNewScroll.evaluate((container) => container.scrollHeight > container.clientHeight)).toBe(true);
+    await whatsNewScroll.evaluate((container) => { container.scrollTop = container.scrollHeight; });
+    await expect.poll(() => whatsNewScroll.evaluate((container) => container.scrollTop > 0)).toBe(true);
     await whatsNew.press('Escape');
     await expect(whatsNew).toHaveCount(0);
+    await page.setViewportSize(originalViewport);
     const homeSelect = page.locator('.primary-project-control .ui-combobox-trigger');
     await expect(homeSelect).toBeEnabled();
     await homeSelect.click();

@@ -1,0 +1,9 @@
+# Repository integration
+
+Apply these rules to all six vendored Ponytail skills before their upstream workflow.
+
+- Read applicable `AGENTS.md` and follow the user's requested scope and language. A plan or review stays read-only; an authorized implementation finishes every requested behavior, validation, and delivery step. Minimal code does not reduce acceptance criteria.
+- lnwjud controls automatic activation through its native policy. `packages/shared/src/ponytail-policy.ts` resolves Goal override, workspace profile `ponytail.mode`, then global `ponytailMode`; the default is `off`. A document update or help/review invocation does not enable a persistent mode, alter settings, or install a host plugin. Explicit invocation runs the requested skill without silently persisting configuration.
+- When `.codegraph/` exists, query CodeGraph before locating or reading source and tracing callers. Use focused text search for information the index does not cover, such as comment markers, config, and dynamic string references. Inspect Git diffs as review inputs, then query affected symbols. Without an index, use `rg` and direct reads.
+- Preserve validation, data integrity, approvals, workspace scope, writer admission, durable Goal leases, and required release evidence. Full Bypass still respects a live rolling-goal fence. Use the project's existing test framework for behavioral checks; a self-check does not replace required integration, native-platform, CI, package, or release acceptance.
+- Upstream slash commands, configuration defaults, band features, hooks, and session import describe other host integrations. This repository vendors skill text and MIT licenses. Use only capabilities actually exposed here; no installation, hook trust, telemetry, or session-history access is implied.

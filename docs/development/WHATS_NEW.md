@@ -2,7 +2,7 @@
 
 The Desktop title bar has two independent controls:
 
-1. the existing version/update button, which keeps update/check/install behavior;
+1. the existing version/update button, which displays the version and update status. Automatic updates are unavailable in the current v5.9.0 source candidate until native transaction authority and signed acceptance are complete;
 2. the adjacent `?` button, which opens bundled release notes for the current release series, newest installed-or-earlier version first.
 
 Do not merge those responsibilities.
@@ -26,18 +26,24 @@ Before packaging a new public version:
 
 `scripts/set-version.mjs` synchronizes version surfaces but intentionally does **not** invent release notes. The release-note entry is a reviewed product artifact.
 
-## Current source v5.8.7 candidate release-note coverage
+## Current source v5.9.0 candidate release-note coverage
 
-The offline `5.8.7` registry entry provides localized Thai and English notes for the combined candidate:
+The offline `5.9.0` registry entry provides localized Thai and English notes for the current candidate:
 
-- Issue #208: guarded HTTPS Git import pinned to an exact commit, with Windows NTFS publication proof and fail-closed recovery;
-- Issue #209: strict create-only mutations, workspace writer leases, exact-target path preflight and explicit same-client idle-session recovery after a 60-second grace period;
-- Process startup writer-admission fix: rejected pre-spawn launches release their reservation; spawned children still require verified zero-active native termination before release;
-- exact host-supplied MCP connector identity, direct child MCP response passthrough, and explicit host permission-denial diagnostics;
-- truthful Scheduled Task/Goal continuation status without claiming an active timer is a continuous background worker;
-- safe Reset All Settings and local Tunnel alias reconciliation without deleting remote tunnels or foreign profiles.
+- Issue #213: Windows process-lifetime and writer-reservation evidence, plus authenticated named-pipe RPC recovery proven in a local disposable fixture; installed SCM pipe and interactive-session acceptance remain open;
+- Issue #214: Engineering Gate applicability that preserves required evidence and reports unavailable or stale proof instead of treating it as passed;
+- Issues #215 and #216: WSL UNC path handling; in-process synchronous mutation reservations are reclaimed only after the recorded owner process is proven gone, with privacy-preserving hashed blocker diagnostics; unknown process reservations remain held and macOS process writers stay refused while escaped-descendant containment remains incomplete;
+- Issue #219: the bounded file-publication contract and its durability limits;
+- Goal ownership: terminal writer refusals close their Goal heartbeat, and writer lease renewal and release receive the exact proof without exposing credentials in activity or audit records;
+- updater status: automatic updates remain unavailable until the native authority, enrolled package trust, independent health, and application/data rollback pass signed acceptance;
+- Tunnel Stop and Factory Reset recovery for a stale Windows alias, without deleting remote Tunnel state; Start stays disabled while that persistent alias may still be active, preventing a duplicate runtime;
+- WSL/tooling intent, unresolved Dashboard startup, large Tunnel history, and pinned Ponytail v5.3.2 document-only skills.
 
-These are source/installed QA candidate notes, **not** evidence that all security verification, protected merge, exact-main-SHA CI, official packages, or publication has passed. The owner authorized a solo-developer review process; no external review is claimed. The latest public release remains v5.8.6 until the release gates complete.
+These notes describe the source candidate and its current limitations. They are **not** evidence that security verification, protected merge, exact-main-SHA CI, official packages, or publication has passed. The updater item explicitly describes an unavailable capability. The latest public release remains v5.8.7 until the release gates complete.
+
+## Historical v5.8.7 candidate release-note coverage
+
+The `5.8.7` registry entry recorded the candidate behavior for Issues #208 and #209, safe Git import, writer leases, MCP connector identity, Scheduled Task/Goal status, and local Tunnel alias reconciliation. Keep these notes as history; do not treat them as v5.9.0 acceptance.
 
 ## Historical v5.8.5 release-note coverage
 

@@ -81,6 +81,70 @@ const createRequest = {
   leaseSeconds: 60,
 } as const;
 
+describe('engineering platform persistence', () => {
+  it.each([
+    { label: 'empty', platforms: [] },
+    { label: 'duplicate', platforms: ['linux', 'linux'] },
+    { label: 'unsupported', platforms: ['windows'] },
+  ])('fails closed when stored platform requirements are $label', async ({ platforms }) => {
+    const { filename, workspace } = await fixture();
+    const runtime = await open(filename, workspace, () => new Date('2026-10-18T00:00:00.000Z'));
+    try {
+      const created = await runtime.service.runGoal(actor('platform-writer'), createRequest);
+      if (!created.ok) throw new Error('Platform fixture goal could not be created');
+      runtime.database.connection.prepare('UPDATE goals SET engineering_metadata_json = ? WHERE id = ?').run(JSON.stringify({
+        schemaVersion: 1, primaryTaskKind: 'release', riskTier: 'high', policyDigest: 'platform-policy', deliveryScope: 'release',
+        gates: [{
+          id: 'cross_platform', title: 'Platform checks', applicability: 'required', status: 'pending',
+          reason: 'Validate the stored requirements.', basedOnUserIntentRevision: 0, requiredPlatforms: platforms,
+        }],
+      }), created.value.goalId);
+      expect(await runtime.service.getGoal(actor('platform-reader'), { goalId: created.value.goalId })).toMatchObject({ ok: false });
+    } finally {
+      runtime.database.close();
+    }
+  });
+
+  it('preserves the exact required platform subset after closing and reopening SQLite', async () => {
+    const { filename, workspace } = await fixture();
+    const now = (): Date => new Date('2026-10-18T00:00:00.000Z');
+    const first = await open(filename, workspace, now);
+    let goalId: string;
+    try {
+      const created = await first.service.runGoal(actor('platform-writer'), {
+        ...createRequest,
+        goalKey: 'platform-subset',
+        engineering: {
+          schemaVersion: 1,
+          primaryTaskKind: 'release',
+          riskTier: 'high',
+          policyDigest: 'platform-policy',
+          deliveryScope: 'release',
+          gates: [{
+            id: 'cross_platform', title: 'Linux delivery', applicability: 'required', status: 'pending',
+            reason: 'This delivery targets Linux only.', basedOnUserIntentRevision: 0,
+            requiredPlatforms: ['linux'],
+          }],
+        },
+      });
+      if (!created.ok) throw new Error('Platform fixture goal could not be created');
+      goalId = created.value.goalId;
+    } finally {
+      first.database.close();
+    }
+    const second = await open(filename, workspace, now);
+    try {
+      const snapshot = await second.service.getGoal(actor('platform-reader'), { goalId });
+      expect(snapshot).toMatchObject({
+        ok: true,
+        value: { engineering: { gates: [{ id: 'cross_platform', requiredPlatforms: ['linux'] }] } },
+      });
+    } finally {
+      second.database.close();
+    }
+  });
+});
+
 describe('workflow metadata compatibility', () => {
   it('persists workflow metadata, rejects same-key input drift, and preserves future schema through checkpoint/reopen', async () => {
     const { filename, workspace } = await fixture();

@@ -241,7 +241,37 @@ describe('stdio MCP runtime', { timeout: STDIO_RUNTIME_TEST_TIMEOUT_MS }, () => 
     }
   });
 
-  it('persists and completes a verified automation run across a STDIO runtime replacement without creating a schedule', async () => {
+  it.skipIf(process.platform !== 'darwin')('refuses STDIO durable execution on macOS before creating a child', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-denied-macos-'));
+    temporaryRoots.push(dataPath);
+    const registered = { ...workspace, rootPath: dataPath, realRootPath: dataPath };
+    const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    await new SqliteWorkspaceRepository(database).insert(registered);
+    database.close();
+    // Exercise a policy-permitted executable to reach native containment denial.
+    const runtime = createStdioMcpRuntime(dataPath, registered, true);
+    try {
+      const attempt = await runtime.services.capabilities?.execute('shell', {
+        operation: 'run', workspaceId: registered.id, executable: process.execPath,
+        arguments: ['--version'],
+        cwd: dataPath, execution: 'background', timeout_seconds: 5, userConfirmed: true,
+        metadata: { [CAPABILITY_TASK_OWNER_METADATA_KEY]: {
+          clientId: 'cli-mcp-stdio', sessionId: 'macos-denial', workspaceId: registered.id,
+        } },
+      });
+      expect(attempt).toMatchObject({
+        ok: false, error: { code: 'CONFLICT', message: expect.stringContaining('macOS durable shell unavailable') },
+      });
+      const tasks = await runtime.services.capabilities?.execute('shell', {
+        operation: 'list', workspaceId: registered.id,
+      });
+      expect(tasks).toMatchObject({ ok: true, value: { tasks: [] } });
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it.skipIf(process.platform === 'darwin')('persists and completes a verified automation run across a STDIO runtime replacement without creating a schedule', async () => {
     const testDeadline = Date.now() + STDIO_RUNTIME_TEST_TIMEOUT_MS;
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-automation-data-'));
     const workspaceRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-automation-workspace-')));
@@ -523,24 +553,37 @@ describe('stdio MCP runtime', { timeout: STDIO_RUNTIME_TEST_TIMEOUT_MS }, () => 
     }
   });
 
-  it('keeps a shell background task alive across STDIO runtime replacement', async () => {
+  it.skipIf(process.platform === 'darwin')('keeps a shell background task alive across STDIO runtime replacement', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-durable-'));
     temporaryRoots.push(dataPath);
-    const firstRuntime = createStdioMcpRuntime(dataPath, workspace, true);
+    const durableWorkspace = { ...workspace, rootPath: dataPath, realRootPath: dataPath };
+    const database = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    await new SqliteWorkspaceRepository(database).insert(durableWorkspace);
+    database.close();
+    const ownerMetadata = {
+      [CAPABILITY_TASK_OWNER_METADATA_KEY]: {
+        clientId: 'cli-mcp-stdio',
+        sessionId: 'stdio-durable-owner',
+        workspaceId: durableWorkspace.id,
+      },
+    };
+    const firstRuntime = createStdioMcpRuntime(dataPath, durableWorkspace, true);
     const capabilities = firstRuntime.services.capabilities;
     expect(capabilities).toBeDefined();
     if (capabilities === undefined) return;
 
     const started = await capabilities.execute('shell', {
       operation: 'run',
+      workspaceId: durableWorkspace.id,
       executable: process.execPath,
       arguments: ['-e', "setTimeout(() => process.stdout.write('stdio-durable'), 350)"],
       cwd: dataPath,
       execution: 'background',
       timeout_seconds: 30,
       userConfirmed: true,
+      metadata: ownerMetadata,
     });
-    expect(started).toMatchObject({ ok: true, value: { task_id: expect.any(String), durable: true } });
+    expect(started, JSON.stringify(started)).toMatchObject({ ok: true, value: { task_id: expect.any(String), durable: true } });
     if (!started.ok) {
       await firstRuntime.close();
       return;
@@ -548,14 +591,16 @@ describe('stdio MCP runtime', { timeout: STDIO_RUNTIME_TEST_TIMEOUT_MS }, () => 
     const taskId = String((started.value as Record<string, unknown>).task_id);
     await firstRuntime.close();
 
-    const replacementRuntime = createStdioMcpRuntime(dataPath, workspace, true);
+    const replacementRuntime = createStdioMcpRuntime(dataPath, durableWorkspace, true);
     const replacementCapabilities = replacementRuntime.services.capabilities;
     expect(replacementCapabilities).toBeDefined();
     if (replacementCapabilities === undefined) {
       await replacementRuntime.close();
       return;
     }
-    const finished = await replacementCapabilities.execute('shell', { operation: 'wait', task_id: taskId, timeout_seconds: 5 });
+    const finished = await replacementCapabilities.execute('shell', {
+      operation: 'wait', task_id: taskId, timeout_seconds: 5, metadata: ownerMetadata,
+    });
     expect(finished).toMatchObject({
       ok: true,
       value: { task_id: taskId, state: 'completed', exit_code: 0, stdout: 'stdio-durable', durable: true },
@@ -563,7 +608,7 @@ describe('stdio MCP runtime', { timeout: STDIO_RUNTIME_TEST_TIMEOUT_MS }, () => 
     await replacementRuntime.close();
   });
 
-  it('reads durable shell task liveness after STDIO runtime replacement without treating another session as absence', async () => {
+  it.skipIf(process.platform === 'darwin')('reads durable shell task liveness after STDIO runtime replacement without treating another session as absence', async () => {
     const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-goal-liveness-data-'));
     const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-goal-liveness-workspace-'));
     temporaryRoots.push(dataPath, workspaceRoot);
@@ -597,7 +642,7 @@ describe('stdio MCP runtime', { timeout: STDIO_RUNTIME_TEST_TIMEOUT_MS }, () => 
       userConfirmed: true,
       metadata: ownerMetadata,
     });
-    expect(started).toMatchObject({ ok: true, value: { task_id: expect.any(String), state: 'running', durable: true } });
+    expect(started, JSON.stringify(started)).toMatchObject({ ok: true, value: { task_id: expect.any(String), state: expect.stringMatching(/^(?:starting|running)$/), durable: true } });
     if (started === undefined || !started.ok) {
       await firstRuntime.close();
       return;

@@ -13,7 +13,7 @@ import { LegacyApiKeyCredentialProvider, type TunnelAuthDiagnostics, type Tunnel
 import { formatTunnelExitMessage, tunnelExitHintFromLog } from './tunnel-exit.js';
 import { acquireTunnelLock, readTunnelLock, type TunnelLockAcquisition, type TunnelLockOwner } from './tunnel-lock.js';
 import { extractTunnelId, extractTunnelMcpServerUrl, normalizeLoopbackMcpUrl, rewriteTunnelYamlMcpServerUrl, rewriteTunnelYamlRuntimeApiKeyRef } from './tunnel-profile.js';
-import { TunnelRuntimeAdapter, type TunnelRuntimeAdapterOptions } from './tunnel-runtime-adapter.js';
+import { TunnelRuntimeAdapter, type TunnelRuntimeAdapterOptions, type TunnelRuntimeUserStopCapability } from './tunnel-runtime-adapter.js';
 import { tunnelAliasRecoveryDirectory } from './tunnel-runtime-alias-journal.js';
 import { TunnelRuntimeReconciler, type TunnelRuntimeDesiredState, type TunnelRuntimeReconcilerAdapter } from './tunnel-runtime-reconciler.js';
 import { TunnelRuntimeSupervisor } from './tunnel-runtime-supervisor.js';
@@ -93,7 +93,9 @@ export interface TunnelControllerOptions {
   readonly setRuntimeDesiredState?: (value: 'running' | 'stopped') => void;
   readonly getRuntimeOwnerPath?: () => string | null;
   readonly setRuntimeOwnerPath?: (value: string) => void;
-  readonly createRuntimeAdapter?: (options: TunnelRuntimeAdapterOptions) => TunnelRuntimeReconcilerAdapter;
+  readonly createRuntimeAdapter?: (options: TunnelRuntimeAdapterOptions) => TunnelRuntimeReconcilerAdapter & Partial<TunnelRuntimeUserStopCapability>;
+  readonly clearStaleTunnelAlias?: TunnelRuntimeAdapterOptions['clearStaleTunnelAlias'];
+  readonly stopOwnedTunnel?: TunnelRuntimeAdapterOptions['stopOwnedTunnel'];
 }
 
 export interface TunnelProcessDiagnostics {
@@ -168,6 +170,7 @@ export class TunnelController {
   private startInFlight: Promise<TunnelStatus> | null = null;
   private startAbortController: AbortController | null = null;
   private stopInFlight: Promise<TunnelStatus> | null = null;
+  private userStopInFlight: Promise<TunnelStatus> | null = null;
   private runtimeSupervisor: TunnelRuntimeSupervisor | null = null;
   private runtimeSnapshot: TunnelRuntimeSnapshot | null = null;
   private runtimeMode: 'native-managed' | 'profile-child' | null = null;
@@ -563,7 +566,7 @@ export class TunnelController {
       throwIfStartCancelled(signal);
       await this.repairDesktopTunnelProfile();
       throwIfStartCancelled(signal);
-      await runTunnelDoctor(clientPath, apiKey, this.profileDirectory(), this.options.platform ?? process.platform);
+      await runTunnelDoctor(clientPath, apiKey, this.profileDirectory(), this.options.platform ?? process.platform, signal);
       throwIfStartCancelled(signal);
       this.runtimeMode = 'profile-child';
       this.spawnRun(clientPath, apiKey);
@@ -586,15 +589,27 @@ export class TunnelController {
     return this.requestStop();
   }
 
+  /** A trusted UI Stop may stop the app-owned local alias even when saved settings are stale. */
+  public stopFromUser(): Promise<TunnelStatus> {
+    this.options.setRuntimeDesiredState?.('stopped');
+    return this.requestStop('user');
+  }
+
+  /** Stop the app-owned Tunnel for update handoff without changing saved user intent. */
+  public stopForUpdate(): Promise<TunnelStatus> {
+    return this.requestStop('update');
+  }
+
   public stopOwned(): Promise<TunnelStatus> {
     return this.requestStop();
   }
 
   /** A user-confirmed factory reset must retire the external native alias before deleting app data. */
   public async prepareFactoryReset(): Promise<void> {
+    const savedOwner = this.runtimeOwnerPath();
     const configuredPath = this.resolveClientPath();
-    const clientPath = configuredPath !== null && existsSync(configuredPath)
-      ? configuredPath : this.options.getBundledClientPath?.() ?? null;
+    const clientPath = savedOwner ?? (configuredPath !== null && existsSync(configuredPath)
+      ? configuredPath : this.options.getBundledClientPath?.() ?? null);
     if (clientPath === null || !existsSync(clientPath)) {
       throw new Error('Cannot verify the local persistent Tunnel alias: bundled tunnel-client is unavailable. Reset was not started.');
     }
@@ -603,16 +618,19 @@ export class TunnelController {
     if (!capabilities.nativeRuntimes) {
       throw new Error('Cannot verify persistent Tunnel alias state with this tunnel-client. Reset was not started.');
     }
+    await adapter.recoverStoppedAliasRetirement?.();
     const initial = await adapter.status();
     if (initial.exists && initial.running) {
-      const configuredTunnelId = await this.resolvePersistentTunnelId();
-      const savedOwner = this.runtimeOwnerPath();
-      if (initial.pid === null || initial.tunnelId === null || initial.tunnelId !== configuredTunnelId
-        || (this.runtimeMode !== 'native-managed' && (savedOwner === null || savedOwner !== path.resolve(clientPath)))) {
+      const ownerVerified = savedOwner !== null
+        ? savedOwner === path.resolve(clientPath)
+        : this.runtimeMode === 'native-managed'
+          && configuredPath !== null
+          && path.resolve(configuredPath) === path.resolve(clientPath);
+      if (initial.pid === null || initial.tunnelId === null || !ownerVerified) {
         throw new Error('Running Tunnel alias identity or process ownership is not verified. Reset did not begin; stop the original owned Tunnel first.');
       }
     }
-    await this.stop();
+    await this.stopFromUser();
     const status = await adapter.status();
     if (!status.exists) {
       if (await this.probeExternalRunning(true) !== 'gone') {
@@ -620,7 +638,7 @@ export class TunnelController {
       }
       return;
     }
-    if (status.running || status.pid !== null || status.tunnelId === null) {
+    if (status.running || status.processStateEvidence !== 'stopped' || status.tunnelId === null) {
       throw new Error('Persistent Tunnel alias is still active or ownership cannot be verified. Stop the owned Tunnel first; reset did not begin.');
     }
     if (await this.probeExternalRunning(true) !== 'gone') {
@@ -635,24 +653,39 @@ export class TunnelController {
     }
   }
 
-  private requestStop(): Promise<TunnelStatus> {
+  private requestStop(intent: 'strict' | 'user' | 'update' = 'strict'): Promise<TunnelStatus> {
     this.intentionalStop = true;
     this.clearRestartTimer();
     this.startAbortController?.abort();
-    if (this.stopInFlight !== null) return this.stopInFlight;
-    const operation = this.enqueueLifecycle(() => this.stopOnce());
+    const inFlight = intent === 'user' ? this.userStopInFlight : this.stopInFlight;
+    if (inFlight !== null) return inFlight;
+    const operation = this.enqueueLifecycle(() => this.stopOnce(intent));
     const tracked = operation.finally(() => {
-      if (this.stopInFlight === tracked) this.stopInFlight = null;
+      if (intent === 'user') {
+        if (this.userStopInFlight === tracked) this.userStopInFlight = null;
+      } else if (this.stopInFlight === tracked) {
+        this.stopInFlight = null;
+      }
     });
-    this.stopInFlight = tracked;
+    if (intent === 'user') this.userStopInFlight = tracked;
+    else this.stopInFlight = tracked;
     return tracked;
   }
 
-  private async stopOnce(): Promise<TunnelStatus> {
+  private async stopOnce(intent: 'strict' | 'user' | 'update'): Promise<TunnelStatus> {
     if (this.runtimeMode === 'native-managed' && this.runtimeSupervisor !== null) {
-      const result = await this.runtimeSupervisor.stopRuntime();
-      if (result !== null && result.snapshot.state !== 'stopped') {
-        throw new Error(result.snapshot.message ?? 'Tunnel runtime did not stop');
+      if (intent !== 'strict') {
+        this.runtimeSupervisor.dispose();
+        if (!await this.stopPersistedNativeRuntimeForUser()) {
+          throw new Error('The app-owned Persistent Tunnel alias could not be verified as stopped');
+        }
+      } else {
+        const result = await this.runtimeSupervisor.stopRuntime();
+        if (result !== null && result.snapshot.state !== 'stopped') {
+          if (!await this.stopPersistedNativeRuntimeIfOwned()) {
+            throw new Error(result.snapshot.message ?? 'Tunnel runtime did not stop');
+          }
+        }
       }
       this.disposeRuntimeSupervisor();
       this.options.setRuntimeOwnerPath?.('');
@@ -668,7 +701,8 @@ export class TunnelController {
     // A profile-child is the positively owned runtime even when the selected
     // client cannot expose native runtime controls. Stop that child first so
     // the persisted-owner reconciliation can safely prove no survivor remains.
-    await this.stopPersistedNativeRuntimeIfOwned();
+    if (intent !== 'strict') await this.stopPersistedNativeRuntimeForUser();
+    else await this.stopPersistedNativeRuntimeIfOwned();
     await this.releaseTunnelLock();
     this.options.setRuntimeOwnerPath?.('');
     this.state = 'stopped';
@@ -1125,6 +1159,107 @@ export class TunnelController {
     return value.length === 0 ? null : path.resolve(value);
   }
 
+  private async stopPersistedNativeRuntimeForUser(): Promise<boolean> {
+    const recordedOwner = this.runtimeOwnerPath();
+    const configuredPath = this.resolveClientPath();
+    const clientPath = recordedOwner ?? configuredPath;
+    if (clientPath === null || !existsSync(clientPath)) {
+      if (recordedOwner !== null) {
+        return this.clearRecordedRuntimeOwnerOnlyWhenExternalGone('the recorded owner executable is missing');
+      }
+      return false;
+    }
+
+    const ownerVerified = recordedOwner !== null
+      ? recordedOwner === path.resolve(clientPath)
+      : this.runtimeMode === 'native-managed'
+        && configuredPath !== null
+        && path.resolve(configuredPath) === path.resolve(clientPath);
+    const adapter = this.createRuntimeAdapter(clientPath, '');
+    if (adapter.runtimeAlias() !== TUNNEL_RUNTIME_ALIAS) {
+      if (ownerVerified) throw new Error('The app-owned Persistent Tunnel alias could not be verified');
+      return false;
+    }
+
+    let capabilities;
+    try {
+      capabilities = await adapter.capabilities();
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : 'capability probe failed';
+      throw new Error(`Could not verify the user-requested Persistent Tunnel Stop through ${clientPath}: ${detail}`);
+    }
+    if (!capabilities.nativeRuntimes) {
+      if (ownerVerified) throw new Error('The recorded Tunnel client does not expose native runtime control');
+      return false;
+    }
+
+    let nativeStatus;
+    try {
+      await adapter.recoverStoppedAliasRetirement?.();
+      nativeStatus = await adapter.status();
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : 'status probe failed';
+      throw new Error(`Could not verify the user-requested Persistent Tunnel Stop through ${clientPath}: ${detail}`);
+    }
+
+    if (!nativeStatus.exists) {
+      if (!ownerVerified) {
+        if (await this.probeExternalRunning(true) !== 'gone') {
+          throw new Error('Tunnel process liveness is not verified as stopped; user-requested Stop was not completed');
+        }
+        return false;
+      }
+      const storedTunnelIdRaw = this.options.getTunnelId?.()?.trim() ?? '';
+      if (/^tunnel_[A-Za-z0-9_-]{8,128}$/.test(storedTunnelIdRaw)) {
+        await adapter.ensureSingleProcess?.(storedTunnelIdRaw, nativeStatus);
+      }
+      return this.clearRecordedRuntimeOwnerOnlyWhenExternalGone('the recorded owner reports that the lnwjud alias is absent');
+    }
+
+    if (!ownerVerified) {
+      if (nativeStatus.running) {
+        throw new Error('The live lnwjud Tunnel alias is not proven to be owned by this app; user-requested Stop was refused');
+      }
+      if (await this.probeExternalRunning(true) !== 'gone') {
+        throw new Error('Tunnel process liveness is not verified as stopped; user-requested Stop was not completed');
+      }
+      return false;
+    }
+    if (!nativeStatus.running) {
+      if (nativeStatus.processStateEvidence !== 'stopped' || nativeStatus.tunnelId === null) {
+        throw new Error('The app-owned Persistent Tunnel alias does not have verified stopped-process evidence');
+      }
+      await adapter.ensureSingleProcess?.(nativeStatus.tunnelId, nativeStatus);
+      if (await this.probeExternalRunning(true) !== 'gone') {
+        throw new Error('Tunnel process liveness is not verified as stopped; user-requested Stop was not completed');
+      }
+      return true;
+    }
+    if (nativeStatus.tunnelId === null || nativeStatus.pid === null) {
+      throw new Error('The live lnwjud Tunnel alias identity or process is not verified; user-requested Stop was refused');
+    }
+
+    const configuredTunnelIdRaw = this.options.getTunnelId?.()?.trim() ?? '';
+    const configuredTunnelId = /^tunnel_[A-Za-z0-9_-]{8,128}$/.test(configuredTunnelIdRaw) ? configuredTunnelIdRaw : null;
+    let stopped: Awaited<ReturnType<TunnelRuntimeReconcilerAdapter['stop']>>;
+    if (configuredTunnelId === nativeStatus.tunnelId) {
+      stopped = await adapter.stop(nativeStatus.tunnelId);
+    } else {
+      const userStopAdapter = adapter as TunnelRuntimeReconcilerAdapter & Partial<TunnelRuntimeUserStopCapability>;
+      if (typeof userStopAdapter.stopOwnedTunnelForUser !== 'function') {
+        throw new Error('TUNNEL_STOP_NATIVE_AUTHORITY_UNAVAILABLE');
+      }
+      stopped = await userStopAdapter.stopOwnedTunnelForUser(nativeStatus.tunnelId);
+    }
+    if (stopped.exists && (stopped.running || stopped.pid !== null || stopped.tunnelId !== nativeStatus.tunnelId)) {
+      throw new Error('The app-owned Persistent Tunnel alias is still active or changed identity after Stop');
+    }
+    if (await this.probeExternalRunning(true) !== 'gone') {
+      throw new Error('Tunnel process liveness is not verified as stopped after user-requested Stop');
+    }
+    return true;
+  }
+
   private autoReconnectEnabled(): boolean {
     return this.options.autoReconnect?.() ?? true;
   }
@@ -1199,6 +1334,7 @@ export class TunnelController {
 
     let nativeStatus;
     try {
+      await adapter.recoverStoppedAliasRetirement?.();
       nativeStatus = await adapter.status();
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : 'status probe failed';
@@ -1212,9 +1348,10 @@ export class TunnelController {
       return false;
     }
     if (storedTunnelId !== null && nativeStatus.tunnelId !== null && nativeStatus.tunnelId !== storedTunnelId) {
-      if (nativeStatus.running || nativeStatus.pid !== null) {
+      if (nativeStatus.processStateEvidence !== 'stopped' || nativeStatus.running) {
         throw new Error('Persistent tunnel alias lnwjud belongs to a different Tunnel ID; refusing to stop it automatically');
       }
+      await adapter.ensureSingleProcess?.(storedTunnelId, nativeStatus);
       if (await this.probeExternalRunning(true) !== 'gone' || adapter.retireStoppedAlias === undefined) {
         throw new Error('Stopped lnwjud Tunnel alias has a different Tunnel ID, but safe cleanup could not be verified. No other runtime was stopped; explicitly stop the original runtime and retry.');
       }
@@ -1260,6 +1397,8 @@ export class TunnelController {
       profileDirectory: this.profileDirectory(),
       recoveryDirectory: tunnelAliasRecoveryDirectory(this.options.getDataPath()),
       environment: tunnelClientEnv(apiKey, this.profileDirectory(), this.options.platform ?? process.platform),
+      ...(this.options.clearStaleTunnelAlias === undefined ? {} : { clearStaleTunnelAlias: this.options.clearStaleTunnelAlias }),
+      ...(this.options.stopOwnedTunnel === undefined ? {} : { stopOwnedTunnel: this.options.stopOwnedTunnel }),
     };
     return this.options.createRuntimeAdapter?.(options) ?? new TunnelRuntimeAdapter(options);
   }
@@ -1293,6 +1432,7 @@ export class TunnelController {
     const capabilities = await adapter.capabilities();
     throwIfStartCancelled(signal);
     if (!capabilities.managedConnect) return null;
+    if (allowPersistentConfigurationReplacement) await adapter.recoverStoppedAliasRetirement?.();
 
     let nativeStatus;
     try {
@@ -1543,15 +1683,17 @@ export function tunnelClientEnv(apiKey: string, profileDirectory: string, platfo
   return env;
 }
 
-async function runTunnelDoctor(clientPath: string, apiKey: string, profileDirectory: string, platform: NodeJS.Platform = process.platform): Promise<void> {
+async function runTunnelDoctor(clientPath: string, apiKey: string, profileDirectory: string, platform: NodeJS.Platform = process.platform, signal?: AbortSignal): Promise<void> {
   try {
     await execFileAsync(clientPath, ['doctor', '--profile', PROFILE_NAME, '--profile-dir', profileDirectory, '--explain'], {
       env: tunnelClientEnv(apiKey, profileDirectory, platform),
       windowsHide: true,
       encoding: 'utf8',
       timeout: 60_000,
+      ...(signal === undefined ? {} : { signal }),
     });
   } catch (error: unknown) {
+    if (signal?.aborted) throw new StartCancelledError('Tunnel start was cancelled');
     const detail = extractExecDetail(error);
     throw new Error(detail.length > 0 ? detail : 'tunnel-client doctor failed');
   }

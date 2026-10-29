@@ -43,6 +43,7 @@ import type { ContextEconomyRuntime } from '../context-economy.js';
 import type { OfficeDataWorkflowService } from '../office-data-workflow.js';
 import type { EccRuntimeOptions } from '../ecc-provider.js';
 import type { DapSessionService } from '../dap-session-service.js';
+import type { EngineeringBuildCaptureService } from '../engineering-build-capture.js';
 
 export interface WorkspaceInfoPort {
   info(actor: FileActor, workspaceId: string): Promise<Result<unknown>>;
@@ -104,6 +105,7 @@ export interface McpApplicationServices {
   readonly projectSnapshot?: ProjectSnapshotPort;
   readonly project?: Pick<ProjectService, 'detect'>;
   readonly engineeringPreparation?: Pick<EngineeringPreparationService, 'prepare'>;
+  readonly engineeringCapture?: Pick<EngineeringBuildCaptureService, 'start' | 'complete' | 'uploadWorker'>;
   readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
   readonly checkpoint?: Pick<CheckpointService, 'list' | 'restore'>;
   readonly callHistory?: Pick<CallHistoryService, 'history'>;
@@ -130,7 +132,7 @@ export interface McpApplicationServices {
     | 'cancelGoal'
     | 'reconcileGoals'
     | 'listGoals'
-  >;
+  > & Partial<Pick<GoalContinuationService, 'recoverBlockedGoal'>>;
   /** Runtime-shared cancellation registry for in-flight fenced MCP requests. */
   readonly goalRequestCancellation?: GoalRequestCancellationPort;
   readonly scheduledContinuations?: Pick<ScheduledContinuationService, 'prepareScheduledContinuation' | 'recordScheduledContinuationReceipt' | 'cancelScheduledContinuation' | 'claimScheduledContinuation' | 'getScheduledContinuation' | 'expediteScheduledContinuation'>;
