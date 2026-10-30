@@ -7,9 +7,12 @@ describe('titlebar update notification', () => {
   it('advances a Settings-initiated update only once and never installs from ordinary update status events', () => {
     const intent = new OperatorUpdateIntent();
     expect(intent.onStatus({ phase: 'ready' })).toBe('none');
-    intent.start();
+    expect(intent.start()).toBe(true);
     expect(intent.onStatus({ phase: 'checking' })).toBe('none');
     expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
+    // A second Settings click while the first download is pending must not
+    // reset the one-shot intent or enqueue another download.
+    expect(intent.start()).toBe(false);
     expect(intent.onStatus({ phase: 'available' })).toBe('none');
     expect(intent.onStatus({ phase: 'downloading' })).toBe('none');
     expect(intent.onStatus({ phase: 'ready' })).toBe('confirm-install');

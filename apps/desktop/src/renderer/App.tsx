@@ -456,7 +456,7 @@ export function App(): ReactElement {
   }
 
   async function handleOperatorUpdateTest(): Promise<void> {
-    operatorUpdateIntentRef.current.start();
+    if (!operatorUpdateIntentRef.current.start()) return;
     try {
       const status = await window.lnwjud.checkForUpdates();
       setUpdateStatus(status);
