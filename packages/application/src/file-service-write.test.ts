@@ -7,6 +7,7 @@ import { AtomicFileWriter, type AtomicWriteOptions } from '@lnwjud/filesystem';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { WorkspacePathGuard, type Checkpoint, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import { FileService, type CheckpointServicePort } from './file-service.js';
+import type { ManagedWriterAdmissionLease } from './writer-admission.js';
 
 const temporaryRoots: string[] = [];
 const actor = { clientId: 'client-1', clientName: 'test' };
@@ -50,7 +51,7 @@ describe('FileService writes', () => {
     const service = new FileService(repository(workspace), undefined, undefined, {
       profile: permissionProfiles.full,
       writerAdmission: {
-        async enter() { throw new Error('private reservation backend path must not be returned'); },
+        async enter(): Promise<Result<ManagedWriterAdmissionLease>> { throw new Error('private reservation backend path must not be returned'); },
       },
     });
     const result = await service.writeFile(actor, workspace.id, { path: target, content: 'never written' });
@@ -69,7 +70,7 @@ describe('FileService writes', () => {
     const service = new FileService(repository(workspace), undefined, undefined, {
       profile: permissionProfiles.full,
       writerAdmission: {
-        async enter() {
+        async enter(): Promise<Result<ManagedWriterAdmissionLease>> {
           return ok({
             id: 'held-writer',
             async releaseAfterVerifiedTermination(): Promise<void> {
