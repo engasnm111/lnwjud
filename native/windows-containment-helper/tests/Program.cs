@@ -1093,11 +1093,19 @@ internal static class NativeTests
                 initialLedger.Prepare(request);
                 initialRuntime.Run(identity, callerSid, opDigest, op, 0);
 
+                // RecordTerminal and Release are two ordered ledger operations.
+                // A verified terminal phase alone is not a settled reservation.
+                // Simulate restart only after the native monitor publishes both.
                 var sw = Stopwatch.StartNew();
-                while (sw.ElapsedMilliseconds < 15000 && initialLedger.Inspect(identity, callerSid).Phase != ServiceAttemptPhase.TerminalVerified)
+                var settled = initialLedger.Inspect(identity, callerSid);
+                while (sw.ElapsedMilliseconds < 15000
+                    && (settled.Phase != ServiceAttemptPhase.TerminalVerified || settled.ReservationHeld))
                 {
                     Thread.Sleep(20);
+                    settled = initialLedger.Inspect(identity, callerSid);
                 }
+                if (settled.Phase != ServiceAttemptPhase.TerminalVerified || settled.ReservationHeld)
+                    throw new Exception("Initial Job did not publish terminal verification and reservation release");
 
                 var restartLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(storePath));
                 var restartRuntime = new WindowsServiceProcessRuntime(restartLedger, useCurrentUserTestLauncher: true);
