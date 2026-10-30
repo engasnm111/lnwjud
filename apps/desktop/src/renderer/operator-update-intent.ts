@@ -4,9 +4,11 @@ export class OperatorUpdateIntent {
   private active = false;
   private requestedDownload = false;
 
-  start(): void {
+  start(): boolean {
+    if (this.active) return false;
     this.active = true;
     this.requestedDownload = false;
+    return true;
   }
 
   cancel(): void {
