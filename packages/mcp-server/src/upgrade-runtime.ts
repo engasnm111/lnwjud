@@ -1433,11 +1433,13 @@ export class UpgradeRuntimeService {
     const evidence: Record<string, unknown> = {
       index: { status: 'unavailable', reason: workspaceId === undefined ? 'workspaceId-required' : 'index-provider-missing' },
       durableTasks: { status: 'unavailable', reason: 'task-provider-missing' },
+      writerReservations: { status: 'unavailable', reason: 'task-provider-missing' },
     };
     const fixes: SelfHealFix[] = [];
     const manualIssues: Record<string, unknown>[] = [];
     let indexObserved = false;
     let tasksObserved = false;
+    let reservationsObserved = false;
 
     if (signal?.aborted) return err(appError('PROCESS_TIMEOUT', 'Recovery evidence read was cancelled', true));
 
@@ -1471,14 +1473,46 @@ export class UpgradeRuntimeService {
           const running = tasks.filter((task) => task.state === 'running');
           tasksObserved = true;
           evidence.durableTasks = { status: 'observed', total: tasks.length, running: running.length, cancellationEligibility: 'requires-explicit-liveness-and-owner-review' };
+          const admission = list.value.admission;
+          const numberFields = ['durable_shell_limit', 'durable_shell_reservations', 'managed_writer_reservations', 'unresolved_reservations', 'unreadable_reservations'] as const;
+          if (isRecord(admission) && admission.status_basis === 'held_reservations_not_process_liveness'
+            && (admission.capacity_population === 'durable_shell' || admission.capacity_population === 'managed_writer')
+            && typeof admission.exclusive_writer_blocked === 'boolean'
+            && numberFields.every((field) => typeof admission[field] === 'number' && Number.isSafeInteger(admission[field]) && (admission[field] as number) >= 0)
+            && Array.isArray(admission.blockers) && admission.blockers.length === admission.unresolved_reservations) {
+            const byKind = { opaque: 0, repository_import: 0, synchronous_mutation: 0, opaque_uncontained: 0, opaque_contained_process: 0, unreadable: 0, unknown: 0 };
+            for (const blocker of admission.blockers) {
+              const kind = isRecord(blocker) ? blocker.mutation_kind : undefined;
+              if (typeof kind === 'string' && Object.hasOwn(byKind, kind)) byKind[kind as keyof typeof byKind] += 1;
+              else byKind.unknown += 1;
+            }
+            evidence.writerReservations = {
+              status: 'observed', scope: 'global_shared_index',
+              capacity_population: admission.capacity_population,
+              durable_shell_limit: admission.durable_shell_limit,
+              durable_shell_reservations: admission.durable_shell_reservations,
+              managed_writer_reservations: admission.managed_writer_reservations,
+              unresolved_reservations: admission.unresolved_reservations,
+              unreadable_reservations: admission.unreadable_reservations,
+              exclusive_writer_blocked: admission.exclusive_writer_blocked,
+              by_mutation_kind: byKind,
+              status_basis: 'held_reservations_not_process_liveness',
+              terminal_proof: 'not_observed', recovery: 'no_automatic_reclamation',
+            };
+            reservationsObserved = true;
+          } else {
+            evidence.writerReservations = { status: 'unknown', reason: 'admission-diagnostics-missing-or-invalid' };
+          }
           for (const task of running.slice(0, 10)) {
             manualIssues.push({ taskId: typeof task.task_id === 'string' ? task.task_id : null, state: 'running', reason: 'Running duration does not prove abandonment', action: 'Inspect the owned task and explicitly cancel only after liveness review' });
           }
         } else {
           evidence.durableTasks = { status: 'unknown', errorCode: list.ok ? 'INVALID_OUTPUT' : list.error.code };
+          evidence.writerReservations = { status: 'unknown', reason: 'admission-diagnostics-unverified' };
         }
       } catch {
         evidence.durableTasks = { status: 'unknown', errorCode: 'INTERNAL_ERROR' };
+        evidence.writerReservations = { status: 'unknown', reason: 'admission-diagnostics-unverified' };
       }
     }
 
@@ -1491,7 +1525,7 @@ export class UpgradeRuntimeService {
       mutationRequired: fixes.some((fix) => fix.requiresConfirmation),
       safeReversibleFixes: fixes,
       manualIssues,
-      observationState: indexObserved && tasksObserved ? 'complete' : 'partial',
+      observationState: indexObserved && tasksObserved && reservationsObserved ? 'complete' : 'partial',
       automaticDestructiveRetry: false,
       auditTarget: 'recovery-plan',
       evidence,
