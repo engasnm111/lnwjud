@@ -53,6 +53,7 @@ import {
 import { createTranslator } from './i18n/index.js';
 import { STARTUP_CORE_CHECK_IDS, markStartupDoctorPassed, startupDoctorCorePassed, startupDoctorNavigationTarget, startupDoctorRequired } from './features/onboarding/startup-doctor-state.js';
 import { McpDashboardState } from './mcp-dashboard-state.js';
+import { OperatorUpdateIntent } from './operator-update-intent.js';
 
 const MAX_CLIENT_LOG_LINES = 30_000;
 
@@ -84,6 +85,7 @@ export function App(): ReactElement {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [installActivity, setInstallActivity] = useState<InstallActivitySnapshot>(EMPTY_INSTALL_ACTIVITY);
   const updateInstallTransitionRef = useRef(false);
+  const operatorUpdateIntentRef = useRef(new OperatorUpdateIntent());
   const [firstRunTunnelTipOpen, setFirstRunTunnelTipOpen] = useState(false);
   const [guidedTunnelSetupOpen, setGuidedTunnelSetupOpen] = useState(false);
   const [startupDoctorReady, setStartupDoctorReady] = useState(false);
@@ -135,6 +137,7 @@ export function App(): ReactElement {
       if (!disposed) {
         updateInstallTransitionRef.current = status.phase === 'installing';
         setUpdateStatus(status);
+        advanceOperatorUpdate(status);
       }
     });
     return (): void => {
@@ -430,6 +433,38 @@ export function App(): ReactElement {
 
   async function openExternalSetupPage(target: ExternalSetupTarget): Promise<void> {
     await window.lnwjud.openExternalSetupPage({ target });
+  }
+
+  function advanceOperatorUpdate(status: UpdateStatus): void {
+    const action = operatorUpdateIntentRef.current.onStatus(status);
+    if (action === 'request-download') {
+      void window.lnwjud.checkForUpdates().then((next) => {
+        setUpdateStatus(next);
+        advanceOperatorUpdate(next);
+      }).catch((cause: unknown) => {
+        operatorUpdateIntentRef.current.cancel();
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    } else if (action === 'confirm-install') {
+      void window.lnwjud.installUpdate().then((result) => {
+        updateInstallTransitionRef.current = result.status.phase === 'installing';
+        setUpdateStatus(result.status);
+      }).catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    }
+  }
+
+  async function handleOperatorUpdateTest(): Promise<void> {
+    operatorUpdateIntentRef.current.start();
+    try {
+      const status = await window.lnwjud.checkForUpdates();
+      setUpdateStatus(status);
+      advanceOperatorUpdate(status);
+    } catch (cause: unknown) {
+      operatorUpdateIntentRef.current.cancel();
+      throw cause;
+    }
   }
 
   async function handleUpdateAction(): Promise<void> {
@@ -1069,6 +1104,8 @@ export function App(): ReactElement {
           locale={locale}
           dashboard={dashboard}
           updatesUnavailable={updateStatus?.phase === 'unavailable'}
+          updateStatus={updateStatus}
+          onTestNativeUpdate={handleOperatorUpdateTest}
           onLocaleChange={changeLocale}
           onFactoryReset={factoryReset}
           onPermissionProfileChange={setPermissionProfile}
