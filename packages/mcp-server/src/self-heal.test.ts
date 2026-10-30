@@ -15,11 +15,48 @@ describe('owned recovery plans', () => {
     } });
   });
 
+  it('exposes held global reservations even with no scoped running tasks, without revealing private identities or claiming liveness', async () => {
+    const runtime = new UpgradeRuntimeService({
+      capabilities: { async execute(): Promise<ReturnType<typeof ok>> {
+        return ok({
+          tasks: [],
+          admission: {
+            capacity_population: 'durable_shell',
+            durable_shell_limit: 16,
+            durable_shell_reservations: 0,
+            managed_writer_reservations: 2,
+            unresolved_reservations: 2,
+            unreadable_reservations: 0,
+            exclusive_writer_blocked: true,
+            status_basis: 'held_reservations_not_process_liveness',
+            blockers: [
+              { reservation_id: 'private-one', mutation_kind: 'opaque_uncontained', capacity_class: 'managed_writer', state: 'held', recovery_requirement: 'trusted_termination_evidence' },
+              { reservation_id: 'private-two', mutation_kind: 'opaque_contained_process', capacity_class: 'managed_writer', state: 'held', recovery_requirement: 'trusted_termination_evidence' },
+            ],
+          },
+        });
+      } },
+    }, actor);
+    const result = await runtime.execute('recovery_status', { workspaceId: 'ws-1' });
+    expect(result).toMatchObject({ ok: true, value: { observations: {
+      durableTasks: { status: 'observed', total: 0, running: 0 },
+      writerReservations: {
+        status: 'observed', scope: 'global_shared_index', durable_shell_limit: 16,
+        managed_writer_reservations: 2, unresolved_reservations: 2,
+        exclusive_writer_blocked: true, terminal_proof: 'not_observed',
+        recovery: 'no_automatic_reclamation',
+        by_mutation_kind: { opaque_uncontained: 1, opaque_contained_process: 1 },
+      },
+    } } });
+    expect(JSON.stringify(result)).not.toContain('private-one');
+    expect(JSON.stringify(result)).not.toContain('private-two');
+  });
+
   it('reads existing Goal and continuation receipts without claiming native liveness', async () => {
     const calls: string[] = [];
     const runtime = new UpgradeRuntimeService({
       workspaceIndex: { async status(): Promise<ReturnType<typeof ok>> { return ok({ indexed: true, snapshot: { entries: [] }, freshness: 'unverified', generation: 'fixture' }); } },
-      capabilities: { async execute(): Promise<ReturnType<typeof ok>> { return ok({ tasks: [] }); } },
+      capabilities: { async execute(): Promise<ReturnType<typeof ok>> { return ok({ tasks: [], admission: { capacity_population: 'durable_shell', durable_shell_limit: 16, durable_shell_reservations: 0, managed_writer_reservations: 0, unresolved_reservations: 0, unreadable_reservations: 0, exclusive_writer_blocked: false, status_basis: 'held_reservations_not_process_liveness', blockers: [] } }); } },
       goals: { async getGoal(receivedActor, request): Promise<ReturnType<typeof ok>> {
         expect(receivedActor).toEqual(actor);
         expect(request).toEqual({ goalId: 'goal-1' });
@@ -79,6 +116,13 @@ describe('owned recovery plans', () => {
     await expect(missing.execute('self_heal_plan', { workspaceId: 'ws-1' })).resolves.toMatchObject({ ok: true, value: {
       evidence: { index: { status: 'unavailable' }, durableTasks: { status: 'unavailable' } },
       safeReversibleFixes: [], observationState: 'partial',
+    } });
+    const malformed = new UpgradeRuntimeService({ capabilities: { async execute(): Promise<ReturnType<typeof ok>> { return ok({ tasks: [], admission: { unresolved_reservations: 0 } }); } } }, actor);
+    await expect(malformed.execute('recovery_status', { workspaceId: 'ws-1' })).resolves.toMatchObject({ ok: true, value: {
+      observationState: 'partial', observations: {
+        durableTasks: { status: 'observed', total: 0 },
+        writerReservations: { status: 'unknown', reason: 'admission-diagnostics-missing-or-invalid' },
+      },
     } });
     const failing = new UpgradeRuntimeService({ capabilities: { async execute(): Promise<ReturnType<typeof err>> { return err(appError('INTERNAL_ERROR', 'fixture')); } } }, actor);
     await expect(failing.execute('self_heal_plan', { workspaceId: 'ws-1' })).resolves.toMatchObject({ ok: true, value: {
