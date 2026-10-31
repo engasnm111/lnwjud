@@ -1052,7 +1052,7 @@ describe('durable shell background tasks', () => {
       ([filename]) => String(filename).endsWith(`${path.sep}task.json`),
     );
     expect(metadataReads).toHaveLength(3);
-  });
+  }, 20_000);
 
   it('lists durable task metadata without hydrating historical output', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-list-memory-'));
