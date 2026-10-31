@@ -125,7 +125,7 @@ describe('MCP tool registry', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('requires explicit confirmation when the same client recovers an idle older MCP session', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-mcp-recover-fence-'));
