@@ -49,6 +49,7 @@ export interface WorkspaceIndexEntry {
 }
 
 const WORKSPACE_INDEX_DISCOVERY_POLICY_REVISION = 1;
+const MAX_INDEX_FILE_BYTES = 16 * 1024 * 1024;
 
 export interface WorkspaceIndexSnapshot {
   readonly version: 1;
@@ -461,6 +462,8 @@ export class WorkspaceIndexService {
     const indexedAt = new Date().toISOString();
     if (metadata.isDirectory()) return { relativePath, kind: 'directory', size: 0, mtimeMs: Number(metadata.mtimeMs), contentHash: null, gitBlobSha: null, language: null, isTest: false, symbols: [], imports: [], exports: [], functions: [], classes: [], interfaces: [], indexedAt };
     if (metadata.isSymbolicLink()) return { relativePath, kind: 'symlink', size: Number(metadata.size), mtimeMs: Number(metadata.mtimeMs), contentHash: null, gitBlobSha: null, language: languageFor(relativePath), isTest: isTestPath(relativePath), symbols: [], imports: [], exports: [], functions: [], classes: [], interfaces: [], indexedAt };
+    // Oversized files remain visible by metadata but never load their bytes into memory.
+    if (metadata.size > MAX_INDEX_FILE_BYTES) return { relativePath, kind: 'file', size: Number(metadata.size), mtimeMs: Number(metadata.mtimeMs), contentHash: null, gitBlobSha: null, language: languageFor(relativePath), isTest: isTestPath(relativePath), symbols: [], imports: [], exports: [], functions: [], classes: [], interfaces: [], indexedAt };
     const content = await readFile(absolutePath, { ...(signal === undefined ? {} : { signal }) });
     const contentHash = createHash('sha256').update(content).digest('hex');
     const gitBlobSha = createHash('sha1').update(`blob ${content.byteLength}\0`).update(content).digest('hex');
