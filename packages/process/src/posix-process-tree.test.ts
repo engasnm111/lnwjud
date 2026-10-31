@@ -22,7 +22,7 @@ describe('portable process contracts', () => {
     expect(signal).not.toHaveBeenCalled();
   });
 
-  it('reprobes an unobserved newly spawned macOS group before sending any verified group signal', async () => {
+  it('reprobes malformed and unobserved macOS group snapshots before signaling', async () => {
     const signals: Array<{ pid: number; signal: NodeJS.Signals | number }> = [];
     const child = { exitCode: null, signalCode: null } as never;
     let probes = 0;
@@ -31,7 +31,33 @@ describe('portable process contracts', () => {
       inspectGroup: async (): Promise<PosixProcessGroupObservation> => {
         probes += 1;
         return probes === 1
-          ? { state: 'empty' }
+          ? { state: 'unknown', reason: 'malformed_process_table' }
+          : probes === 2
+            ? { state: 'empty' }
+            : { state: 'live', livePids: [4242], rootStartedAt: '2026-10-29T00:00:00.000Z' };
+      },
+      processKill: (pid, signal): void => { signals.push({ pid, signal }); },
+      termGraceMs: 5,
+      killGraceMs: 5,
+    });
+    await expect(tree.stop(child, 4242)).rejects.toThrow('could not be verified');
+    expect(probes).toBeGreaterThan(2);
+    expect(signals).toEqual([
+      { pid: -4242, signal: 'SIGTERM' },
+      { pid: -4242, signal: 'SIGKILL' },
+    ]);
+  });
+
+  it('waits for a freshly spawned macOS root start identity when only descendants are initially observable', async () => {
+    const signals: Array<{ pid: number; signal: NodeJS.Signals | number }> = [];
+    const child = { exitCode: null, signalCode: null } as never;
+    let probes = 0;
+    const tree = new PosixProcessTree({
+      platform: 'darwin',
+      inspectGroup: async (): Promise<PosixProcessGroupObservation> => {
+        probes += 1;
+        return probes <= 2
+          ? { state: 'live', livePids: [4243] }
           : { state: 'live', livePids: [4242], rootStartedAt: '2026-10-29T00:00:00.000Z' };
       },
       processKill: (pid, signal): void => { signals.push({ pid, signal }); },

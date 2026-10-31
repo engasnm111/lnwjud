@@ -44,10 +44,10 @@ system is never evidence for another.
    relevant checks, and repeat the merge/release sequence. Do not weaken tests,
    security settings, provenance checks, or branch protection.
 9. Every public GitHub Release body begins with human-written, version-specific
-   `## Highlights` from the matching README `What's new in vX.Y.Z` section.
+   `## Highlights` from the matching `RELEASE_NOTES.md` `What's new in vX.Y.Z` section.
    The generator adds factual Feature, Bug Fix, and Other Change entries from
    linked PRs and commits, then one `**Full Changelog**` link. It omits empty
-   categories instead of publishing `- None.`. A release with no README bullets
+   categories instead of publishing `- None.`. A release with no curated release-history bullets
    or no substantive change evidence fails before publication.
 10. Every application release also has a non-empty, exact-version entry in
     the in-app What's New registry, with Thai and English text. README and
@@ -81,9 +81,9 @@ After GitHub Release `vX.Y.Z` is public and verified, but **before starting the 
 
 Release notes are not free-form. Before tagging, write at least one clear,
 user-facing bullet under the exact-version `### What's new in vX.Y.Z` heading
-in `README.md`. Describe what users can do or what problem is fixed; a version
+in `RELEASE_NOTES.md`. Describe what users can do or what problem is fixed; a version
 bump, CI commit hash, or artifact list alone is insufficient. The tag workflow
-generates notes with `scripts/release-notes.mjs`, checks this README section,
+generates notes with `scripts/release-notes.mjs`, checks this release-history section,
 and validates it immediately after the tag/version check, before waiting for
 or downloading release artifacts. It publishes the generated file as the
 GitHub Release body.
@@ -135,12 +135,12 @@ Changelog lines, and preserves release/provenance metadata under **Other
 Changes**. Do not hand-replace the generated body with `## What's Changed` or a
 different heading scheme after publication.
 
-Keep the three newest release highlights in `README.md` and `FULL_README.md`.
-Move older highlights to `RELEASE_NOTES.md` without dropping their detail.
-When preparing a new version, add its exact-version highlights to both READMEs
-and the release history, and remove the oldest README entry in that same change
-so the three-version limit holds before CI. The generator uses the current
-`README.md` section for a new release and `RELEASE_NOTES.md` for historical
+Keep version-specific highlights in `RELEASE_NOTES.md` and the in-app What's New registry.
+Do not add per-version changelog sections to `README.md` or `FULL_README.md`.
+When preparing a new version, add its exact-version highlights to the release history
+and the in-app release notes, and validate the version-specific release notes
+before CI. The generator uses the current
+`RELEASE_NOTES.md` section for new releases and historical
 backfill.
 
 Historical cleanup uses `node scripts/release-notes.mjs --backfill --repository
@@ -207,7 +207,7 @@ full verification gate.
 - Set the release version by running `corepack pnpm@10.15.0 run set-version <version>` first. The script is the canonical version-sync path; do not begin by hand-editing packages or current-version docs. Inspect the resulting diff for drift, and use manual edits only for uncovered references. If an uncovered reference is part of the canonical current-version surface, extend `scripts/set-version.mjs` in the same change so future bumps stay automated. Do not reuse an existing public tag; this cross-platform target uses a new version when the prior Windows tag already exists.
 - Finish and locally verify functional behavior before changing the version. Keep the mechanical version-sync diff separate from unrelated runtime changes where practical so a failure has one obvious cause.
 - Run `corepack pnpm@10.15.0 test:version` immediately after `set-version`. This fast contract checks package/source alignment, development versus published documentation, local artifact names, and invalid version rejection.
-- Update README release-specific copy such as `What's new` when needed. Historical release details stay in GitHub Release notes and are not rewritten by the version script.
+- Keep README and FULL_README focused on product documentation; publish version Highlights in `RELEASE_NOTES.md`, the in-app modal and GitHub Releases.
 - Update tool-count and target-artifact assertions when the catalog or release
   matrix changes.
 - Run `git diff --check` and keep source provenance clean before the

@@ -1,5 +1,17 @@
 # Maintaining the in-app What's New registry
 
+## v5.9.1 development candidate (not released)
+
+The offline What's New registry includes a `5.9.1` entry with Thai and English descriptions of the single top-left titlebar update action (the duplicate Settings → General update test button has been removed), explicitly confirmed proven-idle same-client writer-lease recovery (ordinary acquisitions cannot reclaim active leases), and MCP refusal diagnostics. The current local Windows Setup and Portable packages are **unsigned test builds**, not production auto-update acceptance.
+
+Activity logs distinguish actual MCP-level `CONFLICT` (expired or missing Goal lease, writer-lease owner not idle), `EXECUTABLE_NOT_FOUND` (e.g. `pwsh` on Windows), and successful tool execution. **Host Safety refusals before dispatch are not necessarily recorded by lnwjud**, and therefore cannot be attributed to `shell` from the server-side audit alone. `shell` preserves restart-safe durable tasks; `process_start` owns an immediate managed process. Keep both until evidence justifies a backward-compatible change, not a safety bypass.
+
+The native updater is not yet proven to install signed packages unattended, relaunch the app, restore the Tunnel, or roll back app/data successfully. Keep release gates closed until installed exact-SHA acceptance proves those outcomes.
+
+**31 October 2026 native safety validation:** A failed or unverified search-subprocess termination now returns a non-recoverable error rather than a successful partial result. Targeted regressions pass; three Windows side-effect-marker process-termination integrations failed under load in earlier runs but passed in a later 34/34 run, so the intermittent issue remains open, so this is a fail-closed reporting improvement, not proof of process containment. For macOS, the process-group stop path now retries a transient malformed process-table observation or a live group lacking the newly spawned root's start identity before attempting any identity-verified signal; repeated missing identity still fails closed. macOS Issue #223 and the native updater release gates remain open until exact-source native CI and signed installed E2E pass; do not advertise zero-click availability.
+
+---
+
 The Desktop title bar has two independent controls:
 
 1. the existing version/update button, which displays the version and update status. Automatic updates are unavailable in the current v5.9.0 source candidate until native transaction authority and signed acceptance are complete;

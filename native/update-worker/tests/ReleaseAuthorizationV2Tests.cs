@@ -143,8 +143,20 @@ internal static class ReleaseAuthorizationV2Tests
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => value["recovery"]!["previousReleaseIdentity"] = new string('d', 64)), extraPolicy, time, retained, snapshot), "signed wrong predecessor refuses");
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => value["release"]!["compatibility"]!["serviceContractSha256"] = new string('d', 64)), extraPolicy, time, retained, snapshot), "incompatible recovery contract refuses");
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => { value["release"]!["platform"] = "darwin"; value["release"]!["distribution"] = "macos-zip"; value["release"]!["artifact"]!["name"] = "lnwjud-5.9.1-x64.zip"; }), extraPolicy, time, retained, snapshot), "cross-target update refuses");
-        Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => { value["release"]!["version"] = "5.9.0"; value["release"]!["artifact"]!["name"] = "lnwjud-Setup-5.9.0.exe"; }), extraPolicy, time, retained, snapshot), "non-increasing version refuses");
+        Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => { value["release"]!["version"] = "5.8.9"; value["release"]!["artifact"]!["name"] = "lnwjud-Setup-5.8.9.exe"; }), extraPolicy, time, retained, snapshot), "downgrade version refuses");
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => value["release"]!["releaseSequence"] = "100"), extraPolicy, time, retained, snapshot), "non-increasing sequence refuses");
+        var sameVersionNewArtifact = SignCandidate(value => {
+            value["release"]!["version"] = "5.9.0";
+            value["release"]!["artifact"]!["name"] = "lnwjud-Setup-5.9.0.exe";
+            value["release"]!["artifact"]!["sha256"] = new string('9', 64);
+        });
+        var refreshed = ReleaseAuthorizationV2.VerifyOffer(sameVersionNewArtifact, extraPolicy, time, retained, snapshot);
+        Check(refreshed.Candidate.IdentitySha256 != first.IdentitySha256, "signed newer-sequence same-version different-artifact refresh accepted");
+        Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => {
+            value["release"]!["version"] = "5.9.0";
+            value["release"]!["artifact"]!["name"] = "lnwjud-Setup-5.9.0.exe";
+            value["release"]!["artifact"]!["sha256"] = ReleaseValues.Text(first.Payload.GetProperty("release").GetProperty("artifact"), "sha256");
+        }), extraPolicy, time, retained, snapshot), "same-version identical-artifact replay refuses");
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => value["recovery"]!["maximumAttempts"] = 2), extraPolicy, time, retained, snapshot), "multiple recovery attempts refuse");
         var updateBaseline = Retain("updateEnvelope", update.IdentitySha256, receipt, now, ReleaseAuthorizationPurpose.Update);
         var next = SignCandidate(value => { value["release"]!["version"] = "5.9.2"; value["release"]!["releaseSequence"] = "102";

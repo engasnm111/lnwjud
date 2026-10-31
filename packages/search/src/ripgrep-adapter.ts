@@ -12,6 +12,8 @@ export interface ProcessRunResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly timedOut?: boolean;
+  /** True when the process-tree terminator rejected or could not prove the child and descendants stopped. */
+  readonly terminationUnverified?: boolean;
   /** True when the caller intentionally stopped a streaming child after collecting enough evidence. */
   readonly stoppedEarly?: boolean;
 }
@@ -58,6 +60,7 @@ export class DirectProcessRunner implements ProcessRunner {
       let stderrBytes = 0;
       let stdoutLinePending = '';
       let timedOut = false;
+      let terminationUnverified = false;
       let stoppedEarly = false;
       let settled = false;
       let terminationPending = false;
@@ -94,6 +97,7 @@ export class DirectProcessRunner implements ProcessRunner {
           finish(pendingExitCode ?? -1);
         }).catch((error: unknown) => {
           terminationPending = false;
+          terminationUnverified = true;
           const message = Buffer.from(error instanceof Error ? error.message : 'process termination could not be verified', 'utf8');
           stderrBytes = appendBounded(stderrChunks, stderrBytes, message);
           finish(-1);
@@ -133,6 +137,7 @@ export class DirectProcessRunner implements ProcessRunner {
           stdout: stdoutText(),
           stderr: stderrText(),
           ...(timedOut ? { timedOut: true } : {}),
+          ...(terminationUnverified ? { terminationUnverified: true } : {}),
           ...(stoppedEarly ? { stoppedEarly: true } : {}),
         });
       };
@@ -228,6 +233,9 @@ export class RipgrepAdapter {
         return observedMatches > maxResults;
       },
     });
+    if (processResult.terminationUnverified === true) {
+      return err({ code: 'INTERNAL_ERROR', message: 'Search process termination could not be verified', recoverable: false });
+    }
     if (!processResult.timedOut && !processResult.stoppedEarly && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
       return err(classifySearchError(processResult.exitCode, processResult.stderr));
     }
@@ -269,6 +277,9 @@ export class RipgrepAdapter {
         return observedPaths > maxResults;
       },
     });
+    if (processResult.terminationUnverified === true) {
+      return err({ code: 'INTERNAL_ERROR', message: 'Search process termination could not be verified', recoverable: false });
+    }
     if (!processResult.timedOut && !processResult.stoppedEarly && processResult.exitCode !== 0 && processResult.exitCode !== 1) {
       return err(classifySearchError(processResult.exitCode, processResult.stderr));
     }

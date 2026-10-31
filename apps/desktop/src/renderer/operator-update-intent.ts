@@ -15,7 +15,7 @@ export class OperatorUpdateIntent {
     this.active = false;
   }
 
-  onStatus(status: Pick<UpdateStatus, 'phase'>): 'none' | 'request-download' | 'confirm-install' {
+  onStatus(status: Pick<UpdateStatus, 'phase'> & Partial<Pick<UpdateStatus, 'canInstall'>>): 'none' | 'request-download' | 'confirm-install' {
     if (!this.active) return 'none';
     if (status.phase === 'available' && !this.requestedDownload) {
       this.requestedDownload = true;
@@ -23,7 +23,7 @@ export class OperatorUpdateIntent {
     }
     if (status.phase === 'ready') {
       this.cancel();
-      return 'confirm-install';
+      return status.canInstall === true ? 'confirm-install' : 'none';
     }
     if (status.phase === 'unavailable' || status.phase === 'error'
       || status.phase === 'up-to-date' || status.phase === 'installing') this.cancel();

@@ -2,7 +2,7 @@
 
 **v5.9.0 development status:** The published version remains v5.8.7. This guide describes a packaging target, not a released or accepted v5.9.0 build. Automatic updates are unavailable in the current source on every target, including macOS. The requested flow requires one confirmation of the exact version, then a safe work drain, Tunnel stop, silent installation without more installer clicks, relaunch, health verification, and trusted rollback. The native authority and signed end-to-end acceptance are incomplete; Developer ID signing alone does not prove them. New macOS durable shell and managed process writers are temporarily refused before spawn because Issue #216 still lacks accepted escaped-descendant containment. See the [acceptance ledger](codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
 
-This guide covers the v5.9.0 native macOS release target. macOS 13 or newer is
+This guide covers the v5.9.1 native macOS release target. macOS 13 or newer is
 supported on both Apple silicon (`arm64`) and Intel (`x64`). The package is
 built on macOS for the matching architecture; there is no universal build
 claim until every native helper and runtime has been verified as universal.

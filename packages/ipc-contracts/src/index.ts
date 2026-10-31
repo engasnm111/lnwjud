@@ -2,7 +2,7 @@ import type { WorkflowPrepareRequest, WorkflowTemplate, WorkflowDraft, CallHisto
 export type * from './workflow-contracts.js';
 
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.9.0';
+export const APP_VERSION = '5.9.1';
 
 export interface WorkflowChoicesRequest {
   readonly workspaceId: string;
