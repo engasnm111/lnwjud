@@ -4,18 +4,18 @@ import { describe, expect, it } from 'vitest';
 import { OperatorUpdateIntent } from '../src/renderer/operator-update-intent.js';
 
 describe('titlebar update notification', () => {
-  it('advances a Settings-initiated update only once and never installs from ordinary update status events', () => {
+  it('advances a titlebar-initiated update only once and never installs from ordinary update status events', () => {
     const intent = new OperatorUpdateIntent();
     expect(intent.onStatus({ phase: 'ready' })).toBe('none');
     expect(intent.start()).toBe(true);
     expect(intent.onStatus({ phase: 'checking' })).toBe('none');
     expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
-    // A second Settings click while the first download is pending must not
+    // A second titlebar click while the first download is pending must not
     // reset the one-shot intent or enqueue another download.
     expect(intent.start()).toBe(false);
     expect(intent.onStatus({ phase: 'available' })).toBe('none');
     expect(intent.onStatus({ phase: 'downloading' })).toBe('none');
-    expect(intent.onStatus({ phase: 'ready' })).toBe('confirm-install');
+    expect(intent.onStatus({ phase: 'ready', canInstall: true })).toBe('confirm-install');
     expect(intent.onStatus({ phase: 'ready' })).toBe('none');
     intent.start();
     expect(intent.onStatus({ phase: 'unavailable' })).toBe('none');
@@ -25,17 +25,61 @@ describe('titlebar update notification', () => {
     expect(intent.onStatus({ phase: 'ready' })).toBe('none');
   });
 
-  it('routes Settings General operator test through native update status without opening Releases', async () => {
+  it('never requests native installation without verified canInstall permission', () => {
+    const intent = new OperatorUpdateIntent();
+    expect(intent.start()).toBe(true);
+    expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
+    expect(intent.onStatus({ phase: 'ready', canInstall: false })).toBe('none');
+    expect(intent.start()).toBe(true);
+    intent.cancel();
+  });
+
+  it('allows a fresh user-initiated check after an unavailable native download declines the offered update', () => {
+    const intent = new OperatorUpdateIntent();
+    expect(intent.start()).toBe(true);
+    expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
+    expect(intent.onStatus({ phase: 'unavailable' })).toBe('none');
+    expect(intent.start()).toBe(true);
+    intent.cancel();
+  });
+
+  it('keeps read-only version checks usable while native package installation is unavailable', async () => {
+    const main = await readFile(path.resolve(import.meta.dirname, '../src/main/main.ts'), 'utf8');
+    expect(main).not.toContain('MANUAL_RELEASE_ONLY');
+    expect(main).toContain('verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority)');
+    expect(main).toContain('autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && desktopUserSettings.updateAutoDownload');
+    expect(main).toContain('autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && settings.updateAutoDownload');
+    expect(main).toContain('if (!verifiedAutomaticUpdateAuthority || !app.isPackaged');
+    expect(main).toContain('if (!verifiedAutomaticUpdateAuthority || currentUpdateStatus.phase');
+    expect(main).toContain("return patchUpdateStatus({ phase: 'unavailable', message: messages.updaterUnavailableTransactionAuthority, canInstall: false });");
+    expect(main).toContain('autoUpdater.checkForUpdates()');
+    const downloadedHandler = main.slice(main.indexOf("autoUpdater.on('update-downloaded', (info) => {"), main.indexOf("autoUpdater.on('error', (err) => {"));
+    expect(downloadedHandler).toContain('if (!verifiedAutomaticUpdateAuthority) {');
+    expect(downloadedHandler.indexOf('if (!verifiedAutomaticUpdateAuthority) {')).toBeLessThan(downloadedHandler.indexOf("phase: 'ready'"));
+    expect(downloadedHandler).toContain("phase: 'unavailable'");
+    const initializer = main.slice(main.indexOf('async function initAutoUpdater('));
+    const authority = initializer.indexOf('verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority)');
+    const configured = initializer.indexOf('configureUpdaterForDistribution(autoUpdater, windowsDistribution)');
+    expect(authority).toBeGreaterThan(0);
+    expect(configured).toBeGreaterThan(authority);
+    expect(initializer.slice(authority, configured)).not.toContain('return;');
+  });
+
+  it('uses the top-left badge as the only update action with one later install confirmation', async () => {
     const root = path.resolve(import.meta.dirname, '..');
     const app = await readFile(path.join(root, 'src/renderer/App.tsx'), 'utf8');
     const settings = await readFile(path.join(root, 'src/renderer/features/settings/SettingsPage.tsx'), 'utf8');
     const userConfig = await readFile(path.join(root, 'src/renderer/features/settings/UserConfigPanel.tsx'), 'utf8');
-    expect(app).toContain('onTestNativeUpdate={handleOperatorUpdateTest}');
-    expect(app).toContain('advanceOperatorUpdate(status)');
-    expect(settings).toContain('onTestNativeUpdate={props.onTestNativeUpdate}');
-    expect(settings).not.toContain("onOpenExternalSetupPage('lnwjud_releases')");
-    expect(userConfig).toContain('void testNativeUpdate()');
-    expect(userConfig).toContain('updateStatus?.message');
+    const action = app.slice(app.indexOf('async function handleUpdateAction()'), app.indexOf('async function addWorkspace('));
+    expect(action).toContain('if (!operatorUpdateIntentRef.current.start()) return;');
+    expect(action).toContain('const status = await window.lnwjud.checkForUpdates();');
+    expect(action).toContain('advanceOperatorUpdate(status);');
+    expect(app).toContain("if (action === 'request-download')");
+    expect(app).toContain("else if (action === 'confirm-install')");
+    expect(app).not.toContain('onTestNativeUpdate=');
+    expect(settings).not.toContain('onTestNativeUpdate');
+    expect(userConfig).not.toContain('manualUpdateAction');
+    expect(userConfig).not.toContain('testNativeUpdate()');
   });
 
   it('turns the top-left version chip into an update action with visual states', async () => {

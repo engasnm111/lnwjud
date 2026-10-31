@@ -455,18 +455,6 @@ export function App(): ReactElement {
     }
   }
 
-  async function handleOperatorUpdateTest(): Promise<void> {
-    if (!operatorUpdateIntentRef.current.start()) return;
-    try {
-      const status = await window.lnwjud.checkForUpdates();
-      setUpdateStatus(status);
-      advanceOperatorUpdate(status);
-    } catch (cause: unknown) {
-      operatorUpdateIntentRef.current.cancel();
-      throw cause;
-    }
-  }
-
   async function handleUpdateAction(): Promise<void> {
     try {
       if (updateStatus?.canInstall === true) {
@@ -476,8 +464,12 @@ export function App(): ReactElement {
         setUpdateStatus(result.status);
         return;
       }
-      setUpdateStatus(await window.lnwjud.checkForUpdates());
+      if (!operatorUpdateIntentRef.current.start()) return;
+      const status = await window.lnwjud.checkForUpdates();
+      setUpdateStatus(status);
+      advanceOperatorUpdate(status);
     } catch (cause: unknown) {
+      operatorUpdateIntentRef.current.cancel();
       updateInstallTransitionRef.current = false;
       setError(errorMessage(cause, t('app.updateCheckError')));
     }
@@ -1104,8 +1096,6 @@ export function App(): ReactElement {
           locale={locale}
           dashboard={dashboard}
           updatesUnavailable={updateStatus?.phase === 'unavailable'}
-          updateStatus={updateStatus}
-          onTestNativeUpdate={handleOperatorUpdateTest}
           onLocaleChange={changeLocale}
           onFactoryReset={factoryReset}
           onPermissionProfileChange={setPermissionProfile}

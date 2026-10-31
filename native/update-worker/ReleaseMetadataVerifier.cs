@@ -235,8 +235,12 @@ internal static class ReleaseMetadataVerifier
     }
     private static void CheckUpgrade(SignedRelease current, RetainedInstallationBaseline baseline)
     {
-        if (current.Number("releaseSequence") <= baseline.Sequence
-            || StableVersion.Parse(current.Text("version")).CompareTo(StableVersion.Parse(baseline.Version)) <= 0) throw new Refusal("RELEASE_REPLAY_OR_DOWNGRADE");
+        var versionOrder = StableVersion.Parse(current.Text("version")).CompareTo(StableVersion.Parse(baseline.Version));
+        // Sequence is the signed monotonic release order; a same-version refresh
+        // must also change the authenticated artifact digest.
+        if (current.Number("releaseSequence") <= baseline.Sequence || versionOrder < 0
+            || (versionOrder == 0 && current.Artifact.Sha256 == baseline.Artifact.Sha256))
+            throw new Refusal("RELEASE_REPLAY_OR_DOWNGRADE");
     }
     private static void ValidateTime(SignedRelease release, ReleaseTrustPolicy policy, ulong now)
     {

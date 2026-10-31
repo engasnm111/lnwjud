@@ -1,4 +1,4 @@
-> **Expanded reference:** this file preserves the long-form README and historical release detail. For the current concise overview, installation links, and release status, start with [README.md](README.md). Historical version-specific sections below are intentionally retained.
+> **Expanded reference:** this is the long-form technical guide. See [README.md](README.md) for installation and product overview, and [GitHub Releases](https://github.com/engasnm111/lnwjud/releases) for version Highlights and Changes.
 >
 > **v5.9.0 Ponytail:** The six bundled document-only coding skills are pinned to upstream stable [v5.3.2](https://github.com/DietrichGebert/ponytail/releases/tag/v5.3.2). See [docs/PONYTAIL.md](docs/PONYTAIL.md) for source provenance, effective mode precedence, restrictions and release acceptance. No upstream executable hooks are installed.
 
@@ -55,172 +55,7 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current published version: v5.9.0
 
-## Current source version: v5.9.0
-
-### What's new in v5.9.0
-
-**Current v5.9.0 release scope (29 October 2026; not published yet):** This release candidate is **manual-install only** for **Windows x64 and Linux x64/arm64**. Settings → General offers an allowlisted official GitHub Releases link to download updates manually; the title-bar version control is unchanged. Unattended installation is disabled even if a native authority becomes available. Signed update/rollback validation is deferred to a future release. **No macOS v5.9.0 binaries will be published** until Issue #216's native containment is accepted; macOS users should remain on the last supported published version. Earlier full-platform/zero-click hold notes below document the previous scope, not this manual-release scope. See [release scope](config/release-scope.json).
-
-**ขอบเขต v5.9.0 ณ 29 ต.ค. 2026 (ยังไม่เผยแพร่):** เตรียมออกแบบ **ติดตั้งด้วยตนเอง** สำหรับ **Windows x64 และ Linux x64/arm64** โดยมีปุ่ม Settings → General เปิดหน้า GitHub Releases ทางการ ส่วนปุ่มเลขเวอร์ชันมุมซ้ายบนคงเดิม รุ่นนี้ไม่ติดตั้งแบบ Silent/Zero-click แม้มี Native Authority; การทดสอบ Signed Update/Rollback จริงถูกเลื่อนไปรุ่นถัดไป **ยังไม่เผยแพร่ macOS v5.9.0** เนื่องจาก Issue #216 ยังไม่ผ่าน Native Containment Acceptance และต้องไม่อ้างว่าแก้แล้ว ข้อความบันทึกสถานะเก่าด้านล่างเป็นประวัติขอบเขต Release เดิม
-
-**Verification update, 29 October 2026 (source candidate; not published):** Exact-source commit [`df0f1edf`](https://github.com/engasnm111/lnwjud/commit/df0f1edf79b9f8d49c22331a076bcaa0ededeaff) passed both [push CI](https://github.com/engasnm111/lnwjud/actions/runs/40882677336) and [Draft PR #218 CI](https://github.com/engasnm111/lnwjud/actions/runs/40882687632), including Windows/macOS/Linux native contracts and desktop test shards. Windows local canonical verification passed (including 932 desktop tests, 40 acceptance tests and 18 Electron E2E tests); the user-installed Windows test candidate also recovered the 10 earlier `NATIVE_SERVICE_RPC_FAILED` cases (97 passing process tests, 3 skipped). These results establish source/test readiness, **not** the release-only signed updater acceptance. Production update trust roots and signer credentials are not configured, the Windows native update worker reports `TRANSACTION_BOOTSTRAP_ONLY` (no install effects), real signed silent installation, restart/health and application/data rollback have not passed, and native macOS owner-loss-safe containment in #216 remains incomplete. **v5.9.0 remains blocked for publication; v5.8.7 remains the latest published release.**
-
-**ผลตรวจสอบ 29 ต.ค. 2026 (Source Candidate ยังไม่เผยแพร่):** Commit `df0f1edf` ผ่าน CI ทั้ง Push และ Draft PR #218 บน Windows, macOS และ Linux และชุดทดสอบ Windows Local ผ่าน รวมถึง Desktop 932, Acceptance 40 และ Electron E2E 18 กรณี ตัวติดตั้งทดสอบ Windows ที่ลงใหม่ยังทำให้ 10 กรณี `NATIVE_SERVICE_RPC_FAILED` เดิมกลับมาผ่าน (Process Tests ผ่าน 97 ข้าม 3) แต่ยัง **ไม่ใช่** หลักฐานการอัปเดตอัตโนมัติแบบ Signed End-to-End: ยังไม่มี Production Trust Roots หรือ Signing Credentials, Native Updater ยังไม่ติดตั้งจริง, ยังไม่ผ่านการเปิดแอปใหม่/ตรวจสุขภาพ/ย้อนกลับ App และ Data และ Issue #216 บน macOS ยังมีข้อจำกัด จึงยัง **ห้ามเผยแพร่ v5.9.0** ตาม Release Gate เดิม
-
-- **Tunnel Start safeguard:** Start stays disabled until the persistent alias is confirmed stopped, preventing a duplicate runtime when saved Tunnel identity is stale. Stop remains available through the verified owner-identity recovery path; the remote Tunnel is unchanged.
-- **ป้องกันการ Start Tunnel ซ้ำ:** ปุ่ม Start จะปิดไว้จนกว่าจะยืนยันได้ว่า persistent alias หยุดแล้ว เพื่อป้องกัน runtime ซ้ำเมื่อ Tunnel ID ที่บันทึกไว้เก่า ปุ่ม Stop ยังใช้เส้นทางกู้คืนที่ตรวจ owner และ process identity ได้ โดยไม่เปลี่ยน Tunnel ระยะไกล
-
-**Historical development preview, 26 October 2026 (superseded scope):** v5.9.0 is not released. Issues #213–#217 and #219 are not collectively accepted: #216 still lacks native macOS containment, and final-source installer/service and cross-platform acceptance remain open. The source now reclaims an in-process synchronous-mutation reservation only after its recorded owner process is proven gone, and reports held blockers with hashed references; unknown process reservations remain protected. After implementation and signed acceptance, the intended flow will ask once for the exact target version, then wait for active work, stop the enrolled Tunnel, install without further installer clicks, and relaunch the app. **Automatic updates are unavailable in this source build:** the native authority, enrolled package trust, independent health check, and verified application/data rollback are not complete. The updater stays fail-closed until signed end-to-end success and rollback receipts prove that flow. Unit tests, metadata verification, and CI alone do not meet the release gate. See the [current acceptance ledger](docs/codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
-
-**สถานะพัฒนา 26 ต.ค. 2026:** ยังไม่เผยแพร่ v5.9.0 และยังไม่ยืนยันว่าครบทุก Issue; #216 ยังขาด native containment บน macOS และการทดสอบ installer/บริการจาก source ล่าสุด การกู้ reservation ใหม่จำกัดเฉพาะ synchronous mutation ใน process เดียวกันและทำเมื่อยืนยันว่า owner process จบแล้วเท่านั้น ส่วน reservation ของ process ที่ไม่ทราบสถานะยังคงป้องกันไว้ พร้อมแสดง blocker reference แบบ hash โดยไม่เปิดเผย ID ภายใน รูปแบบ updater ที่ต้องการหลังพัฒนาครบและผ่าน signed acceptance คือให้ยืนยันเลขเวอร์ชันเป้าหมายครั้งเดียว จากนั้นรอให้งานจบ หยุด Tunnel ที่ตรวจสอบ owner ได้ ติดตั้งโดยไม่ต้องกด installer เพิ่ม แล้วเปิดแอปใหม่เอง แต่ auto updater ใน source build นี้ยังปิดอยู่แบบ fail-closed เพราะ native authority, การลงทะเบียนแพ็กเกจที่เชื่อถือได้, การตรวจสุขภาพ และการคืน app/data รุ่นเดิมยังไม่ครบ ต้องทดสอบ signed update และ rollback จริงให้ผ่านก่อน จึงจะเปิด auto updater หรือปล่อย release ได้
-
-- **Stale Tunnel alias recovery (v5.9.0 candidate):** When saved settings contain an old Tunnel ID, in-app Stop remains available if the aggregate status says stopped but the persistent alias may still be active. On Windows, explicit Stop and confirmed Factory Reset use the live alias ID only after the pinned native helper verifies the app owner, alias ID/PID, and process identity under the client state lock. The updater handoff is not available until the native transaction authority passes signed acceptance. Automatic reconciliation remains strict. A mismatch without a verified native recovery route fails closed. Factory Reset retires only the local alias after confirming that it is stopped and its process is gone; it does not change the remote Tunnel. Stopped aliases with historical PIDs keep strict identity checks. Focused Tunnel and installer tests cover the source behavior; installed signed update and cross-platform acceptance remain pending.
-- **กู้ Stop/Reset เมื่อ Tunnel ID เก่าค้าง (candidate v5.9.0):** เมื่อ ID ที่บันทึกไว้เก่า ปุ่ม Stop ยังใช้ได้แม้สถานะรวมแสดงว่าหยุดแล้วแต่ persistent alias อาจยังทำงานอยู่ บน Windows การกด Stop และ Factory Reset ใช้ ID ปัจจุบันของ alias ได้ต่อเมื่อ native helper ที่ pin ไว้ตรวจ owner ของแอป, alias ID/PID และ process identity ภายใต้ state lock ของ client แล้วเท่านั้น updater handoff ยังใช้ไม่ได้จนกว่า native transaction authority จะผ่าน signed acceptance การ reconcile อัตโนมัติยังปฏิเสธเมื่อ ID ไม่ตรง และหากไม่มีเส้นทางกู้คืน native ที่ตรวจสอบได้ ระบบจะหยุดแบบ fail-closed Factory Reset ลบเฉพาะ alias ในเครื่องหลังยืนยันว่าหยุดและไม่มี process เหลือ โดยไม่เปลี่ยน Tunnel ระยะไกล ส่วน alias ที่หยุดแล้วแต่มี PID เก่ายังตรวจ identity แบบเข้ม ชุดทดสอบเฉพาะทางตรวจพฤติกรรมใน source; installed signed updater E2E และ acceptance ข้าม OS ยังไม่ผ่าน
-- **Windows native pipe permissions:** Authenticated clients receive specific duplex data rights without server-instance creation rights. Restricted-token regression checks cover denied competing instances and legitimate authenticated data exchange. Installed service and signed release acceptance remain separate checks.
-- **สิทธิ์ Named Pipe บน Windows:** ไคลเอนต์รับส่งข้อมูลได้โดยไม่มีสิทธิ์สร้าง server instance แข่งขัน ทดสอบด้วย restricted token ทั้งการปฏิเสธ instance ปลอมและการสื่อสารที่ถูกต้อง ส่วนบริการที่ติดตั้งจริงและ signed release ยังต้องตรวจแยก
-
-- **Writer lease recovery (unreleased v5.9.0):** Foreground and scheduled workers can recover an abandoned same-client writer lease after verified inactivity and a 60-second stale grace. Generation fencing rejects prior proofs, while live or unknown calls block takeover. A command refused before execution now closes its Goal heartbeat. Writer lease renewal and release forward the exact proof to the control handler without putting credentials in activity or audit records. The 17 focused registry tests and independent review pass. Fresh installed-runtime and hosted exact-SHA acceptance remain pending.
-- **กู้คืนสิทธิ์ Writer Lease (v5.9.0 ยังไม่เผยแพร่):** งานปกติและงานตามกำหนดการกู้สิทธิ์ที่ถูกทิ้งได้หลังยืนยันว่าไม่มีงานค้างและผ่านช่วงตรวจสอบ 60 วินาที พร้อมเปลี่ยน generation เพื่อปฏิเสธสิทธิ์เก่า คำสั่งที่ถูกปฏิเสธก่อนเริ่มจะหยุด heartbeat ของ Goal และการต่ออายุหรือปล่อย Writer Lease ส่งหลักฐานสิทธิ์ถึงตัวควบคุมครบ โดยไม่บันทึกข้อมูลลับใน activity หรือ audit ชุดทดสอบ registry 17 กรณีและการตรวจอิสระผ่านแล้ว ส่วนตัวติดตั้งล่าสุดและ CI จาก source เดียวกันยังต้องตรวจ
-- **macOS fail-closed safety mitigation (unreleased v5.9.0 candidate):** A missing POSIX process group is no longer accepted as proof that `setsid`/double-fork descendants stopped. Until real OS-enforced, owner-loss-safe containment passes macOS arm64 acceptance, new macOS durable shell and managed process-writer launches return an explicit conflict *before spawning*, and existing ambiguous reservations are retained. This temporarily disables these macOS operations; it does **not** close Issue #216 or make v5.9.0 releasable.
-- **การป้องกัน macOS แบบปฏิเสธเมื่อพิสูจน์ไม่ได้ (ยังไม่เผยแพร่):** ไม่ยอมรับ Process Group ที่ว่างว่า Process ลูกทุกตัวสิ้นสุดแล้ว; คำสั่ง Shell แบบ Durable และการเขียนผ่าน Managed Process บน macOS จะถูกปฏิเสธก่อนเปิด Process จนกว่าจะมี OS Containment และทดสอบจริงบน macOS arm64 ผ่าน โดยเก็บ Reservation เก่าที่ยังพิสูจน์ไม่ได้ไว้ ฟังก์ชันกลุ่มนี้จึงยังใช้งานไม่ได้ชั่วคราว และ Issue #216 **ยังไม่ปิด**.
-- **Verification scope:** Earlier complete Windows verification and installer results cover their dated candidates. The installed candidate passed native service and Restricted-policy checks plus real Tunnel Stop/Start; it predates the final adapter recovery guards and updater work. Current-source hosted CI and a fresh installer require separate acceptance. v5.8.7 remains the published version.
-- **Managed task lifetime (#213):** Windows uses the protected native service for process containment and authenticated attempt observations. Installer and service-store ACL checks permit ordinary read/execute access and refuse untrusted mutation grants, correcting the early local installer's exit125. Unknown termination retains its writer reservation. POSIX observation covers the launched process group and inherited pipes; it does not prove that arbitrary escaped sessions have stopped.
-- **Repository import publication (#213):** Verify private stage and destination identities before create-only publication. Service migration and installed Windows acceptance remain in progress; do not infer acceptance from older helper-only test results.
-- **Engineering Gates (#214):** Derive applicability and readiness from trusted project facts, delivery scope and evidence. Local-only and Worker projects retain the checks that apply to their outputs; desktop release requirements remain enforced.
-- **WSL workspace paths (#215):** Support `\\wsl.localhost\Ubuntu\...` and `\\wsl$\Ubuntu\...` with an explicitly selected matching distribution, canonical preview/run cwd, alias-aware project scope and case-sensitive Linux path components. Reject generic network shares and traversal.
-- **Writer reservations and capacity (#216):** Await verified POSIX process-group completion and successful reservation release before reporting terminal success. Startup reclaims typed synchronous in-process mutation reservations only after the recorded owner process is proven gone; blocker diagnostics use hashed references without task/client/workspace IDs. Durable shell jobs have their own 16-job budget; other managed writers keep their separate budget and the same global repository-import exclusion. Task lists include aggregate admission diagnostics even when no shell tasks are visible. Legacy unknown and opaque process reservations stay protected and require independent termination evidence for recovery.
-- **Native tooling wording (#217):** `native tools` and `native read tools` alone no longer imply native application work or three-platform evidence. Real native components, explicit OS targets and project platform policies retain their gates. Evidence verification rules are unchanged.
-- **File-publication contract (#219; documentation only):** [Versioned write_file capability matrix](docs/architecture/FILE_PUBLICATION_CONTRACT_V5_9_0.md) distinguishes atomic create-only final-path publication from temporary-file entries, missing file/parent `fsync`, unavailable ordered native inode receipts and unknown outcome after transport loss. macOS exFAT-specific durability is not attested; ordinary process execution is not an approved native publisher receipt API.
-- **สัญญาการเขียนไฟล์ (#219; เอกสารเท่านั้น):** `write_file` แบบ `create_new` ไม่เขียนทับไฟล์ปลายทาง แต่สร้างไฟล์ชั่วคราวก่อนเผยแพร่ผ่าน hard link ไม่ได้รับประกันว่าเกิดไฟล์จริงเพียงไฟล์เดียว ไม่มี `fsync` ทั้งไฟล์และโฟลเดอร์ ไม่มี receipt ของ inode/descriptor และหากการเชื่อมต่อขาดหลังเริ่มเขียนต้องถือว่าผลลัพธ์ยังไม่ทราบแน่ชัด ดูตารางความสามารถตามลิงก์ข้างต้น
-- **Updater (unavailable in this source build):** Automatic update installation is unavailable while the native authority, enrolled package trust, independent post-relaunch health check, and application/data rollback with Tunnel restoration lack signed end-to-end acceptance. The intended flow is one confirmation of the exact target version, then wait for active work, safely stop the enrolled Tunnel, install without further installer clicks, and relaunch the app. This flow is not yet available; unit tests, metadata checks, and CI do not satisfy the installed success-and-injected-rollback release gate.
-- **ระบบอัปเดต (ยังใช้ไม่ได้ใน source build นี้):** ยังไม่มี auto updater ที่ติดตั้งอัปเดตได้จริง เพราะ native authority, trust ของแพ็กเกจที่ลงทะเบียน, การตรวจสุขภาพหลังเปิดแอปใหม่ และ rollback ของแอป/ข้อมูลพร้อมคืน Tunnel ยังไม่มี signed end-to-end acceptance รูปแบบที่ต้องการหลังทำครบคือยืนยันเลขเวอร์ชันเป้าหมายครั้งเดียว แล้วรอให้งานเดิมจบ หยุด Tunnel ที่ยืนยัน owner ได้ ติดตั้งโดยไม่ต้องกด installer เพิ่ม และเปิดแอปใหม่เอง ขณะนี้ flow นี้ยังใช้ไม่ได้; unit test, metadata check และ CI ยังใช้แทนการทดสอบติดตั้งจริงและ rollback ที่จำลองความล้มเหลวไม่ได้
-- **Dashboard startup:** Accept unresolved gate applicability across the preload bridge, preventing `Invalid IPC response` while preserving unresolved evidence.
-- **Tunnel Stop:** Preserve large existing Desktop history while retiring a verified stopped stale alias. The shared history is outside the official client removal footprint, so its size no longer blocks Stop. Configuration, secret and health-file checks remain enforced.
-- **หยุด Tunnel:** แก้ Stop ล้มเหลวด้วย `unsafe or oversized local artifact` เมื่อประวัติเดิมมีขนาดใหญ่ โดยเก็บประวัติไว้ครบและคงการตรวจไฟล์ตั้งค่า ข้อมูลลับ และ health ตามเดิม
-- **ภาษาไทย:** มีตัวแก้และหลักฐานแยกตาม #213–217 และสัญญาเอกสาร #219 แต่ยังไม่ถือว่าทั้งชุดผ่านรับมอบ โดยเฉพาะ #216 บน macOS และการทดสอบบริการ/installer จากโค้ดสุดท้าย รายการที่ยังพิสูจน์การจบงานไม่ได้จะไม่ถูกลบทิ้งอัตโนมัติ
-- **ขอบเขตหลักฐาน:** ผล Windows verification และ installer ก่อนหน้านี้เป็นของ candidate ตามวันที่ ไม่ใช่โค้ดล่าสุดทั้งหมด ตัวที่ติดตั้งผ่าน native/Restricted และ Stop/Start จริง แต่สร้างก่อน final recovery guards และงาน updater จึงยังต้องสร้างและทดสอบ installer สุดท้าย พร้อม CI ของ SHA เดียวกัน
-
-<details>
-<summary>Historical v5.9.0 candidate evidence recorded on 22 October 2026</summary>
-
-The following original observations cover their dated candidates only. References to the installed or new build are relative to that observation, not the current source. Current acceptance is stated above.
-
-> - **Development status (2026-10-22):** Combined local Windows Setup/Portable and the full, unskipped Windows release verification pass (including Electron E2E 18/18, packaging 89/89, and release-gate 34/34). The installed Desktop executable, protected-service helper, native Pin, and manifest match the newly packaged binaries by SHA-256; the service is running, 19 native authority/service regressions pass, and 7 real authority tests pass under PowerShell `ExecutionPolicy Restricted`. This is an unsigned local build from a dirty checkout, **not a published release**. macOS #216 escaped-session safety, remaining service lifecycle/migration acceptance, independent review and protected exact-SHA hosted Windows/macOS/Linux CI still block v5.9.0. v5.8.7 remains published.
->
-> - **สถานะการทดสอบ (22 ต.ค. 2026):** Windows Release Verification แบบไม่ข้ามขั้นตอนผ่านทั้งหมด รวม E2E 18/18, Packaging 89/89 และ Release Gate 34/34; ตรวจ SHA-256 ของตัวแอปที่ติดตั้ง, Native Helper, Pin และ Manifest แล้วตรงกับ Build ใหม่ บริการทำงานอยู่ และ Native Tests ผ่าน 19 รายการ (รวมทดสอบซ้ำ 7 รายการภายใต้ PowerShell Restricted) แต่ยังเป็น Build ในเครื่องจาก Source ที่ยังไม่ Commit และไม่ได้ลงลายเซ็น ต้องแก้ความปลอดภัย macOS #216, ตรวจบริการที่เหลือ, Independent Review และ CI ที่อ้างอิง Commit SHA จริงก่อนปล่อย v5.9.0
->
-</details>
-
-### What's new in v5.8.7
-
-- **Published release:** v5.8.7 is officially published with Windows Setup/Portable, macOS (arm64/x64) and Linux (arm64/x64) installers, SHA256 checksums, a release manifest and five platform provenance records. Protected PR #210 merged as `1a0453ed0ef1de4cdf9ce1ba9edee8da0de8426b`; exact-main CI passed all 18 jobs, and Release workflow #38965349765 completed successfully.
-- **Tunnel Reset All Settings / persistent alias:** Factory reset reconciles only the verified stopped local `lnwjud` runtime alias through the official tunnel-client command, preserving unrelated tunnels and rejecting running, foreign or unverifiable ownership. Targeted desktop regressions passed; a separate real-notebook post-install smoke test is still recommended.
-- **External MCP direct invocation:** Content-only child providers no longer require an invented outer structured-result schema. Direct calls to Playwright, Context7 and codebase-memory-mcp were successfully verified on the v5.8.7 development runtime.
-- **Issue #208 — guarded Git import:** Dedicated `git_clone_safe` supports policy-approved, workspace-scoped HTTPS import pinned to an exact commit with native Windows create-only staging, NTFS identity checks, non-replace publication and fail-closed unknown-state recovery. Existing generic Git command restrictions and host authorization remain in force.
-- **Native Git stage integrity:** Verify trusted Git HEAD, reject tracked/untracked modifications and concealed index changes (`assume-unchanged` / `skip-worktree`) before publication. The Windows regression suite passed 5/5 after reproducing the original flaw.
-- **Issue #209 — write safety:** Strict create-only protection is enforced even under the Full permission profile. Workspace writer leases, global managed-writer admission, `workspace_path_preflight`, and process-lifetime fencing passed targeted and exact-main hosted validation. Explicit recovery of an abandoned same-client writer lease is allowed only when idle ownership is proven; unknown or live work remains blocked.
-- **Security boundary:** Safety claims cover untrusted caller input and writers mediated by the lnwjud Gateway. No guarantee is made against arbitrary same-Windows-user/administrator native processes operating outside the gateway; those processes are outside the tested contract.
-- **Process startup safety:** Failed pre-spawn process admission releases the reservation; a successfully spawned process retains it until verified zero-active native termination. The 35 process regressions and package typecheck passed.
-- **Scheduled Task truthfulness:** Disabled Native ChatGPT continuation was not silently recreated. No recurring native task has been claimed active for this release goal.
-- **ภาษาไทย:** เผยแพร่ v5.8.7 อย่างเป็นทางการแล้ว ตรวจ CI ที่ Merge SHA ตรงครบ 18 Jobs พร้อม Manifest, SHA256 และ Provenance ครบทุกแพลตฟอร์ม แก้ Git Import, Strict Create-Only, Writer Lease, Tunnel Reset และ Direct MCP; รับประกันความปลอดภัยในขอบเขต Writer ที่ผ่าน lnwjud Gateway เท่านั้น ไม่ครอบคลุมโปรเซสภายนอกที่ใช้สิทธิ์ Windows User เดียวกัน
-
-### What's new in v5.8.6
-
-- **Engineering Gate checkpoint compatibility (Issue #198):** Add `checkpoint_goal_engineering` with the same strict schema, Goal handler, lease/revision checks and evidence validation as `checkpoint_goal`. It follows the canonical tool's availability, so disabling `checkpoint_goal` disables both names.
-- **Connector verification:** After the v5.8.6 update, a fresh connector session advertised both checkpoint tools with the Engineering fields. Direct calls to both names and `get_goal` readback confirmed persistence. Connector display names are chosen by each user.
-- **ภาษาไทย:** หลังอัปเดตเป็น v5.8.6 ตรวจใน connector session ใหม่แล้วพบเครื่องมือ checkpoint ทั้งสองชื่อพร้อมฟิลด์ Engineering และเรียกโดยตรงพร้อมอ่านข้อมูลที่บันทึกผ่าน `get_goal` ได้ ชื่อที่แสดงของ connector ขึ้นอยู่กับการตั้งค่าของผู้ใช้แต่ละคน
-
-#### Earlier highlights — v5.8.5
-
-- **Engineering Harness audit routing (Issue #194):** Keep Full Audit requests and read-only reviews of existing deployments or release history in the local review workflow. Explicit deploy, release, commit, push, PR and merge requests retain their matching delivery scope and gates.
-- **Existing Engineering Goals:** Reconcile workflow classification, gate contracts and source scope from the lease-acquired Goal snapshot. Preserve compatible findings, task tracking and proof; revalidate scope-dependent checks when the requested source scope changes.
-- **Modern MCP HTTP inventory:** Notify subscribed clients when host tool availability changes, then serve the current tools/list on the next request.
-- **ภาษาไทย:** แยก Full Audit และการตรวจประวัติ deployment/release แบบอ่านอย่างเดียวออกจากคำสั่งปล่อยงาน, reconcile metadata ของ Goal เดิมจาก snapshot ที่ acquire ภายใต้ lease และแจ้ง MCP client เมื่อ tool availability เปลี่ยน
-
-#### Earlier highlights — v5.8.4
-
-- **Issue #193 durable Shell identity:** Keep stable authorized client/session/workspace ownership across modern HTTP requests, legacy reconnects and capability provider replacement; read retained outputs and terminal receipts without granting foreign readers access.
-- **Checked recipe, recovery and workspace context:** Preview side-effect-free recipes, execute only explicitly requested steps through the same permission and current Goal-lease boundaries, and keep honest partial/unknown results if dependencies or an index update fail.
-- **Agent Swarm CLI non-interactive fix:** Supply the Codex prompt via argv with stdin closed; detach result collection from the transient start-request abort while retaining explicit cancellation of owned work. A three-agent real subprocess fixture verifies EOF and result collection, not availability of a remote model.
-- **MCP tool/provider improvements:** Audit the current 285 tool definitions and supported action paths (273 advertised without Codex). Report provider/platform prerequisites and native media handles and terminal artifact evidence explicitly; do not present undeployed macOS/Linux features as universally available.
-- **ภาษาไทย:** การอ่านผล Shell หลังเปลี่ยนการเชื่อมต่อถูกตรวจเจ้าของ, Workflow เช็กสิทธิ์ทุกขั้นตอน, Agent Swarm ไม่รอ stdin เพิ่ม และ Tool/Doctor ระบุสาเหตุที่ Provider ยังไม่พร้อมโดยไม่รายงานความสำเร็จเกินจริง
-
-### Earlier release highlights — v5.8.0
-
-**v5.7.4** primarily fixed oversized native approval dialogs. **v5.8.0** adds six review-first workflows, richer Doctor evidence, CSV/XLSX data tasks, Git explorer upgrades, a consistent Desktop UI, more reliable Secure MCP Tunnel startup, and controlled dependency maintenance.
-
-- **Six bilingual workflows:** Project Check, Code Review, Release Readiness, Connection Check, Data Audit, and Template Report. Required inputs are validated before preparing a draft; a preview never silently launches a Goal, scheduler, or AI worker.
-- **MCP Call History:** retained audit-backed calls with bounded pagination, tool/Goal filters, outcomes, and server p50/p95 when samples exist. Transport/Tunnel timing is still `unknown` where no trusted sample exists; only Goals with attributable calls appear in the Goal filter.
-- **Goal Results and checkpoints:** inspect meaningful progress, completed steps, recorded checks, actual mutation receipts and verifiable file artifacts. Result filters exclude Goals without evidence; verification is not inferred from a Goal's completed status.
-- **Process Resources:** display measured Windows working-set RAM and lifetime-average CPU for verified Goal-owned child processes; separately show the Desktop main process. Refresh while viewing, suppress Goals without measured resources, and never substitute zero for unavailable measurements.
-- **Context Economy observability:** show real transport-scoped MCP HTTP ledger hits and context bytes, explicitly not per-Goal totals. Shared services are not cancelled with a Goal; owned-task cancellation stays permission- and identity-checked.
-- **Safer restore and audit visibility:** result and restore flows preserve workspace scope, exact checkpoint/Goal revision checks, verified current file hashes, and explicit user confirmation.
-- **CSV/XLSX data workflows:** typed audit and comparison of tabular data plus template-based report creation with readback. Preserve source files by default; native Office actions remain dependent on platform/provider support.
-- **Git explorer and diffs:** show individual untracked files in new folders, not merely folder counts. Expand/collapse the tree, search and filter files, retain code/diff navigation, and show safe text/image previews or bounded binary metadata.
-- **Desktop controls and typography:** shared inputs, filters, buttons and responsive searchable dropdowns across Settings/Tools/Doctor/Git; menus anchor **below their fields only**, reserve outer scrolling room and scroll internally for long lists. Options wrap when long, compact options remain compact. Restore Prompt/previous Git text sizing and improve validation/loading feedback.
-- **Command Prism status visual:** replace the plain golden orb with a faceted prism, using actual MCP states (gold = ready, blue = working, red = stopped/offline). A reserved neutral gray visual does not claim a new backend state. Workflow cards receive matching restrained line icons.
-- **Modal and layout fixes:** correct shared-button CSS precedence so close glyphs stay visible in What's New, Tool Detail, and the guided Tunnel screen. Increase close targets, preserve keyboard access, and separate search fields from actions.
-- **Work Log and Doctor UX:** default Work Log to all workspaces; improve workspace/session filters, loading states, long labels, goal descriptions and meaningful empty states. Doctor Goal selectors show only entries that have relevant results for each tab.
-- **Secure MCP Tunnel reliability:** do not reconnect over a matching managed runtime before a 45-second elapsed readiness grace period. Keep Tunnel identity, ownership protection, health polling and retry backoff; this avoids premature repeated `connect` calls but does not guarantee a fixed startup time.
-- **Bundled native runtime:** update the verified target-native `tunnel-client` to **0.0.16** and preserve native payload preparation for installation on supported platforms.
-- **Dependency updates and delivery checks:** use one managed dependency-update PR with conditional branch cleanup rather than duplicate updates. Keep functional tests and exact-commit target-native CI/build gates; Windows community artifacts can remain unsigned when no signing certificate exists, with SHA-256/provenance checks required.
-
-**ภาษาไทย — ต่างจาก 5.7.4:** เพิ่มเทมเพลต 6 แบบ, ประวัติ MCP และผลงาน Goal ที่มีหลักฐาน, RAM/CPU จริงของโปรเซสที่ตรวจเจ้าของได้, Context Economy แบบรวมระดับ Transport, ตรวจ CSV/XLSX, Git tree/preview ที่ครบขึ้น, UI และ dropdown กลาง, กากบาท Modal ขนาดชัดเจน, Work Log ที่กรองง่ายขึ้น, แก้ Tunnel reconnect ก่อนพร้อม และอัปเดต tunnel-client 0.0.16 พร้อมการทดสอบ/แพ็กเกจตาม SHA จริง ค่าไม่ทราบจะไม่แสดงเป็น 0 หรืออ้างว่าสำเร็จโดยไม่มีข้อมูล
-
-Latest published release: **v5.9.0**. Windows and Linux artifacts were published; macOS v5.9.0 is withheld pending Issue #216 after the exact tagged main commit passed the target-native release gates described below.
-
-See [Thai Engineering Harness setup and workflow](docs/USAGE_TH.md#8a-engineering-harness--senior-coding-workflow) for details.
-
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for complete version history and [Thai troubleshooting](docs/USAGE_TH.md#13-doctor--troubleshooting) for Agent Swarm setup.
-
-Current v4 highlights include:
-
-- Workspace registration, bounded project snapshots, file reads/writes, paging,
-  full scans, persistent indexing, and continuation tokens.
-- Git status/diff/log plus policy-checked Git execution.
-- Foreground/background command tasks with ownership, timeout, cancellation,
-  bounded output, logs, and result retrieval.
-- Project-aware development, test, lint, typecheck, and build commands.
-- Local Codex discovery and optional delegation without reading Codex credential
-  files.
-- Host-native capabilities for shell execution, windows, accessibility, input,
-  screen capture, notifications, clipboard, file dialogs, audio, screen
-  recording, Office automation, and scheduling where the declared platform
-  provider and permissions are available. Windows-only features remain clearly
-  marked unsupported elsewhere.
-- Managed Chrome / CDP automation and Set-of-Marks annotated observations with
-  expiring observation hashes and approval-gated target actions.
-- Scoped WSL execution and Windows/WSL path translation for registered
-  workspaces.
-- Complete local skill discovery across bundled, Codex/plugin, Agents, Cursor,
-  Claude, GitHub workspace, and configured skill roots, plus child MCP
-  discovery/description/call contracts.
-- Compound and parallel workflows, deterministic semantic tool routing, and
-  Context Economy telemetry.
-- Trace-correlated activity, NDJSON/SQLite audit metadata, Work Log, Live Logs,
-  Doctor checks, health surfaces, and background tray operation.
-- OpenAI Secure MCP Tunnel management with operating-system secure runtime-key
-  storage, target-native bundled clients, and reconnect handling. Windows
-  legacy DPAPI envelopes migrate once through the native helper.
-
-Authoritative in-repository references:
-
-- [Native platform support contract](docs/architecture/PLATFORM_SUPPORT.md) —
-  macOS/Linux support tiers, bundled official `tunnel-client` evidence, and
-  the Windows-only features deliberately marked unsupported on foreign hosts.
-- [macOS installation guide](docs/INSTALL_MACOS.md) and [Linux installation
-  guide](docs/INSTALL_LINUX.md) — clean-machine install, permissions, tunnel,
-  STDIO, troubleshooting, and platform limits.
-- [Native provider development](docs/NATIVE_PROVIDER_DEVELOPMENT.md) — bounded
-  helper protocol, target-host build rules, integrity evidence, and readiness
-  boundaries.
-- [Tool contract](docs/architecture/TOOL_CONTRACT.md) — core primitive schemas,
-  policy classes, and compatibility rules; the 259-definition complete index below comes from the live runtime registry.
-- [Upgrade architecture](docs/architecture/UPGRADE_ARCHITECTURE.md) — v4 runtime
-  architecture and additive gateway design.
-- [Release process](docs/development/RELEASE_PROCESS.md) — canonical `dev -> PR -> main CI -> tag -> Release -> dev sync` sequence, exact-SHA artifact rule, and failure handling.
-- [Roadmap phase status](docs/architecture/ROADMAP_PHASE_STATUS.md) — completed
-  implementation phases.
+## Current source version: v5.9.1
 
 ## Security model you should understand before using it
 
@@ -343,7 +178,7 @@ A few operating-system boundaries still apply:
 
 ### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** was established as the default/backward-compatible Remote MCP transport in v5.5.0 and remains the default in the current v5.9.0 source line. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** was established as the default/backward-compatible Remote MCP transport in v5.5.0 and remains the default in the current v5.9.1 source line. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
@@ -714,8 +549,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.9.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.9.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.9.1.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:

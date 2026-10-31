@@ -1588,6 +1588,7 @@ let tray: Tray | null = null;
 let desktopLocale: UiLocale = 'th';
 let desktopUserSettings: UserSettings = defaultUserSettings;
 let autoUpdaterInitialized = false;
+let verifiedAutomaticUpdateAuthority = false;
 let autoUpdaterInitializationPending = false;
 let quitRequested = false;
 let factoryResetQueued = false;
@@ -1816,6 +1817,9 @@ function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateSt
     return currentUpdateStatus;
   }
   if (currentUpdateStatus.phase === 'available') {
+    if (!verifiedAutomaticUpdateAuthority) {
+      return patchUpdateStatus({ phase: 'unavailable', message: messages.updaterUnavailableTransactionAuthority, canInstall: false });
+    }
     if (source !== 'automatic' && !desktopUserSettings.updateAutoDownload) {
       const status = patchUpdateStatus({
         phase: 'downloading',
@@ -1876,7 +1880,7 @@ function boundedNativeDialogText(text: string): string {
 
 async function requestUpdateInstall(): Promise<{ readonly accepted: boolean; readonly status: UpdateStatus }> {
   const consent = updateInstallConsentController;
-  if (!app.isPackaged || currentUpdateStatus.phase !== 'ready' || consent === null) {
+  if (!verifiedAutomaticUpdateAuthority || !app.isPackaged || currentUpdateStatus.phase !== 'ready' || consent === null) {
     return { accepted: false, status: currentUpdateStatus };
   }
   try {
@@ -2124,7 +2128,7 @@ function applyDesktopUserSettings(settings: UserSettings): void {
     });
   }
   if (autoUpdaterInitialized) {
-    autoUpdater.autoDownload = settings.updateAutoDownload;
+    autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && settings.updateAutoDownload;
     configureUpdateCheckSchedule();
   }
 }
@@ -2142,7 +2146,7 @@ function configureUpdateCheckSchedule(): void {
 }
 
 async function installDownloadedUpdate(runtime: DesktopRuntime, offer: DownloadedUpdateOffer): Promise<void> {
-  if (currentUpdateStatus.phase !== 'installing' || !isCurrentDownloadedUpdateOffer(offer)) return;
+  if (!verifiedAutomaticUpdateAuthority || currentUpdateStatus.phase !== 'installing' || !isCurrentDownloadedUpdateOffer(offer)) return;
 
   // Stop admitting renderer IPC before stopping Tunnel so no newly accepted
   // settings or workspace operation can race the install handoff.
@@ -2231,14 +2235,8 @@ async function installDownloadedUpdate(runtime: DesktopRuntime, offer: Downloade
   );
 }
 
-// v5.9.0 manual-only: no unattended update transactions on installed hosts.
-const MANUAL_RELEASE_ONLY = true;
-
+// Read-only update discovery is independent of native installation trust.
 async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
-  if (MANUAL_RELEASE_ONLY) {
-    patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailableTransactionAuthority, canInstall: false });
-    return;
-  }
   if (!app.isPackaged) {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePackagedOnly, canInstall: false });
     return;
@@ -2255,18 +2253,13 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
   autoUpdaterInitializationPending = true;
   try {
     const authority = await nativeUpdateBootstrapClient?.automaticCapability() ?? null;
-    if (!hasVerifiedAutomaticUpdateAuthority(authority)) {
-      patchUpdateStatus({
-        phase: 'unavailable',
-        message: nativeMessages(desktopLocale).updaterUnavailableTransactionAuthority,
-        canInstall: false,
-      });
-      console.warn(`[AutoUpdater] Disabled because the native update transaction authority is unavailable (${authority?.kind === 'unavailable' ? authority.reason : 'AUTHORITY_MISSING'}).`);
-      return;
+    verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority);
+    if (!verifiedAutomaticUpdateAuthority) {
+      console.warn(`[AutoUpdater] Read-only update checks enabled; installation unavailable (${authority?.kind === 'unavailable' ? authority.reason : 'AUTHORITY_MISSING'}).`);
     }
     configureUpdaterForDistribution(autoUpdater, windowsDistribution);
     configureUpdaterForPlatform(autoUpdater, updaterDistribution);
-    autoUpdater.autoDownload = desktopUserSettings.updateAutoDownload;
+    autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && desktopUserSettings.updateAutoDownload;
     autoUpdater.autoInstallOnAppQuit = false;
     updateInstallCoordinator = new UpdateInstallCoordinator({
       activeCallCount: (): number => runtime.activityTracker.listInFlight().length,
@@ -2331,7 +2324,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         return result.response === 0;
       },
       queueInstall: (offer: DownloadedUpdateOffer): boolean => {
-        if (currentUpdateStatus.phase !== 'ready' || !isCurrentDownloadedUpdateOffer(offer)) return false;
+        if (!verifiedAutomaticUpdateAuthority || currentUpdateStatus.phase !== 'ready' || !isCurrentDownloadedUpdateOffer(offer)) return false;
         if (updateInstallCoordinator?.requestInstall(offer) !== true) return false;
         patchUpdateStatus({
           phase: 'installing',
@@ -2351,6 +2344,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
     autoUpdater.on('update-available', (info) => {
       recordUpdaterEvent(`update-available:${info.version}`);
       const requestedFromTray = pendingUpdateCheckSource === 'tray';
+      const requestedByRendererWithoutNativeInstall = pendingUpdateCheckSource === 'renderer' && !verifiedAutomaticUpdateAuthority;
       pendingUpdateCheckSource = null;
       downloadedUpdateGeneration += 1;
       currentDownloadedUpdateOffer = null;
@@ -2363,14 +2357,15 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         availableVersion: info.version,
         progressPercent: 0,
         lastCheckedAt: new Date().toISOString(),
-        message: messages.updateAvailableStatus(info.version),
+        message: verifiedAutomaticUpdateAuthority ? messages.updateAvailableStatus(info.version) : messages.updaterUnavailableTransactionAuthority,
         canInstall: false,
       });
-      if (requestedFromTray) {
+      if (requestedFromTray || requestedByRendererWithoutNativeInstall) {
         void dialog.showMessageBox({
           type: 'info',
           title: messages.updaterAvailableTitle,
           message: boundedNativeDialogText(messages.updateAvailableDialog(info.version)),
+          ...(requestedByRendererWithoutNativeInstall ? { detail: messages.updaterUnavailableTransactionAuthority } : {}),
           buttons: [messages.ok],
         });
       }
@@ -2379,7 +2374,9 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         timestamp: new Date().toISOString(),
         level: 'info',
         source: 'process',
-        text: `[AutoUpdater] Version v${info.version} is available and downloading in background...`,
+        text: verifiedAutomaticUpdateAuthority
+          ? `[AutoUpdater] Version v${info.version} is available for installation after user confirmation.`
+          : `[AutoUpdater] Version v${info.version} is available; trusted automatic installation is not yet supported.`,
       });
     });
 
@@ -2395,7 +2392,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
 
     autoUpdater.on('update-not-available', (info) => {
       recordUpdaterEvent(`update-not-available:${info.version}`);
-      const requestedFromTray = pendingUpdateCheckSource === 'tray';
+      const requestedByUser = pendingUpdateCheckSource === 'tray' || pendingUpdateCheckSource === 'renderer';
       pendingUpdateCheckSource = null;
       downloadedUpdateGeneration += 1;
       currentDownloadedUpdateOffer = null;
@@ -2405,14 +2402,14 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         availableVersion: null,
         progressPercent: null,
         lastCheckedAt: new Date().toISOString(),
-        message: messages.updateCurrentStatus(info.version),
+        message: messages.updateCurrentStatus(app.getVersion()),
         canInstall: false,
       });
-      if (!requestedFromTray) return;
+      if (!requestedByUser) return;
       void dialog.showMessageBox({
         type: 'info',
         title: messages.updaterCheckTitle,
-        message: boundedNativeDialogText(messages.updateCurrentDialog(info.version)),
+        message: boundedNativeDialogText(messages.updateCurrentDialog(app.getVersion())),
         buttons: [messages.ok],
       });
     });
@@ -2421,6 +2418,19 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
       recordUpdaterDownload(info.version);
       const downloadedFile = typeof info.downloadedFile === 'string' ? info.downloadedFile.trim() : '';
       downloadedUpdateGeneration += 1;
+      if (!verifiedAutomaticUpdateAuthority) {
+        currentDownloadedUpdateOffer = null;
+        pendingPortableUpdate = null;
+        pendingLinuxAppImageUpdate = null;
+        patchUpdateStatus({
+          phase: 'unavailable',
+          availableVersion: info.version,
+          progressPercent: null,
+          message: nativeMessages(desktopLocale).updaterUnavailableTransactionAuthority,
+          canInstall: false,
+        });
+        return;
+      }
       if (downloadedFile.length === 0) {
         currentDownloadedUpdateOffer = null;
         patchUpdateStatus({
@@ -2462,7 +2472,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
     });
 
     autoUpdater.on('error', (err) => {
-      const requestedFromTray = pendingUpdateCheckSource === 'tray';
+      const requestedByUser = pendingUpdateCheckSource === 'tray' || pendingUpdateCheckSource === 'renderer';
       pendingUpdateCheckSource = null;
       recordUpdaterEvent(`error:${err.message}`);
       console.error('[AutoUpdater] error:', err.message);
@@ -2491,7 +2501,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         message,
         canInstall: false,
       });
-      if (!requestedFromTray) return;
+      if (!requestedByUser) return;
       void dialog.showMessageBox({
         type: 'error',
         title: messages.updaterCheckTitle,

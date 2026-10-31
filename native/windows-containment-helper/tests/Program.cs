@@ -155,6 +155,7 @@ internal static class NativeTests
                         Directory.Delete(absolute, true);
                     }
                 }
+                case "service-failure-reason-tests": TestServiceFailureReason(); Console.WriteLine("PASS safe service installer failure codes"); return 0;
                 case "service-restart-tests":
                     TestServiceRestartAndJobReconciliation();
                     Console.WriteLine("PASS isolated service restart reconciliation");
@@ -200,6 +201,8 @@ internal static class NativeTests
                 || WindowsContainmentServiceClient.ShouldWaitForOutput(ServiceAttemptPhase.TerminationUnknown))
                 throw new Exception("SERVICE_WATCHER_OUTPUT_PUBLICATION_ORDER_INVALID");
             Console.WriteLine("PASS service watcher waits for output publication after native dispatch");
+            TestServiceFailureReason();
+            Console.WriteLine("PASS service installer reports only stable diagnostic codes");
             TestServiceStoreCreation(root);
             Console.WriteLine("PASS protected store DACL applies at creation and existing untrusted store remains unchanged");
             TestServiceAccessControl();
@@ -332,6 +335,22 @@ internal static class NativeTests
                 File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
             Directory.Delete(absolute, true);
         }
+    }
+
+    private static void TestServiceFailureReason()
+    {
+        static void AssertReason(Exception failure, bool install, string expected)
+        {
+            if (Program.ServiceFailureReason(failure, install) != expected)
+                throw new Exception("SERVICE_FAILURE_REASON_CONTRACT_INVALID");
+        }
+        AssertReason(new IOException("SERVICE_INSTALL_ACL_UNTRUSTED"), true, "SERVICE_INSTALL_ACL_UNTRUSTED");
+        AssertReason(new IOException("SERVICE_PACKAGE_HASH_MISMATCH"), true, "SERVICE_PACKAGE_HASH_MISMATCH");
+        AssertReason(new IOException("SERVICE_REMOVE_OPEN_FAILED"), false, "SERVICE_REMOVE_OPEN_FAILED");
+        AssertReason(new IOException("SERVICE_INSTALL_ACL_UNTRUSTED"), false, "SERVICE_REMOVE_UNEXPECTED");
+        AssertReason(new UnauthorizedAccessException("C:\\private\\customer-secret"), true, "SERVICE_INSTALL_UNEXPECTED");
+        AssertReason(new IOException("SERVICE_INSTALL_BAD;C:\\private\\secret"), true, "SERVICE_INSTALL_UNEXPECTED");
+        AssertReason(new IOException(new string('A', 200)), true, "SERVICE_INSTALL_UNEXPECTED");
     }
 
     private static void TestServiceStoreCreation(string root)

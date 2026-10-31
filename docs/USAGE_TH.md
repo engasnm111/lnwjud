@@ -1,14 +1,14 @@
-# คู่มือใช้งาน lnwjud v5.9.0 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.9.1 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม source `v5.9.0`; public release `v5.9.0` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.9.0)
+คู่มือนี้อัปเดตตาม source `v5.9.1`; public release `v5.9.0` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.9.0)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว build จาก source `v5.8.1` รวม official OpenAI `tunnel-client v0.0.16` ที่ตรงกับ OS/architecture พร้อม SHA-256/provenance ส่วน release รุ่นก่อนหน้าอาจ bundle เวอร์ชันต่างกัน ให้ยึดหลักฐานของไฟล์ที่ดาวน์โหลดจริง
 
-## Auto Updater v5.9.0: ยังปิดไว้จนกว่าจะผ่าน acceptance
+## Auto Updater v5.9.1: ตรวจเวอร์ชันได้ แต่ยังติดตั้งอัตโนมัติไม่ได้
 
-Auto updater ใน source build v5.9.0 ยังปิดอยู่แบบ fail-closed จึงยังตรวจ ดาวน์โหลด หรือติดตั้งอัปเดตจากแอปไม่ได้ รูปแบบที่ต้องการคือให้ผู้ใช้ยืนยันเลขเวอร์ชันเป้าหมายครั้งเดียว จากนั้นรอให้งานจบ หยุด Tunnel ที่ตรวจสอบ owner ได้ ติดตั้งโดยไม่ต้องกด installer เพิ่ม แล้วเปิดแอปใหม่เอง ตัวเลือก **Settings → General → ติดตั้งอัปเดตแบบไม่ต้องคลิก** จะไม่ข้ามการยืนยันเวอร์ชันหรือสิทธิ์ความปลอดภัยของระบบปฏิบัติการ
+Source build v5.9.1 ให้กดเลขเวอร์ชันมุมซ้ายบนเพื่อตรวจ GitHub Releases และดูสถานะตามปกติ ส่วน **Settings → General → ทดสอบอัปเดตอัตโนมัติ (ดาวน์โหลดและติดตั้ง)** เป็นปุ่มแยกสำหรับทดสอบ Native Updater โดยเฉพาะ ขณะนี้ยังไม่มี Production Native Transaction Authority ที่ตรวจสอบได้ จึงตรวจว่ามีรุ่นใหม่ได้ แต่จะไม่ดาวน์โหลดเพื่อเตรียมติดตั้งหรือเรียก Installer แบบ Silent ผ่านปุ่มทดสอบ การยืนยันเวอร์ชันเพียงครั้งเดียว, การรอให้งานจบ, หยุดและคืน Tunnel, ติดตั้งโดยไม่กดหน้าจอ Installer เพิ่ม และเปิดแอปใหม่เองยังเป็นเป้าหมายที่ต้องทดสอบจริงก่อนเปิดใช้งาน
 
 native transaction authority, การลงทะเบียนแพ็กเกจ, การสลับ app/data แบบ atomic, การตรวจสุขภาพหลังเปิดใหม่ และ rollback พร้อมคืน Tunnel ยังไม่ครบและไม่มี signed end-to-end acceptance ที่ยืนยันการติดตั้งจริง จึงห้ามเปิด updater หรือปล่อย Release จนกว่าจะทดสอบอัปเดตและ rollback บนแพ็กเกจที่เซ็นแล้วผ่านครบ ห้ามข้าม UAC หรือสิทธิ์ OS
 
@@ -461,8 +461,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.9.0.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.9.0.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.1.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.9.1.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```

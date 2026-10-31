@@ -252,17 +252,27 @@ export class FileService {
     mutation: () => Promise<Result<T>>,
   ): Promise<Result<T>> {
     if (this.writerAdmission === undefined) return mutation();
+    // An admission exception cannot authorize a file mutation. A reservation
+    // may still be held; no cleanup is permitted without terminal proof.
     const admitted = await this.writerAdmission.enter({
       actorClientId: actor.clientId,
       workspaceId: workspaceId ?? 'implicit-workspace',
       kind: 'synchronous_mutation',
-    });
+    }).catch(() => err(appError('CONFLICT', 'Writer admission could not be verified; the file mutation was not started')));
     if (!admitted.ok) return admitted;
+    const releaseUnverified = (): Result<T> => err(appError('CONFLICT',
+      'Writer reservation release could not be verified; the file mutation may already have been applied. Inspect the target before retrying'));
+    let result: Result<T>;
     try {
-      return await mutation();
-    } finally {
-      await admitted.value.releaseAfterVerifiedTermination();
+      result = await mutation();
+    } catch (error: unknown) {
+      try { await admitted.value.releaseAfterVerifiedTermination(); }
+      catch { return releaseUnverified(); }
+      throw error;
     }
+    try { await admitted.value.releaseAfterVerifiedTermination(); }
+    catch { return releaseUnverified(); }
+    return result;
   }
 
   private isTrustedWorkspace(workspace: Workspace): boolean {

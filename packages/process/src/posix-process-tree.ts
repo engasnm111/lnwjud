@@ -227,8 +227,10 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     // never signal an unknown/reused group or infer that missing means gone.
     if (this.platform === 'darwin' && child !== undefined && expectedStart === undefined) {
       const deadline = Date.now() + 500;
-      while (initial.state === 'unknown' && (initial.reason === 'process_table_unavailable'
-        || initial.reason === 'darwin_escaped_descendants_not_contained')
+      while ((initial.state === 'live' && initial.rootStartedAt === undefined
+        || initial.state === 'unknown' && (initial.reason === 'process_table_unavailable'
+          || initial.reason === 'malformed_process_table'
+          || initial.reason === 'darwin_escaped_descendants_not_contained'))
         && child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 30));
         initial = classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform }), this.platform);

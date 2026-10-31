@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "5.9.0",
+  "version": "5.9.1",
   "installationMode": "manual",
   "automaticUpdaterEnabled": false,
   "targets": [
@@ -12,5 +12,5 @@
     "darwin-arm64",
     "darwin-x64"
   ],
-  "deferredReason": "Issue #216 macOS process containment and signed unattended update transaction remain unaccepted. No macOS v5.9.0 binaries."
+  "deferredReason": "Issue #216 macOS process containment and signed unattended update transaction remain unaccepted. No macOS v5.9.1 binaries."
 }

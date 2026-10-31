@@ -58,7 +58,31 @@ internal static class Program
             throw new IOException("HELPER_COMMAND_INVALID");
 #endif
         }
-        catch { Console.Error.WriteLine("NATIVE_CONTAINMENT_UNRESOLVED"); return 125; }
+        catch (Exception failure)
+        {
+            // The installer must distinguish a rejected protected service setup
+            // from an unknown failure, without disclosing file paths or exception details.
+            if (args.Length == 1 && (args[0] == "service-install" || args[0] == "service-uninstall"))
+            {
+                try { Console.WriteLine(ServiceFailureReason(failure, args[0] == "service-install")); }
+                catch { /* Preserve the nonzero failure when stdout is unavailable. */ }
+            }
+            Console.Error.WriteLine("NATIVE_CONTAINMENT_UNRESOLVED");
+            return 125;
+        }
+    }
+
+    internal static string ServiceFailureReason(Exception failure, bool install)
+    {
+        var fallback = install ? "SERVICE_INSTALL_UNEXPECTED" : "SERVICE_REMOVE_UNEXPECTED";
+        if (failure is not IOException) return fallback;
+        var reason = failure.Message;
+        if (reason.Length is < 8 or > 96) return fallback;
+        var permitted = install
+            ? reason.StartsWith("SERVICE_INSTALL_", StringComparison.Ordinal) || reason.StartsWith("SERVICE_PACKAGE_", StringComparison.Ordinal)
+            : reason.StartsWith("SERVICE_REMOVE_", StringComparison.Ordinal);
+        return permitted && reason.All(character => character is >= 'A' and <= 'Z' or >= '0' and <= '9' or '_')
+            ? reason : fallback;
     }
 
     private static int RunEnrollmentPreflight(string directory)

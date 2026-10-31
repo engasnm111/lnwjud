@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement, type UIEvent } from 'react';
-import { EMPTY_REMOTE_MCP_STATUS, type DashboardSnapshot, type DestructiveDeletePolicy, type ExternalSetupTarget, type PdfProviderInstallResult, type PermissionProfileName, type PonytailModeOverride, type PonytailPolicyContext, type RemoteMcpTransport, type TunnelOAuthLoginStatus, type TunnelStatus, type UiLocale, type UpdateStatus, type UserSettings } from '@lnwjud/ipc-contracts';
+import { EMPTY_REMOTE_MCP_STATUS, type DashboardSnapshot, type DestructiveDeletePolicy, type ExternalSetupTarget, type PdfProviderInstallResult, type PermissionProfileName, type PonytailModeOverride, type PonytailPolicyContext, type RemoteMcpTransport, type TunnelOAuthLoginStatus, type TunnelStatus, type UiLocale, type UserSettings } from '@lnwjud/ipc-contracts';
 import { parseDelimitedList } from '@lnwjud/shared/text-list';
 import { formatDateTime } from '../../date-time.js';
 import { createTranslator, type Translator } from '../../i18n/index.js';
@@ -43,8 +43,6 @@ interface SettingsPageProps {
   readonly tunnelStartPending?: boolean;
   readonly tunnelStopPending?: boolean;
   readonly updatesUnavailable?: boolean;
-  readonly updateStatus?: UpdateStatus | null;
-  readonly onTestNativeUpdate: () => Promise<void>;
   readonly onBeginTunnelOAuthLogin: () => Promise<TunnelOAuthLoginStatus>;
   readonly onGetTunnelOAuthLoginStatus: () => Promise<TunnelOAuthLoginStatus>;
   readonly onCancelTunnelOAuthLogin: () => Promise<TunnelOAuthLoginStatus>;
@@ -699,8 +697,6 @@ export function SettingsPage(props: SettingsPageProps): ReactElement {
               engineeringStatus={props.dashboard.engineeringHarnessStatus}
               section={userConfigSection}
               updatesUnavailable={props.updatesUnavailable ?? false}
-              onTestNativeUpdate={props.onTestNativeUpdate}
-              updateStatus={props.updateStatus ?? null}
               unrestricted={props.dashboard.unrestricted}
               onUnrestrictedChange={props.onUnrestrictedChange}
               onSave={props.onUserSettingsChange}

@@ -1,5 +1,21 @@
 # Maintaining the in-app What's New registry
 
+## v5.9.1 development candidate (not released)
+
+The offline What's New registry includes a `5.9.1` entry with Thai and English descriptions of the single top-left titlebar update action (the duplicate Settings → General update test button has been removed), explicitly confirmed proven-idle same-client writer-lease recovery (ordinary acquisitions cannot reclaim active leases), and MCP refusal diagnostics. The current local Windows Setup and Portable packages are **unsigned test builds**, not production auto-update acceptance.
+
+Activity logs distinguish actual MCP-level `CONFLICT` (expired or missing Goal lease, writer-lease owner not idle), `EXECUTABLE_NOT_FOUND` (e.g. `pwsh` on Windows), and successful tool execution. **Host Safety refusals before dispatch are not necessarily recorded by lnwjud**, and therefore cannot be attributed to `shell` from the server-side audit alone. `shell` preserves restart-safe durable tasks; `process_start` owns an immediate managed process. Keep both until evidence justifies a backward-compatible change, not a safety bypass.
+
+**31 October 2026 CI correction:** PR #236 run `41151562367` reached Windows Desktop Test Shard 2/2 but one Tunnel Controller fixture received `Timed out waiting for the lnwjud tunnel lock critical section` before its intended secret-decryption failure could be exercised. The Windows PowerShell named-mutex helper now has a bounded 30-second startup grace (previously 10 seconds); actual mutex acquisition still waits no more than 5 seconds. A delayed-helper regression requires no published ownership before `READY`. This reduces startup scheduling flakiness but does not prove an arbitrary live holder can be reclaimed. Await the new exact-SHA Windows CI run before calling it resolved.
+
+**Windows CI follow-up:** The same PR run also failed one `Windows Workspace Release Tests` case because the default 10-second Vitest teardown hook was no longer than its existing Windows native-file cleanup retry budget (50 × 200ms). The scoped fixture hook now allows up to 30 seconds without swallowing filesystem errors. Local isolated concurrency-cap test passed; full local native-suite validation remains blocked by `NATIVE_SERVICE_RPC_FAILED` with the installed helper, requiring hosted Windows acceptance for the new commit. The authoritative CI aggregate was not green.
+
+The native updater is not yet proven to install signed packages unattended, relaunch the app, restore the Tunnel, or roll back app/data successfully. Keep release gates closed until installed exact-SHA acceptance proves those outcomes.
+
+**31 October 2026 native safety validation:** A failed or unverified search-subprocess termination now returns a non-recoverable error rather than a successful partial result. Targeted regressions pass; three Windows side-effect-marker process-termination integrations failed under load in earlier runs but passed in a later 34/34 run, so the intermittent issue remains open; this is a fail-closed reporting improvement, not proof of process containment. For macOS, the process-group stop path now retries a transient malformed process-table observation or a live group lacking the newly spawned root's start identity before attempting any identity-verified signal; repeated missing identity still fails closed. macOS Issue #223 and the native updater release gates remain open until exact-source native CI and signed installed E2E pass; do not advertise zero-click availability.
+
+---
+
 The Desktop title bar has two independent controls:
 
 1. the existing version/update button, which displays the version and update status. Automatic updates are unavailable in the current v5.9.0 source candidate until native transaction authority and signed acceptance are complete;
