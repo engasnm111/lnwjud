@@ -57,6 +57,16 @@ describe('context economy policy', () => {
     });
   });
 
+  it('skips AI model assets automatically but leaves explicit access available', () => {
+    for (const extension of ['onnx', 'safetensors', 'gguf', 'ckpt', 'pt', 'pth']) {
+      const name = `models/fixture.${extension}`;
+      expect(classifyContextPath(name, 'automatic')).toMatchObject({ kind: 'binary', discoverable: false });
+      expect(classifyContextPath(name, 'explicit')).toMatchObject({ kind: 'binary', discoverable: true });
+      expect(DEFAULT_CONTEXT_IGNORE_GLOBS).toContain(`!**/*.${extension}`);
+    }
+    expect(classifyContextPath('src/fixture.ts', 'automatic')).toMatchObject({ kind: 'source', discoverable: true });
+  });
+
   it('identifies binary files and generated source without denying explicit reads', () => {
     expect(classifyContextPath('assets/logo.png', 'automatic')).toMatchObject({
       discoverable: false,
