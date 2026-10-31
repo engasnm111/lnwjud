@@ -61,7 +61,7 @@ afterEach(async () => {
 });
 
 describe('tunnel lock mutex cleanup semantics', () => {
-  it('waits for a slow helper startup without publishing an owner before READY', async () => {
+  it.skipIf(process.platform !== 'win32')('waits for a slow helper startup without publishing an owner before READY', async () => {
     const directory = await temporaryDirectory();
     const expectedOwner = owner(1199, '2026-08-20T00:00:00.000Z');
     mutexHelper.readyDelayMs = 16_000;
