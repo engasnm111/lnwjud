@@ -47,6 +47,9 @@ class ShellCapabilityBackend extends BaseShellCapabilityBackend {
   }
 }
 
+// Windows native child-handle release may use all 50 × 200ms cleanup retries
+// under CI load. Give that existing retry budget a distinct bounded hook
+// deadline, while preserving teardown failures as test failures.
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, {
     recursive: true,
@@ -54,7 +57,7 @@ afterEach(async () => {
     maxRetries: process.platform === 'win32' ? 50 : 0,
     retryDelay: 200,
   })));
-});
+}, 30_000);
 
 describe('durable shell background tasks', () => {
   it('preserves a just-reserved POSIX worker during identity capture but fails closed after grace', async () => {

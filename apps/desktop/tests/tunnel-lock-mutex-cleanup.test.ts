@@ -5,7 +5,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const mutexHelper = vi.hoisted(() => ({ exitCodes: [] as number[], spawnCalls: 0 }));
+const mutexHelper = vi.hoisted(() => ({ exitCodes: [] as number[], spawnCalls: 0, readyDelayMs: 0, onSpawn: null as (() => void) | null }));
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -13,6 +13,7 @@ vi.mock('node:child_process', async (importOriginal) => {
     ...actual,
     spawn: vi.fn(() => {
       mutexHelper.spawnCalls += 1;
+      mutexHelper.onSpawn?.();
       const child = new EventEmitter() as EventEmitter & {
         stdin: PassThrough;
         stdout: PassThrough;
@@ -39,7 +40,8 @@ vi.mock('node:child_process', async (importOriginal) => {
           child.emit('exit', exitCode);
         });
       });
-      queueMicrotask(() => child.stdout.write('READY\n'));
+      if (mutexHelper.readyDelayMs > 0) setTimeout(() => child.stdout.write('READY\n'), mutexHelper.readyDelayMs);
+      else queueMicrotask(() => child.stdout.write('READY\n'));
       return child;
     }),
   };
@@ -52,10 +54,43 @@ const temporaryRoots: string[] = [];
 afterEach(async () => {
   mutexHelper.exitCodes = [];
   mutexHelper.spawnCalls = 0;
+  mutexHelper.readyDelayMs = 0;
+  mutexHelper.onSpawn = null;
+  vi.useRealTimers();
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('tunnel lock mutex cleanup semantics', () => {
+  it('waits for a slow helper startup without publishing an owner before READY', async () => {
+    const directory = await temporaryDirectory();
+    const expectedOwner = owner(1199, '2026-08-20T00:00:00.000Z');
+    mutexHelper.readyDelayMs = 16_000;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const spawned = new Promise<void>((resolve) => { mutexHelper.onSpawn = resolve; });
+
+    const result = acquireTunnelLock({
+      profileDirectory: directory,
+      owner: expectedOwner,
+      inspectProcess: async () => ({ state: 'gone' }),
+    }).then(
+      (value) => ({ success: true as const, value }),
+      (error: unknown) => ({ success: false as const, error }),
+    );
+    await spawned;
+    expect(mutexHelper.spawnCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(await readTunnelLock(directory)).toBeNull();
+    await vi.advanceTimersByTimeAsync(999);
+
+    const completed = await result;
+    expect(completed.success).toBe(true);
+    if (!completed.success) return;
+    expect(completed.value.acquired).toBe(true);
+    expect(await readTunnelLock(directory)).toEqual(expectedOwner);
+    mutexHelper.readyDelayMs = 0;
+    if (completed.value.acquired) await expect(completed.value.release()).resolves.toBe(true);
+  });
+
   it('reports acquisition success when the authoritative lock was published before mutex cleanup failed', async () => {
     const directory = await temporaryDirectory();
     const expectedOwner = owner(1201, '2026-08-20T00:00:00.000Z');
