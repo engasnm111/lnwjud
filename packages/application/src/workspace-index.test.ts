@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from 'node:fs';
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, truncate, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -33,6 +33,33 @@ function memoryStore(beforeCommit?: () => Promise<void>): WorkspaceIndexStore {
 }
 
 describe('WorkspaceIndexService', () => {
+  it('skips AI model files and indexes oversized unknown files as metadata without reading contents', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-model-'));
+    const workspace: Workspace = { id: 'model-size', displayName: 'fixture', rootPath: root, realRootPath: root, createdAt: new Date().toISOString() };
+    const service = new WorkspaceIndexService(fixtureRepository(workspace), memoryStore());
+    try {
+      await writeFile(path.join(root, 'source.ts'), 'export const regularSource = 1;\n');
+      await writeFile(path.join(root, 'model.onnx'), 'small model fixture');
+      const largeFile = path.join(root, 'large.custom');
+      await writeFile(largeFile, 'start');
+      await truncate(largeFile, 17 * 1024 * 1024);
+      const result = await service.indexWorkspace(workspace.id, { rebuild: true });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const entries = result.value.entries;
+      expect(entries.find((entry) => entry.relativePath === 'model.onnx')).toBeUndefined();
+      const large = entries.find((entry) => entry.relativePath === 'large.custom');
+      expect(large).toMatchObject({ kind: 'file', size: 17 * 1024 * 1024, contentHash: null, gitBlobSha: null, symbols: [] });
+      expect(entries.find((entry) => entry.relativePath === 'source.ts')?.symbols).toContain('regularSource');
+      const explicit = await service.indexPath(workspace.id, 'model.onnx', { discovery: 'explicit' });
+      expect(explicit.ok).toBe(true);
+      if (explicit.ok) expect(explicit.value.entries.find((entry) => entry.relativePath === 'model.onnx')?.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('preserves both distinct path updates when snapshot commits overlap', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-concurrent-'));
     const workspace: Workspace = {
