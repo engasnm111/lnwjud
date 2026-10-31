@@ -53,7 +53,7 @@ export function parsePosixProcessGroup(table: string, groupId: number, expectedR
     // Only target-group rows need STAT/lstart identity evidence. macOS can
     // emit partial metadata for unrelated processes; rejecting the entire
     // table would leave a known owned child alive after a timeout.
-    const prefix = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    const prefix = /^\s*(\d+)\s+(\d+)(?:\s+(.+?))?\s*$/.exec(line);
     if (prefix === null) return { state: 'unknown', reason: 'malformed_process_table' };
     const pid = Number(prefix[1]);
     const pgid = Number(prefix[2]);
@@ -62,7 +62,7 @@ export function parsePosixProcessGroup(table: string, groupId: number, expectedR
     }
     seen.add(pid);
     if (pid !== groupId && pgid !== groupId) continue;
-    const evidence = /^([A-Za-z<+NsXxLlEsWw-]+)\s+(.+?)\s*$/.exec(prefix[3]!);
+    const evidence = prefix[3] === undefined ? null : /^([A-Za-z<+NsXxLlEsWw-]+)\s+(.+?)\s*$/.exec(prefix[3]);
     const started = evidence === null ? Number.NaN : Date.parse(evidence[2]!);
     if (evidence === null || !Number.isFinite(started)) return { state: 'unknown', reason: 'malformed_process_table' };
     if (pid === groupId) {

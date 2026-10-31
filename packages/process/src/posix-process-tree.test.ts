@@ -78,6 +78,12 @@ describe('portable process contracts', () => {
     expect(parsePosixProcessGroup(`${unrelated}\n${target}`, 4242)).toEqual({
       state: 'live', livePids: [4242], rootStartedAt: new Date('Sun Oct 18 00:00:00 2026').toISOString(),
     });
+    // ps may omit STAT/lstart on unrelated rows; their PID/PGID still prove they are not the target.
+    expect(parsePosixProcessGroup(`1 1\n${target}`, 4242)).toEqual({
+      state: 'live', livePids: [4242], rootStartedAt: new Date('Sun Oct 18 00:00:00 2026').toISOString(),
+    });
+    expect(parsePosixProcessGroup(`4242 4242\n${unrelated}`, 4242))
+      .toMatchObject({ state: 'unknown', reason: 'malformed_process_table' });
     expect(parsePosixProcessGroup(`${unrelated}\n4242 4242 Ss unavailable`, 4242))
       .toMatchObject({ state: 'unknown', reason: 'malformed_process_table' });
     expect(parsePosixProcessGroup(`bad-prefix\n${target}`, 4242))
