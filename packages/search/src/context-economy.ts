@@ -54,6 +54,7 @@ const BINARY_EXTENSIONS = new Set([
   '.7z', '.avi', '.bin', '.class', '.db', '.dll', '.dmg', '.exe', '.gif', '.gz', '.ico', '.jpeg', '.jpg', '.png',
   '.m4a', '.mkv', '.mov', '.mp3', '.mp4', '.pdf', '.pyc', '.rar', '.sqlite', '.sqlite3', '.tar', '.ttf',
   '.wasm', '.webp', '.woff', '.woff2', '.zip',
+  '.onnx', '.safetensors', '.gguf', '.ckpt', '.pt', '.pth',
 ]);
 
 const METADATA_FILES = new Set([
@@ -93,6 +94,7 @@ export const DEFAULT_CONTEXT_IGNORE_GLOBS: readonly string[] = [
   '!**/.venv/**',
   '!**/venv/**',
   '!**/__pycache__/**',
+  '!**/*.onnx', '!**/*.safetensors', '!**/*.gguf', '!**/*.ckpt', '!**/*.pt', '!**/*.pth',
   '!**/.DS_Store',
   '!**/*.map',
   '!**/*.min.js',
