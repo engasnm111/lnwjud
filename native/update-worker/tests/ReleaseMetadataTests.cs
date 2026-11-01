@@ -110,6 +110,22 @@ internal static class ReleaseMetadataTests
         Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 99 }) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_STATE_INVALID" }, "replay floor cannot fall below committed baseline");
         Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 100 }) is ReleaseMetadataVerification.Authenticated, "next candidate advances from committed baseline");
         Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 101 }) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_REPLAY_OR_DOWNGRADE" }, "accepted sequence cannot be reoffered after rollback");
+        // A signed, higher-sequence build with a different package digest may refresh
+        // the same semantic version, but must not replay the installed package.
+        var sameVersionRefresh = (JsonObject)fixture.Offer.DeepClone();
+        sameVersionRefresh["version"] = "5.9.0";
+        sameVersionRefresh["artifact"]!["name"] = ArtifactName("5.9.0", "win32", "x64");
+        Check(fixture.Verify(fixture.Sign(sameVersionRefresh)) is ReleaseMetadataVerification.Authenticated,
+            "signed same-version refresh with a new artifact digest and higher sequence accepted");
+        var sameVersionReplay = (JsonObject)sameVersionRefresh.DeepClone();
+        sameVersionReplay["artifact"]!["sha256"] = Digest('b');
+        sameVersionReplay["recoveryAuthorization"]!["candidateArtifactSha256"] = Digest('b');
+        Check(fixture.Verify(fixture.Sign(sameVersionReplay)) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_REPLAY_OR_DOWNGRADE" },
+            "signed same-version identical-artifact replay refused");
+        Check(fixture.Verify(fixture.Sign(sameVersionRefresh), snapshot: fixture.Snapshot with { HighestAcceptedSequence = 101 })
+            is ReleaseMetadataVerification.Refused { Reason: "RELEASE_REPLAY_OR_DOWNGRADE" },
+            "signed same-version refresh cannot bypass monotonic accepted sequence");
+
         Check(fixture.Verify(snapshot: fixture.Snapshot with { FailedCandidateDigests = new HashSet<string> { Digest('d') } }) is ReleaseMetadataVerification.Refused, "failed candidate quarantine");
         Check(fixture.Verify(baseline: fixture.Baseline with { NativeAcceptanceReceiptSha256 = "" }) is ReleaseMetadataVerification.Refused, "unsigned baseline missing native receipt");
         Check(fixture.Verify(baseline: fixture.Baseline with { EnvelopeSha256 = Digest('0') }) is ReleaseMetadataVerification.Refused, "retained original envelope exact digest");
