@@ -62,7 +62,7 @@ describe('DurableShellTaskIndex', () => {
       launcherStartedAt: '2026-09-20T09:00:00.000Z',
     }));
     const index = new DurableShellTaskIndex(root, {
-      maxConcurrentTasks: 10, inspectTask: async () => 'missing', isProcessProvenGone: () => true,
+      maxConcurrentTasks: 10, inspectTask: async (): Promise<'missing'> => 'missing', isProcessProvenGone: (): boolean => true,
     });
     await index.initialize();
     expect(await index.hasReservation(taskId, 'a'.repeat(64))).toBe(true);

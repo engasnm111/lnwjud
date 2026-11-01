@@ -51,7 +51,7 @@ describe('SharedManagedWriterAdmission authenticated release', () => {
     expect(files).toHaveLength(1);
     expect(JSON.parse(await readFile(path.join(markers, files[0]!), 'utf8'))).toMatchObject({ nativeBinding: admitted.value.nativeBinding });
     const diagnostics = await new DurableShellTaskIndex(f.taskDirectory, {
-      maxConcurrentTasks: 16, inspectTask: async () => 'missing',
+      maxConcurrentTasks: 16, inspectTask: async (): Promise<'missing'> => 'missing',
     }).diagnostics();
     expect(diagnostics.blockers).toMatchObject([{
       marker_origin: 'native_attempt_recorded_unverified',
