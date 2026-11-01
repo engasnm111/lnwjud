@@ -15,6 +15,10 @@ export interface WriterAdmissionBlocker {
   readonly mutation_kind: DurableMutationKind | 'unreadable';
   readonly capacity_class: ReservationCapacityClass | 'unknown';
   readonly state: 'held' | 'unreadable';
+  /** Marker metadata is not independent terminal or owner-liveness proof. */
+  readonly marker_origin: 'unreadable' | 'legacy_unbound' | 'v2_unbound' | 'native_attempt_recorded_unverified';
+  readonly owner_binding: 'unreadable' | 'missing' | 'owner_metadata_only' | 'native_attempt_recorded_unverified';
+  readonly terminal_proof: 'not_observed';
   readonly recovery_requirement: 'owner_process_termination' | 'trusted_termination_evidence' | 'independent_terminal_observation' | 'manual_review';
 }
 
@@ -250,6 +254,7 @@ export class DurableShellTaskIndex {
             mutation_kind: 'unreadable',
             capacity_class: 'unknown',
             state: 'unreadable',
+            marker_origin: 'unreadable', owner_binding: 'unreadable', terminal_proof: 'not_observed',
             recovery_requirement: 'manual_review',
           });
           continue;
@@ -263,6 +268,11 @@ export class DurableShellTaskIndex {
           mutation_kind: marker.record.mutationKind,
           capacity_class: capacityClass,
           state: 'held',
+          marker_origin: marker.record.legacy === true || marker.record.version === 1 || marker.record.requestDigest === null
+            ? 'legacy_unbound' : marker.record.nativeBinding === undefined ? 'v2_unbound' : 'native_attempt_recorded_unverified',
+          owner_binding: marker.record.nativeBinding !== undefined ? 'native_attempt_recorded_unverified'
+            : marker.record.ownerClientId !== undefined && marker.record.ownerWorkspaceId !== undefined ? 'owner_metadata_only' : 'missing',
+          terminal_proof: 'not_observed',
           recovery_requirement: marker.record.mutationKind === 'synchronous_mutation'
             ? 'owner_process_termination'
             : marker.record.mutationKind === 'opaque_uncontained' || marker.record.mutationKind === 'opaque_contained_process' || marker.record.nativeBinding !== undefined
@@ -387,7 +397,7 @@ export class DurableShellTaskIndex {
   private async reclaimTerminatedSynchronousMutationsUnlocked(): Promise<void> {
     for (const marker of await this.readMarkers()) {
       const record = marker.record;
-      if (record === undefined || record.mutationKind !== 'synchronous_mutation' || record.launcherPid === undefined) continue;
+      if (record === undefined || record.legacy === true || record.mutationKind !== 'synchronous_mutation' || record.launcherPid === undefined) continue;
       let ownerGone = false;
       try { ownerGone = this.processProvenGone(record.launcherPid); } catch { /* Unknown liveness retains the blocker. */ }
       if (ownerGone) await this.removeMarker(marker.path);
@@ -396,7 +406,7 @@ export class DurableShellTaskIndex {
 
   private async upgradeLegacyMarkersUnlocked(): Promise<void> {
     for (const marker of await this.readMarkers()) {
-      if (marker.record?.version === 1) await atomicWriteJson(marker.path, { ...marker.record, version: 2 });
+      if (marker.record?.version === 1) await atomicWriteJson(marker.path, { ...marker.record, version: 2, legacy: true });
     }
   }
 

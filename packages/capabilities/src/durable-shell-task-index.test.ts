@@ -35,7 +35,11 @@ describe('DurableShellTaskIndex', () => {
     await index.initialize();
 
     const upgraded = JSON.parse(await readFile(oldPath, 'utf8')) as Record<string, unknown>;
-    expect(upgraded).toMatchObject({ ...oldMarker, version: 2 });
+    expect(upgraded).toMatchObject({ ...oldMarker, version: 2, legacy: true });
+    expect((await index.diagnostics()).blockers).toMatchObject([{
+      marker_origin: 'legacy_unbound', owner_binding: 'owner_metadata_only',
+      terminal_proof: 'not_observed', recovery_requirement: 'independent_terminal_observation',
+    }]);
     expect(JSON.parse(await readFile(path.join(root, '.index', 'v1', 'ready.json'), 'utf8')))
       .toMatchObject({ version: 1, markerFormatVersion: 2 });
     expect(upgraded.version).not.toBe(1);
@@ -44,6 +48,27 @@ describe('DurableShellTaskIndex', () => {
     expect(legacyReaderAccepts(upgraded)).toBe(false);
     expect(await index.reserve({ taskId: 'new-import', requestDigest: 'b'.repeat(64), ownerClientId: 'new-owner', mutationKind: 'repository_import' }))
       .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  });
+
+  it('retains migrated legacy synchronous writers even if the old launcher PID disappeared', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-legacy-pid-'));
+    temporaryRoots.push(root);
+    const taskId = 'old-sync-writer';
+    const active = path.join(root, '.index', 'v1', 'active');
+    await mkdir(active, { recursive: true });
+    await writeFile(path.join(active, `${createHash('sha256').update(taskId).digest('hex')}.json`), JSON.stringify({
+      version: 1, taskId, requestDigest: 'a'.repeat(64), mutationKind: 'synchronous_mutation',
+      ownerClientId: 'old-owner', ownerWorkspaceId: 'old-workspace', launcherPid: 4242,
+      launcherStartedAt: '2026-09-20T09:00:00.000Z',
+    }));
+    const index = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10, inspectTask: async () => 'missing', isProcessProvenGone: () => true,
+    });
+    await index.initialize();
+    expect(await index.hasReservation(taskId, 'a'.repeat(64))).toBe(true);
+    expect((await index.diagnostics()).blockers).toMatchObject([{
+      marker_origin: 'legacy_unbound', terminal_proof: 'not_observed',
+    }]);
   });
 
   it('rebuilds an absent index with v2 quarantine markers for legacy tasks whose status is insufficient', async () => {
@@ -55,6 +80,9 @@ describe('DurableShellTaskIndex', () => {
     const marker = path.join(root, '.index', 'v1', 'active', createHash('sha256').update('legacy-terminal').digest('hex') + '.json');
     expect(JSON.parse(await readFile(marker, 'utf8')))
       .toMatchObject({ version: 2, taskId: 'legacy-terminal', requestDigest: null, legacy: true });
+    expect((await index.diagnostics()).blockers).toMatchObject([{
+      marker_origin: 'legacy_unbound', owner_binding: 'missing', terminal_proof: 'not_observed',
+    }]);
   });
 
   it('keeps a vanished task root reserved until an independent terminal observation exists', async () => {
@@ -413,6 +441,9 @@ describe('DurableShellTaskIndex', () => {
         mutation_kind: 'synchronous_mutation',
         capacity_class: 'managed_writer',
         state: 'held',
+        marker_origin: 'v2_unbound',
+        owner_binding: 'owner_metadata_only',
+        terminal_proof: 'not_observed',
         recovery_requirement: 'owner_process_termination',
       }],
     });
