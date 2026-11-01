@@ -25,11 +25,11 @@ describe('DurableShellTaskIndex', () => {
 
     let entered!: () => void;
     let resume!: () => void;
-    const started = new Promise<void>((resolve) => { entered = resolve; });
-    const stalled = new Promise<void>((resolve) => { resume = resolve; });
+    const started = new Promise<void>((resolve): void => { entered = resolve; });
+    const stalled = new Promise<void>((resolve): void => { resume = resolve; });
     const second = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 4,
-      inspectTask: async () => { entered(); await stalled; return 'active' as const; },
+      inspectTask: async (): Promise<'active'> => { entered(); await stalled; return 'active'; },
     });
     const pending = second.reserve({ taskId: 'next', requestDigest: 'b'.repeat(64), ownerClientId: 'owner' });
     await started;
@@ -49,11 +49,11 @@ describe('DurableShellTaskIndex', () => {
     expect(await first.reserve({ taskId: 'original', requestDigest: 'a'.repeat(64), ownerClientId: 'owner' })).toMatchObject({ ok: true });
     let entered!: () => void;
     let resume!: () => void;
-    const started = new Promise<void>((resolve) => { entered = resolve; });
-    const stalled = new Promise<void>((resolve) => { resume = resolve; });
+    const started = new Promise<void>((resolve): void => { entered = resolve; });
+    const stalled = new Promise<void>((resolve): void => { resume = resolve; });
     const second = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 4,
-      inspectTask: async () => { entered(); await stalled; return 'terminal' as const; },
+      inspectTask: async (): Promise<'terminal'> => { entered(); await stalled; return 'terminal'; },
     });
     const pending = second.reserve({ taskId: 'next', requestDigest: 'b'.repeat(64), ownerClientId: 'owner' });
     await started;

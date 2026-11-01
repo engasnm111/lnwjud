@@ -126,7 +126,10 @@ export class DurableShellTaskIndex {
     try {
       await this.ensureDirectories();
       // Native RPCs may time out; never await them under the shared index lock.
-      await this.withLock(async () => this.initializeUnlocked());
+      const ready = await readJson(this.readyPath);
+      if (!isReady(ready) || ready.markerFormatVersion !== 2) {
+        await this.withLock(async () => this.initializeUnlocked());
+      }
       const observations = await this.observeMarkersOutsideLock(input.taskId);
       return await this.withLock(async () => {
         await this.initializeUnlocked();
