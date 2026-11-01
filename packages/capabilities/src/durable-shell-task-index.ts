@@ -168,7 +168,7 @@ export class DurableShellTaskIndex {
             continue;
           }
           const inspection = await this.options.inspectTask(marker.record.taskId).catch(() => 'unknown' as const);
-          if (inspection === 'terminal') {
+          if (inspection === 'terminal' && marker.record.legacy !== true) {
             await this.removeMarker(marker.path);
             continue;
           }

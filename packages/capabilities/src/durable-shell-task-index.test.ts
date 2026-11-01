@@ -66,6 +66,10 @@ describe('DurableShellTaskIndex', () => {
     });
     await index.initialize();
     expect(await index.hasReservation(taskId, 'a'.repeat(64))).toBe(true);
+    const reopened = new DurableShellTaskIndex(root, { maxConcurrentTasks: 10, inspectTask: async (): Promise<'terminal'> => 'terminal' });
+    expect(await reopened.reserve({ taskId: 'another-import', requestDigest: 'b'.repeat(64), ownerClientId: 'new-owner', mutationKind: 'repository_import' }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.hasReservation(taskId, 'a'.repeat(64))).toBe(true);
     expect((await index.diagnostics()).blockers).toMatchObject([{
       marker_origin: 'legacy_unbound', terminal_proof: 'not_observed',
     }]);
