@@ -211,6 +211,9 @@ internal static class NativeTests
             Console.WriteLine("PASS protected service install layout and command quoting");
             TestServiceEndpointImagePolicy(root);
             Console.WriteLine("PASS protected service image may differ from the portable client and rejects hash or account mismatch");
+            if (!ServiceEndpointIdentity.IsServiceDefinitelyAbsent("lnwjud-absent-" + Guid.NewGuid().ToString("N")))
+                throw new Exception("Missing Windows service was not detected for bounded native RPC refusal");
+            Console.WriteLine("PASS absent Windows service is detected without waiting for the native RPC deadline");
             TestServiceAttemptLedger();
             Console.WriteLine("PASS service attempt ownership, reservation, and terminal release lifecycle");
             TestLaunchTokenFailureBeforeDispatch();

@@ -143,6 +143,26 @@ internal static class ServiceEndpointIdentity
         }
     }
 
+    // This is a negative availability check, never evidence that a service is trusted or running.
+    // An inaccessible SCM or any error other than ERROR_SERVICE_DOES_NOT_EXIST is inconclusive.
+    internal static bool IsServiceDefinitelyAbsent(string serviceName)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var manager = OpenSCManager(null, null, 1);
+        if (manager == 0) return false;
+        try
+        {
+            var service = OpenService(manager, serviceName, 4);
+            if (service != 0)
+            {
+                _ = CloseServiceHandle(service);
+                return false;
+            }
+            return Marshal.GetLastWin32Error() == 1060;
+        }
+        finally { _ = CloseServiceHandle(manager); }
+    }
+
     private sealed class PackagePin : IDisposable
     {
         internal FileStream Image { get; }
