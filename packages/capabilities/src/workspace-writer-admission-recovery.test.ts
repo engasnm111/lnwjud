@@ -394,6 +394,7 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
       owner: { clientId, sessionId: 'session-1', workspaceId },
     }, digest);
 
+    await (f.store as unknown as { activeIndex: { initialize: () => Promise<void> } }).activeIndex.initialize();
     f.mock.setPhase(3, { targetPid: 4567 }); // running initially
     const taskDir = path.join(f.taskDirectory, taskId);
     await mkdir(taskDir, { recursive: true });
@@ -628,6 +629,7 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
       owner: { clientId, sessionId: 'session-old', workspaceId },
     }, digest);
 
+    await (f.store as unknown as { activeIndex: { initialize: () => Promise<void> } }).activeIndex.initialize();
     f.mock.setPhase(3, { targetPid: 3456 }); // running
     const taskDir = path.join(f.taskDirectory, taskId);
     await mkdir(taskDir, { recursive: true });
