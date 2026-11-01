@@ -17,6 +17,32 @@ afterEach(async () => {
 });
 
 describe('DurableShellTaskIndex', () => {
+  it('preserves the safe index lock contention cause for the caller', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-contention-diagnostic-'));
+    temporaryRoots.push(root);
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 1, inspectTask: async () => 'active' as const });
+    await index.initialize();
+    await writeFile(path.join(root, '.index', 'v1', 'index.lock'), JSON.stringify({
+      version: 1, pid: process.pid, acquiredAt: new Date().toISOString(),
+    }));
+
+    // Advance only the clock used by the lock deadline, without waiting ten real seconds.
+    const start = Date.now();
+    let ticks = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => start + (ticks++ * 10_001));
+    try {
+      expect(await index.reserve({
+        taskId: 'blocked', requestDigest: 'a'.repeat(64), ownerClientId: 'owner',
+      })).toMatchObject({
+        ok: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Durable task index lock is busy', recoverable: true },
+      });
+    } finally {
+      clock.mockRestore();
+    }
+    expect(await index.hasReservation('blocked', 'a'.repeat(64))).toBe(false);
+  });
+
   it('keeps index diagnostics available while another reservation waits for native/task observation', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-nonblocking-inspection-'));
     temporaryRoots.push(root);

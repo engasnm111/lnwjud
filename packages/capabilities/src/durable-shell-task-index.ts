@@ -218,8 +218,11 @@ export class DurableShellTaskIndex {
         }
         return ok({ activeTasks: activeTasks + 1, created: true, markerPath });
       });
-    } catch {
-      return err(appError('INTERNAL_ERROR', 'Durable task capacity could not be reserved', true));
+    } catch (error: unknown) {
+      // This fixed diagnostic is safe to surface; all other internal failures remain opaque.
+      const message = error instanceof Error && error.message === 'Durable task index lock is busy'
+        ? 'Durable task index lock is busy' : 'Durable task capacity could not be reserved';
+      return err(appError('INTERNAL_ERROR', message, true));
     }
   }
 
