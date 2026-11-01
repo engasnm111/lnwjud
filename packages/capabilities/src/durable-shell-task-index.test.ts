@@ -17,6 +17,54 @@ afterEach(async () => {
 });
 
 describe('DurableShellTaskIndex', () => {
+  it('keeps index diagnostics available while another reservation waits for native/task observation', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-nonblocking-inspection-'));
+    temporaryRoots.push(root);
+    const first = new DurableShellTaskIndex(root, { maxConcurrentTasks: 4, inspectTask: async () => 'active' as const });
+    expect(await first.reserve({ taskId: 'existing', requestDigest: 'a'.repeat(64), ownerClientId: 'owner' })).toMatchObject({ ok: true });
+
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const stalled = new Promise<void>((resolve) => { resume = resolve; });
+    const second = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 4,
+      inspectTask: async () => { entered(); await stalled; return 'active' as const; },
+    });
+    const pending = second.reserve({ taskId: 'next', requestDigest: 'b'.repeat(64), ownerClientId: 'owner' });
+    await started;
+    try {
+      // Would deadlock if native/task inspection were still inside withLock.
+      expect((await second.diagnostics()).unresolved_reservations).toBe(1);
+    } finally {
+      resume();
+    }
+    expect(await pending).toMatchObject({ ok: true, value: { created: true } });
+  });
+
+  it('does not reclaim a marker replaced while terminal evidence is in flight', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-terminal-race-'));
+    temporaryRoots.push(root);
+    const first = new DurableShellTaskIndex(root, { maxConcurrentTasks: 4, inspectTask: async () => 'active' as const });
+    expect(await first.reserve({ taskId: 'original', requestDigest: 'a'.repeat(64), ownerClientId: 'owner' })).toMatchObject({ ok: true });
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const stalled = new Promise<void>((resolve) => { resume = resolve; });
+    const second = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 4,
+      inspectTask: async () => { entered(); await stalled; return 'terminal' as const; },
+    });
+    const pending = second.reserve({ taskId: 'next', requestDigest: 'b'.repeat(64), ownerClientId: 'owner' });
+    await started;
+    const marker = path.join(root, '.index', 'v1', 'active', createHash('sha256').update('original').digest('hex') + '.json');
+    const original = JSON.parse(await readFile(marker, 'utf8')) as Record<string, unknown>;
+    await writeFile(marker, JSON.stringify({ ...original, requestDigest: 'c'.repeat(64) }));
+    resume();
+    expect(await pending).toMatchObject({ ok: true });
+    expect(JSON.parse(await readFile(marker, 'utf8'))).toMatchObject({ requestDigest: 'c'.repeat(64) });
+  });
+
   it('upgrades mixed legacy markers in place while baseline readers fail closed to current records', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-v2-migration-'));
     temporaryRoots.push(root);

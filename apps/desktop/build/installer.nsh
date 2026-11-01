@@ -19,6 +19,16 @@
         SetErrorLevel $0
         Abort
     ${endIf}
+  ${else}
+    ; Per-user installs cannot register the required LocalSystem containment service.
+    ; Fail a silent installation instead of reporting a protected install that cannot function.
+    IfSilent unsupportedPerUserSilent 0
+    MessageBox MB_ICONEXCLAMATION|MB_OK "Current-user mode cannot install the protected Windows containment service. Managed tasks will remain unavailable. For managed tasks, restart setup and select All Users."
+    Goto acknowledgedPerUserMode
+    unsupportedPerUserSilent:
+      SetErrorLevel 125
+      Abort
+    acknowledgedPerUserMode:
   ${endIf}
 
   ; Resolve the shortcut from the actual end-user install directory at install time.

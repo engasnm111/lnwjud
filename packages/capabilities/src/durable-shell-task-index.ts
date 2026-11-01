@@ -125,6 +125,9 @@ export class DurableShellTaskIndex {
     }
     try {
       await this.ensureDirectories();
+      // Native RPCs may time out; never await them under the shared index lock.
+      await this.withLock(async () => this.initializeUnlocked());
+      const observations = await this.observeMarkersOutsideLock(input.taskId);
       return await this.withLock(async () => {
         await this.initializeUnlocked();
         await this.ensureJournalUnlocked();
@@ -152,8 +155,11 @@ export class DurableShellTaskIndex {
           if (marker.record === undefined) {
             return err(appError('CONFLICT', 'A managed writer reservation is unreadable; resolve its state before launching another writer', true));
           }
+          const observed = observations.get(marker.path);
+          const unchanged = observed !== undefined && JSON.stringify(observed.record) === JSON.stringify(marker.record);
+          const nativeTerminated = unchanged && observed.nativeTerminated;
           if (marker.record.mutationKind === 'opaque_contained_process') {
-            if (await this.hasVerifiedNativeTermination(marker.record)) {
+            if (nativeTerminated) {
               await this.removeMarker(marker.path);
               continue;
             }
@@ -163,11 +169,11 @@ export class DurableShellTaskIndex {
             count(marker.record);
             continue;
           }
-          if (marker.record.nativeBinding !== undefined && await this.hasVerifiedNativeTermination(marker.record)) {
+          if (marker.record.nativeBinding !== undefined && nativeTerminated) {
             await this.removeMarker(marker.path);
             continue;
           }
-          const inspection = await this.options.inspectTask(marker.record.taskId).catch(() => 'unknown' as const);
+          const inspection = unchanged ? observed.inspection : 'unknown' as const;
           if (inspection === 'terminal' && marker.record.legacy !== true) {
             await this.removeMarker(marker.path);
             continue;
@@ -217,12 +223,16 @@ export class DurableShellTaskIndex {
   public async release(taskId: string, requestDigest: string | null): Promise<void> {
     if (!isSafeTaskId(taskId) || (requestDigest !== null && !/^[a-f0-9]{64}$/i.test(requestDigest))) return;
     await this.ensureDirectories();
+    const markerPath = this.markerPath(taskId);
+    const observed = await readMarker(markerPath);
+    if (observed?.taskId !== taskId || observed.requestDigest !== requestDigest) return;
+    const needsNativeProof = observed.mutationKind === 'opaque_contained_process' || observed.nativeBinding !== undefined;
+    const terminal = !needsNativeProof || await this.hasVerifiedNativeTermination(observed);
+    if (!terminal) return;
     await this.withLock(async () => {
-      const markerPath = this.markerPath(taskId);
       const marker = await readMarker(markerPath);
-      if (marker?.taskId !== taskId || marker.requestDigest !== requestDigest) return;
-      if ((marker.mutationKind === 'opaque_contained_process' || marker.nativeBinding !== undefined)
-        && !await this.hasVerifiedNativeTermination(marker)) return;
+      if (marker?.taskId !== taskId || marker.requestDigest !== requestDigest
+        || JSON.stringify(marker) !== JSON.stringify(observed)) return;
       await this.removeMarker(markerPath);
     }).catch(() => undefined);
   }
@@ -333,6 +343,32 @@ export class DurableShellTaskIndex {
   private async ensureDirectories(): Promise<void> {
     await mkdir(this.rootDirectory, { recursive: true });
     await mkdir(this.activeDirectory, { recursive: true });
+  }
+
+  private async observeMarkersOutsideLock(excludedTaskId: string): Promise<Map<string, {
+    record: MarkerRecord;
+    nativeTerminated: boolean;
+    inspection: 'active' | 'terminal' | 'missing' | 'unknown';
+  }>> {
+    const observations = new Map<string, {
+      record: MarkerRecord;
+      nativeTerminated: boolean;
+      inspection: 'active' | 'terminal' | 'missing' | 'unknown';
+    }>();
+    const markers = await this.readMarkers();
+    // Bound native-RPC fan-out, particularly when the Windows service is missing.
+    for (let offset = 0; offset < markers.length; offset += 4) {
+      await Promise.all(markers.slice(offset, offset + 4).map(async (marker) => {
+        const record = marker.record;
+        if (record === undefined || record.taskId === excludedTaskId) return;
+        const needsNativeProof = record.mutationKind === 'opaque_contained_process' || record.nativeBinding !== undefined;
+        const nativeTerminated = needsNativeProof ? await this.hasVerifiedNativeTermination(record) : false;
+        const inspection = record.mutationKind === 'opaque_contained_process' ? 'unknown' as const
+          : await this.options.inspectTask(record.taskId).catch(() => 'unknown' as const);
+        observations.set(marker.path, { record, nativeTerminated, inspection });
+      }));
+    }
+    return observations;
   }
 
   private async hasVerifiedNativeTermination(marker: MarkerRecord): Promise<boolean> {

@@ -12,6 +12,13 @@ describe('Windows installer scope regression', () => {
     expect(builderConfig).not.toContain('selectPerMachineByDefault: false');
   });
 
+  it('warns about missing protected service in per-user installs and rejects unattended degraded installs', () => {
+    expect(installerScript).toContain('Current-user mode cannot install the protected Windows containment service');
+    expect(installerScript).toContain('IfSilent unsupportedPerUserSilent 0');
+    expect(installerScript).toContain('SetErrorLevel 125');
+    expect(installerScript).toContain('acknowledgedPerUserMode:');
+  });
+
   it('keeps silent update uninstall from waiting on the user-data prompt', () => {
     const silentGuard = installerScript.indexOf('IfSilent keepData 0');
     const prompt = installerScript.indexOf('MessageBox MB_YESNO|MB_ICONQUESTION');
