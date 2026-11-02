@@ -46,7 +46,11 @@ describe('MCP tool registry', () => {
       const mutation = registry.invoke('edit_file', {
         workspaceId: 'workspace-a', path: 'file.ts', oldText: 'a', newText: 'b',
       });
-      await started;
+      const dispatch = await Promise.race([
+        started.then(() => ({ entered: true as const })),
+        mutation.then((response) => ({ entered: false as const, response })),
+      ]);
+      expect(dispatch).toEqual({ entered: true });
       expect(await lease.acquire('workspace-a', 'other-client', 'other-session', 120))
         .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
       finish();
