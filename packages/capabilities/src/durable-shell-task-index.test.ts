@@ -73,7 +73,7 @@ describe('DurableShellTaskIndex', () => {
     const initial = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 4,
       inspectTask: async () => 'active' as const,
-      verifyContainedTermination: async () => false,
+      verifyContainedTermination: async (): Promise<boolean> => false,
     });
     expect(await initial.reserve({
       taskId: 'native-existing', requestDigest: 'a'.repeat(64), ownerClientId: 'owner',
