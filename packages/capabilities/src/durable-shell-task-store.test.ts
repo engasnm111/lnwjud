@@ -776,11 +776,11 @@ describe('durable shell background tasks', () => {
       ], { timeout: 3_500 }).then(
         ({ stdout }) => stdout,
         (error: unknown) => {
-          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return '';
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return undefined;
           throw error;
         },
       );
-      return parsePosixProcessProbe(output).state !== 'gone';
+      return output !== undefined && parsePosixProcessProbe(output).state !== 'gone';
     }, { timeout: 10_000, interval: 100 }).toBe(false);
 
     await expect(backend.execute({ operation: 'status', task_id: taskId })).resolves.toMatchObject({
