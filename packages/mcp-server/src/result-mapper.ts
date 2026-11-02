@@ -41,7 +41,6 @@ export function mapResult<T>(result: Result<T>): McpToolResponse {
 }
 
 export function mapError(error: AppError): McpToolResponse {
-  // Expose only the fixed, already-sanitized index contention diagnostic.
   const message = error.code === 'INTERNAL_ERROR' && error.message !== 'Durable task index lock is busy'
     ? 'Operation failed' : error.message;
   return {

@@ -2258,7 +2258,6 @@ async function installDownloadedUpdate(runtime: DesktopRuntime, offer: Downloade
   );
 }
 
-// Read-only update discovery is independent of native installation trust.
 async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
   if (!app.isPackaged) {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePackagedOnly, canInstall: false });

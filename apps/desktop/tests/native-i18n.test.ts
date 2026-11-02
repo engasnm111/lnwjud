@@ -47,7 +47,7 @@ describe('native main-process i18n', () => {
     expect(english.updaterInstallConfirmDetail).toContain('reopen automatically');
   });
 
-  it('keeps a missing native updater authority visibly unavailable in either locale', () => {
+  it('keeps installation unavailable when update discovery lacks native transaction authority', () => {
     const thai = nativeMessages('th');
     const english = nativeMessages('en');
     const status: UpdateStatus = {
@@ -56,7 +56,6 @@ describe('native main-process i18n', () => {
     };
     expect(localizedUpdateStatusMessage(status, 'th')).toBe(thai.updaterUnavailableTransactionAuthority);
     expect(localizedUpdateStatusMessage(status, 'en')).toBe(english.updaterUnavailableTransactionAuthority);
-    // The check itself is usable: only the installation transaction is held.
     const discovered = { ...status, phase: 'available' as const, availableVersion: '5.9.2' };
     expect(localizedUpdateStatusMessage(discovered, 'th')).toBe(thai.updaterUnavailableTransactionAuthority);
     expect(localizedUpdateStatusMessage(discovered, 'en')).toBe(english.updaterUnavailableTransactionAuthority);

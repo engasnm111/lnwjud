@@ -26,7 +26,6 @@ describe('DurableShellTaskIndex', () => {
       version: 1, pid: process.pid, acquiredAt: new Date().toISOString(),
     }));
 
-    // Advance only the clock used by the lock deadline, without waiting ten real seconds.
     const start = Date.now();
     let ticks = 0;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => start + (ticks++ * 10_001));
@@ -60,7 +59,6 @@ describe('DurableShellTaskIndex', () => {
     const pending = second.reserve({ taskId: 'next', requestDigest: 'b'.repeat(64), ownerClientId: 'owner' });
     await started;
     try {
-      // Would deadlock if native/task inspection were still inside withLock.
       expect((await second.diagnostics()).unresolved_reservations).toBe(1);
     } finally {
       resume();

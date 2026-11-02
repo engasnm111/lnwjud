@@ -4,14 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { OperatorUpdateIntent, UpdateStatusEventRevision } from '../src/renderer/operator-update-intent.js';
 
 describe('titlebar update notification', () => {
-  it('advances a titlebar-initiated update only once and never installs from ordinary update status events', () => {
+  it('ignores a second titlebar click while update intent is pending and never installs from ordinary status events', () => {
     const intent = new OperatorUpdateIntent();
     expect(intent.onStatus({ phase: 'ready' })).toBe('none');
     expect(intent.start()).toBe(true);
     expect(intent.onStatus({ phase: 'checking' })).toBe('none');
     expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
-    // A second titlebar click while the first download is pending must not
-    // reset the one-shot intent or enqueue another download.
     expect(intent.start()).toBe(false);
     expect(intent.onStatus({ phase: 'available' })).toBe('none');
     expect(intent.onStatus({ phase: 'downloading' })).toBe('none');

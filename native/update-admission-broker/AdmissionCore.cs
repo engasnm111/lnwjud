@@ -58,7 +58,6 @@ internal sealed class AdmissionCore : IDisposable
         var oldRevision = Parse(previous.Bytes).Revision;
         if (next.Predecessor != previous.Digest || oldRevision == ulong.MaxValue || next.Revision != oldRevision + 1)
             throw new Refusal("ADMISSION_RECOVERY_CONFLICT");
-        // A staged snapshot does not retain the native authority that produced it.
         throw new Refusal("ADMISSION_RECOVERY_UNVERIFIED");
     }
 

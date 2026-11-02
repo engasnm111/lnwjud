@@ -66,8 +66,6 @@ internal static class Program
                 try { Console.WriteLine(rpcFailure); }
                 catch { }
             }
-            // The installer must distinguish a rejected protected service setup
-            // from an unknown failure, without disclosing file paths or exception details.
             if (args.Length == 1 && (args[0] == "service-install" || args[0] == "service-uninstall"))
             {
                 try { Console.WriteLine(ServiceFailureReason(failure, args[0] == "service-install")); }

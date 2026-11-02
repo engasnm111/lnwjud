@@ -142,12 +142,11 @@ internal static class ReleaseAuthorizationV2
         if (snapshot.HighestAcceptedSequence < oldSequence) throw new Refusal("RELEASE_TRUST_STATE_INVALID");
         var versionOrder = StableVersion.Parse(ReleaseValues.Text(newRelease, "version"))
             .CompareTo(StableVersion.Parse(ReleaseValues.Text(oldRelease, "version")));
+        var sameVersion = versionOrder == 0;
         var sameArtifact = ReleaseValues.Text(newRelease.GetProperty("artifact"), "sha256")
             == ReleaseValues.Text(oldRelease.GetProperty("artifact"), "sha256");
-        // A signed, higher-sequence build may refresh the same semantic version,
-        // but cannot replay the identical installed artifact or downgrade.
         if (newSequence <= oldSequence || newSequence <= snapshot.HighestAcceptedSequence
-            || versionOrder < 0 || (versionOrder == 0 && sameArtifact))
+            || versionOrder < 0 || (sameVersion && sameArtifact))
             throw new Refusal("RELEASE_REPLAY_OR_DOWNGRADE");
         if (ReleaseValues.Text(candidate.Payload.GetProperty("recovery"), "previousReleaseIdentity") != baseline.IdentitySha256)
             throw new Refusal("RELEASE_BASELINE_IDENTITY_INVALID");

@@ -110,8 +110,6 @@ internal static class ReleaseMetadataTests
         Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 99 }) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_STATE_INVALID" }, "replay floor cannot fall below committed baseline");
         Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 100 }) is ReleaseMetadataVerification.Authenticated, "next candidate advances from committed baseline");
         Check(fixture.Verify(snapshot: fixture.Snapshot with { HighestAcceptedSequence = 101 }) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_REPLAY_OR_DOWNGRADE" }, "accepted sequence cannot be reoffered after rollback");
-        // A signed, higher-sequence build with a different package digest may refresh
-        // the same semantic version, but must not replay the installed package.
         var sameVersionRefresh = (JsonObject)fixture.Offer.DeepClone();
         sameVersionRefresh["version"] = "5.9.0";
         sameVersionRefresh["artifact"]!["name"] = ArtifactName("5.9.0", "win32", "x64");

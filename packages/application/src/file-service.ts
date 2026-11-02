@@ -252,8 +252,6 @@ export class FileService {
     mutation: () => Promise<Result<T>>,
   ): Promise<Result<T>> {
     if (this.writerAdmission === undefined) return mutation();
-    // An admission exception cannot authorize a file mutation. A reservation
-    // may still be held; no cleanup is permitted without terminal proof.
     const admitted = await this.writerAdmission.enter({
       actorClientId: actor.clientId,
       workspaceId: workspaceId ?? 'implicit-workspace',

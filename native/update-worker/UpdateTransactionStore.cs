@@ -122,7 +122,6 @@ internal sealed class UpdateTransactionStore : IDisposable
         var staged = DecodeTransaction(stagedFile);
         ValidateTransactionSuccessor(current, currentFile?.Digest ?? "none", selection, staged);
         ValidateSelectionPhase(staged, selection);
-        // A checksum and successor relation do not authenticate the writer or its effects.
         throw new Refusal("UPDATE_TRANSACTION_PUBLICATION_UNVERIFIED");
     }
 
