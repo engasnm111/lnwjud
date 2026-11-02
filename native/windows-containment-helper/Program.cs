@@ -60,6 +60,11 @@ internal static class Program
         }
         catch (Exception failure)
         {
+            if (args.Length == 2 && args[0] == "service-rpc" && failure is ServiceEndpointPackageMismatchException)
+            {
+                try { Console.WriteLine("{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_PACKAGE_MISMATCH\"}"); }
+                catch { }
+            }
             // The installer must distinguish a rejected protected service setup
             // from an unknown failure, without disclosing file paths or exception details.
             if (args.Length == 1 && (args[0] == "service-install" || args[0] == "service-uninstall"))

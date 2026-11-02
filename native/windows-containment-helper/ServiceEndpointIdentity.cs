@@ -372,6 +372,11 @@ internal static class ServiceEndpointIdentity
         ValidateHash(expectedSha256);
         image.Position = 0;
         if (!String.Equals(Convert.ToHexString(SHA256.HashData(image)), expectedSha256, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("SERVICE_ENDPOINT_PACKAGE_MISMATCH");
+            throw new ServiceEndpointPackageMismatchException();
     }
+}
+
+internal sealed class ServiceEndpointPackageMismatchException : IOException
+{
+    internal ServiceEndpointPackageMismatchException() : base("SERVICE_ENDPOINT_PACKAGE_MISMATCH") { }
 }
