@@ -157,11 +157,12 @@ describe('MVP release verification gate', () => {
     expect(buildJob).toContain("if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'");
     expect(buildJob).toContain('windows-release-${{ github.sha }}');
     expect(requiredJob).toContain('name: Authoritative Release Verification (Windows)');
-    expect(requiredJob).toContain('needs: [windows-release-tests, windows-release-build]');
+    expect(requiredJob).toContain('needs: [windows-release-tests, windows-release-build, update-package-attestation]');
     expect(requiredJob).toContain('WORKSPACE_TESTS_RESULT: ${{ needs.windows-release-tests.result }}');
     expect(requiredJob).toContain('BUILD_RESULT: ${{ needs.windows-release-build.result }}');
-    expect(requiredJob).toContain('test "$WORKSPACE_TESTS_RESULT" = success');
-    expect(requiredJob).toContain('test "$BUILD_RESULT" = success');
+    expect(requiredJob).toContain('process.env.WORKSPACE_TESTS_RESULT === "success"');
+    expect(requiredJob).toContain('process.env.BUILD_RESULT === "success"');
+    expect(requiredJob).toContain('process.env.UPDATE_PACKAGE_RESULT === (process.env.UPDATE_PACKAGE_REQUIRED === "true" ? "success" : "skipped")');
   });
 
   it('does not repeat the full Windows verification gate on direct non-main pushes', async () => {
@@ -238,7 +239,9 @@ describe('MVP release verification gate', () => {
     expect(release).toContain('--commit "$sha"');
     expect((release.match(/--branch main/g) ?? []).length).toBe(1);
     expect(release).toContain('candidate="$(find_ci_run push)"');
-    expect(release).toContain('candidate="$(find_ci_run workflow_dispatch)"');
+    expect(release).toContain('scope.automaticUpdaterEnabled !== false');
+    const dispatchFallback = release.match(/if \[\[ -z "\$candidate" && "\$automatic_updater_enabled" != "true" \]\]; then\s+candidate="\$\(find_ci_run workflow_dispatch\)"\s+fi/);
+    expect(dispatchFallback).not.toBeNull();
     expect(release).toContain('gh run download');
     expect(release).toContain('windows-release-$sha');
     expect(release).not.toContain('native-darwin-arm64-$sha');

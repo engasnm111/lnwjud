@@ -927,18 +927,31 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  update-package-attestation:
+    name: Attested Windows Update Package
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: ./.github/workflows/update-package-builder.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
   verify:
     # Preserve the branch-protection check name. Both Windows jobs must pass
     # before this required status can succeed or a release can use the run.
     name: Authoritative Release Verification (Windows)
     if: always() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
-    needs: [windows-release-tests, windows-release-build]
+    needs: [windows-release-tests, windows-release-build, update-package-attestation]
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.16.0'
       - name: Require complete Windows release gates
         env:
           WORKSPACE_TESTS_RESULT: ${{ needs.windows-release-tests.result }}
           BUILD_RESULT: ${{ needs.windows-release-build.result }}
-        run: |
-          test "$WORKSPACE_TESTS_RESULT" = success
-          test "$BUILD_RESULT" = success
+          UPDATE_PACKAGE_REQUIRED: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+          UPDATE_PACKAGE_RESULT: ${{ needs.update-package-attestation.result }}
+        run: >-
+          node --input-type=module -e 'process.exitCode = process.env.WORKSPACE_TESTS_RESULT === "success" && process.env.BUILD_RESULT === "success" && process.env.UPDATE_PACKAGE_RESULT === (process.env.UPDATE_PACKAGE_REQUIRED === "true" ? "success" : "skipped") ? 0 : 1'

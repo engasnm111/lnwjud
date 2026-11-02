@@ -78,12 +78,14 @@ jobs:
 
           # Tag pushes can race protected main CI. Wait for that exact-SHA run
           # instead of creating a false-red Release before CI has finished.
+          automatic_updater_enabled="$(node -e "const scope = require('./config/release-scope.json'); process.stdout.write(String(scope.automaticUpdaterEnabled !== false))")"
           run_id=""
           run_attempt=""
           ci_wait_deadline=$((SECONDS + 3600))
           while [[ -z "$run_id" ]]; do
             candidate="$(find_ci_run push)"
-            if [[ -z "$candidate" ]]; then
+            # Dispatch cannot provide the main-push package attestation required by updater releases.
+            if [[ -z "$candidate" && "$automatic_updater_enabled" != "true" ]]; then
               candidate="$(find_ci_run workflow_dispatch)"
             fi
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { link, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -11,6 +12,7 @@ import { TextDecoder } from 'node:util';
 import { assertGeneratedChanges, builderContext, inspectSubjectDirectory, validateGeneratedIdentitySources, validateProvenance } from './builder-control.mjs';
 
 const workflow = (await readFile(new URL('../../.github/workflows/update-package-builder.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
+const mainWorkflow = (await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const bootstrap = workflow.split("node --input-type=module -e @'\n")[1]?.split("\n          '@")[0];
 const environment = () => ({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwjud', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main',
   GITHUB_REF_PROTECTED: 'true',
@@ -31,6 +33,35 @@ async function resolve(environmentOverride = {}, metadata = runMetadata(), respo
     } }, { timeout: 1000 });
   return { ...observed, exitCode: process.exitCode };
 }
+
+test('protected main CI requires successful update package attestations before release verification', () => {
+  const jobStart = mainWorkflow.indexOf('\n  update-package-attestation:');
+  const verifyStart = mainWorkflow.indexOf('\n  verify:');
+  assert.ok(jobStart >= 0 && verifyStart > jobStart);
+  const attestationJob = mainWorkflow.slice(jobStart, verifyStart);
+  const verifyJob = mainWorkflow.slice(verifyStart);
+  const verificationCommand = verifyJob.match(/run: >-\r?\n\s+node --input-type=module -e '([^'\r\n]+)'/)?.[1];
+  assert.match(attestationJob, /if: github\.ref == 'refs\/heads\/main' && github\.event_name == 'push'/);
+  assert.match(attestationJob, /uses: \.\/\.github\/workflows\/update-package-builder\.yml/);
+  assert.match(attestationJob, /id-token: write[\s\S]*attestations: write/);
+  assert.match(verifyJob, /needs: \[windows-release-tests, windows-release-build, update-package-attestation\]/);
+  assert.match(verifyJob, /UPDATE_PACKAGE_REQUIRED: \$\{\{ github\.ref == 'refs\/heads\/main' && github\.event_name == 'push' \}\}/);
+  assert.match(verifyJob, /UPDATE_PACKAGE_RESULT: \$\{\{ needs\.update-package-attestation\.result \}\}/);
+  assert.match(verifyJob, /node-version: '24\.16\.0'/);
+  assert.equal(typeof verificationCommand, 'string');
+  for (const [required, result, workspace, build, expected] of [
+    ['true', 'success', 'success', 'success', 0], ['true', 'failure', 'success', 'success', 1],
+    ['true', 'cancelled', 'success', 'success', 1], ['true', 'skipped', 'success', 'success', 1],
+    ['false', 'skipped', 'success', 'success', 0], ['false', 'success', 'success', 'success', 1],
+    ['false', 'failure', 'success', 'success', 1], ['false', 'cancelled', 'success', 'success', 1],
+    ['true', 'success', 'failure', 'success', 1], ['true', 'success', 'success', 'failure', 1],
+  ]) {
+    const actual = spawnSync(process.execPath, ['--input-type=module', '-e', verificationCommand], {
+      encoding: 'utf8', env: { ...process.env, WORKSPACE_TESTS_RESULT: workspace, BUILD_RESULT: build, UPDATE_PACKAGE_REQUIRED: required, UPDATE_PACKAGE_RESULT: result },
+    });
+    assert.equal(actual.status, expected, `required=${required}, result=${result}, workspace=${workspace}, build=${build}`);
+  }
+});
 
 test('actual inline resolver binds caller, run/attempt and literal immutable referenced builder SHA', async () => {
   assert.equal(typeof bootstrap, 'string');

@@ -295,9 +295,11 @@ branch as mergeable/up to date under the configured protection rules.
 Merge through the protected-branch path and record the resulting exact `main`
 SHA. The authoritative CI for that exact SHA normally comes from the `main`
 push. If no push-event run is created because the protected merge credential
-suppresses downstream Actions, manually dispatch `ci.yml` with `main` as the
-ref and verify that the run's `headSha` is still the exact SHA being prepared
-for release. In either case, the run must complete all of these target boundaries:
+suppresses downstream Actions, a manual-install release may dispatch `ci.yml`
+with `main` as the ref and verify that the run's `headSha` is still the exact
+SHA being prepared for release. A release that enables automatic updates must
+use the main-push run because it carries the update package attestation. In
+either case, the run must complete all of these target boundaries:
 
 - The full Windows workspace suite and the remaining Windows release gate both
   succeed. The build job uploads `windows-release-<main merge SHA>` and their
@@ -330,12 +332,13 @@ After all exact-SHA `main` jobs succeed, verify that the intended `vX.Y.Z` tag
 does not already exist. Create the tag at that exact `main` SHA and push it.
 Never force-replace an existing public release tag.
 
-The Release workflow checks the package-version/tag match, locates the
-successful exact-SHA `ci.yml` push run or, when necessary, the successful
-exact-main `workflow_dispatch` fallback, downloads every target artifact,
-and invokes `apps/desktop/scripts/verify-release-evidence.mjs` with an explicit
-installer directory for each target. `scripts/collect-release-assets.mjs`
-then produces:
+The Release workflow checks the package-version/tag match and locates a
+successful exact-SHA `ci.yml` push run. For manual-install releases only, it may
+use a successful exact-main `workflow_dispatch` fallback; automatic-update
+releases require the push run and its update package attestation. It downloads
+every target artifact and invokes `apps/desktop/scripts/verify-release-evidence.mjs`
+with an explicit installer directory for each target.
+`scripts/collect-release-assets.mjs` then produces:
 
 - target packages and updater metadata;
 - `PROVENANCE-<platform>-<arch>.json` and
