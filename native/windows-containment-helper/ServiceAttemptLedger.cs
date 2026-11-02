@@ -212,6 +212,24 @@ internal sealed class ServiceAttemptLedger
         }
     }
 
+    internal ServiceAttemptObservation MarkJobCollisionBeforeLaunch(ServiceAttemptIdentity identity, string callerSid, ContainedProcess.JobNameInUseException proof)
+    {
+        ArgumentNullException.ThrowIfNull(proof);
+        lock (gate)
+        {
+            var entry = Require(identity, callerSid);
+            if (!proof.Consume(identity)
+                || entry.Phase is not (ServiceAttemptPhase.DispatchCommitted or ServiceAttemptPhase.TerminationUnknown)
+                || entry.TargetPid is not null || !entry.ReservationHeld)
+                throw new IOException("ATTEMPT_PHASE_CONFLICT");
+            entry.Phase = ServiceAttemptPhase.LaunchNotStarted;
+            entry.Reason = "CONTAINMENT_JOB_NAME_IN_USE";
+            Persist();
+            _ = Release(identity, callerSid);
+            return Observe(entry);
+        }
+    }
+
     internal ServiceAttemptObservation MarkUnknown(ServiceAttemptIdentity identity, string callerSid, string reason)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Length > 128) throw new IOException("ATTEMPT_REASON_INVALID");

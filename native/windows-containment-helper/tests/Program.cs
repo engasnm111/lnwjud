@@ -50,6 +50,7 @@ internal static class NativeTests
                 case "pipe-revert-failure-tests": TestPipeRevertFailure(); return 0;
                 case "job-collision-test": TestJobCollision(); return 0;
                 case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
+                case "job-collision-release-test": TestJobCollisionRelease(); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
@@ -221,6 +222,7 @@ internal static class NativeTests
             Console.WriteLine("PASS protected service image may differ from the portable client and rejects hash or account mismatch");
             TestJobCollision();
             TestUnknownCancelCollision();
+            TestJobCollisionRelease();
             Console.WriteLine("PASS named Job collisions do not affect independent processes");
             if (!ServiceEndpointIdentity.IsServiceDefinitelyAbsent("lnwjud-absent-" + Guid.NewGuid().ToString("N")))
                 throw new Exception("Missing Windows service was not detected for bounded native RPC refusal");
@@ -1870,6 +1872,62 @@ internal static class NativeTests
                 throw new Exception($"Unknown cancellation affected an independent Job or released its reservation: active={active}, phase={result.Phase}, held={result.ReservationHeld}");
         }
         finally { first.Cancel(); }
+    }
+
+    private static void TestJobCollisionRelease()
+    {
+        var prefix = "lnwjud-test-" + Guid.NewGuid().ToString("N");
+        var ownerName = ContainedProcess.GetJobName(prefix + ".a");
+        var attemptId = prefix + "_a";
+        if (ownerName != ContainedProcess.GetJobName(attemptId)) throw new Exception("Collision fixture did not collide");
+        var marker = Path.Combine(Path.GetTempPath(), prefix + "-unexpected-target");
+        var directory = Path.Combine(Path.GetTempPath(), prefix + "-ledger");
+        Directory.CreateDirectory(directory);
+        using var first = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: ownerName);
+        try
+        {
+            var callerSid = WindowsIdentity.GetCurrent().User!.Value;
+            var request = NewServiceAttemptRequest(attemptId, Path.Combine(Path.GetTempPath(), prefix)) with { AuthenticatedCallerSid = callerSid };
+            try
+            {
+                using var unexpected = ContainedProcess.Start(Executable, ["mark", marker], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: ownerName, attemptIdentity: request.Identity);
+                throw new Exception("Expected a Job collision");
+            }
+            catch (ContainedProcess.JobNameInUseException proof)
+            {
+                var other = NewServiceAttemptRequest(prefix + ".a", request.ReservationKey).Identity;
+                if (proof.Consume(other) || !proof.Consume(request.Identity) || proof.Consume(request.Identity))
+                    throw new Exception("Collision proof was not bound to one attempt and one use");
+            }
+            var store = Path.Combine(directory, "attempts.json");
+            var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store)); ledger.Prepare(request);
+            var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher: true);
+            runtime.BeforeCollisionRecovery = () =>
+            {
+                runtime.StopAsync().GetAwaiter().GetResult();
+                if (ledger.Inspect(request.Identity, callerSid).Phase != ServiceAttemptPhase.TerminationUnknown)
+                    throw new Exception("Service stop did not reach the unknown-launch race");
+            };
+            var operation = new ServiceProcessOperation("run_process", Executable, ["mark", marker], Environment.CurrentDirectory, 10_000, false, EnvironmentBlock, 1024);
+            var result = runtime.Run(request.Identity, callerSid, request.OperationDigest, operation, 0);
+            if (result.Phase != ServiceAttemptPhase.LaunchNotStarted || result.ReservationHeld || first.ActiveProcesses == 0 || File.Exists(marker))
+                throw new Exception("Proven prelaunch Job collision did not release only its own never-started reservation");
+            var persisted = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store)).Inspect(request.Identity, callerSid);
+            if (persisted.Phase != ServiceAttemptPhase.LaunchNotStarted || persisted.ReservationHeld)
+                throw new Exception("Collision recovery was not durable");
+            if (runtime.Run(request.Identity, callerSid, request.OperationDigest, operation, 0).Phase != ServiceAttemptPhase.LaunchNotStarted)
+                throw new Exception("Collision tombstone allowed a launch retry");
+            var next = ledger.Prepare(NewServiceAttemptRequest(prefix + "-next", request.ReservationKey) with { AuthenticatedCallerSid = callerSid });
+            if (next.Phase != ServiceAttemptPhase.Prepared) throw new Exception("Released collision reservation blocked a new attempt");
+
+            var heldRequest = request with { HoldForImport = true };
+            var heldLedger = new ServiceAttemptLedger(); heldLedger.Prepare(heldRequest);
+            var heldRuntime = new WindowsServiceProcessRuntime(heldLedger, useCurrentUserTestLauncher: true);
+            var held = heldRuntime.Run(heldRequest.Identity, callerSid, heldRequest.OperationDigest, operation, 0);
+            if (held.Phase != ServiceAttemptPhase.LaunchNotStarted || !held.ReservationHeld || first.ActiveProcesses == 0)
+                throw new Exception("Collision recovery released an import reservation");
+        }
+        finally { first.Cancel(); if (File.Exists(marker)) File.Delete(marker); Directory.Delete(directory, recursive: true); }
     }
 
     private static void TestAuthenticatedPipeCallerCapture() =>

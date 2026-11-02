@@ -42,6 +42,9 @@ internal sealed class WindowsServiceProcessRuntime
     private readonly object gate = new();
     private readonly Dictionary<string, RuntimeAttempt> attempts = new(StringComparer.Ordinal);
     private readonly Queue<string> completedAttempts = new();
+#if NATIVE_CONTAINMENT_TESTS
+    internal Action? BeforeCollisionRecovery { get; set; }
+#endif
 
     internal WindowsServiceProcessRuntime(ServiceAttemptLedger ledger, bool useCurrentUserTestLauncher = false)
     {
@@ -92,6 +95,7 @@ internal sealed class WindowsServiceProcessRuntime
             attempt.PersistOutput();
         }
 
+        var launchReturned = false;
         try
         {
             ContainedProcess process;
@@ -109,7 +113,7 @@ internal sealed class WindowsServiceProcessRuntime
                     stderrPipe.ClientSafePipeHandle.DangerousGetHandle(),
                     () => attempt.CancelRequested,
                     pid => _ = ledger.MarkRunning(identity, callerSid, checked((int)pid)),
-                    jobName);
+                    jobName, identity);
             }
             else
 #endif
@@ -125,14 +129,29 @@ internal sealed class WindowsServiceProcessRuntime
                     stderrPipe.ClientSafePipeHandle.DangerousGetHandle(),
                     () => attempt.CancelRequested,
                     pid => _ = ledger.MarkRunning(identity, callerSid, checked((int)pid)),
-                    jobName);
+                    jobName, identity);
             }
 
+            launchReturned = true;
             attempt.Attach(process);
             attempt.DisposeLocalClientHandles();
             attempt.StartOutputReaders();
             attempt.MonitorTask = Task.Run(() => MonitorAsync(attempt));
             return ledger.Inspect(identity, callerSid);
+        }
+        catch (ContainedProcess.JobNameInUseException proof) when (!launchReturned)
+        {
+#if NATIVE_CONTAINMENT_TESTS
+            BeforeCollisionRecovery?.Invoke();
+#endif
+            attempt.DisposeLocalClientHandles();
+            attempt.DisposePipes();
+            lock (gate)
+            {
+                attempt.MarkTerminal();
+                attempts.Remove(identity.AttemptId);
+            }
+            return ledger.MarkJobCollisionBeforeLaunch(identity, callerSid, proof);
         }
         catch
         {
