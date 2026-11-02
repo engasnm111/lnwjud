@@ -33,7 +33,7 @@ internal static class WindowsContainmentServiceClient
         // instead of multiplying the 10-second pipe retry by every held reservation.
         // An inconclusive SCM probe retains the existing authenticated pipe path.
         if (ServiceEndpointIdentity.IsServiceDefinitelyAbsent(WindowsContainmentService.ServiceName))
-            throw new IOException("SERVICE_ENDPOINT_NOT_INSTALLED");
+            throw new ServiceEndpointNotInstalledException();
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(requestTimeout);

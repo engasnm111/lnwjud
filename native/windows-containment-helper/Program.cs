@@ -60,9 +60,10 @@ internal static class Program
         }
         catch (Exception failure)
         {
-            if (args.Length == 2 && args[0] == "service-rpc" && failure is ServiceEndpointPackageMismatchException)
+            var rpcFailure = ServiceRpcFailureEnvelope(failure);
+            if (args.Length == 2 && args[0] == "service-rpc" && rpcFailure is not null)
             {
-                try { Console.WriteLine("{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_PACKAGE_MISMATCH\"}"); }
+                try { Console.WriteLine(rpcFailure); }
                 catch { }
             }
             // The installer must distinguish a rejected protected service setup
@@ -76,6 +77,13 @@ internal static class Program
             return 125;
         }
     }
+
+    internal static string? ServiceRpcFailureEnvelope(Exception failure) => failure switch
+    {
+        ServiceEndpointPackageMismatchException => "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_PACKAGE_MISMATCH\"}",
+        ServiceEndpointNotInstalledException => "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_NOT_INSTALLED\"}",
+        _ => null,
+    };
 
     internal static string ServiceFailureReason(Exception failure, bool install)
     {

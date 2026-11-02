@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { isServicePackageMismatch } from './windows-native-rpc-failure.js';
+import { serviceEndpointFailure, serviceResponseFailure } from './windows-native-rpc-failure.js';
 import type { WindowsContainedLaunch, WindowsContainedLaunchInput } from './windows-contained-launch.js';
 
 export interface NativeAttemptBinding {
@@ -312,7 +312,8 @@ export class WindowsNativeAuthority {
       validateBinding(input.binding);
       return toObservation(await this.client.request<unknown>({ protocol: 3, command: 'inspect', identity: input.binding }), input.binding);
     } catch (error) {
-      return unknown(input.binding, error instanceof Error && error.message === 'SERVICE_ENDPOINT_PACKAGE_MISMATCH'
+      return unknown(input.binding, error instanceof Error && (error.message === 'SERVICE_ENDPOINT_PACKAGE_MISMATCH'
+        || error.message === 'SERVICE_ENDPOINT_NOT_INSTALLED')
         ? error.message : 'NATIVE_SERVICE_PROOF_UNAVAILABLE');
     }
   }
@@ -397,11 +398,10 @@ class ProcessWindowsContainmentServiceClient implements WindowsContainmentServic
       completed = true;
       if (overflow || outputBytes === 0) throw new Error('NATIVE_SERVICE_RPC_FAILED');
       const output = Buffer.concat(chunks, outputBytes);
-      if (exitCode !== 0) throw new Error(isServicePackageMismatch(exitCode, output)
-        ? 'SERVICE_ENDPOINT_PACKAGE_MISMATCH' : 'NATIVE_SERVICE_RPC_FAILED');
+      if (exitCode !== 0) throw new Error(serviceEndpointFailure(exitCode, output) ?? 'NATIVE_SERVICE_RPC_FAILED');
       const envelope: unknown = JSON.parse(output.toString('utf8'));
       if (!isRecord(envelope) || envelope.protocol !== 3 || typeof envelope.ok !== 'boolean') throw new Error('NATIVE_SERVICE_RESPONSE_INVALID');
-      if (!envelope.ok) throw new Error(typeof envelope.error === 'string' ? envelope.error : 'NATIVE_SERVICE_RPC_FAILED');
+      if (!envelope.ok) throw new Error(serviceResponseFailure(envelope.error));
       if (!Object.hasOwn(envelope, 'result')) throw new Error('NATIVE_SERVICE_RESPONSE_INVALID');
       return envelope.result as T;
     } finally { if (!completed) child.kill(); pinned.close(); }

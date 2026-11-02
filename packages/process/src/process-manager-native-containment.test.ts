@@ -138,6 +138,17 @@ describe.skipIf(process.platform !== 'win32')('ProcessManager service observatio
     expect(f.manager.status(binding.taskId)).toMatchObject({ ok: true, value: { state: 'running' } });
   });
 
+  it('reports an absent service while retaining the reservation', async () => {
+    const f = fixture();
+    await f.manager.start(spec, undefined, undefined, f.release);
+    f.observe.mockRejectedValue(new Error('SERVICE_ENDPOINT_NOT_INSTALLED'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(f.manager.status(binding.taskId)).toMatchObject({ ok: true, value: {
+      state: 'termination_unverified', error: 'Native containment service was not found; reservation retained',
+    } });
+    expect(f.release).not.toHaveBeenCalled();
+  });
+
   it('attaches recovery without executable resolution, preparation or submission', async () => {
     const f = fixture(); f.observe.mockResolvedValue(terminal);
     expect(await f.manager.attach({ ...spec, executable: 'missing-program' }, undefined, f.release)).toMatchObject({ ok: true, value: { state: 'exited' } });

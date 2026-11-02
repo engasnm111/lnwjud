@@ -380,3 +380,8 @@ internal sealed class ServiceEndpointPackageMismatchException : IOException
 {
     internal ServiceEndpointPackageMismatchException() : base("SERVICE_ENDPOINT_PACKAGE_MISMATCH") { }
 }
+
+internal sealed class ServiceEndpointNotInstalledException : IOException
+{
+    internal ServiceEndpointNotInstalledException() : base("SERVICE_ENDPOINT_NOT_INSTALLED") { }
+}

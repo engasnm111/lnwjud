@@ -359,6 +359,11 @@ internal static class NativeTests
 
     private static void TestServiceFailureReason()
     {
+        if (Program.ServiceRpcFailureEnvelope(new ServiceEndpointNotInstalledException()) != "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_NOT_INSTALLED\"}"
+            || Program.ServiceRpcFailureEnvelope(new ServiceEndpointPackageMismatchException()) != "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_PACKAGE_MISMATCH\"}"
+            || Program.ServiceRpcFailureEnvelope(new IOException("SERVICE_ENDPOINT_NOT_INSTALLED")) is not null
+            || Program.ServiceRpcFailureEnvelope(new IOException("C:\\private\\secret")) is not null)
+            throw new Exception("SERVICE_RPC_FAILURE_ENVELOPE_INVALID");
         static void AssertReason(Exception failure, bool install, string expected)
         {
             if (Program.ServiceFailureReason(failure, install) != expected)
