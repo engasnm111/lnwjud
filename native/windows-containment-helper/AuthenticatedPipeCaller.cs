@@ -52,6 +52,10 @@ internal sealed class AuthenticatedPipeCaller : IDisposable
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool RevertToSelf();
 
+#if NATIVE_CONTAINMENT_TESTS
+    internal static Func<bool>? RevertForTests;
+#endif
+
     [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "GetTokenInformation")]
     private static extern bool GetRawTokenInformation(nint token, int informationClass, nint information, uint informationLength, out uint returnLength);
 
@@ -146,11 +150,12 @@ internal sealed class AuthenticatedPipeCaller : IDisposable
         }
         finally
         {
-            if (!RevertToSelf())
-            {
-                primaryToken?.Dispose();
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "PIPE_CLIENT_REVERT_FAILED");
-            }
+#if NATIVE_CONTAINMENT_TESTS
+            var reverted = RevertForTests?.Invoke() ?? RevertToSelf();
+#else
+            var reverted = RevertToSelf();
+#endif
+            if (!reverted) Environment.FailFast("PIPE_CLIENT_REVERT_FAILED");
         }
 
         if (primaryToken is null || primaryToken.IsInvalid || sid is null)

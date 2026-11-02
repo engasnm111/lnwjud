@@ -42,6 +42,12 @@ internal static class NativeTests
                 case "updater-crash-boundaries": UpdaterCrashBoundaryFixture.RunSuite(); return 0;
                 case "pipe-acl": ServicePipeSecurityTests.Run(); return 0;
                 case "authenticated-pipe-caller": TestAuthenticatedPipeCallerCapture(); return 0;
+                case "pipe-revert-failure-child":
+                    AuthenticatedPipeCaller.RevertForTests = () => { Console.WriteLine("REVERT_FAILURE_INJECTED"); Console.Out.Flush(); return false; };
+                    try { TestAuthenticatedPipeCallerCapture(); }
+                    catch { Console.WriteLine("REVERT_FAILURE_CAUGHT"); return 1; }
+                    Console.WriteLine("REVERT_FAILURE_RETURNED"); return 0;
+                case "pipe-revert-failure-tests": TestPipeRevertFailure(); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
@@ -243,6 +249,8 @@ internal static class NativeTests
             Console.WriteLine("PASS service pipe refuses pre-existing pipe instances");
             TestAuthenticatedPipeCallerCapture();
             Console.WriteLine("PASS pipe caller SID and primary token come from the connected kernel-authenticated client");
+            TestPipeRevertFailure();
+            Console.WriteLine("PASS failed impersonation revert terminates the test process");
             TestCallerLaunchSessionPolicy();
             Console.WriteLine("PASS headless launch session policy preserves caller security and fails closed on mismatch");
             TestOutputWaitsForReservationRelease().GetAwaiter().GetResult();
@@ -1812,6 +1820,30 @@ internal static class NativeTests
 
     private static void TestAuthenticatedPipeCallerCapture() =>
         TestAuthenticatedPipeCallerCaptureAsync().GetAwaiter().GetResult();
+
+    private static void TestPipeRevertFailure()
+    {
+        using var child = Process.Start(new ProcessStartInfo(Executable) {
+            ArgumentList = { "pipe-revert-failure-child" }, UseShellExecute = false,
+            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+        }) ?? throw new Exception("Unable to start revert failure test process");
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        if (!child.WaitForExit(15_000))
+        {
+            child.Kill();
+            if (!child.WaitForExit(5_000)) throw new Exception("Revert failure test process could not be terminated");
+            throw new Exception("Revert failure test process did not exit");
+        }
+        if (!Task.WaitAll([stdout, stderr], 5_000)) throw new Exception("Revert failure test output did not close");
+        var output = stdout.GetAwaiter().GetResult();
+        _ = stderr.GetAwaiter().GetResult();
+        if (child.ExitCode == 0 || !output.Contains("REVERT_FAILURE_INJECTED", StringComparison.Ordinal)
+            || output.Contains("REVERT_FAILURE_CAUGHT", StringComparison.Ordinal)
+            || output.Contains("REVERT_FAILURE_RETURNED", StringComparison.Ordinal)
+            || output.Contains("PIPE_CAPTURE_DONE", StringComparison.Ordinal))
+            throw new Exception("Failed impersonation revert did not terminate the process");
+    }
 
     private static async Task TestAuthenticatedPipeCallerCaptureAsync()
     {
