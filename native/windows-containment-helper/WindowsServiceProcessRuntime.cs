@@ -167,7 +167,11 @@ internal sealed class WindowsServiceProcessRuntime
     {
         var observation = ledger.Inspect(identity, callerSid);
         if (observation.Phase is ServiceAttemptPhase.TerminalVerified or ServiceAttemptPhase.LaunchNotStarted)
-            return observation;
+        {
+            if (!observation.ReservationHeld) return observation;
+            _ = ledger.Release(identity, callerSid);
+            return ledger.Inspect(identity, callerSid);
+        }
 
         RuntimeAttempt? activeAttempt;
         lock (gate) attempts.TryGetValue(identity.AttemptId, out activeAttempt);

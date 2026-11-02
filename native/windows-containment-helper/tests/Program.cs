@@ -51,6 +51,7 @@ internal static class NativeTests
                 case "job-collision-test": TestJobCollision(); return 0;
                 case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
                 case "job-collision-release-test": TestJobCollisionRelease(); return 0;
+                case "terminal-release-recovery-test": TestTerminalReleaseRecovery(); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
@@ -242,6 +243,7 @@ internal static class NativeTests
             TestServiceImportTimeoutFence(root).GetAwaiter().GetResult();
             Console.WriteLine("PASS native timeout persists import cancellation before stopping its outer Job");
             TestDurableServiceAttemptLedger();
+            TestTerminalReleaseRecovery();
             Console.WriteLine("PASS crash recovery keeps unknown reservations and persists terminal release");
             TestServiceRestartAndJobReconciliation();
             Console.WriteLine("PASS service restart reconciles dead jobs, preserves live descendants, and cancels cleanly");
@@ -1034,6 +1036,66 @@ internal static class NativeTests
             return;
         }
         throw new Exception("Expected " + typeof(T).Name + " with " + expectedMessage);
+    }
+
+    private static void TestTerminalReleaseRecovery()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lnwjud-terminal-release-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var store = Path.Combine(directory, "attempts.json");
+        var sid = WindowsIdentity.GetCurrent().User!.Value;
+        try
+        {
+            var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            var terminal = NewServiceAttemptRequest("terminal", Path.Combine(directory, "terminal")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(terminal);
+            ledger.TryCommitDispatch(terminal.Identity, sid, terminal.OperationDigest);
+            ledger.RecordTerminal(terminal.Identity, sid, ServiceProcessOutcome.Completed, 0, 0);
+            var held = NewServiceAttemptRequest("import", Path.Combine(directory, "import")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(held);
+            ledger.TryCommitDispatch(held.Identity, sid, held.OperationDigest);
+            ledger.RecordTerminal(held.Identity, sid, ServiceProcessOutcome.Completed, 0, 0);
+            var unknown = NewServiceAttemptRequest("unknown", Path.Combine(directory, "unknown")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(unknown);
+            ledger.TryCommitDispatch(unknown.Identity, sid, unknown.OperationDigest);
+            var abort = NewServiceAttemptRequest("abort", Path.Combine(directory, "abort")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(abort);
+            ledger.AbortBeforeLaunch(abort);
+            var retry = NewServiceAttemptRequest("retry", Path.Combine(directory, "retry")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(retry);
+            ledger.TryCommitDispatch(retry.Identity, sid, retry.OperationDigest);
+            ledger.RecordTerminal(retry.Identity, sid, ServiceProcessOutcome.Completed, 0, 0);
+
+            var recovered = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            var runtime = new WindowsServiceProcessRuntime(recovered, useCurrentUserTestLauncher: true);
+            var otherSid = sid == "S-1-5-18" ? "S-1-5-19" : "S-1-5-18";
+            ExpectFailure<UnauthorizedAccessException>(() => runtime.Inspect(terminal.Identity, otherSid), "ATTEMPT_OWNER_MISMATCH");
+            ExpectFailure<UnauthorizedAccessException>(() => runtime.Inspect(terminal.Identity with { TaskId = "other" }, sid), "ATTEMPT_OWNER_MISMATCH");
+            if (runtime.Inspect(terminal.Identity, sid).ReservationHeld || runtime.Inspect(abort.Identity, sid).ReservationHeld)
+                throw new Exception("Proven terminal or never-started reservation remained held after restart");
+            if (!runtime.Inspect(held.Identity, sid).ReservationHeld || !runtime.Inspect(unknown.Identity, sid).ReservationHeld)
+                throw new Exception("Recovery released an import hold or unknown attempt");
+            var reopened = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (reopened.Inspect(terminal.Identity, sid).ReservationHeld || reopened.Inspect(abort.Identity, sid).ReservationHeld)
+                throw new Exception("Recovered reservation release was not durable");
+            using (var locked = new FileStream(store, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                try { runtime.Inspect(retry.Identity, sid); throw new Exception("Failed release persistence was accepted"); }
+                catch (IOException) { }
+            }
+            var retryLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (!retryLedger.Inspect(retry.Identity, sid).ReservationHeld)
+                throw new Exception("Failed release persistence lost the held reservation");
+            var retryRuntime = new WindowsServiceProcessRuntime(retryLedger, useCurrentUserTestLauncher: true);
+            Parallel.For(0, 8, _ =>
+            {
+                if (retryRuntime.Inspect(retry.Identity, sid).ReservationHeld)
+                    throw new Exception("Concurrent release recovery did not settle");
+            });
+            if (new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store)).Inspect(retry.Identity, sid).ReservationHeld)
+                throw new Exception("Retried release was not durable");
+        }
+        finally { Directory.Delete(directory, true); }
     }
 
     private static void TestDurableServiceAttemptLedger()
