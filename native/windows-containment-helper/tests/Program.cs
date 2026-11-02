@@ -52,6 +52,10 @@ internal static class NativeTests
                 case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
                 case "job-collision-release-test": TestJobCollisionRelease(); return 0;
                 case "terminal-release-recovery-test": TestTerminalReleaseRecovery(); return 0;
+                case "rpc-absent-child":
+                    WindowsContainmentServiceClient.ServiceNameForAbsenceTest = "lnwjud-absent-" + Guid.NewGuid().ToString("N");
+                    return Program.Main(["service-rpc", new string('0', 64)]).GetAwaiter().GetResult();
+                case "rpc-absent-test": TestAbsentServiceRpc(); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
@@ -227,6 +231,7 @@ internal static class NativeTests
             Console.WriteLine("PASS named Job collisions do not affect independent processes");
             if (!ServiceEndpointIdentity.IsServiceDefinitelyAbsent("lnwjud-absent-" + Guid.NewGuid().ToString("N")))
                 throw new Exception("Missing Windows service was not detected for bounded native RPC refusal");
+            TestAbsentServiceRpc();
             Console.WriteLine("PASS absent Windows service is detected without waiting for the native RPC deadline");
             TestServiceAttemptLedger();
             Console.WriteLine("PASS service attempt ownership, reservation, and terminal release lifecycle");
@@ -355,6 +360,24 @@ internal static class NativeTests
                 File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
             Directory.Delete(absolute, true);
         }
+    }
+
+    private static void TestAbsentServiceRpc()
+    {
+        using var child = Process.Start(new ProcessStartInfo(Executable)
+        {
+            ArgumentList = { "rpc-absent-child" }, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        }) ?? throw new Exception("Unable to start missing-service RPC fixture");
+        var request = Encoding.UTF8.GetBytes("{\"protocol\":3,\"command\":\"inspect\"}");
+        var header = new byte[4]; System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(header, request.Length);
+        child.StandardInput.BaseStream.Write(header); child.StandardInput.BaseStream.Write(request); child.StandardInput.Close();
+        var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
+        if (!child.WaitForExit(15000)) { child.Kill(); child.WaitForExit(); throw new Exception("Missing-service RPC fixture timed out"); }
+        if (!Task.WaitAll([stdout, stderr], 5000) || child.ExitCode != 125
+            || stdout.Result != "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_NOT_INSTALLED\"}" + Environment.NewLine
+            || stderr.Result != "NATIVE_CONTAINMENT_UNRESOLVED" + Environment.NewLine)
+            throw new Exception("Missing-service RPC did not return the bounded diagnostic");
     }
 
     private static void TestServiceFailureReason()
