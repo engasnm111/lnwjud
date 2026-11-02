@@ -48,6 +48,8 @@ internal static class NativeTests
                     catch { Console.WriteLine("REVERT_FAILURE_CAUGHT"); return 1; }
                     Console.WriteLine("REVERT_FAILURE_RETURNED"); return 0;
                 case "pipe-revert-failure-tests": TestPipeRevertFailure(); return 0;
+                case "job-collision-test": TestJobCollision(); return 0;
+                case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
@@ -217,6 +219,9 @@ internal static class NativeTests
             Console.WriteLine("PASS protected service install layout and command quoting");
             TestServiceEndpointImagePolicy(root);
             Console.WriteLine("PASS protected service image may differ from the portable client and rejects hash or account mismatch");
+            TestJobCollision();
+            TestUnknownCancelCollision();
+            Console.WriteLine("PASS named Job collisions do not affect independent processes");
             if (!ServiceEndpointIdentity.IsServiceDefinitelyAbsent("lnwjud-absent-" + Guid.NewGuid().ToString("N")))
                 throw new Exception("Missing Windows service was not detected for bounded native RPC refusal");
             Console.WriteLine("PASS absent Windows service is detected without waiting for the native RPC deadline");
@@ -1154,7 +1159,7 @@ internal static class NativeTests
             storePath = Path.Combine(directory, "scenario2-attempts.json");
             // Scenario 2: Live Descendants - Process is still running when service restarts.
             // runtime.Inspect detects ActiveProcesses > 0, keeps TerminationUnknown and holds reservation.
-            // runtime.Cancel terminates the named job object, drains active processes to 0, transitions to TerminalVerified (Cancelled), and releases reservation.
+            // Without the retained Job handle, cancellation records intent but must not terminate by name.
             {
                 var persistence = new ServiceAttemptLedgerPersistence(storePath);
                 var initialLedger = new ServiceAttemptLedger(persistence);
@@ -1196,12 +1201,20 @@ internal static class NativeTests
                 ExpectFailure<IOException>(() => restartLedger.Prepare(conflictingRequest), "WRITER_RESERVATION_BUSY");
 
                 var cancelObs = restartRuntime.Cancel(identity, callerSid);
-                if (cancelObs.Phase != ServiceAttemptPhase.TerminalVerified || cancelObs.ActiveProcesses != 0 || cancelObs.ReservationHeld)
-                    throw new Exception("Cancel on orphaned job did not reach terminal verified or release reservation");
+                if (cancelObs.Phase != ServiceAttemptPhase.TerminationUnknown || !cancelObs.ReservationHeld
+                    || cancelObs.Reason != "SERVICE_CANCELLATION_HANDLE_UNAVAILABLE")
+                    throw new Exception("Cancellation without the retained Job handle did not remain unknown");
+                ExpectFailure<IOException>(() => restartLedger.Prepare(conflictingRequest), "WRITER_RESERVATION_BUSY");
+
+                // The original test runtime still owns the actual Job handle and can stop it safely.
+                initialRuntime.StopAsync().GetAwaiter().GetResult();
+                var settledAfterOwnerStop = restartRuntime.Inspect(identity, callerSid);
+                if (settledAfterOwnerStop.Phase != ServiceAttemptPhase.TerminalVerified || settledAfterOwnerStop.ReservationHeld)
+                    throw new Exception("Verified empty Job was not reconciled after its owner stopped it");
 
                 var admitted = restartLedger.Prepare(conflictingRequest);
                 if (admitted.Phase != ServiceAttemptPhase.Prepared || !admitted.ReservationHeld)
-                    throw new Exception("Conflicting writer was not admitted after job cancellation");
+                    throw new Exception("Conflicting writer was not admitted after verified Job termination");
             }
 
             storePath = Path.Combine(directory, "scenario3-attempts.json");
@@ -1816,6 +1829,47 @@ internal static class NativeTests
         var response = new byte[length];
         await client.ReadExactlyAsync(response, timeout.Token);
         return System.Text.Json.JsonDocument.Parse(response);
+    }
+
+    private static void TestJobCollision()
+    {
+        var prefix = "lnwjud-test-" + Guid.NewGuid().ToString("N");
+        var firstName = ContainedProcess.GetJobName(prefix + ".a");
+        var secondName = ContainedProcess.GetJobName(prefix + "_a");
+        if (firstName != secondName) throw new Exception("Collision fixture did not collide");
+        using var first = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: firstName);
+        try
+        {
+            ExpectFailure<IOException>(() => {
+                using var second = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: secondName);
+            }, "CONTAINMENT_JOB_NAME_IN_USE");
+            if (first.ActiveProcesses == 0) throw new Exception("Refused Job collision affected the original child");
+        }
+        finally { first.Cancel(); }
+    }
+
+    private static void TestUnknownCancelCollision()
+    {
+        var prefix = "lnwjud-test-" + Guid.NewGuid().ToString("N");
+        var firstName = ContainedProcess.GetJobName(prefix + ".a");
+        var secondId = prefix + "_a";
+        if (firstName != ContainedProcess.GetJobName(secondId)) throw new Exception("Collision fixture did not collide");
+        using var first = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: firstName);
+        try
+        {
+            var callerSid = WindowsIdentity.GetCurrent().User!.Value;
+            var request = NewServiceAttemptRequest(secondId, Path.Combine(Path.GetTempPath(), prefix)) with { AuthenticatedCallerSid = callerSid };
+            var ledger = new ServiceAttemptLedger(); ledger.Prepare(request);
+            if (!ledger.TryCommitDispatch(request.Identity, callerSid, request.OperationDigest)) throw new Exception("Fixture dispatch was not committed");
+            ledger.MarkUnknown(request.Identity, callerSid, "TEST_UNKNOWN_LAUNCH");
+            var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher: true);
+            var result = runtime.Cancel(request.Identity, callerSid);
+            var active = first.ActiveProcesses;
+            if (active == 0 || result.Phase != ServiceAttemptPhase.TerminationUnknown || !result.ReservationHeld
+                || result.Reason != "SERVICE_CANCELLATION_HANDLE_UNAVAILABLE")
+                throw new Exception($"Unknown cancellation affected an independent Job or released its reservation: active={active}, phase={result.Phase}, held={result.ReservationHeld}");
+        }
+        finally { first.Cancel(); }
     }
 
     private static void TestAuthenticatedPipeCallerCapture() =>

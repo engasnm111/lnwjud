@@ -205,30 +205,7 @@ internal sealed class WindowsServiceProcessRuntime
             return ledger.Inspect(identity, callerSid);
         }
 
-        var jobName = ContainedProcess.GetJobName(identity.AttemptId);
-        var probe = ContainedProcess.QueryJob(jobName);
-        if (probe.Status == ContainedProcess.JobProbeStatus.Active)
-        {
-            if (ContainedProcess.TerminateJobByName(jobName, 15000))
-            {
-                _ = ledger.RecordTerminal(identity, callerSid, ServiceProcessOutcome.Cancelled, 1, 0);
-                _ = ledger.Release(identity, callerSid);
-            }
-            else
-            {
-                _ = ledger.MarkUnknown(identity, callerSid, "SERVICE_TERMINATION_UNVERIFIED");
-            }
-        }
-        else if (probe.Status is ContainedProcess.JobProbeStatus.NotFound or ContainedProcess.JobProbeStatus.Empty
-            && observation.TargetPid is > 0)
-        {
-            // A cancellation requested after the Job vanished does not prove
-            // that cancellation caused termination or that the target exited 0.
-            _ = ledger.RecordTerminal(identity, callerSid, ServiceProcessOutcome.Interrupted, 125, 0);
-            _ = ledger.Release(identity, callerSid);
-        }
-
-        return ledger.Inspect(identity, callerSid);
+        return observation with { Reason = "SERVICE_CANCELLATION_HANDLE_UNAVAILABLE" };
     }
 
     internal ServiceOutputObservation ReadOutput(ServiceAttemptIdentity identity, string callerSid, ServiceOutputCursor? cursor = null)
