@@ -1422,6 +1422,22 @@ internal static class NativeTests
         var server = WindowsContainmentService.RunPipeServerAsync(pipeName, ledger, stopping.Token, useCurrentUserTestLauncher: true);
         try
         {
+            var terminalSid = WindowsIdentity.GetCurrent().User!.Value;
+            var terminalRequest = NewServiceAttemptRequest("rpc-terminal-recovery", Path.Combine(storeDirectory, "terminal-recovery")) with { AuthenticatedCallerSid = terminalSid };
+            ledger.Prepare(terminalRequest);
+            ledger.TryCommitDispatch(terminalRequest.Identity, terminalSid, terminalRequest.OperationDigest);
+            ledger.RecordTerminal(terminalRequest.Identity, terminalSid, ServiceProcessOutcome.Completed, 0, 0);
+            using (var recovered = await SendServiceRpcAsync(pipeName, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+                new { protocol = 3, command = "inspect", identity = terminalRequest.Identity },
+                new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase })))
+            {
+                if (!recovered.RootElement.GetProperty("ok").GetBoolean()
+                    || recovered.RootElement.GetProperty("result").GetProperty("reservationHeld").GetBoolean())
+                    throw new Exception("Authenticated inspect RPC did not recover a proven terminal reservation");
+            }
+            if (new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(storePath)).Inspect(terminalRequest.Identity, terminalSid).ReservationHeld)
+                throw new Exception("Authenticated inspect RPC release was not durable");
+
             var operation = new
             {
                 kind = "run_process",
