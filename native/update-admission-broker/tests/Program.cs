@@ -27,6 +27,8 @@ internal static class Program
         FileSystemAclExtensions.CreateDirectory(security, path); if (bootstrap) AdmissionCore.InitializeIsolated(StoreIdentity.Isolated(path)); return path;
     }
     private static NativeEvidence Evidence(SettlementKind kind, string id) => NativeEvidence.Isolated(kind, id);
+    private static string NewPermit(AdmissionGrant grant) => grant is AdmissionGrant.Granted created
+        ? created.PermitId : throw new Exception("Expected a new admission grant");
     private static Process Child(params string[] arguments)
     {
         var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -56,8 +58,27 @@ internal static class Program
             core.AfterStage = () => Environment.Exit(42);
             core.Close(UpdatePrincipal.Isolated("crash-update", 1), core.Status().Revision); return 12;
         }
-        try { Protocol(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
+        try { Protocol(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+    private static void DuplicateEntryRace()
+    {
+        var root = Root();
+        try
+        {
+            using var core = new AdmissionCore(StoreIdentity.Isolated(root));
+            var runtime = RuntimePrincipal.Isolated("duplicate-race"); var participant = core.Register(runtime);
+            using var start = new ManualResetEventSlim(false);
+            var first = Task.Run(() => { start.Wait(); return core.Enter(runtime, participant, 1, "call"); });
+            var second = Task.Run(() => { start.Wait(); return core.Enter(runtime, participant, 1, "call"); });
+            start.Set();
+            if (!Task.WaitAll([first, second], 10_000)) throw new Exception("Duplicate entry race did not finish");
+            var results = new[] { first.Result, second.Result };
+            Check(results.Count(result => result is AdmissionGrant.Granted) == 1
+                && results.Count(result => result is AdmissionGrant.ExistingRequiresReconciliation) == 1
+                && core.Status().HeldPermits == 1, "concurrent duplicate entry grants once and requires reconciliation");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void EpochBoundQuiescence()
     {
@@ -140,14 +161,18 @@ internal static class Program
             using (var core = new AdmissionCore(StoreIdentity.Isolated(root)))
             {
                 participant = core.Register(runtime); Check(core.Register(runtime) == participant, "register idempotence");
-                core.Enter(runtime, participant, 1, "call"); var revision = core.Status().Revision;
-                Check(core.Enter(runtime, participant, 1, "call") == $"{participant}.1" && core.Status().Revision == revision, "enter retry cannot duplicate work");
+                Check(NewPermit(core.Enter(runtime, participant, 1, "call")) == $"{participant}.1", "initial entry grants a permit"); var revision = core.Status().Revision;
+                Check(core.Enter(runtime, participant, 1, "call") is AdmissionGrant.ExistingRequiresReconciliation && core.Status().Revision == revision, "entry retry requires reconciliation");
+                Refuses(() => core.Enter(runtime, participant, 1, "background"), "ADMISSION_PERMIT_CONFLICT");
                 core.Close(owner, revision);
+                Check(core.Enter(runtime, participant, 1, "call") is AdmissionGrant.ExistingRequiresReconciliation, "closed admission never regrants an existing permit");
                 Refuses(() => core.Enter(runtime, participant, 2, "call"), "ADMISSION_CLOSED");
                 Refuses(() => core.Enter(other, participant, 1, "call"), "ADMISSION_PARTICIPANT_MISMATCH");
                 var quarantined = core.Register(other); Check(core.Status().UnquiescedParticipants == 1, "late participant quarantined");
                 Refuses(() => core.Enter(other, quarantined, 1, "startup"), "ADMISSION_PARTICIPANT_QUIESCENT");
-                core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1");
+                Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.Granted, "promotion grants a new job permit");
+                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "promotion retry with unverified parent requires reconciliation");
+                Refuses(() => core.Promote(runtime, participant, 2, "different-attempt", $"{participant}.1"), "ADMISSION_PERMIT_CONFLICT");
                 core.Settle(runtime, $"{participant}.1", Evidence(SettlementKind.OperationSettled, $"{participant}.1"));
                 Check(core.Status().HeldPermits == 1, "background job retains drain reservation");
                 Refuses(() => core.Settle(runtime, $"{participant}.2", Evidence(SettlementKind.OperationSettled, $"{participant}.2")), "ADMISSION_SETTLEMENT_UNPROVEN");
@@ -158,6 +183,7 @@ internal static class Program
             using (var core = new AdmissionCore(StoreIdentity.Isolated(root)))
             {
                 Check(core.Status().Phase == "closing" && core.Status().HeldPermits == 1, "restart retains closure and job");
+                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "restart does not regrant a held job");
                 core.Settle(runtime, $"{participant}.2", Evidence(SettlementKind.NativeJobZeroAndReleased, $"{participant}.2"));
                 Refuses(() => core.Seal(owner, core.Status().Revision), "ADMISSION_DRAIN_INCOMPLETE");
                 core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{core.Status().Epoch}"));
@@ -212,12 +238,12 @@ internal static class Program
                 participant = core.Register(runtime);
                 for (ulong sequence = 1; sequence <= 520; sequence++)
                 {
-                    var permit = core.Enter(runtime, participant, sequence, "call"); core.Settle(runtime, permit, Evidence(SettlementKind.OperationSettled, permit));
+                    var permit = NewPermit(core.Enter(runtime, participant, sequence, "call")); core.Settle(runtime, permit, Evidence(SettlementKind.OperationSettled, permit));
                 }
                 var records = AdmissionProtocol.Object(File.ReadAllBytes(Path.Combine(root, "admission.json")), AdmissionStore.MaximumJournalBytes);
                 Check(records["state"]!["permits"]!.AsObject().Count == 0 && core.Status().HeldPermits == 0, "more than512 completed calls compact without exhaustion");
                 Refuses(() => core.Enter(runtime, participant, 1, "call"), "ADMISSION_PERMIT_ALREADY_SETTLED");
-                var first = core.Enter(runtime, participant, 521, "call"); var second = core.Enter(runtime, participant, 522, "background");
+                var first = NewPermit(core.Enter(runtime, participant, 521, "call")); var second = NewPermit(core.Enter(runtime, participant, 522, "background"));
                 core.Settle(runtime, second, Evidence(SettlementKind.OperationSettled, second));
                 Check(core.Status().HeldPermits == 1, "out-of-order settlement retains unknown predecessor");
                 core.Settle(runtime, first, Evidence(SettlementKind.OperationSettled, first));

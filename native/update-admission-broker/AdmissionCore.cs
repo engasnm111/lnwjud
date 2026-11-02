@@ -4,6 +4,12 @@ using System.Text.Json.Nodes;
 namespace Lnwjud.UpdateAdmission;
 
 internal sealed record AdmissionStatus(string Phase, string Epoch, ulong Revision, string TransactionId, ulong Generation, int HeldPermits, int UnquiescedParticipants, string Digest);
+internal abstract record AdmissionGrant
+{
+    private AdmissionGrant() { }
+    internal sealed record Granted(string PermitId) : AdmissionGrant;
+    internal sealed record ExistingRequiresReconciliation : AdmissionGrant;
+}
 internal sealed record DrainReceipt(string Domain, string Epoch, string TransactionId, ulong Generation, ulong Revision, string Digest);
 
 [SupportedOSPlatform("windows")]
@@ -165,9 +171,9 @@ internal sealed class AdmissionCore : IDisposable
         return member;
     }
 
-    internal string Enter(RuntimePrincipal principal, string participant, ulong sequence, string kind) => AddPermit(principal, participant, sequence, kind, "", null);
-    internal string Promote(RuntimePrincipal principal, string participant, ulong sequence, string attemptId, string parent) => AddPermit(principal, participant, sequence, "job", attemptId, parent);
-    private string AddPermit(RuntimePrincipal principal, string participant, ulong sequence, string kind, string attempt, string? parent)
+    internal AdmissionGrant Enter(RuntimePrincipal principal, string participant, ulong sequence, string kind) => AddPermit(principal, participant, sequence, kind, "", null);
+    internal AdmissionGrant Promote(RuntimePrincipal principal, string participant, ulong sequence, string attemptId, string parent) => AddPermit(principal, participant, sequence, "job", attemptId, parent);
+    private AdmissionGrant AddPermit(RuntimePrincipal principal, string participant, ulong sequence, string kind, string attempt, string? parent)
     {
         lock (gate)
         {
@@ -178,7 +184,8 @@ internal sealed class AdmissionCore : IDisposable
             if (permits[id] is JsonObject old)
             {
                 if (Field(old, "participant") != participant || Field(old, "kind") != kind || Field(old, "attempt") != attempt) throw new Refusal("ADMISSION_PERMIT_CONFLICT");
-                if (Field(old, "status") != "held") throw new Refusal("ADMISSION_PERMIT_ALREADY_SETTLED"); return id;
+                if (Field(old, "status") != "held") throw new Refusal("ADMISSION_PERMIT_ALREADY_SETTLED");
+                return new AdmissionGrant.ExistingRequiresReconciliation();
             }
             var issued = AdmissionProtocol.Number(member, "issued");
             if (issued == ulong.MaxValue || sequence != issued + 1) throw new Refusal("ADMISSION_SEQUENCE_CONFLICT");
@@ -187,7 +194,7 @@ internal sealed class AdmissionCore : IDisposable
             if (parent is not null && (permits[parent] is not JsonObject owned || Field(owned, "participant") != participant || Field(owned, "status") != "held" || Field(owned, "kind") == "job")) throw new Refusal("ADMISSION_PARENT_INVALID");
             if (permits.Count == 512) throw new Refusal("ADMISSION_PERMIT_LIMIT");
             var next = (JsonObject)state.DeepClone(); ((JsonObject)next["permits"]!)[id] = new JsonObject { ["participant"] = participant, ["kind"] = kind, ["status"] = "held", ["attempt"] = attempt };
-            ((JsonObject)((JsonObject)next["participants"]!)[participant]!)["issued"] = AdmissionProtocol.Decimal(sequence); Save(next); return id;
+            ((JsonObject)((JsonObject)next["participants"]!)[participant]!)["issued"] = AdmissionProtocol.Decimal(sequence); Save(next); return new AdmissionGrant.Granted(id);
         }
     }
 
