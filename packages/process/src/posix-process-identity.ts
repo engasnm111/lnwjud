@@ -22,6 +22,7 @@ export function createPosixProcessIdentityProbe(platform: NodeJS.Platform): Posi
         encoding: 'utf8',
         timeout: 1_750,
         maxBuffer: 16 * 1024,
+        env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
       });
       const value = stdout.trim();
       if (value.length === 0) return null;
@@ -30,17 +31,14 @@ export function createPosixProcessIdentityProbe(platform: NodeJS.Platform): Posi
       const timestamp = new Date(parsed).toISOString();
       return ISO_UTC_MILLISECONDS.test(timestamp) ? timestamp : null;
     } catch (error: unknown) {
-      if (isMissingProcess(error)) return null;
+      try { process.kill(pid, 0); }
+      catch (probeError: unknown) {
+        if (typeof probeError === 'object' && probeError !== null && 'code' in probeError
+          && (probeError as { code: string }).code === 'ESRCH') return null;
+      }
       // An unavailable or malformed probe must fail closed.  Throwing keeps
       // the distinction from a process that has genuinely exited.
       throw new Error('POSIX process start identity could not be verified', { cause: error });
     }
   };
-}
-
-function isMissingProcess(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const value = error as { code?: unknown; stdout?: unknown };
-  if (typeof value.stdout === 'string' && value.stdout.trim().length > 0) return false;
-  return value.code === 1 || value.code === 'ESRCH' || value.code === 'ENOENT';
 }
