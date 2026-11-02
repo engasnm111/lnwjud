@@ -91,6 +91,7 @@ internal static class Program
         assertions += ReleaseBuildEvidenceTests.Run();
         assertions += UpdateTransactionJournalTests.Run();
         assertions += UpdateTransactionStoreTests.Run();
+        assertions += UnauthenticatedPublicationTests.Run();
         assertions += ReleaseMetadataTests.RunInterop(metadataFixture);
         assertions += ReleaseIdentityTests.Run(Path.Combine(Path.GetDirectoryName(metadataFixture)!, "release-identity-v1.json"));
         assertions += ReleaseAuthorizationV2Tests.Run(Path.Combine(Path.GetDirectoryName(metadataFixture)!, "authorization-v2.json"));
@@ -235,9 +236,7 @@ internal static class Program
         JsonObject recovered;
         JsonObject repeated;
         bool statusPreservedBytes;
-        bool publicationRemoved;
         bool selectionUnchanged;
-        UpdateTransactionJournal recoveredTransaction;
         byte[] transactionAfterRecovery;
 
         using (var child = new Child(root))
@@ -247,9 +246,7 @@ internal static class Program
                 && File.ReadAllBytes(transactionPath).SequenceEqual(publishedBytes);
 
             recovered = await child.Send(CommandLine("recover"));
-            publicationRemoved = !File.Exists(pendingPath);
             var recoveredBytes = File.ReadAllBytes(transactionPath);
-            recoveredTransaction = UpdateTransactionJournal.Decode(recoveredBytes, Installation);
             selectionUnchanged = File.ReadAllBytes(selectionPath).SequenceEqual(selectionBytes);
             transactionAfterRecovery = recoveredBytes;
 
@@ -261,14 +258,15 @@ internal static class Program
             "status holds a pending transaction publication");
         Check(statusPreservedBytes, "status preserves pending and published transaction bytes");
         Check(Kind(recovered) == "held" && result?["safeToStart"]?.GetValue<bool>() == false
-            && Reason(recovered) == "UPDATE_TRANSACTION_PENDING",
-            "recovery publishes a valid staged transition but holds before update effects: " + Describe(recovered));
-        Check(publicationRemoved, "recovery removes the resolved transaction staging file");
-        Check(recoveredTransaction == staged, "recovery publishes the exact canonical transaction successor");
-        Check(selectionUnchanged, "transaction publication recovery leaves the active slot unchanged");
-        Check(Kind(repeated) == "held" && Reason(repeated) == "UPDATE_TRANSACTION_PENDING"
-            && File.ReadAllBytes(transactionPath).SequenceEqual(transactionAfterRecovery),
-            "repeated recovery is idempotent and remains held");
+            && Reason(recovered) == "UPDATE_TRANSACTION_PUBLICATION_UNVERIFIED",
+            "recovery holds an unauthenticated staged transition: " + Describe(recovered));
+        Check(File.ReadAllBytes(pendingPath).SequenceEqual(pendingBytes)
+            && transactionAfterRecovery.SequenceEqual(publishedBytes) && selectionUnchanged,
+            "recovery preserves the staged, published, and selection bytes");
+        Check(Kind(repeated) == "held" && Reason(repeated) == "UPDATE_TRANSACTION_PUBLICATION_UNVERIFIED"
+            && File.ReadAllBytes(transactionPath).SequenceEqual(publishedBytes)
+            && File.ReadAllBytes(pendingPath).SequenceEqual(pendingBytes),
+            "repeated recovery preserves the unauthenticated stage");
     }
 
     private static async Task OwnershipAndProtocol()

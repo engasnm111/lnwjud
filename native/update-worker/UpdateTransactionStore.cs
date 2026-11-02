@@ -102,7 +102,7 @@ internal sealed class UpdateTransactionStore : IDisposable
         var selectionFile = io.Read("active-slot.json");
         var transaction = transactionFile is null ? null : DecodeTransaction(transactionFile);
         var selection = selectionFile is null ? null : DecodeSelection(selectionFile);
-        ReconcileSelection(transaction, transactionFile, selection);
+        ReconcileSelection(transaction, selection);
         transactionFile = io.Read("transaction.json");
         selectionFile = io.Read("active-slot.json");
         transaction = transactionFile is null ? null : DecodeTransaction(transactionFile);
@@ -122,9 +122,8 @@ internal sealed class UpdateTransactionStore : IDisposable
         var staged = DecodeTransaction(stagedFile);
         ValidateTransactionSuccessor(current, currentFile?.Digest ?? "none", selection, staged);
         ValidateSelectionPhase(staged, selection);
-        io.PublishStage("transaction.pending.json", "transaction.json", currentFile?.Digest ?? "none");
-        var published = ReadPublishedTransaction() ?? throw new Refusal("UPDATE_TRANSACTION_READBACK_MISSING");
-        if (published.Digest != staged.Digest) throw new Refusal("UPDATE_TRANSACTION_READBACK_CHANGED");
+        // A checksum and successor relation do not authenticate the writer or its effects.
+        throw new Refusal("UPDATE_TRANSACTION_PUBLICATION_UNVERIFIED");
     }
 
     private void RecoverSelectionPublication()
@@ -139,28 +138,15 @@ internal sealed class UpdateTransactionStore : IDisposable
             || staged.Generation != transaction.Generation || staged.TransactionId != transaction.TransactionId
             || !IsExpectedSelectionPublication(transaction, current, staged))
             throw new Refusal("UPDATE_SLOT_PUBLICATION_UNVERIFIED");
-        io.PublishStage("active-slot.pending.json", "active-slot.json", currentFile.Digest);
-        var published = ReadPublishedSelection() ?? throw new Refusal("UPDATE_SLOT_SELECTION_READBACK_MISSING");
-        if (published.Digest != staged.Digest) throw new Refusal("UPDATE_SLOT_SELECTION_READBACK_CHANGED");
+        throw new Refusal("UPDATE_SLOT_PUBLICATION_UNVERIFIED");
     }
 
-    private void ReconcileSelection(UpdateTransactionJournal? transaction, NativeFile? transactionNativeFile,
-        SlotSelection? selection)
+    private static void ReconcileSelection(UpdateTransactionJournal? transaction, SlotSelection? selection)
     {
         if (transaction is null || selection is null) return;
-        if (transaction.Phase == UpdateTransactionPhase.CandidateSelectionIntent && IsCandidateSelection(transaction, selection))
-        {
-            var advanced = transaction.Advance(UpdateTransactionPhase.CandidateSelected,
-                transactionNativeFile?.Digest ?? throw new Refusal("UPDATE_TRANSACTION_READBACK_MISSING"), WindowsStoreIO.CurrentOwner());
-            _ = PersistTransaction(advanced, transactionNativeFile.Digest);
-            return;
-        }
-        if (transaction.Phase == UpdateTransactionPhase.PreviousSelectionIntent && IsPreviousSelection(transaction, selection))
-        {
-            var advanced = transaction.Advance(UpdateTransactionPhase.PreviousSelected,
-                transactionNativeFile?.Digest ?? throw new Refusal("UPDATE_TRANSACTION_READBACK_MISSING"), WindowsStoreIO.CurrentOwner());
-            _ = PersistTransaction(advanced, transactionNativeFile.Digest);
-        }
+        if (transaction.Phase == UpdateTransactionPhase.CandidateSelectionIntent && IsCandidateSelection(transaction, selection)
+            || transaction.Phase == UpdateTransactionPhase.PreviousSelectionIntent && IsPreviousSelection(transaction, selection))
+            throw new Refusal("UPDATE_SLOT_PUBLICATION_UNVERIFIED");
     }
 
     private static bool IsExpectedSelectionPublication(UpdateTransactionJournal transaction,
