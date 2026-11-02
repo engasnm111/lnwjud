@@ -7,7 +7,20 @@ import { ActivityTracker } from './activity-tracker.js';
 import { ToolRegistry } from './tool-registry.js';
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await measure('cleanup', () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))); });
+
+async function measure<T>(phase: string, action: () => T | Promise<T>): Promise<T> {
+  const started = performance.now();
+  if (process.env.CI) console.warn(`[writer-lease-test] ${phase} started`);
+  const timer = setTimeout(() => console.warn(`[writer-lease-test] ${phase} still running after 1000ms`), 1_000);
+  timer.unref();
+  try { return await action(); }
+  finally {
+    clearTimeout(timer);
+    const elapsed = performance.now() - started;
+    if (elapsed >= 250) console.warn(`[writer-lease-test] ${phase} ${Math.round(elapsed)}ms`);
+  }
+}
 
 async function fixture(): Promise<{
   lease: SqliteWorkspaceWriterLease;
@@ -17,10 +30,10 @@ async function fixture(): Promise<{
   recorded: unknown[];
   advance: () => void;
 }> {
-  const root = await mkdtemp(path.join(tmpdir(), 'lnwjud-registry-lease-'));
+  const root = await measure('temp-directory', () => mkdtemp(path.join(tmpdir(), 'lnwjud-registry-lease-')));
   roots.push(root);
   let now = Date.now();
-  const lease = new SqliteWorkspaceWriterLease(path.join(root, 'leases.sqlite'), () => now);
+  const lease = await measure('database-init', () => new SqliteWorkspaceWriterLease(path.join(root, 'leases.sqlite'), () => now));
   const recorded: unknown[] = [];
   const tracker = new ActivityTracker({ async record(event): Promise<void> { recorded.push(event); } }, undefined, {
     async record(event, detail): Promise<void> { recorded.push({ event, detail }); },
@@ -28,8 +41,8 @@ async function fixture(): Promise<{
   const registry = (sessionId = 'session-a'): ToolRegistry => new ToolRegistry({ workspaceWriterLease: lease }, {
     clientId: 'client-a', clientName: 'test', sessionId,
   }, { activityTracker: tracker, authorizationModeProvider: (): 'full_bypass' => 'full_bypass' });
-  const owner = registry();
-  const acquired = await owner.invoke('workspace_writer_lease_acquire', { workspaceId: 'workspace-a', ttlSeconds: 60 });
+  const owner = await measure('registry-init', () => registry());
+  const acquired = await measure('acquire', () => owner.invoke('workspace_writer_lease_acquire', { workspaceId: 'workspace-a', ttlSeconds: 60 }));
   expect(acquired.isError).not.toBe(true);
   const proof = acquired.structuredContent as unknown as WorkspaceWriterLeaseProof & { expiresAt: string };
   expect(proof.leaseToken).toEqual(expect.any(String));
@@ -39,21 +52,21 @@ async function fixture(): Promise<{
 describe('workspace writer lease control through the registry', () => {
   it('releases a freshly acquired proof through the control handler', async () => {
     const f = await fixture();
-    expect((await f.owner.invoke('workspace_writer_lease_release', { workspaceId: 'workspace-a', writerLease: f.proof })).isError).not.toBe(true);
-    expect(await f.lease.inspect('workspace-a')).toMatchObject({ ok: true, value: { state: 'unleased' } });
+    expect((await measure('release', () => f.owner.invoke('workspace_writer_lease_release', { workspaceId: 'workspace-a', writerLease: f.proof }))).isError).not.toBe(true);
+    expect(await measure('inspect', () => f.lease.inspect('workspace-a'))).toMatchObject({ ok: true, value: { state: 'unleased' } });
     expect(JSON.stringify(f.recorded)).not.toContain(f.proof.leaseToken);
   });
 
   it('renews persisted expiry and releases the acquired lease without recording credentials', async () => {
     const f = await fixture();
     f.advance();
-    const renewed = await f.owner.invoke('workspace_writer_lease_renew', { workspaceId: 'workspace-a', writerLease: f.proof, ttlSeconds: 600 });
+    const renewed = await measure('renew', () => f.owner.invoke('workspace_writer_lease_renew', { workspaceId: 'workspace-a', writerLease: f.proof, ttlSeconds: 600 }));
     expect(renewed.isError).not.toBe(true);
     const expiresAt = renewed.structuredContent?.expiresAt as string;
     expect(Date.parse(expiresAt)).toBeGreaterThan(Date.parse(f.proof.expiresAt));
-    expect(await f.lease.inspect('workspace-a')).toMatchObject({ ok: true, value: { state: 'active', expiresAt, activeCalls: 0 } });
-    expect((await f.owner.invoke('workspace_writer_lease_release', { workspaceId: 'workspace-a', writerLease: f.proof })).isError).not.toBe(true);
-    expect(await f.lease.inspect('workspace-a')).toMatchObject({ ok: true, value: { state: 'unleased', activeCalls: 0 } });
+    expect(await measure('inspect-active', () => f.lease.inspect('workspace-a'))).toMatchObject({ ok: true, value: { state: 'active', expiresAt, activeCalls: 0 } });
+    expect((await measure('release', () => f.owner.invoke('workspace_writer_lease_release', { workspaceId: 'workspace-a', writerLease: f.proof }))).isError).not.toBe(true);
+    expect(await measure('inspect-unleased', () => f.lease.inspect('workspace-a'))).toMatchObject({ ok: true, value: { state: 'unleased', activeCalls: 0 } });
     expect(JSON.stringify(f.recorded)).not.toContain(f.proof.leaseToken);
   });
 
