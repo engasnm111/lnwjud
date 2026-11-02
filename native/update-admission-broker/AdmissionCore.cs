@@ -52,7 +52,8 @@ internal sealed class AdmissionCore : IDisposable
         var oldRevision = Parse(previous.Bytes).Revision;
         if (next.Predecessor != previous.Digest || oldRevision == ulong.MaxValue || next.Revision != oldRevision + 1)
             throw new Refusal("ADMISSION_RECOVERY_CONFLICT");
-        io.PublishStage(next.Predecessor);
+        // A staged snapshot does not retain the native authority that produced it.
+        throw new Refusal("ADMISSION_RECOVERY_UNVERIFIED");
     }
 
     private static byte[] Envelope(JsonObject state, ulong revision, string predecessor) => AdmissionProtocol.Encode(new JsonObject

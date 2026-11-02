@@ -18,7 +18,7 @@ MAINTENANCE_REGISTRY_UNCONFIGURED
 exit 125, expected unavailable result
 ```
 
-The final native harness exercised actual cross-process lock exclusion and a child process exiting after stage flush but before publication. Ordinary open refused the pending file without recovering it. Explicit recovery completed the matching transition and a repeat did nothing. A conflicting predecessor remained unchanged. Missing state after an established closure refused instead of recreating open admission, and the test-only bootstrap marker refused reinitialization.
+The earlier native harness exercised actual cross-process lock exclusion and a child process exiting after stage flush but before publication. Ordinary open refused the pending file without recovering it. At that time explicit recovery published a matching transition; that behavior was later removed because matching revision and predecessor do not prove the authority for the transition. Current recovery preserves and refuses both genuine and forged pending successors until independently authenticated recovery exists. A conflicting predecessor remains unchanged. Missing state after an established closure refuses instead of recreating open admission, and the test-only bootstrap marker refuses reinitialization.
 
 The fixture verified explicit TokenUser ownership and protected DACLs on lock, stage and published files. A native NULL-DACL fixture, an unsafe existing write grant, a real hard link and a real junction were refused. An unsafe root was not adopted or modified. Missing roots were not created. These checks do not prove ownership creation under a real service SID or elevated CI token.
 

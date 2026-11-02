@@ -4,6 +4,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json.Nodes;
 using Lnwjud.UpdateAdmission;
 
 [SupportedOSPlatform("windows")]
@@ -34,6 +35,11 @@ internal static class Program
     }
     private static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "unsafe-successor-test")
+        {
+            try { UnsafeSuccessor(); Console.WriteLine("PASS unsafe admission successor refused"); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
         if (args.Length == 2 && args[0] == "lock")
         {
             try { using var store = new AdmissionStore(StoreIdentity.Isolated(args[1])); return 10; }
@@ -45,8 +51,39 @@ internal static class Program
             core.AfterStage = () => Environment.Exit(42);
             core.Close(UpdatePrincipal.Isolated("crash-update", 1), core.Status().Revision); return 12;
         }
-        try { Protocol(); Lifecycle(); SequenceAndRetirement(); Concurrency(); DurableStore(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
+        try { Protocol(); Lifecycle(); SequenceAndRetirement(); Concurrency(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+    private static void UnsafeSuccessor()
+    {
+        var root = Root();
+        try
+        {
+            var identity = StoreIdentity.Isolated(root);
+            using (var core = new AdmissionCore(identity))
+            {
+                var owner = RuntimePrincipal.Isolated("held-owner"); var participant = core.Register(owner);
+                core.Enter(owner, participant, 1, "call");
+                core.Close(UpdatePrincipal.Isolated("update-held", 1), core.Status().Revision);
+                Check(core.Status().HeldPermits == 1 && core.Status().Phase == "closing", "fixture has a held permit during closure");
+            }
+            byte[] current; byte[] pending;
+            using (var store = new AdmissionStore(identity))
+            {
+                var previous = store.Read("admission.json")!; current = previous.Bytes;
+                var value = AdmissionProtocol.Object(current, AdmissionStore.MaximumJournalBytes);
+                value["predecessor"] = previous.Digest;
+                value["revision"] = AdmissionProtocol.Decimal(AdmissionProtocol.Number(value, "revision") + 1);
+                var state = value["state"]!.AsObject();
+                state["phase"] = "open"; state["transaction"] = ""; state["generation"] = "0";
+                state["participants"] = new JsonObject(); state["permits"] = new JsonObject();
+                pending = AdmissionProtocol.Encode(value); store.Stage(pending);
+            }
+            Refuses(() => AdmissionCore.RecoverPublication(identity), "ADMISSION_RECOVERY_UNVERIFIED");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.json")).SequenceEqual(current), "rejected successor preserves current state");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.pending.json")).SequenceEqual(pending), "rejected successor preserves pending evidence");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void Protocol()
     {
@@ -192,14 +229,20 @@ internal static class Program
                 Refuses(() => new AdmissionStore(StoreIdentity.Isolated(root)), "OWNER_BUSY");
                 Refuses(() => core.Enter(RuntimePrincipal.Isolated("unknown"), "absent", 1, "call"), "ADMISSION_PARTICIPANT_MISMATCH");
             }
+            AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root));
+            AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root));
             using (var child = Child("crash", root)) Check(child.WaitForExit(10_000) && child.ExitCode == 42, "actual process exits after durable stage");
             var old = File.ReadAllBytes(Path.Combine(root, "admission.json"));
+            var staged = File.ReadAllBytes(Path.Combine(root, "admission.pending.json"));
             var stageAcl = new FileInfo(Path.Combine(root, "admission.pending.json")).GetAccessControl();
             Check(stageAcl.GetOwner(typeof(SecurityIdentifier))?.Value == WindowsIdentity.GetCurrent().User!.Value && stageAcl.AreAccessRulesProtected, "crash stage explicit user owner protected DACL");
             Refuses(() => new AdmissionCore(StoreIdentity.Isolated(root)), "ADMISSION_PUBLICATION_PENDING");
             Check(File.ReadAllBytes(Path.Combine(root, "admission.json")).SequenceEqual(old), "read-only open never recovers publication");
-            AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root)); AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root));
-            using (var recovered = new AdmissionCore(StoreIdentity.Isolated(root))) Check(recovered.Status().Phase == "closing" && recovered.Status().TransactionId == "crash-update", "explicit recovery idempotent retains closure");
+            Refuses(() => AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root)), "ADMISSION_RECOVERY_UNVERIFIED");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.json")).SequenceEqual(old), "unverified recovery preserves current journal");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.pending.json")).SequenceEqual(staged), "unverified recovery preserves staged journal");
+            Refuses(() => new AdmissionCore(StoreIdentity.Isolated(root)), "ADMISSION_PUBLICATION_PENDING");
+            File.Delete(Path.Combine(root, "admission.pending.json")); // Isolated fixture only; production must retain pending evidence.
             using (var io = new AdmissionStore(StoreIdentity.Isolated(root)))
             {
                 Refuses(() => io.Read("../outside"), "STORE_NAME_INVALID");
