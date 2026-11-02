@@ -304,11 +304,12 @@ function generatedNotes(repository, tag, previousTag) {
   return typeof response?.body === 'string' ? response.body : '';
 }
 
-function compareCommitEntries(repository, tag, previousTag) {
-  const local = localCommitEntries(repository, tag, previousTag);
+function compareCommitEntries(repository, tag, previousTag, commit) {
+  const comparisonTarget = commit || tag;
+  const local = localCommitEntries(repository, comparisonTarget, previousTag);
   if (local !== null) return local;
   if (!previousTag) return ['Initial public release.'];
-  const comparison = runGhJson(['api', `repos/${repository}/compare/${previousTag}...${tag}`]);
+  const comparison = runGhJson(['api', `repos/${repository}/compare/${previousTag}...${comparisonTarget}`]);
   const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
   return commitLinesToEntries(repository, commits.map((commit) => {
     const message = commit?.commit?.message?.split(/\r?\n/, 1)?.[0]?.trim();
@@ -367,10 +368,10 @@ async function generateOne(options) {
   if (!options.tag) throw new Error('Missing tag. Pass --tag vX.Y.Z or set GITHUB_REF_NAME.');
 
   const previousTag = options.previousTag ?? latestPublishedTag(options.repository, options.tag);
-  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
-  const highlightEntries = extractCuratedHighlights(readme, options.tag, options.repository);
+  const releaseHistory = await readFile(new URL('../RELEASE_NOTES.md', import.meta.url), 'utf8');
+  const highlightEntries = extractCuratedHighlights(releaseHistory, options.tag, options.repository);
   if (highlightEntries.length === 0) {
-    throw new Error(`README.md needs a "What's new in ${options.tag}" section with real bullet points before release publication.`);
+    throw new Error(`RELEASE_NOTES.md needs a "What's new in ${options.tag}" section with real bullet points before release publication.`);
   }
   let sourceBody = '';
   try {
@@ -385,7 +386,7 @@ async function generateOne(options) {
     tag: options.tag,
     previousTag,
     additionalOtherEntries: futureReleaseMetadata(options.commit, options.tag, releaseScope),
-    additionalEntries: compareCommitEntries(options.repository, options.tag, previousTag),
+    additionalEntries: compareCommitEntries(options.repository, options.tag, previousTag, options.commit),
     highlightEntries,
   });
 

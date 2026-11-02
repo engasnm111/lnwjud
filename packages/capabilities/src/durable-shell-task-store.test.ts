@@ -8,7 +8,8 @@ import { nativeFixture } from '../../process/test/native-fixture.js';
 import type { WindowsNativeAuthority } from '@lnwjud/process';
 import type { InvocationAuthorization } from '@lnwjud/domain';
 import { CAPABILITY_TASK_OWNER_METADATA_KEY } from './task-ownership.js';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PosixProcessGroupObservation } from '@lnwjud/process';
@@ -47,6 +48,9 @@ class ShellCapabilityBackend extends BaseShellCapabilityBackend {
   }
 }
 
+// Windows native child-handle release may use all 50 × 200ms cleanup retries
+// under CI load. Give that existing retry budget a distinct bounded hook
+// deadline, while preserving teardown failures as test failures.
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, {
     recursive: true,
@@ -54,7 +58,7 @@ afterEach(async () => {
     maxRetries: process.platform === 'win32' ? 50 : 0,
     retryDelay: 200,
   })));
-});
+}, 30_000);
 
 describe('durable shell background tasks', () => {
   it('preserves a just-reserved POSIX worker during identity capture but fails closed after grace', async () => {
@@ -126,7 +130,8 @@ describe('durable shell background tasks', () => {
       owner_client_id: owner.clientId, owner_session_id: owner.sessionId, owner_workspace_id: owner.workspaceId,
     }));
     let observation: PosixProcessGroupObservation = { state: 'live', livePids: [4243] };
-    const options = { platform: 'linux' as const, posixGroupInspector: async (): Promise<PosixProcessGroupObservation> => observation };
+    const options = { platform: 'linux' as const, posixGroupInspector: async (): Promise<PosixProcessGroupObservation> => observation,
+      posixProcessIdentityProbe: async (): Promise<{ readonly state: 'gone' }> => ({ state: 'gone' }) };
     const store = new DurableShellTaskStore(root, options);
     expect(await store.snapshot(request.taskId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
     expect(await store.inspectForWriterAdmission(request.taskId)).toBe('unknown');
@@ -136,6 +141,16 @@ describe('durable shell background tasks', () => {
     expect(await restarted.snapshot(request.taskId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
     expect(await readFile(marker, 'utf8')).toContain(digest);
     observation = { state: 'empty' };
+    const liveRoot = new DurableShellTaskStore(root, { ...options, posixProcessIdentityProbe: async (): Promise<{ readonly state: 'live'; readonly processStartedAt: string }> => ({ state: 'live', processStartedAt: '2026-10-18T00:00:00.000Z' }) });
+    expect(await liveRoot.snapshot(request.taskId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
+    expect(await readFile(marker, 'utf8')).toContain(digest);
+    const unknownRoot = new DurableShellTaskStore(root, { ...options, posixProcessIdentityProbe: async (): Promise<{ readonly state: 'unverifiable'; readonly reason: string }> => ({ state: 'unverifiable', reason: 'probe_failed' }) });
+    expect(await unknownRoot.snapshot(request.taskId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
+    expect(await readFile(marker, 'utf8')).toContain(digest);
+    const changedRoot = vi.fn().mockResolvedValueOnce({ state: 'gone' }).mockResolvedValueOnce({ state: 'live', processStartedAt: '2026-10-18T00:00:00.000Z' });
+    const changed = new DurableShellTaskStore(root, { ...options, posixProcessIdentityProbe: changedRoot });
+    expect(await changed.snapshot(request.taskId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
+    expect(await readFile(marker, 'utf8')).toContain(digest);
     const mac = new DurableShellTaskStore(root, { ...options, platform: 'darwin' });
     expect(await mac.snapshot(request.taskId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
     expect(await readFile(marker, 'utf8')).toContain(digest);
@@ -144,6 +159,41 @@ describe('durable shell background tasks', () => {
     expect(await restarted.launch(request)).toMatchObject({ ok: true, value: { state: 'failed' } });
     expect(await readdir(taskDirectory)).toEqual(['task.json']);
   });
+
+  it('retains a POSIX reservation when an empty group snapshot hides a live child', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-posix-live-root-'));
+    temporaryRoots.push(root);
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'ignore' });
+    try {
+      await once(child, 'spawn');
+      const taskId = 'live-child-empty-group';
+      const taskDirectory = path.join(root, taskId);
+      const markerDirectory = path.join(root, '.index', 'v1', 'active');
+      await mkdir(taskDirectory, { recursive: true });
+      await mkdir(markerDirectory, { recursive: true });
+      const digest = 'a'.repeat(64);
+      const marker = path.join(markerDirectory, createHash('sha256').update(taskId).digest('hex') + '.json');
+      await writeFile(marker, JSON.stringify({ version: 1, taskId, requestDigest: digest, mutationKind: 'opaque',
+        reservedAt: new Date().toISOString(), ownerClientId: 'client', ownerWorkspaceId: 'workspace' }));
+      await writeFile(path.join(taskDirectory, 'task.json'), JSON.stringify({
+        version: 1, task_id: taskId, request_digest: digest, containment: 'posix_group_v1', state: 'running',
+        child_pid: child.pid, child_started_at: '2026-10-18T00:00:00.000Z',
+        started_at: new Date(Date.now() - 60_000).toISOString(), deadline_at: new Date().toISOString(),
+        include_stdout: false, include_stderr: false, max_output_bytes: 1024,
+        owner_client_id: 'client', owner_session_id: 'session', owner_workspace_id: 'workspace',
+      }));
+      const store = new DurableShellTaskStore(root, { platform: 'linux',
+        posixGroupInspector: async (): Promise<PosixProcessGroupObservation> => ({ state: 'empty' }),
+        posixProcessIdentityProbe: async (): Promise<{ readonly state: 'live'; readonly processStartedAt: string }> => ({ state: 'live', processStartedAt: '2026-10-18T00:00:00.000Z' }),
+      });
+      expect(await store.snapshot(taskId)).toMatchObject({ ok: true, value: { state: 'termination_unverified' } });
+      expect(await readFile(marker, 'utf8')).toContain(digest);
+      expect(child.exitCode).toBeNull();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      if (child.exitCode === null && child.signalCode === null) await once(child, 'exit');
+    }
+  }, 10_000);
 
   it('rejects macOS durable shell commands before launch when escaped descendants cannot be fenced', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-macos-failclosed-'));
@@ -516,6 +566,12 @@ describe('durable shell background tasks', () => {
       processStartedAt: expect.any(String),
     });
     expect(parsePosixProcessProbe('not-a-valid-ps-row')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
+    expect(parsePosixProcessProbe('not-a-date Z')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
+    expect(parsePosixProcessProbe('Wed Sep  9 14:58:14 2026 Zjunk')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
+    expect(parsePosixProcessProbe('2026 Z')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
+    expect(parsePosixProcessProbe('Wed Sep 9 14:58 2026 Z')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
+    expect(parsePosixProcessProbe('Wed Sep 9 14:58:14 2026 Z\nWed Sep 9 14:58:14 2026 S')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
+    expect(parsePosixProcessProbe('')).toEqual({ state: 'unverifiable', reason: 'invalid_probe_response' });
   });
 
   it.skipIf(process.platform !== 'linux')('cancels the detached child group before retiring its durable worker', async () => {
@@ -720,11 +776,11 @@ describe('durable shell background tasks', () => {
       ], { timeout: 3_500 }).then(
         ({ stdout }) => stdout,
         (error: unknown) => {
-          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return '';
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return undefined;
           throw error;
         },
       );
-      return parsePosixProcessProbe(output).state !== 'gone';
+      return output !== undefined && parsePosixProcessProbe(output).state !== 'gone';
     }, { timeout: 10_000, interval: 100 }).toBe(false);
 
     await expect(backend.execute({ operation: 'status', task_id: taskId })).resolves.toMatchObject({
@@ -1049,7 +1105,7 @@ describe('durable shell background tasks', () => {
       ([filename]) => String(filename).endsWith(`${path.sep}task.json`),
     );
     expect(metadataReads).toHaveLength(3);
-  });
+  }, 20_000);
 
   it('lists durable task metadata without hydrating historical output', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-list-memory-'));

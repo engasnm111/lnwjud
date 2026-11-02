@@ -7,7 +7,6 @@ import type {
   PermissionProfileName,
   PdfProviderInstallResult,
   UiLocale,
-  UpdateStatus,
   UserSettings,
 } from '@lnwjud/ipc-contracts';
 import { parseDelimitedList } from '@lnwjud/shared/text-list';
@@ -33,8 +32,6 @@ interface UserConfigPanelProps {
   readonly onUnrestrictedChange: (enabled: boolean) => Promise<boolean>;
   readonly onSave: (settings: UserSettings) => Promise<boolean>;
   readonly onInstallPdfProvider: () => Promise<PdfProviderInstallResult>;
-  readonly onTestNativeUpdate?: () => Promise<void>;
-  readonly updateStatus?: UpdateStatus | null;
   readonly embedded?: boolean;
 }
 
@@ -70,7 +67,7 @@ const DEFAULT_USER_SETTINGS: UserSettings = {
   extensions: { mode: 'enable_all', disabledServers: [], enabledServers: [], disabledSkillRoots: [], extraSkillRoots: [], extraMcpServers: [] },
 };
 
-export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, selectedWorkspace = null, engineeringStatus, section, updatesUnavailable = false, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, onTestNativeUpdate, updateStatus = null, embedded = false }: UserConfigPanelProps): ReactElement {
+export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProfile, stdioPermissionProfile, settings, selectedWorkspace = null, engineeringStatus, section, updatesUnavailable = false, unrestricted, onUnrestrictedChange, onSave, onInstallPdfProvider, embedded = false }: UserConfigPanelProps): ReactElement {
   const t = createTranslator(locale);
   const effectiveSettings = settings ?? DEFAULT_USER_SETTINGS;
   const persistedSettingsFingerprint = JSON.stringify(effectiveSettings);
@@ -85,8 +82,6 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
   const [pdfInstallBusy, setPdfInstallBusy] = useState(false);
   const [pdfInstallMessage, setPdfInstallMessage] = useState<string | null>(null);
   const [pdfInstallError, setPdfInstallError] = useState<string | null>(null);
-  const [manualUpdateError, setManualUpdateError] = useState<string | null>(null);
-  const [operatorUpdateBusy, setOperatorUpdateBusy] = useState(false);
   const [unrestrictedMessage, setUnrestrictedMessage] = useState<string | null>(null);
   const engineering = draft.engineeringHarness ?? DEFAULT_USER_SETTINGS.engineeringHarness!;
   const selectedEngineeringOverride = selectedWorkspace === null
@@ -211,18 +206,6 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
     }
   }
 
-  async function testNativeUpdate(): Promise<void> {
-    if (operatorUpdateBusy) return;
-    setOperatorUpdateBusy(true);
-    setManualUpdateError(null);
-    try {
-      await onTestNativeUpdate?.();
-    } catch (cause: unknown) {
-      setManualUpdateError(cause instanceof Error ? cause.message : t('userConfig.manualUpdateOpenFailed'));
-    } finally {
-      setOperatorUpdateBusy(false);
-    }
-  }
 
   async function save(): Promise<void> {
     const invalid = draft.extensions.extraMcpServers.find((server) => server.name.trim().length === 0 || server.command.trim().length === 0);
@@ -254,14 +237,6 @@ export function UserConfigPanel({ locale, hostPlatform, hostArch, permissionProf
         <section className="panel settings-card settings-card-polished" aria-label={t('userConfig.applicationBehavior')}>
           <SettingsCardHeading icon="⚙" title={t('userConfig.applicationBehavior')} subtitle={t('userConfig.applicationBehaviorSubtitle')} />
           {updatesUnavailable ? <StatusMessage tone="warning" role="note" prefix="⚠️ ">{t('userConfig.updaterUnavailable')}</StatusMessage> : null}
-          {onTestNativeUpdate === undefined ? null : (
-            <div className="setting-field">
-              <ActionButton type="button" disabled={operatorUpdateBusy || updateStatus?.phase === 'installing'} onClick={() => { void testNativeUpdate(); }}>{t('userConfig.manualUpdateAction')}</ActionButton>
-              <p className="hint">{t('userConfig.manualUpdateHint')}</p>
-              {updateStatus?.message ? <StatusMessage tone={updateStatus.phase === 'unavailable' || updateStatus.phase === 'error' ? 'warning' : 'success'} role="status">{updateStatus.message}</StatusMessage> : null}
-              {manualUpdateError === null ? null : <StatusMessage tone="warning">{manualUpdateError}</StatusMessage>}
-            </div>
-          )}
           <div className="setting-grid two-col">
             <div className="setting-field">
               <label className="field-label" htmlFor="close-behavior">{t('userConfig.closeBehavior')}</label>

@@ -31,6 +31,8 @@ describe('service-owned attempt handles', () => {
 
   it.each([
     { message: 'PIPE_LAUNCH_SESSION_CHANGE_FAILED_WIN32_5', reason: 'PIPE_LAUNCH_SESSION_CHANGE_FAILED_WIN32_5' },
+    { message: 'SERVICE_ENDPOINT_PACKAGE_MISMATCH', reason: 'SERVICE_ENDPOINT_PACKAGE_MISMATCH' },
+    { message: 'SERVICE_ENDPOINT_NOT_INSTALLED', reason: 'SERVICE_ENDPOINT_NOT_INSTALLED' },
     { message: 'C:\\\\Users\\\\private\\\\secret.txt', reason: 'NATIVE_SERVICE_SUBMISSION_UNRESOLVED' },
   ])('preserves only safe service diagnostics while retaining unknown dispatch: $message', async ({ message, reason }) => {
     const f = fixture(async (request) => {
@@ -40,6 +42,16 @@ describe('service-owned attempt handles', () => {
     const submission = await f.authority.submitProcess(input);
     expect(submission.observation).toEqual({ state: 'termination_unknown', binding, reason });
     expect(f.request.mock.calls.map(([request]) => request.command)).toEqual(['prepare', 'run']);
+  });
+
+  it('retains unknown inspection while reporting a package mismatch', async () => {
+    const f = fixture(async () => { throw new Error('SERVICE_ENDPOINT_PACKAGE_MISMATCH'); });
+    expect(await f.authority.inspect({ binding })).toEqual({ state: 'termination_unknown', binding, reason: 'SERVICE_ENDPOINT_PACKAGE_MISMATCH' });
+  });
+
+  it('retains unknown inspection when the service is not installed', async () => {
+    const f = fixture(async () => { throw new Error('SERVICE_ENDPOINT_NOT_INSTALLED'); });
+    expect(await f.authority.inspect({ binding })).toEqual({ state: 'termination_unknown', binding, reason: 'SERVICE_ENDPOINT_NOT_INSTALLED' });
   });
 
   it('keeps a recoverable handle after ambiguous dispatch without replaying it', async () => {

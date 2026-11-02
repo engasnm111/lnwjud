@@ -101,8 +101,8 @@ const th: NativeMessages = {
   logWorkLogTitle: 'บันทึกการทำงาน',
   logExported: 'เวลาส่งออก',
   logRows: 'จำนวนรายการ',
-  updateAvailableStatus: (version) => `พบ v${version} — กำลังดาวน์โหลดในเบื้องหลัง`,
-  updateAvailableDialog: (version) => `พบ lnwjud v${version} กำลังดาวน์โหลดอัปเดตในเบื้องหลัง`,
+  updateAvailableStatus: (version) => `พบอัปเดต v${version}`,
+  updateAvailableDialog: (version) => `พบ lnwjud v${version}`,
   updateDownloadingStatus: (_version, percent) => `กำลังดาวน์โหลดอัปเดต ${Math.round(percent ?? 0)}%`,
   updateCurrentStatus: (version) => `v${version} เป็นเวอร์ชันล่าสุดแล้ว`,
   updateCurrentDialog: (version) => `lnwjud v${version} เป็นเวอร์ชันล่าสุดแล้ว`,
@@ -157,8 +157,8 @@ const en: NativeMessages = {
   logWorkLogTitle: 'Work Log',
   logExported: 'Exported',
   logRows: 'Rows',
-  updateAvailableStatus: (version) => `v${version} found — downloading in the background`,
-  updateAvailableDialog: (version) => `lnwjud v${version} is available and is downloading in the background`,
+  updateAvailableStatus: (version) => `Update v${version} available`,
+  updateAvailableDialog: (version) => `lnwjud v${version} is available`,
   updateDownloadingStatus: (_version, percent) => `Downloading update ${Math.round(percent ?? 0)}%`,
   updateCurrentStatus: (version) => `v${version} is up to date`,
   updateCurrentDialog: (version) => `lnwjud v${version} is up to date`,
@@ -182,7 +182,9 @@ export function localizedUpdateStatusMessage(status: UpdateStatus, locale: UiLoc
       if (status.message === th.updaterUnavailablePlatform || status.message === en.updaterUnavailablePlatform) return messages.updaterUnavailablePlatform;
       return messages.updaterUnavailablePackagedOnly;
     case 'checking': return messages.updaterChecking;
-    case 'available': return version === null ? messages.updaterChecking : messages.updateAvailableStatus(version);
+    case 'available':
+      if (status.message === th.updaterUnavailableTransactionAuthority || status.message === en.updaterUnavailableTransactionAuthority) return messages.updaterUnavailableTransactionAuthority;
+      return version === null ? messages.updaterChecking : messages.updateAvailableStatus(version);
     case 'downloading': return messages.updateDownloadingStatus(version, status.progressPercent);
     case 'ready':
       return version === null ? status.message : messages.updateReadyStatus(version);

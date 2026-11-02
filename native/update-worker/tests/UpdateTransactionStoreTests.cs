@@ -43,12 +43,9 @@ internal static class UpdateTransactionStoreTests
 
             CrashAtBoundary(root, "quiesce-intent", "transaction-stage-flushed");
             using (var store = new UpdateTransactionStore(root, Installation))
-            {
-                var recovered = store.RecoverPublications();
-                Check(recovered.Transaction?.Phase == UpdateTransactionPhase.QuiesceIntent,
-                    "startup publishes a fully flushed transaction stage");
-                Check(recovered.Selection == initial, "transaction-stage recovery leaves the prior slot selected");
-            }
+                ExpectRefusal(() => store.RecoverPublications(), "UPDATE_TRANSACTION_PUBLICATION_UNVERIFIED",
+                    "startup holds an unauthenticated transaction stage");
+            using (var io = new WindowsStoreIO(root)) io.PublishStage("transaction.pending.json", "transaction.json", ready.Digest);
 
             CrashAtBoundary(root, "quiesced", "transaction-publication-readback");
             UpdateTransactionSnapshot snapshot;
@@ -66,9 +63,15 @@ internal static class UpdateTransactionStoreTests
                 _ = store.PersistTransaction(premature, selectionIntent.Digest);
             }, "UPDATE_SLOT_SELECTION_PHASE_CONFLICT", "candidate cannot become startable before the candidate slot is durably selected");
             CrashAtBoundary(root, "select-candidate", "active-slot-stage-flushed");
+            using (var store = new UpdateTransactionStore(root, Installation))
+                ExpectRefusal(() => store.RecoverPublications(), "UPDATE_SLOT_PUBLICATION_UNVERIFIED", "candidate stage needs issuer proof");
+            using (var io = new WindowsStoreIO(root)) io.PublishStage("active-slot.pending.json", "active-slot.json", initial.Digest);
+            using (var store = new UpdateTransactionStore(root, Installation))
+                ExpectRefusal(() => store.RecoverPublications(), "UPDATE_SLOT_PUBLICATION_UNVERIFIED", "published candidate needs issuer proof");
+            _ = PersistAdvance(root, selectionIntent, UpdateTransactionPhase.CandidateSelected, owner);
             using (var store = new UpdateTransactionStore(root, Installation)) snapshot = store.RecoverPublications();
             Check(snapshot.Transaction?.Phase == UpdateTransactionPhase.CandidateSelected,
-                "startup reconciles candidate selection after a stage-flush crash");
+                "fixture advances candidate selection after explicit publication");
             Check(snapshot.Selection?.Slot == "B" && snapshot.Selection.SlotDigest == Digest('b')
                 && snapshot.Selection.DataGeneration == created.CandidateDataGeneration,
                 "candidate selection publishes the exact inactive application and data generation");
@@ -76,9 +79,16 @@ internal static class UpdateTransactionStoreTests
             var rollbackIntent = PersistAdvance(root, snapshot.Transaction!, UpdateTransactionPhase.RollbackIntent, owner);
             _ = PersistAdvance(root, rollbackIntent, UpdateTransactionPhase.PreviousSelectionIntent, owner);
             CrashAtBoundary(root, "select-previous", "active-slot-publication-readback");
+            UpdateTransactionJournal previousIntent;
+            using (var store = new UpdateTransactionStore(root, Installation))
+            {
+                ExpectRefusal(() => store.RecoverPublications(), "UPDATE_SLOT_PUBLICATION_UNVERIFIED", "published rollback needs issuer proof");
+                previousIntent = store.ReadTransaction()!;
+            }
+            _ = PersistAdvance(root, previousIntent, UpdateTransactionPhase.PreviousSelected, owner);
             using (var store = new UpdateTransactionStore(root, Installation)) snapshot = store.RecoverPublications();
             Check(snapshot.Transaction?.Phase == UpdateTransactionPhase.PreviousSelected,
-                "startup reconciles rollback selection after atomic publication");
+                "fixture advances rollback after explicit publication");
             Check(snapshot.Selection?.Slot == "A" && snapshot.Selection.SlotDigest == Digest('a')
                 && snapshot.Selection.DataGeneration == initial.DataGeneration,
                 "rollback restores the exact prior application and data generation");
@@ -232,21 +242,14 @@ internal static class UpdateTransactionStoreTests
                     Check(repeated == selected && !File.Exists(Path.Combine(root, "active-slot.pending.json")),
                         "lost candidate publication reply retries the exact pair without publishing it again");
                 }
-                var recovered = store.RecoverPublications();
-                Check(recovered.Selection == selected && recovered.Selection.DataGeneration ==
-                    (rollback ? fixture.Transaction.PreviousDataGeneration : fixture.Transaction.CandidateDataGeneration),
-                    "crash recovery publishes the exact application and data descriptor");
-                Check(recovered.Transaction?.Phase == (rollback ? UpdateTransactionPhase.PreviousSelected : UpdateTransactionPhase.CandidateSelected)
-                    && recovered.Transaction.PreviousDataGeneration == fixture.Transaction.PreviousDataGeneration
-                    && recovered.Transaction.CandidateDataGeneration == fixture.Transaction.CandidateDataGeneration
-                    && !recovered.Transaction.SafeToStart,
-                    "crash recovery retains both data generations and holds admission for native evidence");
                 var recoveredJournal = File.ReadAllBytes(Path.Combine(root, "transaction.json"));
-                var repeatedRecovery = store.RecoverPublications();
-                Check(repeatedRecovery == recovered
-                    && File.ReadAllBytes(Path.Combine(root, "transaction.json")).SequenceEqual(recoveredJournal)
-                    && File.ReadAllBytes(Path.Combine(root, "active-slot.json")).SequenceEqual(selectionBytes),
-                    "repeated paired publication recovery is byte-for-byte idempotent");
+                ExpectRefusal(() => store.RecoverPublications(), "UPDATE_SLOT_PUBLICATION_UNVERIFIED",
+                    "paired slot recovery requires issuer proof");
+                ExpectRefusal(() => store.RecoverPublications(), "UPDATE_SLOT_PUBLICATION_UNVERIFIED",
+                    "repeated paired recovery remains held");
+                Check(File.ReadAllBytes(Path.Combine(root, "transaction.json")).SequenceEqual(recoveredJournal)
+                    && File.ReadAllBytes(Path.Combine(root, rollback ? "active-slot.pending.json" : "active-slot.json")).SequenceEqual(selectionBytes),
+                    "refused paired recovery preserves journal and slot bytes");
             }
         }
     }

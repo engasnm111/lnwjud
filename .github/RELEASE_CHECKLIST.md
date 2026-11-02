@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v5.9.0` - Windows installer `lnwjud-Setup-5.9.0.exe` and portable executable `lnwjud-Portable-5.9.0.exe`; MCP registry **298 total definitions / 286 advertised by default / all 298 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v5.9.1` - Windows installer `lnwjud-Setup-5.9.1.exe` and portable executable `lnwjud-Portable-5.9.1.exe`; MCP registry **298 total definitions / 286 advertised by default / all 298 with Codex delegation plus Agent Swarm enabled**.
 
 ## v5.9.0 manual-only release; automatic updater acceptance deferred
 
@@ -14,7 +14,7 @@ Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.
 
 After a tagged release is publicly published and GitHub assets are verified, synchronize the published-version headings/download filenames with `node scripts/sync-published-docs.mjs vX.Y.Z --apply`, verify using `node scripts/sync-published-docs.mjs vX.Y.Z`, then PR `dev -> main`. Keep historical comparison sections and the immutable tag unchanged. The main README and all public download links must match the actual published release before declaring documentation complete.
 
-Before tagging any new version, add its plain-language `What's new in vX.Y.Z` bullets to `README.md`, `FULL_README.md`, and `RELEASE_NOTES.md`, then preview the generated GitHub Release body. Also add a non-empty exact-version entry to the in-app What's New registry with Thai and English titles/descriptions. README and GitHub Release notes do not feed the in-app modal. The Desktop release-notes test checks the current package version and must pass in PR and main CI; do not tag or publish a build whose modal would show the empty state. The release generator must stop if the README section is missing or contains no real change; empty `Features` or `Bug Fixes` sections and `- None.` placeholders must not be published. Keep only the newest three versions in the READMEs and preserve detailed history in `RELEASE_NOTES.md` for later audit and backfill.
+Before tagging any new version, add its plain-language version-specific Highlights to `RELEASE_NOTES.md`, preview the generated GitHub Release body, and add a non-empty exact-version entry to the in-app What's New registry with Thai and English descriptions. README.md and FULL_README.md contain product documentation only; neither embeds a version changelog. The release generator reads curated Highlights from `RELEASE_NOTES.md` (not README), rejects missing or empty changes, and omits empty `Features` / `Bug Fixes` sections and `- None.` placeholders. The Desktop release-notes test checks the current package version and must pass in PR and main CI; do not publish a build whose in-app modal shows the empty state.
 
 ## v5.8.0 functional release acceptance
 

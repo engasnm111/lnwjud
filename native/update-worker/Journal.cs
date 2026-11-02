@@ -62,7 +62,9 @@ internal sealed record Journal(ulong Generation, ulong Revision, string Previous
                     || !Guid.TryParseExact(oldTransaction, "D", out var oldGuid) || oldGuid.ToString("D") != oldTransaction) throw new Refusal("JOURNAL_INVALID");
             }
         }
-        return new Journal(generation, revision, previous, new ProcessOwner(pid, creation, executable), payload);
+        var journal = new Journal(generation, revision, previous, new ProcessOwner(pid, creation, executable), payload);
+        if (!bytes.AsSpan().SequenceEqual(journal.Encode(installationId))) throw new Refusal("JOURNAL_NONCANONICAL");
+        return journal;
     }
 }
 

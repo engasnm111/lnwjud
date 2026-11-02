@@ -66,6 +66,35 @@ describe('RipgrepAdapter', () => {
     expect(result.stdout).not.toContain('late');
   }, 15_000);
 
+  it('marks a rejected process-tree stop as unverified rather than a safe timeout', async () => {
+    const runner = new DirectProcessRunner({
+      async stop(): Promise<void> { throw new Error('POSIX process group identity could not be verified'); },
+    });
+    const result = await runner.run(process.execPath, ['-e', 'setTimeout(() => {}, 250)'], process.cwd(), { timeoutMs: 10 });
+    expect(result.timedOut).toBe(true);
+    expect(result.terminationUnverified).toBe(true);
+    expect(result.exitCode).toBe(-1);
+  }, 15_000);
+
+  it('refuses successful text and file search results when subprocess termination is unverified', async () => {
+    const runner: ProcessRunner = {
+      async run(): Promise<ProcessRunResult> {
+        return { exitCode: -1, stdout: 'partial output', stderr: 'identity unknown', timedOut: true, terminationUnverified: true };
+      },
+    };
+    const resolver: ExecutableResolver = { resolve: async (): Promise<Result<string>> => ({ ok: true, value: 'rg.exe' }) };
+    const adapter = new RipgrepAdapter(resolver, runner);
+    for (const result of [
+      await adapter.searchText({ rootPath: process.cwd(), query: 'needle' }),
+      await adapter.searchFiles({ rootPath: process.cwd() }),
+    ]) {
+      expect(result).toEqual({
+        ok: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Search process termination could not be verified', recoverable: false },
+      });
+    }
+  });
+
   it('passes the invocation abort signal to process-backed text search', async () => {
     const controller = new AbortController();
     let childWasAborted = false;

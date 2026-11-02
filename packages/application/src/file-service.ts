@@ -256,13 +256,21 @@ export class FileService {
       actorClientId: actor.clientId,
       workspaceId: workspaceId ?? 'implicit-workspace',
       kind: 'synchronous_mutation',
-    });
+    }).catch(() => err(appError('CONFLICT', 'Writer admission could not be verified; the file mutation was not started')));
     if (!admitted.ok) return admitted;
+    const releaseUnverified = (): Result<T> => err(appError('CONFLICT',
+      'Writer reservation release could not be verified; the file mutation may already have been applied. Inspect the target before retrying'));
+    let result: Result<T>;
     try {
-      return await mutation();
-    } finally {
-      await admitted.value.releaseAfterVerifiedTermination();
+      result = await mutation();
+    } catch (error: unknown) {
+      try { await admitted.value.releaseAfterVerifiedTermination(); }
+      catch { return releaseUnverified(); }
+      throw error;
     }
+    try { await admitted.value.releaseAfterVerifiedTermination(); }
+    catch { return releaseUnverified(); }
+    return result;
   }
 
   private isTrustedWorkspace(workspace: Workspace): boolean {

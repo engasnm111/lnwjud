@@ -147,6 +147,14 @@ describe('mapResult image payloads', () => {
     expect(response.content[0]?.text).toBe('FILE_NOT_FOUND: File or directory was not found');
   });
 
+  it('preserves the bounded writer-index lock contention reason while hiding other internal errors', () => {
+    const busy = mapError({ code: 'INTERNAL_ERROR', message: 'Durable task index lock is busy', recoverable: true });
+    expect(busy.content[0]?.text).toBe('INTERNAL_ERROR: Durable task index lock is busy');
+    expect(busy.structuredContent).toMatchObject({ error: { message: 'Durable task index lock is busy', recoverable: true } });
+    const unknown = mapError({ code: 'INTERNAL_ERROR', message: 'secret=should-not-appear', recoverable: true });
+    expect(unknown.content[0]?.text).toBe('INTERNAL_ERROR: Operation failed');
+  });
+
   it('preserves structured recovery details on provider failures', () => {
     const response = mapError({
       code: 'INTERNAL_ERROR',

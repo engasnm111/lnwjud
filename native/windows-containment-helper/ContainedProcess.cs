@@ -8,6 +8,13 @@ namespace Lnwjud.Containment;
 
 internal sealed class ContainedProcess : IDisposable
 {
+    internal sealed class JobNameInUseException : IOException
+    {
+        private readonly ServiceAttemptIdentity? identity;
+        private int consumed;
+        internal JobNameInUseException(ServiceAttemptIdentity? identity) : base("CONTAINMENT_JOB_NAME_IN_USE") => this.identity = identity;
+        internal bool Consume(ServiceAttemptIdentity expected) => identity == expected && Interlocked.Exchange(ref consumed, 1) == 0;
+    }
 #if NATIVE_CONTAINMENT_TESTS
     internal static Action<string, uint>? Fault;
 #endif
@@ -78,45 +85,8 @@ internal sealed class ContainedProcess : IDisposable
         }
     }
 
-    internal static bool TerminateJobByName(string jobName, int timeoutMs = 15000)
-    {
-        var handle = OpenJobObject(JobObjectQuery | JobObjectTerminate, false, jobName);
-        if (handle == 0)
-        {
-            var error = Marshal.GetLastWin32Error();
-            return error == 2;
-        }
-        try
-        {
-            if (!TerminateJobObject(handle, 1))
-            {
-                var error = Marshal.GetLastWin32Error();
-                if (error != 0 && error != 2)
-                {
-                    if (QueryInformationJobObject(handle, 1, out var probe, (uint)Marshal.SizeOf<Accounting>(), 0) && probe.ActiveProcesses == 0)
-                        return true;
-                    return false;
-                }
-            }
-            var sw = Stopwatch.StartNew();
-            while (sw.ElapsedMilliseconds < timeoutMs)
-            {
-                if (QueryInformationJobObject(handle, 1, out var info, (uint)Marshal.SizeOf<Accounting>(), 0))
-                {
-                    if (info.ActiveProcesses == 0) return true;
-                }
-                Thread.Sleep(20);
-            }
-            return false;
-        }
-        finally
-        {
-            CloseHandle(handle);
-        }
-    }
-
-    internal static ContainedProcess Start(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null) =>
-        StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName);
+    internal static ContainedProcess Start(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null, ServiceAttemptIdentity? attemptIdentity = null) =>
+        StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, attemptIdentity: attemptIdentity);
 
     internal sealed class LaunchOwnership
     {
@@ -154,15 +124,15 @@ internal sealed class ContainedProcess : IDisposable
         IReadOnlyDictionary<string, string> environment, nint standardOutput, nint standardError, LaunchOwnership ownership) =>
         StartCore(0, executable, arguments, cwd, false, environment, standardOutput, standardError, null, null, null, ownership);
 
-    internal static ContainedProcess StartAsUser(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null)
+    internal static ContainedProcess StartAsUser(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null, ServiceAttemptIdentity? attemptIdentity = null)
     {
         if (primaryToken == 0 || primaryToken == -1) throw new IOException("CONTAINMENT_CALLER_TOKEN_INVALID");
         // CreateProcessAsUser uses the original authenticated caller's session.
         _ = AuthenticatedPipeCaller.ReadSessionId(primaryToken);
-        return StartCore(primaryToken, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName);
+        return StartCore(primaryToken, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, attemptIdentity: attemptIdentity);
     }
 
-    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName, LaunchOwnership? ownership = null)
+    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName, LaunchOwnership? ownership = null, ServiceAttemptIdentity? attemptIdentity = null)
     {
         if (!Path.IsPathFullyQualified(executable) || !Path.IsPathFullyQualified(cwd)) throw new IOException("CONTAINMENT_ABSOLUTE_PATH_REQUIRED");
         var instance = new ContainedProcess();
@@ -174,7 +144,9 @@ internal sealed class ContainedProcess : IDisposable
         {
             if (cancellationRequested?.Invoke() == true) throw new OperationCanceledException();
             instance.job = CreateJobObject(0, jobName);
-            Check(instance.job != 0, "JOB_CREATE");
+            var jobError = Marshal.GetLastWin32Error();
+            if (instance.job == 0) throw new IOException("CONTAINMENT_JOB_CREATE_" + jobError);
+            if (jobName is not null && jobError == 183) throw new JobNameInUseException(attemptIdentity);
             var limits = new ExtendedLimits(); limits.Basic.Flags = 0x2000; // KILL_ON_JOB_CLOSE; no breakaway.
             Check(SetInformationJobObject(instance.job, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()), "JOB_LIMITS");
             var command = new StringBuilder(Quote(executable));

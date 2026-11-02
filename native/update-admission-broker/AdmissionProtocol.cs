@@ -21,10 +21,17 @@ internal static class AdmissionProtocol
     internal static JsonObject Object(ReadOnlySpan<byte> bytes, int maximum)
     {
         if (bytes.Length is 0 || bytes.Length > maximum || bytes.StartsWith(new byte[] { 239, 187, 191 })) throw new Refusal("ADMISSION_JSON_INVALID");
-        _ = Utf8.GetString(bytes);
-        using var doc = JsonDocument.Parse(bytes.ToArray(), new JsonDocumentOptions { MaxDepth = 16 });
-        Unique(doc.RootElement);
-        return JsonNode.Parse(doc.RootElement.GetRawText()) as JsonObject ?? throw new Refusal("ADMISSION_JSON_INVALID");
+        try
+        {
+            _ = Utf8.GetString(bytes);
+            using var doc = JsonDocument.Parse(bytes.ToArray(), new JsonDocumentOptions { MaxDepth = 16 });
+            try { Unique(doc.RootElement); }
+            catch (InvalidOperationException) { throw new Refusal("ADMISSION_JSON_INVALID"); }
+            return JsonNode.Parse(doc.RootElement.GetRawText()) as JsonObject ?? throw new Refusal("ADMISSION_JSON_INVALID");
+        }
+        catch (DecoderFallbackException) { throw new Refusal("ADMISSION_JSON_INVALID"); }
+        catch (EncoderFallbackException) { throw new Refusal("ADMISSION_JSON_INVALID"); }
+        catch (JsonException) { throw new Refusal("ADMISSION_JSON_INVALID"); }
     }
 
     private static void Unique(JsonElement value)

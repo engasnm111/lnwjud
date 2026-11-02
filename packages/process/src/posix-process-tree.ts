@@ -53,7 +53,7 @@ export function parsePosixProcessGroup(table: string, groupId: number, expectedR
     // Only target-group rows need STAT/lstart identity evidence. macOS can
     // emit partial metadata for unrelated processes; rejecting the entire
     // table would leave a known owned child alive after a timeout.
-    const prefix = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    const prefix = /^\s*(\d+)\s+(\d+)(?:\s+(.+?))?\s*$/.exec(line);
     if (prefix === null) return { state: 'unknown', reason: 'malformed_process_table' };
     const pid = Number(prefix[1]);
     const pgid = Number(prefix[2]);
@@ -62,7 +62,7 @@ export function parsePosixProcessGroup(table: string, groupId: number, expectedR
     }
     seen.add(pid);
     if (pid !== groupId && pgid !== groupId) continue;
-    const evidence = /^([A-Za-z<+NsXxLlEsWw-]+)\s+(.+?)\s*$/.exec(prefix[3]!);
+    const evidence = prefix[3] === undefined ? null : /^([A-Za-z<+NsXxLlEsWw-]+)\s+(.+?)\s*$/.exec(prefix[3]);
     const started = evidence === null ? Number.NaN : Date.parse(evidence[2]!);
     if (evidence === null || !Number.isFinite(started)) return { state: 'unknown', reason: 'malformed_process_table' };
     if (pid === groupId) {
@@ -127,12 +127,20 @@ export class PosixProcessTree implements ProcessTreeTerminator {
   public async stop(child: ChildProcess, pid: number): Promise<void> {
     if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('POSIX process identity is invalid');
     if (this.inspectGroup !== undefined) return this.stopObservedGroup(pid, child);
+    const confirmDead = async (): Promise<void> => {
+      if (child.exitCode === null && child.signalCode === null && !await this.waitForExit(child, this.termGraceMs)) {
+        throw new Error('POSIX child exit could not be verified');
+      }
+      if (this.processIsAlive(pid) || this.processGroupIsAlive(pid)) {
+        throw new Error('POSIX process group completion could not be verified');
+      }
+    };
+    const rootAlive = this.processIsAlive(pid);
+    const groupAlive = this.processGroupIsAlive(pid);
+    if (!rootAlive && !groupAlive) { await confirmDead(); return; }
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error('Process root exited before group termination could be verified');
     }
-    const rootAlive = this.processIsAlive(pid);
-    const groupAlive = this.processGroupIsAlive(pid);
-    if (!rootAlive && !groupAlive) return;
     if (!rootAlive && groupAlive) throw new Error('POSIX process group remains live after its root exited; targeted termination refused');
     if (!groupAlive) throw new Error('POSIX process group could not be verified; targeted termination refused');
 
@@ -141,12 +149,15 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     // escalation.  If the probe is unavailable or changes, do not signal.
     const expectedStartedAt = await this.processStartedAt(pid);
     if (expectedStartedAt === null) {
-      if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return;
+      if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) { await confirmDead(); return; }
       throw new Error('POSIX process start identity could not be verified');
     }
     const verifyIdentity = async (): Promise<boolean> => {
       const currentStartedAt = await this.processStartedAt(pid);
-      if (currentStartedAt === null) return !this.processIsAlive(pid) && !this.processGroupIsAlive(pid);
+      if (currentStartedAt === null) {
+        if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return false;
+        throw new Error('POSIX process identity could not be verified');
+      }
       if (currentStartedAt !== expectedStartedAt) throw new Error('POSIX process identity changed; targeted termination refused');
       return true;
     };
@@ -154,7 +165,8 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     // A detached child has its own process group whose id equals the root pid.
     // Refuse to target a reused/non-group pid rather than killing an unrelated
     // process.  ESRCH means the group disappeared between the probe and signal.
-    await verifyIdentity();
+    if (!await verifyIdentity()) { await confirmDead(); return; }
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error('Process root exited before group termination could be verified');
     try {
       this.processKill(-pid, 'SIGTERM');
     } catch (error: unknown) {
@@ -162,14 +174,15 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     }
     if (await this.waitForExit(child, this.termGraceMs) && !this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return;
 
-    await verifyIdentity();
+    if (!await verifyIdentity()) { await confirmDead(); return; }
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error('Process root exited before group termination could be verified');
     try {
       this.processKill(-pid, 'SIGKILL');
     } catch (error: unknown) {
       if (!isNoSuchProcess(error)) throw new Error('POSIX process-group escalation could not be started', { cause: error });
     }
     if (await this.waitForExit(child, this.killGraceMs) && !this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return;
-    if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return;
+    if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) { await confirmDead(); return; }
     throw new Error('POSIX process-group termination could not be verified');
   }
 
@@ -180,15 +193,21 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     const groupAlive = this.processGroupIsAlive(pid);
     if (!rootAlive && !groupAlive) return;
     if (!rootAlive && groupAlive) throw new Error('POSIX process group remains live after its root exited; targeted termination refused');
+    if (!groupAlive) throw new Error('POSIX process group could not be verified; targeted termination refused');
+    if (expectedRootStartedAt === undefined) throw new Error('POSIX process start identity is required');
 
     const expectedStartedAt = await this.processStartedAt(pid);
     if (expectedStartedAt === null) {
       if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return;
       throw new Error('POSIX process start identity could not be verified');
     }
+    if (expectedStartedAt !== expectedRootStartedAt) throw new Error('POSIX process identity changed; targeted termination refused');
     const verifyIdentity = async (): Promise<boolean> => {
       const currentStartedAt = await this.processStartedAt(pid);
-      if (currentStartedAt === null) return !this.processIsAlive(pid) && !this.processGroupIsAlive(pid);
+      if (currentStartedAt === null) {
+        if (!this.processIsAlive(pid) && !this.processGroupIsAlive(pid)) return false;
+        throw new Error('POSIX process identity could not be verified');
+      }
       if (currentStartedAt !== expectedStartedAt) throw new Error('POSIX process identity changed; targeted termination refused');
       return true;
     };
@@ -201,15 +220,15 @@ export class PosixProcessTree implements ProcessTreeTerminator {
       return !this.processIsAlive(pid) && !this.processGroupIsAlive(pid);
     };
 
-    const targetPid = groupAlive ? -pid : pid;
-    await verifyIdentity();
+    const targetPid = -pid;
+    if (!await verifyIdentity()) return;
     try {
       this.processKill(targetPid, 'SIGTERM');
     } catch (error: unknown) {
       if (!isNoSuchProcess(error)) throw new Error('POSIX process termination could not be started', { cause: error });
     }
     if (await waitForGone(this.termGraceMs)) return;
-    await verifyIdentity();
+    if (!await verifyIdentity()) return;
     try {
       this.processKill(targetPid, 'SIGKILL');
     } catch (error: unknown) {
@@ -221,20 +240,41 @@ export class PosixProcessTree implements ProcessTreeTerminator {
 
   private async stopObservedGroup(pid: number, child?: ChildProcess, expectedStart?: string): Promise<void> {
     const inspect = this.inspectGroup!;
+    const confirmEmpty = async (graceMs: number, rootStartedAt?: string): Promise<void> => {
+      if (child === undefined) {
+        if (this.processIsAlive(pid)) throw new Error('POSIX root termination could not be verified');
+      } else {
+        if (child.exitCode === null && child.signalCode === null && !await this.waitForExit(child, graceMs)) {
+          throw new Error('POSIX child exit could not be verified');
+        }
+      }
+      const afterExit = classifyPosixGroupCompletion(await inspect(pid, {
+        platform: this.platform, ...(rootStartedAt === undefined ? {} : { expectedRootStartedAt: rootStartedAt }),
+      }), this.platform);
+      if (afterExit.state !== 'empty' || child === undefined && this.processIsAlive(pid)) {
+        throw new Error('POSIX process group completion could not be verified');
+      }
+    };
     let initial = classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform, ...(expectedStart === undefined ? {} : { expectedRootStartedAt: expectedStart }) }), this.platform);
     // The initial timeout can fire before a freshly spawned macOS child has a
     // stable observable process-group identity. Retry only read-only probes;
     // never signal an unknown/reused group or infer that missing means gone.
     if (this.platform === 'darwin' && child !== undefined && expectedStart === undefined) {
       const deadline = Date.now() + 500;
-      while (initial.state === 'unknown' && (initial.reason === 'process_table_unavailable'
-        || initial.reason === 'darwin_escaped_descendants_not_contained')
+      while ((initial.state === 'live' && initial.rootStartedAt === undefined
+        || initial.state === 'unknown' && (initial.reason === 'process_table_unavailable'
+          || initial.reason === 'malformed_process_table'
+          || initial.reason === 'darwin_escaped_descendants_not_contained'))
         && child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 30));
         initial = classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform }), this.platform);
       }
     }
-    if (initial.state === 'empty') return;
+    if (initial.state === 'empty') { await confirmEmpty(this.termGraceMs, expectedStart); return; }
+    if (child === undefined && expectedStart === undefined) throw new Error('POSIX process start identity is required');
+    if (expectedStart !== undefined && initial.state === 'live' && initial.rootStartedAt !== expectedStart) {
+      throw new Error('POSIX process identity changed; targeted termination refused');
+    }
     if (initial.state !== 'live' || initial.rootStartedAt === undefined
       || child !== undefined && (child.exitCode !== null || child.signalCode !== null)) {
       const observation = initial.state === 'unknown' ? initial.reason
@@ -244,15 +284,21 @@ export class PosixProcessTree implements ProcessTreeTerminator {
     const expectedRootStartedAt = initial.rootStartedAt;
     for (const [signal, grace] of [['SIGTERM', this.termGraceMs], ['SIGKILL', this.killGraceMs]] as const) {
       const before = classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform, expectedRootStartedAt }), this.platform);
-      if (before.state === 'empty') return;
+      if (before.state === 'empty') { await confirmEmpty(grace, expectedRootStartedAt); return; }
       if (before.state !== 'live' || before.rootStartedAt !== expectedRootStartedAt) {
         throw new Error('POSIX process identity changed or root exited; targeted termination refused');
+      }
+      if (child !== undefined && (child.exitCode !== null || child.signalCode !== null)) {
+        throw new Error('Process root exited before group termination could be verified');
       }
       try { this.processKill(-pid, signal); }
       catch (error) { if (!isNoSuchProcess(error)) throw error; }
       const deadline = Date.now() + grace;
       do {
-        if (classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform, expectedRootStartedAt }), this.platform).state === 'empty') return;
+        if (classifyPosixGroupCompletion(await inspect(pid, { platform: this.platform, expectedRootStartedAt }), this.platform).state === 'empty') {
+          await confirmEmpty(grace, expectedRootStartedAt);
+          return;
+        }
         await new Promise<void>((resolve) => setTimeout(resolve, 25));
       } while (Date.now() < deadline);
     }
@@ -269,7 +315,7 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error: unknown) {
-    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+    return !isNoSuchProcess(error);
   }
 }
 
@@ -278,7 +324,7 @@ function isProcessGroupAlive(pid: number): boolean {
     process.kill(-pid, 0);
     return true;
   } catch (error: unknown) {
-    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+    return !isNoSuchProcess(error);
   }
 }
 

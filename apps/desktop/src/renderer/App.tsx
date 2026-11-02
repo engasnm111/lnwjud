@@ -53,7 +53,7 @@ import {
 import { createTranslator } from './i18n/index.js';
 import { STARTUP_CORE_CHECK_IDS, markStartupDoctorPassed, startupDoctorCorePassed, startupDoctorNavigationTarget, startupDoctorRequired } from './features/onboarding/startup-doctor-state.js';
 import { McpDashboardState } from './mcp-dashboard-state.js';
-import { OperatorUpdateIntent } from './operator-update-intent.js';
+import { OperatorUpdateIntent, UpdateStatusEventRevision } from './operator-update-intent.js';
 
 const MAX_CLIENT_LOG_LINES = 30_000;
 
@@ -83,6 +83,7 @@ export function App(): ReactElement {
   const [incidentNotice, setIncidentNotice] = useState<string | null>(null);
   const [incidentBusy, setIncidentBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const updateStatusEventRevisionRef = useRef(new UpdateStatusEventRevision());
   const [installActivity, setInstallActivity] = useState<InstallActivitySnapshot>(EMPTY_INSTALL_ACTIVITY);
   const updateInstallTransitionRef = useRef(false);
   const operatorUpdateIntentRef = useRef(new OperatorUpdateIntent());
@@ -127,14 +128,16 @@ export function App(): ReactElement {
 
   useEffect(() => {
     let disposed = false;
+    const initialRevision = updateStatusEventRevisionRef.current.capture();
     void window.lnwjud.getUpdateStatus().then((status) => {
-      if (!disposed) {
+      if (!disposed && updateStatusEventRevisionRef.current.isCurrent(initialRevision)) {
         updateInstallTransitionRef.current = status.phase === 'installing';
         setUpdateStatus(status);
       }
     }).catch(() => undefined);
     const unsubscribe = window.lnwjud.onUpdateStatus((status) => {
       if (!disposed) {
+        updateStatusEventRevisionRef.current.event(status.phase);
         updateInstallTransitionRef.current = status.phase === 'installing';
         setUpdateStatus(status);
         advanceOperatorUpdate(status);
@@ -438,10 +441,15 @@ export function App(): ReactElement {
   function advanceOperatorUpdate(status: UpdateStatus): void {
     const action = operatorUpdateIntentRef.current.onStatus(status);
     if (action === 'request-download') {
+      const requestRevision = updateStatusEventRevisionRef.current.capture();
+      const requestAttempt = operatorUpdateIntentRef.current.currentAttempt();
       void window.lnwjud.checkForUpdates().then((next) => {
+        if (!updateStatusEventRevisionRef.current.isCurrent(requestRevision)) return;
         setUpdateStatus(next);
         advanceOperatorUpdate(next);
       }).catch((cause: unknown) => {
+        if (!operatorUpdateIntentRef.current.isCurrentAttempt(requestAttempt)
+          || !updateStatusEventRevisionRef.current.isCurrentFailure(requestRevision)) return;
         operatorUpdateIntentRef.current.cancel();
         setError(cause instanceof Error ? cause.message : String(cause));
       });
@@ -455,19 +463,9 @@ export function App(): ReactElement {
     }
   }
 
-  async function handleOperatorUpdateTest(): Promise<void> {
-    if (!operatorUpdateIntentRef.current.start()) return;
-    try {
-      const status = await window.lnwjud.checkForUpdates();
-      setUpdateStatus(status);
-      advanceOperatorUpdate(status);
-    } catch (cause: unknown) {
-      operatorUpdateIntentRef.current.cancel();
-      throw cause;
-    }
-  }
-
   async function handleUpdateAction(): Promise<void> {
+    let requestRevision: number | null = null;
+    let requestAttempt: number | null = null;
     try {
       if (updateStatus?.canInstall === true) {
         updateInstallTransitionRef.current = true;
@@ -476,8 +474,17 @@ export function App(): ReactElement {
         setUpdateStatus(result.status);
         return;
       }
-      setUpdateStatus(await window.lnwjud.checkForUpdates());
+      if (!operatorUpdateIntentRef.current.start()) return;
+      requestAttempt = operatorUpdateIntentRef.current.currentAttempt();
+      requestRevision = updateStatusEventRevisionRef.current.capture();
+      const status = await window.lnwjud.checkForUpdates();
+      if (!updateStatusEventRevisionRef.current.isCurrent(requestRevision)) return;
+      setUpdateStatus(status);
+      advanceOperatorUpdate(status);
     } catch (cause: unknown) {
+      if (requestAttempt !== null && (!operatorUpdateIntentRef.current.isCurrentAttempt(requestAttempt)
+        || (requestRevision !== null && !updateStatusEventRevisionRef.current.isCurrentFailure(requestRevision)))) return;
+      operatorUpdateIntentRef.current.cancel();
       updateInstallTransitionRef.current = false;
       setError(errorMessage(cause, t('app.updateCheckError')));
     }
@@ -1104,8 +1111,6 @@ export function App(): ReactElement {
           locale={locale}
           dashboard={dashboard}
           updatesUnavailable={updateStatus?.phase === 'unavailable'}
-          updateStatus={updateStatus}
-          onTestNativeUpdate={handleOperatorUpdateTest}
           onLocaleChange={changeLocale}
           onFactoryReset={factoryReset}
           onPermissionProfileChange={setPermissionProfile}

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { verifyContainmentArtifacts, validateContainmentEvidence, type ContainmentPlatform } from '../../apps/desktop/scripts/verify-containment-artifacts.mjs';
 
@@ -30,6 +31,21 @@ async function fixture(): Promise<{ directory: string; compiledBundlePath: strin
   await writeFile(path.join(directory, 'manifest.json'), JSON.stringify({ schemaVersion: 2, buildId: 'lnwjud-containment-v2', platform: 'win32', architecture: 'x64', filename: 'lnwjud-containment.exe', sha256: helperSha256, pinFilename: 'lnwjud-containment-pin.node', pinSha256 }));
   return { directory, compiledBundlePath, platform: 'win32' };
 }
+
+it('bundles identical process runtime bytes from different working directories', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-cwd-'));
+  roots.push(directory);
+  const moduleUrl = new URL('../../apps/desktop/scripts/prepare-containment-runtime.mjs', import.meta.url).href;
+  const output = path.join(directory, 'process-runtime.mjs');
+  const script = 'const { bundleContainmentRuntime } = await import(process.argv[1]); await bundleContainmentRuntime(process.argv[2]);';
+  const hashes: string[] = [];
+  for (const cwd of [new URL('../../', import.meta.url), new URL('../../packages/capabilities/', import.meta.url)]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, moduleUrl, output], { cwd: fileURLToPath(cwd), encoding: 'utf8', timeout: 10_000 });
+    expect(result.status, result.stderr).toBe(0);
+    hashes.push(createHash('sha256').update(await readFile(output)).digest('hex'));
+  }
+  expect(hashes[0]).toBe(hashes[1]);
+});
 
 it('excludes legacy profile-key export material from the production native helper compile', async () => {
   const production = await readFile(new URL('../../native/windows-containment-helper/WindowsContainmentHelper.csproj', import.meta.url), 'utf8');

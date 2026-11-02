@@ -21,6 +21,27 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.9.1',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          { id: 'writer-lease-idle-recovery', titleKey: 'whatsNew.591.lease.title', descriptionKey: 'whatsNew.591.lease.description', badge: 'fixed', tags: ['writer lease', 'same-client', 'fencing'] },
+          { id: 'signed-update-acceptance-pending', titleKey: 'whatsNew.591.updater.title', descriptionKey: 'whatsNew.591.updater.description', badge: 'improved', tags: ['Windows', 'updater', 'signed acceptance'] },
+        ],
+      },
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          { id: 'settings-operator-update-test', titleKey: 'whatsNew.591.operator.title', descriptionKey: 'whatsNew.591.operator.description', badge: 'improved', tags: ['Settings', 'Titlebar', 'Updates', 'native'] },
+          { id: 'mcp-denial-diagnostics', titleKey: 'whatsNew.591.diagnostics.title', descriptionKey: 'whatsNew.591.diagnostics.description', badge: 'improved', tags: ['MCP', 'logs', 'diagnostics'] },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.9.0',
     categories: [
       {

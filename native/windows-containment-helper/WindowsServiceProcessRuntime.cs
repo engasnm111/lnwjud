@@ -42,6 +42,9 @@ internal sealed class WindowsServiceProcessRuntime
     private readonly object gate = new();
     private readonly Dictionary<string, RuntimeAttempt> attempts = new(StringComparer.Ordinal);
     private readonly Queue<string> completedAttempts = new();
+#if NATIVE_CONTAINMENT_TESTS
+    internal Action? BeforeCollisionRecovery { get; set; }
+#endif
 
     internal WindowsServiceProcessRuntime(ServiceAttemptLedger ledger, bool useCurrentUserTestLauncher = false)
     {
@@ -92,6 +95,7 @@ internal sealed class WindowsServiceProcessRuntime
             attempt.PersistOutput();
         }
 
+        var launchReturned = false;
         try
         {
             ContainedProcess process;
@@ -109,7 +113,7 @@ internal sealed class WindowsServiceProcessRuntime
                     stderrPipe.ClientSafePipeHandle.DangerousGetHandle(),
                     () => attempt.CancelRequested,
                     pid => _ = ledger.MarkRunning(identity, callerSid, checked((int)pid)),
-                    jobName);
+                    jobName, identity);
             }
             else
 #endif
@@ -125,14 +129,29 @@ internal sealed class WindowsServiceProcessRuntime
                     stderrPipe.ClientSafePipeHandle.DangerousGetHandle(),
                     () => attempt.CancelRequested,
                     pid => _ = ledger.MarkRunning(identity, callerSid, checked((int)pid)),
-                    jobName);
+                    jobName, identity);
             }
 
+            launchReturned = true;
             attempt.Attach(process);
             attempt.DisposeLocalClientHandles();
             attempt.StartOutputReaders();
             attempt.MonitorTask = Task.Run(() => MonitorAsync(attempt));
             return ledger.Inspect(identity, callerSid);
+        }
+        catch (ContainedProcess.JobNameInUseException proof) when (!launchReturned)
+        {
+#if NATIVE_CONTAINMENT_TESTS
+            BeforeCollisionRecovery?.Invoke();
+#endif
+            attempt.DisposeLocalClientHandles();
+            attempt.DisposePipes();
+            lock (gate)
+            {
+                attempt.MarkTerminal();
+                attempts.Remove(identity.AttemptId);
+            }
+            return ledger.MarkJobCollisionBeforeLaunch(identity, callerSid, proof);
         }
         catch
         {
@@ -148,7 +167,11 @@ internal sealed class WindowsServiceProcessRuntime
     {
         var observation = ledger.Inspect(identity, callerSid);
         if (observation.Phase is ServiceAttemptPhase.TerminalVerified or ServiceAttemptPhase.LaunchNotStarted)
-            return observation;
+        {
+            if (!observation.ReservationHeld) return observation;
+            _ = ledger.Release(identity, callerSid);
+            return ledger.Inspect(identity, callerSid);
+        }
 
         RuntimeAttempt? activeAttempt;
         lock (gate) attempts.TryGetValue(identity.AttemptId, out activeAttempt);
@@ -205,30 +228,7 @@ internal sealed class WindowsServiceProcessRuntime
             return ledger.Inspect(identity, callerSid);
         }
 
-        var jobName = ContainedProcess.GetJobName(identity.AttemptId);
-        var probe = ContainedProcess.QueryJob(jobName);
-        if (probe.Status == ContainedProcess.JobProbeStatus.Active)
-        {
-            if (ContainedProcess.TerminateJobByName(jobName, 15000))
-            {
-                _ = ledger.RecordTerminal(identity, callerSid, ServiceProcessOutcome.Cancelled, 1, 0);
-                _ = ledger.Release(identity, callerSid);
-            }
-            else
-            {
-                _ = ledger.MarkUnknown(identity, callerSid, "SERVICE_TERMINATION_UNVERIFIED");
-            }
-        }
-        else if (probe.Status is ContainedProcess.JobProbeStatus.NotFound or ContainedProcess.JobProbeStatus.Empty
-            && observation.TargetPid is > 0)
-        {
-            // A cancellation requested after the Job vanished does not prove
-            // that cancellation caused termination or that the target exited 0.
-            _ = ledger.RecordTerminal(identity, callerSid, ServiceProcessOutcome.Interrupted, 125, 0);
-            _ = ledger.Release(identity, callerSid);
-        }
-
-        return ledger.Inspect(identity, callerSid);
+        return observation with { Reason = "SERVICE_CANCELLATION_HANDLE_UNAVAILABLE" };
     }
 
     internal ServiceOutputObservation ReadOutput(ServiceAttemptIdentity identity, string callerSid, ServiceOutputCursor? cursor = null)

@@ -50,6 +50,24 @@ test('disposable signature authenticates exact bytes and empty production policy
   assert.throws(() => authenticateEnvelope(fixture.bytes, loadProductionPolicy(), 1800000000n), /RELEASE_TRUST_UNCONFIGURED/);
 });
 
+test('signed same-version refresh requires a changed artifact and higher sequence', () => {
+  const fixture = disposableFixture();
+  fixture.payload.previous.version = fixture.payload.version;
+  fixture.payload.previous.artifact.name = fixture.payload.artifact.name;
+  const check = () => authenticateEnvelope(rawEnvelope(fixture, Buffer.from(JSON.stringify(fixture.payload))), fixture.policy, 1800000000n);
+  assert.equal(check().payload.version, '2.0.0');
+  fixture.payload.artifact.sha256 = fixture.payload.previous.artifact.sha256;
+  fixture.payload.recoveryAuthorization.candidateArtifactSha256 = fixture.payload.artifact.sha256;
+  assert.throws(check, /RELEASE_REPLAY/);
+  fixture.payload.artifact.sha256 = 'd'.repeat(64);
+  fixture.payload.recoveryAuthorization.candidateArtifactSha256 = fixture.payload.artifact.sha256;
+  fixture.payload.releaseSequence = fixture.payload.previous.releaseSequence;
+  assert.throws(check, /RELEASE_REPLAY/);
+  fixture.payload.releaseSequence = '2';
+  fixture.payload.version = '0.9.0'; fixture.payload.artifact.name = 'lnwjud-Setup-0.9.0.exe';
+  assert.throws(check, /RELEASE_REPLAY/);
+});
+
 test('authenticated target tuple binds platform, architecture, distribution and artifact names', () => {
   for (const architecture of ['x64', 'arm64']) {
     const fixture = disposableFixture();

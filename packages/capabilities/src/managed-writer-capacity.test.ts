@@ -48,6 +48,7 @@ describe('managed writer and durable shell admission', () => {
     expect(response).toMatchObject({ ok: true, value: { tasks: [], admission: {
       capacity_population: 'durable_shell', durable_shell_limit: 16, durable_shell_reservations: 0,
       managed_writer_reservations: 1, unresolved_reservations: 1, exclusive_writer_blocked: true,
+      blockers: [{ marker_origin: 'v2_unbound', owner_binding: 'owner_metadata_only', terminal_proof: 'not_observed' }],
     } } });
     expect(JSON.stringify(response)).not.toMatch(/private-client|private-session|private-workspace|managed-writer-/);
   });

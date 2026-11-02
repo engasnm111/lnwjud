@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
@@ -483,9 +484,17 @@ export function createDefaultMcpClientFactory(
           // leaders. Do not signal an unrelated process group with -pid.
           // Closing the transport proves only direct-child shutdown, never
           // escaped descendants; macOS managed workspace writers stay denied.
-          if (process.platform !== 'darwin' && pid !== null && getStopPid(processTreeTerminator) !== undefined) {
+          if (process.platform !== 'darwin' && pid !== null) {
             try {
-              await getStopPid(processTreeTerminator)?.(pid);
+              if (process.platform === 'linux') {
+                const child: unknown = Reflect.get(transport, '_process');
+                if (!(child instanceof ChildProcess) || child.pid === undefined || child.pid !== pid) {
+                  throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED');
+                }
+                await processTreeTerminator.stop(child, child.pid);
+              } else {
+                await getStopPid(processTreeTerminator)?.(pid);
+              }
             } catch (error: unknown) {
               firstError = error;
             }

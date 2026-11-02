@@ -72,6 +72,28 @@ test('baseline and update are separate signed purposes', () => {
   assert.throws(() => authenticateAuthorizationV2(f.envelope(f.payload), f.policy, now, 'update'));
 });
 
+test('producer accepts a changed same-version artifact only with a higher sequence', () => {
+  const f = createFixture();
+  const envelope = f.envelope(f.payload);
+  const previous = authenticateAuthorizationV2(envelope, f.policy, now, 'baseline');
+  const update = globalThis.structuredClone(f.payload);
+  update.kind = 'update';
+  update.recovery = { purpose: 'failed-candidate-only', previousReleaseIdentity: previous.identitySha256, maximumAttempts: 1 };
+  update.release.releaseSequence = String(BigInt(update.release.releaseSequence) + 1n);
+  update.release.artifact.sha256 = 'a'.repeat(64);
+  const check = () => authenticatePreviousMetadataV2(
+    inspectAuthorizationPayloadV2(Buffer.from(JSON.stringify(update)), f.policy, now, 'update', 'test-only'), envelope, 'baseline', f.policy, now);
+  assert.equal(check().identitySha256, previous.identitySha256);
+  update.release.artifact.sha256 = f.payload.release.artifact.sha256;
+  assert.throws(check, /RELEASE_REPLAY/);
+  update.release.artifact.sha256 = 'a'.repeat(64);
+  update.release.releaseSequence = f.payload.release.releaseSequence;
+  assert.throws(check, /RELEASE_REPLAY/);
+  update.release.releaseSequence = String(BigInt(f.payload.release.releaseSequence) + 1n);
+  update.release.version = '5.8.0'; update.release.artifact.name = 'lnwjud-Setup-5.8.0.exe';
+  assert.throws(check, /RELEASE_REPLAY/);
+});
+
 test('authenticated metadata remains bound to the bytes that were verified', () => {
   const f = createFixture();
   const update = { ...f.payload, kind: 'update', recovery: { purpose: 'failed-candidate-only', previousReleaseIdentity: 'a'.repeat(64), maximumAttempts: 1 } };

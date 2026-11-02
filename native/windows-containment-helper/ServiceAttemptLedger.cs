@@ -80,6 +80,9 @@ internal sealed class ServiceAttemptLedger
     private readonly Dictionary<string, Entry> attempts = new(StringComparer.Ordinal);
     private readonly ServiceAttemptLedgerPersistence? persistence;
     private bool unavailable;
+#if NATIVE_CONTAINMENT_TESTS
+    internal Action? AfterImportHoldClearedForTest { get; set; }
+#endif
 
     internal ServiceAttemptLedger() { }
 
@@ -209,6 +212,24 @@ internal sealed class ServiceAttemptLedger
             attempts.Add(identity.AttemptId, tombstone);
             Persist();
             return Observe(tombstone);
+        }
+    }
+
+    internal ServiceAttemptObservation MarkJobCollisionBeforeLaunch(ServiceAttemptIdentity identity, string callerSid, ContainedProcess.JobNameInUseException proof)
+    {
+        ArgumentNullException.ThrowIfNull(proof);
+        lock (gate)
+        {
+            var entry = Require(identity, callerSid);
+            if (!proof.Consume(identity)
+                || entry.Phase is not (ServiceAttemptPhase.DispatchCommitted or ServiceAttemptPhase.TerminationUnknown)
+                || entry.TargetPid is not null || !entry.ReservationHeld)
+                throw new IOException("ATTEMPT_PHASE_CONFLICT");
+            entry.Phase = ServiceAttemptPhase.LaunchNotStarted;
+            entry.Reason = "CONTAINMENT_JOB_NAME_IN_USE";
+            entry.ReservationHeld = entry.Request.HoldForImport;
+            Persist();
+            return Observe(entry);
         }
     }
 
@@ -345,10 +366,16 @@ internal sealed class ServiceAttemptLedger
         lock (gate)
         {
             var entry = Require(identity, callerSid);
-            if (!entry.Request.HoldForImport) return;
-            entry.Request = entry.Request with { HoldForImport = false };
-            Persist();
-            if (entry.Phase == ServiceAttemptPhase.TerminalVerified) _ = Release(identity, callerSid);
+            if (entry.Request.HoldForImport)
+            {
+                entry.Request = entry.Request with { HoldForImport = false };
+                Persist();
+#if NATIVE_CONTAINMENT_TESTS
+                AfterImportHoldClearedForTest?.Invoke();
+#endif
+            }
+            if (entry.Phase is ServiceAttemptPhase.TerminalVerified or ServiceAttemptPhase.LaunchNotStarted)
+                _ = Release(identity, callerSid);
         }
     }
 

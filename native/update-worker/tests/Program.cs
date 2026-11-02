@@ -91,6 +91,7 @@ internal static class Program
         assertions += ReleaseBuildEvidenceTests.Run();
         assertions += UpdateTransactionJournalTests.Run();
         assertions += UpdateTransactionStoreTests.Run();
+        assertions += UnauthenticatedPublicationTests.Run();
         assertions += ReleaseMetadataTests.RunInterop(metadataFixture);
         assertions += ReleaseIdentityTests.Run(Path.Combine(Path.GetDirectoryName(metadataFixture)!, "release-identity-v1.json"));
         assertions += ReleaseAuthorizationV2Tests.Run(Path.Combine(Path.GetDirectoryName(metadataFixture)!, "authorization-v2.json"));
@@ -99,6 +100,7 @@ internal static class Program
         await OwnershipAndProtocol();
         foreach (var boundary in new[] { "stage-flushed", "publication-readback", "preauth-committed" }) await CrashRecovery(boundary);
         await TerminalStageRecovery();
+        await NoncanonicalStageRecovery();
         await JournalHolds();
         await Anchoring();
         await NullDaclRefusal();
@@ -234,9 +236,7 @@ internal static class Program
         JsonObject recovered;
         JsonObject repeated;
         bool statusPreservedBytes;
-        bool publicationRemoved;
         bool selectionUnchanged;
-        UpdateTransactionJournal recoveredTransaction;
         byte[] transactionAfterRecovery;
 
         using (var child = new Child(root))
@@ -246,9 +246,7 @@ internal static class Program
                 && File.ReadAllBytes(transactionPath).SequenceEqual(publishedBytes);
 
             recovered = await child.Send(CommandLine("recover"));
-            publicationRemoved = !File.Exists(pendingPath);
             var recoveredBytes = File.ReadAllBytes(transactionPath);
-            recoveredTransaction = UpdateTransactionJournal.Decode(recoveredBytes, Installation);
             selectionUnchanged = File.ReadAllBytes(selectionPath).SequenceEqual(selectionBytes);
             transactionAfterRecovery = recoveredBytes;
 
@@ -260,14 +258,15 @@ internal static class Program
             "status holds a pending transaction publication");
         Check(statusPreservedBytes, "status preserves pending and published transaction bytes");
         Check(Kind(recovered) == "held" && result?["safeToStart"]?.GetValue<bool>() == false
-            && Reason(recovered) == "UPDATE_TRANSACTION_PENDING",
-            "recovery publishes a valid staged transition but holds before update effects: " + Describe(recovered));
-        Check(publicationRemoved, "recovery removes the resolved transaction staging file");
-        Check(recoveredTransaction == staged, "recovery publishes the exact canonical transaction successor");
-        Check(selectionUnchanged, "transaction publication recovery leaves the active slot unchanged");
-        Check(Kind(repeated) == "held" && Reason(repeated) == "UPDATE_TRANSACTION_PENDING"
-            && File.ReadAllBytes(transactionPath).SequenceEqual(transactionAfterRecovery),
-            "repeated recovery is idempotent and remains held");
+            && Reason(recovered) == "UPDATE_TRANSACTION_PUBLICATION_UNVERIFIED",
+            "recovery holds an unauthenticated staged transition: " + Describe(recovered));
+        Check(File.ReadAllBytes(pendingPath).SequenceEqual(pendingBytes)
+            && transactionAfterRecovery.SequenceEqual(publishedBytes) && selectionUnchanged,
+            "recovery preserves the staged, published, and selection bytes");
+        Check(Kind(repeated) == "held" && Reason(repeated) == "UPDATE_TRANSACTION_PUBLICATION_UNVERIFIED"
+            && File.ReadAllBytes(transactionPath).SequenceEqual(publishedBytes)
+            && File.ReadAllBytes(pendingPath).SequenceEqual(pendingBytes),
+            "repeated recovery preserves the unauthenticated stage");
     }
 
     private static async Task OwnershipAndProtocol()
@@ -341,6 +340,18 @@ internal static class Program
             var result = await child.Send(CommandLine("recover"));
             Check(Reason(result) == "PREVIOUS_OWNER_UNVERIFIED", "live previous PID failclosed " + Describe(result));
         }
+        var canonical = journal.Encode(Installation);
+        var noncanonical = Wire.Utf8.GetBytes(" " + Wire.Utf8.GetString(canonical));
+        PublishFixture(root, noncanonical);
+        using (var child = new Child(root))
+        {
+            var result = await child.Send(CommandLine("recover"));
+            Check(Kind(result) == "held" && Reason(result) == "JOURNAL_NONCANONICAL"
+                && result["generation"] is null && result["revision"] is null,
+                "noncanonical journal holds unknown positions " + Describe(result));
+            Check(File.ReadAllBytes(path).SequenceEqual(noncanonical), "noncanonical journal bytes preserved");
+        }
+        PublishFixture(root, canonical);
         ((JsonArray)payload["history"]!).Add(new JsonObject { ["requestId"] = "request-1", ["releaseId"] = "release-1", ["policyRevision"] = 1, ["transactionId"] = Guid.NewGuid().ToString("D") });
         PublishFixture(root, journal.Encode(Installation));
         using (var child = new Child(root)) Check(Kind(await child.Send(Request())) == "held", "historical receipt cannot bypass pending transaction hold");
@@ -370,6 +381,33 @@ internal static class Program
         var owner = new FileInfo(filename).GetAccessControl(AccessControlSections.Owner).GetOwner(typeof(SecurityIdentifier));
         Check(owner == identity.User, "semantic journal fixture must be owned by user before testing phase recovery");
     }
+    private static async Task NoncanonicalStageRecovery()
+    {
+        var root = Root();
+        var first = Root();
+        using (var child = new Child(first)) _ = await child.Send(Request());
+        var terminal = Journal.Decode(File.ReadAllBytes(Path.Combine(first, "journal.json")), Installation);
+        byte[] noncanonical;
+        using (var io = new WindowsStoreIO(root))
+        {
+            var payload = (JsonObject)terminal.Payload.DeepClone(); payload["phase"] = "preauth"; payload.Remove("reason");
+            var preauth = new Journal(1, 1, "none", terminal.Owner, payload);
+            io.Stage(preauth.Encode(Installation)); io.PublishStage("none");
+            var staged = terminal with { PreviousDigest = io.Read("journal.json")!.Digest };
+            noncanonical = Wire.Utf8.GetBytes(" " + Wire.Utf8.GetString(staged.Encode(Installation)));
+            io.Stage(noncanonical);
+        }
+        using var successor = new Child(root);
+        var result = await successor.Send(CommandLine("recover"));
+        Check(Kind(result) == "held" && Reason(result) == "JOURNAL_NONCANONICAL"
+            && result["generation"]!.GetValue<string>() == "1" && result["revision"]!.GetValue<string>() == "1",
+            "noncanonical staged journal cannot be adopted " + Describe(result));
+        Check(File.ReadAllBytes(Path.Combine(root, "journal.pending.json")).SequenceEqual(noncanonical),
+            "noncanonical stage preserved without publication");
+        Check(Reason(await successor.Send(CommandLine("status"))) == "PUBLICATION_PENDING",
+            "noncanonical stage remains held for read-only status");
+    }
+
     private static async Task TerminalStageRecovery()
     {
         var root = Root();

@@ -14,10 +14,9 @@ const generatedPath = path.join(repositoryRoot, 'packages/capabilities/src/conta
 const execute = promisify(execFile);
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-export async function prepareContainmentRuntime() {
-  await mkdir(stageDirectory, { recursive: true });
-  const runtimePath = path.join(stageDirectory, 'process-runtime.mjs');
+export async function bundleContainmentRuntime(runtimePath) {
   await build({
+    absWorkingDir: repositoryRoot,
     entryPoints: [path.join(repositoryRoot, 'packages/process/src/index.ts')],
     bundle: true,
     platform: 'node',
@@ -27,6 +26,12 @@ export async function prepareContainmentRuntime() {
     outfile: runtimePath,
     banner: { js: "import { createRequire as __lnwjudCreateRequire } from 'node:module'; const require = __lnwjudCreateRequire(import.meta.url);" },
   });
+}
+
+export async function prepareContainmentRuntime() {
+  await mkdir(stageDirectory, { recursive: true });
+  const runtimePath = path.join(stageDirectory, 'process-runtime.mjs');
+  await bundleContainmentRuntime(runtimePath);
   let helperSha256 = '0'.repeat(64);
   let pinSha256 = '0'.repeat(64);
   if (process.platform === 'win32') {

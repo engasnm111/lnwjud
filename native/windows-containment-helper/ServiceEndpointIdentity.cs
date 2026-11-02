@@ -143,6 +143,26 @@ internal static class ServiceEndpointIdentity
         }
     }
 
+    // This is a negative availability check, never evidence that a service is trusted or running.
+    // An inaccessible SCM or any error other than ERROR_SERVICE_DOES_NOT_EXIST is inconclusive.
+    internal static bool IsServiceDefinitelyAbsent(string serviceName)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var manager = OpenSCManager(null, null, 1);
+        if (manager == 0) return false;
+        try
+        {
+            var service = OpenService(manager, serviceName, 4);
+            if (service != 0)
+            {
+                _ = CloseServiceHandle(service);
+                return false;
+            }
+            return Marshal.GetLastWin32Error() == 1060;
+        }
+        finally { _ = CloseServiceHandle(manager); }
+    }
+
     private sealed class PackagePin : IDisposable
     {
         internal FileStream Image { get; }
@@ -352,6 +372,16 @@ internal static class ServiceEndpointIdentity
         ValidateHash(expectedSha256);
         image.Position = 0;
         if (!String.Equals(Convert.ToHexString(SHA256.HashData(image)), expectedSha256, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("SERVICE_ENDPOINT_PACKAGE_MISMATCH");
+            throw new ServiceEndpointPackageMismatchException();
     }
+}
+
+internal sealed class ServiceEndpointPackageMismatchException : IOException
+{
+    internal ServiceEndpointPackageMismatchException() : base("SERVICE_ENDPOINT_PACKAGE_MISMATCH") { }
+}
+
+internal sealed class ServiceEndpointNotInstalledException : IOException
+{
+    internal ServiceEndpointNotInstalledException() : base("SERVICE_ENDPOINT_NOT_INSTALLED") { }
 }

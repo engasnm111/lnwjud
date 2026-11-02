@@ -1,0 +1,53 @@
+name: Inspect Protected Update Signing Public Key
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: lnwjud-update-public-root-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  inspect-public-root:
+    if: ${{ github.repository == 'engasnm111/lnwjud' && github.ref == 'refs/heads/main' && github.ref_protected == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: lnwjud-update-signing
+    steps:
+      - name: Derive public SPKI without checkout or signing
+        shell: bash
+        env:
+          LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM }}
+        run: |
+          node <<'NODE'
+          const { createPrivateKey, createPublicKey, createHash } = require('node:crypto');
+          const e = process.env;
+          const refuse = () => { throw new Error('UPDATE_SIGNING_ROOT_BOOTSTRAP_REFUSED'); };
+          if (e.GITHUB_ACTIONS !== 'true' || e.GITHUB_REPOSITORY !== 'engasnm111/lnwjud'
+            || e.GITHUB_REPOSITORY_ID !== '1329830515'
+            || e.GITHUB_REF !== 'refs/heads/main' || e.GITHUB_REF_PROTECTED !== 'true'
+            || e.GITHUB_EVENT_NAME !== 'workflow_dispatch'
+            || e.GITHUB_WORKFLOW_REF !== 'engasnm111/lnwjud/.github/workflows/update-signing-root-bootstrap.yml@refs/heads/main'
+            || e.GITHUB_WORKFLOW_SHA !== e.GITHUB_SHA
+            || !/^[a-f0-9]{40}$/.test(e.GITHUB_SHA ?? '')) refuse();
+          const secret = e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
+          delete e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
+          if (typeof secret !== 'string' || secret.length < 1 || secret.length > 16384) refuse();
+          let key;
+          try { key = createPrivateKey(secret); } catch { refuse(); }
+          if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') refuse();
+          const publicKey = createPublicKey(key);
+          const spki = publicKey.export({ format: 'der', type: 'spki' });
+          if (spki.length < 80 || spki.length > 1024) refuse();
+          const spkiSha256 = createHash('sha256').update(spki).digest('hex');
+          process.stdout.write(JSON.stringify({
+            purpose: 'public-key-discovery-only',
+            algorithm: 'ecdsa-p256-sha256-p1363',
+            spkiBase64: spki.toString('base64'),
+            spkiSha256,
+            sourceCommit: e.GITHUB_SHA,
+            workflow: e.GITHUB_WORKFLOW_REF,
+          }) + '\n');
+          NODE

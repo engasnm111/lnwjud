@@ -132,6 +132,7 @@ export interface DurableShellTaskStoreOptions {
   readonly windowsNativeAuthority?: WindowsNativeAuthority;
   readonly posixProcessRuntime?: { readonly modulePath: string; readonly sha256: string };
   readonly posixGroupInspector?: PosixProcessGroupInspector;
+  readonly posixProcessIdentityProbe?: (pid: number) => Promise<PortableProcessProbe>;
 }
 
 export const DEFAULT_MAX_CONCURRENT_DURABLE_TASKS = 16;
@@ -143,6 +144,7 @@ export class DurableShellTaskStore {
   private readonly windowsNativeAuthority: WindowsNativeAuthority | undefined;
   private readonly posixProcessRuntime: { readonly modulePath: string; readonly sha256: string };
   private readonly posixGroupInspector: PosixProcessGroupInspector;
+  private readonly posixProcessIdentityProbe: (pid: number) => Promise<PortableProcessProbe>;
 
   public constructor(private readonly rootDirectory: string, options: DurableShellTaskStoreOptions = {}) {
     this.maxConcurrentTasks = normalizeMaxConcurrentTasks(options.maxConcurrentTasks);
@@ -150,6 +152,7 @@ export class DurableShellTaskStore {
     this.windowsNativeAuthority = options.windowsNativeAuthority;
     this.posixProcessRuntime = options.posixProcessRuntime ?? createHostPosixProcessRuntime();
     this.posixGroupInspector = options.posixGroupInspector ?? inspectPosixProcessGroup;
+    this.posixProcessIdentityProbe = options.posixProcessIdentityProbe ?? ((pid): Promise<PortableProcessProbe> => probeProcessIdentity(pid, this.platform));
     this.activeIndex = new DurableShellTaskIndex(rootDirectory, {
       maxConcurrentTasks: this.maxConcurrentTasks,
       inspectTask: async (taskId): Promise<ActiveTaskInspection> => this.inspectTaskForIndex(taskId),
@@ -803,10 +806,15 @@ export class DurableShellTaskStore {
     if (this.platform === 'darwin') return false;
     if (metadata.posix_launch_not_started === true && metadata.child_pid === undefined) return true;
     if (metadata.child_pid === undefined) return false;
-    return (await this.posixGroupInspector(metadata.child_pid, {
+    const childPid = metadata.child_pid;
+    const inspect = (): ReturnType<PosixProcessGroupInspector> => this.posixGroupInspector(childPid, {
       platform: this.platform,
       ...(metadata.child_started_at === undefined ? {} : { expectedRootStartedAt: metadata.child_started_at }),
-    })).state === 'empty';
+    });
+    try {
+      if ((await inspect()).state !== 'empty' || (await this.posixProcessIdentityProbe(childPid)).state !== 'gone') return false;
+      return (await inspect()).state === 'empty' && (await this.posixProcessIdentityProbe(childPid)).state === 'gone';
+    } catch { return false; }
   }
 
   private async reconcilePosix(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
@@ -1189,7 +1197,7 @@ type PortableProcessProbe =
   | { readonly state: 'gone' }
   | { readonly state: 'unverifiable'; readonly reason: string };
 
-async function probeProcessIdentity(pid: number, platform: NodeJS.Platform): Promise<PortableProcessProbe> {
+export async function probeProcessIdentity(pid: number, platform: NodeJS.Platform): Promise<PortableProcessProbe> {
   if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 2_147_483_647) return { state: 'unverifiable', reason: 'invalid_pid' };
   try {
     try {
@@ -1207,11 +1215,15 @@ async function probeProcessIdentity(pid: number, platform: NodeJS.Platform): Pro
       return parsePortableProcessProbe(stdout);
     }
     const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'stat='], {
-      encoding: 'utf8', timeout: 3_500, maxBuffer: 16 * 1024,
+      encoding: 'utf8', timeout: 3_500, maxBuffer: 16 * 1024, env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
     });
     return parsePosixProcessProbe(stdout);
   } catch (error: unknown) {
-    if (isProcessProbeNotFound(error)) return { state: 'gone' };
+    try { process.kill(pid, 0); }
+    catch (probeError: unknown) {
+      if (typeof probeError === 'object' && probeError !== null && 'code' in probeError
+        && (probeError as { code: string }).code === 'ESRCH') return { state: 'gone' };
+    }
     return { state: 'unverifiable', reason: isProcessProbeTimeout(error) ? 'probe_timeout' : 'probe_failed' };
   }
 }
@@ -1227,16 +1239,16 @@ function parsePortableProcessProbe(value: string): PortableProcessProbe {
 
 export function parsePosixProcessProbe(value: string): PortableProcessProbe {
   const trimmed = value.trim();
-  if (trimmed.length === 0) return { state: 'gone' };
-  const fields = trimmed.split(/\s+/);
-  const status = fields.pop();
-  if (status === undefined || fields.length === 0) return { state: 'unverifiable', reason: 'invalid_probe_response' };
+  if (trimmed.length === 0 || /[\r\n]/.test(trimmed)) return { state: 'unverifiable', reason: 'invalid_probe_response' };
+  const match = /^((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+([A-Ztx][<NLsl+]*)$/.exec(trimmed);
+  if (match === null) return { state: 'unverifiable', reason: 'invalid_probe_response' };
+  const parsed = Date.parse(match[1]!);
+  if (!Number.isFinite(parsed)) return { state: 'unverifiable', reason: 'invalid_probe_response' };
   // A POSIX zombie has already exited and cannot execute further work. kill(pid, 0)
   // still succeeds until its parent reaps the process, so treating Z as live
   // makes verified cancellation falsely time out on Linux/macOS.
-  if (status.startsWith('Z')) return { state: 'gone' };
-  const parsed = Date.parse(fields.join(' '));
-  return Number.isFinite(parsed) ? { state: 'live', processStartedAt: new Date(parsed).toISOString() } : { state: 'unverifiable', reason: 'invalid_start_time' };
+  if (match[2]!.startsWith('Z')) return { state: 'gone' };
+  return { state: 'live', processStartedAt: new Date(parsed).toISOString() };
 }
 
 function isTrackedProcessLive(probe: PortableProcessProbe, expectedStartedAt: string | undefined): boolean {
@@ -1271,12 +1283,6 @@ function describeTrackedProbe(kind: string, probe: PortableProcessProbe): string
 function identityCapturePending(startedAt: string): boolean {
   const started = Date.parse(startedAt);
   return Number.isFinite(started) && Date.now() - started < PROCESS_IDENTITY_CAPTURE_GRACE_MS;
-}
-
-function isProcessProbeNotFound(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const code: unknown = (error as NodeJS.ErrnoException).code;
-  return code === 1 || code === 'ESRCH' || code === 'ENOENT';
 }
 
 function isProcessProbeTimeout(error: unknown): boolean {
@@ -1498,13 +1504,27 @@ async function processStartedAt(pid) {
       const output = String(result.stdout || '').trim();
       return output.startsWith('LIVE|') ? output.slice(5) : null;
     }
-    const result = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 1750, maxBuffer: 16384 });
+    const result = await execFileAsync('ps', ['-p', String(pid), '-o', 'lstart='], {
+      encoding: 'utf8', timeout: 1750, maxBuffer: 16384, env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+    });
     const value = String(result.stdout || '').trim();
     const parsed = Date.parse(value);
     return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
   } catch {
     return null;
   }
+}
+
+async function posixGroupVerifiedEmpty(pid) {
+  if (!posixRuntime || typeof posixRuntime.classifyPosixGroupCompletion !== 'function') return false;
+  try {
+    const observation = await posixRuntime.inspectPosixProcessGroup(pid, { expectedRootStartedAt: metadata.child_started_at });
+    return posixRuntime.classifyPosixGroupCompletion(observation, process.platform).state === 'empty';
+  } catch { return false; }
+}
+
+function posixChildExited(pid) {
+  return child?.pid === pid && (posixRootExit !== undefined || typeof child.exitCode === 'number' || typeof child.signalCode === 'string');
 }
 
 async function stopTree(pid) {
@@ -1515,11 +1535,10 @@ async function stopTree(pid) {
   }
   if (spec.posix) {
     if (!posixRuntime) return false;
-    if ((await posixRuntime.inspectPosixProcessGroup(pid)).state === 'empty') return true;
     if (!metadata.child_started_at) return false;
     try {
       await new posixRuntime.PosixProcessTree().stopPid(pid, metadata.child_started_at);
-      return (await posixRuntime.inspectPosixProcessGroup(pid, { expectedRootStartedAt: metadata.child_started_at })).state === 'empty';
+      return posixChildExited(pid) && await posixGroupVerifiedEmpty(pid);
     } catch { return false; }
   }
   if (!processRunning(pid)) return true;
@@ -1566,9 +1585,7 @@ async function finish(state, exitCode, error) {
   if (settled) return;
   if (spec.posix) {
     if (!child?.pid) metadata.posix_launch_not_started = true;
-    else if (!posixRuntime || (await posixRuntime.inspectPosixProcessGroup(child.pid, {
-      expectedRootStartedAt: metadata.child_started_at,
-    })).state !== 'empty') {
+    else if (!posixChildExited(child.pid) || !await posixGroupVerifiedEmpty(child.pid)) {
       if (metadata.state !== 'termination_unverified') {
         metadata.state = 'termination_unverified';
         metadata.error = 'POSIX process group remains live or unverified';

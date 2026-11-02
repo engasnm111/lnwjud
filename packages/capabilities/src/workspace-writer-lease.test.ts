@@ -149,7 +149,9 @@ describe('durable multi-session workspace writer lease', () => {
     expect(await two.acquire('workspace', 'owner', 'new-session', 600, true)).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
     time += 61_000;
     expect(await two.acquire('workspace', 'other-owner', 'new-session', 600, true)).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
-    expect(await two.acquire('workspace', 'owner', 'new-session', 600)).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await two.assessAbandonment('workspace', 'owner')).toMatchObject({ ok: true, value: { live: false, reason: 'idle_beyond_grace' } });
+    expect(await two.acquire('workspace', 'owner', 'new-session', 600))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
     const second = await two.acquire('workspace', 'owner', 'new-session', 600, true);
     expect(second.ok).toBe(true);
     if (!second.ok) return;

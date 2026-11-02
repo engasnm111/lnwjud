@@ -4,6 +4,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json.Nodes;
 using Lnwjud.UpdateAdmission;
 
 [SupportedOSPlatform("windows")]
@@ -26,6 +27,8 @@ internal static class Program
         FileSystemAclExtensions.CreateDirectory(security, path); if (bootstrap) AdmissionCore.InitializeIsolated(StoreIdentity.Isolated(path)); return path;
     }
     private static NativeEvidence Evidence(SettlementKind kind, string id) => NativeEvidence.Isolated(kind, id);
+    private static string NewPermit(AdmissionGrant grant) => grant is AdmissionGrant.Granted created
+        ? created.PermitId : throw new Exception("Expected a new admission grant");
     private static Process Child(params string[] arguments)
     {
         var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -34,6 +37,16 @@ internal static class Program
     }
     private static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "epoch-quiescence-test")
+        {
+            try { EpochBoundQuiescence(); Console.WriteLine("PASS current-epoch quiescence"); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
+        if (args.Length == 1 && args[0] == "unsafe-successor-test")
+        {
+            try { UnsafeSuccessor(); Console.WriteLine("PASS unsafe admission successor refused"); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
         if (args.Length == 2 && args[0] == "lock")
         {
             try { using var store = new AdmissionStore(StoreIdentity.Isolated(args[1])); return 10; }
@@ -45,8 +58,82 @@ internal static class Program
             core.AfterStage = () => Environment.Exit(42);
             core.Close(UpdatePrincipal.Isolated("crash-update", 1), core.Status().Revision); return 12;
         }
-        try { Protocol(); Lifecycle(); SequenceAndRetirement(); Concurrency(); DurableStore(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
+        try { Protocol(); CorruptJournal(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+    private static void DuplicateEntryRace()
+    {
+        var root = Root();
+        try
+        {
+            using var core = new AdmissionCore(StoreIdentity.Isolated(root));
+            var runtime = RuntimePrincipal.Isolated("duplicate-race"); var participant = core.Register(runtime);
+            using var start = new ManualResetEventSlim(false);
+            var first = Task.Run(() => { start.Wait(); return core.Enter(runtime, participant, 1, "call"); });
+            var second = Task.Run(() => { start.Wait(); return core.Enter(runtime, participant, 1, "call"); });
+            start.Set();
+            if (!Task.WaitAll([first, second], 10_000)) throw new Exception("Duplicate entry race did not finish");
+            var results = new[] { first.Result, second.Result };
+            Check(results.Count(result => result is AdmissionGrant.Granted) == 1
+                && results.Count(result => result is AdmissionGrant.ExistingRequiresReconciliation) == 1
+                && core.Status().HeldPermits == 1, "concurrent duplicate entry grants once and requires reconciliation");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    private static void EpochBoundQuiescence()
+    {
+        var root = Root();
+        try
+        {
+            var runtime = RuntimePrincipal.Isolated("epoch-owner");
+            string participant; string oldEpoch;
+            using (var previous = new AdmissionCore(StoreIdentity.Isolated(root)))
+            {
+                participant = previous.Register(runtime); oldEpoch = previous.Status().Epoch;
+                previous.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{oldEpoch}"));
+            }
+            using var core = new AdmissionCore(StoreIdentity.Isolated(root));
+            var updater = UpdatePrincipal.Isolated("epoch-update", 1);
+            core.Close(updater, core.Status().Revision);
+            var current = core.Status();
+            Check(current.Epoch != oldEpoch && current.UnquiescedParticipants == 1, "new closure requires current-epoch quiescence");
+            Refuses(() => core.Seal(updater, current.Revision), "ADMISSION_DRAIN_INCOMPLETE");
+            Refuses(() => core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{oldEpoch}")), "ADMISSION_QUIESCENCE_UNPROVEN");
+            core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{current.Epoch}"));
+            Check(core.Seal(updater, core.Status().Revision).Epoch == current.Epoch, "new epoch proof permits sealing");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    private static void UnsafeSuccessor()
+    {
+        var root = Root();
+        try
+        {
+            var identity = StoreIdentity.Isolated(root);
+            using (var core = new AdmissionCore(identity))
+            {
+                var owner = RuntimePrincipal.Isolated("held-owner"); var participant = core.Register(owner);
+                core.Enter(owner, participant, 1, "call");
+                core.Close(UpdatePrincipal.Isolated("update-held", 1), core.Status().Revision);
+                Check(core.Status().HeldPermits == 1 && core.Status().Phase == "closing", "fixture has a held permit during closure");
+            }
+            byte[] current; byte[] pending;
+            using (var store = new AdmissionStore(identity))
+            {
+                var previous = store.Read("admission.json")!; current = previous.Bytes;
+                var value = AdmissionProtocol.Object(current, AdmissionStore.MaximumJournalBytes);
+                value["predecessor"] = previous.Digest;
+                value["revision"] = AdmissionProtocol.Decimal(AdmissionProtocol.Number(value, "revision") + 1);
+                var state = value["state"]!.AsObject();
+                state["phase"] = "open"; state["transaction"] = ""; state["generation"] = "0";
+                state["participants"] = new JsonObject(); state["permits"] = new JsonObject();
+                pending = AdmissionProtocol.Encode(value); store.Stage(pending);
+            }
+            Refuses(() => AdmissionCore.RecoverPublication(identity), "ADMISSION_RECOVERY_UNVERIFIED");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.json")).SequenceEqual(current), "rejected successor preserves current state");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.pending.json")).SequenceEqual(pending), "rejected successor preserves pending evidence");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void Protocol()
     {
@@ -60,9 +147,36 @@ internal static class Program
         foreach (var number in new[] { "01", "-1", "1.0", "18446744073709551616", "", " 1" }) Refuses(() => AdmissionProtocol.Decimal(number), "ADMISSION_POSITION_INVALID");
         Check(AdmissionProtocol.Decimal("18446744073709551615") == ulong.MaxValue, "exact unsigned bound");
         Refuses(() => AdmissionProtocol.Object(new byte[16_385], AdmissionProtocol.FrameBytes), "ADMISSION_JSON_INVALID");
-        try { _ = AdmissionProtocol.Object([123, 34, 255, 34, 58, 49, 125], 100); throw new Exception("UTF8 accepted"); } catch (DecoderFallbackException) { assertions++; }
+        Refuses(() => AdmissionProtocol.Object([123, 34, 255, 34, 58, 49, 125], 100), "ADMISSION_JSON_INVALID");
+        Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{broken"), 100), "ADMISSION_JSON_INVALID");
+        Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD800\"}"), 100), "ADMISSION_JSON_INVALID");
+        Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"\\uD800\":1}"), 100), "ADMISSION_JSON_INVALID");
+        Check(AdmissionProtocol.Text(AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD83D\\uDE00\"}"), 100), "x") == "😀", "valid paired surrogate accepted");
         Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_REGISTRY_UNCONFIGURED");
         foreach (var path in new[] { "relative", "\\\\server\\share", "C:\\", "C:\\root:stream" }) Refuses(() => AdmissionStore.ValidatePath(path), "STATE_ROOT_UNSAFE");
+    }
+    private static void CorruptJournal()
+    {
+        var root = Root();
+        try
+        {
+            var identity = StoreIdentity.Isolated(root); var file = Path.Combine(root, "admission.json");
+            var current = File.ReadAllBytes(file); byte[] corrupt = [123, 34, 255, 34, 58, 49, 125];
+            using (var store = new AdmissionStore(identity)) store.Stage(corrupt);
+            Refuses(() => AdmissionCore.RecoverPublication(identity), "ADMISSION_JSON_INVALID");
+            Check(File.ReadAllBytes(file).SequenceEqual(current), "invalid pending preserves current journal");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.pending.json")).SequenceEqual(corrupt), "invalid pending evidence is preserved");
+        }
+        finally { Directory.Delete(root, true); }
+        root = Root();
+        try
+        {
+            var file = Path.Combine(root, "admission.json"); var corrupt = Encoding.UTF8.GetBytes("{broken");
+            File.WriteAllBytes(file, corrupt);
+            Refuses(() => new AdmissionCore(StoreIdentity.Isolated(root)), "ADMISSION_JSON_INVALID");
+            Check(File.ReadAllBytes(file).SequenceEqual(corrupt), "invalid current journal is preserved");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void Lifecycle()
     {
@@ -74,14 +188,18 @@ internal static class Program
             using (var core = new AdmissionCore(StoreIdentity.Isolated(root)))
             {
                 participant = core.Register(runtime); Check(core.Register(runtime) == participant, "register idempotence");
-                core.Enter(runtime, participant, 1, "call"); var revision = core.Status().Revision;
-                Check(core.Enter(runtime, participant, 1, "call") == $"{participant}.1" && core.Status().Revision == revision, "enter retry cannot duplicate work");
+                Check(NewPermit(core.Enter(runtime, participant, 1, "call")) == $"{participant}.1", "initial entry grants a permit"); var revision = core.Status().Revision;
+                Check(core.Enter(runtime, participant, 1, "call") is AdmissionGrant.ExistingRequiresReconciliation && core.Status().Revision == revision, "entry retry requires reconciliation");
+                Refuses(() => core.Enter(runtime, participant, 1, "background"), "ADMISSION_PERMIT_CONFLICT");
                 core.Close(owner, revision);
+                Check(core.Enter(runtime, participant, 1, "call") is AdmissionGrant.ExistingRequiresReconciliation, "closed admission never regrants an existing permit");
                 Refuses(() => core.Enter(runtime, participant, 2, "call"), "ADMISSION_CLOSED");
                 Refuses(() => core.Enter(other, participant, 1, "call"), "ADMISSION_PARTICIPANT_MISMATCH");
                 var quarantined = core.Register(other); Check(core.Status().UnquiescedParticipants == 1, "late participant quarantined");
                 Refuses(() => core.Enter(other, quarantined, 1, "startup"), "ADMISSION_PARTICIPANT_QUIESCENT");
-                core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1");
+                Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.Granted, "promotion grants a new job permit");
+                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "promotion retry with unverified parent requires reconciliation");
+                Refuses(() => core.Promote(runtime, participant, 2, "different-attempt", $"{participant}.1"), "ADMISSION_PERMIT_CONFLICT");
                 core.Settle(runtime, $"{participant}.1", Evidence(SettlementKind.OperationSettled, $"{participant}.1"));
                 Check(core.Status().HeldPermits == 1, "background job retains drain reservation");
                 Refuses(() => core.Settle(runtime, $"{participant}.2", Evidence(SettlementKind.OperationSettled, $"{participant}.2")), "ADMISSION_SETTLEMENT_UNPROVEN");
@@ -92,6 +210,7 @@ internal static class Program
             using (var core = new AdmissionCore(StoreIdentity.Isolated(root)))
             {
                 Check(core.Status().Phase == "closing" && core.Status().HeldPermits == 1, "restart retains closure and job");
+                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "restart does not regrant a held job");
                 core.Settle(runtime, $"{participant}.2", Evidence(SettlementKind.NativeJobZeroAndReleased, $"{participant}.2"));
                 Refuses(() => core.Seal(owner, core.Status().Revision), "ADMISSION_DRAIN_INCOMPLETE");
                 core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{core.Status().Epoch}"));
@@ -146,12 +265,12 @@ internal static class Program
                 participant = core.Register(runtime);
                 for (ulong sequence = 1; sequence <= 520; sequence++)
                 {
-                    var permit = core.Enter(runtime, participant, sequence, "call"); core.Settle(runtime, permit, Evidence(SettlementKind.OperationSettled, permit));
+                    var permit = NewPermit(core.Enter(runtime, participant, sequence, "call")); core.Settle(runtime, permit, Evidence(SettlementKind.OperationSettled, permit));
                 }
                 var records = AdmissionProtocol.Object(File.ReadAllBytes(Path.Combine(root, "admission.json")), AdmissionStore.MaximumJournalBytes);
                 Check(records["state"]!["permits"]!.AsObject().Count == 0 && core.Status().HeldPermits == 0, "more than512 completed calls compact without exhaustion");
                 Refuses(() => core.Enter(runtime, participant, 1, "call"), "ADMISSION_PERMIT_ALREADY_SETTLED");
-                var first = core.Enter(runtime, participant, 521, "call"); var second = core.Enter(runtime, participant, 522, "background");
+                var first = NewPermit(core.Enter(runtime, participant, 521, "call")); var second = NewPermit(core.Enter(runtime, participant, 522, "background"));
                 core.Settle(runtime, second, Evidence(SettlementKind.OperationSettled, second));
                 Check(core.Status().HeldPermits == 1, "out-of-order settlement retains unknown predecessor");
                 core.Settle(runtime, first, Evidence(SettlementKind.OperationSettled, first));
@@ -192,14 +311,20 @@ internal static class Program
                 Refuses(() => new AdmissionStore(StoreIdentity.Isolated(root)), "OWNER_BUSY");
                 Refuses(() => core.Enter(RuntimePrincipal.Isolated("unknown"), "absent", 1, "call"), "ADMISSION_PARTICIPANT_MISMATCH");
             }
+            AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root));
+            AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root));
             using (var child = Child("crash", root)) Check(child.WaitForExit(10_000) && child.ExitCode == 42, "actual process exits after durable stage");
             var old = File.ReadAllBytes(Path.Combine(root, "admission.json"));
+            var staged = File.ReadAllBytes(Path.Combine(root, "admission.pending.json"));
             var stageAcl = new FileInfo(Path.Combine(root, "admission.pending.json")).GetAccessControl();
             Check(stageAcl.GetOwner(typeof(SecurityIdentifier))?.Value == WindowsIdentity.GetCurrent().User!.Value && stageAcl.AreAccessRulesProtected, "crash stage explicit user owner protected DACL");
             Refuses(() => new AdmissionCore(StoreIdentity.Isolated(root)), "ADMISSION_PUBLICATION_PENDING");
             Check(File.ReadAllBytes(Path.Combine(root, "admission.json")).SequenceEqual(old), "read-only open never recovers publication");
-            AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root)); AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root));
-            using (var recovered = new AdmissionCore(StoreIdentity.Isolated(root))) Check(recovered.Status().Phase == "closing" && recovered.Status().TransactionId == "crash-update", "explicit recovery idempotent retains closure");
+            Refuses(() => AdmissionCore.RecoverPublication(StoreIdentity.Isolated(root)), "ADMISSION_RECOVERY_UNVERIFIED");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.json")).SequenceEqual(old), "unverified recovery preserves current journal");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.pending.json")).SequenceEqual(staged), "unverified recovery preserves staged journal");
+            Refuses(() => new AdmissionCore(StoreIdentity.Isolated(root)), "ADMISSION_PUBLICATION_PENDING");
+            File.Delete(Path.Combine(root, "admission.pending.json")); // Isolated fixture only; production must retain pending evidence.
             using (var io = new AdmissionStore(StoreIdentity.Isolated(root)))
             {
                 Refuses(() => io.Read("../outside"), "STORE_NAME_INVALID");

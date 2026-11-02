@@ -105,9 +105,6 @@ export class SqliteWorkspaceWriterLease implements WorkspaceWriterLeasePort {
         const row = this.row(db, workspaceId);
         const now = this.now();
         if (row?.lease_id !== null && row?.lease_id !== undefined && row.expires_at > now) {
-          // Explicit same-client recovery revokes an idle session. Generation fencing
-          // prevents any previous proof from authorizing later mutations.
-          // Same-session recovery is allowed too: the caller may have lost its proof.
           if (!recoverAbandonedSameClient || !idleSameClientOwner(row, clientId, now)) {
             return conflict('Workspace writer lease is active; same-client idle recovery is not eligible');
           }

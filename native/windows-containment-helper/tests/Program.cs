@@ -42,6 +42,20 @@ internal static class NativeTests
                 case "updater-crash-boundaries": UpdaterCrashBoundaryFixture.RunSuite(); return 0;
                 case "pipe-acl": ServicePipeSecurityTests.Run(); return 0;
                 case "authenticated-pipe-caller": TestAuthenticatedPipeCallerCapture(); return 0;
+                case "pipe-revert-failure-child":
+                    AuthenticatedPipeCaller.RevertForTests = () => { Console.WriteLine("REVERT_FAILURE_INJECTED"); Console.Out.Flush(); return false; };
+                    try { TestAuthenticatedPipeCallerCapture(); }
+                    catch { Console.WriteLine("REVERT_FAILURE_CAUGHT"); return 1; }
+                    Console.WriteLine("REVERT_FAILURE_RETURNED"); return 0;
+                case "pipe-revert-failure-tests": TestPipeRevertFailure(); return 0;
+                case "job-collision-test": TestJobCollision(); return 0;
+                case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
+                case "job-collision-release-test": TestJobCollisionRelease(); return 0;
+                case "terminal-release-recovery-test": TestTerminalReleaseRecovery(); return 0;
+                case "rpc-absent-child":
+                    WindowsContainmentServiceClient.ServiceNameForAbsenceTest = "lnwjud-absent-" + Guid.NewGuid().ToString("N");
+                    return Program.Main(["service-rpc", new string('0', 64)]).GetAwaiter().GetResult();
+                case "rpc-absent-test": TestAbsentServiceRpc(); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
@@ -155,6 +169,7 @@ internal static class NativeTests
                         Directory.Delete(absolute, true);
                     }
                 }
+                case "service-failure-reason-tests": TestServiceFailureReason(); Console.WriteLine("PASS safe service installer failure codes"); return 0;
                 case "service-restart-tests":
                     TestServiceRestartAndJobReconciliation();
                     Console.WriteLine("PASS isolated service restart reconciliation");
@@ -200,6 +215,8 @@ internal static class NativeTests
                 || WindowsContainmentServiceClient.ShouldWaitForOutput(ServiceAttemptPhase.TerminationUnknown))
                 throw new Exception("SERVICE_WATCHER_OUTPUT_PUBLICATION_ORDER_INVALID");
             Console.WriteLine("PASS service watcher waits for output publication after native dispatch");
+            TestServiceFailureReason();
+            Console.WriteLine("PASS service installer reports only stable diagnostic codes");
             TestServiceStoreCreation(root);
             Console.WriteLine("PASS protected store DACL applies at creation and existing untrusted store remains unchanged");
             TestServiceAccessControl();
@@ -208,6 +225,14 @@ internal static class NativeTests
             Console.WriteLine("PASS protected service install layout and command quoting");
             TestServiceEndpointImagePolicy(root);
             Console.WriteLine("PASS protected service image may differ from the portable client and rejects hash or account mismatch");
+            TestJobCollision();
+            TestUnknownCancelCollision();
+            TestJobCollisionRelease();
+            Console.WriteLine("PASS named Job collisions do not affect independent processes");
+            if (!ServiceEndpointIdentity.IsServiceDefinitelyAbsent("lnwjud-absent-" + Guid.NewGuid().ToString("N")))
+                throw new Exception("Missing Windows service was not detected for bounded native RPC refusal");
+            TestAbsentServiceRpc();
+            Console.WriteLine("PASS absent Windows service is detected without waiting for the native RPC deadline");
             TestServiceAttemptLedger();
             Console.WriteLine("PASS service attempt ownership, reservation, and terminal release lifecycle");
             TestLaunchTokenFailureBeforeDispatch();
@@ -223,6 +248,7 @@ internal static class NativeTests
             TestServiceImportTimeoutFence(root).GetAwaiter().GetResult();
             Console.WriteLine("PASS native timeout persists import cancellation before stopping its outer Job");
             TestDurableServiceAttemptLedger();
+            TestTerminalReleaseRecovery();
             Console.WriteLine("PASS crash recovery keeps unknown reservations and persists terminal release");
             TestServiceRestartAndJobReconciliation();
             Console.WriteLine("PASS service restart reconciles dead jobs, preserves live descendants, and cancels cleanly");
@@ -237,6 +263,8 @@ internal static class NativeTests
             Console.WriteLine("PASS service pipe refuses pre-existing pipe instances");
             TestAuthenticatedPipeCallerCapture();
             Console.WriteLine("PASS pipe caller SID and primary token come from the connected kernel-authenticated client");
+            TestPipeRevertFailure();
+            Console.WriteLine("PASS failed impersonation revert terminates the test process");
             TestCallerLaunchSessionPolicy();
             Console.WriteLine("PASS headless launch session policy preserves caller security and fails closed on mismatch");
             TestOutputWaitsForReservationRelease().GetAwaiter().GetResult();
@@ -332,6 +360,45 @@ internal static class NativeTests
                 File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
             Directory.Delete(absolute, true);
         }
+    }
+
+    private static void TestAbsentServiceRpc()
+    {
+        using var child = Process.Start(new ProcessStartInfo(Executable)
+        {
+            ArgumentList = { "rpc-absent-child" }, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        }) ?? throw new Exception("Unable to start missing-service RPC fixture");
+        var request = Encoding.UTF8.GetBytes("{\"protocol\":3,\"command\":\"inspect\"}");
+        var header = new byte[4]; System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(header, request.Length);
+        child.StandardInput.BaseStream.Write(header); child.StandardInput.BaseStream.Write(request); child.StandardInput.Close();
+        var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
+        if (!child.WaitForExit(15000)) { child.Kill(); child.WaitForExit(); throw new Exception("Missing-service RPC fixture timed out"); }
+        if (!Task.WaitAll([stdout, stderr], 5000) || child.ExitCode != 125
+            || stdout.Result != "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_NOT_INSTALLED\"}" + Environment.NewLine
+            || stderr.Result != "NATIVE_CONTAINMENT_UNRESOLVED" + Environment.NewLine)
+            throw new Exception("Missing-service RPC did not return the bounded diagnostic");
+    }
+
+    private static void TestServiceFailureReason()
+    {
+        if (Program.ServiceRpcFailureEnvelope(new ServiceEndpointNotInstalledException()) != "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_NOT_INSTALLED\"}"
+            || Program.ServiceRpcFailureEnvelope(new ServiceEndpointPackageMismatchException()) != "{\"protocol\":3,\"ok\":false,\"error\":\"SERVICE_ENDPOINT_PACKAGE_MISMATCH\"}"
+            || Program.ServiceRpcFailureEnvelope(new IOException("SERVICE_ENDPOINT_NOT_INSTALLED")) is not null
+            || Program.ServiceRpcFailureEnvelope(new IOException("C:\\private\\secret")) is not null)
+            throw new Exception("SERVICE_RPC_FAILURE_ENVELOPE_INVALID");
+        static void AssertReason(Exception failure, bool install, string expected)
+        {
+            if (Program.ServiceFailureReason(failure, install) != expected)
+                throw new Exception("SERVICE_FAILURE_REASON_CONTRACT_INVALID");
+        }
+        AssertReason(new IOException("SERVICE_INSTALL_ACL_UNTRUSTED"), true, "SERVICE_INSTALL_ACL_UNTRUSTED");
+        AssertReason(new IOException("SERVICE_PACKAGE_HASH_MISMATCH"), true, "SERVICE_PACKAGE_HASH_MISMATCH");
+        AssertReason(new IOException("SERVICE_REMOVE_OPEN_FAILED"), false, "SERVICE_REMOVE_OPEN_FAILED");
+        AssertReason(new IOException("SERVICE_INSTALL_ACL_UNTRUSTED"), false, "SERVICE_REMOVE_UNEXPECTED");
+        AssertReason(new UnauthorizedAccessException("C:\\private\\customer-secret"), true, "SERVICE_INSTALL_UNEXPECTED");
+        AssertReason(new IOException("SERVICE_INSTALL_BAD;C:\\private\\secret"), true, "SERVICE_INSTALL_UNEXPECTED");
+        AssertReason(new IOException(new string('A', 200)), true, "SERVICE_INSTALL_UNEXPECTED");
     }
 
     private static void TestServiceStoreCreation(string root)
@@ -999,6 +1066,97 @@ internal static class NativeTests
         throw new Exception("Expected " + typeof(T).Name + " with " + expectedMessage);
     }
 
+    private static void TestTerminalReleaseRecovery()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lnwjud-terminal-release-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var store = Path.Combine(directory, "attempts.json");
+        var sid = WindowsIdentity.GetCurrent().User!.Value;
+        try
+        {
+            var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            var terminal = NewServiceAttemptRequest("terminal", Path.Combine(directory, "terminal")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(terminal);
+            ledger.TryCommitDispatch(terminal.Identity, sid, terminal.OperationDigest);
+            ledger.RecordTerminal(terminal.Identity, sid, ServiceProcessOutcome.Completed, 0, 0);
+            var held = NewServiceAttemptRequest("import", Path.Combine(directory, "import")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(held);
+            ledger.TryCommitDispatch(held.Identity, sid, held.OperationDigest);
+            ledger.RecordTerminal(held.Identity, sid, ServiceProcessOutcome.Completed, 0, 0);
+            var unknown = NewServiceAttemptRequest("unknown", Path.Combine(directory, "unknown")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(unknown);
+            ledger.TryCommitDispatch(unknown.Identity, sid, unknown.OperationDigest);
+            var abort = NewServiceAttemptRequest("abort", Path.Combine(directory, "abort")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(abort);
+            ledger.AbortBeforeLaunch(abort);
+            var retry = NewServiceAttemptRequest("retry", Path.Combine(directory, "retry")) with { AuthenticatedCallerSid = sid };
+            ledger.Prepare(retry);
+            ledger.TryCommitDispatch(retry.Identity, sid, retry.OperationDigest);
+            ledger.RecordTerminal(retry.Identity, sid, ServiceProcessOutcome.Completed, 0, 0);
+            var completedImport = NewServiceAttemptRequest("import-abort", Path.Combine(directory, "import-abort")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(completedImport);
+            ledger.AbortBeforeLaunch(completedImport);
+            ledger.CompleteImportReservation(completedImport.Identity, sid);
+            if (ledger.Inspect(completedImport.Identity, sid).ReservationHeld)
+                throw new Exception("Completed import retained its never-started reservation");
+            var interruptedImport = NewServiceAttemptRequest("import-interrupted", Path.Combine(directory, "import-interrupted")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(interruptedImport);
+            ledger.AbortBeforeLaunch(interruptedImport);
+            ledger.AfterImportHoldClearedForTest = () => throw new IOException("TEST_IMPORT_HOLD_CLEARED");
+            ExpectFailure<IOException>(() => ledger.CompleteImportReservation(interruptedImport.Identity, sid), "TEST_IMPORT_HOLD_CLEARED");
+            ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (!ledger.Inspect(interruptedImport.Identity, sid).ReservationHeld)
+                throw new Exception("Interrupted import completion did not retain the reservation");
+            ledger.CompleteImportReservation(interruptedImport.Identity, sid);
+            ledger.CompleteImportReservation(interruptedImport.Identity, sid);
+            if (ledger.Inspect(interruptedImport.Identity, sid).ReservationHeld)
+                throw new Exception("Repeated import completion did not recover the reservation");
+            var activeImport = NewServiceAttemptRequest("import-active", Path.Combine(directory, "import-active")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(activeImport);
+            ledger.TryCommitDispatch(activeImport.Identity, sid, activeImport.OperationDigest);
+            ledger.CompleteImportReservation(activeImport.Identity, sid);
+            if (!ledger.Inspect(activeImport.Identity, sid).ReservationHeld)
+                throw new Exception("Completed import released a dispatched attempt without terminal proof");
+            var unknownImport = NewServiceAttemptRequest("import-unknown", Path.Combine(directory, "import-unknown")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(unknownImport);
+            ledger.TryCommitDispatch(unknownImport.Identity, sid, unknownImport.OperationDigest);
+            ledger.MarkUnknown(unknownImport.Identity, sid, "TEST_UNKNOWN");
+            ledger.CompleteImportReservation(unknownImport.Identity, sid);
+            if (!ledger.Inspect(unknownImport.Identity, sid).ReservationHeld)
+                throw new Exception("Completed import released an unknown attempt without terminal proof");
+
+            var recovered = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            var runtime = new WindowsServiceProcessRuntime(recovered, useCurrentUserTestLauncher: true);
+            var otherSid = sid == "S-1-5-18" ? "S-1-5-19" : "S-1-5-18";
+            ExpectFailure<UnauthorizedAccessException>(() => runtime.Inspect(terminal.Identity, otherSid), "ATTEMPT_OWNER_MISMATCH");
+            ExpectFailure<UnauthorizedAccessException>(() => runtime.Inspect(terminal.Identity with { TaskId = "other" }, sid), "ATTEMPT_OWNER_MISMATCH");
+            if (runtime.Inspect(terminal.Identity, sid).ReservationHeld || runtime.Inspect(abort.Identity, sid).ReservationHeld)
+                throw new Exception("Proven terminal or never-started reservation remained held after restart");
+            if (!runtime.Inspect(held.Identity, sid).ReservationHeld || !runtime.Inspect(unknown.Identity, sid).ReservationHeld)
+                throw new Exception("Recovery released an import hold or unknown attempt");
+            var reopened = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (reopened.Inspect(terminal.Identity, sid).ReservationHeld || reopened.Inspect(abort.Identity, sid).ReservationHeld)
+                throw new Exception("Recovered reservation release was not durable");
+            using (var locked = new FileStream(store, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                try { runtime.Inspect(retry.Identity, sid); throw new Exception("Failed release persistence was accepted"); }
+                catch (IOException) { }
+            }
+            var retryLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (!retryLedger.Inspect(retry.Identity, sid).ReservationHeld)
+                throw new Exception("Failed release persistence lost the held reservation");
+            var retryRuntime = new WindowsServiceProcessRuntime(retryLedger, useCurrentUserTestLauncher: true);
+            Parallel.For(0, 8, _ =>
+            {
+                if (retryRuntime.Inspect(retry.Identity, sid).ReservationHeld)
+                    throw new Exception("Concurrent release recovery did not settle");
+            });
+            if (new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store)).Inspect(retry.Identity, sid).ReservationHeld)
+                throw new Exception("Retried release was not durable");
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     private static void TestDurableServiceAttemptLedger()
     {
         var directory = Path.Combine(Path.GetTempPath(), "lnwjud-ledger-store-" + Guid.NewGuid().ToString("N"));
@@ -1124,7 +1282,7 @@ internal static class NativeTests
             storePath = Path.Combine(directory, "scenario2-attempts.json");
             // Scenario 2: Live Descendants - Process is still running when service restarts.
             // runtime.Inspect detects ActiveProcesses > 0, keeps TerminationUnknown and holds reservation.
-            // runtime.Cancel terminates the named job object, drains active processes to 0, transitions to TerminalVerified (Cancelled), and releases reservation.
+            // Without the retained Job handle, cancellation records intent but must not terminate by name.
             {
                 var persistence = new ServiceAttemptLedgerPersistence(storePath);
                 var initialLedger = new ServiceAttemptLedger(persistence);
@@ -1166,12 +1324,20 @@ internal static class NativeTests
                 ExpectFailure<IOException>(() => restartLedger.Prepare(conflictingRequest), "WRITER_RESERVATION_BUSY");
 
                 var cancelObs = restartRuntime.Cancel(identity, callerSid);
-                if (cancelObs.Phase != ServiceAttemptPhase.TerminalVerified || cancelObs.ActiveProcesses != 0 || cancelObs.ReservationHeld)
-                    throw new Exception("Cancel on orphaned job did not reach terminal verified or release reservation");
+                if (cancelObs.Phase != ServiceAttemptPhase.TerminationUnknown || !cancelObs.ReservationHeld
+                    || cancelObs.Reason != "SERVICE_CANCELLATION_HANDLE_UNAVAILABLE")
+                    throw new Exception("Cancellation without the retained Job handle did not remain unknown");
+                ExpectFailure<IOException>(() => restartLedger.Prepare(conflictingRequest), "WRITER_RESERVATION_BUSY");
+
+                // The original test runtime still owns the actual Job handle and can stop it safely.
+                initialRuntime.StopAsync().GetAwaiter().GetResult();
+                var settledAfterOwnerStop = restartRuntime.Inspect(identity, callerSid);
+                if (settledAfterOwnerStop.Phase != ServiceAttemptPhase.TerminalVerified || settledAfterOwnerStop.ReservationHeld)
+                    throw new Exception("Verified empty Job was not reconciled after its owner stopped it");
 
                 var admitted = restartLedger.Prepare(conflictingRequest);
                 if (admitted.Phase != ServiceAttemptPhase.Prepared || !admitted.ReservationHeld)
-                    throw new Exception("Conflicting writer was not admitted after job cancellation");
+                    throw new Exception("Conflicting writer was not admitted after verified Job termination");
             }
 
             storePath = Path.Combine(directory, "scenario3-attempts.json");
@@ -1315,6 +1481,22 @@ internal static class NativeTests
         var server = WindowsContainmentService.RunPipeServerAsync(pipeName, ledger, stopping.Token, useCurrentUserTestLauncher: true);
         try
         {
+            var terminalSid = WindowsIdentity.GetCurrent().User!.Value;
+            var terminalRequest = NewServiceAttemptRequest("rpc-terminal-recovery", Path.Combine(storeDirectory, "terminal-recovery")) with { AuthenticatedCallerSid = terminalSid };
+            ledger.Prepare(terminalRequest);
+            ledger.TryCommitDispatch(terminalRequest.Identity, terminalSid, terminalRequest.OperationDigest);
+            ledger.RecordTerminal(terminalRequest.Identity, terminalSid, ServiceProcessOutcome.Completed, 0, 0);
+            using (var recovered = await SendServiceRpcAsync(pipeName, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+                new { protocol = 3, command = "inspect", identity = terminalRequest.Identity },
+                new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase })))
+            {
+                if (!recovered.RootElement.GetProperty("ok").GetBoolean()
+                    || recovered.RootElement.GetProperty("result").GetProperty("reservationHeld").GetBoolean())
+                    throw new Exception("Authenticated inspect RPC did not recover a proven terminal reservation");
+            }
+            if (new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(storePath)).Inspect(terminalRequest.Identity, terminalSid).ReservationHeld)
+                throw new Exception("Authenticated inspect RPC release was not durable");
+
             var operation = new
             {
                 kind = "run_process",
@@ -1788,8 +1970,145 @@ internal static class NativeTests
         return System.Text.Json.JsonDocument.Parse(response);
     }
 
+    private static void TestJobCollision()
+    {
+        var prefix = "lnwjud-test-" + Guid.NewGuid().ToString("N");
+        var firstName = ContainedProcess.GetJobName(prefix + ".a");
+        var secondName = ContainedProcess.GetJobName(prefix + "_a");
+        if (firstName != secondName) throw new Exception("Collision fixture did not collide");
+        using var first = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: firstName);
+        try
+        {
+            ExpectFailure<IOException>(() => {
+                using var second = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: secondName);
+            }, "CONTAINMENT_JOB_NAME_IN_USE");
+            if (first.ActiveProcesses == 0) throw new Exception("Refused Job collision affected the original child");
+        }
+        finally { first.Cancel(); }
+    }
+
+    private static void TestUnknownCancelCollision()
+    {
+        var prefix = "lnwjud-test-" + Guid.NewGuid().ToString("N");
+        var firstName = ContainedProcess.GetJobName(prefix + ".a");
+        var secondId = prefix + "_a";
+        if (firstName != ContainedProcess.GetJobName(secondId)) throw new Exception("Collision fixture did not collide");
+        using var first = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: firstName);
+        try
+        {
+            var callerSid = WindowsIdentity.GetCurrent().User!.Value;
+            var request = NewServiceAttemptRequest(secondId, Path.Combine(Path.GetTempPath(), prefix)) with { AuthenticatedCallerSid = callerSid };
+            var ledger = new ServiceAttemptLedger(); ledger.Prepare(request);
+            if (!ledger.TryCommitDispatch(request.Identity, callerSid, request.OperationDigest)) throw new Exception("Fixture dispatch was not committed");
+            ledger.MarkUnknown(request.Identity, callerSid, "TEST_UNKNOWN_LAUNCH");
+            var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher: true);
+            var result = runtime.Cancel(request.Identity, callerSid);
+            var active = first.ActiveProcesses;
+            if (active == 0 || result.Phase != ServiceAttemptPhase.TerminationUnknown || !result.ReservationHeld
+                || result.Reason != "SERVICE_CANCELLATION_HANDLE_UNAVAILABLE")
+                throw new Exception($"Unknown cancellation affected an independent Job or released its reservation: active={active}, phase={result.Phase}, held={result.ReservationHeld}");
+        }
+        finally { first.Cancel(); }
+    }
+
+    private static void TestJobCollisionRelease()
+    {
+        var prefix = "lnwjud-test-" + Guid.NewGuid().ToString("N");
+        var ownerName = ContainedProcess.GetJobName(prefix + ".a");
+        var attemptId = prefix + "_a";
+        if (ownerName != ContainedProcess.GetJobName(attemptId)) throw new Exception("Collision fixture did not collide");
+        var marker = Path.Combine(Path.GetTempPath(), prefix + "-unexpected-target");
+        var directory = Path.Combine(Path.GetTempPath(), prefix + "-ledger");
+        Directory.CreateDirectory(directory);
+        using var first = ContainedProcess.Start(Executable, ["sleep", "30000"], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: ownerName);
+        try
+        {
+            var callerSid = WindowsIdentity.GetCurrent().User!.Value;
+            var request = NewServiceAttemptRequest(attemptId, Path.Combine(Path.GetTempPath(), prefix)) with { AuthenticatedCallerSid = callerSid };
+            try
+            {
+                using var unexpected = ContainedProcess.Start(Executable, ["mark", marker], Environment.CurrentDirectory, false, EnvironmentBlock, jobName: ownerName, attemptIdentity: request.Identity);
+                throw new Exception("Expected a Job collision");
+            }
+            catch (ContainedProcess.JobNameInUseException proof)
+            {
+                var other = NewServiceAttemptRequest(prefix + ".a", request.ReservationKey).Identity;
+                if (proof.Consume(other) || !proof.Consume(request.Identity) || proof.Consume(request.Identity))
+                    throw new Exception("Collision proof was not bound to one attempt and one use");
+            }
+            var store = Path.Combine(directory, "attempts.json");
+            var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store)); ledger.Prepare(request);
+            var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher: true);
+            runtime.BeforeCollisionRecovery = () =>
+            {
+                runtime.StopAsync().GetAwaiter().GetResult();
+                if (ledger.Inspect(request.Identity, callerSid).Phase != ServiceAttemptPhase.TerminationUnknown)
+                    throw new Exception("Service stop did not reach the unknown-launch race");
+            };
+            var operation = new ServiceProcessOperation("run_process", Executable, ["mark", marker], Environment.CurrentDirectory, 10_000, false, EnvironmentBlock, 1024);
+            var result = runtime.Run(request.Identity, callerSid, request.OperationDigest, operation, 0);
+            if (result.Phase != ServiceAttemptPhase.LaunchNotStarted || result.ReservationHeld || first.ActiveProcesses == 0 || File.Exists(marker))
+                throw new Exception("Proven prelaunch Job collision did not release only its own never-started reservation");
+            var persisted = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store)).Inspect(request.Identity, callerSid);
+            if (persisted.Phase != ServiceAttemptPhase.LaunchNotStarted || persisted.ReservationHeld)
+                throw new Exception("Collision recovery was not durable");
+            if (runtime.Run(request.Identity, callerSid, request.OperationDigest, operation, 0).Phase != ServiceAttemptPhase.LaunchNotStarted)
+                throw new Exception("Collision tombstone allowed a launch retry");
+            var next = ledger.Prepare(NewServiceAttemptRequest(prefix + "-next", request.ReservationKey) with { AuthenticatedCallerSid = callerSid });
+            if (next.Phase != ServiceAttemptPhase.Prepared) throw new Exception("Released collision reservation blocked a new attempt");
+
+            var heldRequest = request with { HoldForImport = true };
+            var heldLedger = new ServiceAttemptLedger(); heldLedger.Prepare(heldRequest);
+            var heldRuntime = new WindowsServiceProcessRuntime(heldLedger, useCurrentUserTestLauncher: true);
+            var held = heldRuntime.Run(heldRequest.Identity, callerSid, heldRequest.OperationDigest, operation, 0);
+            if (held.Phase != ServiceAttemptPhase.LaunchNotStarted || !held.ReservationHeld || first.ActiveProcesses == 0)
+                throw new Exception("Collision recovery released an import reservation");
+
+            var failureStore = Path.Combine(directory, "failure.json");
+            var failureLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(failureStore)); failureLedger.Prepare(request);
+            var failureRuntime = new WindowsServiceProcessRuntime(failureLedger, useCurrentUserTestLauncher: true);
+            FileStream? lockedStore = null;
+            failureRuntime.BeforeCollisionRecovery = () => lockedStore = new FileStream(failureStore, FileMode.Open, FileAccess.Read, FileShare.None);
+            try
+            {
+                failureRuntime.Run(request.Identity, callerSid, request.OperationDigest, operation, 0);
+                throw new Exception("Collision recovery accepted a failed persistence write");
+            }
+            catch (IOException) { }
+            finally { lockedStore?.Dispose(); }
+            var afterFailure = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(failureStore)).Inspect(request.Identity, callerSid);
+            if (afterFailure.Phase != ServiceAttemptPhase.TerminationUnknown || !afterFailure.ReservationHeld || first.ActiveProcesses == 0)
+                throw new Exception($"Failed collision recovery state: phase={afterFailure.Phase}, held={afterFailure.ReservationHeld}, active={first.ActiveProcesses}");
+        }
+        finally { first.Cancel(); if (File.Exists(marker)) File.Delete(marker); Directory.Delete(directory, recursive: true); }
+    }
+
     private static void TestAuthenticatedPipeCallerCapture() =>
         TestAuthenticatedPipeCallerCaptureAsync().GetAwaiter().GetResult();
+
+    private static void TestPipeRevertFailure()
+    {
+        using var child = Process.Start(new ProcessStartInfo(Executable) {
+            ArgumentList = { "pipe-revert-failure-child" }, UseShellExecute = false,
+            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+        }) ?? throw new Exception("Unable to start revert failure test process");
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        if (!child.WaitForExit(15_000))
+        {
+            child.Kill();
+            if (!child.WaitForExit(5_000)) throw new Exception("Revert failure test process could not be terminated");
+            throw new Exception("Revert failure test process did not exit");
+        }
+        if (!Task.WaitAll([stdout, stderr], 5_000)) throw new Exception("Revert failure test output did not close");
+        var output = stdout.GetAwaiter().GetResult();
+        _ = stderr.GetAwaiter().GetResult();
+        if (child.ExitCode == 0 || !output.Contains("REVERT_FAILURE_INJECTED", StringComparison.Ordinal)
+            || output.Contains("REVERT_FAILURE_CAUGHT", StringComparison.Ordinal)
+            || output.Contains("REVERT_FAILURE_RETURNED", StringComparison.Ordinal)
+            || output.Contains("PIPE_CAPTURE_DONE", StringComparison.Ordinal))
+            throw new Exception("Failed impersonation revert did not terminate the process");
+    }
 
     private static async Task TestAuthenticatedPipeCallerCaptureAsync()
     {

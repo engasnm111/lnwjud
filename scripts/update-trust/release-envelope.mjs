@@ -220,8 +220,9 @@ export function validateRelationships(payload, policy, now) {
   const currentVersion = payload.version.split('.').map(BigInt);
   const previousVersion = payload.previous.version.split('.').map(BigInt);
   const firstDifferent = currentVersion.findIndex((part, index) => part !== previousVersion[index]);
-  if (BigInt(payload.releaseSequence) <= BigInt(payload.previous.releaseSequence) || firstDifferent < 0
-    || currentVersion[firstDifferent] <= previousVersion[firstDifferent]) refuse('RELEASE_REPLAY');
+  if (BigInt(payload.releaseSequence) <= BigInt(payload.previous.releaseSequence)
+    || (firstDifferent < 0 ? payload.artifact.sha256 === payload.previous.artifact.sha256
+      : currentVersion[firstDifferent] < previousVersion[firstDifferent])) refuse('RELEASE_REPLAY');
   const recovery = payload.recoveryAuthorization;
   if (recovery.candidateArtifactSha256 !== payload.artifact.sha256 || recovery.candidateReleaseSequence !== payload.releaseSequence
     || recovery.previousEnvelopeSha256 !== payload.previous.envelopeSha256

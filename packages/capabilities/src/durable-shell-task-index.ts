@@ -15,6 +15,10 @@ export interface WriterAdmissionBlocker {
   readonly mutation_kind: DurableMutationKind | 'unreadable';
   readonly capacity_class: ReservationCapacityClass | 'unknown';
   readonly state: 'held' | 'unreadable';
+  /** Marker metadata is not independent terminal or owner-liveness proof. */
+  readonly marker_origin: 'unreadable' | 'legacy_unbound' | 'v2_unbound' | 'native_attempt_recorded_unverified';
+  readonly owner_binding: 'unreadable' | 'missing' | 'owner_metadata_only' | 'native_attempt_recorded_unverified';
+  readonly terminal_proof: 'not_observed';
   readonly recovery_requirement: 'owner_process_termination' | 'trusted_termination_evidence' | 'independent_terminal_observation' | 'manual_review';
 }
 
@@ -121,6 +125,12 @@ export class DurableShellTaskIndex {
     }
     try {
       await this.ensureDirectories();
+      // Native RPCs may time out; never await them under the shared index lock.
+      const ready = await readJson(this.readyPath);
+      if (!isReady(ready) || ready.markerFormatVersion !== 2) {
+        await this.withLock(async () => this.initializeUnlocked());
+      }
+      const observations = await this.observeMarkersOutsideLock(input.taskId);
       return await this.withLock(async () => {
         await this.initializeUnlocked();
         await this.ensureJournalUnlocked();
@@ -148,8 +158,11 @@ export class DurableShellTaskIndex {
           if (marker.record === undefined) {
             return err(appError('CONFLICT', 'A managed writer reservation is unreadable; resolve its state before launching another writer', true));
           }
+          const observed = observations.get(marker.path);
+          const unchanged = observed !== undefined && JSON.stringify(observed.record) === JSON.stringify(marker.record);
+          const nativeTerminated = unchanged && observed.nativeTerminated;
           if (marker.record.mutationKind === 'opaque_contained_process') {
-            if (await this.hasVerifiedNativeTermination(marker.record)) {
+            if (nativeTerminated) {
               await this.removeMarker(marker.path);
               continue;
             }
@@ -159,12 +172,12 @@ export class DurableShellTaskIndex {
             count(marker.record);
             continue;
           }
-          if (marker.record.nativeBinding !== undefined && await this.hasVerifiedNativeTermination(marker.record)) {
+          if (marker.record.nativeBinding !== undefined && nativeTerminated) {
             await this.removeMarker(marker.path);
             continue;
           }
-          const inspection = await this.options.inspectTask(marker.record.taskId).catch(() => 'unknown' as const);
-          if (inspection === 'terminal') {
+          const inspection = unchanged ? observed.inspection : 'unknown' as const;
+          if (inspection === 'terminal' && marker.record.legacy !== true) {
             await this.removeMarker(marker.path);
             continue;
           }
@@ -205,20 +218,26 @@ export class DurableShellTaskIndex {
         }
         return ok({ activeTasks: activeTasks + 1, created: true, markerPath });
       });
-    } catch {
-      return err(appError('INTERNAL_ERROR', 'Durable task capacity could not be reserved', true));
+    } catch (error: unknown) {
+      const message = error instanceof Error && error.message === 'Durable task index lock is busy'
+        ? 'Durable task index lock is busy' : 'Durable task capacity could not be reserved';
+      return err(appError('INTERNAL_ERROR', message, true));
     }
   }
 
   public async release(taskId: string, requestDigest: string | null): Promise<void> {
     if (!isSafeTaskId(taskId) || (requestDigest !== null && !/^[a-f0-9]{64}$/i.test(requestDigest))) return;
     await this.ensureDirectories();
+    const markerPath = this.markerPath(taskId);
+    const observed = await readMarker(markerPath);
+    if (observed?.taskId !== taskId || observed.requestDigest !== requestDigest) return;
+    const needsNativeProof = observed.mutationKind === 'opaque_contained_process' || observed.nativeBinding !== undefined;
+    const terminal = !needsNativeProof || await this.hasVerifiedNativeTermination(observed);
+    if (!terminal) return;
     await this.withLock(async () => {
-      const markerPath = this.markerPath(taskId);
       const marker = await readMarker(markerPath);
-      if (marker?.taskId !== taskId || marker.requestDigest !== requestDigest) return;
-      if ((marker.mutationKind === 'opaque_contained_process' || marker.nativeBinding !== undefined)
-        && !await this.hasVerifiedNativeTermination(marker)) return;
+      if (marker?.taskId !== taskId || marker.requestDigest !== requestDigest
+        || JSON.stringify(marker) !== JSON.stringify(observed)) return;
       await this.removeMarker(markerPath);
     }).catch(() => undefined);
   }
@@ -250,6 +269,7 @@ export class DurableShellTaskIndex {
             mutation_kind: 'unreadable',
             capacity_class: 'unknown',
             state: 'unreadable',
+            marker_origin: 'unreadable', owner_binding: 'unreadable', terminal_proof: 'not_observed',
             recovery_requirement: 'manual_review',
           });
           continue;
@@ -263,6 +283,11 @@ export class DurableShellTaskIndex {
           mutation_kind: marker.record.mutationKind,
           capacity_class: capacityClass,
           state: 'held',
+          marker_origin: marker.record.legacy === true || marker.record.version === 1 || marker.record.requestDigest === null
+            ? 'legacy_unbound' : marker.record.nativeBinding === undefined ? 'v2_unbound' : 'native_attempt_recorded_unverified',
+          owner_binding: marker.record.nativeBinding !== undefined ? 'native_attempt_recorded_unverified'
+            : marker.record.ownerClientId !== undefined && marker.record.ownerWorkspaceId !== undefined ? 'owner_metadata_only' : 'missing',
+          terminal_proof: 'not_observed',
           recovery_requirement: marker.record.mutationKind === 'synchronous_mutation'
             ? 'owner_process_termination'
             : marker.record.mutationKind === 'opaque_uncontained' || marker.record.mutationKind === 'opaque_contained_process' || marker.record.nativeBinding !== undefined
@@ -323,6 +348,32 @@ export class DurableShellTaskIndex {
   private async ensureDirectories(): Promise<void> {
     await mkdir(this.rootDirectory, { recursive: true });
     await mkdir(this.activeDirectory, { recursive: true });
+  }
+
+  private async observeMarkersOutsideLock(excludedTaskId: string): Promise<Map<string, {
+    record: MarkerRecord;
+    nativeTerminated: boolean;
+    inspection: 'active' | 'terminal' | 'missing' | 'unknown';
+  }>> {
+    const observations = new Map<string, {
+      record: MarkerRecord;
+      nativeTerminated: boolean;
+      inspection: 'active' | 'terminal' | 'missing' | 'unknown';
+    }>();
+    const markers = await this.readMarkers();
+    // Bound native-RPC fan-out, particularly when the Windows service is missing.
+    for (let offset = 0; offset < markers.length; offset += 4) {
+      await Promise.all(markers.slice(offset, offset + 4).map(async (marker) => {
+        const record = marker.record;
+        if (record === undefined || record.taskId === excludedTaskId) return;
+        const needsNativeProof = record.mutationKind === 'opaque_contained_process' || record.nativeBinding !== undefined;
+        const nativeTerminated = needsNativeProof ? await this.hasVerifiedNativeTermination(record) : false;
+        const inspection = record.mutationKind === 'opaque_contained_process' ? 'unknown' as const
+          : await this.options.inspectTask(record.taskId).catch(() => 'unknown' as const);
+        observations.set(marker.path, { record, nativeTerminated, inspection });
+      }));
+    }
+    return observations;
   }
 
   private async hasVerifiedNativeTermination(marker: MarkerRecord): Promise<boolean> {
@@ -387,7 +438,7 @@ export class DurableShellTaskIndex {
   private async reclaimTerminatedSynchronousMutationsUnlocked(): Promise<void> {
     for (const marker of await this.readMarkers()) {
       const record = marker.record;
-      if (record === undefined || record.mutationKind !== 'synchronous_mutation' || record.launcherPid === undefined) continue;
+      if (record === undefined || record.legacy === true || record.mutationKind !== 'synchronous_mutation' || record.launcherPid === undefined) continue;
       let ownerGone = false;
       try { ownerGone = this.processProvenGone(record.launcherPid); } catch { /* Unknown liveness retains the blocker. */ }
       if (ownerGone) await this.removeMarker(marker.path);
@@ -396,7 +447,7 @@ export class DurableShellTaskIndex {
 
   private async upgradeLegacyMarkersUnlocked(): Promise<void> {
     for (const marker of await this.readMarkers()) {
-      if (marker.record?.version === 1) await atomicWriteJson(marker.path, { ...marker.record, version: 2 });
+      if (marker.record?.version === 1) await atomicWriteJson(marker.path, { ...marker.record, version: 2, legacy: true });
     }
   }
 

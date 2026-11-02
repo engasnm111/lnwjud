@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WindowsNativeAuthority } from '@lnwjud/process';
 import type { NativeAttemptBinding, WindowsContainmentServiceClient, WindowsContainmentRpcRequest } from '../../process/src/windows-native-authority.js';
 import { SharedManagedWriterAdmission } from './shared-managed-writer-admission.js';
+import { DurableShellTaskIndex } from './durable-shell-task-index.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -49,6 +50,17 @@ describe('SharedManagedWriterAdmission authenticated release', () => {
     const files = await readdir(markers);
     expect(files).toHaveLength(1);
     expect(JSON.parse(await readFile(path.join(markers, files[0]!), 'utf8'))).toMatchObject({ nativeBinding: admitted.value.nativeBinding });
+    const diagnostics = await new DurableShellTaskIndex(f.taskDirectory, {
+      maxConcurrentTasks: 16, inspectTask: async (): Promise<'missing'> => 'missing',
+    }).diagnostics();
+    expect(diagnostics.blockers).toMatchObject([{
+      marker_origin: 'native_attempt_recorded_unverified',
+      owner_binding: 'native_attempt_recorded_unverified',
+      terminal_proof: 'not_observed',
+      recovery_requirement: 'trusted_termination_evidence',
+    }]);
+    expect(JSON.stringify(diagnostics)).not.toContain(f.taskId);
+    expect(JSON.stringify(diagnostics)).not.toContain(f.receiptPath);
   });
 
   it.skipIf(process.platform === 'darwin')('retains forged terminal proof across restart and releases only after an exclusive authenticated abort', async () => {

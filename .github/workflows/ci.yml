@@ -314,6 +314,19 @@ jobs:
           fi
           rg --version
 
+      # Issue #223: exercise the real timeout/abort marker regression on both
+      # macOS architectures. One green unit run cannot establish that the
+      # early process-group identity race has stopped recurring.
+      - name: Verify macOS direct-child timeout has no late side effects
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "macOS process containment regression attempt ${attempt}/5"
+            pnpm --filter @lnwjud/search exec vitest run src/ripgrep-adapter.integration.test.ts
+          done
+
       - name: Install native ARM64 Debian packager
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'
         shell: bash
