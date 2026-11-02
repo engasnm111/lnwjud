@@ -66,6 +66,44 @@ describe('DurableShellTaskIndex', () => {
     expect(await pending).toMatchObject({ ok: true, value: { created: true } });
   });
 
+  it('keeps index diagnostics available while native termination proof is in flight', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-native-inspection-'));
+    temporaryRoots.push(root);
+    const nativeReceiptPath = path.join(root, 'native.receipt.json');
+    const initial = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 4,
+      inspectTask: async () => 'active' as const,
+      verifyContainedTermination: async () => false,
+    });
+    expect(await initial.reserve({
+      taskId: 'native-existing', requestDigest: 'a'.repeat(64), ownerClientId: 'owner',
+      ownerWorkspaceId: 'workspace',
+      mutationKind: 'opaque_contained_process', nativeReceiptPath,
+      nativeBinding: {
+        taskId: 'native-existing', reservationId: 'native-existing', attemptId: 'native-existing-attempt',
+        generation: 1, requestDigest: 'a'.repeat(64), ownerClientId: 'owner', ownerSessionId: 'session', workspaceId: 'workspace',
+      },
+    })).toMatchObject({ ok: true });
+
+    let entered!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve): void => { entered = resolve; });
+    const stalled = new Promise<void>((resolve): void => { resume = resolve; });
+    const second = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 4,
+      inspectTask: async () => 'active' as const,
+      verifyContainedTermination: async (): Promise<boolean> => { entered(); await stalled; return false; },
+    });
+    const pending = second.reserve({ taskId: 'next', requestDigest: 'b'.repeat(64), ownerClientId: 'owner' });
+    await started;
+    try {
+      expect((await second.diagnostics()).unresolved_reservations).toBe(1);
+    } finally {
+      resume();
+    }
+    expect(await pending).toMatchObject({ ok: true, value: { created: true } });
+  });
+
   it('does not reclaim a marker replaced while terminal evidence is in flight', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-terminal-race-'));
     temporaryRoots.push(root);
