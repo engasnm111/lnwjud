@@ -32,7 +32,7 @@ export function authenticatePreviousMetadataV2(candidate, envelopeBytes, purpose
   const oldVersion = oldRelease.version.split('.').map(BigInt);
   const newVersion = newRelease.version.split('.').map(BigInt);
   const difference = newVersion.findIndex((part, index) => part !== oldVersion[index]);
-  if (difference < 0 || newVersion[difference] <= oldVersion[difference]
+  if ((difference < 0 ? newRelease.artifact.sha256 === oldRelease.artifact.sha256 : newVersion[difference] < oldVersion[difference])
     || BigInt(newRelease.releaseSequence) <= BigInt(oldRelease.releaseSequence)) refuse('RELEASE_REPLAY');
   for (const name of ['platform', 'architecture', 'distribution'])
     if (oldRelease[name] !== newRelease[name]) refuse('RELEASE_PREVIOUS_UNTRUSTED');
