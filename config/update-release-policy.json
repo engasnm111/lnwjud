@@ -1,7 +1,19 @@
 {
   "protocol": 1,
   "revision": 1,
-  "roots": [],
+  "roots": [
+    {
+      "keyId": "lnwjud-update-release-2026-11",
+      "algorithm": "ecdsa-p256-sha256-p1363",
+      "spkiBase64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEE0Q59mYP0FlCGukUH5zdv4CdA+ip6KKTNoVneWNMuo5gm7ut03bARkjunlMFO3lxh1a/MtvbXJueP5ThOUeCGA==",
+      "spkiSha256": "23991c089a1c5bd441566b8381b4196e570c80ccfe5c174db555f67595c61ee9",
+      "roles": ["release", "recovery"],
+      "notBefore": "1793577600",
+      "expiresAt": "1856736000",
+      "revoked": false,
+      "allowHistoricalRecovery": true
+    }
+  ],
   "authorities": [],
   "verifier": null,
   "limits": {
