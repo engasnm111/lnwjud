@@ -42,7 +42,7 @@ Before changing workflow guidance, inspect the current runtime through CodeGraph
 
 ## Lease and checkpoint payloads
 
-Every rolling-mode workspace mutation carries the current `goalLease` object with `goalId`, `leaseToken`, and `leaseGeneration`. The top-level `leaseToken` on Goal control calls is a separate API field; follow the advertised schema for both. After reacquisition, replace the full proof with the returned generation. MCP session equality, Full Bypass, and a saved token are not ownership proof. Ordinary unscheduled Full Bypass calls stay lease-free when no live rolling-goal fence exists.
+For lnwjud MCP mutation calls, follow the runtime's `goalLease` schema when a rolling-goal fence is active. The top-level `leaseToken` on Goal control calls is a separate API field. After reacquisition, use the returned generation. MCP session equality, Full Bypass, and a saved token are not ownership proof. Ordinary unscheduled Full Bypass calls stay lease-free when no live rolling-goal fence exists. Codex can edit files and run commands directly without an MCP mutation call.
 
 Use the latest returned Goal `revision` as `expectedRevision`, and the latest continuation `version` as `expectedVersion`. On conflict, read authoritative state and reconcile before retrying; never replay a mutation blindly.
 
@@ -52,7 +52,7 @@ When `resumeContext` is present, include all eight arrays, using empty arrays wh
 
 ## Start or resume
 
-1. Call `run_goal` before the first mutation of non-trivial multi-step work. Reuse the stable workspace and `goalKey`; do not create a second active goal for the same objective. Preserve scheduling authorization as described above.
+1. When working through the durable Goal, call `run_goal` to acquire its lease. Reuse the stable workspace and `goalKey`; do not create a second active goal for the same objective. Preserve scheduling authorization as described above.
 2. Use the normal 600-second lease and keep the lease token private.
 3. Read the durable checkpoint and continue useful fenced work. Prefer the latest checkpoint `resumeContext` over guessing from a short summary: inspect changed files, exact commands/results, decisions, failed attempts, pending validation, resume prerequisites, state facts, artifacts, blockers, tracked tasks, and the next action.
 4. Keep the durable Goal fresh while working. Call `checkpoint_goal` immediately after a plan-step state change, terminal blocking task, blocker add/resolution, commit, push, hosted-CI conclusion, package/deploy/release artifact, or other meaningful milestone. If sustained active work has no natural milestone, refresh `currentPhase`, `nextAction`, blockers, `trackedTasks`, and truthful step state at least every 10 minutes; never defer several completed steps to one late end-of-task checkpoint. A meaningful milestone or handoff checkpoint must include reconstruction-grade `resumeContext`: changed files; exact commands with `passed`/`failed`/`running` status, exit code and concise result; decisions; failed attempts that should not be repeated; pending validation; resume prerequisites; state facts; and artifacts. `summary` is only a headline and must never be the sole recovery record.

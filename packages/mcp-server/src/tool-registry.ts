@@ -1685,7 +1685,7 @@ async function resolveEngineeringAdmission(
     return err(appError('ENGINEERING_POLICY_CHANGED', 'The supplied Engineering task policy digest is stale. Re-prepare and reconcile the task before mutation.', true));
   }
   if (engineeringTask.goalRevision !== selected.revision || engineeringTask.userIntentRevision !== selected.userIntentRevision) {
-    return err(appError('ENGINEERING_PREFLIGHT_REQUIRED', 'The Engineering task binding is stale for the current goal revision. Re-run engineering_start_task before mutation.', true));
+    return err(appError('ENGINEERING_PREFLIGHT_REQUIRED', 'The Engineering task binding is stale for the current goal revision. Use the binding returned by the latest checkpoint, or call run_goal with the existing goal key to refresh it.', true));
   }
   if (actor.sessionId !== undefined && engineeringTask.sessionId !== actor.sessionId) {
     return err(appError('ENGINEERING_PREFLIGHT_REQUIRED', 'The Engineering task binding belongs to a different MCP session. Re-run engineering_start_task in this session before mutation.', true));
