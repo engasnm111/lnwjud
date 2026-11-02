@@ -257,7 +257,9 @@ internal sealed class AdmissionCore : IDisposable
             if (((JsonArray)state["finished"]!).Any(item => item!.GetValue<string>() == owner.TransactionId)) throw new Refusal("ADMISSION_TRANSACTION_FINISHED");
             if (((JsonArray)state["finished"]!).Count == 256) throw new Refusal("ADMISSION_TRANSACTION_LIMIT");
             if (Revision != expectedRevision || owner.Generation != 1) throw new Refusal("ADMISSION_REVISION_CONFLICT");
-            var next = (JsonObject)state.DeepClone(); next["phase"] = "closing"; next["epoch"] = Guid.NewGuid().ToString("D"); next["transaction"] = owner.TransactionId; next["generation"] = AdmissionProtocol.Decimal(owner.Generation); next["disposition"] = ""; Save(next);
+            var next = (JsonObject)state.DeepClone(); next["phase"] = "closing"; next["epoch"] = Guid.NewGuid().ToString("D"); next["transaction"] = owner.TransactionId; next["generation"] = AdmissionProtocol.Decimal(owner.Generation); next["disposition"] = "";
+            foreach (var member in (JsonObject)next["participants"]!) ((JsonObject)member.Value!)["status"] = "active";
+            Save(next);
         }
     }
 

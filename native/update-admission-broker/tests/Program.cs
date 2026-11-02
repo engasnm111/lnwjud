@@ -35,6 +35,11 @@ internal static class Program
     }
     private static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "epoch-quiescence-test")
+        {
+            try { EpochBoundQuiescence(); Console.WriteLine("PASS current-epoch quiescence"); return 0; }
+            catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+        }
         if (args.Length == 1 && args[0] == "unsafe-successor-test")
         {
             try { UnsafeSuccessor(); Console.WriteLine("PASS unsafe admission successor refused"); return 0; }
@@ -51,8 +56,32 @@ internal static class Program
             core.AfterStage = () => Environment.Exit(42);
             core.Close(UpdatePrincipal.Isolated("crash-update", 1), core.Status().Revision); return 12;
         }
-        try { Protocol(); Lifecycle(); SequenceAndRetirement(); Concurrency(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
+        try { Protocol(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+    private static void EpochBoundQuiescence()
+    {
+        var root = Root();
+        try
+        {
+            var runtime = RuntimePrincipal.Isolated("epoch-owner");
+            string participant; string oldEpoch;
+            using (var previous = new AdmissionCore(StoreIdentity.Isolated(root)))
+            {
+                participant = previous.Register(runtime); oldEpoch = previous.Status().Epoch;
+                previous.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{oldEpoch}"));
+            }
+            using var core = new AdmissionCore(StoreIdentity.Isolated(root));
+            var updater = UpdatePrincipal.Isolated("epoch-update", 1);
+            core.Close(updater, core.Status().Revision);
+            var current = core.Status();
+            Check(current.Epoch != oldEpoch && current.UnquiescedParticipants == 1, "new closure requires current-epoch quiescence");
+            Refuses(() => core.Seal(updater, current.Revision), "ADMISSION_DRAIN_INCOMPLETE");
+            Refuses(() => core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{oldEpoch}")), "ADMISSION_QUIESCENCE_UNPROVEN");
+            core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{current.Epoch}"));
+            Check(core.Seal(updater, core.Status().Revision).Epoch == current.Epoch, "new epoch proof permits sealing");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void UnsafeSuccessor()
     {
