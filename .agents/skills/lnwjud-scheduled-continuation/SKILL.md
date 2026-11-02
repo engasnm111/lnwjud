@@ -42,7 +42,7 @@ Before changing workflow guidance, inspect the current runtime through CodeGraph
 
 ## Lease and checkpoint payloads
 
-For lnwjud MCP mutation calls, follow the runtime's `goalLease` schema when a rolling-goal fence is active. The top-level `leaseToken` on Goal control calls is a separate API field. After reacquisition, use the returned generation. MCP session equality, Full Bypass, and a saved token are not ownership proof. Ordinary unscheduled Full Bypass calls stay lease-free when no live rolling-goal fence exists. Codex can edit files and run commands directly without an MCP mutation call.
+For lnwjud MCP mutation calls, follow the runtime's `goalLease` schema when a rolling-goal fence is active. The top-level `leaseToken` on Goal control calls is a separate API field. After reacquisition, use the returned generation. MCP session equality, Full Bypass, and a saved token are not ownership proof. Ordinary unscheduled Full Bypass calls stay lease-free when no live rolling-goal fence exists. Codex can edit files and run commands directly, but these operations are not observed by the MCP fence. When a scheduled Goal is active, verify the worker owns its current lease and no other worker is live, renew through checkpoints, and stop direct mutations before lease expiry or handoff. Direct processes without provider-backed liveness proof must not be left running across a handoff; an interrupted worker's liveness remains unknown until independently checked.
 
 Use the latest returned Goal `revision` as `expectedRevision`, and the latest continuation `version` as `expectedVersion`. On conflict, read authoritative state and reconcile before retrying; never replay a mutation blindly.
 
