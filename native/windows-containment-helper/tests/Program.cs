@@ -1065,6 +1065,37 @@ internal static class NativeTests
             ledger.Prepare(retry);
             ledger.TryCommitDispatch(retry.Identity, sid, retry.OperationDigest);
             ledger.RecordTerminal(retry.Identity, sid, ServiceProcessOutcome.Completed, 0, 0);
+            var completedImport = NewServiceAttemptRequest("import-abort", Path.Combine(directory, "import-abort")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(completedImport);
+            ledger.AbortBeforeLaunch(completedImport);
+            ledger.CompleteImportReservation(completedImport.Identity, sid);
+            if (ledger.Inspect(completedImport.Identity, sid).ReservationHeld)
+                throw new Exception("Completed import retained its never-started reservation");
+            var interruptedImport = NewServiceAttemptRequest("import-interrupted", Path.Combine(directory, "import-interrupted")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(interruptedImport);
+            ledger.AbortBeforeLaunch(interruptedImport);
+            ledger.AfterImportHoldClearedForTest = () => throw new IOException("TEST_IMPORT_HOLD_CLEARED");
+            ExpectFailure<IOException>(() => ledger.CompleteImportReservation(interruptedImport.Identity, sid), "TEST_IMPORT_HOLD_CLEARED");
+            ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (!ledger.Inspect(interruptedImport.Identity, sid).ReservationHeld)
+                throw new Exception("Interrupted import completion did not retain the reservation");
+            ledger.CompleteImportReservation(interruptedImport.Identity, sid);
+            ledger.CompleteImportReservation(interruptedImport.Identity, sid);
+            if (ledger.Inspect(interruptedImport.Identity, sid).ReservationHeld)
+                throw new Exception("Repeated import completion did not recover the reservation");
+            var activeImport = NewServiceAttemptRequest("import-active", Path.Combine(directory, "import-active")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(activeImport);
+            ledger.TryCommitDispatch(activeImport.Identity, sid, activeImport.OperationDigest);
+            ledger.CompleteImportReservation(activeImport.Identity, sid);
+            if (!ledger.Inspect(activeImport.Identity, sid).ReservationHeld)
+                throw new Exception("Completed import released a dispatched attempt without terminal proof");
+            var unknownImport = NewServiceAttemptRequest("import-unknown", Path.Combine(directory, "import-unknown")) with { AuthenticatedCallerSid = sid, HoldForImport = true };
+            ledger.Prepare(unknownImport);
+            ledger.TryCommitDispatch(unknownImport.Identity, sid, unknownImport.OperationDigest);
+            ledger.MarkUnknown(unknownImport.Identity, sid, "TEST_UNKNOWN");
+            ledger.CompleteImportReservation(unknownImport.Identity, sid);
+            if (!ledger.Inspect(unknownImport.Identity, sid).ReservationHeld)
+                throw new Exception("Completed import released an unknown attempt without terminal proof");
 
             var recovered = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
             var runtime = new WindowsServiceProcessRuntime(recovered, useCurrentUserTestLauncher: true);

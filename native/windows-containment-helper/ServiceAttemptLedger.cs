@@ -80,6 +80,9 @@ internal sealed class ServiceAttemptLedger
     private readonly Dictionary<string, Entry> attempts = new(StringComparer.Ordinal);
     private readonly ServiceAttemptLedgerPersistence? persistence;
     private bool unavailable;
+#if NATIVE_CONTAINMENT_TESTS
+    internal Action? AfterImportHoldClearedForTest { get; set; }
+#endif
 
     internal ServiceAttemptLedger() { }
 
@@ -363,10 +366,16 @@ internal sealed class ServiceAttemptLedger
         lock (gate)
         {
             var entry = Require(identity, callerSid);
-            if (!entry.Request.HoldForImport) return;
-            entry.Request = entry.Request with { HoldForImport = false };
-            Persist();
-            if (entry.Phase == ServiceAttemptPhase.TerminalVerified) _ = Release(identity, callerSid);
+            if (entry.Request.HoldForImport)
+            {
+                entry.Request = entry.Request with { HoldForImport = false };
+                Persist();
+#if NATIVE_CONTAINMENT_TESTS
+                AfterImportHoldClearedForTest?.Invoke();
+#endif
+            }
+            if (entry.Phase is ServiceAttemptPhase.TerminalVerified or ServiceAttemptPhase.LaunchNotStarted)
+                _ = Release(identity, callerSid);
         }
     }
 
