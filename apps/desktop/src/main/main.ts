@@ -107,7 +107,7 @@ import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js'
 import { createLogViewerWindow, createMainWindow, createMutationApprovalWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
 import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, getTrayIconPath, shouldHideMainWindowOnClose } from './tray.js';
 import { installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from './update-install.js';
-import { UpdateCheckScheduler } from './update-check-scheduler.js';
+import { UpdateCheckInitializationQueue, UpdateCheckScheduler, type UpdateCheckSource } from './update-check-scheduler.js';
 import {
   configureUpdaterForDistribution,
   configureUpdaterForPlatform,
@@ -1599,7 +1599,9 @@ let updateInstallConsentController: UpdateInstallConsentController | null = null
 const updateTunnelRecovery = new UpdateTunnelRecovery();
 let nativeUpdateBootstrapClient: NativeUpdateBootstrapClient | null = null;
 let updateCheckScheduler: UpdateCheckScheduler | null = null;
-let pendingUpdateCheckSource: 'automatic' | 'tray' | 'renderer' | null = null;
+let pendingUpdateCheckSource: UpdateCheckSource | null = null;
+let updateCheckAttempt = 0;
+const initializationUpdateChecks = new UpdateCheckInitializationQueue();
 const windowsDistribution = detectWindowsDistribution(app.isPackaged);
 const updaterDistribution = detectUpdaterDistribution(app.isPackaged, process.platform, process.env);
 const platformCompatibility = platformCompatibilityProfile(process.platform, os.release(), process.arch);
@@ -1792,7 +1794,7 @@ async function requestFactoryReset(dataPath: string): Promise<{ readonly accepte
   return { accepted: true };
 }
 
-function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateStatus {
+function requestUpdateCheck(source: UpdateCheckSource): UpdateStatus {
   const messages = nativeMessages(desktopLocale);
   if (!app.isPackaged) {
     const status = patchUpdateStatus({ phase: 'unavailable', message: messages.updaterUnavailable, canInstall: false });
@@ -1807,6 +1809,10 @@ function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateSt
       : currentUpdateStatus.phase === 'unavailable' || currentUpdateStatus.phase === 'error'
         ? currentUpdateStatus.message ?? messages.updaterUnavailableTransactionAuthority
         : messages.updaterUnavailableTransactionAuthority;
+    if (autoUpdaterInitializationPending && !quitRequested) {
+      initializationUpdateChecks.enqueue(source);
+      return patchUpdateStatus({ phase: 'checking', progressPercent: null, message, canInstall: false });
+    }
     if (source === 'tray') {
       void dialog.showMessageBox({
         type: 'info', title: messages.updaterCheckTitle,
@@ -1814,7 +1820,9 @@ function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateSt
         buttons: [messages.ok],
       });
     }
-    return currentUpdateStatus;
+    return currentUpdateStatus.phase === 'idle'
+      ? patchUpdateStatus({ phase: 'unavailable', message, canInstall: false })
+      : currentUpdateStatus;
   }
   if (currentUpdateStatus.phase === 'available') {
     if (!verifiedAutomaticUpdateAuthority) {
@@ -1846,10 +1854,25 @@ function requestUpdateCheck(source: 'automatic' | 'tray' | 'renderer'): UpdateSt
     }
     return currentUpdateStatus;
   }
+  return startUpdateCheck(source);
+}
+
+function startUpdateCheck(source: UpdateCheckSource): UpdateStatus {
+  const messages = nativeMessages(desktopLocale);
   pendingUpdateCheckSource = source;
+  const attempt = ++updateCheckAttempt;
   const status = patchUpdateStatus({ phase: 'checking', progressPercent: null, message: messages.updaterChecking, canInstall: false });
-  void autoUpdater.checkForUpdates().catch((error: unknown) => {
-    if (pendingUpdateCheckSource !== source) return;
+  void Promise.resolve().then(() => {
+    if (quitRequested) {
+      if (pendingUpdateCheckSource === source && updateCheckAttempt === attempt) {
+        pendingUpdateCheckSource = null;
+        patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailable, canInstall: false });
+      }
+      return;
+    }
+    return autoUpdater.checkForUpdates();
+  }).catch((error: unknown) => {
+    if (pendingUpdateCheckSource !== source || updateCheckAttempt !== attempt) return;
     pendingUpdateCheckSource = null;
     const message = error instanceof Error ? error.message : nativeMessages(desktopLocale).updaterCheckFailed;
     console.error(`[AutoUpdater] ${source} check failed: ${message}`);
@@ -2512,8 +2535,13 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
 
     autoUpdaterInitialized = true;
     configureUpdateCheckSchedule();
+    const cancelledCheck = initializationUpdateChecks.finish(!quitRequested, startUpdateCheck);
+    if (quitRequested && cancelledCheck) {
+      patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailable, canInstall: false });
+    }
 
   } catch (err: unknown) {
+    initializationUpdateChecks.finish(false, startUpdateCheck);
     console.error('Failed to initialize auto updater:', err);
     patchUpdateStatus({ phase: 'error', message: err instanceof Error ? err.message : nativeMessages(desktopLocale).updaterCheckFailed, canInstall: false });
   } finally {

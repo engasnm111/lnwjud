@@ -1,11 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AUTO_UPDATE_CHECK_INTERVAL_MS, AUTO_UPDATE_STARTUP_DELAY_MS, UpdateCheckScheduler } from '../src/main/update-check-scheduler.js';
+import { AUTO_UPDATE_CHECK_INTERVAL_MS, AUTO_UPDATE_STARTUP_DELAY_MS, UpdateCheckInitializationQueue, UpdateCheckScheduler } from '../src/main/update-check-scheduler.js';
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe('automatic update check scheduler', () => {
+  it('coalesces initialization-time checks and gives an explicit renderer request priority', () => {
+    const queued = new UpdateCheckInitializationQueue();
+    queued.enqueue('automatic');
+    queued.enqueue('tray');
+    queued.enqueue('renderer');
+    queued.enqueue('tray');
+    const dispatch = vi.fn();
+    expect(queued.finish(true, dispatch)).toBe(true);
+    expect(queued.finish(true, dispatch)).toBe(false);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith('renderer');
+    queued.enqueue('tray');
+    expect(queued.finish(false, dispatch)).toBe(true);
+    expect(queued.finish(true, dispatch)).toBe(false);
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
   it('checks once shortly after startup and then every 30 minutes', async () => {
     vi.useFakeTimers();
     const check = vi.fn();

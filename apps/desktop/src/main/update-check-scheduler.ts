@@ -1,6 +1,23 @@
 export const AUTO_UPDATE_STARTUP_DELAY_MS = 5_000;
 export const AUTO_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1_000;
 
+export type UpdateCheckSource = 'automatic' | 'tray' | 'renderer';
+
+export class UpdateCheckInitializationQueue {
+  private pending: UpdateCheckSource | null = null;
+
+  public enqueue(source: UpdateCheckSource): void {
+    if (this.pending === null || source === 'renderer' || (source === 'tray' && this.pending === 'automatic')) this.pending = source;
+  }
+
+  public finish(ready: boolean, dispatch: (source: UpdateCheckSource) => unknown): boolean {
+    const pending = this.pending;
+    this.pending = null;
+    if (ready && pending !== null) dispatch(pending);
+    return pending !== null;
+  }
+}
+
 export interface UpdateCheckSchedulerOptions {
   readonly check: () => void;
   readonly startupDelayMs?: number;

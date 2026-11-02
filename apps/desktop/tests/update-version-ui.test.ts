@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { OperatorUpdateIntent } from '../src/renderer/operator-update-intent.js';
+import { OperatorUpdateIntent, UpdateStatusEventRevision } from '../src/renderer/operator-update-intent.js';
 
 describe('titlebar update notification', () => {
   it('advances a titlebar-initiated update only once and never installs from ordinary update status events', () => {
@@ -41,6 +41,32 @@ describe('titlebar update notification', () => {
     expect(intent.onStatus({ phase: 'unavailable' })).toBe('none');
     expect(intent.start()).toBe(true);
     intent.cancel();
+  });
+
+  it('allows another click when updater initialization returned idle without starting a check', () => {
+    const intent = new OperatorUpdateIntent();
+    expect(intent.start()).toBe(true);
+    expect(intent.onStatus({ phase: 'idle' })).toBe('none');
+    expect(intent.start()).toBe(true);
+    expect(intent.onStatus({ phase: 'checking' })).toBe('none');
+    expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
+  });
+
+  it('rejects stale check replies and failures without cancelling a newer attempt', () => {
+    const intent = new OperatorUpdateIntent();
+    const revisions = new UpdateStatusEventRevision();
+    expect(intent.start()).toBe(true);
+    const attempt = intent.currentAttempt();
+    const request = revisions.capture();
+    revisions.event('checking');
+    expect(revisions.isCurrent(request)).toBe(false);
+    expect(revisions.isCurrentFailure(request)).toBe(true);
+    revisions.event('available');
+    expect(intent.onStatus({ phase: 'available' })).toBe('request-download');
+    expect(revisions.isCurrentFailure(request)).toBe(false);
+    intent.onStatus({ phase: 'unavailable' });
+    expect(intent.start()).toBe(true);
+    expect(intent.isCurrentAttempt(attempt)).toBe(false);
   });
 
   it('keeps read-only version checks usable while native package installation is unavailable', async () => {
