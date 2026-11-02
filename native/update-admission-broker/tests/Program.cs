@@ -58,7 +58,7 @@ internal static class Program
             core.AfterStage = () => Environment.Exit(42);
             core.Close(UpdatePrincipal.Isolated("crash-update", 1), core.Status().Revision); return 12;
         }
-        try { Protocol(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
+        try { Protocol(); CorruptJournal(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
     private static void DuplicateEntryRace()
@@ -147,9 +147,36 @@ internal static class Program
         foreach (var number in new[] { "01", "-1", "1.0", "18446744073709551616", "", " 1" }) Refuses(() => AdmissionProtocol.Decimal(number), "ADMISSION_POSITION_INVALID");
         Check(AdmissionProtocol.Decimal("18446744073709551615") == ulong.MaxValue, "exact unsigned bound");
         Refuses(() => AdmissionProtocol.Object(new byte[16_385], AdmissionProtocol.FrameBytes), "ADMISSION_JSON_INVALID");
-        try { _ = AdmissionProtocol.Object([123, 34, 255, 34, 58, 49, 125], 100); throw new Exception("UTF8 accepted"); } catch (DecoderFallbackException) { assertions++; }
+        Refuses(() => AdmissionProtocol.Object([123, 34, 255, 34, 58, 49, 125], 100), "ADMISSION_JSON_INVALID");
+        Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{broken"), 100), "ADMISSION_JSON_INVALID");
+        Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD800\"}"), 100), "ADMISSION_JSON_INVALID");
+        Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"\\uD800\":1}"), 100), "ADMISSION_JSON_INVALID");
+        Check(AdmissionProtocol.Text(AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD83D\\uDE00\"}"), 100), "x") == "😀", "valid paired surrogate accepted");
         Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_REGISTRY_UNCONFIGURED");
         foreach (var path in new[] { "relative", "\\\\server\\share", "C:\\", "C:\\root:stream" }) Refuses(() => AdmissionStore.ValidatePath(path), "STATE_ROOT_UNSAFE");
+    }
+    private static void CorruptJournal()
+    {
+        var root = Root();
+        try
+        {
+            var identity = StoreIdentity.Isolated(root); var file = Path.Combine(root, "admission.json");
+            var current = File.ReadAllBytes(file); byte[] corrupt = [123, 34, 255, 34, 58, 49, 125];
+            using (var store = new AdmissionStore(identity)) store.Stage(corrupt);
+            Refuses(() => AdmissionCore.RecoverPublication(identity), "ADMISSION_JSON_INVALID");
+            Check(File.ReadAllBytes(file).SequenceEqual(current), "invalid pending preserves current journal");
+            Check(File.ReadAllBytes(Path.Combine(root, "admission.pending.json")).SequenceEqual(corrupt), "invalid pending evidence is preserved");
+        }
+        finally { Directory.Delete(root, true); }
+        root = Root();
+        try
+        {
+            var file = Path.Combine(root, "admission.json"); var corrupt = Encoding.UTF8.GetBytes("{broken");
+            File.WriteAllBytes(file, corrupt);
+            Refuses(() => new AdmissionCore(StoreIdentity.Isolated(root)), "ADMISSION_JSON_INVALID");
+            Check(File.ReadAllBytes(file).SequenceEqual(corrupt), "invalid current journal is preserved");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void Lifecycle()
     {
