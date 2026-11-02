@@ -224,8 +224,8 @@ internal sealed class ServiceAttemptLedger
                 throw new IOException("ATTEMPT_PHASE_CONFLICT");
             entry.Phase = ServiceAttemptPhase.LaunchNotStarted;
             entry.Reason = "CONTAINMENT_JOB_NAME_IN_USE";
+            entry.ReservationHeld = entry.Request.HoldForImport;
             Persist();
-            _ = Release(identity, callerSid);
             return Observe(entry);
         }
     }

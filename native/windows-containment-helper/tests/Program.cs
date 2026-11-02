@@ -1926,6 +1926,22 @@ internal static class NativeTests
             var held = heldRuntime.Run(heldRequest.Identity, callerSid, heldRequest.OperationDigest, operation, 0);
             if (held.Phase != ServiceAttemptPhase.LaunchNotStarted || !held.ReservationHeld || first.ActiveProcesses == 0)
                 throw new Exception("Collision recovery released an import reservation");
+
+            var failureStore = Path.Combine(directory, "failure.json");
+            var failureLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(failureStore)); failureLedger.Prepare(request);
+            var failureRuntime = new WindowsServiceProcessRuntime(failureLedger, useCurrentUserTestLauncher: true);
+            FileStream? lockedStore = null;
+            failureRuntime.BeforeCollisionRecovery = () => lockedStore = new FileStream(failureStore, FileMode.Open, FileAccess.Read, FileShare.None);
+            try
+            {
+                failureRuntime.Run(request.Identity, callerSid, request.OperationDigest, operation, 0);
+                throw new Exception("Collision recovery accepted a failed persistence write");
+            }
+            catch (IOException) { }
+            finally { lockedStore?.Dispose(); }
+            var afterFailure = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(failureStore)).Inspect(request.Identity, callerSid);
+            if (afterFailure.Phase != ServiceAttemptPhase.TerminationUnknown || !afterFailure.ReservationHeld || first.ActiveProcesses == 0)
+                throw new Exception($"Failed collision recovery state: phase={afterFailure.Phase}, held={afterFailure.ReservationHeld}, active={first.ActiveProcesses}");
         }
         finally { first.Cancel(); if (File.Exists(marker)) File.Delete(marker); Directory.Delete(directory, recursive: true); }
     }
