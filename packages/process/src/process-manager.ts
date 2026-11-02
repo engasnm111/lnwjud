@@ -350,7 +350,9 @@ export class ProcessManager {
         this.scheduleServiceObservation(record);
         return;
       case 'termination_unknown':
-        this.markTerminationUnverified(record, 'Native process termination is unverified; reservation retained');
+        this.markTerminationUnverified(record, observation.reason === 'SERVICE_ENDPOINT_PACKAGE_MISMATCH'
+          ? 'Native containment service package does not match the client; reservation retained'
+          : 'Native process termination is unverified; reservation retained');
         return;
       case 'launch_not_started':
       case 'terminal_verified':
