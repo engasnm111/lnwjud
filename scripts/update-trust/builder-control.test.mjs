@@ -72,7 +72,7 @@ test('protected main CI requires successful update package attestations before r
   assert.match(verifyJob, /needs: \[windows-release-tests, windows-release-build, update-package-attestation\]/);
   assert.match(verifyJob, /UPDATE_PACKAGE_REQUIRED: \$\{\{ github\.ref == 'refs\/heads\/main' && github\.event_name == 'push' \}\}/);
   assert.match(verifyJob, /UPDATE_PACKAGE_RESULT: \$\{\{ needs\.update-package-attestation\.result \}\}/);
-  assert.match(verifyJob, /node-version: '24\.16\.0'/);
+  assert.match(verifyJob, /node-version: '24\.22\.2'/);
   assert.equal(typeof verificationCommand, 'string');
   for (const [required, result, workspace, build, expected] of [
     ['true', 'success', 'success', 'success', 0], ['true', 'failure', 'success', 'success', 1],
@@ -86,6 +86,12 @@ test('protected main CI requires successful update package attestations before r
     });
     assert.equal(actual.status, expected, `required=${required}, result=${result}, workspace=${workspace}, build=${build}`);
   }
+});
+
+test('Windows update builder uses a Node release with the libuv short-path watcher fix', () => {
+  const versions = [...workflow.matchAll(/node-version: '([^']+)'/g)].map(([, version]) => version);
+  assert.equal(versions.length, 3);
+  assert.deepEqual(versions, ['24.22.2', '24.22.2', '24.22.2']);
 });
 
 test('actual inline resolver accepts a SHA-pinned builder with separate branch ref metadata', async () => {
