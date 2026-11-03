@@ -84,6 +84,21 @@ jobs:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: 'v3.1.3'
+      - name: Install ripgrep for release verification
+        shell: powershell
+        run: |
+          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
+            $rgDir = Join-Path $env:RUNNER_TEMP 'ripgrep-release-verification'
+            New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
+            $zip = Join-Path $rgDir 'ripgrep.zip'
+            Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip' -OutFile $zip -UseBasicParsing
+            Expand-Archive -Path $zip -DestinationPath $rgDir -Force
+            $rgExe = (Get-ChildItem -Path $rgDir -Filter 'rg.exe' -Recurse | Select-Object -First 1).FullName
+            Copy-Item -LiteralPath $rgExe -Destination (Join-Path $rgDir 'rg.exe') -Force
+            $rgDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:PATH = "$rgDir;$env:PATH"
+          }
+          rg --version
       - name: Build and validate unsigned metadata subjects without signing credentials
         shell: pwsh
         env:
