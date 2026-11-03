@@ -27,6 +27,11 @@ export function builderContext(environment, credentialless = false) {
     runId: environment.GITHUB_RUN_ID, runAttempt: environment.GITHUB_RUN_ATTEMPT, ref: environment.GITHUB_REF };
 }
 
+export function windowsPowerShell51Environment(environment, workspace) {
+  return { ...environment, GITHUB_WORKSPACE: workspace,
+    PSModulePath: path.win32.join(environment.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules') };
+}
+
 export function assertGeneratedChanges(status) {
   for (const entry of status.split('\0').filter(Boolean)) {
     if (!entry.startsWith(' M ') || !generatedFiles.has(entry.slice(3))) refuse();
@@ -115,7 +120,7 @@ async function buildSubjects(environment) {
   const version = JSON.parse(await readFile(path.join(source, 'package.json'), 'utf8')).version;
   const powershell = path.join(environment.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
   const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/verify-release.ps1'],
-    { cwd: source, env: { ...environment, GITHUB_WORKSPACE: source }, windowsHide: true, shell: false, stdio: 'inherit' });
+    { cwd: source, env: windowsPowerShell51Environment(environment, source), windowsHide: true, shell: false, stdio: 'inherit' });
   if (result.status !== 0 || result.error !== undefined || git(source, ['rev-parse', 'HEAD']) !== context.commit) refuse();
   assertGeneratedChanges(git(source, ['status', '--porcelain=v1', '-z', '--untracked-files=normal']));
   await validateGeneratedIdentitySources(source);

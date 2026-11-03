@@ -10,7 +10,8 @@ import process from 'node:process';
 import { URL } from 'node:url';
 import vm from 'node:vm';
 import { TextDecoder } from 'node:util';
-import { assertGeneratedChanges, builderContext, inspectSubjectDirectory, validateGeneratedIdentitySources, validateProvenance } from './builder-control.mjs';
+import { assertGeneratedChanges, builderContext, inspectSubjectDirectory, validateGeneratedIdentitySources, validateProvenance,
+  windowsPowerShell51Environment } from './builder-control.mjs';
 
 const workflow = (await readFile(new URL('../../.github/workflows/update-package-builder.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const mainWorkflow = (await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
@@ -19,6 +20,29 @@ const environment = () => ({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm
   GITHUB_REF_PROTECTED: 'true',
   GITHUB_WORKFLOW_REF: 'engasnm111/lnwjud/.github/workflows/ci.yml@refs/heads/main', GITHUB_SHA: 'a'.repeat(40),
   GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', LNWJUD_BUILDER_SHA: 'b'.repeat(40) });
+
+test('Windows PowerShell child hashes a fixture with the builder module path', { skip: process.platform !== 'win32' }, async () => {
+  const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-builder-powershell-'));
+  try {
+    const fixture = Buffer.from('hash through the Windows PowerShell 5.1 module path');
+    const fixturePath = path.join(directory, 'fixture.bin');
+    await writeFile(fixturePath, fixture);
+    const parentEnvironment = { ...process.env, LNWJUD_HASH_FIXTURE: fixturePath };
+    const inheritedModulePath = parentEnvironment.PSModulePath;
+    const childEnvironment = windowsPowerShell51Environment(parentEnvironment, process.cwd());
+    assert.equal(parentEnvironment.PSModulePath, inheritedModulePath);
+    assert.equal(childEnvironment.PSModulePath, path.win32.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'));
+    assert.equal(childEnvironment.LNWJUD_HASH_FIXTURE, fixturePath);
+    const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+      '(Get-FileHash -LiteralPath $env:LNWJUD_HASH_FIXTURE -Algorithm SHA256).Hash.ToLowerInvariant()'], {
+      encoding: 'utf8', env: childEnvironment, windowsHide: true, shell: false,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), createHash('sha256').update(fixture).digest('hex'));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 const runMetadata = () => ({ id: 123, run_attempt: 2, event: 'push', head_sha: 'a'.repeat(40), head_branch: 'main', status: 'in_progress',
   path: '.github/workflows/ci.yml', repository: { full_name: 'engasnm111/lnwjud' },
   referenced_workflows: [{ path: `engasnm111/lnwjud/.github/workflows/update-package-builder.yml@${'b'.repeat(40)}`, ref: 'refs/heads/main', sha: 'b'.repeat(40) }] });
