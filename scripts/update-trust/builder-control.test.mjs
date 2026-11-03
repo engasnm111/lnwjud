@@ -94,6 +94,18 @@ test('Windows update builder uses a Node release with the libuv short-path watch
   assert.deepEqual(versions, ['24.22.2', '24.22.2', '24.22.2']);
 });
 
+test('Windows update builder installs ripgrep before release verification', () => {
+  const buildStart = workflow.indexOf('\n  build-package:');
+  const attestStart = workflow.indexOf('\n  attest-package:', buildStart);
+  assert.ok(buildStart >= 0 && attestStart > buildStart);
+  const buildJob = workflow.slice(buildStart, attestStart);
+  const installStart = buildJob.indexOf('- name: Install ripgrep for release verification');
+  const buildCommand = buildJob.indexOf('node _trusted-builder/scripts/update-trust/builder-control.mjs build');
+  assert.ok(installStart >= 0 && buildCommand > installStart);
+  assert.match(buildJob.slice(installStart, buildCommand), /rg --version/);
+  assert.match(buildJob.slice(installStart, buildCommand), /GITHUB_PATH/);
+});
+
 test('actual inline resolver accepts a SHA-pinned builder with separate branch ref metadata', async () => {
   assert.equal(typeof bootstrap, 'string');
   const result = await resolve(); assert.equal(result.exitCode, 0); assert.equal(result.output, `builder_sha=${'b'.repeat(40)}\n`);
