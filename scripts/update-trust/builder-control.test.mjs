@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { link, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { URL } from 'node:url';
 import vm from 'node:vm';
 import { TextDecoder } from 'node:util';
