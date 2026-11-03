@@ -21,7 +21,7 @@ const environment = () => ({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm
   GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', LNWJUD_BUILDER_SHA: 'b'.repeat(40) });
 const runMetadata = () => ({ id: 123, run_attempt: 2, event: 'push', head_sha: 'a'.repeat(40), head_branch: 'main', status: 'in_progress',
   path: '.github/workflows/ci.yml', repository: { full_name: 'engasnm111/lnwjud' },
-  referenced_workflows: [{ path: `engasnm111/lnwjud/.github/workflows/update-package-builder.yml@${'b'.repeat(40)}`, sha: 'b'.repeat(40) }] });
+  referenced_workflows: [{ path: `engasnm111/lnwjud/.github/workflows/update-package-builder.yml@${'b'.repeat(40)}`, ref: 'refs/heads/main', sha: 'b'.repeat(40) }] });
 
 async function resolve(environmentOverride = {}, metadata = runMetadata(), responseOverride = {}) {
   const observed = { output: '', error: '', fetches: 0 }; const process = { env: { ...environment(), ...environmentOverride },
@@ -64,7 +64,7 @@ test('protected main CI requires successful update package attestations before r
   }
 });
 
-test('actual inline resolver binds caller, run/attempt and literal immutable referenced builder SHA', async () => {
+test('actual inline resolver accepts a SHA-pinned builder with separate branch ref metadata', async () => {
   assert.equal(typeof bootstrap, 'string');
   const result = await resolve(); assert.equal(result.exitCode, 0); assert.equal(result.output, `builder_sha=${'b'.repeat(40)}\n`);
   assert.equal(result.fetches, 1);
@@ -81,7 +81,7 @@ test('actual inline resolver refuses wrong actual run, mutable references, ambig
   for (const change of [run => { run.head_sha = 'c'.repeat(40); }, run => { run.run_attempt = 1; }, run => { run.id = 124; },
     run => { run.event = 'workflow_dispatch'; }, run => { run.path = '.github/workflows/dev-installer.yml'; }, run => { run.repository.full_name = 'other/repository'; },
     run => { run.referenced_workflows[0].path = 'engasnm111/lnwjud/.github/workflows/update-package-builder.yml@main'; },
-    run => { run.referenced_workflows[0].ref = 'refs/heads/main'; },
+    run => { run.referenced_workflows[0].sha = 'c'.repeat(40); },
     run => { run.referenced_workflows.push(run.referenced_workflows[0]); }, run => { run.referenced_workflows = []; }]) {
     const metadata = runMetadata(); change(metadata); const result = await resolve({}, metadata);
     assert.equal(result.exitCode, 1); assert.equal(result.output, '');
