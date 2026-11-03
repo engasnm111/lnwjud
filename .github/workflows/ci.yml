@@ -946,7 +946,7 @@ jobs:
     steps:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: '24.16.0'
+          node-version: '24.22.2'
       - name: Require complete Windows release gates
         env:
           WORKSPACE_TESTS_RESULT: ${{ needs.windows-release-tests.result }}
