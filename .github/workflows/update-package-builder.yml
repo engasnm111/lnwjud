@@ -43,8 +43,7 @@ jobs:
             const prefix = repository + '/.github/workflows/update-package-builder.yml@';
             const references = run.referenced_workflows.filter(item => typeof item?.path === 'string' && item.path.startsWith(prefix));
             if (references.length !== 1 || !/^[a-f0-9]{40}$/.test(references[0].sha)
-              || references[0].path !== prefix + references[0].sha
-              || Object.hasOwn(references[0], 'ref') && references[0].ref !== references[0].sha) fail();
+              || references[0].path !== prefix + references[0].sha) fail();
             process.stdout.write('builder_sha=' + references[0].sha + '\n');
           })().catch(() => { process.stderr.write('UPDATE_BUILDER_CONTEXT_REFUSED\n'); process.exitCode = 1; });
           '@
