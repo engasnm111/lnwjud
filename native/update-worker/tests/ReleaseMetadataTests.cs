@@ -81,6 +81,14 @@ internal static class ReleaseMetadataTests
     {
         assertions = 0;
         using var fixture = new Fixture();
+        var embeddedTrust = ReleaseTrustPolicy.Embedded();
+        var pinnedRoot = embeddedTrust.Roots.Single(root => root.KeyId == "lnwjud-update-release-2026-11");
+        Check(ReleaseTrustPolicy.Hash(pinnedRoot.Spki) == "23991c089a1c5bd441566b8381b4196e570c80ccfe5c174db555f67595c61ee9", "embedded root matches protected public-key discovery");
+        Check(pinnedRoot.Roles.Contains("release") && pinnedRoot.Roles.Contains("recovery") && !pinnedRoot.Revoked,
+            "embedded bootstrap root carries both authorization roles required by native verifiers");
+        Check(pinnedRoot.AllowHistoricalRecovery, "embedded root permits expired predecessor validation without extending candidate validity");
+        Check(!embeddedTrust.Configured && embeddedTrust.Sources.Count == 0 && embeddedTrust.Verifier is null,
+            "a pinned root without immutable source authorities and verifier remains unusable for updates");
         foreach (var mutation in new Action<JsonObject>[] {
             p => p["authorities"]!.AsArray().Add(p["authorities"]![0]!.DeepClone()),
             p => p["authorities"]![0]!["builderDigest"] = "not-a-digest",
@@ -99,7 +107,8 @@ internal static class ReleaseMetadataTests
         Check(metadata.HistoricalPreviousEligibilityOnly && metadata.Receipt.ExpectedGeneration == 4 && metadata.Receipt.ExpectedRevision == 6, "metadata receipt bound to snapshot with recovery eligibility only");
         var before = fixture.Snapshot.Digest;
         _ = fixture.Verify(); Check(fixture.Snapshot.Digest == before, "verification never mutates trust floor");
-        Check(fixture.Verify(policy: ReleaseTrustPolicy.Embedded()) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" }, "production embedded roots empty");
+        Check(fixture.Verify(policy: ReleaseTrustPolicy.Embedded()) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" },
+            "production embedded policy has no source authorities or verifier");
         Check(EnrollmentPreflight.VerifyPackage("not-an-absolute-path", ReleaseTrustPolicy.Embedded(), Schema, fixture.Time)
             is EnrollmentPreflightResult.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" }, "enrollment preflight refuses empty policy before opening a package");
         RunEnrollment(fixture);
