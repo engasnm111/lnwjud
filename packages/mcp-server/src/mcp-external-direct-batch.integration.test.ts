@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { LocalExtensionsService } from '@lnwjud/extensions';
+import { createWindowsMcpStdioOwner } from '@lnwjud/process';
+import { CONTAINMENT_HELPER_SHA256, CONTAINMENT_PIN_SHA256 } from '../../capabilities/src/containment-integrity.generated.js';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { ToolRegistry } from './tool-registry.js';
 
@@ -12,7 +14,19 @@ const child = fileURLToPath(new URL('../../extensions/tests/fixtures/external-mc
 describe('real local external MCP direct-vs-batch contract', () => {
   it('preserves direct success, exact child error, and batched child status without changing approval policy', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-mcp-direct-batch-'));
+    const windowsMcpStdioOwner = process.platform === 'win32' ? createWindowsMcpStdioOwner({
+      helper: {
+        executable: fileURLToPath(new URL('../../../apps/desktop/build/native-containment/lnwjud-containment.exe', import.meta.url)),
+        sha256: CONTAINMENT_HELPER_SHA256,
+        buildId: 'lnwjud-containment-v2',
+      },
+      pin: {
+        modulePath: fileURLToPath(new URL('../../../apps/desktop/build/native-containment/lnwjud-containment-pin.node', import.meta.url)),
+        sha256: CONTAINMENT_PIN_SHA256,
+      },
+    }) : undefined;
     const extensions = new LocalExtensionsService({
+      ...(windowsMcpStdioOwner === undefined ? {} : { windowsMcpStdioOwner }),
       homeDir: root,
       appDataDir: root,
       settings: {
