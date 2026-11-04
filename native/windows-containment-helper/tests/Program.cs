@@ -53,6 +53,7 @@ internal static class NativeTests
                 case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
                 case "job-collision-release-test": TestJobCollisionRelease(); return 0;
                 case "terminal-release-recovery-test": TestTerminalReleaseRecovery(); return 0;
+                case "post-reboot-recovery-test": TestPostRebootRecovery(); return 0;
                 case "rpc-absent-child":
                     WindowsContainmentServiceClient.ServiceNameForAbsenceTest = "lnwjud-absent-" + Guid.NewGuid().ToString("N");
                     return Program.Main(["service-rpc", new string('0', 64)]).GetAwaiter().GetResult();
@@ -257,6 +258,8 @@ internal static class NativeTests
             TestDurableServiceAttemptLedger();
             TestTerminalReleaseRecovery();
             Console.WriteLine("PASS crash recovery keeps unknown reservations and persists terminal release");
+            TestPostRebootRecovery();
+            Console.WriteLine("PASS missing attempt recovery requires new boot, absent Job, and exact owner");
             TestServiceRestartAndJobReconciliation();
             Console.WriteLine("PASS service restart reconciles dead jobs, preserves live descendants, and cancels cleanly");
             UpdaterCrashBoundaryFixture.RunSuite();
@@ -1071,6 +1074,46 @@ internal static class NativeTests
             return;
         }
         throw new Exception("Expected " + typeof(T).Name + " with " + expectedMessage);
+    }
+
+    private static void TestPostRebootRecovery()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lnwjud-reboot-recovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = Path.Combine(directory, "attempts.json");
+            var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            var request = NewServiceAttemptRequest("reboot-missing-" + Guid.NewGuid().ToString("N"),
+                ServiceAttemptLedger.GlobalReservationKey);
+            var now = DateTimeOffset.UtcNow;
+            var reservedAt = now.AddHours(-2);
+            var bootTime = now.AddHours(-1);
+            var absentJob = new ContainedProcess.JobProbeResult(ContainedProcess.JobProbeStatus.NotFound, 0, 0);
+            var activeJob = new ContainedProcess.JobProbeResult(ContainedProcess.JobProbeStatus.Active, 1, 0);
+            ExpectFailure<IOException>(() => ledger.RecoverAfterReboot(request.Identity,
+                request.AuthenticatedCallerSid, now, bootTime, absentJob), "SERVICE_RECOVERY_NEW_BOOT_REQUIRED");
+            ExpectFailure<IOException>(() => ledger.RecoverAfterReboot(request.Identity,
+                request.AuthenticatedCallerSid, reservedAt, bootTime, activeJob), "SERVICE_RECOVERY_JOB_UNVERIFIED");
+            var recovered = ledger.RecoverAfterReboot(request.Identity,
+                request.AuthenticatedCallerSid, reservedAt, bootTime, absentJob);
+            if (recovered.Phase != ServiceAttemptPhase.TerminalVerified || recovered.Outcome != ServiceProcessOutcome.Interrupted
+                || recovered.ExitCode != 125 || recovered.ActiveProcesses != 0 || recovered.ReservationHeld)
+                throw new Exception("Post-reboot reconciliation created a false success or retained the writer");
+            var persisted = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (persisted.Inspect(request.Identity, request.AuthenticatedCallerSid) != recovered
+                || persisted.RecoverAfterReboot(request.Identity, request.AuthenticatedCallerSid, reservedAt, bootTime, absentJob) != recovered)
+                throw new Exception("Reboot recovery proof was not persisted or idempotent");
+            ExpectFailure<UnauthorizedAccessException>(() => persisted.RecoverAfterReboot(request.Identity,
+                "S-1-5-21-2000", reservedAt, bootTime, absentJob), "ATTEMPT_OWNER_MISMATCH");
+            var running = NewServiceAttemptRequest("reboot-running-" + Guid.NewGuid().ToString("N"),
+                ServiceAttemptLedger.GlobalReservationKey);
+            persisted.Prepare(running);
+            persisted.TryCommitDispatch(running.Identity, running.AuthenticatedCallerSid, running.OperationDigest);
+            ExpectFailure<IOException>(() => persisted.RecoverAfterReboot(running.Identity,
+                running.AuthenticatedCallerSid, reservedAt, bootTime, absentJob), "SERVICE_RECOVERY_EXISTING_ATTEMPT_UNVERIFIED");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
     }
 
     private static void TestTerminalReleaseRecovery()

@@ -58,7 +58,7 @@ internal static class WindowsContainmentService
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate uint HandlerCallback(uint control, uint eventType, nint eventData, nint context);
     private sealed record RpcRequest(int Protocol, string Command, ServiceAttemptIdentity? Identity, string? ReservationKey, string? OperationDigest, ServiceProcessOperation? Operation,
-        string? ControlCommand = null, JsonElement? ControlRequest = null, ServiceOutputCursor? OutputCursor = null);
+        string? ControlCommand = null, JsonElement? ControlRequest = null, ServiceOutputCursor? OutputCursor = null, string? RecordedAt = null);
     private sealed record RpcResponse(int Protocol, bool Ok, object? Result, string? Error);
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "StartServiceCtrlDispatcherW")]
@@ -167,6 +167,7 @@ internal static class WindowsContainmentService
                     "prepare" => Prepare(ledger, request, caller.Sid),
                     "run" => Run(ledger, runtime, request, caller),
                     "inspect" => Inspect(runtime, request, caller.Sid),
+                    "recover_after_reboot" => RecoverAfterReboot(ledger, request, caller.Sid),
                     "cancel" => Cancel(runtime, request, caller.Sid),
                     "read_output" => ReadOutput(runtime, request, caller.Sid),
                     "abort" => Abort(ledger, request, caller.Sid),
@@ -292,6 +293,24 @@ internal static class WindowsContainmentService
 
     private static ServiceAttemptObservation Inspect(WindowsServiceProcessRuntime runtime, RpcRequest request, string sid) =>
         runtime.Inspect(request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED"), sid);
+
+    // A service replacement is not termination proof; only a later OS boot
+    // plus a missing native Job may reconcile a missing ledger attempt.
+    private static ServiceAttemptObservation RecoverAfterReboot(ServiceAttemptLedger ledger, RpcRequest request, string sid)
+    {
+        var identity = request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED");
+        if (request.RecordedAt is null || !request.RecordedAt.EndsWith("Z", StringComparison.Ordinal)
+            || !DateTimeOffset.TryParse(request.RecordedAt,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var recordedAt))
+            throw new IOException("SERVICE_RECOVERY_TIME_INVALID");
+        var uptime = Environment.TickCount64;
+        if (uptime < 0) throw new IOException("SERVICE_RECOVERY_BOOT_UNVERIFIED");
+        var bootTime = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(uptime);
+        var job = ContainedProcess.QueryJob(ContainedProcess.GetJobName(identity.AttemptId));
+        return ledger.RecoverAfterReboot(identity, sid, recordedAt, bootTime, job);
+    }
 
     private static ServiceAttemptObservation Abort(ServiceAttemptLedger ledger, RpcRequest request, string sid)
     {

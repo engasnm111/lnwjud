@@ -85,6 +85,7 @@ export interface NativeProcessRequest {
 export type WindowsContainmentRpcRequest = { readonly protocol: 3; readonly identity: NativeAttemptBinding } & (
   | { readonly command: 'prepare' | 'run'; readonly operation: NativeServiceProcessOperation; readonly reservationKey?: string; readonly operationDigest?: string }
   | { readonly command: 'inspect' | 'cancel' }
+  | { readonly command: 'recover_after_reboot'; readonly recordedAt: string }
   | { readonly command: 'read_output'; readonly outputCursor?: NativeOutputCursor }
   | ({ readonly command: 'abort'; readonly reservationKey: string } & (
     | { readonly operation: NativeServiceProcessOperation; readonly operationDigest?: never }
@@ -317,6 +318,19 @@ export class WindowsNativeAuthority {
       return unknown(input.binding, error instanceof Error && (error.message === 'SERVICE_ENDPOINT_PACKAGE_MISMATCH'
         || error.message === 'SERVICE_ENDPOINT_NOT_INSTALLED')
         ? error.message : 'NATIVE_SERVICE_PROOF_UNAVAILABLE');
+    }
+  }
+
+  public async recoverAfterReboot(input: AttemptLocation & { readonly recordedAt: string }): Promise<NativeProcessObservation> {
+    try {
+      validateBinding(input.binding);
+      if (!Number.isFinite(Date.parse(input.recordedAt)) || !input.recordedAt.endsWith('Z'))
+        return unknown(input.binding, 'NATIVE_RECOVERY_TIME_INVALID');
+      return toObservation(await this.client.request<unknown>({
+        protocol: 3, command: 'recover_after_reboot', identity: input.binding, recordedAt: input.recordedAt,
+      }), input.binding);
+    } catch {
+      return unknown(input.binding, 'NATIVE_RECOVERY_PROOF_UNAVAILABLE');
     }
   }
 
