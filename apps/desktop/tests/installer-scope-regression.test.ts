@@ -19,6 +19,16 @@ describe('Windows installer scope regression', () => {
     expect(installerScript).toContain('acknowledgedPerUserMode:');
   });
 
+  it('rejects silent per-user install in NSIS initialization before any files are extracted', () => {
+    const init = installerScript.slice(installerScript.indexOf('!macro customInit'), installerScript.indexOf('!macroend'));
+    expect(installerScript.indexOf('!macro customInit')).toBeGreaterThanOrEqual(0);
+    expect(init).toContain('${if} $installMode == "CurrentUser"');
+    expect(init).toContain('${if} ${Silent}');
+    expect(init).toContain('SetErrorLevel 125');
+    expect(init).toContain('Abort');
+    expect(installerScript.indexOf('!macro customInit')).toBeLessThan(installerScript.indexOf('!macro customInstall'));
+  });
+
   it('keeps silent update uninstall from waiting on the user-data prompt', () => {
     const silentGuard = installerScript.indexOf('IfSilent keepData 0');
     const prompt = installerScript.indexOf('MessageBox MB_YESNO|MB_ICONQUESTION');

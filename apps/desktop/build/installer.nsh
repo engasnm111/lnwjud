@@ -1,3 +1,16 @@
+; Electron-builder calls customInit from .onInit *after* initMultiUser selected
+; the installation mode and *before* installSection uninstalls or extracts files.
+; A silent per-user install cannot enroll the protected LocalSystem containment
+; service. Reject before touching an existing installation or creating new files.
+!macro customInit
+  ${if} $installMode == "CurrentUser"
+    ${if} ${Silent}
+      SetErrorLevel 125
+      Abort
+    ${endif}
+  ${endif}
+!macroend
+
 !macro customInstall
   ; The LocalSystem containment service belongs only to a protected all-users install.
   ${if} $installMode == "all"
