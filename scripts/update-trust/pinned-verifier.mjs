@@ -85,6 +85,8 @@ export async function acquirePinnedVerifier(configured) {
   if (!filenameField || !digestField || !Object.hasOwn(filenameField, 'value') || !Object.hasOwn(digestField, 'value')
     || filenameField.value !== 'gh.exe' || typeof digestField.value !== 'string' || !/^[a-f0-9]{64}$/.test(digestField.value))
     refuse('RELEASE_VERIFIER_UNTRUSTED');
+  if (Object.prototype.hasOwnProperty.call(process.env, 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM'))
+    refuse('RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED');
   const expectedDigest = digestField.value;
   const addon = await loadVerifierPinModule();
   const filename = path.join(repositoryRoot, 'tools/update-attestation/gh.exe');
