@@ -23,6 +23,17 @@ describe('Windows Sandbox execution contract', () => {
     if (result.ok) expect(result.value.wsbXml).toContain('<ReadOnly>true</ReadOnly>');
   });
 
+  it('rejects job IDs that alias parent directories or Win32 device names', () => {
+    for (const jobId of ['.', '..', 'CON', 'nul.txt', 'job.']) {
+      expect(buildSandboxExecutionPlan({
+        workspaceId: 'ws-1', allowedRoots: ['C:\\workspace'],
+        inputPath: 'C:\\workspace\\.lnwjud\\sandbox\\input',
+        outputPath: 'C:\\workspace\\.lnwjud\\sandbox\\output',
+        executable: 'node', arguments: [], jobId,
+      })).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    }
+  });
+
   it('rejects workspace escape and shell-string commands before a WSB is created', () => {
     expect(buildSandboxExecutionPlan({
       workspaceId: 'ws-1', allowedRoots: ['C:\\workspace'], inputPath: 'C:\\outside', outputPath: 'C:\\workspace\\out', executable: 'node', arguments: [],

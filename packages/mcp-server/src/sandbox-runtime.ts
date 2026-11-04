@@ -103,8 +103,19 @@ export class SandboxRuntimeService {
       return err(appError('PERMISSION_REQUIRED', 'Sandbox detonation requires explicit chat confirmation. Ask the user first, then retry with userConfirmed: true'));
     }
 
-    await mkdir(inputPath, { recursive: true });
-    await mkdir(outputPath, { recursive: true });
+    // Create each job directory exclusively: reusing an ID could make a stale
+    // exit-code.txt appear to be proof of a new sandbox execution.
+    await mkdir(path.win32.dirname(staging), { recursive: true });
+    try {
+      await mkdir(staging);
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST') {
+        return err(appError('INVALID_INPUT', 'Sandbox job ID already exists; previous artifacts cannot be reused'));
+      }
+      throw error;
+    }
+    await mkdir(inputPath);
+    await mkdir(outputPath);
     await writeFile(path.win32.join(inputPath, 'sandbox-runner.ps1'), SANDBOX_RUNNER_SCRIPT, 'utf8');
     await writeFile(path.win32.join(outputPath, 'job-manifest.json'), JSON.stringify(plan.value.jobManifest, null, 2), 'utf8');
     const wsbPath = path.win32.join(staging, 'job.wsb');

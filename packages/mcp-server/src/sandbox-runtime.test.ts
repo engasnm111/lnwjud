@@ -190,6 +190,31 @@ describe('SandboxRuntimeService', () => {
     });
   });
 
+  it('rejects a repeated job ID rather than accepting stale exit-code artifacts', async () => {
+    await withTempRoot(async (root) => {
+      let launches = 0;
+      const runtime = new SandboxRuntimeService(servicesWithRoot(root), actor, {
+        platform: 'win32',
+        sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
+        launcher: async () => { launches++; return ok(undefined); },
+        waiter: async (file) => {
+          const output = path.win32.dirname(file);
+          await writeFile(path.join(output, 'exit-code.txt'), '0');
+          await writeFile(path.join(output, 'stdout.log'), 'first execution');
+          await writeFile(path.join(output, 'stderr.log'), '');
+          return true;
+        },
+      });
+      const request = { workspaceId: 'ws-1', executable: 'node', arguments: ['--version'],
+        dryRun: false, userConfirmed: true, jobId: 'job-unique', timeoutSeconds: 5 };
+      await expect(runtime.execute(request)).resolves.toMatchObject({ ok: true, value: { stdout: 'first execution' } });
+      await expect(runtime.execute(request)).resolves.toMatchObject({
+        ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('already exists') },
+      });
+      expect(launches).toBe(1);
+    });
+  });
+
   it('fails closed when the sandbox never produces exit-code.txt', async () => {
     await withTempRoot(async (root) => {
       const runtime = service({ root, waitResult: false });

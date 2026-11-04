@@ -36,7 +36,11 @@ export function buildSandboxExecutionPlan(input: SandboxExecutionPlanInput): Res
   const timeoutSeconds = input.timeoutSeconds ?? 300;
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3_600) return err(appError('INVALID_INPUT', 'Sandbox timeout is invalid'));
   const jobId = input.jobId?.trim() || randomUUID();
-  if (!/^[A-Za-z0-9._-]{1,128}$/.test(jobId)) return err(appError('INVALID_INPUT', 'Sandbox job ID is invalid'));
+  // Reject path aliases and Win32 device names before the job ID is used as a directory.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(jobId) || jobId.endsWith('.')
+    || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(jobId)) {
+    return err(appError('INVALID_INPUT', 'Sandbox job ID is invalid'));
+  }
 
   const sandboxInput = 'C:\\lnwjud\\input';
   const sandboxOutput = 'C:\\lnwjud\\output';
