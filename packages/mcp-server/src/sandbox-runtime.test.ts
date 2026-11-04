@@ -190,7 +190,35 @@ describe('SandboxRuntimeService', () => {
       // A completed guest must shut itself down; otherwise the next Windows Sandbox
       // launch is refused because Windows permits only one running instance.
       expect(runner).toContain("(Join-Path $env:SystemRoot 'System32\\shutdown.exe') /s /t 0 /f");
-      expect(runner.indexOf('Set-Content -Path $manifest.exitCode')).toBeLessThan(runner.indexOf('shutdown.exe'));
+      // The completion receipt must be published only after its bytes are fully
+      // written. Existence-only host polling must never observe an empty file.
+      expect(runner).toContain('[System.IO.File]::WriteAllText($receiptTemp');
+      expect(runner).toContain('[System.IO.File]::Move($receiptTemp, [string]$manifest.exitCode)');
+      expect(runner.indexOf('[System.IO.File]::WriteAllText')).toBeLessThan(runner.indexOf('[System.IO.File]::Move'));
+      expect(runner.indexOf('[System.IO.File]::Move')).toBeLessThan(runner.indexOf('shutdown.exe'));
+    });
+  });
+
+  it('preserves a nonzero guest exit code instead of treating an empty receipt as success', async () => {
+    await withTempRoot(async (root) => {
+      const runtime = new SandboxRuntimeService(servicesWithRoot(root), actor, {
+        platform: 'win32',
+        sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
+        launcher: async (): Promise<ReturnType<typeof ok>> => ok(undefined),
+        waiter: async (file): Promise<boolean> => {
+          const output = path.win32.dirname(file);
+          await writeFile(path.join(output, 'exit-code.txt'), '7\r\n');
+          await writeFile(path.join(output, 'stdout.log'), '');
+          await writeFile(path.join(output, 'stderr.log'), 'expected failure');
+          return true;
+        },
+      });
+      await expect(runtime.execute({
+        workspaceId: 'ws-1', executable: 'node', arguments: ['--version'],
+        dryRun: false, userConfirmed: true, jobId: 'nonzero-guest-exit', timeoutSeconds: 5,
+      })).resolves.toMatchObject({
+        ok: true, value: { executed: true, exitCode: 7, stderr: 'expected failure' },
+      });
     });
   });
 
