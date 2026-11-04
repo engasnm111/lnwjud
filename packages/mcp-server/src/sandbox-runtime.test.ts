@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -20,7 +21,11 @@ function hostFile<T>(file: T): T | string {
 }
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  return { ...actual, existsSync: (file: Parameters<typeof actual.existsSync>[0]): boolean => actual.existsSync(hostFile(file)) };
+  return {
+    ...actual,
+    existsSync: (file: Parameters<typeof actual.existsSync>[0]): boolean => actual.existsSync(hostFile(file)),
+    createReadStream: (file: string): ReturnType<typeof actual.createReadStream> => actual.createReadStream(hostFile(file)),
+  };
 });
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
@@ -29,6 +34,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     mkdir: (file: string, options: Parameters<typeof actual.mkdir>[1]): Promise<string | undefined> => actual.mkdir(hostFile(file), options),
     readFile: (file: string, options: 'utf8'): Promise<string> => actual.readFile(hostFile(file), options),
     writeFile: (file: string, data: string, options?: 'utf8'): Promise<void> => actual.writeFile(hostFile(file), data, options),
+    lstat: (file: string): ReturnType<typeof actual.lstat> => actual.lstat(hostFile(file)),
+    stat: (file: string): ReturnType<typeof actual.stat> => actual.stat(hostFile(file)),
+    realpath: async (file: string): Promise<string> => { await actual.realpath(hostFile(file)); return file; },
+    copyFile: (source: string, destination: string, flags?: number): ReturnType<typeof actual.copyFile> => actual.copyFile(hostFile(source), hostFile(destination), flags),
   };
 });
 
@@ -219,6 +228,62 @@ describe('SandboxRuntimeService', () => {
       })).resolves.toMatchObject({
         ok: true, value: { executed: true, exitCode: 7, stderr: 'expected failure' },
       });
+    });
+  });
+
+  it('stages an exact SHA-256 approved workspace executable into the guest-only read-only input', async () => {
+    await withTempRoot(async (root) => {
+      await mkdir(path.join(fixtureFs.root, 'fixtures'));
+      const bytes = 'isolated-fixture-executable';
+      await writeFile(path.join(fixtureFs.root, 'fixtures', 'installer.exe'), bytes);
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      let launches = 0;
+      const runtime = new SandboxRuntimeService(servicesWithRoot(root), actor, {
+        platform: 'win32', sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
+        launcher: async (): Promise<ReturnType<typeof ok>> => { launches++; return ok(undefined); },
+        waiter: async (file): Promise<boolean> => {
+          const input = path.join(fixtureFs.root, '.lnwjud', 'sandbox', 'staged-installer', 'input', 'payload.exe');
+          await expect(readFile(input, 'utf8')).resolves.toBe(bytes);
+          const output = path.win32.dirname(file);
+          await writeFile(path.join(output, 'exit-code.txt'), '0');
+          await writeFile(path.join(output, 'stdout.log'), 'fixture completed');
+          await writeFile(path.join(output, 'stderr.log'), '');
+          return true;
+        },
+      });
+      const result = await runtime.execute({
+        workspaceId: 'ws-1', executable: 'C:\\lnwjud\\input\\payload.exe',
+        inputFile: 'C:\\sandbox-fixture\\fixtures\\installer.exe', inputSha256: digest,
+        arguments: ['/S', '/currentuser'], dryRun: false, userConfirmed: true,
+        jobId: 'staged-installer', timeoutSeconds: 5,
+      });
+      expect(result).toMatchObject({ ok: true, value: { executed: true, exitCode: 0, stdout: 'fixture completed' } });
+      expect(launches).toBe(1);
+      const manifest = JSON.parse(await readFile(path.join(fixtureFs.root, '.lnwjud', 'sandbox', 'staged-installer', 'output', 'job-manifest.json'), 'utf8'));
+      expect(manifest.executable).toBe('C:\\lnwjud\\input\\payload.exe');
+    });
+  });
+
+  it('refuses a mismatched or out-of-workspace installer without launching the guest', async () => {
+    await withTempRoot(async (root) => {
+      await mkdir(path.join(fixtureFs.root, 'fixtures'));
+      await writeFile(path.join(fixtureFs.root, 'fixtures', 'installer.exe'), 'actual bytes');
+      let launches = 0;
+      const runtime = new SandboxRuntimeService(servicesWithRoot(root), actor, {
+        platform: 'win32', sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
+        launcher: async (): Promise<ReturnType<typeof ok>> => { launches++; return ok(undefined); },
+      });
+      const request = {
+        workspaceId: 'ws-1', executable: 'C:\\lnwjud\\input\\payload.exe',
+        inputFile: 'C:\\sandbox-fixture\\fixtures\\installer.exe', inputSha256: '0'.repeat(64),
+        arguments: ['/S'], dryRun: false, userConfirmed: true, timeoutSeconds: 5,
+      };
+      await expect(runtime.execute({ ...request, jobId: 'bad-digest' })).resolves.toMatchObject({
+        ok: false, error: { code: 'CONFLICT', message: expect.stringContaining('SHA-256') },
+      });
+      await expect(runtime.execute({ ...request, inputFile: 'C:\\outside\\installer.exe', jobId: 'outside-workspace' }))
+        .resolves.toMatchObject({ ok: false, error: { code: 'PATH_OUTSIDE_WORKSPACE' } });
+      expect(launches).toBe(0);
     });
   });
 
