@@ -5,6 +5,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import {
   createProcessTreeTerminator,
+  type WindowsMcpStdioOwner,
   type ProcessTreeTerminator,
 } from '@lnwjud/process';
 import type { ExternalMcpContractDrift, McpResourceSummary, McpServerLaunchConfig, McpSessionLifecycle, McpToolSummary } from './types.js';
@@ -20,9 +21,16 @@ export interface McpClientFactory {
   connect(config: McpServerLaunchConfig, signal?: AbortSignal): Promise<McpClientSession>;
 }
 
+class McpConnectionCleanupError extends AggregateError {
+  public constructor(connectionError: unknown, cleanupError: unknown, readonly session: McpClientSession) {
+    super([connectionError, cleanupError], 'Child MCP connection failed and cleanup could not be verified', { cause: connectionError });
+  }
+}
+
 export interface McpSessionManagerOptions {
   readonly clientFactory?: McpClientFactory;
   readonly processTreeTerminator?: ProcessTreeTerminator;
+  readonly windowsMcpStdioOwner?: WindowsMcpStdioOwner;
   readonly callTimeoutMs?: number;
   readonly idleTimeoutMs?: number;
 }
@@ -42,11 +50,15 @@ interface PendingConnection {
   readonly launchFingerprint: string;
   readonly controller: AbortController;
   readonly promise: Promise<ManagedSession>;
+  readonly factorySettled: Promise<void>;
+  factoryComplete: boolean;
+  cleanupPending: boolean;
 }
 
 export class McpSessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly pendingConnections = new Map<string, PendingConnection>();
+  private readonly retiringSessions = new Map<string, Promise<void>>();
   private readonly lastLaunchFingerprints = new Map<string, string>();
   private readonly lastCatalogFingerprints = new Map<string, string>();
   private readonly factory: McpClientFactory;
@@ -61,7 +73,7 @@ export class McpSessionManager {
 
   public constructor(options: McpSessionManagerOptions = {}) {
     this.processTreeTerminator = options.processTreeTerminator ?? createProcessTreeTerminator();
-    this.factory = options.clientFactory ?? createDefaultMcpClientFactory(this.processTreeTerminator);
+    this.factory = options.clientFactory ?? createDefaultMcpClientFactory(this.processTreeTerminator, options.windowsMcpStdioOwner);
     this.callTimeoutMs = options.callTimeoutMs ?? 60_000;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 5 * 60_000;
   }
@@ -72,7 +84,11 @@ export class McpSessionManager {
 
   public lifecycle(server: string): McpSessionLifecycle {
     if (this.sessions.has(server)) return 'connected';
-    return this.closeFailures.has(server) ? 'termination_unverified' : 'disconnected';
+    return this.closeFailures.has(server)
+      || this.pendingConnections.get(server)?.cleanupPending === true
+      || this.retiringSessions.has(server)
+      ? 'termination_unverified'
+      : 'disconnected';
   }
 
   /** Reconcile settings before every discovery-backed operation. */
@@ -214,24 +230,39 @@ export class McpSessionManager {
   }
 
   public async close(): Promise<void> {
-    if (this.closed) return;
     this.closed = true;
     if (this.idleTimer !== undefined) clearInterval(this.idleTimer);
     this.idleTimer = undefined;
     const pending = [...this.pendingConnections.values()];
     for (const connection of pending) connection.controller.abort(new Error('Child MCP session manager is closed'));
-    await Promise.all(pending.map((connection) => this.awaitPending(connection.promise)));
+    await Promise.all(pending.map(async (connection) => {
+      await this.awaitPending(connection.promise);
+      await this.awaitPending(connection.factorySettled);
+    }));
+    const retiring = [...this.retiringSessions.values()];
     const closers = [...this.sessions.entries()].map(([name, managed]) => this.drop(name, managed));
-    await Promise.all(closers);
-    this.pendingConnections.clear();
+    await Promise.all([...retiring, ...closers]);
+    const retries = [...this.unverifiedSessions.entries()].map(([name, session]) => this.closeSession(name, session));
+    await Promise.all(retries);
   }
 
   private async ensure(server: string, config: McpServerLaunchConfig, signal?: AbortSignal): Promise<ManagedSession> {
     if (this.closed) throw new Error('Child MCP session manager is closed');
     if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
+    const retirement = this.retiringSessions.get(server);
+    if (retirement !== undefined) {
+      await retirement;
+      if (this.closed) throw new Error('Child MCP session manager is closed');
+      if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
+      if (this.unverifiedSessions.has(server)) {
+        throw new Error(`Child MCP termination is unverified for ${server}: ${this.closeFailures.get(server) ?? 'close failed'}`);
+      }
+    }
     const unverified = this.unverifiedSessions.get(server);
     if (unverified !== undefined) {
       await this.closeSession(server, unverified);
+      if (this.closed) throw new Error('Child MCP session manager is closed');
+      if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
       if (this.unverifiedSessions.has(server)) {
         throw new Error(`Child MCP termination is unverified for ${server}: ${this.closeFailures.get(server) ?? 'close failed'}`);
       }
@@ -242,39 +273,105 @@ export class McpSessionManager {
       existing.lastUsedAt = Date.now();
       return existing;
     }
-    if (existing !== undefined) await this.drop(server, existing);
+    if (existing !== undefined) {
+      await this.drop(server, existing);
+      if (this.closed) throw new Error('Child MCP session manager is closed');
+      if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
+      if (this.unverifiedSessions.has(server)) {
+        throw new Error(`Child MCP termination is unverified for ${server}: ${this.closeFailures.get(server) ?? 'close failed'}`);
+      }
+    }
 
-    const pending = this.pendingConnections.get(server);
-    if (pending !== undefined) {
-      if (pending.launchFingerprint === launchFingerprint) return await awaitWithAbort(pending.promise, signal);
-      pending.controller.abort(new Error('MCP server launch configuration changed'));
-      await pending.promise.catch(() => undefined);
+    const existingPending = this.pendingConnections.get(server);
+    if (existingPending !== undefined) {
+      if (existingPending.launchFingerprint === launchFingerprint) return await awaitWithAbort(existingPending.promise, signal);
+      existingPending.controller.abort(new Error('MCP server launch configuration changed'));
+      await existingPending.promise.catch(() => undefined);
+      if (this.pendingConnections.get(server) === existingPending) {
+        if (!existingPending.factoryComplete) {
+          existingPending.cleanupPending = true;
+          throw new Error(`Child MCP termination is unverified for ${server}: connection cleanup is still pending`);
+        }
+        this.pendingConnections.delete(server);
+      }
       return this.ensure(server, config, signal);
     }
 
+    if (this.closed) throw new Error('Child MCP session manager is closed');
+    if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
     const controller = new AbortController();
-    const promise = this.connectManaged(server, config, launchFingerprint, controller.signal);
-    this.pendingConnections.set(server, { launchFingerprint, controller, promise });
-    try {
-      return await awaitWithAbort(promise, signal);
-    } finally {
-      if (this.pendingConnections.get(server)?.promise === promise) this.pendingConnections.delete(server);
-    }
+    let resolveFactorySettled!: () => void;
+    const factorySettled = new Promise<void>((resolve) => { resolveFactorySettled = resolve; });
+    const pendingRef: { current?: PendingConnection } = {};
+    let factoryComplete = false;
+    let cleanupPending = false;
+    const settleFactory = (): void => {
+      if (factoryComplete) return;
+      factoryComplete = true;
+      cleanupPending = false;
+      if (pendingRef.current !== undefined) {
+        pendingRef.current.factoryComplete = true;
+        pendingRef.current.cleanupPending = false;
+      }
+      resolveFactorySettled();
+    };
+    const promise = this.connectManaged(server, config, launchFingerprint, settleFactory, controller.signal);
+    const pending: PendingConnection = { launchFingerprint, controller, promise, factorySettled, factoryComplete, cleanupPending };
+    pendingRef.current = pending;
+    this.pendingConnections.set(server, pending);
+    void promise.catch(() => {
+      if (!factoryComplete) {
+        cleanupPending = true;
+        pending.cleanupPending = true;
+      }
+    });
+    void Promise.all([promise.then(() => undefined, () => undefined), factorySettled]).then(() => {
+      if (this.pendingConnections.get(server) === pending) this.pendingConnections.delete(server);
+    });
+    return await awaitWithAbort(promise, signal);
   }
 
   private async connectManaged(
     server: string,
     config: McpServerLaunchConfig,
     launchFingerprint: string,
+    settleFactory: () => void,
     signal?: AbortSignal,
   ): Promise<ManagedSession> {
-    const session = await withTimeout(
-      (connectSignal) => this.factory.connect(config, connectSignal),
+    let factoryStarted = false;
+    let session: McpClientSession;
+    try {
+      session = await withTimeout(
+      (connectSignal) => {
+        let connection: Promise<McpClientSession>;
+        try {
+          connection = this.factory.connect(config, connectSignal);
+        } catch (error: unknown) {
+          settleFactory();
+          throw error;
+        }
+        factoryStarted = true;
+        void connection.catch((error: unknown) => {
+          if (error instanceof McpConnectionCleanupError) {
+            this.closeFailures.set(server, sanitizeError(error));
+            this.unverifiedSessions.set(server, error.session);
+          }
+          settleFactory();
+        });
+        return connection;
+      },
       this.callTimeoutMs,
       `Timed out connecting to ${server}`,
       signal,
-      (lateSession) => this.closeSession(server, lateSession),
-    );
+      async (lateSession) => {
+        try { await this.closeSession(server, lateSession); } finally { settleFactory(); }
+      },
+      );
+      settleFactory();
+    } catch (error: unknown) {
+      if (!factoryStarted) settleFactory();
+      throw error;
+    }
     try {
       if (this.closed) throw new Error('Child MCP session manager is closed');
       if (isAborted(signal)) throw new Error('Child MCP connection was cancelled');
@@ -353,10 +450,18 @@ export class McpSessionManager {
   }
 
   private async drop(server: string, expected?: ManagedSession): Promise<void> {
+    const retiring = this.retiringSessions.get(server);
+    if (retiring !== undefined) return retiring;
     const managed = this.sessions.get(server);
     if (managed === undefined || (expected !== undefined && managed !== expected)) return;
     this.sessions.delete(server);
-    await this.closeManaged(server, managed);
+    const retirement = Promise.resolve().then(() => this.closeManaged(server, managed));
+    this.retiringSessions.set(server, retirement);
+    try {
+      await retirement;
+    } finally {
+      if (this.retiringSessions.get(server) === retirement) this.retiringSessions.delete(server);
+    }
   }
 
   private scheduleIdleSweep(): void {
@@ -405,31 +510,162 @@ export class McpSessionManager {
     }
   }
 
-  private async awaitPending(promise: Promise<ManagedSession>): Promise<void> {
+  private async awaitPending<T>(promise: Promise<T>): Promise<void> {
     await Promise.race([promise.then(() => undefined, () => undefined), delay(this.callTimeoutMs)]);
   }
 }
 
 export function createDefaultMcpClientFactory(
   processTreeTerminator: ProcessTreeTerminator = createProcessTreeTerminator(),
+  windowsMcpStdioOwner?: WindowsMcpStdioOwner,
 ): McpClientFactory {
   return {
     async connect(config: McpServerLaunchConfig, signal?: AbortSignal): Promise<McpClientSession> {
-    // Linux ships util-linux `setsid`; macOS does not.  Keep the SDK transport
-    // on macOS and let the PID terminator use its direct-process fallback.
+    if (process.platform === 'win32' && windowsMcpStdioOwner === undefined) throw new Error('MCP_WINDOWS_JOB_PROXY_REQUIRED');
+    const windowsLaunch = process.platform === 'win32'
+      ? await windowsMcpStdioOwner!.prepare(config)
+      : undefined;
     const useSessionWrapper = process.platform === 'linux';
-    const command = useSessionWrapper ? 'setsid' : config.command;
-    const args = useSessionWrapper ? [config.command, ...(config.args ?? [])] : [...(config.args ?? [])];
-    const transport = new StdioClientTransport({
-      command,
-      args,
-      ...(config.cwd === undefined ? {} : { cwd: config.cwd }),
-      env: {
-        ...definedEnv(process.env),
-        ...(config.env ?? {}),
+    const command = windowsLaunch?.command ?? (useSessionWrapper ? 'setsid' : config.command);
+    const args = windowsLaunch === undefined
+      ? useSessionWrapper ? [config.command, ...(config.args ?? [])] : [...(config.args ?? [])]
+      : [...windowsLaunch.args];
+    type OwnedChildRecord = { readonly child: ChildProcess; readonly pid: number | null; verified: boolean };
+    const ownedChildren = new Map<StdioClientTransport, OwnedChildRecord>();
+    const mainTransport: { current?: StdioClientTransport } = {};
+    let pinReleaseRequested = false;
+    let pinReleased = false;
+    let probeCleanupFailure: unknown;
+    const maybeReleasePin = (): void => {
+      if (windowsLaunch === undefined || pinReleased || !pinReleaseRequested) return;
+      if ([...ownedChildren.values()].some(({ child }) => child.pid !== undefined && child.exitCode === null && child.signalCode === null)) return;
+      pinReleased = true;
+      windowsLaunch.release();
+    };
+    const requestPinRelease = (): void => {
+      pinReleaseRequested = true;
+      maybeReleasePin();
+    };
+    const registerOwnedChild = (owner: StdioClientTransport, child: ChildProcess): void => {
+      ownedChildren.set(owner, { child, pid: owner.pid, verified: false });
+      child.once('close', () => {
+        if (owner === mainTransport.current) pinReleaseRequested = true;
+        maybeReleasePin();
+      });
+    };
+    const sdkSiblingDispose: unknown = Reflect.get(StdioClientTransport.prototype, '_dispose');
+    if (typeof sdkSiblingDispose !== 'function') {
+      windowsLaunch?.release();
+      pinReleased = windowsLaunch !== undefined;
+      throw new Error('MCP_SDK_STDIO_DISPOSAL_UNAVAILABLE');
+    }
+    const verifyOwnedChild = async (owner: StdioClientTransport): Promise<void> => {
+      const record = ownedChildren.get(owner);
+      if (record === undefined || record.verified || process.platform === 'darwin') return;
+      if (process.platform === 'win32') {
+        if (windowsLaunch === undefined) throw new Error('MCP_WINDOWS_JOB_PROXY_REQUIRED');
+        await windowsLaunch.closeAndVerify(record.child);
+      } else {
+        if (record.pid === null) throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED');
+        await processTreeTerminator.stop(record.child, record.pid);
+      }
+      record.verified = true;
+    };
+    const disposeOwnedTransport = async (owner: StdioClientTransport): Promise<void> => {
+      let cleanupError: unknown;
+      try { await verifyOwnedChild(owner); } catch (error: unknown) { cleanupError = error; }
+      try { await Reflect.apply(sdkSiblingDispose, owner, []); } catch (error: unknown) { cleanupError ??= error; }
+      if (cleanupError !== undefined) {
+        if (owner !== mainTransport.current) probeCleanupFailure ??= cleanupError;
+        throw cleanupError;
+      }
+      const record = ownedChildren.get(owner);
+      if (record !== undefined) record.verified = true;
+    };
+    class OwnedStdioClientTransport extends StdioClientTransport {
+      public override start(): Promise<void> {
+        if (this === mainTransport.current && probeCleanupFailure !== undefined) {
+          return Promise.reject(new Error('MCP_PROBE_CLEANUP_UNVERIFIED', { cause: probeCleanupFailure }));
+        }
+        const started = super.start();
+        const child: unknown = Reflect.get(this, '_process');
+        if (child instanceof ChildProcess) registerOwnedChild(this, child);
+        return started.then(() => {
+          const record = ownedChildren.get(this);
+          if (record === undefined || process.platform !== 'win32' && (record.pid === null || record.child.pid !== record.pid)) {
+            throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED');
+          }
+        });
+      }
+    }
+    // SDK 2.0.0 clones stdio probes only when the prototype owns its private disposal hook.
+    Object.defineProperty(OwnedStdioClientTransport.prototype, '_dispose', {
+      configurable: false,
+      value: async function (this: OwnedStdioClientTransport): Promise<void> {
+        await disposeOwnedTransport(this);
       },
-      stderr: 'pipe',
     });
+    let transport: StdioClientTransport;
+    try {
+      transport = new OwnedStdioClientTransport({
+        command,
+        args,
+        ...(windowsLaunch === undefined && config.cwd !== undefined ? { cwd: config.cwd } : {}),
+        env: {
+          ...definedEnv(process.env),
+          ...(windowsLaunch?.env ?? config.env ?? {}),
+        },
+        stderr: 'pipe',
+      });
+    } catch (error: unknown) {
+      windowsLaunch?.release();
+      pinReleased = windowsLaunch !== undefined;
+      throw error;
+    }
+    mainTransport.current = transport;
+    let cleanupPid: number | null = null;
+    const startSdkTransport = transport.start.bind(transport);
+    transport.start = async (): Promise<void> => {
+      try {
+        await startSdkTransport();
+      } finally {
+        cleanupPid = ownedChildren.get(transport)?.pid ?? null;
+        if (!ownedChildren.has(transport)) requestPinRelease();
+      }
+      const record = ownedChildren.get(transport);
+      if (record === undefined
+        || process.platform !== 'win32' && (record.pid === null || record.child.pid !== record.pid)) {
+        throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED');
+      }
+    };
+    let treeStopAttempt: Promise<void> | undefined;
+    let transportCloseAttempt: Promise<void> | undefined;
+    let transportCleanupFailure: unknown;
+    const stopChildTree = (): Promise<void> => {
+      treeStopAttempt ??= (async (): Promise<void> => {
+        let firstError: unknown;
+        for (const [owner, record] of ownedChildren) {
+          if (record.verified || process.platform === 'darwin' && owner === transport) continue;
+          try {
+            if (process.platform === 'darwin') await disposeOwnedTransport(owner);
+            else await verifyOwnedChild(owner);
+          } catch (error: unknown) {
+            firstError ??= error;
+          }
+        }
+        if (firstError !== undefined) throw firstError;
+      })();
+      return treeStopAttempt;
+    };
+    const closeSdkTransport = transport.close.bind(transport);
+    transport.close = async (): Promise<void> => {
+      transportCloseAttempt ??= (async (): Promise<void> => {
+        try { await stopChildTree(); } catch (error: unknown) { transportCleanupFailure ??= error; }
+        try { await closeSdkTransport(); } catch (error: unknown) { transportCleanupFailure ??= error; }
+        requestPinRelease();
+      })();
+      await transportCloseAttempt;
+    };
     const disposeStderrDrain = attachChildStderrDrain(transport.stderr);
     const client = new Client(
       { name: 'lnwjud-mcp-bridge', version: '1.0.0' },
@@ -438,16 +674,20 @@ export function createDefaultMcpClientFactory(
     try {
       await client.connect(transport, signal === undefined ? undefined : { signal });
     } catch (error: unknown) {
-      const pid = transport.pid;
-      // A macOS SDK stdio child is not a detached process group.
-      if (process.platform !== 'darwin' && pid !== null && getStopPid(processTreeTerminator) !== undefined) {
-        await getStopPid(processTreeTerminator)?.(pid).catch(() => undefined);
+      const failedSession = createSession();
+      try {
+        await failedSession.close();
+      } catch (cleanupError: unknown) {
+        requestPinRelease();
+        throw new McpConnectionCleanupError(error, cleanupError, failedSession);
       }
-      await client.close().catch(() => undefined);
-      disposeStderrDrain();
+      requestPinRelease();
       throw error;
     }
-    const pid = transport.pid;
+    return createSession();
+
+    function createSession(): McpClientSession {
+    const pid = cleanupPid;
     let closed = false;
     let closing: Promise<void> | undefined;
     return {
@@ -478,26 +718,21 @@ export function createDefaultMcpClientFactory(
       async close(): Promise<void> {
         if (closed) return;
         if (closing !== undefined) return closing;
+        if (transportCleanupFailure !== undefined) {
+          treeStopAttempt = undefined;
+          transportCloseAttempt = undefined;
+          transportCleanupFailure = undefined;
+        }
         const attempt = (async (): Promise<void> => {
           let firstError: unknown;
           // macOS SDK stdio children are direct processes, not session/group
           // leaders. Do not signal an unrelated process group with -pid.
           // Closing the transport proves only direct-child shutdown, never
           // escaped descendants; macOS managed workspace writers stay denied.
-          if (process.platform !== 'darwin' && pid !== null) {
-            try {
-              if (process.platform === 'linux') {
-                const child: unknown = Reflect.get(transport, '_process');
-                if (!(child instanceof ChildProcess) || child.pid === undefined || child.pid !== pid) {
-                  throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED');
-                }
-                await processTreeTerminator.stop(child, child.pid);
-              } else {
-                await getStopPid(processTreeTerminator)?.(pid);
-              }
-            } catch (error: unknown) {
-              firstError = error;
-            }
+          try {
+            await transport.close();
+          } catch (error: unknown) {
+            firstError = error;
           }
           try {
             await client.close();
@@ -505,6 +740,7 @@ export function createDefaultMcpClientFactory(
           } catch (error: unknown) {
             firstError ??= error;
           }
+          firstError ??= transportCleanupFailure;
           if (firstError !== undefined) throw firstError;
           closed = true;
           disposeStderrDrain();
@@ -517,6 +753,7 @@ export function createDefaultMcpClientFactory(
         }
       },
     };
+    }
     },
   };
 }
@@ -803,9 +1040,4 @@ function definedEnv(environment: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(
     Object.entries(environment).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   );
-}
-
-function getStopPid(terminator: ProcessTreeTerminator): ((pid: number) => Promise<void>) | undefined {
-  const stopPid = (terminator as ProcessTreeTerminator & { readonly stopPid?: (pid: number) => Promise<void> }).stopPid;
-  return stopPid === undefined ? undefined : stopPid.bind(terminator);
 }

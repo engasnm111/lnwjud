@@ -1,7 +1,7 @@
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { McpConfigLoader } from './mcp-config-loader.js';
 import { fingerprintExternalMcpValue, McpSessionManager, type McpClientFactory } from './mcp-session-manager.js';
-import type { ProcessTreeTerminator } from '@lnwjud/process';
+import type { ProcessTreeTerminator, WindowsMcpStdioOwner } from '@lnwjud/process';
 import { SkillCatalog } from './skill-catalog.js';
 import type {
   ExtensionsService,
@@ -20,6 +20,7 @@ export interface LocalExtensionsServiceOptions {
   readonly bundledSkillRoots?: readonly string[];
   readonly clientFactory?: McpClientFactory;
   readonly processTreeTerminator?: ProcessTreeTerminator;
+  readonly windowsMcpStdioOwner?: WindowsMcpStdioOwner;
   readonly callTimeoutMs?: number;
   readonly idleTimeoutMs?: number;
 }
@@ -41,6 +42,7 @@ export class LocalExtensionsService implements ExtensionsService {
     this.sessions = new McpSessionManager({
       ...(options.clientFactory === undefined ? {} : { clientFactory: options.clientFactory }),
       ...(options.processTreeTerminator === undefined ? {} : { processTreeTerminator: options.processTreeTerminator }),
+      ...(options.windowsMcpStdioOwner === undefined ? {} : { windowsMcpStdioOwner: options.windowsMcpStdioOwner }),
       ...(options.callTimeoutMs === undefined ? {} : { callTimeoutMs: options.callTimeoutMs }),
       ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
     });

@@ -47,5 +47,5 @@ function isWindowsCommandShim(executable: string): boolean {
 }
 
 function quoteWindowsCommandArgument(value: string): string {
-  return /\s/.test(value) ? `"${value}"` : value;
+  return value.length === 0 || /\s/.test(value) ? `"${value.replace(/(\\*)$/, '$1$1')}"` : value;
 }

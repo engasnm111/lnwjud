@@ -3,6 +3,9 @@ import readline from 'node:readline';
 
 const fixtureMode = process.env.LNWJUD_EXTERNAL_MCP_FIXTURE_ERA ?? 'legacy';
 const era = fixtureMode === 'modern' ? 'modern' : 'legacy';
+const argumentReport = process.env.LNWJUD_EXTERNAL_MCP_FIXTURE_ECHO_ARGS === 'true'
+  ? ` ${JSON.stringify(process.argv.slice(2))}`
+  : '';
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 
 function send(payload) {
@@ -27,6 +30,7 @@ rl.on('line', (line) => {
   }
 
   if (message?.method === 'server/discover' && message.id !== undefined) {
+    if (fixtureMode === 'legacy-exit-on-discover') process.exit(0);
     if (era === 'modern') {
       result(message.id, {
         supportedVersions: ['2026-07-28'],
@@ -39,6 +43,10 @@ rl.on('line', (line) => {
   }
 
   if (message?.method === 'initialize' && message.id !== undefined) {
+    if (fixtureMode === 'initialize-error') {
+      rpcError(message.id, -32603, 'Fixture initialization rejected');
+      return;
+    }
     if (era === 'modern') {
       rpcError(message.id, -32601, 'Modern fixture does not use initialize');
       return;
@@ -73,12 +81,14 @@ rl.on('line', (line) => {
         }]
         : [{
           name: era === 'modern' ? 'modern_ping' : 'legacy_ping',
-          description: `${era} external MCP fixture`,
+          description: `${era} external MCP fixture${argumentReport}`,
           inputSchema: { type: 'object', additionalProperties: false },
         }],
     });
     return;
   }
+
+  if (message?.method === 'tools/call' && fixtureMode === 'exit-on-call') process.exit(0);
 
   if (message?.method === 'tools/call' && message.id !== undefined && fixtureMode === 'schema-error') {
     const mode = message.params?.arguments?.mode;
