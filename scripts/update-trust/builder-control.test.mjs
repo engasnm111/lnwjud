@@ -139,6 +139,7 @@ test('build control refuses publisher/envelope secrets and credential-bearing bu
   assert.throws(() => builderContext({ ...environment(), GITHUB_REF_PROTECTED: 'false' }, true));
   for (const name of ['CSC_LINK', 'csc_key_password', 'WINDOWS_CSC_LINK', 'WINDOWS_CSC_KEY_PASSWORD', 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM',
     'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN']) assert.throws(() => builderContext({ ...environment(), [name]: 'untrusted' }, true));
+  assert.throws(() => builderContext({ ...environment(), LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM: '' }, true));
   assert.equal(builderContext({ ...environment(), ACTIONS_ID_TOKEN_REQUEST_URL: 'allowed-only-in-attestation-job' }).runId, '123');
 });
 

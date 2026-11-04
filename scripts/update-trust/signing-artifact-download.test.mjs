@@ -76,11 +76,13 @@ test('refuses to download while the signing key is present in the environment', 
   const name = 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM';
   const original = process.env[name];
   try {
-    process.env[name] = 'fixture-only';
-    let calls = 0;
-    const result = request(async () => { calls++; throw new Error('must not fetch'); });
-    await assert.rejects(result.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
-    assert.equal(calls, 0);
+    for (const value of ['fixture-only', '']) {
+      process.env[name] = value;
+      let calls = 0;
+      const result = request(async () => { calls++; throw new Error('must not fetch'); });
+      await assert.rejects(result.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
+      assert.equal(calls, 0);
+    }
   } finally {
     if (original === undefined) delete process.env[name]; else process.env[name] = original;
   }
