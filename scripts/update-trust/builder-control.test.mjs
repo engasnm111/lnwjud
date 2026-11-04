@@ -19,7 +19,8 @@ const bootstrap = workflow.split("node --input-type=module -e @'\n")[1]?.split("
 const environment = () => ({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwjud', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main',
   GITHUB_REF_PROTECTED: 'true',
   GITHUB_WORKFLOW_REF: 'engasnm111/lnwjud/.github/workflows/ci.yml@refs/heads/main', GITHUB_SHA: 'a'.repeat(40),
-  GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', LNWJUD_BUILDER_SHA: 'b'.repeat(40) });
+  GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '2', LNWJUD_BUILDER_SHA: 'b'.repeat(40),
+  UPDATE_RESOLVER_GITHUB_TOKEN: 'fixture-resolver-token' });
 
 test('Windows PowerShell child hashes a fixture with the builder module path', { skip: process.platform !== 'win32' }, async () => {
   const powershell = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
@@ -53,7 +54,7 @@ async function resolve(environmentOverride = {}, metadata = runMetadata(), respo
   await vm.runInNewContext(bootstrap, { process, Buffer, TextDecoder, AbortSignal: globalThis.AbortSignal,
     fetch: async (url, options) => {
       observed.fetches++; assert.equal(url, 'https://api.github.com/repos/engasnm111/lnwjud/actions/runs/123/attempts/2');
-      assert.equal(options.redirect, 'error'); assert.equal(Object.hasOwn(options.headers, 'Authorization'), false);
+      assert.equal(options.redirect, 'error'); assert.equal(options.headers.Authorization, 'Bearer fixture-resolver-token');
       return { ok: true, body: (async function* () { yield Buffer.from(JSON.stringify(metadata)); })(), ...responseOverride };
     } }, { timeout: 1000 });
   return { ...observed, exitCode: process.exitCode };
@@ -113,7 +114,7 @@ test('actual inline resolver accepts a SHA-pinned builder with separate branch r
 });
 
 for (const [key, value] of Object.entries({ GITHUB_ACTIONS: 'false', GITHUB_REPOSITORY: 'other/repository', GITHUB_EVENT_NAME: 'pull_request',
-  GITHUB_REF: 'refs/heads/dev', GITHUB_REF_PROTECTED: 'false', GITHUB_WORKFLOW_REF: 'engasnm111/lnwjud/.github/workflows/release.yml@refs/heads/main', GITHUB_SHA: 'bad', GITHUB_RUN_ID: '../123', GITHUB_RUN_ATTEMPT: '02' })) {
+  GITHUB_REF: 'refs/heads/dev', GITHUB_REF_PROTECTED: 'false', GITHUB_WORKFLOW_REF: 'engasnm111/lnwjud/.github/workflows/release.yml@refs/heads/main', GITHUB_SHA: 'bad', GITHUB_RUN_ID: '../123', GITHUB_RUN_ATTEMPT: '02', UPDATE_RESOLVER_GITHUB_TOKEN: '' })) {
   test(`actual inline resolver refuses untrusted ${key} before network`, async () => {
     const result = await resolve({ [key]: value }); assert.equal(result.exitCode, 1); assert.equal(result.fetches, 0); assert.equal(result.output, '');
   });
