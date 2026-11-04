@@ -44,6 +44,7 @@ export interface DurableTaskReservation {
   /** Trusted native proof path; never accepted from MCP caller input. */
   readonly nativeReceiptPath?: string;
   readonly nativeBinding?: NativeAttemptBinding;
+  readonly reservedAt?: string;
   readonly launchRecord?: DurableTaskLaunchRecord;
 }
 
@@ -388,6 +389,7 @@ export class DurableShellTaskIndex {
         mutationKind: marker.mutationKind ?? 'opaque',
         nativeReceiptPath: marker.nativeReceiptPath,
         ...(marker.nativeBinding === undefined ? {} : { nativeBinding: marker.nativeBinding }),
+        ...(marker.reservedAt === undefined ? {} : { reservedAt: marker.reservedAt }),
       });
     } catch {
       return false;

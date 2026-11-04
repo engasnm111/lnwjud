@@ -150,6 +150,47 @@ internal sealed class ServiceAttemptLedger
         }
     }
 
+    // The old process may have run before reboot. Never call this LaunchNotStarted.
+    internal ServiceAttemptObservation RecoverAfterReboot(
+        ServiceAttemptIdentity identity, string callerSid, DateTimeOffset recordedAt,
+        DateTimeOffset bootTime, ContainedProcess.JobProbeResult job)
+    {
+        var request = new ServiceAttemptRequest(identity, callerSid, GlobalReservationKey, identity.RequestDigest, Shared: true);
+        Validate(request);
+        if (recordedAt.Offset != TimeSpan.Zero || recordedAt > DateTimeOffset.UtcNow
+            || bootTime <= recordedAt.AddSeconds(5))
+            throw new IOException("SERVICE_RECOVERY_NEW_BOOT_REQUIRED");
+        if (job.Status != ContainedProcess.JobProbeStatus.NotFound)
+            throw new IOException("SERVICE_RECOVERY_JOB_UNVERIFIED");
+        lock (gate)
+        {
+            EnsureAvailable();
+            if (attempts.TryGetValue(identity.AttemptId, out var existing))
+            {
+                if (existing.Request.Identity != identity
+                    || !String.Equals(existing.Request.AuthenticatedCallerSid, callerSid, StringComparison.Ordinal))
+                    throw new UnauthorizedAccessException("ATTEMPT_OWNER_MISMATCH");
+                if (existing.Phase is ServiceAttemptPhase.TerminalVerified or ServiceAttemptPhase.LaunchNotStarted)
+                {
+                    if (existing.ReservationHeld) _ = Release(identity, callerSid);
+                    return Observe(existing);
+                }
+                throw new IOException("SERVICE_RECOVERY_EXISTING_ATTEMPT_UNVERIFIED");
+            }
+            var recovered = new Entry(request)
+            {
+                Phase = ServiceAttemptPhase.TerminalVerified,
+                Outcome = ServiceProcessOutcome.Interrupted,
+                ExitCode = 125,
+                ActiveProcesses = 0,
+                ReservationHeld = false,
+            };
+            attempts.Add(identity.AttemptId, recovered);
+            Persist();
+            return Observe(recovered);
+        }
+    }
+
     internal bool TryCommitDispatch(ServiceAttemptIdentity identity, string callerSid, string operationDigest)
     {
         lock (gate)
