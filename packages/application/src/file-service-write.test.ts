@@ -7,6 +7,7 @@ import { AtomicFileWriter, type AtomicWriteOptions } from '@lnwjud/filesystem';
 import { permissionProfiles } from '@lnwjud/permissions';
 import { WorkspacePathGuard, type Checkpoint, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import { FileService, type CheckpointServicePort } from './file-service.js';
+import { FileWriteOperationJournal } from './file-write-operation-journal.js';
 import type { ManagedWriterAdmissionLease } from './writer-admission.js';
 
 const temporaryRoots: string[] = [];
@@ -45,6 +46,99 @@ function checkpointService(): CheckpointServicePort & { calls: string[][] } {
 }
 
 describe('FileService writes', () => {
+  it('persists a successful operation receipt and never replays the same operation ID', async () => {
+    const workspace = await createWorkspace();
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      profile: permissionProfiles.full,
+      writeOperationJournalRoot: path.join(workspace.rootPath, 'operation-receipts'),
+    });
+    const operationId = '123e4567-e89b-42d3-a456-426614174000';
+    const request = { operationId, path: 'src/receipt.txt', content: 'original', mode: 'create_new' as const };
+    const first = await service.writeFile(actor, workspace.id, request);
+    expect(first).toMatchObject({ ok: true, value: { bytesWritten: 8 } });
+    const repeated = await service.writeFile(actor, workspace.id, request);
+    expect(repeated).toEqual(first);
+    const receipt = await service.writeFileStatus(actor, workspace.id, operationId);
+    expect(receipt).toMatchObject({ ok: true, value: { state: 'succeeded', result: first } });
+    await expect(readFile(path.join(workspace.rootPath, 'src', 'receipt.txt'), 'utf8')).resolves.toBe('original');
+    await expect(service.writeFile(actor, workspace.id, { ...request, content: 'different' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    await expect(service.writeFileStatus({ clientId: 'another', clientName: 'another' }, workspace.id, operationId))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+  });
+
+  it('does not replay a pending operation whose outcome may have been lost with the transport', async () => {
+    const workspace = await createWorkspace();
+    const operationId = '123e4567-e89b-42d3-a456-426614174001';
+    const request = { operationId, path: 'src/unknown.txt', content: 'must not run' };
+    const journalRoot = path.join(workspace.rootPath, 'operation-receipts');
+    const journal = new FileWriteOperationJournal(journalRoot);
+    await journal.begin(operationId, actor, workspace.id, request);
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      profile: permissionProfiles.full, writeOperationJournalRoot: journalRoot,
+    });
+    await expect(service.writeFile(actor, workspace.id, request))
+      .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    await expect(service.writeFileStatus(actor, workspace.id, operationId))
+      .resolves.toMatchObject({ ok: true, value: { state: 'outcome_unverified' } });
+    await expect(readFile(path.join(workspace.rootPath, 'src', 'unknown.txt'), 'utf8')).rejects.toThrow();
+  });
+
+  it('records a completed write even when transport cancellation arrives after the disk commit', async () => {
+    const workspace = await createWorkspace();
+    const controller = new AbortController();
+    class AbortAfterCommitWriter extends AtomicFileWriter {
+      public override async write(filePath: string, content: string | Buffer, options: AtomicWriteOptions = {}): Promise<Result<void>> {
+        const result = await super.write(filePath, content, options);
+        controller.abort();
+        return result;
+      }
+    }
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      profile: permissionProfiles.full, writer: new AbortAfterCommitWriter(),
+      writeOperationJournalRoot: path.join(workspace.rootPath, 'operation-receipts'),
+    });
+    const operationId = '123e4567-e89b-42d3-a456-426614174002';
+    const request = { operationId, path: 'src/committed.txt', content: 'committed', mode: 'create_new' as const };
+    const result = await service.writeFile(actor, workspace.id, request, controller.signal);
+    expect(result).toMatchObject({ ok: true });
+    await expect(service.writeFileStatus(actor, workspace.id, operationId))
+      .resolves.toMatchObject({ ok: true, value: { state: 'succeeded', result } });
+    await expect(service.writeFile(actor, workspace.id, request)).resolves.toEqual(result);
+    await expect(readFile(path.join(workspace.rootPath, 'src', 'committed.txt'), 'utf8')).resolves.toBe('committed');
+  });
+
+  it('records cancellation before writer admission as a failed non-mutating operation', async () => {
+    const workspace = await createWorkspace();
+    const controller = new AbortController();
+    let releaseAdmission!: () => void;
+    let entered!: () => void;
+    const admissionEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const admissionGate = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+    const service = new FileService(repository(workspace), undefined, undefined, {
+      profile: permissionProfiles.full,
+      writeOperationJournalRoot: path.join(workspace.rootPath, 'operation-receipts'),
+      writerAdmission: {
+        async enter(): Promise<Result<ManagedWriterAdmissionLease>> {
+          entered();
+          await admissionGate;
+          return ok({ id: 'admitted', async releaseAfterVerifiedTermination(): Promise<void> {} });
+        },
+      },
+    });
+    const operationId = '123e4567-e89b-42d3-a456-426614174003';
+    const pending = service.writeFile(actor, workspace.id, {
+      operationId, path: 'src/cancelled.txt', content: 'must not write',
+    }, controller.signal);
+    await admissionEntered;
+    controller.abort();
+    releaseAdmission();
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'PROCESS_TIMEOUT' } });
+    await expect(service.writeFileStatus(actor, workspace.id, operationId))
+      .resolves.toMatchObject({ ok: true, value: { state: 'failed' } });
+    await expect(readFile(path.join(workspace.rootPath, 'src', 'cancelled.txt'), 'utf8')).rejects.toThrow();
+  });
+
   it('does not write when managed-writer admission is unverified', async () => {
     const workspace = await createWorkspace();
     const target = path.join(workspace.rootPath, 'src', 'not-created.txt');

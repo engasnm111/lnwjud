@@ -88,7 +88,7 @@ function buildCatalogDefinition(definition: McpToolDefinition): ToolCatalogDefin
 
 function categoryFor(name: string): ToolCategory {
   if (/^(workspace_|project_snapshot$)/.test(name)) return 'workspace';
-  if (/^(read_|write_file$|apply_patch$|edit_file$|move_file$|copy_file$|delete_file$|list_recovery_items$|restore_deleted_file$|list_checkpoints$|restore_checkpoint$)/.test(name)) return 'files';
+  if (/^(read_|write_file$|write_file_status$|apply_patch$|edit_file$|move_file$|copy_file$|delete_file$|list_recovery_items$|restore_deleted_file$|list_checkpoints$|restore_checkpoint$)/.test(name)) return 'files';
   if (/^(search_|symbol_|find_|call_hierarchy$|import_graph$|dependency_graph$|module_graph$|type_search$|trace_symbol$|context_|debug_context$|review_context$|change_context$|test_context$|git_context$|frontend_context$|backend_context$|dependency_context$|repo_map$|changed_symbols$|affected_modules$|git_history_context$|git_blame_context$|discover_tests$|test_failures$|coverage_context$|test_history$|tool_function_find$|dev_context$|handoff_context$)/.test(name)) return 'search_context';
   if (/^git(?:_|$)/.test(name)) return 'git';
   if (/^(process_|project_dev$|project_test$|project_lint$|project_typecheck$|project_build$|shell$|wsl_exec$)/.test(name)) return 'process';

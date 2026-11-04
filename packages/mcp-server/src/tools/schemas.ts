@@ -79,8 +79,13 @@ export const writeFileSchema = z.object({
   path: pathSchema,
   content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'File is too large'),
   overwriteExisting: z.boolean().optional(),
+  operationId: z.string().uuid().optional(),
   mode: z.literal('create_new').optional(),
   userConfirmed: z.boolean().optional(),
+}).strict();
+export const writeFileStatusSchema = z.object({
+  workspaceId: z.string().min(1).max(128),
+  operationId: z.string().uuid(),
 }).strict();
 export const applyPatchSchema = z.object({ workspaceId: optionalWorkspaceIdSchema, files: z.array(z.object({ path: pathSchema, content: z.string().refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_MULTI_FILE_BYTES, 'File is too large') }).strict()).min(1).max(20), userConfirmed: z.boolean().optional() }).strict();
 export const editFileSchema = z.object({

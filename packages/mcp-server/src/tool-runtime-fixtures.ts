@@ -50,7 +50,7 @@ const unavailable = (
 ): ToolRuntimeFixture => ({ input, evidence: { kind: 'truthful_unavailable', unavailableStatus } });
 
 /**
- * Safe parse-valid inputs and expected delivery evidence for the 109 core tools.
+ * Safe parse-valid inputs and expected delivery evidence for the core tools.
  * These are non-production fixtures: they use controlled workspace IDs, dry-run
  * inputs where available, and never point at a real user path.
  */
@@ -89,6 +89,7 @@ export const CORE_TOOL_RUNTIME_FIXTURES = {
   git_clone_cancel: service({ workspaceId, taskId: 'import-smoke' }, 'repositoryImport.cancel'),
   git: service({ workspaceId, args: ['status', '--short'] }, 'git.run'),
   write_file: service({ workspaceId, path: 'tmp-smoke.txt', content: 'smoke' }, 'file.writeFile'),
+  write_file_status: service({ workspaceId, operationId: '123e4567-e89b-42d3-a456-426614174000' }, 'file.writeFileStatus'),
   apply_patch: service({ workspaceId, files: [{ path: 'tmp-smoke.txt', content: 'smoke' }] }, 'file.applyPatch'),
   edit_file: service({ workspaceId, path: 'tmp-smoke.txt', oldText: 'before', newText: 'after' }, 'file.editFile'),
   move_file: service({ workspaceId, sourcePath: 'from.txt', destinationPath: 'to.txt' }, 'file.moveFile'),

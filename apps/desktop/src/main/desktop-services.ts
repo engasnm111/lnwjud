@@ -559,6 +559,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     protectCriticalFiles: (): boolean => !desktopFullBypassEnabled() && destructivePolicyProvider().protectCriticalFiles,
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot,
+    writeOperationJournalRoot: path.join(dataPath, 'file-write-operations'),
   });
   const ponytailProfilePath = '.lnwjud/project-profile.json';
   const readWorkspaceProfile = async (workspaceId: string): Promise<Record<string, unknown>> => {
