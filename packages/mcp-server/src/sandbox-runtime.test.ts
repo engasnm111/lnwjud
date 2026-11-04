@@ -196,8 +196,8 @@ describe('SandboxRuntimeService', () => {
       const runtime = new SandboxRuntimeService(servicesWithRoot(root), actor, {
         platform: 'win32',
         sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
-        launcher: async () => { launches++; return ok(undefined); },
-        waiter: async (file) => {
+        launcher: async (): Promise<ReturnType<typeof ok>> => { launches++; return ok(undefined); },
+        waiter: async (file): Promise<boolean> => {
           const output = path.win32.dirname(file);
           await writeFile(path.join(output, 'exit-code.txt'), '0');
           await writeFile(path.join(output, 'stdout.log'), 'first execution');
