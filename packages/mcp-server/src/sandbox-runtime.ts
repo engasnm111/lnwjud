@@ -27,6 +27,7 @@ export interface SandboxRuntimeOptions {
 
 export const SANDBOX_RUNNER_SCRIPT = [
   '$ErrorActionPreference = \'Continue\'',
+  'try {',
   '$manifestPath = \'C:\\lnwjud\\output\\job-manifest.json\'',
   '$manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json',
   '$quoted = @($manifest.arguments | ForEach-Object {',
@@ -36,13 +37,23 @@ export const SANDBOX_RUNNER_SCRIPT = [
   '$process = Start-Process -FilePath $manifest.executable -ArgumentList $quoted -RedirectStandardOutput $manifest.stdout -RedirectStandardError $manifest.stderr -NoNewWindow -PassThru',
   '$exitCode = 0',
   'try {',
-  '  $process | Wait-Process -Timeout ([int]$manifest.timeoutSeconds) -ErrorAction Stop',
-  '  $exitCode = $process.ExitCode',
+  '  if ($process.WaitForExit([int]$manifest.timeoutSeconds * 1000)) {',
+  '    $process.Refresh()',
+  '    $exitCode = [int]$process.ExitCode',
+  '  } else {',
+  '    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue',
+  '    $exitCode = 124',
+  '  }',
+
   '} catch {',
   '  Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue',
   '  $exitCode = 124',
   '}',
   'Set-Content -Path $manifest.exitCode -Value $exitCode',
+  '} finally {',
+  '  Start-Sleep -Seconds 2',
+  "  & (Join-Path $env:SystemRoot 'System32\\shutdown.exe') /s /t 0 /f",
+  '}',
 ].join('\n');
 
 const DEFAULT_POLL_MS = 1_000;
@@ -134,6 +145,12 @@ export class SandboxRuntimeService {
       readBounded(path.win32.join(outputPath, 'stdout.log'), this.maxArtifactBytes),
       readBounded(path.win32.join(outputPath, 'stderr.log'), this.maxArtifactBytes),
     ]);
+    const exitCodeText = exitCode.trim();
+    if (!/^(?:0|-[1-9][0-9]{0,9}|[1-9][0-9]{0,9})$/.test(exitCodeText)
+      || Number(exitCodeText) < -2_147_483_648 || Number(exitCodeText) > 2_147_483_647) {
+      return err(appError('INTERNAL_ERROR', 'Sandbox exit-code artifact is missing or invalid', true));
+    }
+    const parsedExitCode = Number(exitCodeText);
     return ok({
       tool: 'sandbox_exec',
       status: 'ready',
@@ -141,7 +158,7 @@ export class SandboxRuntimeService {
       executed: true,
       jobId,
       networking: 'disabled',
-      exitCode: Number.isNaN(Number.parseInt(exitCode, 10)) ? null : Number.parseInt(exitCode, 10),
+      exitCode: parsedExitCode,
       stdout,
       stderr,
       artifacts: plan.value.outputArtifact.files,

@@ -187,6 +187,10 @@ describe('SandboxRuntimeService', () => {
       expect(runner).toContain('job-manifest.json');
       expect(runner).toContain('$manifest.exitCode');
       expect(runner).not.toContain('$manifest.exit_code');
+      // A completed guest must shut itself down; otherwise the next Windows Sandbox
+      // launch is refused because Windows permits only one running instance.
+      expect(runner).toContain("(Join-Path $env:SystemRoot 'System32\\shutdown.exe') /s /t 0 /f");
+      expect(runner.indexOf('Set-Content -Path $manifest.exitCode')).toBeLessThan(runner.indexOf('shutdown.exe'));
     });
   });
 
@@ -212,6 +216,31 @@ describe('SandboxRuntimeService', () => {
         ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('already exists') },
       });
       expect(launches).toBe(1);
+    });
+  });
+
+  it('rejects empty or malformed sandbox exit-code receipts', async () => {
+    await withTempRoot(async (root) => {
+      for (const [index, receipt] of ['', '7garbage', '2147483648'].entries()) {
+        const runtime = new SandboxRuntimeService(servicesWithRoot(root), actor, {
+          platform: 'win32',
+          sandboxExecutable: path.join(root, 'WindowsSandbox.exe'),
+          launcher: async (): Promise<ReturnType<typeof ok>> => ok(undefined),
+          waiter: async (file): Promise<boolean> => {
+            const output = path.win32.dirname(file);
+            await writeFile(path.join(output, 'exit-code.txt'), receipt);
+            await writeFile(path.join(output, 'stdout.log'), '');
+            await writeFile(path.join(output, 'stderr.log'), '');
+            return true;
+          },
+        });
+        await expect(runtime.execute({
+          workspaceId: 'ws-1', executable: 'node', arguments: ['--version'],
+          dryRun: false, userConfirmed: true, jobId: 'invalid-receipt-' + index, timeoutSeconds: 5,
+        })).resolves.toMatchObject({
+          ok: false, error: { code: 'INTERNAL_ERROR', message: expect.stringContaining('exit-code artifact') },
+        });
+      }
     });
   });
 
