@@ -119,6 +119,29 @@ test('rejects metadata size mismatch and key-bearing preflight without leaving a
   });
 });
 
+test('rejects untrusted archive metadata and signing-key environments before native spool creation', async () => {
+  let created = 0;
+  const unsafeAddon = { createArchiveSpool() { created++; throw new Error('UNEXPECTED_NATIVE_SPOOL_CREATION'); } };
+  const base = { addon: unsafeAddon, filename: 'fixture', artifact, token: 'fixture', fetchImpl: fetchFixture };
+  for (const changed of [
+    { artifact: { ...artifact, artifactId: 'invalid' } },
+    { artifact: { ...artifact, archiveSha256: 'A'.repeat(64) } },
+    { artifact: { ...artifact, archiveSizeBytes: 0 } },
+    { artifact: { ...artifact, archiveSizeBytes: 5 * 1024 * 1024 * 1024 + 1 } },
+    { token: '' }, { fetchImpl: null },
+  ]) {
+    await assert.rejects(withDownloadedSigningArchive({ ...base, ...changed }, () => {}), /SIGNING_ARCHIVE_INPUT_INVALID/);
+    assert.equal(created, 0);
+  }
+  const name = 'lnwjud_update_release_private_key_pem';
+  const original = process.env[name];
+  try {
+    process.env[name] = '';
+    await assert.rejects(withDownloadedSigningArchive(base, () => {}), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+    assert.equal(created, 0);
+  } finally { if (original === undefined) delete process.env[name]; else process.env[name] = original; }
+});
+
 test('refuses abandoned reader streams and preserves a thrown undefined', { skip: !windows }, async () => {
   await fixture(async filename => {
     let stream;
