@@ -39,8 +39,14 @@ export function inspectSigningWorkflowObservations(context, runBytes, jobsBytes,
     || !Array.isArray(jobs.jobs) || !Number.isSafeInteger(jobs.total_count) || jobs.total_count !== jobs.jobs.length
     || jobs.total_count > 100) refuse('SIGNING_RUN_REFUSED');
   const matching = jobs.jobs.filter(job => job?.name === jobName);
-  if (matching.length !== 1 || id(matching[0].run_id) !== context.runId || matching[0].head_sha !== context.commit
-    || matching[0].status !== 'completed' || matching[0].conclusion !== 'success') refuse('SIGNING_JOB_REFUSED');
+  // GitHub's job metadata must identify the fixed hosted Windows verifier runner, not a self-hosted substitute.
+  const verifierJob = matching[0];
+  if (matching.length !== 1 || id(verifierJob.run_id) !== context.runId || verifierJob.head_sha !== context.commit
+    || verifierJob.status !== 'completed' || verifierJob.conclusion !== 'success'
+    || verifierJob.runner_group_name !== 'GitHub Actions'
+    || typeof verifierJob.runner_name !== 'string' || !/^GitHub Actions [1-9][0-9]*$/.test(verifierJob.runner_name)
+    || !Array.isArray(verifierJob.labels) || verifierJob.labels.length !== 1 || verifierJob.labels[0] !== 'windows-latest')
+    refuse('SIGNING_JOB_REFUSED');
   const owner = artifact.workflow_run;
   if (id(artifact.id) !== context.artifactId || artifact.name !== artifactName || artifact.expired !== false
     || id(owner?.id) !== context.runId || id(owner?.repository_id) !== repositoryId

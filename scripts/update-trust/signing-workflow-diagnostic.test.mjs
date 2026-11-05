@@ -15,7 +15,8 @@ const env = () => ({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwj
 const run = () => ({ id: 42, run_attempt: 1, path: '.github/workflows/update-signing.yml', event: 'workflow_dispatch',
   head_sha: commit, head_branch: 'main', status: 'in_progress', conclusion: null,
   repository: { id: 1329830515 }, head_repository: { id: 1329830515 } });
-const jobs = () => ({ total_count: 1, jobs: [{ name: 'verify signing evidence', run_id: 42, head_sha: commit, status: 'completed', conclusion: 'success' }] });
+const jobs = () => ({ total_count: 1, jobs: [{ name: 'verify signing evidence', run_id: 42, head_sha: commit, status: 'completed', conclusion: 'success',
+  runner_group_name: 'GitHub Actions', runner_name: 'GitHub Actions 1000013323', labels: ['windows-latest'] }] });
 const artifact = () => ({ id: 12, name: 'lnwjud-signing-evidence', expired: false, size_in_bytes: 1024, digest: `sha256:${'c'.repeat(64)}`,
   workflow_run: { id: 42, repository_id: 1329830515, head_repository_id: 1329830515, head_sha: commit } });
 const bytes = value => Buffer.from(JSON.stringify(value));
@@ -46,6 +47,10 @@ test('refuses wrong attempt, incomplete jobs and substituted artifact', () => {
     ({ r }) => { r.run_attempt = 2; }, ({ r }) => { r.head_repository.id = 9; }, ({ r }) => { r.status = 'completed'; },
     ({ j }) => { j.total_count = 2; }, ({ j }) => { j.jobs[0].conclusion = 'failure'; },
     ({ j }) => { j.jobs[0].run_id = 41; }, ({ j }) => { j.jobs.push({ ...j.jobs[0] }); j.total_count = 2; },
+    ({ j }) => { j.jobs[0].runner_group_name = 'Default'; },
+    ({ j }) => { j.jobs[0].runner_name = 'self-hosted-windows'; },
+    ({ j }) => { j.jobs[0].labels = ['self-hosted', 'windows']; },
+    ({ j }) => { j.jobs[0].labels = ['windows-latest', 'self-hosted']; },
     ({ a }) => { a.id = 13; }, ({ a }) => { a.expired = true; },
     ({ a }) => { a.workflow_run.id = 41; }, ({ a }) => { a.workflow_run.repository_id = 3; },
     ({ a }) => { a.digest = null; }, ({ a }) => { a.size_in_bytes = 0; }, ({ a }) => { a.size_in_bytes = 5368709121; }
