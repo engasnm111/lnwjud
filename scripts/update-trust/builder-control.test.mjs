@@ -111,6 +111,10 @@ test('actual inline resolver accepts a SHA-pinned builder with separate branch r
   assert.equal(typeof bootstrap, 'string');
   const result = await resolve(); assert.equal(result.exitCode, 0); assert.equal(result.output, `builder_sha=${'b'.repeat(40)}\n`);
   assert.equal(result.fetches, 1);
+  const exact = runMetadata(); exact.referenced_workflows[0].ref = 'b'.repeat(40);
+  assert.equal((await resolve({}, exact)).exitCode, 0);
+  const omitted = runMetadata(); delete omitted.referenced_workflows[0].ref;
+  assert.equal((await resolve({}, omitted)).exitCode, 0);
 });
 
 for (const [key, value] of Object.entries({ GITHUB_ACTIONS: 'false', GITHUB_REPOSITORY: 'other/repository', GITHUB_EVENT_NAME: 'pull_request',
@@ -125,6 +129,8 @@ test('actual inline resolver refuses wrong actual run, mutable references, ambig
     run => { run.event = 'workflow_dispatch'; }, run => { run.path = '.github/workflows/dev-installer.yml'; }, run => { run.repository.full_name = 'other/repository'; },
     run => { run.referenced_workflows[0].path = 'engasnm111/lnwjud/.github/workflows/update-package-builder.yml@main'; },
     run => { run.referenced_workflows[0].sha = 'c'.repeat(40); },
+    run => { run.referenced_workflows[0].ref = 'refs/heads/dev'; },
+    run => { run.referenced_workflows[0].ref = 'refs/tags/v5.9.1'; },
     run => { run.referenced_workflows.push(run.referenced_workflows[0]); }, run => { run.referenced_workflows = []; }]) {
     const metadata = runMetadata(); change(metadata); const result = await resolve({}, metadata);
     assert.equal(result.exitCode, 1); assert.equal(result.output, '');

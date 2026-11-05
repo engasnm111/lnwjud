@@ -46,7 +46,9 @@ jobs:
             const prefix = repository + '/.github/workflows/update-package-builder.yml@';
             const references = run.referenced_workflows.filter(item => typeof item?.path === 'string' && item.path.startsWith(prefix));
             if (references.length !== 1 || !/^[a-f0-9]{40}$/.test(references[0].sha)
-              || references[0].path !== prefix + references[0].sha) fail('called-workflow');
+              || references[0].path !== prefix + references[0].sha
+              || (references[0].ref !== undefined && references[0].ref !== 'refs/heads/main'
+                && references[0].ref !== references[0].sha)) fail('called-workflow');
             process.stdout.write('builder_sha=' + references[0].sha + '\n');
           })().catch(error => { const message = typeof error?.message === 'string' && /^UPDATE_BUILDER_CONTEXT_REFUSED:[a-z0-9-]+$/.test(error.message) ? error.message : 'UPDATE_BUILDER_CONTEXT_REFUSED:exception'; process.stderr.write(message + '\n'); process.exitCode = 1; });
           '@
