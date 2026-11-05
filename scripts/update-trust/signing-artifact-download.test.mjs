@@ -83,7 +83,14 @@ test('refuses to download while the signing key is present in the environment', 
       await assert.rejects(result.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
       assert.equal(calls, 0);
     }
+    delete process.env[name];
+    process.env.lnwjud_update_release_private_key_pem = '';
+    let calls = 0;
+    const variant = request(async () => { calls++; throw new Error('must not fetch'); });
+    await assert.rejects(variant.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
+    assert.equal(calls, 0);
   } finally {
+    delete process.env.lnwjud_update_release_private_key_pem;
     if (original === undefined) delete process.env[name]; else process.env[name] = original;
   }
 });

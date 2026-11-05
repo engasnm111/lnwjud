@@ -92,6 +92,9 @@ test('real pinned executor retains executable and exact input through child clos
         await assert.rejects(writeFile(input, 'swapped')); await assert.rejects(rename(input, input + '.moved'));
         assert.equal((await completion).toString(), 'SIGNER=undefined'); await closing;
         delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
+        process.env.lnwjud_update_release_private_key_pem = '';
+        await assert.rejects(acquirePinnedVerifier({ filename: 'gh.exe', sha256 }), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        delete process.env.lnwjud_update_release_private_key_pem;
         await writeFile(input, 'released');
         await rename(filename, filename + '.moved'); await rename(filename + '.moved', filename);
         assert.throws(() => session.run(['version']), /RELEASE_VERIFIER_ARGUMENTS_INVALID/);

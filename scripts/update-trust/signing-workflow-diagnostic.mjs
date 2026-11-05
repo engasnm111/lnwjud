@@ -24,7 +24,7 @@ export function inspectSigningWorkflowContext(environment) {
     || environment.GITHUB_REF_PROTECTED !== 'true' || environment.GITHUB_WORKFLOW_REF !== `${repository}/${workflow}@refs/heads/main`
     || environment.GITHUB_WORKFLOW_SHA !== value.commit || !/^[a-f0-9]{40}$/.test(value.commit ?? '')
     || !integer(value.runId) || value.attempt !== '1' || !integer(value.artifactId) || !digest(value.manifestSha256)
-    || environment.LNWJUD_VERIFY_RESULT !== 'success' || Object.prototype.hasOwnProperty.call(environment, 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse('SIGNING_CONTEXT_REFUSED');
+    || environment.LNWJUD_VERIFY_RESULT !== 'success' || Object.keys(environment).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse('SIGNING_CONTEXT_REFUSED');
   return Object.freeze(value);
 }
 

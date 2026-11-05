@@ -35,7 +35,8 @@ test('untrusted workflow context and key-bearing diagnostic refuse', () => {
     e => { e.GITHUB_REF_PROTECTED = 'false'; }, e => { e.GITHUB_EVENT_NAME = 'push'; }, e => { e.GITHUB_WORKFLOW_SHA = 'b'.repeat(40); },
     e => { e.GITHUB_RUN_ATTEMPT = '02'; }, e => { e.GITHUB_RUN_ATTEMPT = '2'; }, e => { e.LNWJUD_VERIFY_RESULT = 'skipped'; },
     e => { e.LNWJUD_VERIFY_MANIFEST_SHA256 = 'A'.repeat(64); }, e => { e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = 'fixture'; },
-    e => { e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = ''; }
+    e => { e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = ''; },
+    e => { e.lnwjud_update_release_private_key_pem = ''; }
   ]) { const value = env(); change(value); assert.throws(() => inspectSigningWorkflowContext(value)); }
 });
 
