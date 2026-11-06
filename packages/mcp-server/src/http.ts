@@ -84,7 +84,7 @@ async function readBody(request: IncomingMessage, maxBytes: number): Promise<Bod
   return { tooLarge, body: Buffer.concat(chunks) };
 }
 
-function toFetchRequest(request: IncomingMessage, body: Buffer): Request {
+function toFetchRequest(request: IncomingMessage, body: Buffer, signal: AbortSignal): Request {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
     if (Array.isArray(value)) headers.set(name, value.join(', '));
@@ -92,7 +92,7 @@ function toFetchRequest(request: IncomingMessage, body: Buffer): Request {
   }
 
   const requestedPath = new URL(request.url ?? '/', 'http://127.0.0.1');
-  const init: RequestInit = { method: request.method ?? 'GET', headers };
+  const init: RequestInit = { method: request.method ?? 'GET', headers, signal };
   if (init.method !== 'GET' && init.method !== 'HEAD' && body.length > 0) {
     init.body = new Uint8Array(body);
   }
@@ -286,6 +286,7 @@ function createSessionfulMcpHandler(options: McpHttpServerOptions): McpHttpHandl
       contextEconomy: modernContextEconomy,
       legacyTasksProtocol: false,
       requestScope: createHttpRequestScope({ ...(request === undefined ? {} : { request }), fallbackSessionId: endpointFallbackSessionId }),
+      ...(request === undefined ? {} : { requestSignal: request.signal }),
     });
     if (request !== undefined) {
       modernServersByRequest.set(request, server);
@@ -454,45 +455,54 @@ async function handleRequest(
     return;
   }
 
-  const fetchRequest = toFetchRequest(request, read.body);
-  const rejected = hostHeaderValidationResponse(fetchRequest, allowedHostnames)
-    ?? originPolicy.validate(fetchRequest);
-  if (rejected !== undefined) {
-    await writeFetchResponse(response, rejected);
-    return;
-  }
-
-  if (requestedPath === OAUTH_PROTECTED_RESOURCE_PATH || requestedPath === OAUTH_PROTECTED_RESOURCE_MCP_PATH) {
-    // Secure Tunnel intentionally uses tunnel-client's sample_mcp_remote_no_auth
-    // profile. tunnel-client v0.0.15 treats empty 404s on every PRMD candidate as
-    // the explicit no-OAuth contract, while a text body such as "Not found"
-    // is parsed as malformed metadata and degrades discovery/readiness.
-    response.statusCode = 404;
-    response.setHeader('cache-control', 'no-store');
-    response.end();
-    return;
-  }
-
-  if (requestedPath === LNWJUD_MCP_IDENTITY_PATH) {
-    if (fetchRequest.method !== 'GET') {
-      sendStatus(response, 405, 'Method not allowed');
+  const requestController = new AbortController();
+  const onDisconnect = (): void => {
+    if (!response.writableEnded) requestController.abort(new Error('MCP_HTTP_CLIENT_DISCONNECTED'));
+  };
+  response.once('close', onDisconnect);
+  try {
+    const fetchRequest = toFetchRequest(request, read.body, requestController.signal);
+    const rejected = hostHeaderValidationResponse(fetchRequest, allowedHostnames)
+      ?? originPolicy.validate(fetchRequest);
+    if (rejected !== undefined) {
+      await writeFetchResponse(response, rejected);
       return;
     }
-    await writeFetchResponse(response, Response.json({
-      product: APP_NAME,
-      service: 'desktop-mcp',
-      protocol: 1,
-      version: APP_VERSION,
-    }, {
-      headers: {
-        'cache-control': 'no-store',
-        'x-lnwjud-service': 'desktop-mcp',
-      },
-    }));
-    return;
-  }
 
-  await writeFetchResponse(response, await handler.fetch(fetchRequest));
+    if (requestedPath === OAUTH_PROTECTED_RESOURCE_PATH || requestedPath === OAUTH_PROTECTED_RESOURCE_MCP_PATH) {
+      // Secure Tunnel intentionally uses tunnel-client's sample_mcp_remote_no_auth
+      // profile. tunnel-client v0.0.15 treats empty 404s on every PRMD candidate as
+      // the explicit no-OAuth contract, while a text body such as "Not found"
+      // is parsed as malformed metadata and degrades discovery/readiness.
+      response.statusCode = 404;
+      response.setHeader('cache-control', 'no-store');
+      response.end();
+      return;
+    }
+
+    if (requestedPath === LNWJUD_MCP_IDENTITY_PATH) {
+      if (fetchRequest.method !== 'GET') {
+        sendStatus(response, 405, 'Method not allowed');
+        return;
+      }
+      await writeFetchResponse(response, Response.json({
+        product: APP_NAME,
+        service: 'desktop-mcp',
+        protocol: 1,
+        version: APP_VERSION,
+      }, {
+        headers: {
+          'cache-control': 'no-store',
+          'x-lnwjud-service': 'desktop-mcp',
+        },
+      }));
+      return;
+    }
+
+    await writeFetchResponse(response, await handler.fetch(fetchRequest));
+  } finally {
+    response.off('close', onDisconnect);
+  }
 }
 
 type LoopbackHost = '127.0.0.1' | '::1';

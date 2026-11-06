@@ -38,6 +38,8 @@ export interface McpServerOptions {
   readonly services: McpApplicationServices;
   readonly actor: FileActor;
   readonly requestScope?: McpRequestScope;
+  /** Modern HTTP request lifetime. Aborts before a delayed side effect when the response connection disappears. */
+  readonly requestSignal?: AbortSignal;
   readonly diagnostic?: DiagnosticLogger;
   readonly activity?: ActivitySink;
   readonly activityTracker?: ActivityTracker;
@@ -166,7 +168,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         ...(sdkTrace.baggage !== undefined || requestScope?.baggage === undefined ? {} : { baggage: requestScope.baggage }),
       };
       const result = await withProgressHeartbeat(dispatchContext, tool.name, async () => (
-        registry.invoke(tool.name, input, traceContext) as unknown as Promise<CallToolResult>
+        registry.invoke(tool.name, input, traceContext, options.requestSignal) as unknown as Promise<CallToolResult>
       ));
       const finished = runBudgetGuard.finish(dispatchContext, result);
       return finished;
