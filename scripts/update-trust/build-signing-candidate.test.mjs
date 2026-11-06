@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { URL } from 'node:url';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { hash } from './release-envelope.mjs';
@@ -48,7 +48,7 @@ async function setup(root) {
 }
 
 test('builds a real-file-bound unsigned baseline bundle with the exact manifest ZIP member layout', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-candidate-bundle-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-candidate-bundle-')));
   try {
     await setup(root);
     const policy = JSON.parse(await readFile(new URL('../../config/update-release-policy.json', import.meta.url)));
@@ -78,7 +78,7 @@ test('builds a real-file-bound unsigned baseline bundle with the exact manifest 
 });
 
 test('refuses a source-compatibility mismatch before producing a signing candidate', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-candidate-bundle-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-candidate-bundle-')));
   try {
     await setup(root);
     await writeFile(path.join(root, '_source/native/update-worker/UpdateTransactionJournal.cs'), 'different contract\n');
