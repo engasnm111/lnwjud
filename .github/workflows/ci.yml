@@ -933,6 +933,7 @@ jobs:
     uses: ./.github/workflows/update-package-builder.yml
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
 
