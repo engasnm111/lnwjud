@@ -2,6 +2,7 @@ import process from 'node:process';
 import { Readable, Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { downloadSigningArtifactArchive } from './signing-artifact-download.mjs';
+import { inspectSigningArchive } from './signing-archive-entries.mjs';
 
 const destroyReadable = Readable.prototype.destroy;
 const readableClosed = Object.getOwnPropertyDescriptor(Readable.prototype, 'closed').get;
@@ -103,4 +104,17 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
   catch (cleanupError) { throw new ArchiveQuarantineError(spool, failed, primary, cleanupError); }
   if (failed) throw primary;
   return result;
+}
+
+/**
+ * Download, verify the immutable archive digest and inspect every bound member
+ * before exposing any member bytes to a key-free consumer. Still not signing authority.
+ */
+export function withInspectedSigningArchive(options, consume) {
+  if (typeof consume !== 'function' || !options || typeof options.expectedManifestSha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(options.expectedManifestSha256)) throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
+  return withDownloadedSigningArchive(options, async reader => {
+    const inspection = await inspectSigningArchive(reader, options.expectedManifestSha256);
+    return consume(reader, inspection);
+  });
 }
