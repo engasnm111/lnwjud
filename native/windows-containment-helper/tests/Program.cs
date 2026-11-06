@@ -1848,7 +1848,9 @@ internal static class NativeTests
                 var terminal = await WaitForOutputReservationRelease(ledger, identity, callerSid);
                 if (terminal.Phase != ServiceAttemptPhase.TerminalVerified || terminal.ReservationHeld)
                     throw new Exception($"Output persistence state prevented native terminal proof and release. phase={terminal.Phase} held={terminal.ReservationHeld} reason={terminal.Reason} persistenceFailure={failPersistence}");
-                using var output = await SendServiceRpcAsync(pipeName, Request("read_output"));
+                // Verified process termination can precede the final output pipe drain.
+                using var output = await WaitForBoundedOutputAsync(
+                    () => SendServiceRpcAsync(pipeName, Request("read_output")), failPersistence);
                 if (!output.RootElement.GetProperty("ok").GetBoolean()) throw new Exception("Output scenario read failed");
                 var result = output.RootElement.GetProperty("result");
                 var stdout = Convert.FromBase64String(result.GetProperty("stdoutBase64").GetString()!);
@@ -1874,6 +1876,38 @@ internal static class NativeTests
                 }
             }
         }
+    }
+
+    private static async Task<System.Text.Json.JsonDocument> WaitForBoundedOutputAsync(
+        Func<Task<System.Text.Json.JsonDocument>> read, bool failPersistence)
+    {
+        var lastState = "unobserved";
+        for (var poll = 0; poll < 200; poll++)
+        {
+            var response = await read();
+            try
+            {
+                if (!response.RootElement.GetProperty("ok").GetBoolean())
+                    throw new Exception("Output scenario read failed");
+                var result = response.RootElement.GetProperty("result");
+                var stdoutLength = Convert.FromBase64String(result.GetProperty("stdoutBase64").GetString()!).Length;
+                var stderrLength = Convert.FromBase64String(result.GetProperty("stderrBase64").GetString()!).Length;
+                var stdoutTruncated = result.GetProperty("stdoutTruncated").GetBoolean();
+                var stderrTruncated = result.GetProperty("stderrTruncated").GetBoolean();
+                var persisted = result.GetProperty("persisted").GetBoolean();
+                var complete = result.GetProperty("complete").GetBoolean();
+                var ready = stdoutLength == ServiceOutputStore.MaximumStreamBytes
+                    && stderrLength == ServiceOutputStore.MaximumStreamBytes
+                    && stdoutTruncated && stderrTruncated && persisted != failPersistence
+                    && (failPersistence ? !complete && result.GetProperty("incompleteReason").GetString() == "SERVICE_OUTPUT_PERSISTENCE_FAILED" : complete);
+                if (ready) return response;
+                lastState = $"stdout={stdoutLength} stderr={stderrLength} truncated={stdoutTruncated}/{stderrTruncated} persisted={persisted} complete={complete}";
+            }
+            catch { response.Dispose(); throw; }
+            response.Dispose();
+            await Task.Delay(50);
+        }
+        throw new Exception($"Output snapshot did not reach verified per-stream bounds: {lastState}");
     }
 
     private static async Task<ServiceAttemptObservation> WaitForOutputReservationRelease(ServiceAttemptLedger ledger, ServiceAttemptIdentity identity, string callerSid)
