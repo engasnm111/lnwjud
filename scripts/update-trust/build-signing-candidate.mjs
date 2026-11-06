@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { constants } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -168,6 +168,16 @@ export async function prepareSigningBundle({ workspace, context, policyBytes, ob
     candidateSha256: hash(candidate), releaseId: JSON.parse(candidate.toString('utf8')).release.releaseId });
 }
 
+export async function readSourceReleasePolicy(sourceRoot) {
+  if (typeof sourceRoot !== 'string' || !path.isAbsolute(sourceRoot))
+    refuse('UPDATE_SIGNING_CANDIDATE_UNVERIFIED');
+  const snapshot = await readBoundedFile(path.join(sourceRoot, 'config/update-release-policy.json'), 65536n);
+  const policy = parseStrictJson(snapshot.bytes, 65536, 12);
+  if (policy?.protocol !== 1 || policy.revision !== 1 || !Array.isArray(policy.roots)
+    || !Array.isArray(policy.authorities)) refuse('UPDATE_SIGNING_CANDIDATE_UNVERIFIED');
+  return snapshot.bytes;
+}
+
 export async function prepareBaselineSigningBundle(options) {
   return prepareSigningBundle({ ...options, purpose: 'baseline' });
 }
@@ -186,7 +196,10 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.reso
     const git = args => execFileSync('git', args, { cwd: sourceRoot, encoding: 'utf8', windowsHide: true }).trim();
     if (git(['rev-parse', 'HEAD']) !== ctx.commit || git(['status', '--porcelain=v1']) !== '')
       refuse('UPDATE_SIGNING_CANDIDATE_UNVERIFIED');
-    const policyBytes = await readFile(path.join(workspace, '_trusted-builder/config/update-release-policy.json'));
+    // Builder code is pinned to an immutable commit, but the release trust policy
+    // belongs to the exact protected source commit being attested. A builder's
+    // historical policy may be intentionally unconfigured and must not replace it.
+    const policyBytes = await readSourceReleasePolicy(sourceRoot);
     const previousRunId = process.env.LNWJUD_PREDECESSOR_RUN_ID || '';
     const previousArtifactId = process.env.LNWJUD_PREDECESSOR_ARTIFACT_ID || '';
     const decimal = value => /^[1-9][0-9]{0,14}$/.test(value) && Number.isSafeInteger(Number(value));

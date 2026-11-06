@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { hash } from './release-envelope.mjs';
 import { sourceRecoveryContracts } from './source-recovery-contracts.mjs';
-import { prepareBaselineSigningBundle, prepareUpdateSigningBundle } from './build-signing-candidate.mjs';
+import { prepareBaselineSigningBundle, prepareUpdateSigningBundle, readSourceReleasePolicy } from './build-signing-candidate.mjs';
 import { parseSigningVerificationManifest, inspectManifestCandidate } from './signing-verification-manifest.mjs';
 
 const sha = 'a'.repeat(40);
@@ -93,6 +93,23 @@ async function signedPredecessor(root, change = () => undefined) {
   await writeFile(path.join(folder, 'PROVENANCE.json'), previousProvenance);
   return { policyBytes: Buffer.from(JSON.stringify(policy)), folder, release };
 }
+
+test('immutable builder uses protected source policy instead of an obsolete builder policy', async () => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-source-policy-')));
+  try {
+    const source = path.join(root, '_source');
+    const builder = path.join(root, '_trusted-builder');
+    await mkdir(path.join(source, 'config'), { recursive: true });
+    await mkdir(path.join(builder, 'config'), { recursive: true });
+    const verifiedSourcePolicy = Buffer.from(JSON.stringify({ protocol: 1, revision: 1,
+      roots: [{ keyId: 'protected-source-root' }], authorities: [{ workflow: '.github/workflows/ci.yml' }] }));
+    await writeFile(path.join(source, 'config/update-release-policy.json'), verifiedSourcePolicy);
+    await writeFile(path.join(builder, 'config/update-release-policy.json'), Buffer.from('{}'));
+    assert.deepEqual(await readSourceReleasePolicy(source), verifiedSourcePolicy);
+    await writeFile(path.join(source, 'config/update-release-policy.json'), Buffer.from('{}'));
+    await assert.rejects(readSourceReleasePolicy(source), /UPDATE_SIGNING_CANDIDATE_UNVERIFIED/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('builds update manifest only from signed prior release and authenticated predecessor files', async () => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-candidate-')));
