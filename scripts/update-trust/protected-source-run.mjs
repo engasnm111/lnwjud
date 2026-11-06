@@ -17,6 +17,7 @@ const requirements = Object.freeze({
   'Attested Windows Update Package / resolve-control': 'windows-latest',
   'Attested Windows Update Package / build-package': 'windows-latest',
   'Attested Windows Update Package / attest-package': 'windows-latest',
+  'Attested Windows Update Package / prepare-signing-candidate': 'windows-latest',
 });
 
 export function inspectProtectedSourceContext(environment) {
@@ -62,6 +63,27 @@ export function inspectProtectedSourceRun(context, runBytes, jobsBytes) {
     sourceSha: context.commit, jobs: Object.freeze(jobs) });
 }
 
+export function inspectProtectedSourceArtifact(context, artifactsBytes) {
+  const listing = parseStrictJson(artifactsBytes, 4 * 1024 * 1024, 64);
+  if (!Array.isArray(listing.artifacts) || !Number.isSafeInteger(listing.total_count)
+    || listing.total_count !== listing.artifacts.length || listing.total_count > 100)
+    refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
+  const expectedName = `update-package-attested-${context.sourceRunId}-1`;
+  const matches = listing.artifacts.filter(item => item?.name === expectedName);
+  if (matches.length !== 1) refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
+  const item = matches[0], owner = item.workflow_run;
+  if (identifier(item.id) === '' || item.expired !== false
+    || !Number.isSafeInteger(item.size_in_bytes) || item.size_in_bytes < 1 || item.size_in_bytes > 5 * 1024 * 1024 * 1024
+    || typeof item.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(item.digest)
+    || identifier(owner?.id) !== context.sourceRunId
+    || identifier(owner?.repository_id) !== repositoryId
+    || identifier(owner?.head_repository_id) !== repositoryId
+    || owner?.head_sha !== context.commit)
+    refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
+  return Object.freeze({ artifactId: String(item.id), artifactName: expectedName,
+    archiveSha256: item.digest.slice(7), archiveSizeBytes: item.size_in_bytes });
+}
+
 async function api(relative, token) {
   const response = await globalThis.fetch(`https://api.github.com/repos/${repository}/${relative}`, {
     redirect: 'error', signal: globalThis.AbortSignal.timeout(30000),
@@ -85,11 +107,13 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.reso
     const token = process.env.GITHUB_TOKEN;
     if (typeof token !== 'string' || token.length < 10 || token.length > 4096)
       refuse('SIGNING_SOURCE_CONTEXT_REFUSED');
-    const [run, jobs] = await Promise.all([
+    const [run, jobs, artifacts] = await Promise.all([
       api(`actions/runs/${context.sourceRunId}/attempts/1`, token),
       api(`actions/runs/${context.sourceRunId}/attempts/1/jobs?per_page=100`, token),
+      api(`actions/runs/${context.sourceRunId}/artifacts?per_page=100`, token),
     ]);
-    process.stdout.write(`${JSON.stringify(inspectProtectedSourceRun(context, run, jobs))}\n`);
+    process.stdout.write(`${JSON.stringify({ ...inspectProtectedSourceRun(context, run, jobs),
+      ...inspectProtectedSourceArtifact(context, artifacts) })}\n`);
   } catch {
     process.stderr.write('SIGNING_SOURCE_PREFLIGHT_REFUSED\n');
     process.exitCode = 1;

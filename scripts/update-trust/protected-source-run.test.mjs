@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { inspectProtectedSourceContext, inspectProtectedSourceRun } from './protected-source-run.mjs';
+import { inspectProtectedSourceContext, inspectProtectedSourceRun, inspectProtectedSourceArtifact } from './protected-source-run.mjs';
 
 const commit = 'a'.repeat(40);
 const env = () => ({
@@ -19,6 +19,7 @@ const required = {
   'Attested Windows Update Package / resolve-control': 'windows-latest',
   'Attested Windows Update Package / build-package': 'windows-latest',
   'Attested Windows Update Package / attest-package': 'windows-latest',
+  'Attested Windows Update Package / prepare-signing-candidate': 'windows-latest',
 };
 const run = () => ({
   id: 500, run_attempt: 1, event: 'push', path: '.github/workflows/ci.yml',
@@ -27,7 +28,7 @@ const run = () => ({
   head_repository: { id: 1329830515 },
 });
 const jobs = () => ({
-  total_count: 6,
+  total_count: 7,
   jobs: Object.entries(required).map(([name, label], i) => ({
     id: 200 + i, name, run_id: 500, head_sha: commit,
     status: 'completed', conclusion: 'success', runner_group_name: 'GitHub Actions',
@@ -42,7 +43,7 @@ test('protected main push source and all required successful hosted jobs are obs
   assert.equal(v.status, 'source-ci-observed-only');
   assert.equal(v.sourceRunId, '500');
   assert.equal(v.sourceSha, commit);
-  assert.equal(Object.keys(v.jobs).length, 6);
+  assert.equal(Object.keys(v.jobs).length, 7);
   assert.equal(Object.hasOwn(v, 'canSign'), false);
   assert.equal(Object.hasOwn(v, 'authorization'), false);
 });
@@ -67,7 +68,7 @@ test('refuses stale, substituted, rerun and incomplete protected CI', () => {
     ({ r }) => { r.conclusion = 'cancelled'; }, ({ r }) => { r.status = 'in_progress'; },
     ({ r }) => { r.repository.id = 2; }, ({ r }) => { r.repository.full_name = 'other/repo'; },
     ({ r }) => { r.head_repository.id = 2; },
-    ({ j }) => { j.total_count = 7; }, ({ j }) => { j.jobs.pop(); j.total_count--; },
+    ({ j }) => { j.total_count = 8; }, ({ j }) => { j.jobs.pop(); j.total_count--; },
     ({ j }) => { j.jobs.push({ ...j.jobs[0] }); j.total_count++; },
     ({ j }) => { j.jobs[0].run_id = 501; }, ({ j }) => { j.jobs[0].head_sha = 'b'.repeat(40); },
     ({ j }) => { j.jobs[0].conclusion = 'failure'; }, ({ j }) => { j.jobs[0].status = 'in_progress'; },
@@ -80,6 +81,44 @@ test('refuses stale, substituted, rerun and incomplete protected CI', () => {
   for (const change of changes) {
     const r = run(), j = jobs(); change({ r, j });
     assert.throws(() => observed(env(), r, j));
+  }
+});
+
+
+const artifactListing = () => ({
+  total_count: 1, artifacts: [{
+    id: 700, name: 'update-package-attested-500-1', expired: false, size_in_bytes: 4096,
+    digest: `sha256:${'c'.repeat(64)}`,
+    workflow_run: { id: 500, repository_id: 1329830515, head_repository_id: 1329830515, head_sha: commit },
+  }],
+});
+
+test('exact attested package artifact belongs to selected protected run but is not signing authority', () => {
+  const result = inspectProtectedSourceArtifact(inspectProtectedSourceContext(env()), Buffer.from(JSON.stringify(artifactListing())));
+  assert.deepEqual(result, { artifactId: '700', artifactName: 'update-package-attested-500-1',
+    archiveSha256: 'c'.repeat(64), archiveSizeBytes: 4096 });
+  assert.equal(Object.hasOwn(result, 'verified'), false);
+  assert.equal(Object.hasOwn(result, 'canSign'), false);
+});
+
+test('missing, duplicated, expired, substituted and malformed artifact metadata are refused', () => {
+  for (const change of [
+    value => { value.total_count = 2; },
+    value => { value.artifacts.push({ ...value.artifacts[0] }); value.total_count = 2; },
+    value => { value.artifacts[0].name = 'update-package-subjects-500-1'; },
+    value => { value.artifacts[0].name = 'update-package-attested-501-1'; },
+    value => { value.artifacts[0].id = null; },
+    value => { value.artifacts[0].expired = true; },
+    value => { value.artifacts[0].size_in_bytes = 0; },
+    value => { value.artifacts[0].size_in_bytes = 5 * 1024 * 1024 * 1024 + 1; },
+    value => { value.artifacts[0].digest = 'sha256:' + 'X'.repeat(64); },
+    value => { value.artifacts[0].workflow_run.id = 502; },
+    value => { value.artifacts[0].workflow_run.repository_id = 1; },
+    value => { value.artifacts[0].workflow_run.head_repository_id = 1; },
+    value => { value.artifacts[0].workflow_run.head_sha = 'd'.repeat(40); },
+  ]) {
+    const value = artifactListing(); change(value);
+    assert.throws(() => inspectProtectedSourceArtifact(inspectProtectedSourceContext(env()), Buffer.from(JSON.stringify(value))));
   }
 });
 

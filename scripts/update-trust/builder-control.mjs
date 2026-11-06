@@ -104,7 +104,7 @@ function git(directory, args) {
   return execFileSync('git', args, { cwd: directory, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd();
 }
 
-async function trustedWorkspace(environment, context) {
+export async function trustedWorkspace(environment, context) {
   if (process.platform !== 'win32' || process.arch !== 'x64' || !path.isAbsolute(environment.GITHUB_WORKSPACE ?? '')) refuse();
   const workspace = path.resolve(environment.GITHUB_WORKSPACE);
   if (controlRoot !== path.join(workspace, '_trusted-builder') || git(controlRoot, ['rev-parse', 'HEAD']) !== context.builderSha

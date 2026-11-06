@@ -5,6 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-artifacts.mjs';
+import { sourceRecoveryContracts, assertSourceRecoveryContracts } from '../../../scripts/update-trust/source-recovery-contracts.mjs';
 import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
 import { validateContainmentEvidence } from './verify-containment-artifacts.mjs';
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
@@ -29,6 +30,12 @@ const sums = parseSums(sumsText);
 if (provenance?.schemaVersion !== 1 || provenance.product !== 'lnwjud') throw new Error('PROVENANCE.json schema/product is invalid');
 if (provenance.version !== packageJson.version) throw new Error(`Provenance version mismatch: ${String(provenance.version)} != ${String(packageJson.version)}`);
 if (!isPlatform(provenance.platform)) throw new Error('Provenance platform is invalid');
+if (provenance.platform === 'win32') {
+  const contracts = await sourceRecoveryContracts(path.resolve(desktopRoot, '../..'));
+  assertSourceRecoveryContracts(provenance.recoveryCompatibility, contracts);
+} else if (provenance.recoveryCompatibility !== null) {
+  throw new Error('Non-Windows provenance must not claim native recovery compatibility');
+}
 let macSigning = null;
 if (provenance.platform === 'darwin') {
   const signing = provenance.build?.macSigning ?? { mode: 'unsigned' };

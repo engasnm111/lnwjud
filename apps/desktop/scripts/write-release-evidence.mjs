@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
 import { validateContainmentEvidence } from './verify-containment-artifacts.mjs';
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
+import { sourceRecoveryContracts } from '../../../scripts/update-trust/source-recovery-contracts.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
@@ -37,6 +38,7 @@ const capabilityBridge = platform === 'win32' ? validateCapabilityBridge(runtime
 const macSigning = platform === 'darwin' ? validateMacSigning(runtimeEvidence) : null;
 const containment = validateContainmentEvidence(runtimeEvidence.containment, runtimeEvidence.files, platform);
 const updateWorker = validateUpdateWorkerEvidence(runtimeEvidence.updateWorker, runtimeEvidence.files, platform);
+const recoveryCompatibility = platform === 'win32' ? await sourceRecoveryContracts(repositoryRoot) : null;
 
 const artifactNames = expectedArtifactNames(platform, version, runtimeEvidence.arch);
 const artifacts = [];
@@ -72,6 +74,7 @@ const provenance = {
   capabilityBridge,
   containment,
   updateWorker,
+  recoveryCompatibility,
   artifacts,
   runtime: runtimeEvidence.files,
 };

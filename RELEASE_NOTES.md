@@ -4,6 +4,8 @@ Release history is maintained here for release authoring; the [README](README.md
 
 ### What's new in v5.9.1
 
+- **Unsigned update candidate (development only):** The protected Windows package build produces a source-bound, unsigned baseline manifest and separately staged attested installer/provenance. Seven protected CI jobs must pass before source-run preflight accepts that build as observed. Candidate generation does **not** sign packages, enroll a native install or enable automatic updates. Native transaction, secure signer/verifier, installed restart/health and rollback acceptance remain blocking. This is not a published release.
+
 - **Version badge checks GitHub releases:** The top-left version button performs a read-only release check even when the protected native installer is not enrolled. A request made while the updater starts is queued until initialization completes; unsupported installation is reported instead of silently doing nothing.
 - **One explicit confirmation for authorized updates:** The guarded update intent can proceed through download and a single exact-version native confirmation before requesting automatic installation. Automatic installation remains disabled on this build because native package authentication and rollback are not yet certified.
 - **Single update control:** The top-left version badge checks releases, starts a guarded download when an authenticated update is available, then requests one exact-version confirmation before installation. The duplicate Settings → General update test action has been removed. Unverified native installation stays unavailable. Version-specific changes live in What's New and GitHub Releases, not in README files.

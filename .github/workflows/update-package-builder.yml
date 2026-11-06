@@ -127,6 +127,8 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    outputs:
+      artifact_id: ${{ steps.attested-upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -168,10 +170,52 @@ jobs:
           LNWJUD_EXPECTED_ARTIFACT_SHA256: ${{ steps.subjects.outputs.artifact_sha256 }}
           LNWJUD_EXPECTED_PROVENANCE_SHA256: ${{ steps.subjects.outputs.provenance_sha256 }}
         run: node _trusted-builder/scripts/update-trust/builder-control.mjs bundles
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - id: attested-upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: update-package-attested-${{ github.run_id }}-${{ github.run_attempt }}
           path: _incoming/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+  prepare-signing-candidate:
+    # No privileged attestation environment or signing secrets in this data preparation job.
+    needs: [resolve-control, attest-package]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ needs.resolve-control.outputs.builder_sha }}
+          path: _trusted-builder
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          path: _source
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.2'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.attest-package.outputs.artifact_id }}
+          path: _incoming
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Bind actual package and provenance to an unsigned baseline candidate
+        shell: pwsh
+        env:
+          LNWJUD_BUILDER_SHA: ${{ needs.resolve-control.outputs.builder_sha }}
+        run: node _trusted-builder/scripts/update-trust/build-signing-candidate.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: update-package-signing-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _signing-bundle/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

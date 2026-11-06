@@ -91,8 +91,8 @@ test('protected main CI requires successful update package attestations before r
 
 test('Windows update builder uses a Node release with the libuv short-path watcher fix', () => {
   const versions = [...workflow.matchAll(/node-version: '([^']+)'/g)].map(([, version]) => version);
-  assert.equal(versions.length, 3);
-  assert.deepEqual(versions, ['24.22.2', '24.22.2', '24.22.2']);
+  assert.equal(versions.length, 4);
+  assert.deepEqual(versions, ['24.22.2', '24.22.2', '24.22.2', '24.22.2']);
 });
 
 test('Windows update builder installs ripgrep before release verification', () => {
@@ -210,10 +210,16 @@ test('workflow has no activation/input/secrets surface and isolates build creden
   assert.doesNotMatch(workflow, /workflow_dispatch:|pull_request:|^\s+inputs:|^\s+secrets:|secrets\./m);
   for (const match of workflow.matchAll(/^\s*- uses: ([^\s]+)$/gm)) assert.match(match[1], /^[A-Za-z0-9/_-]+@[a-f0-9]{40}$/);
   const build = workflow.split('  build-package:')[1].split('  attest-package:')[0];
-  const attest = workflow.split('  attest-package:')[1];
+  const attest = workflow.split('  attest-package:')[1].split('  prepare-signing-candidate:')[0];
+  const candidate = workflow.split('  prepare-signing-candidate:')[1];
   assert.doesNotMatch(build, /id-token:|attestations:|CSC_LINK|PRIVATE_KEY/);
   assert.match(attest, /id-token: write/); assert.match(attest, /attestations: write/);
   assert.doesNotMatch(attest, /_source|pnpm|npm install|dotnet|powershell\.exe|run-id:|repository:.*\$\{\{/);
   assert.match(attest, /artifact-ids: \$\{\{ needs\.build-package\.outputs\.artifact_id \}\}/);
   for (const command of attest.matchAll(/^\s*run: (.+)$/gm)) assert.match(command[1], /^node _trusted-builder\/scripts\/update-trust\/builder-control\.mjs (?:inspect|bundles)$/);
+  assert.match(attest, /id: attested-upload/);
+  assert.match(candidate, /artifact-ids: \$\{\{ needs\.attest-package\.outputs\.artifact_id \}\}/);
+  assert.match(candidate, /run: node _trusted-builder\/scripts\/update-trust\/build-signing-candidate\.mjs/);
+  assert.doesNotMatch(candidate, /id-token:|attestations:|PRIVATE_KEY|CSC_LINK|secrets\./);
+  assert.match(candidate, /permissions:\n\s+contents: read/);
 });
