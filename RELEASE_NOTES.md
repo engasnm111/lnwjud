@@ -4,6 +4,7 @@ Release history is maintained here for release authoring; the [README](README.md
 
 ### What's new in v5.9.1
 
+- **Fail-closed update handoff:** Invalid local or shared activity snapshots never count as idle, and temporary activity-probe failures resume polling instead of silently stranding the requested install. The native transaction startup verifier now rejects mismatched app-slot/data-generation pairs, including rollback pairings. These are preparatory safety fixes; the production installer remains disabled pending native authority, signed trust and installed E2E acceptance.
 - **Unsigned update candidate (development only):** The protected Windows package build produces a source-bound, unsigned baseline manifest and separately staged attested installer/provenance. Seven protected CI jobs must pass before source-run preflight accepts that build as observed. Candidate generation does **not** sign packages, enroll a native install or enable automatic updates. Native transaction, secure signer/verifier, installed restart/health and rollback acceptance remain blocking. This is not a published release.
 
 - **Version badge checks GitHub releases:** The top-left version button performs a read-only release check even when the protected native installer is not enrolled. A request made while the updater starts is queued until initialization completes; unsupported installation is reported instead of silently doing nothing.

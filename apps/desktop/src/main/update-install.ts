@@ -151,6 +151,9 @@ export class UpdateInstallCoordinator {
     let activity: { readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string };
     try {
       activity = await this.observeActivity();
+    } catch {
+      // Unknown local activity must never authorize an install or strand the request.
+      activity = { trustworthy: false, activeCount: 0, revision: 'local:unverifiable' };
     } finally {
       this.evaluating = false;
     }
@@ -169,7 +172,16 @@ export class UpdateInstallCoordinator {
     if (!this.pending || this.shutdown) return;
     // Poll the existing tracker throughout the quiet period so a short call
     // that starts and ends inside the interval restarts the quiet clock.
-    const activity = await this.observeActivity();
+    let activity: { readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string };
+    try {
+      activity = await this.observeActivity();
+    } catch {
+      if (this.pending && !this.shutdown) {
+        this.quietUntil = 0;
+        this.schedule(this.pollIntervalMs, () => { void this.evaluate(); });
+      }
+      return;
+    }
     if (!this.pending || this.shutdown) return;
     if (!activity.trustworthy || activity.activeCount > 0 || activity.revision !== this.quietRevision) {
       void this.evaluate();
@@ -223,6 +235,11 @@ export class UpdateInstallCoordinator {
       const afterShared = this.sampleLocalActivity();
       if (!sameLocalActivity(afterTunnel, afterShared)) return staleLocalActivity(afterShared);
       if (shared.state !== 'available') return { trustworthy: false, activeCount: afterShared.activeCount, revision: `${localRevisionKey(afterShared)}:shared:${shared.state}` };
+      if (!Number.isSafeInteger(shared.activeCallCount) || shared.activeCallCount < 0
+        || !Number.isSafeInteger(shared.revision) || shared.revision < 0
+        || (shared.ownerKey !== undefined && typeof shared.ownerKey !== 'string')) {
+        return { trustworthy: false, activeCount: afterShared.activeCount, revision: `${localRevisionKey(afterShared)}:shared:invalid` };
+      }
       return { trustworthy: true, activeCount: afterShared.activeCount + shared.activeCallCount, revision: `${localRevisionKey(afterShared)}:shared:${shared.ownerKey ?? ''}:${shared.revision}` };
     } catch {
       const afterShared = this.sampleLocalActivity();
@@ -231,7 +248,12 @@ export class UpdateInstallCoordinator {
   }
 
   private sampleLocalActivity(): LocalActivityObservation {
-    return { activeCount: this.options.activeCallCount(), revision: this.options.activityRevision?.() ?? 0 };
+    const activeCount = this.options.activeCallCount();
+    const revision = this.options.activityRevision?.() ?? 0;
+    if (!Number.isSafeInteger(activeCount) || activeCount < 0 || !Number.isSafeInteger(revision) || revision < 0) {
+      throw new Error('UPDATE_LOCAL_ACTIVITY_UNVERIFIABLE');
+    }
+    return { activeCount, revision };
   }
 
   private schedule(delayMs: number, action: () => void): void {

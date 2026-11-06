@@ -23,6 +23,7 @@ internal static class UnauthenticatedPublicationTests
                 SelectionPublication(Path.Combine(directory, $"selection-{rollback}-{published}"), rollback, published);
             foreach (var rollback in new[] { false, true })
                 ForgedTerminal(Path.Combine(directory, "terminal-" + rollback), rollback);
+            TerminalSelectionPairing(Path.Combine(directory, "terminal-selection-pairing"));
             RejectMalformedStage(Path.Combine(directory, "malformed-transaction"), false);
             RejectMalformedStage(Path.Combine(directory, "malformed-slot"), true);
             return assertions;
@@ -80,6 +81,43 @@ internal static class UnauthenticatedPublicationTests
                 "worker rejects an unauthenticated terminal claim");
         }
         CheckUnchanged(root, before);
+    }
+
+    private static void TerminalSelectionPairing(string root)
+    {
+        var owner = WindowsStoreIO.CurrentOwner();
+        var fixture = Initialize(root, owner);
+        var transaction = fixture.Transaction;
+        var selected = SlotSelection.Create(Installation, transaction.Generation, 1, fixture.Selection.Digest,
+            owner, transaction.TransactionId, transaction.CandidateSlot, transaction.CandidateSlotDigest,
+            transaction.CandidateDataGeneration);
+        var committed = transaction with { Phase = UpdateTransactionPhase.Committed };
+        Check(UpdateWorkerCore.TerminalSelectionMatches(committed, selected),
+            "matching terminal candidate binds the exact application/data pair");
+        Check(!UpdateWorkerCore.TerminalSelectionMatches(committed, selected with
+        { DataGeneration = transaction.PreviousDataGeneration }),
+            "candidate slot with previous data cannot be accepted at startup");
+        Check(!UpdateWorkerCore.TerminalSelectionMatches(committed, selected with
+        { DataGeneration = DataGeneration.Create(transaction.CandidateDataGeneration.Id, Digest('3')) }),
+            "candidate slot with changed data manifest cannot be accepted at startup");
+
+        var restored = selected with
+        {
+            Slot = transaction.PreviousSlot,
+            SlotDigest = transaction.PreviousSlotDigest,
+            DataGeneration = transaction.PreviousDataGeneration,
+        };
+        var rolledBack = transaction with { Phase = UpdateTransactionPhase.RollbackVerified };
+        Check(UpdateWorkerCore.TerminalSelectionMatches(rolledBack, restored),
+            "verified rollback selects both exact predecessor application and data");
+        Check(!UpdateWorkerCore.TerminalSelectionMatches(rolledBack, restored with
+        { DataGeneration = transaction.CandidateDataGeneration }),
+            "rollback slot with candidate data cannot be accepted at startup");
+        Check(!UpdateWorkerCore.TerminalSelectionMatches(rolledBack, restored with
+        { DataGeneration = DataGeneration.Create(transaction.PreviousDataGeneration.Id, Digest('4')) }),
+            "rollback slot with changed predecessor manifest cannot be accepted at startup");
+        Check(!UpdateWorkerCore.TerminalSelectionMatches(transaction, selected),
+            "nonterminal transaction cannot claim startup-safe selection");
     }
 
     private static void PendingTransaction(string root, UpdateTransactionPhase phase)

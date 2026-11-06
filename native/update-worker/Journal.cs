@@ -122,12 +122,7 @@ internal sealed class UpdateWorkerCore : IDisposable
                 var selection = SlotSelection.Decode(selectionFile.Bytes, installationId);
                 if (!selectionFile.Bytes.AsSpan().SequenceEqual(selection.Encode()) || selectionFile.Digest != selection.Digest)
                     return Held(command.RequestId, current, "UPDATE_SLOT_SELECTION_NONCANONICAL");
-                var expectedSlot = transaction.Phase == UpdateTransactionPhase.Committed
-                    ? transaction.CandidateSlot : transaction.PreviousSlot;
-                var expectedSlotDigest = transaction.Phase == UpdateTransactionPhase.Committed
-                    ? transaction.CandidateSlotDigest : transaction.PreviousSlotDigest;
-                if (selection.Generation != transaction.Generation || selection.TransactionId != transaction.TransactionId
-                    || selection.Slot != expectedSlot || selection.SlotDigest != expectedSlotDigest)
+                if (!TerminalSelectionMatches(transaction, selection))
                     return Held(command.RequestId, current, "UPDATE_SLOT_SELECTION_CONFLICT");
             }
             var pending = io.Read("journal.pending.json");
@@ -184,6 +179,19 @@ internal sealed class UpdateWorkerCore : IDisposable
         }
         catch (Refusal error) { return Unverified(command.RequestId, current, error.Reason); }
         catch (Exception) { return Unverified(command.RequestId, current, "JOURNAL_UNVERIFIED"); }
+    }
+
+    // A terminal selection must bind both the executable slot and its exact data generation.
+    // Matching only the slot digest would incorrectly accept a crossed application/data pair.
+    internal static bool TerminalSelectionMatches(UpdateTransactionJournal transaction, SlotSelection selection)
+    {
+        if (!transaction.SafeToStart || transaction.InstallationId != selection.InstallationId
+            || selection.Generation != transaction.Generation || selection.TransactionId != transaction.TransactionId)
+            return false;
+        var committed = transaction.Phase == UpdateTransactionPhase.Committed;
+        return selection.Slot == (committed ? transaction.CandidateSlot : transaction.PreviousSlot)
+            && selection.SlotDigest == (committed ? transaction.CandidateSlotDigest : transaction.PreviousSlotDigest)
+            && selection.DataGeneration == (committed ? transaction.CandidateDataGeneration : transaction.PreviousDataGeneration);
     }
 
     private bool MayAdopt(ProcessOwner previous) => previous == owner || WindowsStoreIO.Observe(previous) == "gone";
