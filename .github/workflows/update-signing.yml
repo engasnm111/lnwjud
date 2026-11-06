@@ -1,0 +1,43 @@
+# This workflow is a key-free source-run preflight, NOT a signing or deployment authority.
+# Until attestation, independent verifier/signer and native installed rollback gates exist,
+# it produces no signed envelope, no release artifact and no update permission.
+name: Update Signing Preflight (No Private Key)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Completed protected-main push CI run ID (attempt 1) for the exact main commit'
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: lnwjud-update-signing-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify-protected-source:
+    name: Verify protected source run (diagnostic only)
+    if: ${{ github.repository == 'engasnm111/lnwjud' && github.ref == 'refs/heads/main' && github.ref_protected == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.2'
+      - name: Verify exact protected CI run and hosted jobs without signer credentials
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LNWJUD_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: node scripts/update-trust/protected-source-run.mjs
