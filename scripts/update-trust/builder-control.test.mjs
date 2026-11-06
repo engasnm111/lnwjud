@@ -205,9 +205,12 @@ test('immutable inspector hashes unexecuted subjects and refuses mutation, extra
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('workflow has no activation/input/secrets surface and isolates build credentials from data-only attestation', () => {
-  assert.match(workflow, /on:\n {2}workflow_call:\n\npermissions: \{\}/);
-  assert.doesNotMatch(workflow, /workflow_dispatch:|pull_request:|^\s+inputs:|^\s+secrets:|secrets\./m);
+test('workflow constrains predecessor inputs and isolates signing credentials from data-only attestation', () => {
+  assert.match(workflow, /on:\n {2}workflow_call:\n {4}inputs:/);
+  const inputs = workflow.split('  workflow_call:\n')[1]?.split('\npermissions:')[0];
+  assert.deepEqual([...inputs.matchAll(/^ {6}([a-z_]+):$/gm)].map(([, name]) => name),
+    ['predecessor_run_id', 'predecessor_artifact_id']);
+  assert.doesNotMatch(workflow, /workflow_dispatch:|pull_request:|^\s+secrets:|secrets\./m);
   for (const match of workflow.matchAll(/^\s*- uses: ([^\s]+)$/gm)) assert.match(match[1], /^[A-Za-z0-9/_-]+@[a-f0-9]{40}$/);
   const build = workflow.split('  build-package:')[1].split('  attest-package:')[0];
   const attest = workflow.split('  attest-package:')[1].split('  prepare-signing-candidate:')[0];
@@ -220,6 +223,9 @@ test('workflow has no activation/input/secrets surface and isolates build creden
   assert.match(attest, /id: attested-upload/);
   assert.match(candidate, /artifact-ids: \$\{\{ needs\.attest-package\.outputs\.artifact_id \}\}/);
   assert.match(candidate, /run: node _trusted-builder\/scripts\/update-trust\/build-signing-candidate\.mjs/);
+  assert.match(candidate, /artifact-ids: \$\{\{ inputs\.predecessor_artifact_id \}\}/);
+  assert.match(candidate, /run-id: \$\{\{ inputs\.predecessor_run_id \}\}/);
+  assert.match(candidate, /if: \$\{\{ inputs\.predecessor_artifact_id != '' && inputs\.predecessor_run_id != '' \}\}/);
   assert.doesNotMatch(candidate, /id-token:|attestations:|PRIVATE_KEY|CSC_LINK|secrets\./);
   assert.match(candidate, /permissions:\n\s+contents: read/);
 });

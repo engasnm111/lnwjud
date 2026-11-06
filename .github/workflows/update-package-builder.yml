@@ -2,6 +2,17 @@ name: Immutable Windows Update Package Builder
 
 on:
   workflow_call:
+    inputs:
+      predecessor_run_id:
+        description: 'GitHub Actions run containing the authenticated previous release bundle, or empty for baseline'
+        type: string
+        required: false
+        default: ''
+      predecessor_artifact_id:
+        description: 'Exact prior signed-release bundle artifact ID, or empty for baseline'
+        type: string
+        required: false
+        default: ''
 
 permissions: {}
 
@@ -185,6 +196,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -207,10 +219,21 @@ jobs:
           path: _incoming
           merge-multiple: true
           digest-mismatch: error
-      - name: Bind actual package and provenance to an unsigned baseline candidate
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        if: ${{ inputs.predecessor_artifact_id != '' && inputs.predecessor_run_id != '' }}
+        with:
+          artifact-ids: ${{ inputs.predecessor_artifact_id }}
+          run-id: ${{ inputs.predecessor_run_id }}
+          github-token: ${{ github.token }}
+          path: _predecessor
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Bind actual package and provenance to an unsigned signed-predecessor-aware candidate
         shell: pwsh
         env:
           LNWJUD_BUILDER_SHA: ${{ needs.resolve-control.outputs.builder_sha }}
+          LNWJUD_PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+          LNWJUD_PREDECESSOR_ARTIFACT_ID: ${{ inputs.predecessor_artifact_id }}
         run: node _trusted-builder/scripts/update-trust/build-signing-candidate.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
