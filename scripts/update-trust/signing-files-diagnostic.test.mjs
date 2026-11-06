@@ -9,6 +9,7 @@ import path from 'node:path';
 import { hash, loadProductionPolicy } from './release-envelope.mjs';
 import { authenticateAuthorizationV2 } from './release-authorization-v2.mjs';
 import { inspectSigningFiles } from './signing-files-diagnostic.mjs';
+import { constructSigningVerificationManifest } from './signing-manifest-producer.mjs';
 
 const template = JSON.parse(await readFile(new URL('../../tests/fixtures/update-release/release-identity-v1.json', import.meta.url), 'utf8'));
 const now = 1800000000n;
@@ -140,5 +141,49 @@ test('rejects previous authorization expiring during reads while candidate remai
     const manifest = Buffer.from(JSON.stringify(f.manifest)); let tick = 0;
     await assert.rejects(inspectSigningFiles(root, manifest, f.policyBytes, () => tick++ === 0 ? now : now + 3600n,
       'test-only', hash(manifest), '1', '2', '1'), /RELEASE_HISTORICAL_BASELINE_UNAUTHORIZED/);
+  });
+});
+
+test('key-free manifest builder binds the exact baseline and predecessor file sets', async () => {
+  for (const update of [false, true]) await withinTemp(async root => {
+    const f = fixture(update);
+    await writeFiles(root, 'candidate', f.candidateFiles);
+    if (update) await writeFiles(root, 'predecessor', f.previousFiles);
+    const built = await constructSigningVerificationManifest({
+      root, policyBytes: f.policyBytes, keyId: 'test-only',
+      repositoryId: '1', runId: '2', runAttempt: 1, observeTime: () => now,
+    });
+    assert.equal(built.status, 'diagnostic-only');
+    assert.deepEqual(JSON.parse(built.bytes), f.manifest);
+    assert.equal(built.sha256, hash(built.bytes));
+    assert.match(built.candidateIdentitySha256, /^[a-f0-9]{64}$/);
+    const verified = await inspectSigningFiles(root, built.bytes, f.policyBytes, () => now,
+      'test-only', built.sha256, '1', '2', '1');
+    assert.equal(verified.candidateIdentitySha256, built.candidateIdentitySha256);
+  });
+});
+
+test('manifest builder fails closed on tampering, extra files and invalid run identity', async () => {
+  await withinTemp(async root => {
+    const f = fixture(true);
+    await writeFiles(root, 'candidate', f.candidateFiles);
+    await writeFiles(root, 'predecessor', f.previousFiles);
+    const options = { root, policyBytes: f.policyBytes, keyId: 'test-only',
+      repositoryId: '1', runId: '2', runAttempt: 1, observeTime: () => now };
+    for (const invalid of [{ ...options, runAttempt: 2 }, { ...options, runId: '02' },
+      { ...options, repositoryId: '0' }, { ...options, observeTime: () => -1n }]) {
+      await assert.rejects(constructSigningVerificationManifest(invalid));
+    }
+    let tick = 0;
+    await assert.rejects(constructSigningVerificationManifest({ ...options,
+      observeTime: () => tick++ === 0 ? now : now + 3600n }), /RELEASE_TIME_INVALID/);
+    tick = 0;
+    await assert.rejects(constructSigningVerificationManifest({ ...options,
+      observeTime: () => tick++ === 0 ? now + 1n : now }), /SIGNING_MANIFEST_PRODUCTION_REFUSED/);
+    await writeFile(path.join(root, 'candidate', 'extra.txt'), 'untrusted');
+    await assert.rejects(constructSigningVerificationManifest(options));
+    await unlink(path.join(root, 'candidate', 'extra.txt'));
+    await writeFile(path.join(root, 'candidate', f.candidateFiles.artifact[0]), 'substituted');
+    await assert.rejects(constructSigningVerificationManifest(options));
   });
 });
