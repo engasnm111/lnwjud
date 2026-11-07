@@ -16,6 +16,7 @@
     <Compile Include="../ServiceAttemptLedger.cs" Link="ServiceAttemptLedger.cs" />
     <Compile Include="../ServiceImportTransactionRuntime.cs" Link="ServiceImportTransactionRuntime.cs" />
     <Compile Include="../ContainedProcess.cs" Link="ContainedProcess.cs" />
+    <Compile Include="../McpStdioProxy.cs" Link="McpStdioProxy.cs" />
     <Compile Include="../AuthenticatedPipeCaller.cs" Link="AuthenticatedPipeCaller.cs" />
     <Compile Include="../ServicePipeSecurity.cs" Link="ServicePipeSecurity.cs" />
     <Compile Include="../WindowsContainmentService.cs" Link="WindowsContainmentService.cs" />

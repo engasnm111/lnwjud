@@ -76,7 +76,7 @@ import {
   type WorkspaceScope,
 } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
-import type { ManagedProcess } from '@lnwjud/process';
+import { createWindowsMcpStdioOwner, type ManagedProcess } from '@lnwjud/process';
 import { PathExecutableResolver } from '@lnwjud/search';
 import {
   ALLOW_AI_DELETE_SETTING_KEY,
@@ -559,6 +559,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     protectCriticalFiles: (): boolean => !desktopFullBypassEnabled() && destructivePolicyProvider().protectCriticalFiles,
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot,
+    writeOperationJournalRoot: path.join(dataPath, 'file-write-operations'),
   });
   const ponytailProfilePath = '.lnwjud/project-profile.json';
   const readWorkspaceProfile = async (workspaceId: string): Promise<Record<string, unknown>> => {
@@ -771,6 +772,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     settingsJsonProvider: () => settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
+    ...(nativeAuthority === undefined ? {} : { windowsMcpStdioOwner: createWindowsMcpStdioOwner(nativeAuthority.configuration) }),
     workspaceRootProvider: async (): Promise<string | undefined> => {
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       return selected?.realRootPath;

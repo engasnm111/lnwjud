@@ -19,18 +19,19 @@ describe('release asset collector', () => {
     const stagingDirectory = path.join(temporaryRoot, 'staging');
     const assetsDirectory = path.join(temporaryRoot, 'assets');
     try {
-      for (const target of [
+      // Independent target fixtures can be staged concurrently on busy Windows runners.
+      await Promise.all([
         { key: 'win32-x64', platform: 'win32', arch: 'x64' },
         { key: 'darwin-arm64', platform: 'darwin', arch: 'arm64' },
         { key: 'darwin-x64', platform: 'darwin', arch: 'x64' },
         { key: 'linux-x64', platform: 'linux', arch: 'x64' },
         { key: 'linux-arm64', platform: 'linux', arch: 'arm64' },
-      ]) {
+      ].map(async (target) => {
         await writeTargetFixture(stagingDirectory, target);
         const dependencyDirectory = path.join(stagingDirectory, target.key, 'apps', 'desktop', 'dist', 'installers', 'unpacked', 'dependency');
         await mkdir(dependencyDirectory, { recursive: true });
         await writeFile(path.join(dependencyDirectory, 'SHA256SUMS.txt'), 'unrelated dependency checksums\n');
-      }
+      }));
 
       await execFileAsync(process.execPath, [path.join(repositoryRoot, 'scripts', 'collect-release-assets.mjs')], {
         cwd: repositoryRoot,
@@ -79,7 +80,7 @@ describe('release asset collector', () => {
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it('rejects a missing sibling checksum instead of using a nested copy', async () => {
     const temporaryRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-release-collector-')));
@@ -118,7 +119,7 @@ async function writeTargetFixture(
     : target.platform === 'darwin'
       ? [`lnwjud-${version}-${target.arch}.dmg`, `lnwjud-${version}-${target.arch}.zip`, 'latest-mac.yml']
       : [`lnwjud-${version}-${target.arch}.AppImage`, `lnwjud-${version}-${target.arch}.deb`, target.arch === 'x64' ? 'latest-linux.yml' : 'latest-linux-arm64.yml'];
-  const artifactEntries = [];
+  const artifactEntries: Array<{ name: string; sizeBytes: number; sha256: string }> = [];
   for (const name of artifactNames) {
     const contents = name.endsWith('.yml') && target.platform === 'darwin'
       ? [

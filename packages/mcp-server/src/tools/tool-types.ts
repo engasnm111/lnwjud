@@ -106,7 +106,7 @@ export interface McpApplicationServices {
   readonly project?: Pick<ProjectService, 'detect'>;
   readonly engineeringPreparation?: Pick<EngineeringPreparationService, 'prepare'>;
   readonly engineeringCapture?: Pick<EngineeringBuildCaptureService, 'start' | 'complete' | 'uploadWorker'>;
-  readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
+  readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'writeFileStatus' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
   readonly checkpoint?: Pick<CheckpointService, 'list' | 'restore'>;
   readonly callHistory?: Pick<CallHistoryService, 'history'>;
   readonly taskResults?: Pick<TaskResultService, 'get'>;

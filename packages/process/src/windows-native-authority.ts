@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { PathExecutableResolver } from './executable-resolver.js';
+import { toWindowsSpawnInvocation } from './windows-spawn.js';
 import { serviceEndpointFailure, serviceResponseFailure } from './windows-native-rpc-failure.js';
 import type { WindowsContainedLaunch, WindowsContainedLaunchInput } from './windows-contained-launch.js';
 
@@ -83,6 +85,7 @@ export interface NativeProcessRequest {
 export type WindowsContainmentRpcRequest = { readonly protocol: 3; readonly identity: NativeAttemptBinding } & (
   | { readonly command: 'prepare' | 'run'; readonly operation: NativeServiceProcessOperation; readonly reservationKey?: string; readonly operationDigest?: string }
   | { readonly command: 'inspect' | 'cancel' }
+  | { readonly command: 'recover_after_reboot'; readonly recordedAt: string }
   | { readonly command: 'read_output'; readonly outputCursor?: NativeOutputCursor }
   | ({ readonly command: 'abort'; readonly reservationKey: string } & (
     | { readonly operation: NativeServiceProcessOperation; readonly operationDigest?: never }
@@ -318,6 +321,19 @@ export class WindowsNativeAuthority {
     }
   }
 
+  public async recoverAfterReboot(input: AttemptLocation & { readonly recordedAt: string }): Promise<NativeProcessObservation> {
+    try {
+      validateBinding(input.binding);
+      if (!Number.isFinite(Date.parse(input.recordedAt)) || !input.recordedAt.endsWith('Z'))
+        return unknown(input.binding, 'NATIVE_RECOVERY_TIME_INVALID');
+      return toObservation(await this.client.request<unknown>({
+        protocol: 3, command: 'recover_after_reboot', identity: input.binding, recordedAt: input.recordedAt,
+      }), input.binding);
+    } catch {
+      return unknown(input.binding, 'NATIVE_RECOVERY_PROOF_UNAVAILABLE');
+    }
+  }
+
   public async cancel(input: AttemptLocation): Promise<NativeProcessObservation> {
     try {
       validateBinding(input.binding);
@@ -415,6 +431,108 @@ class ProcessWindowsContainmentServiceClient implements WindowsContainmentServic
 
 interface ExecutablePin { close(): void }
 const requireNative = createRequire(import.meta.url);
+
+export interface WindowsMcpStdioTarget {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly env?: Readonly<Record<string, string>>;
+}
+export interface WindowsMcpStdioLaunch {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  closeAndVerify(child: ChildProcess): Promise<void>;
+  release(): void;
+}
+export interface WindowsMcpStdioOwner {
+  prepare(target: WindowsMcpStdioTarget): Promise<WindowsMcpStdioLaunch>;
+}
+
+export function createWindowsMcpStdioOwner(configuration: WindowsNativeAuthorityConfiguration): WindowsMcpStdioOwner {
+  return {
+    async prepare(target: WindowsMcpStdioTarget): Promise<WindowsMcpStdioLaunch> {
+      if (process.platform !== 'win32') throw new Error('NATIVE_WINDOWS_REQUIRED');
+      if (typeof target.command !== 'string' || target.command.trim().length === 0 || target.command.includes('\0'))
+        throw new Error('MCP_TARGET_EXECUTABLE_UNAVAILABLE');
+      const cwd = path.resolve(target.cwd ?? process.cwd());
+      let cwdInfo;
+      try { cwdInfo = await stat(cwd); } catch { throw new Error('MCP_TARGET_WORKING_DIRECTORY_UNAVAILABLE'); }
+      if (!cwdInfo.isDirectory()) throw new Error('MCP_TARGET_WORKING_DIRECTORY_UNAVAILABLE');
+      const environment = new Map<string, [string, string]>();
+      for (const [key, value] of Object.entries(definedEnvironment(process.env))) {
+        const normalized = key.toUpperCase();
+        environment.set(normalized, [['PATH', 'PATHEXT'].includes(normalized) ? normalized : key, value]);
+      }
+      for (const [key, value] of Object.entries(target.env ?? {})) {
+        if (typeof value !== 'string') throw new Error('MCP_TARGET_ENVIRONMENT_INVALID');
+        const normalized = key.toUpperCase();
+        environment.set(normalized, [['PATH', 'PATHEXT'].includes(normalized) ? normalized : key, value]);
+      }
+      const targetEnvironment = Object.fromEntries(environment.values());
+      const environmentEntries = Object.entries(targetEnvironment);
+      if (environmentEntries.length > 512 || environmentEntries.some(([key, value]) =>
+        key.length === 0 || key.length > 32_000 || key.includes('=') || key.includes('\0') || value.includes('\0')))
+        throw new Error('MCP_TARGET_ENVIRONMENT_INVALID');
+      if (Object.keys(targetEnvironment).some((key) => key.toUpperCase() === 'LNWJUD_MCP_STDIO_PROXY_CONFIG'))
+        throw new Error('MCP_PROXY_RESERVED_ENVIRONMENT_VARIABLE');
+      if (!path.win32.isAbsolute(target.command) && /^[a-z]:/i.test(target.command))
+        throw new Error('MCP_TARGET_EXECUTABLE_UNAVAILABLE');
+      const commandRoot = path.win32.parse(target.command).root;
+      const commandIsDriveOrUncQualified = commandRoot.length > 1;
+      const command = /[\\/]/.test(target.command) && !commandIsDriveOrUncQualified
+        ? path.win32.resolve(cwd, target.command)
+        : target.command;
+      const pathEntries = (targetEnvironment.PATH ?? '').split(path.win32.delimiter).filter(Boolean)
+        .map((entry) => path.win32.resolve(cwd, entry));
+      const pathEnvironment = { ...targetEnvironment, PATH: [cwd, ...pathEntries].join(path.win32.delimiter) };
+      const resolved = await new PathExecutableResolver(pathEnvironment, 'win32').resolve(command);
+      if (!resolved.ok) throw new Error('MCP_TARGET_EXECUTABLE_UNAVAILABLE');
+      const extension = path.win32.extname(resolved.value).toLowerCase();
+      if (!['.exe', '.cmd', '.bat'].includes(extension)) throw new Error('MCP_TARGET_EXECUTABLE_UNAVAILABLE');
+      const targetArgs = [...(target.args ?? [])];
+      if (targetArgs.length > 512 || targetArgs.some((argument) => typeof argument !== 'string' || argument.includes('\0')))
+        throw new Error('MCP_TARGET_COMMAND_UNAVAILABLE');
+      const invocation = toWindowsSpawnInvocation(resolved.value, targetArgs, {}, 'win32');
+      if (!invocation.ok) throw new Error('MCP_TARGET_COMMAND_UNAVAILABLE');
+      const request = JSON.stringify({
+        command: invocation.value.executable,
+        args: [...invocation.value.args],
+        cwd,
+        environment: targetEnvironment,
+        windowsVerbatimArguments: invocation.value.windowsVerbatimArguments === true,
+      });
+      const requestCharacters = invocation.value.executable.length + cwd.length
+        + invocation.value.args.reduce((total, argument) => total + argument.length + 1, 0)
+        + environmentEntries.reduce((total, [key, value]) => total + key.length + value.length + 2, 0);
+      if (requestCharacters >= 32_000) throw new Error('MCP_PROXY_CONFIGURATION_TOO_LARGE');
+      if (Buffer.byteLength(request, 'utf8') > 64 * 1024) throw new Error('MCP_PROXY_CONFIGURATION_TOO_LARGE');
+      const pinned = await pinVerifiedHelper(configuration);
+      let released = false;
+      return {
+        command: configuration.helper.executable,
+        args: ['mcp-stdio-proxy'],
+        env: { LNWJUD_MCP_STDIO_PROXY_CONFIG: request },
+        async closeAndVerify(child: ChildProcess): Promise<void> {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            if (child.exitCode === 0 && child.signalCode === null) return;
+            throw new Error('MCP_PROXY_TERMINATION_UNVERIFIED');
+          }
+          if (child.stdin === null || child.stdin.destroyed) throw new Error('MCP_PROXY_INPUT_UNAVAILABLE');
+          if (!child.stdin.writableEnded) child.stdin.end();
+          const exitCode = await childCompletion(child, 15_000);
+          if (exitCode !== 0 || child.signalCode !== null) throw new Error('MCP_PROXY_TERMINATION_UNVERIFIED');
+        },
+        release(): void {
+          if (released) return;
+          released = true;
+          pinned.close();
+        },
+      };
+    },
+  };
+}
+
 async function pinVerifiedHelper(config: WindowsNativeAuthorityConfiguration): Promise<ExecutablePin> {
   await assertPlainPath(config.pin.modulePath, false);
   if (createHash('sha256').update(await readFile(config.pin.modulePath)).digest('hex') !== config.pin.sha256.toLowerCase()) throw new Error('NATIVE_PIN_BOOTSTRAP_INTEGRITY_FAILED');

@@ -78,6 +78,10 @@ function invoke(filename, args, childEnvironment) {
   });
 }
 
+function signerEnvironmentPresent() {
+  return Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM');
+}
+
 export async function acquirePinnedVerifier(configured) {
   if (configured === null || typeof configured !== 'object') refuse('RELEASE_VERIFIER_UNTRUSTED');
   const filenameField = Object.getOwnPropertyDescriptor(configured, 'filename');
@@ -85,6 +89,7 @@ export async function acquirePinnedVerifier(configured) {
   if (!filenameField || !digestField || !Object.hasOwn(filenameField, 'value') || !Object.hasOwn(digestField, 'value')
     || filenameField.value !== 'gh.exe' || typeof digestField.value !== 'string' || !/^[a-f0-9]{64}$/.test(digestField.value))
     refuse('RELEASE_VERIFIER_UNTRUSTED');
+  if (signerEnvironmentPresent()) refuse('RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED');
   const expectedDigest = digestField.value;
   const addon = await loadVerifierPinModule();
   const filename = path.join(repositoryRoot, 'tools/update-attestation/gh.exe');
@@ -137,6 +142,7 @@ export async function acquirePinnedVerifier(configured) {
       inspecting = true;
       try {
         requested = snapshotStrings(filenames, 8, 'RELEASE_INPUT_INVALID');
+        if (signerEnvironmentPresent()) refuse('RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED');
         if (inputs.length + reserved + requested.length > 8) refuse('RELEASE_INPUT_INVALID');
         reserved += requested.length; pinning++;
       } finally { inspecting = false; }
@@ -163,6 +169,7 @@ export async function acquirePinnedVerifier(configured) {
       inspecting = true;
       try { requested = snapshotStrings(args, 64, 'RELEASE_VERIFIER_ARGUMENTS_INVALID'); }
       finally { inspecting = false; }
+      if (signerEnvironmentPresent()) refuse('RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED');
       running = true;
       const completion = invoke(filename, requested, childEnvironment);
       pending.add(completion);

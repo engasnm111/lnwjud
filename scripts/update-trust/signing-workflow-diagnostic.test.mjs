@@ -15,7 +15,8 @@ const env = () => ({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwj
 const run = () => ({ id: 42, run_attempt: 1, path: '.github/workflows/update-signing.yml', event: 'workflow_dispatch',
   head_sha: commit, head_branch: 'main', status: 'in_progress', conclusion: null,
   repository: { id: 1329830515 }, head_repository: { id: 1329830515 } });
-const jobs = () => ({ total_count: 1, jobs: [{ name: 'verify signing evidence', run_id: 42, head_sha: commit, status: 'completed', conclusion: 'success' }] });
+const jobs = () => ({ total_count: 1, jobs: [{ name: 'verify signing evidence', run_id: 42, head_sha: commit, status: 'completed', conclusion: 'success',
+  runner_group_name: 'GitHub Actions', runner_name: 'GitHub Actions 1000013323', labels: ['windows-latest'] }] });
 const artifact = () => ({ id: 12, name: 'lnwjud-signing-evidence', expired: false, size_in_bytes: 1024, digest: `sha256:${'c'.repeat(64)}`,
   workflow_run: { id: 42, repository_id: 1329830515, head_repository_id: 1329830515, head_sha: commit } });
 const bytes = value => Buffer.from(JSON.stringify(value));
@@ -34,7 +35,9 @@ test('untrusted workflow context and key-bearing diagnostic refuse', () => {
     e => { e.GITHUB_ACTIONS = 'false'; }, e => { e.GITHUB_REPOSITORY_ID = '3'; }, e => { e.GITHUB_REF = 'refs/heads/dev'; },
     e => { e.GITHUB_REF_PROTECTED = 'false'; }, e => { e.GITHUB_EVENT_NAME = 'push'; }, e => { e.GITHUB_WORKFLOW_SHA = 'b'.repeat(40); },
     e => { e.GITHUB_RUN_ATTEMPT = '02'; }, e => { e.GITHUB_RUN_ATTEMPT = '2'; }, e => { e.LNWJUD_VERIFY_RESULT = 'skipped'; },
-    e => { e.LNWJUD_VERIFY_MANIFEST_SHA256 = 'A'.repeat(64); }, e => { e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = 'fixture'; }
+    e => { e.LNWJUD_VERIFY_MANIFEST_SHA256 = 'A'.repeat(64); }, e => { e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = 'fixture'; },
+    e => { e.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = ''; },
+    e => { e.lnwjud_update_release_private_key_pem = ''; }
   ]) { const value = env(); change(value); assert.throws(() => inspectSigningWorkflowContext(value)); }
 });
 
@@ -44,6 +47,10 @@ test('refuses wrong attempt, incomplete jobs and substituted artifact', () => {
     ({ r }) => { r.run_attempt = 2; }, ({ r }) => { r.head_repository.id = 9; }, ({ r }) => { r.status = 'completed'; },
     ({ j }) => { j.total_count = 2; }, ({ j }) => { j.jobs[0].conclusion = 'failure'; },
     ({ j }) => { j.jobs[0].run_id = 41; }, ({ j }) => { j.jobs.push({ ...j.jobs[0] }); j.total_count = 2; },
+    ({ j }) => { j.jobs[0].runner_group_name = 'Default'; },
+    ({ j }) => { j.jobs[0].runner_name = 'self-hosted-windows'; },
+    ({ j }) => { j.jobs[0].labels = ['self-hosted', 'windows']; },
+    ({ j }) => { j.jobs[0].labels = ['windows-latest', 'self-hosted']; },
     ({ a }) => { a.id = 13; }, ({ a }) => { a.expired = true; },
     ({ a }) => { a.workflow_run.id = 41; }, ({ a }) => { a.workflow_run.repository_id = 3; },
     ({ a }) => { a.digest = null; }, ({ a }) => { a.size_in_bytes = 0; }, ({ a }) => { a.size_in_bytes = 5368709121; }

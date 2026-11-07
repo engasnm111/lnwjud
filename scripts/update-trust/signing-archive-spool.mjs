@@ -1,6 +1,8 @@
+import process from 'node:process';
 import { Readable, Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { downloadSigningArtifactArchive } from './signing-artifact-download.mjs';
+import { inspectSigningArchive } from './signing-archive-entries.mjs';
 
 const destroyReadable = Readable.prototype.destroy;
 const readableClosed = Object.getOwnPropertyDescriptor(Readable.prototype, 'closed').get;
@@ -29,6 +31,15 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
   if (!addon || typeof addon.createArchiveSpool !== 'function' || typeof filename !== 'string'
     || !artifact || typeof artifact !== 'object' || typeof consume !== 'function') throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
   const { artifactId, archiveSha256, archiveSizeBytes } = artifact;
+  // Refuse before creating a native file: download-level validation runs only after spool creation.
+  if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM'))
+    throw new Error('SIGNING_ARCHIVE_DOWNLOAD_REFUSED');
+  if (typeof artifactId !== 'string' || !/^[1-9][0-9]{0,14}$/.test(artifactId)
+    || !Number.isSafeInteger(Number(artifactId)) || typeof archiveSha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(archiveSha256) || !Number.isSafeInteger(archiveSizeBytes)
+    || archiveSizeBytes < 1 || archiveSizeBytes > 5 * 1024 * 1024 * 1024
+    || typeof token !== 'string' || token.length < 1 || token.length > 4096
+    || (fetchImpl !== undefined && typeof fetchImpl !== 'function')) throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
   const spool = addon.createArchiveSpool(filename, archiveSizeBytes, archiveSha256);
   const streams = new Map();
   let active = true, failed = false, primary, result;
@@ -93,4 +104,17 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
   catch (cleanupError) { throw new ArchiveQuarantineError(spool, failed, primary, cleanupError); }
   if (failed) throw primary;
   return result;
+}
+
+/**
+ * Download, verify the immutable archive digest and inspect every bound member
+ * before exposing any member bytes to a key-free consumer. Still not signing authority.
+ */
+export function withInspectedSigningArchive(options, consume) {
+  if (typeof consume !== 'function' || !options || typeof options.expectedManifestSha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(options.expectedManifestSha256)) throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
+  return withDownloadedSigningArchive(options, async reader => {
+    const inspection = await inspectSigningArchive(reader, options.expectedManifestSha256);
+    return consume(reader, inspection);
+  });
 }

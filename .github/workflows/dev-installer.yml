@@ -64,6 +64,34 @@ jobs:
           LNWJUD_COSIGN_PATH: cosign
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
 
+      - name: Verify silent current-user setup refuses without extracting application files
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -LiteralPath 'apps/desktop/dist/installers' -Filter 'lnwjud-Setup-*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'EXPECTED_ONE_NSIS_INSTALLER' }
+          $target = Join-Path $env:RUNNER_TEMP 'lnwjud-currentuser-refusal'
+          if (Test-Path -LiteralPath $target) { throw 'INSTALL_TEST_TARGET_ALREADY_EXISTS' }
+          $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\com.lnwjud.desktop'
+          $hadUninstallKey = Test-Path -LiteralPath $uninstallKey
+          $hadService = $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)
+          if ($hadUninstallKey -or $hadService) { throw 'INSTALL_TEST_RUNNER_NOT_CLEAN' }
+          $installer = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', '/currentuser', "/D=$target") -PassThru -WindowStyle Hidden
+          if (-not $installer.WaitForExit(90000)) {
+            $installer.Kill()
+            throw 'SILENT_CURRENTUSER_INSTALLER_TIMEOUT'
+          }
+          if ($installer.ExitCode -ne 125) { throw "SILENT_CURRENTUSER_EXPECTED_REFUSAL_125_ACTUAL_$($installer.ExitCode)" }
+          if ((Test-Path -LiteralPath $target) -and @(Get-ChildItem -LiteralPath $target -Force).Count -ne 0) {
+            throw 'SILENT_CURRENTUSER_EXTRACTED_FILES'
+          }
+          if ((Test-Path -LiteralPath $uninstallKey) -or
+              $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)) {
+            throw 'SILENT_CURRENTUSER_CREATED_INSTALL_REGISTRATION'
+          }
+          Write-Output 'SILENT_CURRENTUSER_CLEAN_REFUSAL_VERIFIED'
+
       - name: Run packaged Windows Electron MCP and security smoke
         shell: pwsh
         timeout-minutes: 10

@@ -178,6 +178,48 @@ describe('downloaded update installation', () => {
     active = 0;
   });
 
+  it('holds installation while local activity sampling fails, then requires a trustworthy quiet period', async () => {
+    vi.useFakeTimers();
+    let failedSamples = 2;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => {
+        if (failedSamples > 0) { failedSamples -= 1; throw new Error('Activity unavailable'); }
+        return 0;
+      },
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    expect(coordinator.requestInstall(offer)).toBe(true);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('restarts the quiet period if local activity observation fails after initial admission', async () => {
+    vi.useFakeTimers();
+    let samples = 0;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => {
+        if (++samples === 3) throw new Error('Activity temporarily unavailable');
+        return 0;
+      },
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    expect(coordinator.requestInstall(offer)).toBe(true);
+    await vi.advanceTimersByTimeAsync(19);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
   it('installs after MCP becomes idle for the quiet period', async () => {
     vi.useFakeTimers();
     let active = 1;
@@ -239,6 +281,44 @@ describe('downloaded update installation', () => {
     expect(install).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(install).toHaveBeenCalledOnce();
+  });
+
+  it('does not install when local activity count is invalid', async () => {
+    vi.useFakeTimers();
+    let localCount = Number.NaN;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => localCount,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    localCount = 0;
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('refuses a malformed shared activity count instead of treating negative work as idle', async () => {
+    vi.useFakeTimers();
+    let shared: UpdateSharedActivitySnapshot = { state: 'available', activeCallCount: -1, revision: 0 };
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<boolean> => true,
+      sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => shared,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    shared = { state: 'available', activeCallCount: 0, revision: 1 };
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
   });
 
   it('fails closed while a running tunnel has no trustworthy shared STDIO activity snapshot', async () => {

@@ -68,6 +68,7 @@ import {
   SqliteWorkspaceRepository,
 } from '@lnwjud/storage';
 import { isMachineRootPath, SecretPolicy, WorkspacePathGuard, WorkspaceService, type Workspace } from '@lnwjud/workspace';
+import { createWindowsMcpStdioOwner } from '@lnwjud/process';
 import { StrictWorkspaceRepository } from './strict-workspace-repository.js';
 
 export interface PersistedStdioSecurityPolicy {
@@ -192,6 +193,7 @@ export function createStdioMcpRuntime(
   const workspaceQuery = new WorkspaceQueryService(workspaceRepository, pathGuard);
   const extensions = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
+    ...(nativeAuthority === undefined ? {} : { windowsMcpStdioOwner: createWindowsMcpStdioOwner(nativeAuthority.configuration) }),
     workspaceRootProvider: async (): Promise<string> => workspace.realRootPath,
     callTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpCallTimeoutMs), DEFAULT_MCP_CALL_TIMEOUT_MS, 1_000, 60 * 60_000),
     idleTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpIdleTimeoutMs), DEFAULT_MCP_IDLE_TIMEOUT_MS, 30_000, 24 * 60 * 60_000),

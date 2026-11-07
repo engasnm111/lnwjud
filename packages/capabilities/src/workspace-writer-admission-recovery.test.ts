@@ -20,6 +20,7 @@ interface MockAuthorityContext {
   readonly authority: WindowsNativeAuthority;
   readonly setPhase: (phase: number, details?: { outcome?: number; exitCode?: number; targetPid?: number; reason?: string }) => void;
   readonly setAttemptLost: (lost: boolean) => void;
+  readonly setRecoveryJobActive: (active: boolean) => void;
   readonly getCancelledAttempts: () => readonly string[];
 }
 
@@ -30,6 +31,7 @@ function createMockAuthority(root: string): MockAuthorityContext {
   let currentTargetPid = 12345;
   let currentReason: string | undefined;
   let attemptLost = false;
+  let recoveryJobActive = false;
   const cancelled: string[] = [];
 
   const client: WindowsContainmentServiceClient = {
@@ -52,6 +54,16 @@ function createMockAuthority(root: string): MockAuthorityContext {
         }
         currentPhase = 2;
         return { identity: request.identity, phase: 2, reservationHeld: false } as T;
+      }
+      if (request.command === 'recover_after_reboot') {
+        if (!attemptLost || recoveryJobActive || !request.recordedAt.endsWith('Z'))
+          throw new Error('SERVICE_RECOVERY_JOB_UNVERIFIED');
+        attemptLost = false;
+        currentPhase = 4;
+        currentOutcome = 3;
+        currentExitCode = 125;
+        return { identity: request.identity, phase: 4, outcome: 3, exitCode: 125,
+          activeProcesses: 0, reservationHeld: false } as T;
       }
       if (request.command === 'inspect') {
         if (attemptLost) {
@@ -95,6 +107,9 @@ function createMockAuthority(root: string): MockAuthorityContext {
     },
     setAttemptLost: (lost: boolean): void => {
       attemptLost = lost;
+    },
+    setRecoveryJobActive: (active: boolean): void => {
+      recoveryJobActive = active;
     },
     getCancelledAttempts: () => [...cancelled],
   };
@@ -756,7 +771,7 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
     expect(snapshot.ok).toBe(true);
     if (snapshot.ok) {
       expect(snapshot.value.state).toBe('failed');
-      expect(snapshot.value.exit_code).toBe(-1);
+      expect(snapshot.value.exit_code).toBe(125); // Interrupted after reboot; no fabricated target exit status.
     }
   }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
 
@@ -844,6 +859,31 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
     expect(recovered.ok).toBe(false);
     if (recovered.ok) return;
     expect(recovered.error.message).toMatch(/Unverified native process descendants block repository import/);
+  }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
+
+  it('15b. Missing service ledger with active native Job never releases writer', async () => {
+    const f = await fixture(10_000);
+    const workspaceId = 'workspace-1';
+    const clientId = 'client-1';
+    await f.lease.acquire(workspaceId, clientId, 'session-1', 30);
+    const taskId = randomUUID();
+    const digest = createHash('sha256').update(taskId).digest('hex');
+    const binding: NativeAttemptBinding = {
+      taskId, reservationId: taskId, attemptId: randomUUID(), generation: 1, requestDigest: digest,
+      ownerClientId: clientId, ownerSessionId: 'session-1', workspaceId,
+    };
+    await mkdir(path.join(f.taskDirectory, taskId), { recursive: true });
+    await (f.store as unknown as { activeIndex: { reserve: (input: unknown) => Promise<unknown> } }).activeIndex.reserve({
+      taskId, capacityClass: 'managed_writer', requestDigest: digest, mutationKind: 'opaque_contained_process',
+      nativeBinding: binding, nativeReceiptPath: path.join(f.taskDirectory, taskId, 'containment.receipt.json'),
+      ownerClientId: clientId, ownerWorkspaceId: workspaceId,
+    });
+    f.mock.setAttemptLost(true);
+    f.mock.setRecoveryJobActive(true);
+    f.advanceTime(35_000);
+    const recovered = await f.lease.acquire(workspaceId, clientId, 'session-2', 60, true);
+    expect(recovered.ok).toBe(false);
+    if (!recovered.ok) expect(recovered.error.message).toMatch(/Unverified native process descendants/);
   }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
 
   it('16. Crash After Dispatch + Terminal Reconciled: recovers cleanly once kernel confirms termination', async () => {

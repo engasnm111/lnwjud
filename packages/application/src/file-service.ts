@@ -30,6 +30,7 @@ import { isProtectedCriticalPath } from '@lnwjud/shared';
 import { isFilesystemRoot, isWithin, WorkspacePathGuard, type ResolvedWorkspacePath, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
 import type { CheckpointServicePort } from './checkpoint-service.js';
 import { createGuardedWriteValidator } from './guarded-write.js';
+import { FileWriteOperationJournal, validFileWriteOperationId } from './file-write-operation-journal.js';
 import type { ManagedWriterAdmissionPort } from './writer-admission.js';
 import { runMutationTransaction } from './mutation-transaction.js';
 import { resolveSharedWorkspace, resolveWorkspaceForPath } from './workspace-locator.js';
@@ -84,9 +85,13 @@ export interface FileServiceDependencies {
   /** Move deleted targets to recovery trash instead of permanently unlinking them. */
   readonly recoverableDelete?: () => boolean;
   readonly recoveryTrashRoot?: string;
+  /** Host-private durable receipt directory, outside user workspaces. */
+  readonly writeOperationJournalRoot?: string;
 }
 
 export interface WriteFileRequest {
+  /** Stable caller-generated UUID for transport-loss reconciliation. Never replay an unknown outcome. */
+  readonly operationId?: string;
   readonly path: string;
   readonly content: string;
   /** Existing targets are create-only unless this is explicitly true. */
@@ -101,6 +106,14 @@ export interface WriteFileResult {
   readonly path: string;
   readonly bytesWritten: number;
   readonly checkpointId?: string;
+}
+
+export interface WriteFileOperationStatus {
+  readonly operationId: string;
+  readonly state: 'outcome_unverified' | 'succeeded' | 'failed';
+  readonly createdAt: string;
+  readonly finishedAt?: string;
+  readonly result?: Result<WriteFileResult>;
 }
 
 export interface ApplyPatchRequest {
@@ -224,6 +237,7 @@ export class FileService {
   private readonly protectCriticalFiles: () => boolean;
   private readonly recoverableDelete: () => boolean;
   private readonly recoveryTrashRoot: string | undefined;
+  private readonly writeOperationJournal: FileWriteOperationJournal | undefined;
 
   public constructor(
     private readonly workspaces: WorkspaceRepository,
@@ -244,6 +258,8 @@ export class FileService {
     this.protectCriticalFiles = dependencies.protectCriticalFiles ?? ((): boolean => true);
     this.recoverableDelete = dependencies.recoverableDelete ?? ((): boolean => true);
     this.recoveryTrashRoot = dependencies.recoveryTrashRoot;
+    this.writeOperationJournal = dependencies.writeOperationJournalRoot === undefined
+      ? undefined : new FileWriteOperationJournal(dependencies.writeOperationJournalRoot);
   }
 
   private async withWriterAdmission<T>(
@@ -353,8 +369,60 @@ export class FileService {
     return ok({ files });
   }
 
-  public writeFile(actor: FileActor, workspaceId: string | undefined, request: WriteFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<WriteFileResult>> {
-    return this.withWriterAdmission(actor, workspaceId, () => this.writeFileInternal(actor, workspaceId, request, signal, authorization));
+  public async writeFile(actor: FileActor, workspaceId: string | undefined, request: WriteFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<WriteFileResult>> {
+    const mutate = (): Promise<Result<WriteFileResult>> =>
+      this.withWriterAdmission(actor, workspaceId, () => this.writeFileInternal(actor, workspaceId, request, signal, authorization));
+    if (request?.operationId === undefined) return mutate();
+    const operationId = request.operationId;
+    if (!validFileWriteOperationId(operationId) || workspaceId === undefined || this.writeOperationJournal === undefined) {
+      return err(appError('INVALID_INPUT', 'Durable write requires a UUID operationId, explicit workspaceId and configured receipt storage'));
+    }
+    let admission: Awaited<ReturnType<FileWriteOperationJournal['begin']>>;
+    try {
+      admission = await this.writeOperationJournal.begin(operationId, actor, workspaceId, request);
+    } catch {
+      return err(appError('CONFLICT', 'Write operation receipt could not be admitted or the operation ID conflicts; do not retry with a new ID'));
+    }
+    if (!admission.fresh) {
+      if (admission.receipt.state === 'settled' && admission.receipt.result !== undefined) return admission.receipt.result;
+      return err(appError('CONFLICT', 'Write operation is pending or its outcome is unverified; query write_file_status before any further mutation'));
+    }
+    // Admission is durably recorded before waiting for a shared writer permit.
+    // Transport cancellation cannot prove the mutation was never committed.
+    let result: Result<WriteFileResult>;
+    try {
+      result = await mutate();
+    } catch {
+      return err(appError('CONFLICT', 'Write operation ended without a terminal receipt; inspect write_file_status and the target before retrying'));
+    }
+    try {
+      await this.writeOperationJournal.settle(admission.receipt, result);
+    } catch {
+      return err(appError('CONFLICT', 'Write operation may have committed but its terminal receipt could not be persisted; do not replay'));
+    }
+    return result;
+  }
+
+  public async writeFileStatus(actor: FileActor, workspaceId: string | undefined, operationId: string): Promise<Result<WriteFileOperationStatus>> {
+    if (!validFileWriteOperationId(operationId) || workspaceId === undefined || this.writeOperationJournal === undefined) {
+      return err(appError('INVALID_INPUT', 'A UUID operationId, explicit workspaceId and configured receipt storage are required'));
+    }
+    try {
+      const receipt = await this.writeOperationJournal.status(operationId, actor, workspaceId);
+      if (receipt === undefined) return err(appError('FILE_NOT_FOUND', 'Write operation receipt was not found'));
+      const uncertain = receipt.state === 'pending' ||
+        (receipt.result?.ok === false && receipt.result.error.code === 'CONFLICT' &&
+          /may already|may have|unverified|uncertain/i.test(receipt.result.error.message));
+      return ok({
+        operationId: receipt.operationId,
+        state: uncertain ? 'outcome_unverified' : receipt.result?.ok === true ? 'succeeded' : 'failed',
+        createdAt: receipt.createdAt,
+        ...(receipt.finishedAt === undefined ? {} : { finishedAt: receipt.finishedAt }),
+        ...(receipt.result === undefined ? {} : { result: receipt.result }),
+      });
+    } catch {
+      return err(appError('CONFLICT', 'Write operation receipt could not be verified for this actor and workspace'));
+    }
   }
 
   private async writeFileInternal(actor: FileActor, workspaceId: string | undefined, request: WriteFileRequest, signal?: AbortSignal, authorization?: InvocationAuthorization): Promise<Result<WriteFileResult>> {

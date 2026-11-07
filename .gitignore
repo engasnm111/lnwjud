@@ -6,6 +6,8 @@ node_modules/
 # Build & Compilation
 # Linker-generated Windows N-API import library at the repository root.
 /pin.lib
+# Locally provisioned, externally signed GitHub CLI verifier (never commit a binary).
+/tools/update-attestation/gh.exe
 dist/
 build/
 !apps/desktop/build/

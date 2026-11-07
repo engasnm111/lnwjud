@@ -140,6 +140,107 @@ internal static class ReleaseAuthorizationV2Tests
             var signatureBytes = key.SignData(message, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
             return Wire.Encode(new JsonObject { ["protocol"] = 2, ["keyId"] = "negative-fixture", ["payload"] = Convert.ToBase64String(payloadBytes), ["signature"] = Convert.ToBase64String(signatureBytes) });
         }
+        var authenticatedDirectory = Path.Combine(Path.GetTempPath(), "lnwjud-authenticated-update-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(authenticatedDirectory);
+        try
+        {
+            var installer = Wire.Utf8.GetBytes("signed update installer bytes");
+            var provenance = Wire.Utf8.GetBytes("signed update provenance bytes");
+            var artifactBundle = Wire.Utf8.GetBytes("signed update artifact bundle");
+            var provenanceBundle = Wire.Utf8.GetBytes("signed update provenance bundle");
+            var signed = SignCandidate(value =>
+            {
+                var release = value["release"]!;
+                release["artifact"]!["sha256"] = ReleaseTrustPolicy.Hash(installer);
+                release["artifact"]!["sizeBytes"] = Wire.Decimal((ulong)installer.Length);
+                release["provenance"]!["sha256"] = ReleaseTrustPolicy.Hash(provenance);
+                release["provenance"]!["sizeBytes"] = Wire.Decimal((ulong)provenance.Length);
+                release["buildEvidence"]!["artifactAttestationSha256"] = ReleaseTrustPolicy.Hash(artifactBundle);
+                release["buildEvidence"]!["provenanceAttestationSha256"] = ReleaseTrustPolicy.Hash(provenanceBundle);
+            });
+            var installerPath = Path.Combine(authenticatedDirectory, "lnwjud-Setup-5.9.1.exe");
+            var bundlePath = Path.Combine(authenticatedDirectory, "artifact.bundle.json");
+            File.WriteAllBytes(Path.Combine(authenticatedDirectory, "RELEASE.json"), signed);
+            File.WriteAllBytes(installerPath, installer);
+            File.WriteAllBytes(Path.Combine(authenticatedDirectory, "PROVENANCE.json"), provenance);
+            File.WriteAllBytes(bundlePath, artifactBundle);
+            File.WriteAllBytes(Path.Combine(authenticatedDirectory, "provenance.bundle.json"), provenanceBundle);
+            using (var package = AuthenticatedUpdatePackage.Open(authenticatedDirectory, extraPolicy, time, retained, snapshot))
+            {
+                Check(package.Metadata.Candidate.EnvelopeSha256 == ReleaseTrustPolicy.Hash(signed),
+                    "signed package preflight binds exact release envelope");
+                Check(package.Metadata.PreviousIdentitySha256 == first.IdentitySha256,
+                    "signed package preflight binds accepted predecessor");
+                package.Files.RecheckAll();
+                Check(package.Files.AbsolutePath("lnwjud-Setup-5.9.1.exe") == installerPath,
+                    "signed package preflight pins installed artifact path");
+            }
+            File.WriteAllBytes(installerPath, Wire.Utf8.GetBytes("signed update installer byte!"));
+            Refused(() => { using var invalid = AuthenticatedUpdatePackage.Open(authenticatedDirectory, extraPolicy, time, retained, snapshot); },
+                "changed signed update installer refuses");
+            File.WriteAllBytes(installerPath, installer);
+            File.WriteAllBytes(bundlePath, Wire.Utf8.GetBytes("tampered attestation bytes"));
+            Refused(() => { using var invalid = AuthenticatedUpdatePackage.Open(authenticatedDirectory, extraPolicy, time, retained, snapshot); },
+                "changed attestation bundle refuses");
+            File.WriteAllBytes(bundlePath, artifactBundle);
+            Refused(() => { using var invalid = AuthenticatedUpdatePackage.Open(authenticatedDirectory, extraPolicy, time, null, snapshot); },
+                "signed update without retained installed baseline refuses");
+            Refused(() => { using var invalid = AuthenticatedUpdatePackage.Open(authenticatedDirectory, extraPolicy, time, retained, snapshot with { HighestAcceptedSequence = 101 }); },
+                "signed update replay against accepted sequence refuses");
+            var corrupt = JsonNode.Parse(signed)!.AsObject();
+            corrupt["signature"] = Convert.ToBase64String(new byte[64]);
+            File.WriteAllBytes(Path.Combine(authenticatedDirectory, "RELEASE.json"), Wire.Encode(corrupt));
+            Refused(() => { using var invalid = AuthenticatedUpdatePackage.Open(authenticatedDirectory, extraPolicy, time, retained, snapshot); },
+                "signed update with corrupted release signature refuses");
+        }
+        finally { Directory.Delete(authenticatedDirectory, true); }
+        var baselineDirectory = Path.Combine(Path.GetTempPath(), "lnwjud-signed-baseline-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(baselineDirectory);
+        try
+        {
+            var installer = Wire.Utf8.GetBytes("first signed installer payload");
+            var provenance = Wire.Utf8.GetBytes("first signed provenance payload");
+            var artifactBundle = Wire.Utf8.GetBytes("first signed artifact attestation");
+            var provenanceBundle = Wire.Utf8.GetBytes("first signed provenance attestation");
+            var payload = JsonNode.Parse(first.Payload.GetRawText())!.AsObject();
+            var release = payload["release"]!;
+            release["artifact"]!["sha256"] = ReleaseTrustPolicy.Hash(installer);
+            release["artifact"]!["sizeBytes"] = Wire.Decimal((ulong)installer.Length);
+            release["provenance"]!["sha256"] = ReleaseTrustPolicy.Hash(provenance);
+            release["provenance"]!["sizeBytes"] = Wire.Decimal((ulong)provenance.Length);
+            release["buildEvidence"]!["artifactAttestationSha256"] = ReleaseTrustPolicy.Hash(artifactBundle);
+            release["buildEvidence"]!["provenanceAttestationSha256"] = ReleaseTrustPolicy.Hash(provenanceBundle);
+            var bytes = Wire.Encode(payload);
+            var message = System.Text.Encoding.ASCII.GetBytes("lnwjud-update-release-v2\0").Concat(bytes).ToArray();
+            var baselineSignature = key.SignData(message, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+            var signed = Wire.Encode(new JsonObject
+            {
+                ["protocol"] = 2, ["keyId"] = "negative-fixture",
+                ["payload"] = Convert.ToBase64String(bytes), ["signature"] = Convert.ToBase64String(baselineSignature),
+            });
+            File.WriteAllBytes(Path.Combine(baselineDirectory, "RELEASE.json"), signed);
+            var installerPath = Path.Combine(baselineDirectory, "lnwjud-Setup-5.9.0.exe");
+            File.WriteAllBytes(installerPath, installer);
+            File.WriteAllBytes(Path.Combine(baselineDirectory, "PROVENANCE.json"), provenance);
+            File.WriteAllBytes(Path.Combine(baselineDirectory, "artifact.bundle.json"), artifactBundle);
+            File.WriteAllBytes(Path.Combine(baselineDirectory, "provenance.bundle.json"), provenanceBundle);
+            using (var verifiedPackage = AuthenticatedBaselinePackage.Open(baselineDirectory, extraPolicy, time))
+            {
+                Check(verifiedPackage.Authorization.EnvelopeSha256 == ReleaseTrustPolicy.Hash(signed),
+                    "native baseline enrollment pins the signed v2 envelope");
+                Check(verifiedPackage.Files.AbsolutePath("lnwjud-Setup-5.9.0.exe") == installerPath,
+                    "native baseline enrollment pins the original installer");
+                verifiedPackage.Files.RecheckAll();
+            }
+            File.WriteAllBytes(installerPath, Wire.Utf8.GetBytes("changed signed installer payload"));
+            Refused(() => { using var invalid = AuthenticatedBaselinePackage.Open(baselineDirectory, extraPolicy, time); },
+                "changed native baseline installer refuses");
+            File.WriteAllBytes(installerPath, installer);
+            File.WriteAllBytes(Path.Combine(baselineDirectory, "artifact.bundle.json"), Wire.Utf8.GetBytes("altered"));
+            Refused(() => { using var invalid = AuthenticatedBaselinePackage.Open(baselineDirectory, extraPolicy, time); },
+                "changed native baseline attestation bundle refuses");
+        }
+        finally { Directory.Delete(baselineDirectory, true); }
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => value["recovery"]!["previousReleaseIdentity"] = new string('d', 64)), extraPolicy, time, retained, snapshot), "signed wrong predecessor refuses");
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => value["release"]!["compatibility"]!["serviceContractSha256"] = new string('d', 64)), extraPolicy, time, retained, snapshot), "incompatible recovery contract refuses");
         Refused(() => ReleaseAuthorizationV2.VerifyOffer(SignCandidate(value => { value["release"]!["platform"] = "darwin"; value["release"]!["distribution"] = "macos-zip"; value["release"]!["artifact"]!["name"] = "lnwjud-5.9.1-x64.zip"; }), extraPolicy, time, retained, snapshot), "cross-target update refuses");

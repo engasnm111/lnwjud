@@ -39,9 +39,24 @@ test('downloads the exact artifact and never forwards its token to redirected ho
   }
 });
 
+test('accepts the additional observed GitHub artifact storage host without forwarding credentials', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return calls.length === 1
+      ? redirected('https://productionresultssa11.blob.core.windows.net/archive')
+      : new globalThis.Response(bytes, { headers: { 'content-length': String(bytes.length) } });
+  };
+  const result = request(fetchImpl);
+  assert.deepEqual(await result.promise, { sizeBytes: bytes.length, sha256 });
+  assert.deepEqual(Buffer.concat(result.chunks), bytes);
+  assert.equal(calls[1].options.headers.authorization, undefined);
+});
+
 test('rejects wrong archive digest, unsafe redirects and unbounded or altered content', async () => {
   for (const fetchImpl of [
     async (url) => url.startsWith('https://api.github.com/') ? redirected('https://127.0.0.1/a') : new globalThis.Response(bytes),
+    async (url) => url.startsWith('https://api.github.com/') ? redirected('https://productionresultssa12.blob.core.windows.net/a') : new globalThis.Response(bytes),
     async (url) => url.startsWith('https://api.github.com/') ? redirected('http://productionresultssa8.blob.core.windows.net/a') : new globalThis.Response(bytes),
     async (url) => url.startsWith('https://api.github.com/') ? redirected('https://user:password@productionresultssa8.blob.core.windows.net/a') : new globalThis.Response(bytes),
     async (url) => url.startsWith('https://api.github.com/') ? redirected() : new globalThis.Response(bytes, { headers: { 'content-length': '5368709121' } }),
@@ -76,12 +91,21 @@ test('refuses to download while the signing key is present in the environment', 
   const name = 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM';
   const original = process.env[name];
   try {
-    process.env[name] = 'fixture-only';
+    for (const value of ['fixture-only', '']) {
+      process.env[name] = value;
+      let calls = 0;
+      const result = request(async () => { calls++; throw new Error('must not fetch'); });
+      await assert.rejects(result.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
+      assert.equal(calls, 0);
+    }
+    delete process.env[name];
+    process.env.lnwjud_update_release_private_key_pem = '';
     let calls = 0;
-    const result = request(async () => { calls++; throw new Error('must not fetch'); });
-    await assert.rejects(result.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
+    const variant = request(async () => { calls++; throw new Error('must not fetch'); });
+    await assert.rejects(variant.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
     assert.equal(calls, 0);
   } finally {
+    delete process.env.lnwjud_update_release_private_key_pem;
     if (original === undefined) delete process.env[name]; else process.env[name] = original;
   }
 });

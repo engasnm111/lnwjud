@@ -5,6 +5,27 @@ import { fileTools } from './file-tools.js';
 import type { McpToolContext } from './tool-types.js';
 
 describe('fileTools cancellation', () => {
+  it('exposes read-only operation reconciliation without invoking a second write', async () => {
+    const calls: string[] = [];
+    const context = {
+      actor: { clientId: 'test', clientName: 'test' },
+      contextEconomy: new ContextEconomyRuntime(),
+      services: { file: {
+        async writeFileStatus(_actor: unknown, workspaceId: string, operationId: string) {
+          calls.push(`${workspaceId}:${operationId}`);
+          return ok({ operationId, state: 'outcome_unverified', createdAt: new Date(0).toISOString() });
+        },
+      } },
+    } as unknown as McpToolContext;
+    const tool = fileTools(context).find((candidate) => candidate.name === 'write_file_status');
+    expect(tool?.permission).toBe('READ');
+    expect(tool?.annotations?.readOnlyHint).toBe(true);
+    const operationId = '123e4567-e89b-42d3-a456-426614174000';
+    await expect(tool?.execute({ workspaceId: 'workspace-1', operationId }, new AbortController().signal))
+      .resolves.toMatchObject({ ok: true, value: { state: 'outcome_unverified' } });
+    expect(calls).toEqual([`workspace-1:${operationId}`]);
+  });
+
   it('forwards the invocation signal to every file mutation', async () => {
     const observedSignals: Array<AbortSignal | undefined> = [];
     const record = (signal?: AbortSignal): ReturnType<typeof ok> => {

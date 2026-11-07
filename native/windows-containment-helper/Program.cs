@@ -30,6 +30,7 @@ internal static class Program
             if (args.Length == 2 && args[0] == "service-watch") return await WindowsContainmentServiceClient.RunWatcherAsync(args[1], Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.OpenStandardError()).ConfigureAwait(false);
             if (args.Length == 2 && args[0] == "service-enroll-preflight") return RunEnrollmentPreflight(args[1]);
             if (args.Length == 2 && args[0] == "service-enroll-attestation-preflight") return RunEnrollmentAttestationPreflight(args[1]);
+            if (args.Length == 1 && args[0] == "mcp-stdio-proxy") return await McpStdioProxy.RunAsync().ConfigureAwait(false);
 #if !NATIVE_CONTAINMENT_TESTS
             if (args.Length == 1 && args[0] == "service") { WindowsContainmentService.Run(); return 0; }
             if (args.Length == 1 && args[0] == "service-install") { WindowsContainmentServiceInstaller.Install(); return 0; }

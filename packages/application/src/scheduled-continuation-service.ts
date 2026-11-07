@@ -259,6 +259,14 @@ export type ClaimScheduledContinuationResult =
       readonly continuation: ScheduledContinuationSnapshot;
       readonly goal: GoalSnapshot;
       readonly retryAfterSeconds: number;
+      readonly currentWakeMayReturn: true;
+      readonly nextRequiredAction: 'return_without_mutation_and_wait_for_next_interval';
+    }
+  | {
+      readonly outcome: 'not_due';
+      readonly continuation: ScheduledContinuationSnapshot;
+      readonly goal: GoalSnapshot;
+      readonly retryAfterSeconds: number;
       readonly taskUpdateRequest: ScheduledContinuationTaskUpdateRequest;
       readonly handoffReady: false;
       readonly currentWakeMayReturn: false;
@@ -813,6 +821,17 @@ export class ScheduledContinuationService {
         return ok({ outcome: claimed.outcome, continuation, goal });
       }
       if (claimed.outcome !== 'not_due') throw new GoalStateError('corrupt', 'Unexpected scheduled continuation claim outcome');
+      if (continuation.occurrence === 'interval') {
+        // The host owns the fixed hourly cadence; an early wake cannot retime it.
+        return ok({
+          outcome: 'not_due',
+          continuation,
+          goal,
+          retryAfterSeconds: claimed.retryAfterSeconds,
+          currentWakeMayReturn: true,
+          nextRequiredAction: 'return_without_mutation_and_wait_for_next_interval',
+        });
+      }
       return ok({
         outcome: 'not_due',
         continuation,

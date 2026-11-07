@@ -69,7 +69,7 @@ test('protected main CI requires successful update package attestations before r
   const verificationCommand = verifyJob.match(/run: >-\r?\n\s+node --input-type=module -e '([^'\r\n]+)'/)?.[1];
   assert.match(attestationJob, /if: github\.ref == 'refs\/heads\/main' && github\.event_name == 'push'/);
   assert.match(attestationJob, /uses: \.\/\.github\/workflows\/update-package-builder\.yml/);
-  assert.match(attestationJob, /id-token: write[\s\S]*attestations: write/);
+  assert.match(attestationJob, /permissions:\n\s+contents: read\n\s+actions: read\n\s+id-token: write\n\s+attestations: write/);
   assert.match(verifyJob, /needs: \[windows-release-tests, windows-release-build, update-package-attestation\]/);
   assert.match(verifyJob, /UPDATE_PACKAGE_REQUIRED: \$\{\{ github\.ref == 'refs\/heads\/main' && github\.event_name == 'push' \}\}/);
   assert.match(verifyJob, /UPDATE_PACKAGE_RESULT: \$\{\{ needs\.update-package-attestation\.result \}\}/);
@@ -91,8 +91,8 @@ test('protected main CI requires successful update package attestations before r
 
 test('Windows update builder uses a Node release with the libuv short-path watcher fix', () => {
   const versions = [...workflow.matchAll(/node-version: '([^']+)'/g)].map(([, version]) => version);
-  assert.equal(versions.length, 3);
-  assert.deepEqual(versions, ['24.22.2', '24.22.2', '24.22.2']);
+  assert.equal(versions.length, 4);
+  assert.deepEqual(versions, ['24.22.2', '24.22.2', '24.22.2', '24.22.2']);
 });
 
 test('Windows update builder installs ripgrep before release verification', () => {
@@ -111,6 +111,10 @@ test('actual inline resolver accepts a SHA-pinned builder with separate branch r
   assert.equal(typeof bootstrap, 'string');
   const result = await resolve(); assert.equal(result.exitCode, 0); assert.equal(result.output, `builder_sha=${'b'.repeat(40)}\n`);
   assert.equal(result.fetches, 1);
+  const exact = runMetadata(); exact.referenced_workflows[0].ref = 'b'.repeat(40);
+  assert.equal((await resolve({}, exact)).exitCode, 0);
+  const omitted = runMetadata(); delete omitted.referenced_workflows[0].ref;
+  assert.equal((await resolve({}, omitted)).exitCode, 0);
 });
 
 for (const [key, value] of Object.entries({ GITHUB_ACTIONS: 'false', GITHUB_REPOSITORY: 'other/repository', GITHUB_EVENT_NAME: 'pull_request',
@@ -125,6 +129,8 @@ test('actual inline resolver refuses wrong actual run, mutable references, ambig
     run => { run.event = 'workflow_dispatch'; }, run => { run.path = '.github/workflows/dev-installer.yml'; }, run => { run.repository.full_name = 'other/repository'; },
     run => { run.referenced_workflows[0].path = 'engasnm111/lnwjud/.github/workflows/update-package-builder.yml@main'; },
     run => { run.referenced_workflows[0].sha = 'c'.repeat(40); },
+    run => { run.referenced_workflows[0].ref = 'refs/heads/dev'; },
+    run => { run.referenced_workflows[0].ref = 'refs/tags/v5.9.1'; },
     run => { run.referenced_workflows.push(run.referenced_workflows[0]); }, run => { run.referenced_workflows = []; }]) {
     const metadata = runMetadata(); change(metadata); const result = await resolve({}, metadata);
     assert.equal(result.exitCode, 1); assert.equal(result.output, '');
@@ -139,6 +145,7 @@ test('build control refuses publisher/envelope secrets and credential-bearing bu
   assert.throws(() => builderContext({ ...environment(), GITHUB_REF_PROTECTED: 'false' }, true));
   for (const name of ['CSC_LINK', 'csc_key_password', 'WINDOWS_CSC_LINK', 'WINDOWS_CSC_KEY_PASSWORD', 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM',
     'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN']) assert.throws(() => builderContext({ ...environment(), [name]: 'untrusted' }, true));
+  assert.throws(() => builderContext({ ...environment(), LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM: '' }, true));
   assert.equal(builderContext({ ...environment(), ACTIONS_ID_TOKEN_REQUEST_URL: 'allowed-only-in-attestation-job' }).runId, '123');
 });
 
@@ -198,15 +205,27 @@ test('immutable inspector hashes unexecuted subjects and refuses mutation, extra
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('workflow has no activation/input/secrets surface and isolates build credentials from data-only attestation', () => {
-  assert.match(workflow, /on:\n {2}workflow_call:\n\npermissions: \{\}/);
-  assert.doesNotMatch(workflow, /workflow_dispatch:|pull_request:|^\s+inputs:|^\s+secrets:|secrets\./m);
+test('workflow constrains predecessor inputs and isolates signing credentials from data-only attestation', () => {
+  assert.match(workflow, /on:\n {2}workflow_call:\n {4}inputs:/);
+  const inputs = workflow.split('  workflow_call:\n')[1]?.split('\npermissions:')[0];
+  assert.deepEqual([...inputs.matchAll(/^ {6}([a-z_]+):$/gm)].map(([, name]) => name),
+    ['predecessor_run_id', 'predecessor_artifact_id']);
+  assert.doesNotMatch(workflow, /workflow_dispatch:|pull_request:|^\s+secrets:|secrets\./m);
   for (const match of workflow.matchAll(/^\s*- uses: ([^\s]+)$/gm)) assert.match(match[1], /^[A-Za-z0-9/_-]+@[a-f0-9]{40}$/);
   const build = workflow.split('  build-package:')[1].split('  attest-package:')[0];
-  const attest = workflow.split('  attest-package:')[1];
+  const attest = workflow.split('  attest-package:')[1].split('  prepare-signing-candidate:')[0];
+  const candidate = workflow.split('  prepare-signing-candidate:')[1];
   assert.doesNotMatch(build, /id-token:|attestations:|CSC_LINK|PRIVATE_KEY/);
   assert.match(attest, /id-token: write/); assert.match(attest, /attestations: write/);
   assert.doesNotMatch(attest, /_source|pnpm|npm install|dotnet|powershell\.exe|run-id:|repository:.*\$\{\{/);
   assert.match(attest, /artifact-ids: \$\{\{ needs\.build-package\.outputs\.artifact_id \}\}/);
   for (const command of attest.matchAll(/^\s*run: (.+)$/gm)) assert.match(command[1], /^node _trusted-builder\/scripts\/update-trust\/builder-control\.mjs (?:inspect|bundles)$/);
+  assert.match(attest, /id: attested-upload/);
+  assert.match(candidate, /artifact-ids: \$\{\{ needs\.attest-package\.outputs\.artifact_id \}\}/);
+  assert.match(candidate, /run: node _trusted-builder\/scripts\/update-trust\/build-signing-candidate\.mjs/);
+  assert.match(candidate, /artifact-ids: \$\{\{ inputs\.predecessor_artifact_id \}\}/);
+  assert.match(candidate, /run-id: \$\{\{ inputs\.predecessor_run_id \}\}/);
+  assert.match(candidate, /if: \$\{\{ inputs\.predecessor_artifact_id != '' && inputs\.predecessor_run_id != '' \}\}/);
+  assert.doesNotMatch(candidate, /id-token:|attestations:|PRIVATE_KEY|CSC_LINK|secrets\./);
+  assert.match(candidate, /permissions:\n\s+contents: read/);
 });

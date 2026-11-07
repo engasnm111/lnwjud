@@ -167,6 +167,48 @@ describe('ScheduledContinuationService', () => {
     }
   });
 
+  it('does not retime or reject an hourly watchdog claimed before its first due time', async () => {
+    const { database, goals, scheduled, clock } = await fixture();
+    try {
+      const started = await startGoal(goals);
+      const prepared = await scheduled.prepareScheduledContinuation(actor, validPrepare(started));
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error('prepare failed');
+      const created = await scheduled.recordScheduledContinuationReceipt(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        expectedVersion: prepared.value.continuation.version,
+        outcome: 'created',
+        nativeTaskId: 'hourly-early-wake',
+        dueAt: prepared.value.continuation.dueAt,
+        runsOn: 'cloud',
+      });
+      expect(created.ok).toBe(true);
+
+      // An early duplicate or manual claim must preserve the existing hourly schedule.
+      clock.set('2026-08-27T10:20:00.000Z');
+      const claim = await scheduled.claimScheduledContinuation(actor, {
+        continuationId: prepared.value.continuation.continuationId,
+        goalId: started.goalId,
+        workspaceId: 'workspace-1',
+      });
+      expect(claim).toMatchObject({
+        ok: true,
+        value: {
+          outcome: 'not_due',
+          retryAfterSeconds: 300,
+          currentWakeMayReturn: true,
+          nextRequiredAction: 'return_without_mutation_and_wait_for_next_interval',
+          continuation: { occurrence: 'interval', nativeTaskId: 'hourly-early-wake' },
+        },
+      });
+      if (!claim.ok) throw new Error('early recurring claim was rejected');
+      expect('taskUpdateRequest' in claim.value).toBe(false);
+      expect('scheduleRequest' in claim.value).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
   it('defaults to one hourly recurring watchdog while keeping the normal 10-minute worker lease', async () => {
     const { database, goals, scheduled } = await fixture();
     try {
