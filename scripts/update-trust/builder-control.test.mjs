@@ -68,7 +68,7 @@ test('protected main CI requires successful update package attestations before r
   const verifyJob = mainWorkflow.slice(verifyStart);
   const verificationCommand = verifyJob.match(/run: >-\r?\n\s+node --input-type=module -e '([^'\r\n]+)'/)?.[1];
   assert.match(attestationJob, /if: github\.ref == 'refs\/heads\/main' && github\.event_name == 'push'/);
-  assert.match(attestationJob, /uses: \.\/\.github\/workflows\/update-package-builder\.yml/);
+  assert.match(attestationJob, /uses: engasnm111\/lnwjud\/\.github\/workflows\/update-package-builder\.yml@cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406/);
   assert.match(attestationJob, /permissions:\n\s+contents: read\n\s+actions: read\n\s+id-token: write\n\s+attestations: write/);
   assert.match(verifyJob, /needs: \[windows-release-tests, windows-release-build, update-package-attestation\]/);
   assert.match(verifyJob, /UPDATE_PACKAGE_REQUIRED: \$\{\{ github\.ref == 'refs\/heads\/main' && github\.event_name == 'push' \}\}/);

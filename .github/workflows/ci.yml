@@ -930,7 +930,7 @@ jobs:
   update-package-attestation:
     name: Attested Windows Update Package
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    uses: ./.github/workflows/update-package-builder.yml
+    uses: engasnm111/lnwjud/.github/workflows/update-package-builder.yml@cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406
     permissions:
       contents: read
       actions: read
