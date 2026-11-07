@@ -39,9 +39,24 @@ test('downloads the exact artifact and never forwards its token to redirected ho
   }
 });
 
+test('accepts the additional observed GitHub artifact storage host without forwarding credentials', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return calls.length === 1
+      ? redirected('https://productionresultssa11.blob.core.windows.net/archive')
+      : new globalThis.Response(bytes, { headers: { 'content-length': String(bytes.length) } });
+  };
+  const result = request(fetchImpl);
+  assert.deepEqual(await result.promise, { sizeBytes: bytes.length, sha256 });
+  assert.deepEqual(Buffer.concat(result.chunks), bytes);
+  assert.equal(calls[1].options.headers.authorization, undefined);
+});
+
 test('rejects wrong archive digest, unsafe redirects and unbounded or altered content', async () => {
   for (const fetchImpl of [
     async (url) => url.startsWith('https://api.github.com/') ? redirected('https://127.0.0.1/a') : new globalThis.Response(bytes),
+    async (url) => url.startsWith('https://api.github.com/') ? redirected('https://productionresultssa12.blob.core.windows.net/a') : new globalThis.Response(bytes),
     async (url) => url.startsWith('https://api.github.com/') ? redirected('http://productionresultssa8.blob.core.windows.net/a') : new globalThis.Response(bytes),
     async (url) => url.startsWith('https://api.github.com/') ? redirected('https://user:password@productionresultssa8.blob.core.windows.net/a') : new globalThis.Response(bytes),
     async (url) => url.startsWith('https://api.github.com/') ? redirected() : new globalThis.Response(bytes, { headers: { 'content-length': '5368709121' } }),

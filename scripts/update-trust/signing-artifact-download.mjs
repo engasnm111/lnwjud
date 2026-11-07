@@ -8,12 +8,17 @@ import { refuse } from './release-envelope.mjs';
 const repository = 'engasnm111/lnwjud';
 const maximumArchiveBytes = 5 * 1024 * 1024 * 1024;
 const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+// Exact GitHub-hosted storage accounts observed from authenticated artifact API redirects; no wildcard.
+const trustedStorageHosts = new Set([
+  'productionresultssa8.blob.core.windows.net',
+  'productionresultssa11.blob.core.windows.net',
+]);
 
 function storageUrl(value, base) {
   if (typeof value !== 'string' || value.length === 0) refuse('SIGNING_ARCHIVE_DOWNLOAD_REFUSED');
   let url;
   try { url = new URL(value, base); } catch { refuse('SIGNING_ARCHIVE_DOWNLOAD_REFUSED'); }
-  if (url.protocol !== 'https:' || url.hostname !== 'productionresultssa8.blob.core.windows.net'
+  if (url.protocol !== 'https:' || !trustedStorageHosts.has(url.hostname)
     || url.port || url.username || url.password || url.hash) refuse('SIGNING_ARCHIVE_DOWNLOAD_REFUSED');
   return url.href;
 }
