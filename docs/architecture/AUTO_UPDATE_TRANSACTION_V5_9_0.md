@@ -6,6 +6,10 @@ The current v5.9.0 source keeps automatic updates unavailable: `initAutoUpdater(
 
 Any release **that enables automatic installation** must remain blocked until a real signed update and an injected-failure rollback pass on each advertised platform. The separately scoped v5.9.0 manual-install release does not enable this feature or claim these receipts, and excludes macOS until #216 is accepted. Local tests, package provenance, or a release receipt fixture do not prove those operations. The release verifier currently refuses every structurally valid updater receipt because it cannot authenticate the producer; matching self-reported fields against package provenance is not proof of an observed update. This guard must be replaced only by a verified target-native producer and independent evidence validation.
 
+## v5.9.1 hosted installer regression evidence (7 November 2026)
+
+The [Windows dev installer run #42384358846](https://github.com/engasnm111/lnwjud/actions/runs/42384358846) completed successfully at exact commit `f7f5f33c2e7d8d9ab71106a485d2632bb8099c99`, including the packaged NSIS `/currentuser` refusal check. The test verifies the installer exits with the expected refusal and does not leave extracted app files, an uninstall registration or a protected service registration. The [Draft PR](https://github.com/engasnm111/lnwjud/actions/runs/42384163561) and [push](https://github.com/engasnm111/lnwjud/actions/runs/42384159991) CI runs for the same SHA passed. This is a **negative installation-safety test**. It does not demonstrate a valid authorized install, independently verified production signer, successful in-place update, app relaunch, Tunnel recovery or rollback. Keep automatic installation unavailable and PR #246 in Draft until the separate production gates pass.
+
 ## Usage
 
 The Electron main process owns update offers and user intent. It does not receive a package path or ask a privileged process to execute a caller-provided command.
