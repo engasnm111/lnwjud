@@ -117,8 +117,14 @@ jobs:
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "ALLUSERS_INSTALLED_FILE_MISSING_$file" }
           }
           $service = Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue
-          if ($null -eq $service -or $service.Status -ne 'Running') {
-            throw 'ALLUSERS_PROTECTED_SERVICE_NOT_RUNNING'
+          try {
+            if ($null -eq $service -or $service.Status -ne 'Running') {
+              throw 'ALLUSERS_PROTECTED_SERVICE_NOT_RUNNING'
+            }
+          } finally {
+            # ServiceController may retain a native SCM handle even after Status.
+            # Holding it across DeleteService prevents the entry from disappearing.
+            if ($null -ne $service) { $service.Dispose() }
           }
           $serviceConfig = Get-CimInstance Win32_Service -Filter "Name='LnwjudContainment'"
           if ($null -eq $serviceConfig -or $serviceConfig.StartName -ne 'LocalSystem' -or
@@ -131,13 +137,25 @@ jobs:
             throw 'ALLUSERS_SILENT_UNINSTALL_TIMEOUT'
           }
           if ($remover.ExitCode -ne 0) { throw "ALLUSERS_SILENT_UNINSTALL_EXIT_$($remover.ExitCode)" }
-          $applicationRemains = Test-Path -LiteralPath $application -PathType Leaf
-          $remainingService = Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue
-          if ($applicationRemains -or $null -ne $remainingService) {
-            # Distinguish unresolved SCM deletion from failed NSIS file cleanup.
-            # Never hide either failure or force-delete a service on the runner.
-            throw ("ALLUSERS_SILENT_UNINSTALL_INCOMPLETE application={0} service={1}" -f
-              $applicationRemains, $(if ($null -eq $remainingService) { 'absent' } else { $remainingService.Status.ToString() }))
+          # NSIS may spawn its actual uninstaller as a second process and let
+          # the initial bootstrap exit 0 first. Verify final state, not only
+          # the bootstrap exit; a broken teardown must still fail after a bound.
+          $verification = [Diagnostics.Stopwatch]::StartNew()
+          while ($true) {
+            $applicationRemains = Test-Path -LiteralPath $application -PathType Leaf
+            $helperRemains = Test-Path -LiteralPath $helper -PathType Leaf
+            $remainingService = Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue
+            try {
+              $serviceState = if ($null -eq $remainingService) { 'absent' } else { $remainingService.Status.ToString() }
+            } finally {
+              if ($null -ne $remainingService) { $remainingService.Dispose() }
+            }
+            if (-not $applicationRemains -and -not $helperRemains -and $serviceState -eq 'absent') { break }
+            if ($verification.Elapsed -ge [TimeSpan]::FromSeconds(90)) {
+              throw ("ALLUSERS_SILENT_UNINSTALL_INCOMPLETE application={0} helper={1} service={2}" -f
+                $applicationRemains, $helperRemains, $serviceState)
+            }
+            Start-Sleep -Milliseconds 250
           }
           Write-Output 'ALLUSERS_SILENT_INSTALL_PROTECTED_SERVICE_UNINSTALL_VERIFIED'
 
