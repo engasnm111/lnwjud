@@ -29,7 +29,7 @@ export async function stageUpdateAttestationVerifier(repositoryRoot, nativeConta
     if (error?.code !== 'ENOENT') throw error;
     await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', path.join(repositoryRoot, 'scripts/update-trust/provision-gh-verifier.ps1')],
-    { windowsHide: true, maxBuffer: 1024 * 1024 });
+    { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 150_000 });
   }
   await pinnedFile(source);
   await mkdir(targetDirectory, { recursive: true });

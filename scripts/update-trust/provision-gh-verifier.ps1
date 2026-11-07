@@ -18,7 +18,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
         $ArchivePath = Join-Path $tempDirectory "gh_${version}_windows_amd64.zip"
         $uri = "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_windows_amd64.zip"
-        Invoke-WebRequest -Uri $uri -OutFile $ArchivePath -MaximumRedirection 5 -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri $uri -OutFile $ArchivePath -MaximumRedirection 5 -TimeoutSec 120 -UseBasicParsing -ErrorAction Stop
     } else {
         $ArchivePath = (Resolve-Path -LiteralPath $ArchivePath -ErrorAction Stop).Path
     }
