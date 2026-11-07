@@ -68,20 +68,29 @@ export function inspectProtectedSourceArtifact(context, artifactsBytes) {
   if (!Array.isArray(listing.artifacts) || !Number.isSafeInteger(listing.total_count)
     || listing.total_count !== listing.artifacts.length || listing.total_count > 100)
     refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
-  const expectedName = `update-package-attested-${context.sourceRunId}-1`;
-  const matches = listing.artifacts.filter(item => item?.name === expectedName);
-  if (matches.length !== 1) refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
-  const item = matches[0], owner = item.workflow_run;
-  if (identifier(item.id) === '' || item.expired !== false
-    || !Number.isSafeInteger(item.size_in_bytes) || item.size_in_bytes < 1 || item.size_in_bytes > 5 * 1024 * 1024 * 1024
-    || typeof item.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(item.digest)
-    || identifier(owner?.id) !== context.sourceRunId
-    || identifier(owner?.repository_id) !== repositoryId
-    || identifier(owner?.head_repository_id) !== repositoryId
-    || owner?.head_sha !== context.commit)
-    refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
-  return Object.freeze({ artifactId: String(item.id), artifactName: expectedName,
-    archiveSha256: item.digest.slice(7), archiveSizeBytes: item.size_in_bytes });
+  const inspect = (prefix) => {
+    const expectedName = `${prefix}-${context.sourceRunId}-1`;
+    const matches = listing.artifacts.filter(item => item?.name === expectedName);
+    if (matches.length !== 1) refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
+    const item = matches[0], owner = item.workflow_run;
+    if (identifier(item.id) === '' || item.expired !== false
+      || !Number.isSafeInteger(item.size_in_bytes) || item.size_in_bytes < 1 || item.size_in_bytes > 5 * 1024 * 1024 * 1024
+      || typeof item.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(item.digest)
+      || identifier(owner?.id) !== context.sourceRunId
+      || identifier(owner?.repository_id) !== repositoryId
+      || identifier(owner?.head_repository_id) !== repositoryId
+      || owner?.head_sha !== context.commit)
+      refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
+    return { artifactId: String(item.id), artifactName: expectedName,
+      archiveSha256: item.digest.slice(7), archiveSizeBytes: item.size_in_bytes };
+  };
+  const attested = inspect('update-package-attested');
+  const candidate = inspect('update-package-signing');
+  if (attested.artifactId === candidate.artifactId) refuse('SIGNING_SOURCE_ARTIFACT_REFUSED');
+  return Object.freeze({ ...attested, signingCandidateArtifactId: candidate.artifactId,
+    signingCandidateArtifactName: candidate.artifactName,
+    signingCandidateArchiveSha256: candidate.archiveSha256,
+    signingCandidateArchiveSizeBytes: candidate.archiveSizeBytes });
 }
 
 async function api(relative, token) {

@@ -86,25 +86,42 @@ test('refuses stale, substituted, rerun and incomplete protected CI', () => {
 
 
 const artifactListing = () => ({
-  total_count: 1, artifacts: [{
-    id: 700, name: 'update-package-attested-500-1', expired: false, size_in_bytes: 4096,
-    digest: `sha256:${'c'.repeat(64)}`,
-    workflow_run: { id: 500, repository_id: 1329830515, head_repository_id: 1329830515, head_sha: commit },
-  }],
+  total_count: 2, artifacts: [
+    {
+      id: 700, name: 'update-package-attested-500-1', expired: false, size_in_bytes: 4096,
+      digest: `sha256:${'c'.repeat(64)}`,
+      workflow_run: { id: 500, repository_id: 1329830515, head_repository_id: 1329830515, head_sha: commit },
+    },
+    {
+      id: 701, name: 'update-package-signing-500-1', expired: false, size_in_bytes: 8192,
+      digest: `sha256:${'d'.repeat(64)}`,
+      workflow_run: { id: 500, repository_id: 1329830515, head_repository_id: 1329830515, head_sha: commit },
+    },
+  ],
 });
 
 test('exact attested package artifact belongs to selected protected run but is not signing authority', () => {
   const result = inspectProtectedSourceArtifact(inspectProtectedSourceContext(env()), Buffer.from(JSON.stringify(artifactListing())));
   assert.deepEqual(result, { artifactId: '700', artifactName: 'update-package-attested-500-1',
-    archiveSha256: 'c'.repeat(64), archiveSizeBytes: 4096 });
+    archiveSha256: 'c'.repeat(64), archiveSizeBytes: 4096,
+    signingCandidateArtifactId: '701', signingCandidateArtifactName: 'update-package-signing-500-1',
+    signingCandidateArchiveSha256: 'd'.repeat(64), signingCandidateArchiveSizeBytes: 8192 });
   assert.equal(Object.hasOwn(result, 'verified'), false);
   assert.equal(Object.hasOwn(result, 'canSign'), false);
 });
 
 test('missing, duplicated, expired, substituted and malformed artifact metadata are refused', () => {
   for (const change of [
-    value => { value.total_count = 2; },
-    value => { value.artifacts.push({ ...value.artifacts[0] }); value.total_count = 2; },
+    value => { value.total_count = 3; },
+    value => { value.artifacts.pop(); value.total_count--; },
+    value => { value.artifacts.push({ ...value.artifacts[0] }); value.total_count++; },
+    value => { value.artifacts.push({ ...value.artifacts[1] }); value.total_count++; },
+    value => { value.artifacts[1].name = 'update-package-signing-501-1'; },
+    value => { value.artifacts[1].id = 700; },
+    value => { value.artifacts[1].expired = true; },
+    value => { value.artifacts[1].digest = 'sha256:' + 'X'.repeat(64); },
+    value => { value.artifacts[1].workflow_run.id = 502; },
+    value => { value.artifacts[1].workflow_run.head_sha = 'b'.repeat(40); },
     value => { value.artifacts[0].name = 'update-package-subjects-500-1'; },
     value => { value.artifacts[0].name = 'update-package-attested-501-1'; },
     value => { value.artifacts[0].id = null; },
