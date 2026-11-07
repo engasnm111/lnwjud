@@ -15,6 +15,21 @@ internal static class NativeTests
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcess(string application, StringBuilder command, nint processSecurity, nint threadSecurity, bool inherit, uint flags, nint environment, string cwd, ref Startup startup, out ProcessInfo info);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
     [DllImport("kernel32.dll")] private static extern bool TerminateProcess(nint handle, uint exit);
+    private static void TestEndpointExit259()
+    {
+        using var self = Process.GetCurrentProcess();
+        using (var handle = new Microsoft.Win32.SafeHandles.SafeProcessHandle(self.Handle, ownsHandle: false))
+            if (!ServiceEndpointIdentity.ProcessStillRunning(handle)) throw new Exception("Live endpoint process misclassified");
+        var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var argument in new[] { "/d", "/c", "exit", "/b", "259" }) start.ArgumentList.Add(argument);
+        using var child = Process.Start(start) ?? throw new Exception("Endpoint exit fixture unavailable");
+        child.WaitForExit();
+        if (child.ExitCode != 259) throw new Exception("Endpoint exit fixture did not return 259");
+        using var terminated = new Microsoft.Win32.SafeHandles.SafeProcessHandle(child.Handle, ownsHandle: false);
+        if (ServiceEndpointIdentity.ProcessStillRunning(terminated)) throw new Exception("Terminated endpoint exit code 259 misclassified as live");
+        Console.WriteLine("PASS endpoint liveness uses terminal exit time, not ambiguous exit code 259");
+    }
+
     private static readonly string Executable = Environment.ProcessPath ?? throw new Exception("No test executable");
     private static readonly Dictionary<string, string> EnvironmentBlock = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string)(entry.Value ?? ""));
 
@@ -177,6 +192,7 @@ internal static class NativeTests
                         Directory.Delete(absolute, true);
                     }
                 }
+                case "endpoint-exit259-tests": TestEndpointExit259(); return 0;
                 case "service-failure-reason-tests": TestServiceFailureReason(); Console.WriteLine("PASS safe service installer failure codes"); return 0;
                 case "service-restart-tests":
                     TestServiceRestartAndJobReconciliation();
@@ -232,7 +248,8 @@ internal static class NativeTests
             TestServiceInstallPathValidation();
             Console.WriteLine("PASS protected service install layout and command quoting");
             TestServiceEndpointImagePolicy(root);
-            Console.WriteLine("PASS protected service image may differ from the portable client and rejects hash or account mismatch");
+            TestEndpointExit259();
+            Console.WriteLine("PASS protected service image policy and unambiguous process exit-time liveness");
             TestJobCollision();
             TestUnknownCancelCollision();
             TestJobCollisionRelease();
