@@ -8,6 +8,8 @@ import { inspectSigningArchive } from './signing-archive-entries.mjs';
 import { withInspectedSigningArchive } from './signing-archive-spool.mjs';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+const expectedSource = Object.freeze({ repositoryId: '1329830515', runId: '123', runAttempt: 1,
+  policySha256: 'b'.repeat(64) });
 function crc32(bytes) {
   let crc = 0xffffffff;
   for (const byte of bytes) {
@@ -93,7 +95,7 @@ function reader(bytes) {
   return { size: bytes.length, readAt: (at, size) => bytes.subarray(at, at + size),
     stream: (at, size) => Readable.from([bytes.subarray(at, at + size)]) };
 }
-const inspect = (bytes, sha) => inspectSigningArchive(reader(bytes), sha);
+const inspect = (bytes, sha, source = expectedSource) => inspectSigningArchive(reader(bytes), sha, source);
 
 test('sealed archive checks every fixed role, SHA-256 and ZIP CRC without unpacking executable files', async () => {
   const f = fixture();
@@ -102,6 +104,21 @@ test('sealed archive checks every fixed role, SHA-256 and ZIP CRC without unpack
     assert.deepEqual(result, { status: 'verified-archive-contents-only',
       manifestSha256: f.manifestSha256, purpose: 'baseline', fileCount: 6 });
   }
+});
+
+test('archive manifest must match independently selected source run and tracked policy before consumption', async () => {
+  const f = fixture(), bytes = zip(f.files);
+  for (const source of [
+    undefined, null, {},
+    { ...expectedSource, repositoryId: '7' },
+    { ...expectedSource, runId: '124' },
+    { ...expectedSource, runAttempt: 2 },
+    { ...expectedSource, policySha256: 'c'.repeat(64) },
+    { ...expectedSource, runId: '0123' },
+    { ...expectedSource, unexpected: true },
+  ]) await assert.rejects(inspectSigningArchive(reader(bytes), f.manifestSha256, source),
+    /SIGNING_ARCHIVE_STRUCTURE_REFUSED/);
+  assert.equal((await inspect(bytes, f.manifestSha256)).fileCount, 6);
 });
 
 test('archive rejects wrong manifest, malicious filename, unexpected role, missing role and duplicated member', async () => {
@@ -179,7 +196,7 @@ test('native spool verifies exact ZIP members before invoking a consumer, then d
     : new globalThis.Response(archive);
   const options = { addon, filename: 'fixture-only', artifact: {
     artifactId: '12', archiveSha256: sha256(archive), archiveSizeBytes: archive.length },
-    token: 'test-token', fetchImpl, expectedManifestSha256: f.manifestSha256 };
+    token: 'test-token', fetchImpl, expectedManifestSha256: f.manifestSha256, expectedSource };
   const result = await withInspectedSigningArchive(options, (_reader, inspection) => {
     consumed++;
     return inspection.fileCount;
@@ -191,7 +208,11 @@ test('native spool verifies exact ZIP members before invoking a consumer, then d
     () => { consumed++; }), /SIGNING_ARCHIVE_STRUCTURE_REFUSED/);
   assert.equal(discarded, 2);
   assert.equal(consumed, 1);
+  await assert.rejects(withInspectedSigningArchive({ ...options, expectedSource: undefined },
+    () => { consumed++; }), /SIGNING_ARCHIVE_STRUCTURE_REFUSED/);
+  assert.equal(discarded, 3);
+  assert.equal(consumed, 1);
   assert.throws(() => withInspectedSigningArchive({ ...options, expectedManifestSha256: 'INVALID' },
     () => { consumed++; }), /SIGNING_ARCHIVE_INPUT_INVALID/);
-  assert.equal(discarded, 2);
+  assert.equal(discarded, 3);
 });

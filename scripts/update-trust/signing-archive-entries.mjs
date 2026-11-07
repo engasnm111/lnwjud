@@ -125,8 +125,17 @@ async function hashEntry(reader, entry, keepBytes) {
 }
 
 /** A key-free, data-only check on a pinned, already SHA-256-validated archive. */
-export async function inspectSigningArchive(reader, expectedManifestSha256) {
-  if (!sha256(expectedManifestSha256)
+export async function inspectSigningArchive(reader, expectedManifestSha256, expectedSource) {
+  // Caller must supply the independently observed source-run and tracked policy identity.
+  // Never adopt a run or policy claimed only by the untrusted archive manifest.
+  if (!sha256(expectedManifestSha256) || !expectedSource || typeof expectedSource !== 'object'
+    || Array.isArray(expectedSource)
+    || Object.keys(expectedSource).sort().join(',') !== 'policySha256,repositoryId,runAttempt,runId'
+    || !/^[1-9][0-9]{0,14}$/.test(expectedSource.repositoryId)
+    || !/^[1-9][0-9]{0,14}$/.test(expectedSource.runId)
+    || !Number.isSafeInteger(Number(expectedSource.repositoryId))
+    || !Number.isSafeInteger(Number(expectedSource.runId))
+    || expectedSource.runAttempt !== 1 || !sha256(expectedSource.policySha256)
     || Object.keys(process.env).some(key => key.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse();
   const files = entries(reader);
   const top = files.get('manifest.json');
@@ -135,6 +144,10 @@ export async function inspectSigningArchive(reader, expectedManifestSha256) {
   if (manifestContents.sha256 !== expectedManifestSha256) refuse();
   let manifest;
   try { manifest = parseSigningVerificationManifest(manifestContents.bytes); } catch { refuse(); }
+  if (manifest.verification.repositoryId !== expectedSource.repositoryId
+    || manifest.verification.runId !== expectedSource.runId
+    || manifest.verification.runAttempt !== expectedSource.runAttempt
+    || manifest.policySha256 !== expectedSource.policySha256) refuse();
   const expected = new Map([['manifest.json', { name: 'manifest.json', sizeBytes: String(top.size), sha256: expectedManifestSha256 }]]);
   for (const [scope, roles] of [['candidate', manifest.candidate],
     ...(manifest.purpose === 'update' ? [['predecessor', manifest.predecessor]] : [])]) {

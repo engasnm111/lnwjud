@@ -114,7 +114,7 @@ export function withInspectedSigningArchive(options, consume) {
   if (typeof consume !== 'function' || !options || typeof options.expectedManifestSha256 !== 'string'
     || !/^[a-f0-9]{64}$/.test(options.expectedManifestSha256)) throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
   return withDownloadedSigningArchive(options, async reader => {
-    const inspection = await inspectSigningArchive(reader, options.expectedManifestSha256);
+    const inspection = await inspectSigningArchive(reader, options.expectedManifestSha256, options.expectedSource);
     return consume(reader, inspection);
   });
 }
