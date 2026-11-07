@@ -4,6 +4,8 @@ import { Buffer } from 'node:buffer';
 import { inspectProtectedSourceContext, inspectProtectedSourceRun, inspectProtectedSourceArtifact } from './protected-source-run.mjs';
 
 const commit = 'a'.repeat(40);
+const builderSha = 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406';
+const builderPath = `engasnm111/lnwjud/.github/workflows/update-package-builder.yml@${builderSha}`;
 const env = () => ({
   GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwjud',
   GITHUB_REPOSITORY_ID: '1329830515', GITHUB_EVENT_NAME: 'workflow_dispatch',
@@ -26,6 +28,7 @@ const run = () => ({
   head_branch: 'main', head_sha: commit, status: 'completed', conclusion: 'success',
   repository: { id: 1329830515, full_name: 'engasnm111/lnwjud' },
   head_repository: { id: 1329830515 },
+  referenced_workflows: [{ path: builderPath, sha: builderSha }],
 });
 const jobs = () => ({
   total_count: 7,
@@ -46,6 +49,10 @@ test('protected main push source and all required successful hosted jobs are obs
   assert.equal(Object.keys(v.jobs).length, 7);
   assert.equal(Object.hasOwn(v, 'canSign'), false);
   assert.equal(Object.hasOwn(v, 'authorization'), false);
+  for (const ref of ['refs/heads/main', builderSha]) {
+    const selected = run(); Object.assign(selected.referenced_workflows[0], { ref });
+    assert.equal(observed(env(), selected, jobs()).status, 'source-ci-observed-only');
+  }
 });
 
 test('refuses unprotected or synthetic context and any secret in verifier environment', () => {
@@ -68,6 +75,13 @@ test('refuses stale, substituted, rerun and incomplete protected CI', () => {
     ({ r }) => { r.conclusion = 'cancelled'; }, ({ r }) => { r.status = 'in_progress'; },
     ({ r }) => { r.repository.id = 2; }, ({ r }) => { r.repository.full_name = 'other/repo'; },
     ({ r }) => { r.head_repository.id = 2; },
+    ({ r }) => { delete r.referenced_workflows; },
+    ({ r }) => { r.referenced_workflows = []; },
+    ({ r }) => { r.referenced_workflows.push({ ...r.referenced_workflows[0] }); },
+    ({ r }) => { r.referenced_workflows[0].sha = 'b'.repeat(40); },
+    ({ r }) => { r.referenced_workflows[0].path = `engasnm111/lnwjud/.github/workflows/update-package-builder.yml@refs/heads/main`; },
+    ({ r }) => { r.referenced_workflows[0].path = `another/repo/.github/workflows/update-package-builder.yml@${builderSha}`; },
+    ({ r }) => { r.referenced_workflows[0].ref = 'refs/heads/dev'; },
     ({ j }) => { j.total_count = 8; }, ({ j }) => { j.jobs.pop(); j.total_count--; },
     ({ j }) => { j.jobs.push({ ...j.jobs[0] }); j.total_count++; },
     ({ j }) => { j.jobs[0].run_id = 501; }, ({ j }) => { j.jobs[0].head_sha = 'b'.repeat(40); },
