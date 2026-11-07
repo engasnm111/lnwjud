@@ -86,6 +86,11 @@ test('real pinned executor retains executable and exact input through child clos
         process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = '';
         await assert.rejects(acquirePinnedVerifier({ filename: 'gh.exe', sha256 }), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
         process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = 'sentinel-test-only';
+        assert.throws(() => session.run(['-e', 'process.stdout.write("unsafe")']), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        await assert.rejects(session.pinInputs([input]), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = '';
+        assert.throws(() => session.run(['-e', 'process.stdout.write("unsafe")']), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
         const completion = session.run(['-e', 'setTimeout(() => process.stdout.write("SIGNER=" + String(process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM)), 150)']);
         const closing = session.close();
         await assert.rejects(writeFile(filename, 'changed')); await assert.rejects(rename(filename, filename + '.moved'));
