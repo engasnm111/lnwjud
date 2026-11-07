@@ -38,22 +38,3 @@ internal sealed class AuthenticatedBaselinePackage : IDisposable
 
     public void Dispose() => Files.Dispose();
 }
-
-internal static class AuthenticatedPackageFiles
-{
-    internal static void Pin(EnrollmentPackageFiles files, JsonElement release, ReleaseTrustPolicy policy)
-    {
-        var artifact = SignedRelease.Identity(release.GetProperty("artifact"));
-        var provenance = SignedRelease.Identity(release.GetProperty("provenance"));
-        if (ReleaseValues.Text(release, "platform") != "win32"
-            || ReleaseValues.Text(release, "architecture") != "x64"
-            || ReleaseValues.Text(release, "distribution") != "windows-nsis")
-            throw new Refusal("RELEASE_TARGET_UNSUPPORTED");
-        files.Verify(artifact.Name, artifact, policy.MaximumPackage);
-        files.Verify(provenance.Name, provenance, policy.MaximumProvenance);
-        var evidence = release.GetProperty("buildEvidence");
-        files.PinBundle("artifact.bundle.json", ReleaseValues.Text(evidence, "artifactAttestationSha256"));
-        files.PinBundle("provenance.bundle.json", ReleaseValues.Text(evidence, "provenanceAttestationSha256"));
-        files.RecheckAll();
-    }
-}
