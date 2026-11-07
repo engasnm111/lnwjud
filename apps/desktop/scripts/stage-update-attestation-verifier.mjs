@@ -27,9 +27,18 @@ export async function stageUpdateAttestationVerifier(repositoryRoot, nativeConta
     await lstat(source);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
-    await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-File', path.join(repositoryRoot, 'scripts/update-trust/provision-gh-verifier.ps1')],
-    { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 150_000 });
+    const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(repositoryRoot, 'scripts/update-trust/provision-gh-verifier.ps1')];
+    const options = { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 150_000 };
+    try {
+      await execute('pwsh.exe', args, options);
+    } catch (failure) {
+      // Older supported Windows installations may not have PowerShell 7.
+      // Fall back only when the executable is genuinely missing; do not bypass
+      // any failed digest, Authenticode, version, or other verifier check.
+      if (failure?.code !== 'ENOENT') throw failure;
+      await execute('powershell.exe', args, options);
+    }
   }
   await pinnedFile(source);
   await mkdir(targetDirectory, { recursive: true });
