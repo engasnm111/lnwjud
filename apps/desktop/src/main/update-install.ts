@@ -224,7 +224,9 @@ export class UpdateInstallCoordinator {
 
     const afterTunnel = this.sampleLocalActivity();
     if (!sameLocalActivity(initialLocal, afterTunnel)) return staleLocalActivity(afterTunnel);
-    if (tunnelState === false) {
+    // A stopped Tunnel does not prove other local STDIO/MCP clients are idle.
+    // Require the shared activity observer whenever one is configured.
+    if (tunnelState === false && this.options.sharedActivitySnapshot === undefined) {
       return { trustworthy: true, activeCount: afterTunnel.activeCount, revision: localRevisionKey(afterTunnel) };
     }
     if (this.options.sharedActivitySnapshot === undefined) {

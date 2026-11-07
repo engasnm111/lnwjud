@@ -102,6 +102,18 @@ internal static class ReleaseBuildEvidenceTests
         Accept(() => Attestation(new JsonArray(new JsonObject(), valid[0]!.DeepClone())), "unmatched entry does not hide valid entry");
         var fraction = valid.DeepClone(); fraction[0]!["verificationResult"]!["verifiedTimestamps"]![0]!["timestamp"] = "2026-01-01T00:00:00.123456789Z";
         Accept(() => Attestation(fraction), "nine fractional digits");
+        var issued = DateTimeOffset.FromUnixTimeSeconds((long)release.Number("issuedAt"));
+        foreach (var offset in new[] { TimeSpan.FromHours(7), TimeSpan.FromHours(-7), TimeSpan.FromHours(14) })
+        {
+            var withOffset = valid.DeepClone();
+            withOffset[0]!["verificationResult"]!["verifiedTimestamps"]![0]!["timestamp"] =
+                issued.ToOffset(offset).ToString("yyyy-MM-dd'T'HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture);
+            Accept(() => Attestation(withOffset), "verified GitHub timestamp offset " + offset);
+        }
+        var futureTimestamp = valid.DeepClone();
+        futureTimestamp[0]!["verificationResult"]!["verifiedTimestamps"]![0]!["timestamp"] =
+            issued.AddSeconds(301).ToOffset(TimeSpan.FromHours(7)).ToString("yyyy-MM-dd'T'HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture);
+        Refuse(() => Attestation(futureTimestamp), "numeric offset does not bypass issued-at skew");
         var tooMany = valid.DeepClone(); var times = tooMany[0]!["verificationResult"]!["verifiedTimestamps"]!.AsArray();
         while (times.Count < 16) times.Add(times[0]!.DeepClone());
         Accept(() => Attestation(tooMany), "sixteen timestamps");
@@ -126,7 +138,7 @@ internal static class ReleaseBuildEvidenceTests
             v => v[0]!["verificationResult"]!["verifiedTimestamps"]![0]!["extra"] = true,
             v => v[0]!["verificationResult"]!["verifiedTimestamps"]!.AsArray().Add(new JsonObject { ["type"] = "Tlog", ["uri"] = "http://bad", ["timestamp"] = "2000-01-01T00:00:00Z" })
         }) { var changed = valid.DeepClone(); mutation(changed); Refuse(() => Attestation(changed), "evidence shape"); }
-        foreach (var timestamp in new[] { "2026-02-30T00:00:00Z", "2026-01-01T00:00:60Z", "1969-12-31T23:59:59Z", "9999-12-31T23:59:59Z", "2026-01-01T00:00:00.1234567890Z", "2026-01-01T00:00:00+00:00" })
+        foreach (var timestamp in new[] { "2026-02-30T00:00:00Z", "2026-01-01T00:00:60Z", "1969-12-31T23:59:59Z", "9999-12-31T23:59:59Z", "2026-01-01T00:00:00.1234567890Z", "2026-01-01T00:00:00+14:01", "2026-01-01T00:00:00-14:30", "2026-01-01T00:00:00+24:00", "2026-01-01T00:00:00+00:60", "2026-01-01T00:00:00+07" })
         {
             var changed = valid.DeepClone(); changed[0]!["verificationResult"]!["verifiedTimestamps"]![0]!["timestamp"] = timestamp;
             Refuse(() => Attestation(changed), "timestamp " + timestamp);

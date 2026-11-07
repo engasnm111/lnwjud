@@ -321,6 +321,26 @@ describe('downloaded update installation', () => {
     expect(install).toHaveBeenCalledExactlyOnceWith(offer);
   });
 
+  it('does not install while another MCP client works even when the Tunnel is stopped', async () => {
+    vi.useFakeTimers();
+    let shared: UpdateSharedActivitySnapshot = { state: 'available', activeCallCount: 1, revision: 3 };
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<boolean> => false,
+      sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => shared,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    shared = { state: 'available', activeCallCount: 0, revision: 4 };
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
   it('fails closed while a running tunnel has no trustworthy shared STDIO activity snapshot', async () => {
     vi.useFakeTimers();
     let shared: { state: 'missing' } | { state: 'available'; activeCallCount: number; revision: number } = { state: 'missing' };
