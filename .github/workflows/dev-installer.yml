@@ -92,6 +92,51 @@ jobs:
           }
           Write-Output 'SILENT_CURRENTUSER_CLEAN_REFUSAL_VERIFIED'
 
+      - name: Verify protected all-users silent install and uninstall on hosted Windows
+        shell: pwsh
+        timeout-minutes: 6
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -LiteralPath 'apps/desktop/dist/installers' -Filter 'lnwjud-Setup-*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'EXPECTED_ONE_NSIS_INSTALLER' }
+          $target = Join-Path $env:ProgramFiles 'lnwjud'
+          if ((Test-Path -LiteralPath $target) -or
+              $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)) {
+            throw 'ALLUSERS_INSTALL_TEST_RUNNER_NOT_CLEAN'
+          }
+          $installer = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', '/allusers') -PassThru -WindowStyle Hidden
+          if (-not $installer.WaitForExit(120000)) {
+            $installer.Kill()
+            throw 'ALLUSERS_SILENT_INSTALL_TIMEOUT'
+          }
+          if ($installer.ExitCode -ne 0) { throw "ALLUSERS_SILENT_INSTALL_EXIT_$($installer.ExitCode)" }
+          $application = Join-Path $target 'lnwjud.exe'
+          $uninstaller = Join-Path $target 'uninstall.exe'
+          $helper = Join-Path $target 'resources/native-containment/lnwjud-containment.exe'
+          foreach ($file in @($application, $uninstaller, $helper)) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "ALLUSERS_INSTALLED_FILE_MISSING_$file" }
+          }
+          $service = Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue
+          if ($null -eq $service -or $service.Status -ne 'Running') {
+            throw 'ALLUSERS_PROTECTED_SERVICE_NOT_RUNNING'
+          }
+          $serviceConfig = Get-CimInstance Win32_Service -Filter "Name='LnwjudContainment'"
+          if ($null -eq $serviceConfig -or $serviceConfig.StartName -ne 'LocalSystem' -or
+              $serviceConfig.PathName -notlike "*lnwjud-containment.exe*") {
+            throw 'ALLUSERS_PROTECTED_SERVICE_IDENTITY_INVALID'
+          }
+          $remover = Start-Process -FilePath $uninstaller -ArgumentList @('/S', '/allusers') -PassThru -WindowStyle Hidden
+          if (-not $remover.WaitForExit(120000)) {
+            $remover.Kill()
+            throw 'ALLUSERS_SILENT_UNINSTALL_TIMEOUT'
+          }
+          if ($remover.ExitCode -ne 0) { throw "ALLUSERS_SILENT_UNINSTALL_EXIT_$($remover.ExitCode)" }
+          if ((Test-Path -LiteralPath $application) -or
+              $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)) {
+            throw 'ALLUSERS_SILENT_UNINSTALL_LEFT_EXECUTABLE_OR_SERVICE'
+          }
+          Write-Output 'ALLUSERS_SILENT_INSTALL_PROTECTED_SERVICE_UNINSTALL_VERIFIED'
+
       - name: Run packaged Windows Electron MCP and security smoke
         shell: pwsh
         timeout-minutes: 10
