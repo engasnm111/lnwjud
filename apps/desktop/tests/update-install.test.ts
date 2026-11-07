@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
-import { installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
+import { fingerprintDownloadedUpdate, installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe('downloaded update installation', () => {
-  const offer: DownloadedUpdateOffer = { generation: 1, version: '4.0.2', artifactIdentity: 'sha256:offer-1' };
+  const offer: DownloadedUpdateOffer = { generation: 1, version: '4.0.2', artifactIdentity: 'sha256:offer-1', artifactSha256: 'a'.repeat(64) };
 
   it('asks the user to confirm the exact downloaded version before queuing installation', async () => {
     const confirmVersion = vi.fn(async (): Promise<boolean> => true);
@@ -131,6 +134,37 @@ describe('downloaded update installation', () => {
 
     await expect(controller.requestInstall()).resolves.toBe(false);
     expect(queueInstall).not.toHaveBeenCalled();
+  });
+
+  it('rejects a same-version same-path offer whose downloaded bytes changed during consent', async () => {
+    let currentOffer: DownloadedUpdateOffer = offer;
+    const queueInstall = vi.fn(() => true);
+    const controller = new UpdateInstallConsentController({
+      getCurrentOffer: (): DownloadedUpdateOffer => currentOffer,
+      hasPendingInstall: (): boolean => false,
+      confirmVersion: async (): Promise<boolean> => {
+        currentOffer = { ...offer, artifactSha256: 'b'.repeat(64) };
+        return true;
+      },
+      queueInstall,
+    });
+    await expect(controller.requestInstall()).resolves.toBe(false);
+    expect(queueInstall).not.toHaveBeenCalled();
+  });
+
+  it('fingerprints the bytes rather than the pathname of a downloaded installer', async () => {
+    const folder = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-fingerprint-'));
+    try {
+      const installer = path.join(folder, 'lnwjud-Setup.exe');
+      await writeFile(installer, 'first verified artifact');
+      const first = await fingerprintDownloadedUpdate(installer);
+      expect(first).toMatch(/^[a-f0-9]{64}$/);
+      await writeFile(installer, 'second verified artifact');
+      const second = await fingerprintDownloadedUpdate(installer);
+      expect(second).not.toBe(first);
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
   });
 
   it('coalesces simultaneous tray and renderer confirmations', async () => {

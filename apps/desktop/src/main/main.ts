@@ -106,7 +106,7 @@ import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './ex
 import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, createMutationApprovalWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
 import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, getTrayIconPath, shouldHideMainWindowOnClose } from './tray.js';
-import { installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from './update-install.js';
+import { fingerprintDownloadedUpdate, installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from './update-install.js';
 import { UpdateCheckInitializationQueue, UpdateCheckScheduler, type UpdateCheckSource } from './update-check-scheduler.js';
 import {
   configureUpdaterForDistribution,
@@ -1921,7 +1921,8 @@ function isCurrentDownloadedUpdateOffer(offer: DownloadedUpdateOffer): boolean {
     && currentUpdateStatus.availableVersion === offer.version
     && current.generation === offer.generation
     && current.version === offer.version
-    && current.artifactIdentity === offer.artifactIdentity;
+    && current.artifactIdentity === offer.artifactIdentity
+    && current.artifactSha256 === offer.artifactSha256;
 }
 
 async function stopTunnelForUpdateInstall(runtime: DesktopRuntime): Promise<boolean> {
@@ -2192,6 +2193,13 @@ async function installDownloadedUpdate(runtime: DesktopRuntime, offer: Downloade
         await restoreTunnelAfterInterruptedUpdate('The downloaded update changed before installation began.');
         return;
       }
+      if (await fingerprintDownloadedUpdate(offer.artifactIdentity) !== offer.artifactSha256) {
+        throw new Error('UPDATE_DOWNLOADED_ARTIFACT_CHANGED');
+      }
+      if (currentUpdateStatus.phase !== 'installing' || !isCurrentDownloadedUpdateOffer(offer)) {
+        await restoreTunnelAfterInterruptedUpdate('The downloaded update changed during package verification.');
+        return;
+      }
 
       if (usesElectronUpdaterInstall(updaterDistribution)) {
         if (updaterDistribution === 'macos') {
@@ -2436,10 +2444,10 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
       });
     });
 
-    autoUpdater.on('update-downloaded', (info) => {
+    autoUpdater.on('update-downloaded', async (info) => {
       recordUpdaterDownload(info.version);
       const downloadedFile = typeof info.downloadedFile === 'string' ? info.downloadedFile.trim() : '';
-      downloadedUpdateGeneration += 1;
+      const generation = ++downloadedUpdateGeneration;
       if (!verifiedAutomaticUpdateAuthority) {
         currentDownloadedUpdateOffer = null;
         pendingPortableUpdate = null;
@@ -2464,10 +2472,30 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         });
         return;
       }
+      let artifactSha256: string;
+      try {
+        artifactSha256 = await fingerprintDownloadedUpdate(path.resolve(downloadedFile));
+      } catch (error: unknown) {
+        if (downloadedUpdateGeneration !== generation) return;
+        currentDownloadedUpdateOffer = null;
+        pendingPortableUpdate = null;
+        pendingLinuxAppImageUpdate = null;
+        console.error('[AutoUpdater] Downloaded artifact verification failed:', error instanceof Error ? error.message : 'unavailable');
+        patchUpdateStatus({
+          phase: 'error',
+          availableVersion: info.version,
+          progressPercent: null,
+          message: nativeMessages(desktopLocale).updaterInstallFailedMessage,
+          canInstall: false,
+        });
+        return;
+      }
+      if (downloadedUpdateGeneration !== generation) return;
       const downloadedOffer: DownloadedUpdateOffer = {
-        generation: downloadedUpdateGeneration,
+        generation,
         version: info.version,
         artifactIdentity: path.resolve(downloadedFile),
+        artifactSha256,
       };
       currentDownloadedUpdateOffer = downloadedOffer;
       if (windowsDistribution === 'portable') {

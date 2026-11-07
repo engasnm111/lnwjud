@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { lstat, open } from 'node:fs/promises';
+import path from 'node:path';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
 
 export function updateInstallNeedsTunnelStopConfirmation(status: TunnelStatus): boolean {
@@ -8,10 +11,44 @@ export function updateInstallNeedsTunnelStopConfirmation(status: TunnelStatus): 
   return persistent.state === 'starting' || persistent.state === 'running' || persistent.state === 'reconnecting';
 }
 
+/** Hash the exact downloaded file and recheck its identity around the stream.
+ * This binds in-memory consent to bytes, not only a version and cache pathname.
+ * Package provenance and signer trust are separate mandatory native checks.
+ */
+export async function fingerprintDownloadedUpdate(filename: string): Promise<string> {
+  if (typeof filename !== 'string' || !path.isAbsolute(filename) || filename.includes('\0')) {
+    throw new Error('UPDATE_DOWNLOADED_ARTIFACT_INVALID');
+  }
+  const target = path.resolve(filename);
+  const original = await lstat(target);
+  if (!original.isFile() || original.isSymbolicLink() || original.nlink !== 1
+    || original.size < 1 || original.size > 2_147_483_648) throw new Error('UPDATE_DOWNLOADED_ARTIFACT_INVALID');
+  const handle = await open(target, 'r');
+  try {
+    const before = await handle.stat();
+    if (before.dev !== original.dev || before.ino !== original.ino || before.size !== original.size) {
+      throw new Error('UPDATE_DOWNLOADED_ARTIFACT_CHANGED');
+    }
+    const digest = createHash('sha256');
+    for await (const chunk of handle.createReadStream({ autoClose: false })) digest.update(chunk);
+    const after = await handle.stat();
+    const current = await lstat(target);
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size
+      || after.mtimeMs !== before.mtimeMs || current.dev !== before.dev
+      || current.ino !== before.ino || current.size !== before.size || current.mtimeMs !== before.mtimeMs) {
+      throw new Error('UPDATE_DOWNLOADED_ARTIFACT_CHANGED');
+    }
+    return digest.digest('hex');
+  } finally {
+    await handle.close();
+  }
+}
+
 export interface DownloadedUpdateOffer {
   readonly generation: number;
   readonly version: string;
   readonly artifactIdentity: string;
+  readonly artifactSha256: string;
 }
 
 export async function installAfterPreUpdateBackup(
@@ -88,7 +125,8 @@ function sameDownloadedOffer(left: DownloadedUpdateOffer, right: DownloadedUpdat
   return right !== null
     && left.generation === right.generation
     && left.version === right.version
-    && left.artifactIdentity === right.artifactIdentity;
+    && left.artifactIdentity === right.artifactIdentity
+    && left.artifactSha256 === right.artifactSha256;
 }
 
 export interface UpdateInstallCoordinatorOptions {
