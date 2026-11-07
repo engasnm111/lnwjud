@@ -63,6 +63,21 @@ internal static class ReleaseAuthorizationV2Tests
                     Check(locked, "candidate input stays pinned: " + name);
                 }
             }
+            var crossTarget = JsonNode.Parse(descriptorBytes)!.AsObject();
+            crossTarget["release"]!["platform"] = "darwin";
+            crossTarget["release"]!["distribution"] = "macos-zip";
+            crossTarget["release"]!["artifact"]!["name"] = "lnwjud-5.9.1-x64.zip";
+            File.WriteAllBytes(Path.Combine(directory, "CANDIDATE.json"), Wire.Encode(crossTarget));
+            try
+            {
+                using var invalid = UnsignedEvidencePackage.Open(directory, policy, time, ReleaseAuthorizationPurpose.Update, update.KeyId);
+                throw new Exception("cross-target candidate accepted by Windows signing preflight");
+            }
+            catch (Refusal error)
+            {
+                Check(error.Reason == "RELEASE_TARGET_UNSUPPORTED", "Windows signing preflight must reject macOS target before accessing artifact");
+            }
+            File.WriteAllBytes(Path.Combine(directory, "CANDIDATE.json"), descriptorBytes);
             File.WriteAllText(Path.Combine(directory, "artifact.bundle.json"), "tampered");
             Refused(() => UnsignedEvidencePackage.Open(directory, policy, time, ReleaseAuthorizationPurpose.Update, update.KeyId), "changed bundle refuses");
         }
