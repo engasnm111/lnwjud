@@ -212,7 +212,14 @@ test('native spool verifies exact ZIP members before invoking a consumer, then d
     () => { consumed++; }), /SIGNING_ARCHIVE_STRUCTURE_REFUSED/);
   assert.equal(discarded, 3);
   assert.equal(consumed, 1);
+  const mutableSource = { ...expectedSource, runId: '124' };
+  const pending = withInspectedSigningArchive({ ...options, expectedSource: mutableSource },
+    () => { consumed++; });
+  mutableSource.runId = '123'; // A late mutation must not replace the pre-download source identity.
+  await assert.rejects(pending, /SIGNING_ARCHIVE_STRUCTURE_REFUSED/);
+  assert.equal(discarded, 4);
+  assert.equal(consumed, 1);
   assert.throws(() => withInspectedSigningArchive({ ...options, expectedManifestSha256: 'INVALID' },
     () => { consumed++; }), /SIGNING_ARCHIVE_INPUT_INVALID/);
-  assert.equal(discarded, 3);
+  assert.equal(discarded, 4);
 });

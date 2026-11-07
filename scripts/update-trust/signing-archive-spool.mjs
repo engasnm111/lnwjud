@@ -113,8 +113,13 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
 export function withInspectedSigningArchive(options, consume) {
   if (typeof consume !== 'function' || !options || typeof options.expectedManifestSha256 !== 'string'
     || !/^[a-f0-9]{64}$/.test(options.expectedManifestSha256)) throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
+  // Snapshot caller-supplied identity before the asynchronous download; a mutable
+  // options object must not change the accepted source or policy mid-verification.
+  const expectedManifestSha256 = options.expectedManifestSha256;
+  const expectedSource = options.expectedSource && typeof options.expectedSource === 'object'
+    && !Array.isArray(options.expectedSource) ? Object.freeze({ ...options.expectedSource }) : options.expectedSource;
   return withDownloadedSigningArchive(options, async reader => {
-    const inspection = await inspectSigningArchive(reader, options.expectedManifestSha256, options.expectedSource);
+    const inspection = await inspectSigningArchive(reader, expectedManifestSha256, expectedSource);
     return consume(reader, inspection);
   });
 }
