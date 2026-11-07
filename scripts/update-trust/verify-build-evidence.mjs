@@ -49,13 +49,19 @@ function verifiedTimestamp(record, issuedAt) {
   if (record === null || typeof record !== 'object' || Array.isArray(record)
     || Object.keys(record).sort().join(',') !== 'timestamp,type,uri'
     || !['Tlog', 'TimestampAuthority'].includes(record.type) || typeof record.uri !== 'string' || record.uri.length > 2048
-    || typeof record.timestamp !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$/.test(record.timestamp)) return false;
+    || typeof record.timestamp !== 'string') return false;
+  // GitHub CLI emits verified transparency timestamps with numeric UTC offsets (e.g. +07:00).
+  const timestamp = /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]{1,9})?(Z|([+-])([0-9]{2}):([0-9]{2}))$/.exec(record.timestamp);
+  if (!timestamp) return false;
+  const hours = Number(timestamp[4] ?? 0), minutes = Number(timestamp[5] ?? 0);
+  if (hours > 14 || (hours === 14 && minutes !== 0)) return false;
+  const offsetMinutes = (timestamp[3] === '-' ? -1 : 1) * (hours * 60 + minutes);
   let uri;
   try { uri = new URL(record.uri); } catch { return false; }
   const milliseconds = Date.parse(record.timestamp);
   return uri.protocol === 'https:' && uri.username === '' && uri.password === '' && uri.hash === ''
     && Number.isFinite(milliseconds) && milliseconds >= 0 && milliseconds <= 253402300799000
-    && new Date(milliseconds).toISOString().slice(0, 19) === record.timestamp.slice(0, 19)
+    && new Date(milliseconds + offsetMinutes * 60000).toISOString().slice(0, 19) === timestamp[1]
     && BigInt(Math.floor(milliseconds / 1000)) <= BigInt(issuedAt) + 300n;
 }
 
