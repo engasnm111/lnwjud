@@ -263,6 +263,7 @@ export class PosixProcessTree implements ProcessTreeTerminator {
       const deadline = Date.now() + 500;
       while ((initial.state === 'live' && initial.rootStartedAt === undefined
         || initial.state === 'unknown' && (initial.reason === 'process_table_unavailable'
+          || initial.reason === 'empty_process_table'
           || initial.reason === 'malformed_process_table'
           || initial.reason === 'darwin_escaped_descendants_not_contained'))
         && child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
