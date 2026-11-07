@@ -131,9 +131,13 @@ jobs:
             throw 'ALLUSERS_SILENT_UNINSTALL_TIMEOUT'
           }
           if ($remover.ExitCode -ne 0) { throw "ALLUSERS_SILENT_UNINSTALL_EXIT_$($remover.ExitCode)" }
-          if ((Test-Path -LiteralPath $application) -or
-              $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)) {
-            throw 'ALLUSERS_SILENT_UNINSTALL_LEFT_EXECUTABLE_OR_SERVICE'
+          $applicationRemains = Test-Path -LiteralPath $application -PathType Leaf
+          $remainingService = Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue
+          if ($applicationRemains -or $null -ne $remainingService) {
+            # Distinguish unresolved SCM deletion from failed NSIS file cleanup.
+            # Never hide either failure or force-delete a service on the runner.
+            throw ("ALLUSERS_SILENT_UNINSTALL_INCOMPLETE application={0} service={1}" -f
+              $applicationRemains, $(if ($null -eq $remainingService) { 'absent' } else { $remainingService.Status.ToString() }))
           }
           Write-Output 'ALLUSERS_SILENT_INSTALL_PROTECTED_SERVICE_UNINSTALL_VERIFIED'
 
