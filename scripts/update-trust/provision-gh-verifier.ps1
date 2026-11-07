@@ -5,6 +5,7 @@ param([string]$ArchivePath)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $version = '2.103.3'
 $archiveHash = '98d0cfa794721665d7973dd728c78aff7bd836d58f10f6d7a03568eccb0a22e0'
 $executableHash = 'd303d8ac3f5e9438bf7c977b64dd6425513eae46218f8881d30694f28c1d0dfd'
@@ -12,6 +13,17 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $destination = Join-Path $repositoryRoot 'tools/update-attestation/gh.exe'
 $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) ('lnwjud-gh-verifier-' + [guid]::NewGuid().ToString('N'))
 $zip = $null
+
+function Get-PinnedFileSha256([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        # Use the streaming .NET API, not Get-FileHash: the latter may not be
+        # loaded in the constrained hosted Windows PowerShell runner.
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try { return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+        finally { $stream.Dispose() }
+    } finally { $sha.Dispose() }
+}
 
 try {
     New-Item -ItemType Directory -Path $tempDirectory -ErrorAction Stop | Out-Null
@@ -23,7 +35,7 @@ try {
         $ArchivePath = (Resolve-Path -LiteralPath $ArchivePath -ErrorAction Stop).Path
     }
 
-    if ((Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $archiveHash) {
+    if ((Get-PinnedFileSha256 $ArchivePath) -ne $archiveHash) {
         throw 'VERIFIER_ARCHIVE_DIGEST_MISMATCH'
     }
 
@@ -43,7 +55,7 @@ try {
     $zip.Dispose()
     $zip = $null
 
-    if ((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant() -ne $executableHash) {
+    if ((Get-PinnedFileSha256 $candidate) -ne $executableHash) {
         throw 'VERIFIER_EXECUTABLE_DIGEST_MISMATCH'
     }
     $signature = Get-AuthenticodeSignature -LiteralPath $candidate
@@ -63,14 +75,14 @@ try {
     if (Test-Path -LiteralPath $destination) {
         $existing = Get-Item -LiteralPath $destination -Force
         if (($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $executableHash) {
+            (Get-PinnedFileSha256 $destination) -ne $executableHash) {
             throw 'VERIFIER_DESTINATION_CONFLICT'
         }
     } else {
         # Atomic create-only: a concurrent replacement must never be overwritten.
         [IO.File]::Copy($candidate, $destination, $false)
     }
-    if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $executableHash) {
+    if ((Get-PinnedFileSha256 $destination) -ne $executableHash) {
         throw 'VERIFIER_PUBLICATION_UNVERIFIED'
     }
     Write-Output "VERIFIER_PROVISIONED version=$version sha256=$executableHash"
