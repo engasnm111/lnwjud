@@ -240,8 +240,11 @@ internal sealed class WindowsStoreIO : IDisposable
     {
         using var handle = OpenProcess(0x101000, false, (uint)owner.Pid);
         if (handle.IsInvalid) return Marshal.GetLastWin32Error() == 87 ? "gone" : "unknown";
-        if (!GetExitCodeProcess(handle, out var exit)) return "unknown";
-        if (exit != 259) return "gone";
+        // Exit code 259 (STILL_ACTIVE) is a valid terminal exit code; only the
+        // signaled process handle establishes termination without ambiguity.
+        var wait = WaitForSingleObject(handle, 0);
+        if (wait == 0) return "gone";
+        if (wait != 258) return "unknown";
         if (!GetProcessTimes(handle, out var creation, out _, out _, out _)) return "unknown";
         if (creation.Value.ToString(CultureInfo.InvariantCulture) != owner.CreationTime) return "gone";
         return "live";
@@ -279,7 +282,7 @@ internal sealed class WindowsStoreIO : IDisposable
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool MoveFileExW(string existing, string destination, uint flags);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeFileHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetProcessTimes(SafeFileHandle process, out NativeTime creation, out NativeTime exit, out NativeTime kernel, out NativeTime user);
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetExitCodeProcess(SafeFileHandle process, out uint exit);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeFileHandle process, uint milliseconds);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool QueryFullProcessImageNameW(SafeFileHandle process, uint flags, [Out] char[] path, ref int size);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string descriptor, uint revision, out IntPtr security, out uint size);
     [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
