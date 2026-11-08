@@ -22,6 +22,9 @@ const authority = Object.freeze({
   buildConfigDigestRule: 'source-commit',
 });
 const refuse = () => { throw new Error('KEYFREE_SIGNING_EVIDENCE_REFUSED'); };
+const requireKeyFree = () => {
+  if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse();
+};
 const decimal = value => typeof value === 'string' && /^[1-9][0-9]{0,14}$/.test(value)
   && Number.isSafeInteger(Number(value));
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -48,8 +51,8 @@ async function roleFile(root, spec, limit) {
  * authorizes enrollment, installation, rollback, or a signer handoff.
  */
 export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source, now, verify }) {
-  if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')
-    || typeof root !== 'string' || !path.isAbsolute(root) || !Buffer.isBuffer(policyBytes)
+  requireKeyFree();
+  if (typeof root !== 'string' || !path.isAbsolute(root) || !Buffer.isBuffer(policyBytes)
     || policyBytes.length < 1 || policyBytes.length > 65536 || !source || typeof source !== 'object'
     || !decimal(source.runId) || !/^[a-f0-9]{40}$/.test(source.commit ?? '')
     || source.builderSha !== builderSha || typeof now !== 'bigint' || now < 0n
@@ -119,11 +122,13 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
     || !Array.isArray(subject) || subject.length !== 1 || subject[0].sha256 !== release.artifact.sha256
     || String(subject[0].sizeBytes) !== release.artifact.sizeBytes) refuse();
   for (const kind of ['artifact', 'provenance']) {
+    requireKeyFree();
     const output = await verify({
       filename: path.join(candidateRoot, manifest.candidate[kind].name),
       bundle: path.join(candidateRoot, manifest.candidate[`${kind}Bundle`].name),
       source: boundSource, authority,
     });
+    requireKeyFree();
     if (!Buffer.isBuffer(output)
       || selectVerifiedAttestation(output, { source: release.source, issuedAt: payload.issuedAt }, release[kind], authority) !== 1) refuse();
   }
@@ -136,6 +141,7 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
         : kind === 'provenance' ? 1048576n : 16777216n);
   const finalManifest = await readBoundedFile(path.join(root, 'manifest.json'), 32768n);
   if (finalManifest.sha256 !== manifestFile.sha256) refuse();
+  requireKeyFree();
   return Object.freeze({ status: 'key-free-attestations-observed-only', sourceSha: boundSource.commit,
     sourceRunId: boundSource.runId, candidateSha256: candidate.sha256, manifestSha256: manifestFile.sha256 });
 }

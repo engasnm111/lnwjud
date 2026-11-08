@@ -5,6 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { hash } from './release-envelope.mjs';
 import { inspectKeyFreeSigningCandidate } from './keyfree-signing-evidence.mjs';
 
@@ -163,6 +164,21 @@ test('key-free verifier refuses persistent candidate or manifest substitution du
       return verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact']);
     }), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
   });
+});
+
+test('key-free diagnostic refuses a signing secret injected during asynchronous attestation', async () => {
+  for (const secret of ['', 'fixture-secret']) {
+    await withFixture(async (root, f) => {
+      try {
+        await assert.rejects(inspect(root, f, ({ filename }) => {
+          process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = secret;
+          return verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact']);
+        }), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+      } finally {
+        delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
+      }
+    });
+  }
 });
 
 test('key-free verifier refuses wrong attestation signer and subject', async () => {
