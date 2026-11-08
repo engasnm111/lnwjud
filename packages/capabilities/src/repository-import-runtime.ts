@@ -192,7 +192,23 @@ export class SecureRepositoryImportRuntime {
         return ok({ ...response, state: 'unresolved', detail: 'Native destination could not be inspected' });
       }
     }
+    // Terminal failure with no native receipt and no destination: nothing was or can be
+    // published. Ask the native service to drop its exclusive import hold (best effort;
+    // the service independently refuses unless the owner is verified terminal and no
+    // publication intent was ever committed).
+    await this.abortUnpublishedImport(manifest.value);
     return ok({ ...response, state: state === 'cancelled' ? 'cancelled' : 'failed' });
+  }
+
+  private async abortUnpublishedImport(manifest: ImportManifest): Promise<void> {
+    if (process.platform !== 'win32' || !this.nativeAuthority || manifest.version !== 2) return;
+    try {
+      await this.nativeAuthority.control({
+        directory: path.join(this.importDirectory(manifest.requestId), 'abort-' + randomUUID()),
+        binding: manifest.binding, command: 'abort_import',
+        request: { workspaceRoot: manifest.workspaceRoot, destination: manifest.destination, commit: manifest.commit },
+      });
+    } catch { /* fail closed: the reservation simply stays held */ }
   }
 
   async cancel(input: SecureRepositoryImportHandle): Promise<Result<Record<string, unknown>>> {
