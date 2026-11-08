@@ -151,7 +151,9 @@ export class DurableShellTaskIndex {
             if (marker.record.requestDigest !== input.requestDigest || marker.record.mutationKind !== (input.mutationKind ?? 'opaque')
               || reservationCapacityClass(marker.record) !== capacityClass
               || marker.record.ownerClientId !== input.ownerClientId
-              || marker.record.ownerWorkspaceId !== input.ownerWorkspaceId) {
+              || marker.record.ownerWorkspaceId !== input.ownerWorkspaceId
+              || marker.record.nativeReceiptPath !== input.nativeReceiptPath
+              || JSON.stringify(parseNativeAttemptBinding(marker.record.nativeBinding)) !== JSON.stringify(parseNativeAttemptBinding(input.nativeBinding))) {
               return err(appError('CONFLICT', 'Durable task ID is already reserved for another request', true));
             }
             return ok({ activeTasks: activeTasks + 1, created: false, markerPath: marker.path });

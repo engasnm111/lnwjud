@@ -271,6 +271,35 @@ describe('DurableShellTaskIndex', () => {
     expect(await index.reserve({ ...owned, ownerWorkspaceId: 'other-workspace' })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
   });
 
+  it('refuses to adopt a native reservation with changed receipt or attempt identity', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-native-reservation-identity-'));
+    temporaryRoots.push(root);
+    const index = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10,
+      inspectTask: async (): Promise<'active'> => 'active',
+      verifyContainedTermination: async (): Promise<boolean> => false,
+    });
+    const nativeBinding = {
+      taskId: 'same-native', reservationId: 'same-native', attemptId: 'attempt-1',
+      generation: 1, requestDigest: 'a'.repeat(64), ownerClientId: 'owner',
+      ownerSessionId: 'session-1', workspaceId: 'workspace',
+    };
+    const owned = {
+      taskId: 'same-native', requestDigest: 'a'.repeat(64), ownerClientId: 'owner',
+      ownerWorkspaceId: 'workspace', mutationKind: 'opaque_contained_process' as const,
+      nativeReceiptPath: path.join(root, 'attempt-1.receipt.json'), nativeBinding,
+    };
+    expect(await index.reserve(owned)).toMatchObject({ ok: true, value: { created: true } });
+    expect(await index.reserve(owned)).toMatchObject({ ok: true, value: { created: false } });
+    expect(await index.reserve({ ...owned, nativeReceiptPath: path.join(root, 'other.receipt.json') }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.reserve({ ...owned, nativeBinding: { ...nativeBinding, attemptId: 'attempt-2' } }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.reserve({ ...owned, nativeBinding: { ...nativeBinding, ownerSessionId: 'session-2' } }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.hasReservation('same-native', 'a'.repeat(64))).toBe(true);
+  });
+
   it.each(['active', 'unknown', 'missing'] as const)('blocks import across workspaces while an opaque writer is %s', async (state) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-admission-'));
     temporaryRoots.push(root);
