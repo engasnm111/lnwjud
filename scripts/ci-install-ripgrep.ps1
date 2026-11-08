@@ -48,7 +48,9 @@ foreach ($sourceUrl in @($primaryUrl, $apiUrl)) {
             $transientStatus = $statusCode -in @(408, 429, 500, 502, 503, 504)
             $transientTransport = $_.Exception -is [System.Net.WebException] -and
                 $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)
-            if (-not $transientStatus -and -not $transientTransport) { throw }
+            # pwsh 7 reports configured HttpClient timeouts without WebException.Status.
+            $httpClientTimeout = $_.Exception.Message -match 'configured HttpClient[.]Timeout of [0-9]+ seconds elapsing'
+            if (-not $transientStatus -and -not $transientTransport -and -not $httpClientTimeout) { throw }
             if (Test-Path -LiteralPath $archive) {
                 Remove-Item -LiteralPath $archive -Force -ErrorAction Stop
             }

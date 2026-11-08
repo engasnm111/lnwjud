@@ -16,7 +16,7 @@ test('verifier executable path is fixed and rejects caller paths', async () => {
 });
 
 test('pinned verifier provisioning retries transport timeouts but refuses other download errors', { skip: !windows }, () => {
-  for (const [failure, expectedAttempts] of [['timeout', 6], ['gateway-timeout', 6], ['forbidden', 1], ['unexpected', 1]]) {
+  for (const [failure, expectedAttempts] of [['timeout', 6], ['gateway-timeout', 6], ['httpclient-timeout', 6], ['forbidden', 1], ['unexpected', 1]]) {
     const script = `
       $global:attempts = 0
       $global:apiAttempts = 0
@@ -33,6 +33,9 @@ test('pinned verifier provisioning retries transport timeouts but refuses other 
         }
         if ('${failure}' -eq 'gateway-timeout') {
           throw [System.Net.WebException]::new('504 Gateway Time-out', [System.Net.WebExceptionStatus]::ProtocolError)
+        }
+        if ('${failure}' -eq 'httpclient-timeout') {
+          throw [System.Threading.Tasks.TaskCanceledException]::new('The request was canceled due to the configured HttpClient.Timeout of 90 seconds elapsing.')
         }
         if ('${failure}' -eq 'forbidden') {
           throw [System.Net.WebException]::new('403 Forbidden', [System.Net.WebExceptionStatus]::ProtocolError)
@@ -69,18 +72,18 @@ test('Windows CI ripgrep pinned fallback handles CDN 502, refuses 403 and reject
   try {
     for (const [failure, attempts, apiAttempts, expectedError] of [
       ['gateway', 6, 3, '502 Bad Gateway'],
+      ['httpclient-timeout', 6, 3, 'HttpClient.Timeout'],
       ['forbidden', 1, 0, '403 Forbidden'],
       ['corrupt', 1, 0, 'RIPGREP_CI_ARCHIVE_DIGEST_MISMATCH'],
     ]) {
       const runnerTemp = path.join(temp, failure);
       await mkdir(runnerTemp);
       const fixture = [
-        // Import before mocking Get-Command; a fresh hosted runner otherwise
-        // cannot auto-load Get-FileHash from Microsoft.PowerShell.Utility.
-        'Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop',
+        // Mask only external rg.exe on PATH, not PowerShell command/module discovery.
+        // Overriding Get-Command can prevent Get-FileHash auto-load on fresh CI runners.
+        '$env:PATH = [string]::Join(";", @((Join-Path $env:SystemRoot "System32"), $env:SystemRoot, (Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0")))',
         '$global:attempts = 0',
         '$global:apiAttempts = 0',
-        'function Get-Command { [CmdletBinding()] param([string]$Name) if ($Name -eq "rg") { return $null } else { throw "Unexpected Get-Command" } }',
         'function Invoke-WebRequest {',
         '  [CmdletBinding()]',
         '  param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)',
@@ -92,6 +95,9 @@ test('Windows CI ripgrep pinned fallback handles CDN 502, refuses 403 and reject
         '  if ("' + failure + '" -eq "corrupt") { Set-Content -LiteralPath $OutFile -Value "not the official archive" -Encoding ascii; return }',
         '  if ("' + failure + '" -eq "gateway") {',
         '    throw [System.Net.WebException]::new("502 Bad Gateway", [System.Net.WebExceptionStatus]::ProtocolError)',
+        '  }',
+        '  if ("' + failure + '" -eq "httpclient-timeout") {',
+        '    throw [System.Threading.Tasks.TaskCanceledException]::new("The request was canceled due to the configured HttpClient.Timeout of 90 seconds elapsing.")',
         '  }',
         '  throw [System.Net.WebException]::new("403 Forbidden", [System.Net.WebExceptionStatus]::ProtocolError)',
         '}',
@@ -132,7 +138,7 @@ test('Windows CI cosign fallback retries CDN 504 via its pinned official API ass
   }).join('\n');
   const temp = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-cosign-ci-'));
   try {
-    for (const [failure, expectedAttempts, expectedApi] of [['gateway-timeout', 8, 4], ['forbidden', 1, 0]]) {
+    for (const [failure, expectedAttempts, expectedApi] of [['gateway-timeout', 8, 4], ['httpclient-timeout', 8, 4], ['forbidden', 1, 0]]) {
       const fixture = `
         $global:attempts = 0
         $global:apiAttempts = 0
@@ -149,6 +155,9 @@ test('Windows CI cosign fallback retries CDN 504 via its pinned official API ass
           }
           if ('${failure}' -eq 'gateway-timeout') {
             throw [System.Net.WebException]::new('504 Gateway Time-out', [System.Net.WebExceptionStatus]::ProtocolError)
+          }
+          if ('${failure}' -eq 'httpclient-timeout') {
+            throw [System.Threading.Tasks.TaskCanceledException]::new('The request was canceled due to the configured HttpClient.Timeout of 120 seconds elapsing.')
           }
           throw [System.Net.WebException]::new('403 Forbidden', [System.Net.WebExceptionStatus]::ProtocolError)
         }

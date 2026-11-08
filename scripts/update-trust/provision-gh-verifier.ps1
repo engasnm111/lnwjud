@@ -58,7 +58,10 @@ try {
                     $transientStatus = $statusCode -in @(408, 429, 500, 502, 503, 504)
                     $transientTransport = $_.Exception -is [System.Net.WebException] -and
                         $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)
-                    if (-not $transientStatus -and -not $transientTransport) { throw }
+                    # pwsh 7 may report a configured HttpClient timeout as TaskCanceled,
+                    # not System.Net.WebException. Only the explicit timeout message retries.
+                    $httpClientTimeout = $_.Exception.Message -match 'configured HttpClient[.]Timeout of [0-9]+ seconds elapsing'
+                    if (-not $transientStatus -and -not $transientTransport -and -not $httpClientTimeout) { throw }
                     if (Test-Path -LiteralPath $ArchivePath) {
                         Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction Stop
                     }
