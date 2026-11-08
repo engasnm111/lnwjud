@@ -49,6 +49,20 @@ describe('RipgrepAdapter', () => {
     expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThan(1024 * 1024);
   }, 15_000);
 
+  it('contains a throwing stdout observer and reports a failed search instead of an uncaught stream error', async () => {
+    const runner = new DirectProcessRunner();
+    const result = await runner.run(process.execPath,
+      ['-e', "process.stdout.write('line\\n'); setTimeout(() => {}, 250)"],
+      process.cwd(), {
+        timeoutMs: 5_000,
+        stopAfterStdoutLine: () => { throw new Error('fixture observer failed'); },
+      });
+    expect(result.exitCode).toBe(-1);
+    expect(result.stderr).toContain('Search stdout observer failed');
+    expect(result.timedOut).not.toBe(true);
+    expect(result.stoppedEarly).not.toBe(true);
+  }, 15_000);
+
   it('terminates a ripgrep child when the MCP invocation is aborted', async () => {
     const runner = new DirectProcessRunner();
     const controller = new AbortController();
@@ -66,14 +80,17 @@ describe('RipgrepAdapter', () => {
     expect(result.stdout).not.toContain('late');
   }, 15_000);
 
-  it('marks a rejected process-tree stop as unverified rather than a safe timeout', async () => {
-    const runner = new DirectProcessRunner({
-      async stop(): Promise<void> { throw new Error('POSIX process group identity could not be verified'); },
-    });
-    const result = await runner.run(process.execPath, ['-e', 'setTimeout(() => {}, 250)'], process.cwd(), { timeoutMs: 10 });
-    expect(result.timedOut).toBe(true);
-    expect(result.terminationUnverified).toBe(true);
-    expect(result.exitCode).toBe(-1);
+  it('marks synchronous or asynchronous process-tree stop rejection as unverified', async () => {
+    for (const terminator of [
+      { async stop(): Promise<void> { throw new Error('POSIX process group identity could not be verified'); } },
+      { stop(): Promise<void> { throw new Error('POSIX process group identity could not be verified'); } },
+    ]) {
+      const runner = new DirectProcessRunner(terminator);
+      const result = await runner.run(process.execPath, ['-e', 'setTimeout(() => {}, 250)'], process.cwd(), { timeoutMs: 10 });
+      expect(result.timedOut).toBe(true);
+      expect(result.terminationUnverified).toBe(true);
+      expect(result.exitCode).toBe(-1);
+    }
   }, 15_000);
 
   it('refuses successful text and file search results when subprocess termination is unverified', async () => {

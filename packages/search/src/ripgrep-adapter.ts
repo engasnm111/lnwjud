@@ -62,6 +62,7 @@ export class DirectProcessRunner implements ProcessRunner {
       let timedOut = false;
       let terminationUnverified = false;
       let stoppedEarly = false;
+      let observerFailed = false;
       let settled = false;
       let terminationPending = false;
       let pendingExitCode: number | null = null;
@@ -82,17 +83,19 @@ export class DirectProcessRunner implements ProcessRunner {
         }
         finish(exitCode);
       };
-      const requestStop = (reason: 'timeout' | 'early'): void => {
+      const requestStop = (reason: 'timeout' | 'early' | 'observer_error'): void => {
         if (terminationPending || settled) return;
         if (reason === 'timeout') timedOut = true;
-        else stoppedEarly = true;
+        else if (reason === 'early') stoppedEarly = true;
         const pid = child.pid;
         if (pid === undefined) {
           finish(-1);
           return;
         }
         terminationPending = true;
-        void this.terminator.stop(child, pid).then(() => {
+        // Normalize synchronous and asynchronous terminator failures into the
+        // same fail-closed result; neither may escape a stream/timer callback.
+        void Promise.resolve().then(() => this.terminator.stop(child, pid)).then(() => {
           terminationPending = false;
           finish(pendingExitCode ?? -1);
         }).catch((error: unknown) => {
@@ -105,7 +108,7 @@ export class DirectProcessRunner implements ProcessRunner {
       };
       const abort = (): void => requestStop('timeout');
       const captureStdout = (chunk: Buffer): void => {
-        if (stoppedEarly || timedOut) return;
+        if (stoppedEarly || timedOut || observerFailed) return;
         const observer = options.stopAfterStdoutLine;
         if (observer === undefined) {
           stdoutBytes = appendBounded(stdoutChunks, stdoutBytes, chunk);
@@ -120,9 +123,18 @@ export class DirectProcessRunner implements ProcessRunner {
         stdoutLinePending = lines.pop() ?? '';
         for (const line of lines) {
           stdoutBytes = appendBounded(stdoutChunks, stdoutBytes, Buffer.from(`${line}\n`, 'utf8'));
-          if (observer(line)) {
-            stdoutLinePending = '';
-            requestStop('early');
+          try {
+            if (observer(line)) {
+              stdoutLinePending = '';
+              requestStop('early');
+              return;
+            }
+          } catch {
+            // Never allow a user-supplied stdout observer to throw out of the
+            // stream event handler while its child continues running.
+            observerFailed = true;
+            stderrBytes = appendBounded(stderrChunks, stderrBytes, Buffer.from('Search stdout observer failed', 'utf8'));
+            requestStop('observer_error');
             return;
           }
         }
@@ -133,7 +145,7 @@ export class DirectProcessRunner implements ProcessRunner {
         if (timer !== undefined) clearTimeout(timer);
         options.signal?.removeEventListener('abort', abort);
         resolve({
-          exitCode,
+          exitCode: observerFailed ? -1 : exitCode,
           stdout: stdoutText(),
           stderr: stderrText(),
           ...(timedOut ? { timedOut: true } : {}),
