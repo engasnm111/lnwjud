@@ -29,12 +29,12 @@ const requireKeyFree = () => {
 
 // A verifier subprocess must never inherit a signer secret, even if a future
 // workflow mistakenly places the protected key in the key-free job context.
-// Pass only the OS process essentials to the verifier. Inheriting GH_CONFIG_DIR,
-// GIT_CONFIG_* or other caller-controlled GitHub CLI settings can redirect the
-// verifier to mutable configuration despite fixed CLI arguments.
+// Pass only the OS process essentials to the verifier. Inheriting PATH,
+// PATHEXT, COMSPEC, GH_CONFIG_DIR, GIT_CONFIG_* or other caller-controlled
+// settings could redirect helper execution or mutable CLI configuration despite
+// fixed verifier arguments. The verifier executable itself is an absolute path.
 const verifierEnvironmentNames = new Set([
-  'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PROGRAMFILES',
-  'PROGRAMFILES(X86)', 'PROGRAMW6432',
+  'SYSTEMROOT', 'WINDIR', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMW6432',
 ]);
 export function keyFreeGhEnvironment(environment, token, isolatedDirectory) {
   if (!environment || typeof environment !== 'object' || Array.isArray(environment)

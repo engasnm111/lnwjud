@@ -95,8 +95,8 @@ const inspect = (root, f, verify = ({ filename }) => {
 }) => inspectKeyFreeSigningCandidate({ root, policyBytes: f.policyBytes, source, now, verify });
 
 test('pinned GitHub verifier subprocess environment rejects signer keys before launch', () => {
-  const environment = { PATH: 'fixture-path', SystemRoot: 'C:\\Windows',
-    GH_HOST: 'untrusted.example', GH_TOKEN: 'old-token',
+  const environment = { PATH: 'fixture-path', PATHEXT: '.EXE;.CMD', COMSPEC: 'C:\\untrusted\\cmd.exe',
+    SystemRoot: 'C:\\Windows', GH_HOST: 'untrusted.example', GH_TOKEN: 'old-token',
     GH_CONFIG_DIR: 'attacker-controlled', GIT_CONFIG_GLOBAL: 'attacker-config',
     NODE_OPTIONS: '--require=untrusted', GITHUB_TOKEN: 'unrelated-credential' };
   const isolated = path.resolve('fixture-keyfree-gh-config');
@@ -104,8 +104,9 @@ test('pinned GitHub verifier subprocess environment rejects signer keys before l
   assert.equal(allowed.GH_HOST, 'github.com');
   assert.equal(allowed.GH_TOKEN, 'verified-fixture-token');
   assert.equal(allowed.GH_PROMPT_DISABLED, '1');
-  assert.equal(Reflect.get(allowed, 'PATH'), 'fixture-path');
   assert.equal(Reflect.get(allowed, 'SystemRoot'), 'C:\\Windows');
+  for (const name of ['PATH', 'PATHEXT', 'COMSPEC'])
+    assert.equal(Object.hasOwn(allowed, name), false, `${name} must not control verifier helper lookup`);
   for (const name of ['GH_CONFIG_DIR', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP'])
     assert.equal(allowed[name], isolated, `${name} must use the fresh isolated directory`);
   for (const name of ['GIT_CONFIG_GLOBAL', 'NODE_OPTIONS', 'GITHUB_TOKEN'])
