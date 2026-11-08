@@ -29,7 +29,7 @@ export async function stageUpdateAttestationVerifier(repositoryRoot, nativeConta
     if (error?.code !== 'ENOENT') throw error;
     const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', path.join(repositoryRoot, 'scripts/update-trust/provision-gh-verifier.ps1')];
-    const options = { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 150_000 };
+    const options = { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 300_000 };
     try {
       await execute('pwsh.exe', args, options);
     } catch (failure) {

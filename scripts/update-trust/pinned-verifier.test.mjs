@@ -15,6 +15,34 @@ test('verifier executable path is fixed and rejects caller paths', async () => {
   await assert.rejects(acquirePinnedVerifier({ filename: process.execPath, sha256: '0'.repeat(64) }), /RELEASE_VERIFIER_UNTRUSTED/);
 });
 
+test('pinned verifier provisioning retries transport timeouts but refuses other download errors', { skip: !windows }, () => {
+  for (const [failure, expectedAttempts] of [['timeout', 3], ['unexpected', 1]]) {
+    const script = `
+      $global:attempts = 0
+      function Invoke-WebRequest {
+        [CmdletBinding()]
+        param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing)
+        $global:attempts++
+        if ('${failure}' -eq 'timeout') {
+          throw [System.Net.WebException]::new('timeout', [System.Net.WebExceptionStatus]::Timeout)
+        }
+        throw [System.InvalidOperationException]::new('unexpected failure')
+      }
+      function Start-Sleep { param([int]$Seconds) }
+      try { & './scripts/update-trust/provision-gh-verifier.ps1'; exit 10 }
+      catch {
+        if ($global:attempts -ne ${expectedAttempts}) { Write-Error "attempts=$global:attempts"; exit 11 }
+        exit 0
+      }
+    `;
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000,
+    });
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 0, `${failure}: ${result.stdout}\n${result.stderr}`);
+  }
+});
+
 test('actual native addon pins file and ancestors, rejecting writes/renames until release', { skip: !windows }, async () => {
   const addon = await loadVerifierPinModule();
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-verifier-pin-'));

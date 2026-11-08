@@ -29,7 +29,28 @@ try {
     if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
         $ArchivePath = Join-Path $tempDirectory "gh_${version}_windows_amd64.zip"
         $uri = "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_windows_amd64.zip"
-        Invoke-WebRequest -Uri $uri -OutFile $ArchivePath -MaximumRedirection 5 -TimeoutSec 120 -UseBasicParsing -ErrorAction Stop
+        # GitHub's release-asset CDN can return transient 5xx/429 responses.
+        # Retry only transport failures; every completed archive is still SHA-256 pinned.
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                Invoke-WebRequest -Uri $uri -OutFile $ArchivePath -MaximumRedirection 5 -TimeoutSec 90 -UseBasicParsing -ErrorAction Stop
+                break
+            } catch {
+                $statusCode = $null
+                $responseProperty = $_.Exception.PSObject.Properties['Response']
+                if ($null -ne $responseProperty -and $null -ne $responseProperty.Value) {
+                    $statusCode = [int]$responseProperty.Value.StatusCode
+                }
+                $transientStatus = $statusCode -in @(408, 429, 500, 502, 503, 504)
+                $transientTransport = $_.Exception -is [System.Net.WebException] -and
+                    $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)
+                if ($attempt -eq 3 -or (-not $transientStatus -and -not $transientTransport)) { throw }
+                if (Test-Path -LiteralPath $ArchivePath) {
+                    Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction Stop
+                }
+                Start-Sleep -Seconds (3 * $attempt)
+            }
+        }
     } else {
         $ArchivePath = (Resolve-Path -LiteralPath $ArchivePath -ErrorAction Stop).Path
     }
