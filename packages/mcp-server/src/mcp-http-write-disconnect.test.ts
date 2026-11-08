@@ -40,7 +40,7 @@ describe('modern MCP HTTP lost-response write safety', () => {
         async enter(): Promise<{ ok: true; value: { id: string; releaseAfterVerifiedTermination(): Promise<void> } }> {
           admitted();
           await admissionGate;
-          return { ok: true, value: { id: 'test-admission', async releaseAfterVerifiedTermination() {} } };
+          return { ok: true, value: { id: 'test-admission', async releaseAfterVerifiedTermination(): Promise<void> {} } };
         },
       },
     });
@@ -105,7 +105,7 @@ describe('modern MCP HTTP lost-response write safety', () => {
       async write(filePath: string, content: string | Buffer, options: {
         validateDestination?: () => Promise<Result<void>>;
         createNew?: boolean;
-      } = {}) {
+      } = {}): Promise<Result<void>> {
         const validation = await options.validateDestination?.();
         if (validation && !validation.ok) return validation;
         await writeFile(filePath, content, { flag: options.createNew ? 'wx' : 'w' });
