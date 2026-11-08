@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
-import { lstat, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, realpath, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -191,7 +191,20 @@ export async function withIsolatedGhConfig(action) {
   } finally {
     if (await realpath(directory) !== directory || path.dirname(directory) !== base
       || !path.basename(directory).startsWith('lnwjud-keyfree-gh-')) refuse();
-    await rm(directory, { recursive: true });
+    // The verifier may write into this directory. Never recursively delete
+    // entries it controls: remove only our known regular config files, then
+    // require the directory to be empty. Unexpected content is quarantined.
+    for (const name of ['config.yml', 'hosts.yml']) {
+      const entry = path.join(directory, name);
+      const metadata = await lstat(entry);
+      if (!metadata.isFile() || metadata.isSymbolicLink()) refuse();
+      await unlink(entry);
+    }
+    try {
+      await rmdir(directory);
+    } catch {
+      refuse();
+    }
   }
 }
 

@@ -148,6 +148,20 @@ test('key-free verifier creates fresh empty GitHub CLI configuration and removes
   await assert.rejects(lstat(directory), { code: 'ENOENT' });
 });
 
+test('key-free verifier refuses recursive deletion of unexpected verifier-controlled entries', async () => {
+  let isolated;
+  try {
+    await assert.rejects(withIsolatedGhConfig(async location => {
+      isolated = location;
+      await writeFile(path.join(location, 'unexpected-verifier-output'), 'retain for inspection');
+    }), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+    assert.equal(await readFile(path.join(isolated, 'unexpected-verifier-output'), 'utf8'),
+      'retain for inspection');
+  } finally {
+    if (isolated) await rm(isolated, { recursive: true, force: true });
+  }
+});
+
 test('key-free verifier checks both exact attestation subjects without authorizing signing', async () => {
   await withFixture(async (root, f) => {
     let calls = 0;
