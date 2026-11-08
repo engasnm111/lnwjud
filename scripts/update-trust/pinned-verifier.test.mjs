@@ -75,6 +75,9 @@ test('Windows CI ripgrep pinned fallback handles CDN 502, refuses 403 and reject
       const runnerTemp = path.join(temp, failure);
       await mkdir(runnerTemp);
       const fixture = [
+        // Import before mocking Get-Command; a fresh hosted runner otherwise
+        // cannot auto-load Get-FileHash from Microsoft.PowerShell.Utility.
+        'Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop',
         '$global:attempts = 0',
         '$global:apiAttempts = 0',
         'function Get-Command { [CmdletBinding()] param([string]$Name) if ($Name -eq "rg") { return $null } else { throw "Unexpected Get-Command" } }',
