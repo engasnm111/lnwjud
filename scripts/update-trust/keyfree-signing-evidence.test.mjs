@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { hash } from './release-envelope.mjs';
-import { inspectKeyFreeSigningCandidate } from './keyfree-signing-evidence.mjs';
+import { inspectKeyFreeSigningCandidate, keyFreeGhEnvironment } from './keyfree-signing-evidence.mjs';
 
 const now = 1800000000n;
 const repo = 'https://github.com/engasnm111/lnwjud';
@@ -93,6 +93,22 @@ const inspect = (root, f, verify = ({ filename }) => {
   const kind = filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact';
   return verified(f.release[kind]);
 }) => inspectKeyFreeSigningCandidate({ root, policyBytes: f.policyBytes, source, now, verify });
+
+test('pinned GitHub verifier subprocess environment rejects signer keys before launch', () => {
+  const environment = { PATH: 'fixture-path', GH_HOST: 'untrusted.example', GH_TOKEN: 'old-token' };
+  const allowed = keyFreeGhEnvironment(environment, 'verified-fixture-token');
+  assert.equal(allowed.GH_HOST, 'github.com');
+  assert.equal(allowed.GH_TOKEN, 'verified-fixture-token');
+  assert.equal(allowed.PATH, 'fixture-path');
+  assert.equal(environment.GH_HOST, 'untrusted.example');
+  for (const name of ['LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', 'lnwjud_update_release_private_key_pem']) {
+    for (const value of ['', 'fixture-secret']) {
+      assert.throws(() => keyFreeGhEnvironment({ ...environment, [name]: value }, 'verified-fixture-token'),
+        /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+    }
+  }
+  assert.throws(() => keyFreeGhEnvironment(environment, ''), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+});
 
 test('key-free verifier checks both exact attestation subjects without authorizing signing', async () => {
   await withFixture(async (root, f) => {

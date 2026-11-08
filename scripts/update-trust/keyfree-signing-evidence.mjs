@@ -25,6 +25,15 @@ const refuse = () => { throw new Error('KEYFREE_SIGNING_EVIDENCE_REFUSED'); };
 const requireKeyFree = () => {
   if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse();
 };
+
+// A verifier subprocess must never inherit a signer secret, even if a future
+// workflow mistakenly places the protected key in the key-free job context.
+export function keyFreeGhEnvironment(environment, token) {
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)
+    || Object.keys(environment).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')
+    || typeof token !== 'string' || token.length < 10 || token.length > 4096) refuse();
+  return Object.freeze({ ...environment, GH_TOKEN: token, GH_HOST: 'github.com' });
+}
 const decimal = value => typeof value === 'string' && /^[1-9][0-9]{0,14}$/.test(value)
   && Number.isSafeInteger(Number(value));
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -153,6 +162,7 @@ async function main() {
     || process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch'
     || process.env.GITHUB_RUN_ATTEMPT !== '1'
     || process.env.GITHUB_WORKFLOW_SHA !== process.env.GITHUB_SHA) refuse();
+  requireKeyFree();
   const token = process.env.GH_TOKEN, workspace = process.env.GITHUB_WORKSPACE;
   if (typeof token !== 'string' || token.length < 10 || token.length > 4096
     || typeof workspace !== 'string' || !path.isAbsolute(workspace)) refuse();
@@ -160,7 +170,7 @@ async function main() {
   const actualCli = await readBoundedFile(cli, 100n * 1024n * 1024n);
   if (actualCli.sha256 !== verifierSha256) refuse();
   const run = args => exec(cli, args, { cwd: workspace, windowsHide: true, timeout: 120000,
-    maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GH_TOKEN: token, GH_HOST: 'github.com' } });
+    maxBuffer: 4 * 1024 * 1024, env: keyFreeGhEnvironment(process.env, token) });
   const version = (await run(['--version'])).stdout.split(/\r?\n/)[0];
   if (!version.startsWith('gh version 2.103.3 ')) refuse();
   const policy = (await readBoundedFile(path.join(workspace, 'config', 'update-release-policy.json'), 65536n)).bytes;
