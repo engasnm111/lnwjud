@@ -23,6 +23,9 @@ jobs:
     if: ${{ github.repository == 'engasnm111/lnwjud' && github.ref == 'refs/heads/main' && github.ref_protected == true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      source_run_id: ${{ steps.source.outputs.source_run_id }}
+      candidate_artifact_id: ${{ steps.source.outputs.candidate_artifact_id }}
     permissions:
       actions: read
       contents: read
@@ -35,9 +38,54 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.22.2'
-      - name: Verify exact protected CI run and hosted jobs without signer credentials
+      - id: source
+        name: Verify exact protected CI run and hosted jobs without signer credentials
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LNWJUD_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-        run: node scripts/update-trust/protected-source-run.mjs
+        run: |
+          set -euo pipefail
+          observed="$(node scripts/update-trust/protected-source-run.mjs)"
+          jq -e --arg sha "$GITHUB_SHA" '.sourceSha == $sha and .status == "source-ci-observed-only"' <<< "$observed"
+          {
+            printf 'source_run_id=%s\n' "$(jq -er '.sourceRunId' <<< "$observed")"
+            printf 'candidate_artifact_id=%s\n' "$(jq -er '.signingCandidateArtifactId' <<< "$observed")"
+          } >> "$GITHUB_OUTPUT"
+
+  verify-candidate-evidence:
+    name: Verify signing evidence (key-free diagnostic)
+    needs: verify-protected-source
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.2'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.verify-protected-source.outputs.candidate_artifact_id }}
+          run-id: ${{ needs.verify-protected-source.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: _candidate
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Provision exact SHA-256-pinned GitHub attestation verifier
+        shell: pwsh
+        run: ./scripts/update-trust/provision-gh-verifier.ps1
+      - name: Inspect baseline candidate bytes and hosted attestations without signing key
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
+        run: |
+          node scripts/update-trust/keyfree-signing-evidence.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED' }
