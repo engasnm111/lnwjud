@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
-import { lstat, readdir, realpath } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
@@ -32,21 +33,25 @@ const requireKeyFree = () => {
 // GIT_CONFIG_* or other caller-controlled GitHub CLI settings can redirect the
 // verifier to mutable configuration despite fixed CLI arguments.
 const verifierEnvironmentNames = new Set([
-  'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE',
-  'APPDATA', 'LOCALAPPDATA', 'HOME', 'COMSPEC', 'PROGRAMFILES',
+  'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PROGRAMFILES',
   'PROGRAMFILES(X86)', 'PROGRAMW6432',
 ]);
-export function keyFreeGhEnvironment(environment, token) {
+export function keyFreeGhEnvironment(environment, token, isolatedDirectory) {
   if (!environment || typeof environment !== 'object' || Array.isArray(environment)
     || Object.keys(environment).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')
-    || typeof token !== 'string' || token.length < 10 || token.length > 4096) refuse();
+    || typeof token !== 'string' || token.length < 10 || token.length > 4096
+    || typeof isolatedDirectory !== 'string' || !path.isAbsolute(isolatedDirectory)
+    || isolatedDirectory.length > 4096 || isolatedDirectory.includes('\0')) refuse();
   const child = {};
   for (const [name, value] of Object.entries(environment)) {
     if (!verifierEnvironmentNames.has(name.toUpperCase())) continue;
     if (typeof value !== 'string') refuse();
     child[name] = value;
   }
-  return Object.freeze({ ...child, GH_TOKEN: token, GH_HOST: 'github.com', GH_PROMPT_DISABLED: '1' });
+  return Object.freeze({ ...child, GH_TOKEN: token, GH_HOST: 'github.com', GH_PROMPT_DISABLED: '1',
+    GH_CONFIG_DIR: isolatedDirectory, HOME: isolatedDirectory, USERPROFILE: isolatedDirectory,
+    APPDATA: isolatedDirectory, LOCALAPPDATA: isolatedDirectory, TEMP: isolatedDirectory, TMP: isolatedDirectory,
+    GH_NO_UPDATE_NOTIFIER: '1', GH_NO_EXTENSION_UPDATE_NOTIFIER: '1' });
 }
 const decimal = value => typeof value === 'string' && /^[1-9][0-9]{0,14}$/.test(value)
   && Number.isSafeInteger(Number(value));
@@ -169,6 +174,21 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
     sourceRunId: boundSource.runId, candidateSha256: candidate.sha256, manifestSha256: manifestFile.sha256 });
 }
 
+export async function withIsolatedGhConfig(action) {
+  const base = await realpath(tmpdir());
+  const directory = await mkdtemp(path.join(base, 'lnwjud-keyfree-gh-'));
+  try {
+    if (await realpath(directory) !== directory) refuse();
+    for (const name of ['config.yml', 'hosts.yml'])
+      await writeFile(path.join(directory, name), '{}\n', { flag: 'wx' });
+    return await action(directory);
+  } finally {
+    if (await realpath(directory) !== directory || path.dirname(directory) !== base
+      || !path.basename(directory).startsWith('lnwjud-keyfree-gh-')) refuse();
+    await rm(directory, { recursive: true });
+  }
+}
+
 async function main() {
   if (process.argv.length !== 2 || process.env.GITHUB_ACTIONS !== 'true'
     || process.env.GITHUB_REPOSITORY !== 'engasnm111/lnwjud'
@@ -183,24 +203,26 @@ async function main() {
   const cli = path.join(workspace, 'tools', 'update-attestation', 'gh.exe');
   const actualCli = await readBoundedFile(cli, 100n * 1024n * 1024n);
   if (actualCli.sha256 !== verifierSha256) refuse();
-  const run = args => exec(cli, args, { cwd: workspace, windowsHide: true, timeout: 120000,
-    maxBuffer: 4 * 1024 * 1024, env: keyFreeGhEnvironment(process.env, token) });
-  const version = (await run(['--version'])).stdout.split(/\r?\n/)[0];
-  if (!version.startsWith('gh version 2.103.3 ')) refuse();
-  const policy = (await readBoundedFile(path.join(workspace, 'config', 'update-release-policy.json'), 65536n)).bytes;
-  const result = await inspectKeyFreeSigningCandidate({
-    root: path.join(workspace, '_candidate'), policyBytes: policy,
-    source: { runId: process.env.LNWJUD_SOURCE_RUN_ID, commit: process.env.GITHUB_SHA, builderSha },
-    now: BigInt(Math.floor(Date.now() / 1000)),
-    verify: async ({ filename, bundle, source, authority }) => {
-      const args = ['attestation', 'verify', filename, '--repo', 'engasnm111/lnwjud', '--bundle', bundle,
-        '--cert-oidc-issuer', authority.issuer,
-        '--signer-workflow', authority.builderWorkflowUri.replace('https://github.com/', '').split('@')[0],
-        '--signer-digest', authority.builderDigest, '--source-digest', source.commit,
-        '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners',
-        '--predicate-type', 'https://slsa.dev/provenance/v1', '--format', 'json'];
-      return Buffer.from((await run(args)).stdout);
-    },
+  const result = await withIsolatedGhConfig(async isolatedDirectory => {
+    const run = args => exec(cli, args, { cwd: workspace, windowsHide: true, timeout: 120000,
+      maxBuffer: 4 * 1024 * 1024, env: keyFreeGhEnvironment(process.env, token, isolatedDirectory) });
+    const version = (await run(['--version'])).stdout.split(/\r?\n/)[0];
+    if (!version.startsWith('gh version 2.103.3 ')) refuse();
+    const policy = (await readBoundedFile(path.join(workspace, 'config', 'update-release-policy.json'), 65536n)).bytes;
+    return inspectKeyFreeSigningCandidate({
+      root: path.join(workspace, '_candidate'), policyBytes: policy,
+      source: { runId: process.env.LNWJUD_SOURCE_RUN_ID, commit: process.env.GITHUB_SHA, builderSha },
+      now: BigInt(Math.floor(Date.now() / 1000)),
+      verify: async ({ filename, bundle, source, authority }) => {
+        const args = ['attestation', 'verify', filename, '--repo', 'engasnm111/lnwjud', '--bundle', bundle,
+          '--cert-oidc-issuer', authority.issuer,
+          '--signer-workflow', authority.builderWorkflowUri.replace('https://github.com/', '').split('@')[0],
+          '--signer-digest', authority.builderDigest, '--source-digest', source.commit,
+          '--source-ref', 'refs/heads/main', '--deny-self-hosted-runners',
+          '--predicate-type', 'https://slsa.dev/provenance/v1', '--format', 'json'];
+        return Buffer.from((await run(args)).stdout);
+      },
+    });
   });
   process.stdout.write(JSON.stringify(result) + '\n');
 }

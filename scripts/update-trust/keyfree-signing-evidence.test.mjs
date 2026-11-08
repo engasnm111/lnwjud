@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { writeFileSync } from 'node:fs';
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { hash } from './release-envelope.mjs';
-import { inspectKeyFreeSigningCandidate, keyFreeGhEnvironment } from './keyfree-signing-evidence.mjs';
+import { inspectKeyFreeSigningCandidate, keyFreeGhEnvironment, withIsolatedGhConfig } from './keyfree-signing-evidence.mjs';
 
 const now = 1800000000n;
 const repo = 'https://github.com/engasnm111/lnwjud';
@@ -99,22 +99,43 @@ test('pinned GitHub verifier subprocess environment rejects signer keys before l
     GH_HOST: 'untrusted.example', GH_TOKEN: 'old-token',
     GH_CONFIG_DIR: 'attacker-controlled', GIT_CONFIG_GLOBAL: 'attacker-config',
     NODE_OPTIONS: '--require=untrusted', GITHUB_TOKEN: 'unrelated-credential' };
-  const allowed = keyFreeGhEnvironment(environment, 'verified-fixture-token');
+  const isolated = path.resolve('fixture-keyfree-gh-config');
+  const allowed = keyFreeGhEnvironment(environment, 'verified-fixture-token', isolated);
   assert.equal(allowed.GH_HOST, 'github.com');
   assert.equal(allowed.GH_TOKEN, 'verified-fixture-token');
   assert.equal(allowed.GH_PROMPT_DISABLED, '1');
-  assert.equal(allowed.PATH, 'fixture-path');
-  assert.equal(allowed.SystemRoot, 'C:\\Windows');
-  for (const name of ['GH_CONFIG_DIR', 'GIT_CONFIG_GLOBAL', 'NODE_OPTIONS', 'GITHUB_TOKEN'])
+  assert.equal(Reflect.get(allowed, 'PATH'), 'fixture-path');
+  assert.equal(Reflect.get(allowed, 'SystemRoot'), 'C:\\Windows');
+  for (const name of ['GH_CONFIG_DIR', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP'])
+    assert.equal(allowed[name], isolated, `${name} must use the fresh isolated directory`);
+  for (const name of ['GIT_CONFIG_GLOBAL', 'NODE_OPTIONS', 'GITHUB_TOKEN'])
     assert.equal(Object.hasOwn(allowed, name), false, `${name} must not reach the verifier`);
   assert.equal(environment.GH_HOST, 'untrusted.example');
   for (const name of ['LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', 'lnwjud_update_release_private_key_pem']) {
     for (const value of ['', 'fixture-secret']) {
-      assert.throws(() => keyFreeGhEnvironment({ ...environment, [name]: value }, 'verified-fixture-token'),
+      assert.throws(() => keyFreeGhEnvironment({ ...environment, [name]: value }, 'verified-fixture-token', isolated),
         /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
     }
   }
-  assert.throws(() => keyFreeGhEnvironment(environment, ''), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+  assert.throws(() => keyFreeGhEnvironment(environment, '', isolated), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+  assert.throws(() => keyFreeGhEnvironment(environment, 'verified-fixture-token', undefined), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+  assert.throws(() => keyFreeGhEnvironment(environment, 'verified-fixture-token', 'relative-dir'),
+    /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+});
+
+test('key-free verifier creates fresh empty GitHub CLI configuration and removes it after success or failure', async () => {
+  let directory;
+  await withIsolatedGhConfig(async location => {
+    directory = location;
+    assert.equal(await readFile(path.join(location, 'config.yml'), 'utf8'), '{}\n');
+    assert.equal(await readFile(path.join(location, 'hosts.yml'), 'utf8'), '{}\n');
+  });
+  await assert.rejects(lstat(directory), { code: 'ENOENT' });
+  await assert.rejects(withIsolatedGhConfig(async location => {
+    directory = location;
+    throw new Error('fixture-verifier-failure');
+  }), /fixture-verifier-failure/);
+  await assert.rejects(lstat(directory), { code: 'ENOENT' });
 });
 
 test('key-free verifier checks both exact attestation subjects without authorizing signing', async () => {
