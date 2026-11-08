@@ -64,7 +64,16 @@ foreach ($sourceUrl in @($primaryUrl, $apiUrl)) {
     if ($downloaded) { break }
 }
 if (-not $downloaded) { throw 'RIPGREP_CI_DOWNLOAD_UNAVAILABLE' }
-$actualArchiveSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+# The 2-MiB official asset is capped before reading so hashing does not depend
+# on PowerShell module auto-loading on clean hosted Windows images.
+$archiveSize = (Get-Item -LiteralPath $archive -ErrorAction Stop).Length
+if ($archiveSize -lt 1 -or $archiveSize -gt 4MB) { throw 'RIPGREP_CI_ARCHIVE_SIZE_REFUSED' }
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $actualArchiveSha256 = [BitConverter]::ToString(
+        $sha256.ComputeHash([System.IO.File]::ReadAllBytes($archive))
+    ).Replace('-', '').ToLowerInvariant()
+} finally { $sha256.Dispose() }
 if ($actualArchiveSha256 -cne $expectedArchiveSha256) { throw 'RIPGREP_CI_ARCHIVE_DIGEST_MISMATCH' }
 
 Expand-Archive -LiteralPath $archive -DestinationPath $destinationDirectory -ErrorAction Stop
