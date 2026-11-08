@@ -51,6 +51,7 @@ internal static class NativeTests
                 case "job-collision-test": TestJobCollision(); return 0;
                 case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
                 case "job-collision-release-test": TestJobCollisionRelease(); return 0;
+                case "abandon-import-test": TestAbandonImportReservation(); return 0;
                 case "terminal-release-recovery-test": TestTerminalReleaseRecovery(); return 0;
                 case "rpc-absent-child":
                     WindowsContainmentServiceClient.ServiceNameForAbsenceTest = "lnwjud-absent-" + Guid.NewGuid().ToString("N");
@@ -228,6 +229,7 @@ internal static class NativeTests
             TestJobCollision();
             TestUnknownCancelCollision();
             TestJobCollisionRelease();
+            TestAbandonImportReservation();
             Console.WriteLine("PASS named Job collisions do not affect independent processes");
             if (!ServiceEndpointIdentity.IsServiceDefinitelyAbsent("lnwjud-absent-" + Guid.NewGuid().ToString("N")))
                 throw new Exception("Missing Windows service was not detected for bounded native RPC refusal");
@@ -768,6 +770,39 @@ internal static class NativeTests
             "S-1-5-21-1000",
             reservationKey,
             new string('b', 64));
+
+    private static void TestAbandonImportReservation()
+    {
+        var ledger = new ServiceAttemptLedger();
+        var reservationKey = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "lnwjud-abandon-" + Guid.NewGuid().ToString("N")));
+        var request = NewServiceAttemptRequest("abandon-import", reservationKey) with { Shared = true };
+        ledger.Prepare(request);
+        ledger.TryCommitDispatch(request.Identity, request.AuthenticatedCallerSid, request.OperationDigest);
+        ledger.MarkRunning(request.Identity, request.AuthenticatedCallerSid, 2020);
+        ledger.AcquireImportReservation(request.Identity, request.AuthenticatedCallerSid);
+        ExpectFailure<IOException>(() => ledger.AbandonImportReservation(request.Identity, request.AuthenticatedCallerSid),
+            "SERVICE_IMPORT_ABORT_REQUIRES_TERMINAL");
+        ledger.RecordTerminal(request.Identity, request.AuthenticatedCallerSid, ServiceProcessOutcome.Completed, 1, 0);
+        if (ledger.Release(request.Identity, request.AuthenticatedCallerSid) != ReservationRelease.Retained)
+            throw new Exception("Unpublished import hold was released without an explicit abort");
+        ledger.AbandonImportReservation(request.Identity, request.AuthenticatedCallerSid);
+        if (ledger.Inspect(request.Identity, request.AuthenticatedCallerSid).ReservationHeld)
+            throw new Exception("Abandoned import did not release the global writer reservation");
+        ledger.AbandonImportReservation(request.Identity, request.AuthenticatedCallerSid);
+        var next = ledger.Prepare(NewServiceAttemptRequest("after-abandon", ServiceAttemptLedger.GlobalReservationKey));
+        if (!next.ReservationHeld) throw new Exception("Writer was not admitted after an abandoned import");
+
+        var committed = new ServiceAttemptLedger();
+        var second = NewServiceAttemptRequest("abandon-committed", reservationKey) with { Shared = true };
+        committed.Prepare(second);
+        committed.TryCommitDispatch(second.Identity, second.AuthenticatedCallerSid, second.OperationDigest);
+        committed.MarkRunning(second.Identity, second.AuthenticatedCallerSid, 2021);
+        committed.AcquireImportReservation(second.Identity, second.AuthenticatedCallerSid);
+        committed.CommitImportPublication(second.Identity, second.AuthenticatedCallerSid, () => { });
+        committed.RecordTerminal(second.Identity, second.AuthenticatedCallerSid, ServiceProcessOutcome.Completed, 0, 0);
+        ExpectFailure<IOException>(() => committed.AbandonImportReservation(second.Identity, second.AuthenticatedCallerSid),
+            "SERVICE_IMPORT_ABORT_PUBLICATION_COMMITTED");
+    }
 
     private static void TestSharedWriterImportPromotion()
     {

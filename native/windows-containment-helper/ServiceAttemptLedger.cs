@@ -310,6 +310,26 @@ internal sealed class ServiceAttemptLedger
         }
     }
 
+    /// <summary>
+    /// Releases the exclusive import hold of an attempt whose import can never publish:
+    /// the owner process is verified terminal (or never started) and no publication
+    /// intent was ever committed. Refuses in every other case (fail-closed).
+    /// </summary>
+    internal void AbandonImportReservation(ServiceAttemptIdentity identity, string callerSid)
+    {
+        lock (gate)
+        {
+            var entry = Require(identity, callerSid);
+            if (!entry.Request.HoldForImport) return;
+            if (entry.Request.PublicationCommitted) throw new IOException("SERVICE_IMPORT_ABORT_PUBLICATION_COMMITTED");
+            if (entry.Phase is not (ServiceAttemptPhase.TerminalVerified or ServiceAttemptPhase.LaunchNotStarted))
+                throw new IOException("SERVICE_IMPORT_ABORT_REQUIRES_TERMINAL");
+            entry.Request = entry.Request with { HoldForImport = false };
+            Persist();
+            _ = Release(identity, callerSid);
+        }
+    }
+
     internal ServiceAttemptObservation RequestCancellation(ServiceAttemptIdentity identity, string callerSid)
     {
         lock (gate)

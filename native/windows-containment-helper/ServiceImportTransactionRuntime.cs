@@ -25,6 +25,7 @@ internal sealed class ServiceImportTransactionRuntime
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
     private static readonly Regex NativeIdentity = new("^[0-9A-F]{16}-[0-9A-F]{32}$", RegexOptions.CultureInvariant);
+    private const string AbortedIdentity = "0000000000000000-00000000000000000000000000000000";
     private readonly ServiceAttemptLedger ledger;
     private readonly string? storeDirectory;
     private readonly bool useCurrentUserTestLauncher;
@@ -60,6 +61,19 @@ internal sealed class ServiceImportTransactionRuntime
                 var entry = existing ?? throw new IOException("SERVICE_IMPORT_TRANSACTION_MISSING");
                 if (!SamePublicationRequest(entry.Arguments, args)) throw new IOException("SERVICE_IMPORT_REQUEST_CONFLICT");
                 return InspectEntry("publish_import", entry, callerToken) with { Command = command };
+            }
+            if (command == "abort_import")
+            {
+                if (existing is not null)
+                {
+                    if (!SamePublicationRequest(existing.Arguments, args)) throw new IOException("SERVICE_IMPORT_REQUEST_CONFLICT");
+                    if (existing.Phase is ServiceImportPhase.PublicationIntent or ServiceImportPhase.Published)
+                        throw new IOException("SERVICE_IMPORT_ABORT_PUBLICATION_STARTED");
+                }
+                ledger.AbandonImportReservation(identity, callerSid);
+                if (existing is not null) DeleteRecord(identity);
+                return new ServiceControlObservation(identity, command,
+                    new ServiceImportReceipt(2, "aborted", existing?.StageIdentity ?? AbortedIdentity, args.Commit));
             }
             if (command is not ("prepare_import" or "publish_import")) throw new IOException("SERVICE_IMPORT_COMMAND_INVALID");
             if (existing is not null && existing.Arguments != args with { ExpectedStageIdentity = null })
@@ -176,7 +190,7 @@ internal sealed class ServiceImportTransactionRuntime
             || String.IsNullOrWhiteSpace(args.Destination) || args.Destination.Contains('\0')
             || args.Commit is null || !Regex.IsMatch(args.Commit, "^(?:[a-f0-9]{40}|[a-f0-9]{64})$", RegexOptions.CultureInvariant))
             throw new IOException("SERVICE_IMPORT_REQUEST_INVALID");
-        if (command != "inspect_publication")
+        if (command is not ("inspect_publication" or "abort_import"))
         {
             if (String.IsNullOrWhiteSpace(args.StagePath) || !Path.IsPathFullyQualified(args.StagePath)
                 || String.IsNullOrWhiteSpace(args.PrivateHome) || !Path.IsPathFullyQualified(args.PrivateHome)
@@ -216,6 +230,13 @@ internal sealed class ServiceImportTransactionRuntime
         catch { throw new IOException("SERVICE_IMPORT_STORE_CORRUPT"); }
         if (entry.Identity != identity || entry.CallerSid != callerSid) throw new UnauthorizedAccessException("SERVICE_IMPORT_OWNER_MISMATCH");
         return entry;
+    }
+
+    private void DeleteRecord(ServiceAttemptIdentity identity)
+    {
+        var filename = Filename(identity);
+        EnsurePlainPath(filename);
+        if (File.Exists(filename)) File.Delete(filename);
     }
 
     private void Save(ServiceImportRecord entry)
