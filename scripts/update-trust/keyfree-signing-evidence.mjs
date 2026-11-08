@@ -54,6 +54,9 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
     || !decimal(source.runId) || !/^[a-f0-9]{40}$/.test(source.commit ?? '')
     || source.builderSha !== builderSha || typeof now !== 'bigint' || now < 0n
     || now > 253402300799n || typeof verify !== 'function') refuse();
+  // Bind mutable caller inputs before any asynchronous file or verifier operation.
+  const boundSource = Object.freeze({ runId: source.runId, commit: source.commit, builderSha: source.builderSha });
+  const boundPolicy = Buffer.from(policyBytes);
   const rootInfo = await lstat(root);
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || await realpath(root) !== root) refuse();
   const manifestFile = await readBoundedFile(path.join(root, 'manifest.json'), 32768n);
@@ -61,8 +64,8 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
   // Updates require independent authentication of a signed predecessor. This
   // key-free diagnostic intentionally accepts only baseline evidence.
   if (manifest.purpose !== 'baseline' || manifest.verification.repositoryId !== '1329830515'
-    || manifest.verification.runId !== source.runId || manifest.verification.runAttempt !== 1
-    || manifest.policySha256 !== hash(policyBytes)) refuse();
+    || manifest.verification.runId !== boundSource.runId || manifest.verification.runAttempt !== 1
+    || manifest.policySha256 !== hash(boundPolicy)) refuse();
   // The top-level directory also contains 'files'; inspect it separately without
   // treating a directory as an ordinary file.
   const top = await readdir(root, { withFileTypes: true });
@@ -81,12 +84,12 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
     || release?.product !== 'lnwjud' || release.channel !== 'stable'
     || release.platform !== 'win32' || release.architecture !== 'x64'
     || release.distribution !== 'windows-nsis'
-    || release.releaseSequence !== source.runId
-    || release.releaseId !== `lnwjud-${release.version}-${source.runId}`
+    || release.releaseSequence !== boundSource.runId
+    || release.releaseId !== `lnwjud-${release.version}-${boundSource.runId}`
     || release.artifact?.name !== expectedArtifactName('win32', 'x64', 'windows-nsis', release.version)
     || origin?.repository !== repository || origin.workflow !== sourceWorkflow
-    || origin.ref !== 'refs/heads/main' || origin.commit !== source.commit
-    || origin.runId !== source.runId || origin.runAttempt !== '1'
+    || origin.ref !== 'refs/heads/main' || origin.commit !== boundSource.commit
+    || origin.runId !== boundSource.runId || origin.runAttempt !== '1'
     || release.buildEvidence?.kind !== 'github-artifact-attestation-v1') refuse();
   for (const kind of ['artifact', 'provenance']) {
     const declared = release[kind], spec = manifest.candidate[kind];
@@ -109,9 +112,9 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
     || Object.keys(provenance.recoveryCompatibility).sort().join(',') !== recoveryKeys.join(',')) refuse();
   if (provenance.schemaVersion !== 1 || provenance.product !== 'lnwjud' || provenance.version !== release.version
     || provenance.platform !== 'win32' || provenance.arch !== 'x64'
-    || provenance.source?.repository !== repository || provenance.source.commit !== source.commit
+    || provenance.source?.repository !== repository || provenance.source.commit !== boundSource.commit
     || provenance.source.dirty !== false || provenance.build?.environment !== 'github-actions'
-    || provenance.build.signingCredentialConfigured !== false || provenance.build.runId !== source.runId
+    || provenance.build.signingCredentialConfigured !== false || provenance.build.runId !== boundSource.runId
     || provenance.build.runAttempt !== '1' || provenance.build.ref !== 'refs/heads/main'
     || !Array.isArray(subject) || subject.length !== 1 || subject[0].sha256 !== release.artifact.sha256
     || String(subject[0].sizeBytes) !== release.artifact.sizeBytes) refuse();
@@ -119,13 +122,22 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
     const output = await verify({
       filename: path.join(candidateRoot, manifest.candidate[kind].name),
       bundle: path.join(candidateRoot, manifest.candidate[`${kind}Bundle`].name),
-      source, authority,
+      source: boundSource, authority,
     });
     if (!Buffer.isBuffer(output)
       || selectVerifiedAttestation(output, { source: release.source, issuedAt: payload.issuedAt }, release[kind], authority) !== 1) refuse();
   }
-  return Object.freeze({ status: 'key-free-attestations-observed-only', sourceSha: source.commit,
-    sourceRunId: source.runId, candidateSha256: candidate.sha256, manifestSha256: manifestFile.sha256 });
+  // A verifier callback must not leave different on-disk bytes behind after
+  // successful attestations. This detects persistent substitution; it does not
+  // replace native file-handle pinning or authorize a production signer.
+  for (const kind of ['candidate', 'artifact', 'provenance', 'artifactBundle', 'provenanceBundle'])
+    await roleFile(candidateRoot, manifest.candidate[kind],
+      kind === 'candidate' ? 32768n : kind === 'artifact' ? 2147483648n
+        : kind === 'provenance' ? 1048576n : 16777216n);
+  const finalManifest = await readBoundedFile(path.join(root, 'manifest.json'), 32768n);
+  if (finalManifest.sha256 !== manifestFile.sha256) refuse();
+  return Object.freeze({ status: 'key-free-attestations-observed-only', sourceSha: boundSource.commit,
+    sourceRunId: boundSource.runId, candidateSha256: candidate.sha256, manifestSha256: manifestFile.sha256 });
 }
 
 async function main() {

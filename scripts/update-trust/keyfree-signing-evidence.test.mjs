@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -123,6 +124,44 @@ test('key-free verifier rejects changed package bytes, source substitution and u
       artifact: bind('old.exe', Buffer.from('a')), provenance: bind('PROVENANCE.json', Buffer.from('a')) };
     await writeFile(path.join(root, 'manifest.json'), JSON.stringify(changed));
     await assert.rejects(inspect(root, f));
+  });
+});
+
+test('key-free verifier binds source identity before an asynchronous verifier callback', async () => {
+  await withFixture(async (root, f) => {
+    const mutableSource = { ...source };
+    const result = await inspectKeyFreeSigningCandidate({ root, policyBytes: f.policyBytes,
+      source: mutableSource, now, verify: ({ filename, source: verifiedSource }) => {
+        mutableSource.commit = 'b'.repeat(40);
+        assert.equal(verifiedSource.commit, commit);
+        return verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact']);
+      } });
+    assert.equal(result.sourceSha, commit);
+    assert.equal(result.sourceRunId, '500');
+  });
+});
+
+test('key-free verifier refuses persistent candidate or manifest substitution during attestation', async () => {
+  await withFixture(async (root, f) => {
+    let calls = 0;
+    await assert.rejects(inspect(root, f, ({ filename }) => {
+      if (++calls === 1) writeFileSync(path.join(f.candidateDir, f.release.artifact.name), 'swapped during verification');
+      return verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact']);
+    }), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+  });
+  await withFixture(async (root, f) => {
+    let calls = 0;
+    await assert.rejects(inspect(root, f, ({ filename }) => {
+      if (++calls === 1) writeFileSync(path.join(f.candidateDir, 'CANDIDATE.json'), '{}');
+      return verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact']);
+    }), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+  });
+  await withFixture(async (root, f) => {
+    let calls = 0;
+    await assert.rejects(inspect(root, f, ({ filename }) => {
+      if (++calls === 1) writeFileSync(path.join(root, 'manifest.json'), '{}');
+      return verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact']);
+    }), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
   });
 });
 
