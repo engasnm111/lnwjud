@@ -16,7 +16,7 @@ test('verifier executable path is fixed and rejects caller paths', async () => {
 });
 
 test('pinned verifier provisioning retries transport timeouts but refuses other download errors', { skip: !windows }, () => {
-  for (const [failure, expectedAttempts] of [['timeout', 3], ['unexpected', 1]]) {
+  for (const [failure, expectedAttempts] of [['timeout', 3], ['gateway-timeout', 3], ['forbidden', 1], ['unexpected', 1]]) {
     const script = `
       $global:attempts = 0
       function Invoke-WebRequest {
@@ -25,6 +25,12 @@ test('pinned verifier provisioning retries transport timeouts but refuses other 
         $global:attempts++
         if ('${failure}' -eq 'timeout') {
           throw [System.Net.WebException]::new('timeout', [System.Net.WebExceptionStatus]::Timeout)
+        }
+        if ('${failure}' -eq 'gateway-timeout') {
+          throw [System.Net.WebException]::new('504 Gateway Time-out', [System.Net.WebExceptionStatus]::ProtocolError)
+        }
+        if ('${failure}' -eq 'forbidden') {
+          throw [System.Net.WebException]::new('403 Forbidden', [System.Net.WebExceptionStatus]::ProtocolError)
         }
         throw [System.InvalidOperationException]::new('unexpected failure')
       }

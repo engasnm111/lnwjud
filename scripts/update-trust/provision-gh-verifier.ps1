@@ -41,6 +41,12 @@ try {
                 if ($null -ne $responseProperty -and $null -ne $responseProperty.Value) {
                     $statusCode = [int]$responseProperty.Value.StatusCode
                 }
+                # Some hosted PowerShell web exceptions expose only the HTTP status
+                # in their message (no Response property). Recognize just the
+                # known transient codes; the downloaded bytes remain hash-pinned.
+                if ($null -eq $statusCode -and $_.Exception.Message -match '^(?:HTTP\s+)?(408|429|500|502|503|504)(?:\b|\s)') {
+                    $statusCode = [int]$Matches[1]
+                }
                 $transientStatus = $statusCode -in @(408, 429, 500, 502, 503, 504)
                 $transientTransport = $_.Exception -is [System.Net.WebException] -and
                     $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)

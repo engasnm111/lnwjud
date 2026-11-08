@@ -821,12 +821,14 @@ jobs:
           $downloaded = $false
           for ($attempt = 1; $attempt -le 4; $attempt++) {
             try {
-              Invoke-WebRequest -Uri $url -OutFile $target -UseBasicParsing
+              Invoke-WebRequest -Uri $url -OutFile $target -UseBasicParsing -ErrorAction Stop
               $downloaded = $true
               break
             }
             catch {
               if ($attempt -eq 4) { throw }
+              # Remove any incomplete executable before retrying.
+              if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }
               Start-Sleep -Seconds (2 * $attempt)
             }
           }
