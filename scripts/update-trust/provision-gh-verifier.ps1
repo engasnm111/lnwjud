@@ -34,11 +34,14 @@ try {
         # Both routes are still subject to the same pinned ZIP and EXE digests.
         $apiUri = 'https://api.github.com/repos/cli/cli/releases/assets/679195750'
         $downloaded = $false
+        # At most four 55-second requests plus two 3-second backoffs: 226s,
+        # safely inside the native staging subprocess's 300-second deadline.
+        # Preserve both independently pinned official download routes.
         foreach ($sourceUri in @($uri, $apiUri)) {
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
+            for ($attempt = 1; $attempt -le 2; $attempt++) {
                 try {
                     $request = @{ Uri = $sourceUri; OutFile = $ArchivePath; MaximumRedirection = 5
-                                  TimeoutSec = 90; UseBasicParsing = $true; ErrorAction = 'Stop' }
+                                  TimeoutSec = 55; UseBasicParsing = $true; ErrorAction = 'Stop' }
                     if ($sourceUri -eq $apiUri) {
                         $request.Headers = @{ Accept = 'application/octet-stream'; 'User-Agent' = 'lnwjud-pinned-update-verifier' }
                     }
@@ -65,7 +68,7 @@ try {
                     if (Test-Path -LiteralPath $ArchivePath) {
                         Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction Stop
                     }
-                    if ($attempt -eq 3) {
+                    if ($attempt -eq 2) {
                         if ($sourceUri -eq $apiUri) { throw }
                         break
                     }

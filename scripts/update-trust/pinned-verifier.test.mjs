@@ -16,7 +16,7 @@ test('verifier executable path is fixed and rejects caller paths', async () => {
 });
 
 test('pinned verifier provisioning retries transport timeouts but refuses other download errors', { skip: !windows }, () => {
-  for (const [failure, expectedAttempts] of [['timeout', 6], ['gateway-timeout', 6], ['httpclient-timeout', 6], ['forbidden', 1], ['unexpected', 1]]) {
+  for (const [failure, expectedAttempts] of [['timeout', 4], ['gateway-timeout', 4], ['httpclient-timeout', 4], ['forbidden', 1], ['unexpected', 1]]) {
     const script = `
       $global:attempts = 0
       $global:apiAttempts = 0
@@ -24,6 +24,7 @@ test('pinned verifier provisioning retries transport timeouts but refuses other 
         [CmdletBinding()]
         param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)
         $global:attempts++
+        if ($TimeoutSec -ne 55) { throw 'Verifier download exceeded bounded request budget' }
         if ($Uri -eq 'https://api.github.com/repos/cli/cli/releases/assets/679195750') {
           $global:apiAttempts++
           if ($Headers.Accept -ne 'application/octet-stream') { throw 'Invalid fallback accept header' }
@@ -46,7 +47,7 @@ test('pinned verifier provisioning retries transport timeouts but refuses other 
       try { & './scripts/update-trust/provision-gh-verifier.ps1'; exit 10 }
       catch {
         if ($global:attempts -ne ${expectedAttempts}) { Write-Error "attempts=$global:attempts"; exit 11 }
-        if ($global:apiAttempts -ne ${expectedAttempts > 3 ? 3 : 0}) { Write-Error "apiAttempts=$global:apiAttempts"; exit 12 }
+        if ($global:apiAttempts -ne ${expectedAttempts > 2 ? 2 : 0}) { Write-Error "apiAttempts=$global:apiAttempts"; exit 12 }
         exit 0
       }
     `;
