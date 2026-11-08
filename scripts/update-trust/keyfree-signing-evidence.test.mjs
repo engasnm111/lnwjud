@@ -82,8 +82,8 @@ async function withFixture(action) {
   const base = await realpath(tmpdir()), root = await mkdtemp(path.join(base, 'lnwjud-keyfree-'));
   try { await action(root, await fixture(root)); }
   finally {
-    if (path.dirname(await realpath(root)) !== base || !path.basename(root).startsWith('lnwjud-keyfree-'))
-      throw new Error('TEST_CLEANUP_REFUSED');
+    assert.equal(path.dirname(await realpath(root)), base, 'TEST_CLEANUP_REFUSED');
+    assert.ok(path.basename(root).startsWith('lnwjud-keyfree-'), 'TEST_CLEANUP_REFUSED');
     await rm(root, { recursive: true });
   }
 }
