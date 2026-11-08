@@ -57,12 +57,14 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
     readAt(offset, length) {
       check(offset, length);
       if (length > 1024 * 1024) throw new Error('SIGNING_ARCHIVE_READ_INVALID');
+      requireNoSigningKey();
       const bytes = spool.readAt(offset, length);
       if (!Buffer.isBuffer(bytes) || bytes.length !== length) throw new Error('SIGNING_ARCHIVE_READ_INVALID');
       return bytes;
     },
     stream(offset, length) {
       check(offset, 0);
+      requireNoSigningKey();
       if (length === undefined) length = archiveSizeBytes - offset;
       if (!Number.isSafeInteger(length) || length < 0) throw new Error('SIGNING_ARCHIVE_READ_INVALID');
       length = Math.min(length, archiveSizeBytes - offset);
@@ -70,6 +72,7 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
       const stream = new Readable({ read(requested) {
         try {
           if (!active) throw new Error('SIGNING_ARCHIVE_READ_INVALID');
+          requireNoSigningKey();
           if (remaining === 0) { this.push(null); return; }
           const count = Math.min(remaining, Math.max(1, requested), 65536);
           const chunk = spool.readAt(position, count);

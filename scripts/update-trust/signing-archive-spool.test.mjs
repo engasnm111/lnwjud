@@ -149,6 +149,42 @@ test('refuses signing-key injection after download or during archive inspection'
   }
 });
 
+test('refuses archive reads while a signer secret appears transiently during consumption', { skip: !windows }, async () => {
+  const name = 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', original = process.env[name];
+  try {
+    await fixture(async filename => {
+      const result = await withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: fetchFixture },
+        reader => {
+          process.env[name] = 'transient-fixture';
+          try {
+            assert.throws(() => reader.readAt(0, 1), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+            assert.throws(() => reader.stream(0, 1), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+          } finally { delete process.env[name]; }
+          assert.deepEqual(reader.readAt(0, 1), payload.subarray(0, 1));
+          return 'read-guard-checked';
+        });
+      assert.equal(result, 'read-guard-checked');
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+    await fixture(async filename => {
+      await assert.rejects(withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: fetchFixture },
+        async reader => {
+          const stream = reader.stream(0, 4);
+          process.env[name] = 'transient-fixture';
+          try {
+            await assert.rejects(async () => {
+              for await (const chunk of stream) assert.fail(`unexpected archive chunk: ${chunk.length}`);
+            }, /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+          } finally { delete process.env[name]; }
+        }), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+  } finally {
+    if (original === undefined) delete process.env[name];
+    else process.env[name] = original;
+  }
+});
+
 test('rejects untrusted archive metadata and signing-key environments before native spool creation', async () => {
   let created = 0;
   const unsafeAddon = { createArchiveSpool() { created++; throw new Error('UNEXPECTED_NATIVE_SPOOL_CREATION'); } };
