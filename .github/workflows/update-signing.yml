@@ -26,6 +26,8 @@ jobs:
     outputs:
       source_run_id: ${{ steps.source.outputs.source_run_id }}
       candidate_artifact_id: ${{ steps.source.outputs.candidate_artifact_id }}
+      candidate_archive_sha256: ${{ steps.source.outputs.candidate_archive_sha256 }}
+      candidate_archive_size_bytes: ${{ steps.source.outputs.candidate_archive_size_bytes }}
     permissions:
       actions: read
       contents: read
@@ -51,6 +53,8 @@ jobs:
           {
             printf 'source_run_id=%s\n' "$(jq -er '.sourceRunId' <<< "$observed")"
             printf 'candidate_artifact_id=%s\n' "$(jq -er '.signingCandidateArtifactId' <<< "$observed")"
+            printf 'candidate_archive_sha256=%s\n' "$(jq -er '.signingCandidateArchiveSha256' <<< "$observed")"
+            printf 'candidate_archive_size_bytes=%s\n' "$(jq -er '.signingCandidateArchiveSizeBytes' <<< "$observed")"
           } >> "$GITHUB_OUTPUT"
 
   verify-candidate-evidence:
@@ -70,6 +74,27 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.22.2'
+      - name: Independently recheck selected protected source and exact artifact identity
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
+          LNWJUD_EXPECTED_CANDIDATE_ID: ${{ needs.verify-protected-source.outputs.candidate_artifact_id }}
+          LNWJUD_EXPECTED_CANDIDATE_SHA256: ${{ needs.verify-protected-source.outputs.candidate_archive_sha256 }}
+          LNWJUD_EXPECTED_CANDIDATE_SIZE_BYTES: ${{ needs.verify-protected-source.outputs.candidate_archive_size_bytes }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $observed = & node scripts/update-trust/protected-source-run.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'SIGNING_SOURCE_RECHECK_REFUSED' }
+          $selected = $observed | ConvertFrom-Json
+          if ($selected.status -cne 'source-ci-observed-only' -or
+              $selected.sourceSha -cne $env:GITHUB_SHA -or
+              $selected.sourceRunId -cne $env:LNWJUD_SOURCE_RUN_ID -or
+              $selected.signingCandidateArtifactId -cne $env:LNWJUD_EXPECTED_CANDIDATE_ID -or
+              $selected.signingCandidateArchiveSha256 -cne $env:LNWJUD_EXPECTED_CANDIDATE_SHA256 -or
+              [string]$selected.signingCandidateArchiveSizeBytes -cne $env:LNWJUD_EXPECTED_CANDIDATE_SIZE_BYTES) {
+            throw 'SIGNING_SOURCE_RECHECK_REFUSED'
+          }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           artifact-ids: ${{ needs.verify-protected-source.outputs.candidate_artifact_id }}
