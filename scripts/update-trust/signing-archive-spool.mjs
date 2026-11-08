@@ -7,6 +7,10 @@ import { inspectSigningArchive } from './signing-archive-entries.mjs';
 
 const destroyReadable = Readable.prototype.destroy;
 const readableClosed = Object.getOwnPropertyDescriptor(Readable.prototype, 'closed').get;
+const requireNoSigningKey = () => {
+  if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM'))
+    throw new Error('SIGNING_ARCHIVE_DOWNLOAD_REFUSED');
+};
 
 export class ArchiveQuarantineError extends Error {
   #spool;
@@ -33,8 +37,7 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
     || !artifact || typeof artifact !== 'object' || typeof consume !== 'function') throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
   const { artifactId, archiveSha256, archiveSizeBytes } = artifact;
   // Refuse before creating a native file: download-level validation runs only after spool creation.
-  if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM'))
-    throw new Error('SIGNING_ARCHIVE_DOWNLOAD_REFUSED');
+  requireNoSigningKey();
   if (typeof artifactId !== 'string' || !/^[1-9][0-9]{0,14}$/.test(artifactId)
     || !Number.isSafeInteger(Number(artifactId)) || typeof archiveSha256 !== 'string'
     || !/^[a-f0-9]{64}$/.test(archiveSha256) || !Number.isSafeInteger(archiveSizeBytes)
@@ -91,8 +94,12 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
     const download = await downloadSigningArtifactArchive({ artifactId, expectedSha256: archiveSha256, token, destination,
       ...(fetchImpl === undefined ? {} : { fetchImpl }) });
     if (download.sizeBytes !== archiveSizeBytes) throw new Error('SIGNING_ARCHIVE_SIZE_MISMATCH');
+    // The signer secret must remain absent after the asynchronous network read
+    // and throughout consumer inspection; the guard is process-local only.
+    requireNoSigningKey();
     spool.seal();
     result = await consume(reader);
+    requireNoSigningKey();
   } catch (error) { failed = true; primary = error; }
   active = false;
   const pending = [...streams.entries()];

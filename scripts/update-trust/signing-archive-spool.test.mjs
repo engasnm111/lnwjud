@@ -119,6 +119,36 @@ test('rejects metadata size mismatch and key-bearing preflight without leaving a
   });
 });
 
+test('refuses signing-key injection after download or during archive inspection', { skip: !windows }, async () => {
+  const name = 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', original = process.env[name];
+  try {
+    await fixture(async filename => {
+      let exposed = false;
+      const lateFetch = async url => {
+        if (url.startsWith('https://api.github.com/')) return fetchFixture(url);
+        process.env[name] = '';
+        return new globalThis.Response(payload);
+      };
+      await assert.rejects(withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: lateFetch },
+        () => { exposed = true; }), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+      assert.equal(exposed, false, 'download-time key injection must not expose archive bytes');
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+    delete process.env[name];
+    await fixture(async filename => {
+      let reader;
+      await assert.rejects(withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: fetchFixture },
+        value => { reader = value; process.env[name] = 'fixture-only'; return 'not-authorized'; }),
+      /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+      assert.throws(() => reader.readAt(0, 1), /SIGNING_ARCHIVE_READ_INVALID/);
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+  } finally {
+    if (original === undefined) delete process.env[name];
+    else process.env[name] = original;
+  }
+});
+
 test('rejects untrusted archive metadata and signing-key environments before native spool creation', async () => {
   let created = 0;
   const unsafeAddon = { createArchiveSpool() { created++; throw new Error('UNEXPECTED_NATIVE_SPOOL_CREATION'); } };
