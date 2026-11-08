@@ -18,6 +18,20 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Capture clean source checkout provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $checkoutSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkoutSha -ne $env:GITHUB_SHA) {
+            throw 'DEV_INSTALLER_SOURCE_SHA_MISMATCH'
+          }
+          $sourceStatus = @(git status --porcelain=v1 --untracked-files=normal)
+          if ($LASTEXITCODE -ne 0 -or (($sourceStatus -join "`n").Trim().Length -gt 0)) {
+            throw 'DEV_INSTALLER_SOURCE_CHECKOUT_DIRTY'
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value 'LNWJUD_SOURCE_DIRTY_AT_START=0'
+
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:

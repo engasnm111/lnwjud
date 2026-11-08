@@ -6,6 +6,20 @@ const repositoryRoot = path.resolve(import.meta.dirname, '..', '..');
 const desktopRoot = path.join(repositoryRoot, 'apps', 'desktop');
 
 describe('Windows release trust evidence', () => {
+  it('captures a clean exact-SHA checkout before dev packaging mutates tracked build outputs', async () => {
+    const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'dev-installer.yml'), 'utf8');
+    const checkoutStep = workflow.indexOf('- name: Checkout Code');
+    const sourceStep = workflow.indexOf('- name: Capture clean source checkout provenance');
+    const buildStep = workflow.indexOf('- name: Install dependencies');
+
+    expect(checkoutStep).toBeGreaterThanOrEqual(0);
+    expect(sourceStep).toBeGreaterThan(checkoutStep);
+    expect(sourceStep).toBeLessThan(buildStep);
+    expect(workflow).toContain('$checkoutSha -ne $env:GITHUB_SHA');
+    expect(workflow).toContain('DEV_INSTALLER_SOURCE_CHECKOUT_DIRTY');
+    expect(workflow).toContain("Add-Content -Path $env:GITHUB_ENV -Value 'LNWJUD_SOURCE_DIRTY_AT_START=0'");
+  });
+
   it('renames the installed uninstaller to uninstall.exe and rewrites both uninstall registry commands', async () => {
     const installer = await readFile(path.join(desktopRoot, 'build', 'installer.nsh'), 'utf8');
 
