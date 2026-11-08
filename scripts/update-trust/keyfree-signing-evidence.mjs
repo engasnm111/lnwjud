@@ -43,9 +43,14 @@ export function keyFreeGhEnvironment(environment, token, isolatedDirectory) {
     || typeof isolatedDirectory !== 'string' || !path.isAbsolute(isolatedDirectory)
     || isolatedDirectory.length > 4096 || isolatedDirectory.includes('\0')) refuse();
   const child = {};
+  const seen = new Set();
   for (const [name, value] of Object.entries(environment)) {
-    if (!verifierEnvironmentNames.has(name.toUpperCase())) continue;
-    if (typeof value !== 'string') refuse();
+    const canonicalName = name.toUpperCase();
+    if (!verifierEnvironmentNames.has(canonicalName)) continue;
+    // Windows environment variables are case-insensitive. Refuse ambiguous
+    // duplicates rather than letting the child launcher choose a value.
+    if (seen.has(canonicalName) || typeof value !== 'string') refuse();
+    seen.add(canonicalName);
     child[name] = value;
   }
   return Object.freeze({ ...child, GH_TOKEN: token, GH_HOST: 'github.com', GH_PROMPT_DISABLED: '1',

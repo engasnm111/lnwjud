@@ -112,6 +112,15 @@ test('pinned GitHub verifier subprocess environment rejects signer keys before l
   for (const name of ['GIT_CONFIG_GLOBAL', 'NODE_OPTIONS', 'GITHUB_TOKEN'])
     assert.equal(Object.hasOwn(allowed, name), false, `${name} must not reach the verifier`);
   assert.equal(environment.GH_HOST, 'untrusted.example');
+  // Windows treats environment names case-insensitively; Node may otherwise
+  // choose a caller-controlled duplicate instead of the intended OS path.
+  for (const entries of [
+    [['SystemRoot', 'C:\\Windows'], ['SYSTEMROOT', 'C:\\untrusted']],
+    [['SYSTEMROOT', 'C:\\untrusted'], ['SystemRoot', 'C:\\Windows']],
+  ]) {
+    assert.throws(() => keyFreeGhEnvironment(Object.fromEntries(entries), 'verified-fixture-token', isolated),
+      /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+  }
   for (const name of ['LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', 'lnwjud_update_release_private_key_pem']) {
     for (const value of ['', 'fixture-secret']) {
       assert.throws(() => keyFreeGhEnvironment({ ...environment, [name]: value }, 'verified-fixture-token', isolated),
