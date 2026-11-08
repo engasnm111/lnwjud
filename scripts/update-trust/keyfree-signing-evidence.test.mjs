@@ -173,6 +173,22 @@ test('key-free verifier rejects changed package bytes, source substitution and u
   });
 });
 
+test('key-free verifier rejects a candidate whose expiry precedes its issue time', async () => {
+  await withFixture(async (root, f) => {
+    const candidatePath = path.join(f.candidateDir, 'CANDIDATE.json');
+    const payload = JSON.parse(await readFile(candidatePath, 'utf8'));
+    payload.issuedAt = String(now + 300n);
+    payload.notBefore = payload.issuedAt;
+    payload.expiresAt = String(now + 100n);
+    const candidateBytes = Buffer.from(JSON.stringify(payload));
+    await writeFile(candidatePath, candidateBytes);
+    const manifest = JSON.parse(f.manifest);
+    manifest.candidate.candidate = bind('CANDIDATE.json', candidateBytes);
+    await writeFile(path.join(root, 'manifest.json'), JSON.stringify(manifest));
+    await assert.rejects(inspect(root, f), /KEYFREE_SIGNING_EVIDENCE_REFUSED/);
+  });
+});
+
 test('key-free verifier binds source identity before an asynchronous verifier callback', async () => {
   await withFixture(async (root, f) => {
     const mutableSource = { ...source };

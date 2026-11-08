@@ -111,7 +111,8 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
   if (payload.protocol !== 2 || payload.kind !== 'baseline' || payload.policyRevision !== 1
     || !decimal(payload.issuedAt) || !decimal(payload.notBefore) || !decimal(payload.expiresAt)
     || payload.issuedAt !== payload.notBefore || BigInt(payload.issuedAt) > now + 300n
-    || now >= BigInt(payload.expiresAt) || BigInt(payload.expiresAt) - BigInt(payload.issuedAt) > 86400n
+    || BigInt(payload.expiresAt) <= BigInt(payload.issuedAt) || now >= BigInt(payload.expiresAt)
+    || BigInt(payload.expiresAt) - BigInt(payload.issuedAt) > 86400n
     || release?.product !== 'lnwjud' || release.channel !== 'stable'
     || release.platform !== 'win32' || release.architecture !== 'x64'
     || release.distribution !== 'windows-nsis'
