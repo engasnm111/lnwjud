@@ -198,6 +198,24 @@ test('propagates a retained-handle read failure and still discards the spool', a
   assert.equal(discarded, true);
 });
 
+test('rejects truncated or oversized native reads without exposing archive bytes', async () => {
+  for (const delta of [-1, 1]) {
+    let discarded = false;
+    const spool = {
+      write() {}, seal() {},
+      readAt(_offset, length) { return Buffer.alloc(length + delta); },
+      discard() { discarded = true; }, close() {},
+    };
+    const options = { addon: { createArchiveSpool: () => spool }, filename: 'fixture', artifact,
+      token: 'fixture', fetchImpl: fetchFixture };
+    await assert.rejects(withDownloadedSigningArchive(options, reader => {
+      assert.throws(() => reader.readAt(0, 4), /SIGNING_ARCHIVE_READ_INVALID/);
+      return (async () => { for await (const chunk of reader.stream(0, 4)) assert.ok(chunk); })();
+    }), /SIGNING_ARCHIVE_READ_INVALID/);
+    assert.equal(discarded, true);
+  }
+});
+
 test('can explicitly release a retained quarantine without claiming deletion', async () => {
   let closed = false;
   const spool = { write() {}, seal() {}, readAt() { return Buffer.alloc(0); },

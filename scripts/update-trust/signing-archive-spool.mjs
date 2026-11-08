@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import process from 'node:process';
 import { Readable, Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
@@ -53,7 +54,9 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
     readAt(offset, length) {
       check(offset, length);
       if (length > 1024 * 1024) throw new Error('SIGNING_ARCHIVE_READ_INVALID');
-      return spool.readAt(offset, length);
+      const bytes = spool.readAt(offset, length);
+      if (!Buffer.isBuffer(bytes) || bytes.length !== length) throw new Error('SIGNING_ARCHIVE_READ_INVALID');
+      return bytes;
     },
     stream(offset, length) {
       check(offset, 0);
@@ -67,6 +70,7 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
           if (remaining === 0) { this.push(null); return; }
           const count = Math.min(remaining, Math.max(1, requested), 65536);
           const chunk = spool.readAt(position, count);
+          if (!Buffer.isBuffer(chunk) || chunk.length !== count) throw new Error('SIGNING_ARCHIVE_READ_INVALID');
           position += count; remaining -= count; this.push(chunk);
         } catch (error) { destroyReadable.call(this, error); }
       } });
