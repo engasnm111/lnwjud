@@ -121,7 +121,10 @@ export class DurableShellTaskIndex {
         || input.nativeBinding.ownerClientId !== input.ownerClientId || input.nativeBinding.workspaceId !== input.ownerWorkspaceId))
       || !isSafeTaskId(input.taskId)
       || !/^[a-f0-9]{64}$/i.test(input.requestDigest)
-      || (input.launchRecord !== undefined && (!isLaunchRecord(input.launchRecord) || input.launchRecord.taskId !== input.taskId))) {
+      || (input.launchRecord !== undefined && (!isLaunchRecord(input.launchRecord) || input.launchRecord.taskId !== input.taskId
+        || input.launchRecord.ownerClientId !== input.ownerClientId
+        || input.launchRecord.ownerWorkspaceId !== input.ownerWorkspaceId
+        || (input.nativeBinding !== undefined && input.launchRecord.ownerSessionId !== input.nativeBinding.ownerSessionId)))) {
       return err(appError('INVALID_INPUT', 'Durable task reservation identity is invalid'));
     }
     try {

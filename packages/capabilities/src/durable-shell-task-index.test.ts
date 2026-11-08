@@ -595,6 +595,35 @@ describe('DurableShellTaskIndex', () => {
     expect(JSON.stringify(diagnostics)).not.toContain('private-client');
   });
 
+  it('refuses launch journal identities that disagree with reservation or native attempt ownership', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-journal-identity-'));
+    temporaryRoots.push(root);
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 2, inspectTask: async () => 'active' as const });
+    await index.initialize();
+    const taskId = 'journal-identity';
+    const requestDigest = 'a'.repeat(64);
+    const launchRecord = {
+      version: 1 as const, taskId, startedAt: '2026-11-09T00:00:00.000Z',
+      ownerClientId: 'client-a', ownerSessionId: 'session-a', ownerWorkspaceId: 'workspace-a',
+    };
+    const reservation = { taskId, requestDigest, ownerClientId: 'client-a', ownerWorkspaceId: 'workspace-a', launchRecord };
+    for (const mismatched of [
+      { ...launchRecord, ownerClientId: 'client-b' },
+      { ...launchRecord, ownerWorkspaceId: 'workspace-b' },
+    ]) {
+      expect(await index.reserve({ ...reservation, launchRecord: mismatched }))
+        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    }
+    const nativeBinding = {
+      taskId, reservationId: taskId, attemptId: 'attempt-a', generation: 1, requestDigest,
+      ownerClientId: 'client-a', ownerSessionId: 'session-b', workspaceId: 'workspace-a',
+    };
+    expect(await index.reserve({ ...reservation, nativeBinding }))
+      .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    expect(await index.hasReservation(taskId, requestDigest)).toBe(false);
+    expect(await index.listLaunches({ limit: 10 })).toMatchObject({ ok: true, value: { records: [] } });
+  });
+
   it('bootstraps and pages the compact launch journal without hydrating filtered histories', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-index-journal-'));
     temporaryRoots.push(root);
