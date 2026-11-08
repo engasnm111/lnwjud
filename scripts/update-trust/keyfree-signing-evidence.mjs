@@ -28,11 +28,25 @@ const requireKeyFree = () => {
 
 // A verifier subprocess must never inherit a signer secret, even if a future
 // workflow mistakenly places the protected key in the key-free job context.
+// Pass only the OS process essentials to the verifier. Inheriting GH_CONFIG_DIR,
+// GIT_CONFIG_* or other caller-controlled GitHub CLI settings can redirect the
+// verifier to mutable configuration despite fixed CLI arguments.
+const verifierEnvironmentNames = new Set([
+  'PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE',
+  'APPDATA', 'LOCALAPPDATA', 'HOME', 'COMSPEC', 'PROGRAMFILES',
+  'PROGRAMFILES(X86)', 'PROGRAMW6432',
+]);
 export function keyFreeGhEnvironment(environment, token) {
   if (!environment || typeof environment !== 'object' || Array.isArray(environment)
     || Object.keys(environment).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')
     || typeof token !== 'string' || token.length < 10 || token.length > 4096) refuse();
-  return Object.freeze({ ...environment, GH_TOKEN: token, GH_HOST: 'github.com' });
+  const child = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (!verifierEnvironmentNames.has(name.toUpperCase())) continue;
+    if (typeof value !== 'string') refuse();
+    child[name] = value;
+  }
+  return Object.freeze({ ...child, GH_TOKEN: token, GH_HOST: 'github.com', GH_PROMPT_DISABLED: '1' });
 }
 const decimal = value => typeof value === 'string' && /^[1-9][0-9]{0,14}$/.test(value)
   && Number.isSafeInteger(Number(value));

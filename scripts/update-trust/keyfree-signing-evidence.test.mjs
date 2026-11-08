@@ -95,11 +95,18 @@ const inspect = (root, f, verify = ({ filename }) => {
 }) => inspectKeyFreeSigningCandidate({ root, policyBytes: f.policyBytes, source, now, verify });
 
 test('pinned GitHub verifier subprocess environment rejects signer keys before launch', () => {
-  const environment = { PATH: 'fixture-path', GH_HOST: 'untrusted.example', GH_TOKEN: 'old-token' };
+  const environment = { PATH: 'fixture-path', SystemRoot: 'C:\\Windows',
+    GH_HOST: 'untrusted.example', GH_TOKEN: 'old-token',
+    GH_CONFIG_DIR: 'attacker-controlled', GIT_CONFIG_GLOBAL: 'attacker-config',
+    NODE_OPTIONS: '--require=untrusted', GITHUB_TOKEN: 'unrelated-credential' };
   const allowed = keyFreeGhEnvironment(environment, 'verified-fixture-token');
   assert.equal(allowed.GH_HOST, 'github.com');
   assert.equal(allowed.GH_TOKEN, 'verified-fixture-token');
+  assert.equal(allowed.GH_PROMPT_DISABLED, '1');
   assert.equal(allowed.PATH, 'fixture-path');
+  assert.equal(allowed.SystemRoot, 'C:\\Windows');
+  for (const name of ['GH_CONFIG_DIR', 'GIT_CONFIG_GLOBAL', 'NODE_OPTIONS', 'GITHUB_TOKEN'])
+    assert.equal(Object.hasOwn(allowed, name), false, `${name} must not reach the verifier`);
   assert.equal(environment.GH_HOST, 'untrusted.example');
   for (const name of ['LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', 'lnwjud_update_release_private_key_pem']) {
     for (const value of ['', 'fixture-secret']) {
