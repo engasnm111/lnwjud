@@ -82,19 +82,7 @@ jobs:
       - name: Install ripgrep for native search acceptance (Windows)
         if: matrix.name == 'Windows'
         shell: powershell
-        run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            $rgDir = Join-Path $env:RUNNER_TEMP 'ripgrep-native-contract'
-            New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
-            $zip = Join-Path $rgDir 'ripgrep.zip'
-            Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip' -OutFile $zip -UseBasicParsing
-            Expand-Archive -Path $zip -DestinationPath $rgDir -Force
-            $rgExe = (Get-ChildItem -Path $rgDir -Filter 'rg.exe' -Recurse | Select-Object -First 1).FullName
-            Copy-Item -LiteralPath $rgExe -Destination (Join-Path $rgDir 'rg.exe') -Force
-            $rgDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            $env:PATH = "$rgDir;$env:PATH"
-          }
-          rg --version
+        run: ./scripts/ci-install-ripgrep.ps1 -DestinationName ripgrep-native-contract
 
       - name: Install ripgrep for native search acceptance (macOS/Linux)
         if: matrix.name != 'Windows'
@@ -761,19 +749,7 @@ jobs:
 
       - name: Install ripgrep for workspace search integration
         shell: powershell
-        run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            $rgDir = Join-Path $env:RUNNER_TEMP 'ripgrep-workspace-tests'
-            New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
-            $zip = Join-Path $rgDir 'ripgrep.zip'
-            Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip' -OutFile $zip -UseBasicParsing
-            Expand-Archive -Path $zip -DestinationPath $rgDir -Force
-            $rgExe = (Get-ChildItem -Path $rgDir -Filter 'rg.exe' -Recurse | Select-Object -First 1).FullName
-            Copy-Item -LiteralPath $rgExe -Destination (Join-Path $rgDir 'rg.exe') -Force
-            $rgDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            $env:PATH = "$rgDir;$env:PATH"
-          }
-          rg --version
+        run: ./scripts/ci-install-ripgrep.ps1 -DestinationName ripgrep-workspace-tests
 
       - name: Run complete Windows workspace release suite
         run: pnpm test:release
@@ -882,27 +858,7 @@ jobs:
 
       - name: Install ripgrep for E2E search
         shell: powershell
-        run: |
-          if (Get-Command rg -ErrorAction SilentlyContinue) {
-            rg --version
-          }
-          else {
-            try {
-              choco install ripgrep -y --no-progress
-            } catch {}
-            if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-              $rgDir = Join-Path $env:RUNNER_TEMP 'ripgrep'
-              New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
-              $zip = Join-Path $rgDir 'ripgrep.zip'
-              Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip' -OutFile $zip -UseBasicParsing
-              Expand-Archive -Path $zip -DestinationPath $rgDir -Force
-              $rgExe = (Get-ChildItem -Path $rgDir -Filter 'rg.exe' -Recurse | Select-Object -First 1).FullName
-              Copy-Item -LiteralPath $rgExe -Destination (Join-Path $rgDir 'rg.exe') -Force
-              $rgDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-              $env:PATH = "$rgDir;$env:PATH"
-            }
-            rg --version
-          }
+        run: ./scripts/ci-install-ripgrep.ps1 -DestinationName ripgrep-e2e
 
 
 

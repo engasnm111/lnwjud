@@ -55,6 +55,65 @@ test('pinned verifier provisioning retries transport timeouts but refuses other 
   }
 });
 
+
+test('Windows CI ripgrep pinned fallback handles CDN 502, refuses 403 and rejects corrupt archives', { skip: !windows }, async () => {
+  const workflow = await readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8');
+  for (const destination of ['ripgrep-native-contract', 'ripgrep-workspace-tests', 'ripgrep-e2e']) {
+    assert.ok(workflow.includes('./scripts/ci-install-ripgrep.ps1 -DestinationName ' + destination),
+      'Windows ' + destination + ' must use the common pinned installer');
+  }
+  const script = await readFile(path.join(root, 'scripts/ci-install-ripgrep.ps1'), 'utf8');
+  assert.match(script, /d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1/);
+  assert.match(script, /releases\/assets\/191354245/);
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-ripgrep-ci-'));
+  try {
+    for (const [failure, attempts, apiAttempts, expectedError] of [
+      ['gateway', 6, 3, '502 Bad Gateway'],
+      ['forbidden', 1, 0, '403 Forbidden'],
+      ['corrupt', 1, 0, 'RIPGREP_CI_ARCHIVE_DIGEST_MISMATCH'],
+    ]) {
+      const runnerTemp = path.join(temp, failure);
+      await mkdir(runnerTemp);
+      const fixture = [
+        '$global:attempts = 0',
+        '$global:apiAttempts = 0',
+        'function Get-Command { [CmdletBinding()] param([string]$Name) if ($Name -eq "rg") { return $null } else { throw "Unexpected Get-Command" } }',
+        'function Invoke-WebRequest {',
+        '  [CmdletBinding()]',
+        '  param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)',
+        '  $global:attempts++',
+        '  if ($Uri -eq "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/191354245") {',
+        '    $global:apiAttempts++',
+        '    if ($Headers.Accept -ne "application/octet-stream") { throw "Bad Accept header" }',
+        '  } elseif ($Uri -notmatch "^https://github[.]com/BurntSushi/ripgrep/releases/download/") { throw "Unreviewed download URL" }',
+        '  if ("' + failure + '" -eq "corrupt") { Set-Content -LiteralPath $OutFile -Value "not the official archive" -Encoding ascii; return }',
+        '  if ("' + failure + '" -eq "gateway") {',
+        '    throw [System.Net.WebException]::new("502 Bad Gateway", [System.Net.WebExceptionStatus]::ProtocolError)',
+        '  }',
+        '  throw [System.Net.WebException]::new("403 Forbidden", [System.Net.WebExceptionStatus]::ProtocolError)',
+        '}',
+        'function Start-Sleep { param([int]$Seconds) }',
+        'try { & "./scripts/ci-install-ripgrep.ps1" -DestinationName "ripgrep-' + failure + '"; exit 10 }',
+        'catch {',
+        '  if ($global:attempts -ne ' + attempts + ' -or $global:apiAttempts -ne ' + apiAttempts + ') {',
+        '    Write-Error "attempts=$global:attempts apiAttempts=$global:apiAttempts"; exit 11',
+        '  }',
+        '  if ($_.Exception.Message -notmatch "' + expectedError + '") {',
+        '    Write-Error ("wrong refusal: " + $_.Exception.Message); exit 12',
+        '  }',
+        '  exit 0',
+        '}',
+      ].join('\n');
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', fixture], {
+        cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000,
+        env: { ...process.env, RUNNER_TEMP: runnerTemp },
+      });
+      assert.equal(result.error, undefined, result.error?.message);
+      assert.equal(result.status, 0, failure + ': ' + result.stdout + '\n' + result.stderr);
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
 test('Windows CI cosign fallback retries CDN 504 via its pinned official API asset, not HTTP 403', { skip: !windows }, async () => {
   const workflow = await readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8');
   const label = '      - name: Install checksum-pinned cosign fallback';
