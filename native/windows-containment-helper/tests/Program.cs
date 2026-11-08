@@ -239,6 +239,7 @@ internal static class NativeTests
                 || WindowsContainmentServiceClient.ShouldWaitForOutput(ServiceAttemptPhase.TerminationUnknown))
                 throw new Exception("SERVICE_WATCHER_OUTPUT_PUBLICATION_ORDER_INVALID");
             Console.WriteLine("PASS service watcher waits for output publication after native dispatch");
+            TestWatcherRequiresServiceOwnedTerminalPublication();
             TestServiceFailureReason();
             Console.WriteLine("PASS service installer reports only stable diagnostic codes");
             TestServiceStoreCreation(root);
@@ -1953,6 +1954,26 @@ internal static class NativeTests
             await Task.Delay(20);
         }
         return null;
+    }
+
+    private static void TestWatcherRequiresServiceOwnedTerminalPublication()
+    {
+        var identity = new ServiceAttemptIdentity("watch", "reservation", "attempt", 1, new string('a', 64), "client", "session", "workspace");
+        var terminal = new ServiceAttemptObservation(identity, ServiceAttemptPhase.TerminalVerified, null, ServiceProcessOutcome.Completed, 0, 0, null, false);
+        var cursor = new ServiceOutputCursor(0, 0);
+        var output = new ServiceOutputObservation("", "", false, false, true, cursor, cursor, true, "persisted", null, identity);
+        static bool Verified(ServiceAttemptObservation observation, ServiceOutputObservation snapshot) =>
+            WindowsContainmentServiceClient.HasVerifiedPublishedOutput(observation, snapshot);
+        if (!Verified(terminal, output)
+            || Verified(terminal with { ReservationHeld = true }, output)
+            || Verified(terminal with { ActiveProcesses = 1 }, output)
+            || Verified(terminal with { Phase = ServiceAttemptPhase.Running }, output)
+            || Verified(terminal, output with { Complete = false, FinalCursor = null })
+            || Verified(terminal, output with { Persisted = false })
+            || Verified(terminal, output with { FinalCursor = null })
+            || Verified(terminal, output with { Identity = identity with { AttemptId = "other" } }))
+            throw new Exception("Service watcher accepted unverified Job release or incomplete output publication");
+        Console.WriteLine("PASS watcher requires Job-zero, reservation release, matching identity and persisted final output");
     }
 
     private static async Task TestCancellationWaitsForReservationRelease()
