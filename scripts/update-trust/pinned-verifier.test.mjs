@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,13 +16,18 @@ test('verifier executable path is fixed and rejects caller paths', async () => {
 });
 
 test('pinned verifier provisioning retries transport timeouts but refuses other download errors', { skip: !windows }, () => {
-  for (const [failure, expectedAttempts] of [['timeout', 3], ['gateway-timeout', 3], ['forbidden', 1], ['unexpected', 1]]) {
+  for (const [failure, expectedAttempts] of [['timeout', 6], ['gateway-timeout', 6], ['forbidden', 1], ['unexpected', 1]]) {
     const script = `
       $global:attempts = 0
+      $global:apiAttempts = 0
       function Invoke-WebRequest {
         [CmdletBinding()]
-        param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing)
+        param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)
         $global:attempts++
+        if ($Uri -eq 'https://api.github.com/repos/cli/cli/releases/assets/679195750') {
+          $global:apiAttempts++
+          if ($Headers.Accept -ne 'application/octet-stream') { throw 'Invalid fallback accept header' }
+        } elseif ($Uri -notmatch '^https://github[.]com/cli/cli/releases/download/') { throw 'Unreviewed download URL' }
         if ('${failure}' -eq 'timeout') {
           throw [System.Net.WebException]::new('timeout', [System.Net.WebExceptionStatus]::Timeout)
         }
@@ -38,6 +43,7 @@ test('pinned verifier provisioning retries transport timeouts but refuses other 
       try { & './scripts/update-trust/provision-gh-verifier.ps1'; exit 10 }
       catch {
         if ($global:attempts -ne ${expectedAttempts}) { Write-Error "attempts=$global:attempts"; exit 11 }
+        if ($global:apiAttempts -ne ${expectedAttempts > 3 ? 3 : 0}) { Write-Error "apiAttempts=$global:apiAttempts"; exit 12 }
         exit 0
       }
     `;
@@ -47,6 +53,63 @@ test('pinned verifier provisioning retries transport timeouts but refuses other 
     assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 0, `${failure}: ${result.stdout}\n${result.stderr}`);
   }
+});
+
+test('Windows CI cosign fallback retries CDN 504 via its pinned official API asset, not HTTP 403', { skip: !windows }, async () => {
+  const workflow = await readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8');
+  const label = '      - name: Install checksum-pinned cosign fallback';
+  const begin = workflow.indexOf(label);
+  assert.ok(begin >= 0, 'missing checksum-pinned cosign step');
+  const scriptStart = workflow.indexOf('        run: |', begin);
+  const nextStep = workflow.indexOf('      - name: Verify cosign release verifier', scriptStart);
+  assert.ok(scriptStart > begin && nextStep > scriptStart, 'unexpected CI step boundaries');
+  const raw = workflow.slice(scriptStart + '        run: |'.length, nextStep).trimEnd();
+  const script = raw.split(/\r?\n/).filter(Boolean).map(line => {
+    assert.ok(line.startsWith('          '), 'unexpected CI script indentation');
+    return line.slice(10);
+  }).join('\n');
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-cosign-ci-'));
+  try {
+    for (const [failure, expectedAttempts, expectedApi] of [['gateway-timeout', 8, 4], ['forbidden', 1, 0]]) {
+      const fixture = `
+        $global:attempts = 0
+        $global:apiAttempts = 0
+        function Invoke-WebRequest {
+          [CmdletBinding()]
+          param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection,
+                [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)
+          $global:attempts++
+          if ($Uri -eq 'https://api.github.com/repos/sigstore/cosign/releases/assets/503286236') {
+            $global:apiAttempts++
+            if ($Headers.Accept -ne 'application/octet-stream') { throw 'Invalid asset accept header' }
+          } elseif ($Uri -notmatch '^https://github[.]com/sigstore/cosign/releases/download/') {
+            throw 'Unreviewed asset URL'
+          }
+          if ('${failure}' -eq 'gateway-timeout') {
+            throw [System.Net.WebException]::new('504 Gateway Time-out', [System.Net.WebExceptionStatus]::ProtocolError)
+          }
+          throw [System.Net.WebException]::new('403 Forbidden', [System.Net.WebExceptionStatus]::ProtocolError)
+        }
+        function Start-Sleep { param([int]$Seconds) }
+        try {
+          ${script}
+          exit 10
+        } catch {
+          if ($global:attempts -ne ${expectedAttempts} -or $global:apiAttempts -ne ${expectedApi}) {
+            Write-Error "attempts=$global:attempts apiAttempts=$global:apiAttempts"
+            exit 11
+          }
+          exit 0
+        }
+      `;
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', fixture], {
+        cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000,
+        env: { ...process.env, RUNNER_TEMP: temp },
+      });
+      assert.equal(result.error, undefined, result.error?.message);
+      assert.equal(result.status, 0, `${failure}: ${result.stdout}\n${result.stderr}`);
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
 test('actual native addon pins file and ancestors, rejecting writes/renames until release', { skip: !windows }, async () => {

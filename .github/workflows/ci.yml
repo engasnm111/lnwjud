@@ -818,19 +818,44 @@ jobs:
           $target = Join-Path $installDir 'cosign.exe'
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           $url = "https://github.com/sigstore/cosign/releases/download/$version/cosign-windows-amd64.exe"
+          # Fixed official release asset ID: alternate GitHub API route bypasses
+          # the release-download front door when it returns HTTP 504.
+          $apiUrl = 'https://api.github.com/repos/sigstore/cosign/releases/assets/503286236'
           $downloaded = $false
-          for ($attempt = 1; $attempt -le 4; $attempt++) {
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $target -UseBasicParsing -ErrorAction Stop
-              $downloaded = $true
-              break
+          foreach ($sourceUrl in @($url, $apiUrl)) {
+            for ($attempt = 1; $attempt -le 4; $attempt++) {
+              try {
+                $params = @{ Uri = $sourceUrl; OutFile = $target; UseBasicParsing = $true
+                             ErrorAction = 'Stop'; MaximumRedirection = 5; TimeoutSec = 120 }
+                if ($sourceUrl -eq $apiUrl) {
+                  $params.Headers = @{ Accept = 'application/octet-stream'; 'User-Agent' = 'lnwjud-pinned-cosign' }
+                }
+                Invoke-WebRequest @params
+                $downloaded = $true
+                break
+              }
+              catch {
+                $statusCode = $null
+                $response = $_.Exception.PSObject.Properties['Response']
+                if ($null -ne $response -and $null -ne $response.Value) {
+                  $statusCode = [int]$response.Value.StatusCode
+                }
+                if ($null -eq $statusCode -and $_.Exception.Message -match '^(?:HTTP\s+)?(408|429|500|502|503|504)(?:\b|\s)') {
+                  $statusCode = [int]$Matches[1]
+                }
+                $transient = $statusCode -in @(408, 429, 500, 502, 503, 504)
+                $transport = $_.Exception -is [System.Net.WebException] -and
+                  $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)
+                if (-not $transient -and -not $transport) { throw }
+                if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }
+                if ($attempt -eq 4) {
+                  if ($sourceUrl -eq $apiUrl) { throw }
+                  break
+                }
+                Start-Sleep -Seconds (2 * $attempt)
+              }
             }
-            catch {
-              if ($attempt -eq 4) { throw }
-              # Remove any incomplete executable before retrying.
-              if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }
-              Start-Sleep -Seconds (2 * $attempt)
-            }
+            if ($downloaded) { break }
           }
           if (-not $downloaded) { throw 'Failed to download cosign fallback.' }
           $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $target).Hash.ToLowerInvariant()

@@ -29,34 +29,49 @@ try {
     if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
         $ArchivePath = Join-Path $tempDirectory "gh_${version}_windows_amd64.zip"
         $uri = "https://github.com/cli/cli/releases/download/v${version}/gh_${version}_windows_amd64.zip"
-        # GitHub's release-asset CDN can return transient 5xx/429 responses.
-        # Retry only transport failures; every completed archive is still SHA-256 pinned.
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
-            try {
-                Invoke-WebRequest -Uri $uri -OutFile $ArchivePath -MaximumRedirection 5 -TimeoutSec 90 -UseBasicParsing -ErrorAction Stop
-                break
-            } catch {
-                $statusCode = $null
-                $responseProperty = $_.Exception.PSObject.Properties['Response']
-                if ($null -ne $responseProperty -and $null -ne $responseProperty.Value) {
-                    $statusCode = [int]$responseProperty.Value.StatusCode
+        # The immutable official GitHub release-asset ID offers an API route
+        # that avoids the github.com release-download front door during 504s.
+        # Both routes are still subject to the same pinned ZIP and EXE digests.
+        $apiUri = 'https://api.github.com/repos/cli/cli/releases/assets/679195750'
+        $downloaded = $false
+        foreach ($sourceUri in @($uri, $apiUri)) {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+                try {
+                    $request = @{ Uri = $sourceUri; OutFile = $ArchivePath; MaximumRedirection = 5
+                                  TimeoutSec = 90; UseBasicParsing = $true; ErrorAction = 'Stop' }
+                    if ($sourceUri -eq $apiUri) {
+                        $request.Headers = @{ Accept = 'application/octet-stream'; 'User-Agent' = 'lnwjud-pinned-update-verifier' }
+                    }
+                    Invoke-WebRequest @request
+                    $downloaded = $true
+                    break
+                } catch {
+                    $statusCode = $null
+                    $responseProperty = $_.Exception.PSObject.Properties['Response']
+                    if ($null -ne $responseProperty -and $null -ne $responseProperty.Value) {
+                        $statusCode = [int]$responseProperty.Value.StatusCode
+                    }
+                    # Hosted web exceptions can have no Response property.
+                    if ($null -eq $statusCode -and $_.Exception.Message -match '^(?:HTTP\s+)?(408|429|500|502|503|504)(?:\b|\s)') {
+                        $statusCode = [int]$Matches[1]
+                    }
+                    $transientStatus = $statusCode -in @(408, 429, 500, 502, 503, 504)
+                    $transientTransport = $_.Exception -is [System.Net.WebException] -and
+                        $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)
+                    if (-not $transientStatus -and -not $transientTransport) { throw }
+                    if (Test-Path -LiteralPath $ArchivePath) {
+                        Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction Stop
+                    }
+                    if ($attempt -eq 3) {
+                        if ($sourceUri -eq $apiUri) { throw }
+                        break
+                    }
+                    Start-Sleep -Seconds (3 * $attempt)
                 }
-                # Some hosted PowerShell web exceptions expose only the HTTP status
-                # in their message (no Response property). Recognize just the
-                # known transient codes; the downloaded bytes remain hash-pinned.
-                if ($null -eq $statusCode -and $_.Exception.Message -match '^(?:HTTP\s+)?(408|429|500|502|503|504)(?:\b|\s)') {
-                    $statusCode = [int]$Matches[1]
-                }
-                $transientStatus = $statusCode -in @(408, 429, 500, 502, 503, 504)
-                $transientTransport = $_.Exception -is [System.Net.WebException] -and
-                    $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)
-                if ($attempt -eq 3 -or (-not $transientStatus -and -not $transientTransport)) { throw }
-                if (Test-Path -LiteralPath $ArchivePath) {
-                    Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction Stop
-                }
-                Start-Sleep -Seconds (3 * $attempt)
             }
+            if ($downloaded) { break }
         }
+        if (-not $downloaded) { throw 'VERIFIER_DOWNLOAD_UNAVAILABLE' }
     } else {
         $ArchivePath = (Resolve-Path -LiteralPath $ArchivePath -ErrorAction Stop).Path
     }
