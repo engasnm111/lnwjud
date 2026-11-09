@@ -59,6 +59,7 @@ import {
   type CancelScheduledContinuationRecordResult,
 } from '@lnwjud/domain';
 import type { SqliteDatabase } from './database.js';
+import type { GoalEventOperation, HostGoalOutboxWriter } from './goal-postcommit-outbox.js';
 
 const MAX_TRACKED_TASKS = 50;
 const SCHEDULE_RECEIPT_TIME_TOLERANCE_MS = 1_000;
@@ -189,7 +190,36 @@ const EXPEDITE_MIN_SECONDS = 120;
 const EXPEDITE_MAX_SECONDS = 5 * 60;
 
 export class SqliteGoalRepository implements GoalRepository, ScheduledContinuationRepository {
+  private eventOutbox: HostGoalOutboxWriter | null = null;
+  private eventAuthorization: (() => 'standard' | 'full_bypass') | null = null;
+  private onGoalCommitted: (() => Promise<void> | void) | null = null;
+  private stagedEvent = false;
+
   public constructor(private readonly database: SqliteDatabase) {}
+
+  /** Host-owned registration only: no MCP caller may attach a signer. */
+  public attachTrustedGoalPostCommitOutbox(
+    outbox: HostGoalOutboxWriter,
+    authorization: () => 'standard' | 'full_bypass',
+    onCommitted: () => Promise<void> | void,
+  ): void {
+    if (this.eventOutbox !== null) throw new Error('HOST_GOAL_OUTBOX_ALREADY_ATTACHED');
+    this.eventOutbox = outbox;
+    this.eventAuthorization = authorization;
+    this.onGoalCommitted = onCommitted;
+  }
+
+  private stageGoalCommit(before: GoalStatus | null, goal: GoalRecord, operation: GoalEventOperation): void {
+    if (!this.eventOutbox || this.eventAuthorization?.() !== 'standard') return;
+    try {
+      this.eventOutbox.stage({workspaceId:goal.workspaceId,goalId:goal.id,revision:goal.revision,
+        operation,fromStatus:before,toStatus:goal.status,committedAt:goal.updatedAt});
+      this.stagedEvent = true;
+    } catch {
+      // Never let a memory side-effect abort an authoritative Goal mutation.
+      console.warn('[goal-postcommit] durable event unavailable; no retry');
+    }
+  }
 
   public async acquire(request: AcquireGoalRecordRequest): Promise<AcquireGoalRecordResult> {
     return this.transaction(() => {
@@ -228,7 +258,9 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
           request.now,
         );
         if (request.workflow !== undefined) this.database.connection.prepare('UPDATE goals SET workflow_json = ? WHERE id = ?').run(JSON.stringify(request.workflow), request.goalId);
-        return { goal: this.requireById(request.goalId), acquired: true };
+        const goal = this.requireById(request.goalId);
+        this.stageGoalCommit(null, goal, 'run_goal');
+        return { goal, acquired: true };
       }
 
       const existing = this.toGoalRecord(existingRow);
@@ -489,7 +521,9 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         ...(request.resumeContext === undefined ? {} : { resumeContext: request.resumeContext }),
         createdAt: request.now,
       });
-      return this.requireById(request.goalId);
+      const committed = this.requireById(request.goalId);
+      this.stageGoalCommit(current.status, committed, 'checkpoint_goal');
+      return committed;
     });
   }
 
@@ -534,7 +568,9 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
         trackedTasks: [],
         createdAt: request.now,
       });
-      return this.requireById(request.goalId);
+      const committed = this.requireById(request.goalId);
+      this.stageGoalCommit(current.status, committed, 'finish_goal');
+      return committed;
     });
   }
 
@@ -2736,13 +2772,26 @@ export class SqliteGoalRepository implements GoalRepository, ScheduledContinuati
 
   private transaction<T>(operation: () => T): T {
     const connection: DatabaseSync = this.database.connection;
+    this.stagedEvent = false;
     connection.exec('BEGIN IMMEDIATE;');
+    let committed = false;
     try {
       const value = operation();
       connection.exec('COMMIT;');
+      committed = true;
+      // Side effects only after the authoritative Goal transaction has COMMITTED.
+      if (this.stagedEvent && this.onGoalCommitted) {
+        const listener = this.onGoalCommitted;
+        queueMicrotask(() => {
+          try { void Promise.resolve(listener()).catch(() => {}); }
+          catch { /* Pending events remain in the durable outbox. */ }
+        });
+      }
+      this.stagedEvent = false;
       return value;
     } catch (error) {
-      connection.exec('ROLLBACK;');
+      if (!committed) connection.exec('ROLLBACK;');
+      this.stagedEvent = false;
       throw error;
     }
   }

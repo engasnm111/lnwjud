@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, createPrivateKey, createPublicKey, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { open, readFile } from 'node:fs/promises';
@@ -76,7 +76,7 @@ import {
   type WorkspaceScope,
 } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
-import { createWindowsMcpStdioOwner, type ManagedProcess } from '@lnwjud/process';
+import type { ManagedProcess } from '@lnwjud/process';
 import { PathExecutableResolver } from '@lnwjud/search';
 import {
   ALLOW_AI_DELETE_SETTING_KEY,
@@ -135,7 +135,7 @@ import {
   type EngineeringHarnessWorkspaceOverride,
 } from '@lnwjud/shared';
 import { AesGcmCheckpointCipher, BACKUP_RESTORE_NOTICE_SETTING_KEY, parseBackupRestoreNotice, SqliteAgentSwarmRepository, SqliteAuditRepository, SqliteAutomationRepository, SqliteBackupService, SqliteCheckpointRepository, SqliteDatabase, SqliteSettingsRepository, SqliteWorkspaceRepository, type BackupReason, type BackupRestoreNotice as StorageBackupRestoreNotice, type BackupSummary, type CheckpointPayloadCipher } from '@lnwjud/storage';
-import { SqliteGoalRepository } from '@lnwjud/storage';
+import { GOAL_POSTCOMMIT_OUTBOX_SQL, SqliteGoalPostCommitOutbox, SqliteGoalRepository } from '@lnwjud/storage';
 import type { Workspace } from '@lnwjud/workspace';
 import { comparableHostPath, isDriveRoot, isMachineRootPath, resolveHostPath, SecretPolicy, WorkspacePathGuard, WorkspaceService } from '@lnwjud/workspace';
 import {
@@ -236,6 +236,11 @@ import { readRuntimeDiagnosticsHistory } from './runtime-diagnostics-history.js'
 import { createRetryableShutdown } from './desktop-shutdown.js';
 import { DesktopMcpLifecycle } from './mcp-lifecycle.js';
 import { WorkLogViewState } from './work-log-view-state.js';
+import { ProductionGoalMemoryBoundary, safeMilestoneText } from './production-goal-memory-core.js';
+import { SqliteGoalMemoryJournal, GOAL_MEMORY_MIGRATION_SQL } from './sqlite-goal-memory-journal.js';
+import { createProductionGoalMemoryRecall } from './production-goal-memory-recall.js';
+import { signCommittedGoalEvent, verifyAndClaimGoalEvent } from './host-goal-postcommit-event-contract.js';
+import { loadProductionGoalMemoryOptIn } from './production-goal-memory-config.js';
 import { installPdfProvider, type InstalledPdfProvider } from './pdf-provider-installer.js';
 import { RemoteMcpController } from './remote-mcp-controller.js';
 import { supportedHostPlatform } from './platform-compatibility.js';
@@ -294,6 +299,11 @@ export interface DesktopRuntimeOptions {
   readonly nativeContainmentDirectory?: string;
   readonly permissionProfile?: PermissionProfileName;
   readonly hostMutationApprovalProvider?: (request: HostMutationApprovalRequest) => boolean | Promise<boolean>;
+  /** Disabled unless trusted Host composition injects opt-in and an explicit existing-bank map. */
+  readonly productionGoalMemory?: {
+    readonly enabled: boolean;
+    readonly authorizedBank: (workspaceId: string) => string | null | Promise<string | null>;
+  };
   readonly pdfProviderInstaller?: (dataPath: string) => Promise<InstalledPdfProvider>;
   readonly onInstallActivity?: (kind: 'ngrok' | 'pdf_provider', update: { readonly phase: InstallOperationPhase; readonly progressPercent: number | null; readonly message: string | null } | null) => void;
   readonly checkpointEncryptionKey?: Buffer;
@@ -559,7 +569,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     protectCriticalFiles: (): boolean => !desktopFullBypassEnabled() && destructivePolicyProvider().protectCriticalFiles,
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot,
-    writeOperationJournalRoot: path.join(dataPath, 'file-write-operations'),
   });
   const ponytailProfilePath = '.lnwjud/project-profile.json';
   const readWorkspaceProfile = async (workspaceId: string): Promise<Record<string, unknown>> => {
@@ -772,7 +781,6 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     settingsJsonProvider: () => settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
-    ...(nativeAuthority === undefined ? {} : { windowsMcpStdioOwner: createWindowsMcpStdioOwner(nativeAuthority.configuration) }),
     workspaceRootProvider: async (): Promise<string | undefined> => {
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       return selected?.realRootPath;
@@ -782,6 +790,20 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const debugSessions = new DapSessionService();
   const mcpServices: McpApplicationServices = {
+    // One-use native-consent read for the Host-selected project only.
+    ...(options.productionGoalMemory?.enabled === true && options.hostMutationApprovalProvider !== undefined ? {
+      projectMemory: createProductionGoalMemoryRecall({
+        getSelectedScope: async () => {
+          const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
+          if (selectedId === null) return null;
+          const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+          return selected !== null && selected.id === selectedId
+            ? { workspaceId: selected.id, realRootPath: selected.realRootPath } : null;
+        },
+        getAuthorizedBank: options.productionGoalMemory.authorizedBank,
+        requestApproval: options.hostMutationApprovalProvider,
+      }),
+    } : {}),
     engineeringCapture,
     platform: process.platform,
     runtimeStatePath: path.join(dataPath, 'upgrade-runtime.json'),
@@ -841,6 +863,119 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     ? event
     : { ...event, sessionId: logSessionId };
   let activityLogDiagnostic: ((key: string, message: string) => void) | null = null;
+  // Host-only Production checkpoint candidate. Defaults OFF; never infer a bank ID.
+  // The Host retains one-use native approval for every actual Hindsight write.
+  (() => {
+    const config = options.productionGoalMemory;
+    const approve = options.hostMutationApprovalProvider;
+    if (config?.enabled !== true || approve === undefined) return null;
+    database.applyMigration({ id: '026_upm_goal_checkpoint_events_v1', sql: GOAL_MEMORY_MIGRATION_SQL });
+    const journal = new SqliteGoalMemoryJournal(() => database.connection);
+    const getSelectedScope = async () => {
+      const selectedId = settingsRepository.get(selectedWorkspaceSettingKey);
+      if (selectedId === null) return null;
+      const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
+      return selected !== null && selected.id === selectedId
+        ? { workspaceId: selected.id, realRootPath: selected.realRootPath } : null;
+    };
+    const getPersistedGoal = async (goalId: string) => {
+      const record = await goalRepository.getById(goalId);
+      if (record === null) return null;
+      // Host-owned Goal checkpoint only: no caller-supplied decision is trusted.
+      const last = record.checkpoints.at(-1);
+      const decisionSummary = last?.revision === record.revision
+        ? (last.resumeContext?.decisions?.map(safeMilestoneText).find((value) => value !== null) ?? null)
+        : null;
+      const nextStepSummary = last?.revision === record.revision
+        ? safeMilestoneText(last.nextAction) : null;
+      const terminalSummary = (record.status === 'completed' || record.status === 'blocked' || record.status === 'failed')
+        && last?.revision === record.revision ? safeMilestoneText(last.summary) : null;
+      const decisionRecorded = decisionSummary !== null;
+      const nextStepRecorded = nextStepSummary !== null;
+      return {
+        id: record.id, workspaceId: record.workspaceId, status: record.status,
+        revision: record.revision, updatedAt: record.updatedAt,
+        ...(decisionRecorded ? { decisionRecorded: true, decisionSummary: decisionSummary! } : {}),
+        ...(nextStepRecorded ? { nextStepRecorded: true, nextStepSummary: nextStepSummary! } : {}),
+        ...(terminalSummary !== null ? { terminalSummary } : {}),
+      };
+    };
+    // The signed publisher runs inside the trusted Desktop Host only, never
+    // through MCP tool activity, arbitrary HTTP callbacks or watcher snapshots.
+    // A distinct Ed25519 key is deterministically separated from the protected
+    // checkpoint master key. Missing protected credentials fail closed.
+    if (checkpointEncryptionKey?.length !== 32 || options.secretProtector === undefined) return null;
+    const seed = Buffer.from(hkdfSync('sha256', checkpointEncryptionKey,
+      Buffer.from('lnwjud.goal.postcommit.v1'), Buffer.from('ed25519-host-publisher'), 32));
+    const hostPrivateKey = createPrivateKey({
+      key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), seed]),
+      format: 'der', type: 'pkcs8',
+    });
+    seed.fill(0);
+    const hostPublicKey = createPublicKey(hostPrivateKey);
+    const hostKeyId = 'host-' + createHash('sha256').update(
+      hostPublicKey.export({ format: 'der', type: 'spki' })).digest('hex').slice(0, 24);
+    database.applyMigration({ id: '027_upm_goal_postcommit_outbox_v1', sql: GOAL_POSTCOMMIT_OUTBOX_SQL });
+    const outbox = new SqliteGoalPostCommitOutbox(() => database.connection);
+    const getCurrentAuthorizedBank = async (workspaceId: string): Promise<string | null> => {
+      const freshOptIn = await loadProductionGoalMemoryOptIn(dataPath);
+      return freshOptIn?.authorizedBank(workspaceId) ?? null;
+    };
+    const writer = new ProductionGoalMemoryBoundary({
+      getSelectedScope, getPersistedGoal, getAuthorizedBank: getCurrentAuthorizedBank,
+      requestApproval: approve, journal,
+    });
+    let draining = false;
+    const drainCommittedEvents = async (): Promise<void> => {
+      if (draining) return;
+      draining = true;
+      try {
+        const protectorStatus = await options.secretProtector!.status();
+        if (protectorStatus.secure !== true) return;
+        const scope = await getSelectedScope();
+        if (scope === null || await getCurrentAuthorizedBank(scope.workspaceId) === null) return;
+        for (const committed of outbox.pending(scope.workspaceId, 30)) {
+          const signed = signCommittedGoalEvent(committed, hostKeyId, hostPrivateKey);
+          const verification = await verifyAndClaimGoalEvent(signed, scope.workspaceId, {
+            isAuthorized: async (workspaceId, keyId) => {
+              const liveScope = await getSelectedScope();
+              return keyId === hostKeyId
+                && liveScope?.workspaceId === workspaceId
+                && liveScope.realRootPath === scope.realRootPath
+                && await getCurrentAuthorizedBank(workspaceId) !== null;
+            },
+            trustedPublicKey: (keyId) => keyId === hostKeyId ? hostPublicKey : null,
+            claimOnce: (_workspaceId, _goalId, _revision, eventId) => outbox.markDispatched(eventId),
+          });
+          if (verification.status !== 'verified') continue;
+          const stored = await getPersistedGoal(committed.goalId);
+          const outcome = await writer.recordGoalEvent({
+            phase: 'completed', resultCode: 'SUCCESS', authorizationMode: 'standard',
+            eventId: committed.eventId, workspaceId: committed.workspaceId,
+            goalId: committed.goalId, goalStatus: committed.toStatus,
+            goalRevision: committed.revision, toolName: committed.operation,
+            ...(stored?.decisionRecorded === true ? { decisionRecorded: true } : {}),
+            ...(stored?.nextStepRecorded === true ? { nextStepRecorded: true } : {}),
+          });
+          outbox.settle(committed.eventId,
+            outcome.status === 'verified' ? 'verified'
+              : outcome.status === 'skipped' ? 'no_write' : 'uncertain');
+        }
+      } catch {
+        // A failed delivery cannot change a committed Goal. Dispatched/unknown
+        // events are never blindly retried; pending events remain durable.
+        console.warn('[UPM] Signed Goal event unavailable; no blind retry');
+      } finally {
+        draining = false;
+      }
+    };
+    goalRepository.attachTrustedGoalPostCommitOutbox(outbox,
+      () => desktopFullBypassEnabled() ? 'full_bypass' : 'standard',
+      drainCommittedEvents);
+    // Drains durable pending events only when the Host is explicitly opted in.
+    queueMicrotask(() => { void drainCommittedEvents(); });
+    return null;
+  })();
   const activityTracker = new ActivityTracker(
     { record: (event): Promise<void> => fileActivitySink.record(toLogActivityEvent(event)) },
     (error, event) => {
@@ -875,6 +1010,9 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
           timestamp: event.timestamp,
         });
         activitySessionCatalog.record(loggedEvent);
+        // An unavailable memory side effect never changes the committed Goal result.
+        // Automatic Goal checkpoints are emitted only by the trusted Goal
+        // repository's committed-event outbox, never from activity logging.
       },
     },
   );

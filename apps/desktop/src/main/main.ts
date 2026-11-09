@@ -96,6 +96,7 @@ import { readSharedActivitySnapshot, startMcpStdio, inspectWorkflowFile, inspect
 import { createExplicitKeySecretProtector, DEFAULT_DISPLAY_TIME_ZONE, DEFAULT_MCP_POLL_WAIT_SECONDS, DEFAULT_SHELL_SYNCHRONOUS_WAIT_SECONDS, MAX_CONFIGURABLE_WAIT_SECONDS, MIN_CONFIGURABLE_WAIT_SECONDS, formatDisplayDateTime, formatOffsetIsoTimestamp, normalizeMcpAllowedHostname, resolveLnwjudDataPath, type SecretProtector } from '@lnwjud/shared';
 import { applyPendingSqliteRestoreSync, CheckpointKeyStore, type CheckpointPayloadCipher } from '@lnwjud/storage';
 import { createDesktopRuntime, formatCompleteTargetDetail, formatIncompleteLegacyHistory, writeSerializedLogRows, type DesktopRuntime } from './desktop-services.js';
+import { loadProductionGoalMemoryOptIn } from './production-goal-memory-config.js';
 import { resolveTunnelProfileDirectory, TUNNEL_SECRET_FILE_NAME } from './tunnel-controller.js';
 import { TunnelAliasRetirementJournal, tunnelAliasRecoveryDirectory } from './tunnel-runtime-alias-journal.js';
 import { migrateLegacyWindowsSecrets } from './legacy-secret-migration.js';
@@ -2065,9 +2066,11 @@ function bootstrapMcpStdio(): void {
     await prepareDataPath(dataPath);
     prependBundledRuntimeToolsToPath();
     const secrets = await resolveDesktopRuntimeSecrets(dataPath);
+    const productionGoalMemory = await loadProductionGoalMemoryOptIn(dataPath);
     const runtime = createDesktopRuntime(dataPath, {
       permissionProfile: 'full',
       hostMutationApprovalProvider: requestMutationApproval,
+      ...(productionGoalMemory === undefined ? {} : { productionGoalMemory }),
       nativeCapabilityApi: createElectronNativeCapabilityApi(() => null),
       eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
       nativeContainmentDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native-containment') : path.join(app.getAppPath(), 'build', 'native-containment'),
@@ -2787,6 +2790,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
   ).recover();
   recordDesktopStartup('runtime-secrets:begin');
   const secrets = await resolveDesktopRuntimeSecrets(dataPath);
+  const productionGoalMemory = await loadProductionGoalMemoryOptIn(dataPath);
   recordDesktopStartup('runtime-secrets:end');
   recordDesktopStartup('runtime-create:begin');
   const desktopLogSession = desktopSessionDiagnostics?.snapshot() ?? null;
@@ -2802,6 +2806,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
       ...(desktopLogSession.previous === null ? {} : { previousLogSessionStartedAt: desktopLogSession.previous.startedAt }),
     }),
     hostMutationApprovalProvider: requestMutationApproval,
+    ...(productionGoalMemory === undefined ? {} : { productionGoalMemory }),
     pdfProviderInstaller: (rootPath) => installPdfProvider(rootPath, {
       fetchImpl: (url) => net.fetch(url, { redirect: 'follow' }),
       onProgress: (phase) => installActivity.set({ kind: 'pdf_provider', phase, progressPercent: null, message: null }),
