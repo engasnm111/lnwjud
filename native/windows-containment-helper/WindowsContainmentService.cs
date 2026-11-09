@@ -197,7 +197,7 @@ internal static class WindowsContainmentService
                             || w32.Message.StartsWith("SERVICE_", StringComparison.Ordinal) => w32.Message,
                         _ => "SERVICE_REQUEST_FAILED",
                     };
-                    await WriteFrameAsync(pipe, new RpcResponse(3, false, null, safeError), CancellationToken.None).ConfigureAwait(false);
+                    await WriteFailureFrameAsync(pipe, safeError, serviceStopping).ConfigureAwait(false);
                 }
                 catch { }
             }
@@ -341,6 +341,15 @@ internal static class WindowsContainmentService
         var payload = new byte[length];
         await stream.ReadExactlyAsync(payload, cancellationToken).ConfigureAwait(false);
         return payload;
+    }
+
+    // An unresponsive or disconnected client must not retain a service worker forever
+    // while the error reply is being written. Cancellation never changes the ledger.
+    internal static async Task WriteFailureFrameAsync(Stream stream, string error, CancellationToken serviceStopping)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(serviceStopping);
+        deadline.CancelAfter(TimeSpan.FromSeconds(2));
+        await WriteFrameAsync(stream, new RpcResponse(3, false, null, error), deadline.Token).ConfigureAwait(false);
     }
 
     private static async Task WriteFrameAsync(Stream stream, object response, CancellationToken cancellationToken)

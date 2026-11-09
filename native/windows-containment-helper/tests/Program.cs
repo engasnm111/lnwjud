@@ -30,6 +30,60 @@ internal static class NativeTests
         Console.WriteLine("PASS endpoint liveness uses terminal exit time, not ambiguous exit code 259");
     }
 
+    private sealed class NeverWritableStream : Stream
+    {
+        internal bool ObservedCancellation { get; private set; }
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+            catch (OperationCanceledException) { ObservedCancellation = true; throw; }
+        }
+    }
+
+    private static async Task TestBoundedServiceFailureReply()
+    {
+        using var blocked = new NeverWritableStream();
+        var elapsed = Stopwatch.StartNew();
+        try
+        {
+            await WindowsContainmentService.WriteFailureFrameAsync(blocked, "SERVICE_REQUEST_FAILED", CancellationToken.None);
+            throw new Exception("Unresponsive service error reply completed without a write");
+        }
+        catch (OperationCanceledException) { }
+        if (!blocked.ObservedCancellation || elapsed.Elapsed > TimeSpan.FromSeconds(5))
+            throw new Exception("Unresponsive service error reply was not cancelled within its deadline");
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        using var cancelledStream = new NeverWritableStream();
+        try
+        {
+            await WindowsContainmentService.WriteFailureFrameAsync(cancelledStream, "SERVICE_REQUEST_FAILED", cancelled.Token);
+            throw new Exception("Service shutdown did not cancel the error reply");
+        }
+        catch (OperationCanceledException) { }
+        if (!cancelledStream.ObservedCancellation)
+            throw new Exception("Service shutdown token did not reach the response writer");
+
+        using var normal = new MemoryStream();
+        await WindowsContainmentService.WriteFailureFrameAsync(normal, "SERVICE_REQUEST_FAILED", CancellationToken.None);
+        var frame = normal.ToArray();
+        if (frame.Length < 4 || BitConverter.ToInt32(frame, 0) != frame.Length - 4
+            || JsonDocument.Parse(frame.AsMemory(4)).RootElement.GetProperty("error").GetString() != "SERVICE_REQUEST_FAILED")
+            throw new Exception("Bounded error reply changed the wire response contract");
+        Console.WriteLine("PASS service error replies are bounded on stalled clients and shutdown, with unchanged wire framing");
+    }
+
     private static readonly string Executable = Environment.ProcessPath ?? throw new Exception("No test executable");
     private static readonly Dictionary<string, string> EnvironmentBlock = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string)(entry.Value ?? ""));
 
@@ -56,6 +110,7 @@ internal static class NativeTests
                 case "updater-crash-authority": return UpdaterCrashBoundaryFixture.RunAuthority(args);
                 case "updater-crash-child": return UpdaterCrashBoundaryFixture.RunChild(args);
                 case "updater-crash-boundaries": UpdaterCrashBoundaryFixture.RunSuite(); return 0;
+                case "service-error-reply-timeout": TestBoundedServiceFailureReply().GetAwaiter().GetResult(); return 0;
                 case "pipe-acl": ServicePipeSecurityTests.Run(); return 0;
                 case "authenticated-pipe-caller": TestAuthenticatedPipeCallerCapture(); return 0;
                 case "pipe-revert-failure-child":
@@ -242,6 +297,7 @@ internal static class NativeTests
             Console.WriteLine("PASS service watcher waits for output publication after native dispatch");
             TestWatcherRequiresServiceOwnedTerminalPublication();
             TestServiceFailureReason();
+            TestBoundedServiceFailureReply().GetAwaiter().GetResult();
             Console.WriteLine("PASS service installer reports only stable diagnostic codes");
             TestServiceStoreCreation(root);
             Console.WriteLine("PASS protected store DACL applies at creation and existing untrusted store remains unchanged");
