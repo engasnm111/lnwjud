@@ -241,11 +241,14 @@ internal static class UpdaterCrashBoundaryFixture
                 throw new Exception("UPDATER_FIXTURE_DIFFERENT_SESSION_REAUTHENTICATED " + stage);
 
             var registrationPersisted = stage is "after_registration_before_resume" or "after_resume_before_reply";
-            var expectedPhase = registrationPersisted ? ServiceAttemptPhase.TerminalVerified : ServiceAttemptPhase.TerminationUnknown;
+            // Before the PID is registered the target was created suspended and never
+            // resumed (kill-on-close Job), so recovery proves launch_not_started and
+            // releases the reservation. It never reports terminal success for it.
+            var expectedPhase = registrationPersisted ? ServiceAttemptPhase.TerminalVerified : ServiceAttemptPhase.LaunchNotStarted;
             if (afterRestart.GetProperty("phase").GetInt32() != (int)expectedPhase
                 || afterRestart.GetProperty("activeProcesses").ValueKind != (registrationPersisted ? System.Text.Json.JsonValueKind.Number : System.Text.Json.JsonValueKind.Null)
                 || (registrationPersisted && afterRestart.GetProperty("activeProcesses").GetInt32() != 0)
-                || afterRestart.GetProperty("reservationHeld").GetBoolean() == registrationPersisted
+                || afterRestart.GetProperty("reservationHeld").GetBoolean()
                 || (registrationPersisted && afterRestart.GetProperty("outcome").GetInt32() != (int)ServiceProcessOutcome.Interrupted))
                 throw new Exception("UPDATER_FIXTURE_RESTART_STATE_NOT_RECONCILED " + stage);
 
