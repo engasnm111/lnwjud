@@ -134,7 +134,16 @@ export class DurableShellTaskIndex {
       if (!isReady(ready) || ready.markerFormatVersion !== 2) {
         await this.withLock(async () => this.initializeUnlocked());
       }
-      const observations = await this.observeMarkersOutsideLock(input.taskId);
+      // Ordinary synchronous writes need capacity, not an expensive native RPC for every
+      // unrelated held reservation. Import exclusion and capacity pressure still inspect.
+      const capacityClass = input.capacityClass ?? this.options.capacityClass ?? 'durable_shell';
+      const currentMarkers = await this.readMarkers();
+      const skipObservation = input.mutationKind === 'synchronous_mutation'
+        && capacityClass === 'managed_writer'
+        && !currentMarkers.some((marker) => marker.record?.mutationKind === 'repository_import')
+        && currentMarkers.filter((marker) => marker.record === undefined
+          || reservationCapacityClass(marker.record) === capacityClass).length < this.maxConcurrentTasks;
+      const observations = skipObservation ? null : await this.observeMarkersOutsideLock(input.taskId);
       return await this.withLock(async () => {
         await this.initializeUnlocked();
         await this.ensureJournalUnlocked();
@@ -164,7 +173,7 @@ export class DurableShellTaskIndex {
           if (marker.record === undefined) {
             return err(appError('CONFLICT', 'A managed writer reservation is unreadable; resolve its state before launching another writer', true));
           }
-          const observed = observations.get(marker.path);
+          const observed = observations?.get(marker.path);
           const unchanged = observed !== undefined && JSON.stringify(observed.record) === JSON.stringify(marker.record);
           const nativeTerminated = unchanged && observed.nativeTerminated;
           if (marker.record.mutationKind === 'opaque_contained_process') {

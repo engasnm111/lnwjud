@@ -104,6 +104,50 @@ describe('DurableShellTaskIndex', () => {
     expect(await pending).toMatchObject({ ok: true, value: { created: true } });
   });
 
+  it('admits a synchronous writer without probing 29 unrelated held native reservations', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-missing-service-'));
+    temporaryRoots.push(root);
+    const initial = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10_000, inspectTask: async () => 'unknown' as const,
+      verifyContainedTermination: async (): Promise<boolean> => false,
+    });
+    for (let index = 0; index < 29; index += 1) {
+      const taskId = `held-${index}`;
+      const requestDigest = createHash('sha256').update(taskId).digest('hex');
+      expect(await initial.reserve({
+        taskId, requestDigest, ownerClientId: 'owner', ownerWorkspaceId: 'workspace',
+        capacityClass: index < 16 ? 'durable_shell' : 'managed_writer',
+        mutationKind: 'opaque_contained_process',
+        nativeReceiptPath: path.join(root, `${taskId}.receipt.json`),
+        nativeBinding: {
+          taskId, reservationId: taskId, attemptId: `attempt-${index}`, generation: 1,
+          requestDigest, ownerClientId: 'owner', ownerSessionId: 'session', workspaceId: 'workspace',
+        },
+      })).toMatchObject({ ok: true, value: { created: true } });
+    }
+    const verifyNative = vi.fn(async () => false);
+    const inspectTask = vi.fn(async () => 'unknown' as const);
+    const writer = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10_000, capacityClass: 'managed_writer',
+      inspectTask, verifyContainedTermination: verifyNative,
+    });
+    expect(await writer.reserve({
+      taskId: 'write', requestDigest: 'b'.repeat(64), ownerClientId: 'writer',
+      capacityClass: 'managed_writer', mutationKind: 'synchronous_mutation',
+    })).toMatchObject({ ok: true, value: { created: true } });
+    expect(verifyNative).not.toHaveBeenCalled();
+    expect(inspectTask).not.toHaveBeenCalled();
+    expect(await writer.diagnostics()).toMatchObject({
+      durable_shell_reservations: 16, managed_writer_reservations: 14,
+      unresolved_reservations: 30, unreadable_reservations: 0,
+    });
+    expect(await writer.reserve({
+      taskId: 'exclusive-import', requestDigest: 'c'.repeat(64),
+      ownerClientId: 'import', mutationKind: 'repository_import',
+    })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(verifyNative).toHaveBeenCalled();
+  }, 15_000);
+
   it('does not reclaim a marker replaced while terminal evidence is in flight', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-terminal-race-'));
     temporaryRoots.push(root);
@@ -359,7 +403,10 @@ describe('DurableShellTaskIndex', () => {
       'history-unverified',
     ]);
 
-    const warmInspector = vi.fn(async () => 'active' as const);
+    const warmInspector = vi.fn(async (taskId: string) => {
+      expect(taskId).toBeTruthy();
+      return 'active' as const;
+    });
     const replacement = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 3,
       inspectTask: warmInspector,
