@@ -104,7 +104,7 @@ describe('DurableShellTaskIndex', () => {
     expect(await pending).toMatchObject({ ok: true, value: { created: true } });
   });
 
-  it('admits a synchronous writer without probing 29 unrelated held native reservations', async () => {
+  it('admits ordinary writers without probing a mixed native and legacy backlog', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-missing-service-'));
     temporaryRoots.push(root);
     const initial = new DurableShellTaskIndex(root, {
@@ -125,6 +125,13 @@ describe('DurableShellTaskIndex', () => {
         },
       })).toMatchObject({ ok: true, value: { created: true } });
     }
+    // One legacy/uncontained marker makes the backlog mixed; native probes
+    // must still be deferred while capacity is available.
+    expect(await initial.reserve({
+      taskId: 'legacy-held', requestDigest: 'e'.repeat(64), ownerClientId: 'owner',
+      ownerWorkspaceId: 'workspace', capacityClass: 'durable_shell',
+      mutationKind: 'opaque_uncontained',
+    })).toMatchObject({ ok: true, value: { created: true } });
     const verifyNative = vi.fn(async () => false);
     const inspectTask = vi.fn(async () => 'unknown' as const);
     const writer = new DurableShellTaskIndex(root, {
@@ -144,8 +151,8 @@ describe('DurableShellTaskIndex', () => {
     expect(verifyNative).not.toHaveBeenCalled();
     expect(inspectTask).not.toHaveBeenCalled();
     expect(await writer.diagnostics()).toMatchObject({
-      durable_shell_reservations: 17, managed_writer_reservations: 14,
-      unresolved_reservations: 31, unreadable_reservations: 0,
+      durable_shell_reservations: 18, managed_writer_reservations: 14,
+      unresolved_reservations: 32, unreadable_reservations: 0,
     });
     expect(await writer.reserve({
       taskId: 'exclusive-import', requestDigest: 'c'.repeat(64),

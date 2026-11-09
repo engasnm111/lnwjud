@@ -143,8 +143,11 @@ export class DurableShellTaskIndex {
       const spareCapacity = currentMarkers.filter((marker) => marker.record === undefined
         || reservationCapacityClass(marker.record) === capacityClass).length < this.maxConcurrentTasks;
       const noImport = !currentMarkers.some((marker) => marker.record?.mutationKind === 'repository_import');
+      // A mixed legacy/native backlog must not force N slow service probes
+      // when an ordinary request has spare capacity. Keep all markers held;
+      // exclusive imports and capacity pressure still require observation.
       const bulkNativeBacklog = currentMarkers.length >= 8
-        && currentMarkers.every((marker) => marker.record?.mutationKind === 'opaque_contained_process');
+        && currentMarkers.some((marker) => marker.record?.mutationKind === 'opaque_contained_process');
       const skipObservation = input.mutationKind !== 'repository_import' && noImport && spareCapacity
         && ((input.mutationKind === 'synchronous_mutation' && capacityClass === 'managed_writer')
           || bulkNativeBacklog);
