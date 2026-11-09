@@ -134,15 +134,20 @@ export class DurableShellTaskIndex {
       if (!isReady(ready) || ready.markerFormatVersion !== 2) {
         await this.withLock(async () => this.initializeUnlocked());
       }
-      // Ordinary synchronous writes need capacity, not an expensive native RPC for every
-      // unrelated held reservation. Import exclusion and capacity pressure still inspect.
+      // When admission has spare capacity and no import holds the exclusive fence,
+      // native termination RPCs are not needed to admit another ordinary operation.
+      // Preserve every unverified marker; inspect again under capacity pressure or
+      // for exclusive imports. This also avoids N slow RPCs on a missing-service host.
       const capacityClass = input.capacityClass ?? this.options.capacityClass ?? 'durable_shell';
       const currentMarkers = await this.readMarkers();
-      const skipObservation = input.mutationKind === 'synchronous_mutation'
-        && capacityClass === 'managed_writer'
-        && !currentMarkers.some((marker) => marker.record?.mutationKind === 'repository_import')
-        && currentMarkers.filter((marker) => marker.record === undefined
-          || reservationCapacityClass(marker.record) === capacityClass).length < this.maxConcurrentTasks;
+      const spareCapacity = currentMarkers.filter((marker) => marker.record === undefined
+        || reservationCapacityClass(marker.record) === capacityClass).length < this.maxConcurrentTasks;
+      const noImport = !currentMarkers.some((marker) => marker.record?.mutationKind === 'repository_import');
+      const bulkNativeBacklog = currentMarkers.length >= 8
+        && currentMarkers.every((marker) => marker.record?.mutationKind === 'opaque_contained_process');
+      const skipObservation = input.mutationKind !== 'repository_import' && noImport && spareCapacity
+        && ((input.mutationKind === 'synchronous_mutation' && capacityClass === 'managed_writer')
+          || bulkNativeBacklog);
       const observations = skipObservation ? null : await this.observeMarkersOutsideLock(input.taskId);
       return await this.withLock(async () => {
         await this.initializeUnlocked();

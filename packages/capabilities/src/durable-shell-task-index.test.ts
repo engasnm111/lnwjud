@@ -131,6 +131,12 @@ describe('DurableShellTaskIndex', () => {
       maxConcurrentTasks: 10_000, capacityClass: 'managed_writer',
       inspectTask, verifyContainedTermination: verifyNative,
     });
+    // A non-import background operation must not incur 29 slow native RPCs
+    // when it has spare capacity; no held marker may be reclaimed without proof.
+    expect(await writer.reserve({
+      taskId: 'background', requestDigest: 'd'.repeat(64), ownerClientId: 'writer',
+      capacityClass: 'durable_shell', mutationKind: 'opaque',
+    })).toMatchObject({ ok: true, value: { created: true } });
     expect(await writer.reserve({
       taskId: 'write', requestDigest: 'b'.repeat(64), ownerClientId: 'writer',
       capacityClass: 'managed_writer', mutationKind: 'synchronous_mutation',
@@ -138,8 +144,8 @@ describe('DurableShellTaskIndex', () => {
     expect(verifyNative).not.toHaveBeenCalled();
     expect(inspectTask).not.toHaveBeenCalled();
     expect(await writer.diagnostics()).toMatchObject({
-      durable_shell_reservations: 16, managed_writer_reservations: 14,
-      unresolved_reservations: 30, unreadable_reservations: 0,
+      durable_shell_reservations: 17, managed_writer_reservations: 14,
+      unresolved_reservations: 31, unreadable_reservations: 0,
     });
     expect(await writer.reserve({
       taskId: 'exclusive-import', requestDigest: 'c'.repeat(64),
