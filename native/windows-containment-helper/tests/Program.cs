@@ -1167,8 +1167,15 @@ internal static class NativeTests
             ExpectFailure<UnauthorizedAccessException>(() => runtime.Inspect(terminal.Identity with { TaskId = "other" }, sid), "ATTEMPT_OWNER_MISMATCH");
             if (runtime.Inspect(terminal.Identity, sid).ReservationHeld || runtime.Inspect(abort.Identity, sid).ReservationHeld)
                 throw new Exception("Proven terminal or never-started reservation remained held after restart");
-            if (!runtime.Inspect(held.Identity, sid).ReservationHeld || !runtime.Inspect(unknown.Identity, sid).ReservationHeld)
-                throw new Exception("Recovery released an import hold or unknown attempt");
+            if (!runtime.Inspect(held.Identity, sid).ReservationHeld)
+                throw new Exception("Recovery released an import hold");
+            // `unknown` committed dispatch but never recorded a target PID. The target
+            // is created suspended and its PID is persisted before ResumeThread, so no
+            // target code ran: recovery releases it as launch_not_started (not success).
+            var recoveredUnknown = runtime.Inspect(unknown.Identity, sid);
+            if (recoveredUnknown.ReservationHeld || recoveredUnknown.Phase != ServiceAttemptPhase.LaunchNotStarted
+                || recoveredUnknown.Outcome is not null || recoveredUnknown.ExitCode is not null)
+                throw new Exception("Recovery did not release a never-resumed dispatch as launch_not_started");
             var reopened = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
             if (reopened.Inspect(terminal.Identity, sid).ReservationHeld || reopened.Inspect(abort.Identity, sid).ReservationHeld)
                 throw new Exception("Recovered reservation release was not durable");
