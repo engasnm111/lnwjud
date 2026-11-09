@@ -27,6 +27,25 @@ const requireKeyFree = () => {
   if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse();
 };
 
+// Treat the hosted verifier's workflow identity as an exact trust boundary.
+// A protected ref alone is insufficient: a different workflow or repository
+// must not be able to reuse the key-free verifier as release evidence.
+export function inspectKeyFreeWorkflowContext(environment) {
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)
+    || environment.GITHUB_ACTIONS !== 'true'
+    || environment.GITHUB_REPOSITORY !== 'engasnm111/lnwjud'
+    || environment.GITHUB_REPOSITORY_ID !== '1329830515'
+    || environment.GITHUB_REF !== 'refs/heads/main'
+    || environment.GITHUB_REF_PROTECTED !== 'true'
+    || environment.GITHUB_EVENT_NAME !== 'workflow_dispatch'
+    || environment.GITHUB_WORKFLOW_REF !== 'engasnm111/lnwjud/.github/workflows/update-signing.yml@refs/heads/main'
+    || !/^[a-f0-9]{40}$/.test(environment.GITHUB_SHA ?? '')
+    || environment.GITHUB_WORKFLOW_SHA !== environment.GITHUB_SHA
+    || environment.GITHUB_RUN_ATTEMPT !== '1'
+    || Object.keys(environment).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse();
+  return Object.freeze({ sourceSha: environment.GITHUB_SHA });
+}
+
 // A verifier subprocess must never inherit a signer secret, even if a future
 // workflow mistakenly places the protected key in the key-free job context.
 // Pass only the OS process essentials to the verifier. Inheriting PATH,
@@ -209,12 +228,8 @@ export async function withIsolatedGhConfig(action) {
 }
 
 async function main() {
-  if (process.argv.length !== 2 || process.env.GITHUB_ACTIONS !== 'true'
-    || process.env.GITHUB_REPOSITORY !== 'engasnm111/lnwjud'
-    || process.env.GITHUB_REF !== 'refs/heads/main' || process.env.GITHUB_REF_PROTECTED !== 'true'
-    || process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch'
-    || process.env.GITHUB_RUN_ATTEMPT !== '1'
-    || process.env.GITHUB_WORKFLOW_SHA !== process.env.GITHUB_SHA) refuse();
+  if (process.argv.length !== 2) refuse();
+  inspectKeyFreeWorkflowContext(process.env);
   requireKeyFree();
   const token = process.env.GH_TOKEN, workspace = process.env.GITHUB_WORKSPACE;
   if (typeof token !== 'string' || token.length < 10 || token.length > 4096

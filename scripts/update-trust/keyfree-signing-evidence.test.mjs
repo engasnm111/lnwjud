@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { hash } from './release-envelope.mjs';
-import { inspectKeyFreeSigningCandidate, keyFreeGhEnvironment, withIsolatedGhConfig } from './keyfree-signing-evidence.mjs';
+import { inspectKeyFreeSigningCandidate, inspectKeyFreeWorkflowContext, keyFreeGhEnvironment, withIsolatedGhConfig } from './keyfree-signing-evidence.mjs';
 
 const now = 1800000000n;
 const repo = 'https://github.com/engasnm111/lnwjud';
@@ -93,6 +93,28 @@ const inspect = (root, f, verify = ({ filename }) => {
   const kind = filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact';
   return verified(f.release[kind]);
 }) => inspectKeyFreeSigningCandidate({ root, policyBytes: f.policyBytes, source, now, verify });
+
+test('key-free verifier accepts only the exact protected workflow identity', () => {
+  const environment = {
+    GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwjud',
+    GITHUB_REPOSITORY_ID: '1329830515', GITHUB_REF: 'refs/heads/main',
+    GITHUB_REF_PROTECTED: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_WORKFLOW_REF: 'engasnm111/lnwjud/.github/workflows/update-signing.yml@refs/heads/main',
+    GITHUB_SHA: 'a'.repeat(40), GITHUB_WORKFLOW_SHA: 'a'.repeat(40), GITHUB_RUN_ATTEMPT: '1',
+  };
+  assert.deepEqual(inspectKeyFreeWorkflowContext(environment), { sourceSha: 'a'.repeat(40) });
+  for (const [name, value] of [
+    ['GITHUB_REPOSITORY_ID', '123'], ['GITHUB_REPOSITORY', 'attacker/lnwjud'],
+    ['GITHUB_WORKFLOW_REF', 'engasnm111/lnwjud/.github/workflows/ci.yml@refs/heads/main'],
+    ['GITHUB_WORKFLOW_REF', 'engasnm111/lnwjud/.github/workflows/update-signing.yml@refs/heads/dev'],
+    ['GITHUB_REF', 'refs/heads/dev'], ['GITHUB_REF_PROTECTED', 'false'],
+    ['GITHUB_EVENT_NAME', 'pull_request'], ['GITHUB_RUN_ATTEMPT', '2'],
+    ['GITHUB_WORKFLOW_SHA', 'b'.repeat(40)], ['GITHUB_SHA', 'not-a-commit'],
+    ['LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', ''],
+    ['lnwjud_update_release_private_key_pem', 'fixture-secret'],
+  ]) assert.throws(() => inspectKeyFreeWorkflowContext({ ...environment, [name]: value }),
+    /KEYFREE_SIGNING_EVIDENCE_REFUSED/, name);
+});
 
 test('pinned GitHub verifier subprocess environment rejects signer keys before launch', () => {
   const environment = { PATH: 'fixture-path', PATHEXT: '.EXE;.CMD', COMSPEC: 'C:\\untrusted\\cmd.exe',
