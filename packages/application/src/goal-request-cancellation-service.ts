@@ -60,6 +60,13 @@ export class GoalRequestCancellationService implements GoalRequestCancellationPo
       return { accepted: false, done: Promise.resolve(), release: (): void => undefined };
     }
 
+    // Reusing an in-flight call ID must not replace its abort controller:
+    // cancellation would otherwise lose track of the original operation.
+    const existingEntries = this.entries.get(normalizedGoalId);
+    if (existingEntries?.has(normalizedRequestId)) {
+      return { accepted: false, done: Promise.resolve(), release: (): void => undefined };
+    }
+
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => { resolveDone = resolve; });
     const entry: Entry = {
@@ -70,7 +77,7 @@ export class GoalRequestCancellationService implements GoalRequestCancellationPo
       resolveDone,
       released: false,
     };
-    let goalEntries = this.entries.get(normalizedGoalId);
+    let goalEntries = existingEntries;
     if (goalEntries === undefined) {
       goalEntries = new Map<string, Entry>();
       this.entries.set(normalizedGoalId, goalEntries);

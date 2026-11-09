@@ -36,6 +36,23 @@ describe('GoalRequestCancellationService', () => {
     registration.release();
   });
 
+  it('rejects duplicate in-flight request IDs without losing the original cancellation owner', async () => {
+    const service = new GoalRequestCancellationService({ waitMs: 100 });
+    const originalController = new AbortController();
+    const duplicateController = new AbortController();
+    const original = service.register('goal-duplicate', 'same-call', originalController, 5);
+    const duplicate = service.register('goal-duplicate', 'same-call', duplicateController, 5);
+    expect(original.accepted).toBe(true);
+    expect(duplicate.accepted).toBe(false);
+    duplicate.release();
+    originalController.signal.addEventListener('abort', () => original.release(), { once: true });
+
+    const result = await service.cancelForGoal('goal-duplicate', 5);
+    expect(result).toMatchObject({ requested: 1, stopped: 1, remaining: 0, timedOut: false, requestIds: ['same-call'] });
+    expect(originalController.signal.aborted).toBe(true);
+    expect(duplicateController.signal.aborted).toBe(false);
+  });
+
   it('admits only a verified newer generation and keeps old requests fenced', async () => {
     const service = new GoalRequestCancellationService({ waitMs: 1 });
     const old = new AbortController();
