@@ -35,4 +35,25 @@ describe('GoalRequestCancellationService', () => {
     expect(result).toMatchObject({ goalId: 'goal-3', requested: 1, stopped: 0, remaining: 1, timedOut: true });
     registration.release();
   });
+
+  it('admits only a verified newer generation and keeps old requests fenced', async () => {
+    const service = new GoalRequestCancellationService({ waitMs: 1 });
+    const old = new AbortController();
+    const pending = service.register('goal-4', 'old', old, 7);
+    await service.cancelForGoal('goal-4', 7);
+    expect(old.signal.aborted).toBe(true);
+    expect(service.admitRecoveredGeneration('goal-4', 7)).toBe(false);
+    expect(service.admitRecoveredGeneration('goal-4', 8)).toBe(true);
+    expect(service.register('goal-4', 'stale', new AbortController(), 7).accepted).toBe(false);
+    expect(service.register('goal-4', 'unbound', new AbortController()).accepted).toBe(false);
+    const fresh = service.register('goal-4', 'new', new AbortController(), 8);
+    expect(fresh.accepted).toBe(true);
+    await service.cancelForGoal('goal-4', 7); // late old-generation cancellation cannot kill new work
+    expect(fresh.accepted).toBe(true);
+    expect(service.admitRecoveredGeneration('goal-4', 8)).toBe(false);
+    await service.cancelForGoal('goal-4', 8);
+    expect(service.register('goal-4', 'after-terminal', new AbortController(), 8).accepted).toBe(false);
+    pending.release();
+    fresh.release();
+  });
 });

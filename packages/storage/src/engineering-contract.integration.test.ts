@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { EngineeringPreparationService, GoalContinuationService, engineeringGoalMetadata, type RunGoalResult } from '@lnwjud/application';
+import { EngineeringPreparationService, GoalContinuationService, GoalRequestCancellationService, engineeringGoalMetadata, type RunGoalResult } from '@lnwjud/application';
 import { DEFAULT_ENGINEERING_HARNESS_SETTINGS, type EngineeringHarnessSettings } from '@lnwjud/shared';
 import type { ScheduledContinuationWorkerLiveness } from '@lnwjud/domain';
 import { SqliteDatabase } from './database.js';
@@ -15,7 +15,7 @@ import { SqliteBackupService, applyPendingSqliteRestoreSync } from './backup-ser
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 const actor = { clientId: 'owner', clientName: 'Owner', sessionId: 'session' };
-async function fixture(): Promise<{ database: SqliteDatabase; filename: string; repository: SqliteGoalRepository; service: GoalContinuationService; source: string; goal: RunGoalResult; token: string }> {
+async function fixture(): Promise<{ database: SqliteDatabase; filename: string; repository: SqliteGoalRepository; service: GoalContinuationService; source: string; goal: RunGoalResult; token: string; requestCancellation: GoalRequestCancellationService }> {
   const root = await mkdtemp(path.join(tmpdir(), 'engineering-v2-')); roots.push(root);
   const source = path.join(root, 'project'); await mkdir(source);
   await writeFile(path.join(source, 'package.json'), '{"name":"fixture","scripts":{"test":"node test.js"}}');
@@ -26,14 +26,15 @@ async function fixture(): Promise<{ database: SqliteDatabase; filename: string; 
   await workspaces.insert({ id: 'workspace', displayName: 'Fixture', rootPath: source, realRootPath: source, createdAt: '2026-10-18T00:00:00Z' });
   const repository = new SqliteGoalRepository(database);
   const preparation = new EngineeringPreparationService(workspaces, { globalSettingsProvider: (): EngineeringHarnessSettings => ({ ...DEFAULT_ENGINEERING_HARNESS_SETTINGS, enabled: true, allowNoGit: true, hostedCi: 'local_only' }) });
-  const service = new GoalContinuationService(workspaces, repository, { engineeringPreparation: preparation, now: (): Date => new Date('2026-10-18T00:00:00Z'), engineeringEvidenceVerifier: { verify: async (): Promise<boolean> => true }, workerLiveness: { observe: async (goalId): Promise<ScheduledContinuationWorkerLiveness> => {
+  const requestCancellation = new GoalRequestCancellationService({ waitMs: 10 });
+  const service = new GoalContinuationService(workspaces, repository, { requestCancellation, engineeringPreparation: preparation, now: (): Date => new Date('2026-10-18T00:00:00Z'), engineeringEvidenceVerifier: { verify: async (): Promise<boolean> => true }, workerLiveness: { observe: async (goalId): Promise<ScheduledContinuationWorkerLiveness> => {
     const goal = await repository.getById(goalId); if (goal === null) throw new Error('missing');
     return { trustworthy: true, observedAt: '2026-10-18T00:00:00Z', leaseGeneration: goal.leaseGeneration, leaseActivitySeq: goal.leaseActivitySeq, liveFencedCallCount: 0, blockingTaskStates: [] };
   } } });
   const prepared = await preparation.prepare('workspace', 'Fix code behavior'); if (!prepared.ok) throw new Error('prepare failed');
   const started = await service.runGoal(actor, { workspaceId: 'workspace', goalKey: 'engineering', objective: 'Fix code behavior', plan: { steps: [] }, engineering: engineeringGoalMetadata(prepared.value.policy.policyDigest, prepared.value.workflow) });
   if (!started.ok || started.value.leaseToken === undefined) throw new Error('start failed');
-  return { database, filename, repository, service, source, goal: started.value, token: started.value.leaseToken };
+  return { database, filename, repository, service, source, goal: started.value, token: started.value.leaseToken, requestCancellation };
 }
 
 describe('versioned Engineering authority', () => {
@@ -175,15 +176,21 @@ describe('versioned Engineering authority', () => {
     try {
       const blocked = await f.service.finishGoal(actor, { goalId: f.goal.goalId, leaseToken: f.token, expectedRevision: f.goal.revision, status: 'blocked', summary: 'Await required proof', evidence: [] });
       if (!blocked.ok) throw new Error('block failed');
+      expect(f.requestCancellation.register(f.goal.goalId, 'blocked', new AbortController(), f.goal.leaseGeneration).accepted).toBe(false);
       const request = { goalId: f.goal.goalId, expectedRevision: blocked.value.revision, reason: 'User requests recovery after local policy correction', userConfirmed: true };
       expect((await f.service.recoverBlockedGoal({ ...actor, clientId: 'other' }, request)).ok).toBe(false);
       expect((await f.service.recoverBlockedGoal(actor, { ...request, userConfirmed: false })).ok).toBe(false);
       expect((await f.service.recoverBlockedGoal(actor, { ...request, expectedRevision: 0 })).ok).toBe(false);
+      expect(f.requestCancellation.register(f.goal.goalId, 'after-denied-recovery', new AbortController(), f.goal.leaseGeneration + 1).accepted).toBe(false);
       const recovered = await f.service.recoverBlockedGoal(actor, request);
       if (!recovered.ok) throw new Error(JSON.stringify(recovered.error));
       expect(recovered.value).toMatchObject({ goalId: f.goal.goalId, status: 'active', acquired: true });
       expect(recovered.value.leaseToken).not.toBe(f.token);
       expect(recovered.value.leaseGeneration).toBeGreaterThan(f.goal.leaseGeneration);
+      expect(f.requestCancellation.register(f.goal.goalId, 'stale', new AbortController(), f.goal.leaseGeneration).accepted).toBe(false);
+      const fresh = f.requestCancellation.register(f.goal.goalId, 'fresh', new AbortController(), recovered.value.leaseGeneration);
+      expect(fresh.accepted).toBe(true);
+      fresh.release();
       expect((await f.service.recoverBlockedGoal(actor, request)).ok).toBe(false);
       const history = await f.repository.getById(f.goal.goalId);
       expect(history?.checkpoints.some((entry) => entry.summary.includes('Explicit blocked goal recovery'))).toBe(true);

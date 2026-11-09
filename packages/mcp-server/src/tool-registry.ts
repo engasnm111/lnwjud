@@ -730,6 +730,7 @@ export class ToolRegistry {
         parentSignal,
         goalLease === undefined ? undefined : goalLease.goalId,
         callId,
+        goalLease?.leaseGeneration,
         { ...internal, checkedInvocation: {
           ...(goalLease === undefined ? {} : { goalLease }),
           ...(engineeringTask === undefined ? {} : { engineeringTask }),
@@ -1159,12 +1160,13 @@ export class ToolRegistry {
     parentSignal?: AbortSignal,
     goalId?: string,
     callId?: string,
+    leaseGeneration?: number,
     internal?: McpInternalInvocationContext,
   ): Promise<BudgetedToolExecution> {
     const controller = new AbortController();
     const registration = goalId === undefined || callId === undefined || this.services.goalRequestCancellation === undefined
       ? undefined
-      : this.services.goalRequestCancellation.register(goalId, callId, controller);
+      : this.services.goalRequestCancellation.register(goalId, callId, controller, leaseGeneration);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
     let deadlineExceeded = false;

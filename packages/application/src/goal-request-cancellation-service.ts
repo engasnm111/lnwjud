@@ -20,8 +20,9 @@ export interface GoalRequestCancellationRegistration {
 }
 
 export interface GoalRequestCancellationPort {
-  register(goalId: string, requestId: string, controller: AbortController): GoalRequestCancellationRegistration;
-  cancelForGoal(goalId: string): Promise<GoalRequestCancellationResult>;
+  register(goalId: string, requestId: string, controller: AbortController, leaseGeneration?: number): GoalRequestCancellationRegistration;
+  cancelForGoal(goalId: string, leaseGeneration?: number): Promise<GoalRequestCancellationResult>;
+  admitRecoveredGeneration?(goalId: string, leaseGeneration: number): boolean;
 }
 
 export interface GoalRequestCancellationServiceOptions {
@@ -43,16 +44,19 @@ interface Entry {
 export class GoalRequestCancellationService implements GoalRequestCancellationPort {
   private readonly waitMs: number;
   private readonly entries = new Map<string, Map<string, Entry>>();
-  private readonly cancelledGoals = new Set<string>();
+  private readonly cancelledGoals = new Map<string, number>();
+  private readonly admittedGenerations = new Map<string, number>();
 
   public constructor(options: GoalRequestCancellationServiceOptions = {}) {
     this.waitMs = normalizeWaitMs(options.waitMs);
   }
 
-  public register(goalId: string, requestId: string, controller: AbortController): GoalRequestCancellationRegistration {
+  public register(goalId: string, requestId: string, controller: AbortController, leaseGeneration?: number): GoalRequestCancellationRegistration {
     const normalizedGoalId = normalizeId(goalId, 'goalId');
     const normalizedRequestId = normalizeId(requestId, 'requestId');
-    if (this.cancelledGoals.has(normalizedGoalId)) {
+    const admittedGeneration = this.admittedGenerations.get(normalizedGoalId);
+    if ((this.cancelledGoals.has(normalizedGoalId) && admittedGeneration === undefined)
+      || (admittedGeneration !== undefined && leaseGeneration !== admittedGeneration)) {
       return { accepted: false, done: Promise.resolve(), release: (): void => undefined };
     }
 
@@ -80,12 +84,26 @@ export class GoalRequestCancellationService implements GoalRequestCancellationPo
     };
   }
 
-  public async cancelForGoal(goalId: string): Promise<GoalRequestCancellationResult> {
+  public admitRecoveredGeneration(goalId: string, leaseGeneration: number): boolean {
+    const id = normalizeId(goalId, 'goalId');
+    if (!Number.isSafeInteger(leaseGeneration) || leaseGeneration < 1) return false;
+    if (leaseGeneration <= (this.cancelledGoals.get(id) ?? -1)
+      || leaseGeneration <= (this.admittedGenerations.get(id) ?? -1)) return false;
+    // Called only after the durable blocked-goal recovery CAS commits.
+    // Preserve the tombstone: registrations require the exact new generation.
+    this.admittedGenerations.set(id, leaseGeneration);
+    return true;
+  }
+
+  public async cancelForGoal(goalId: string, leaseGeneration?: number): Promise<GoalRequestCancellationResult> {
     const normalizedGoalId = normalizeId(goalId, 'goalId');
-    // Keep a tombstone for the lifetime of this runtime. A cancelled durable
-    // goal can never be reopened, so rejecting late registrations prevents an
-    // obsolete wake or stale request from starting new work in this process.
-    this.cancelledGoals.add(normalizedGoalId);
+    const generation = leaseGeneration ?? 0;
+    const admitted = this.admittedGenerations.get(normalizedGoalId);
+    if (!Number.isSafeInteger(generation) || generation < 0 || (admitted !== undefined && generation < admitted)) {
+      return { goalId: normalizedGoalId, requested: 0, stopped: 0, remaining: 0, timedOut: false, requestIds: [] };
+    }
+    this.cancelledGoals.set(normalizedGoalId, Math.max(generation, this.cancelledGoals.get(normalizedGoalId) ?? 0));
+    this.admittedGenerations.delete(normalizedGoalId);
     const entries = [...(this.entries.get(normalizedGoalId)?.values() ?? [])];
     for (const entry of entries) {
       if (!entry.controller.signal.aborted) entry.controller.abort();
