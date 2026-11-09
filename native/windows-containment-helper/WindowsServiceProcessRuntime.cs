@@ -339,17 +339,20 @@ internal sealed class WindowsServiceProcessRuntime
                 : attempt.CancelRequested
                     ? ServiceProcessOutcome.Cancelled
                     : ServiceProcessOutcome.Completed;
-            _ = ledger.RecordTerminal(attempt.Identity, attempt.CallerSid, outcome, process.ExitCode, 0);
-            var release = ledger.Release(attempt.Identity, attempt.CallerSid);
-            if (release is not (ReservationRelease.Released or ReservationRelease.AlreadyReleased or ReservationRelease.Retained))
-                throw new IOException("SERVICE_RESERVATION_RELEASE_UNRESOLVED");
-
+            // Do not publish terminal/released state while output readers can still
+            // append to the persisted receipt. A failed drain remains explicitly
+            // incomplete, but cannot be mistaken for a still-running process.
             try
             {
                 var readers = Task.WhenAll(attempt.StdoutReader!, attempt.StderrReader!);
                 await readers.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             }
             catch { attempt.FailOutputReaders(); }
+
+            _ = ledger.RecordTerminal(attempt.Identity, attempt.CallerSid, outcome, process.ExitCode, 0);
+            var release = ledger.Release(attempt.Identity, attempt.CallerSid);
+            if (release is not (ReservationRelease.Released or ReservationRelease.AlreadyReleased or ReservationRelease.Retained))
+                throw new IOException("SERVICE_RESERVATION_RELEASE_UNRESOLVED");
             attempt.MarkTerminal();
             attempt.DisposeProcessAndPipes();
             RetainCompletedOutput(attempt);
