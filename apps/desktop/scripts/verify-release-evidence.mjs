@@ -8,6 +8,7 @@ import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-arti
 import { sourceRecoveryContracts, assertSourceRecoveryContracts } from '../../../scripts/update-trust/source-recovery-contracts.mjs';
 import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
 import { validateContainmentEvidence } from './verify-containment-artifacts.mjs';
+import { VERIFIER_SHA256 } from './stage-update-attestation-verifier.mjs';
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
 import { readUpdateAcceptanceReceipt, verifyUpdateAcceptanceForRelease } from './verify-update-acceptance.mjs';
 
@@ -132,6 +133,10 @@ for (const runtime of provenance.runtime) {
   requiredRuntime.delete(runtime.relativePath);
   const sumName = `installed/${runtime.relativePath}`;
   if (sums.get(sumName) !== runtime.sha256.toLowerCase()) throw new Error(`SHA256SUMS mismatch for ${sumName}`);
+  if (provenance.platform === 'win32' && runtime.relativePath === 'resources/native-containment/update-attestation/gh.exe'
+    && runtime.sha256.toLowerCase() !== VERIFIER_SHA256) {
+    throw new Error('Runtime provenance attestation verifier hash does not match pinned trust');
+  }
   if (provenance.platform === 'win32' && runtime.relativePath === 'resources/windows-capability-bridge.ps1'
     && (runtime.sha256 !== verifiedCapabilityBridge.sha256 || runtime.sizeBytes !== verifiedCapabilityBridge.sizeBytes)) {
     throw new Error('Runtime provenance capability bridge entry does not match verified packaged bytes');
@@ -189,6 +194,7 @@ function requiredRuntimePaths(platform, arch) {
       'resources/native-containment/lnwjud-containment-pin.node',
       'resources/native-containment/manifest.json',
       'resources/native-containment/process-runtime.mjs',
+      'resources/native-containment/update-attestation/gh.exe',
       'resources/update-worker/lnwjud-update-worker.exe',
       'resources/update-worker/manifest.json',
       'resources/windows-capability-bridge.ps1',
