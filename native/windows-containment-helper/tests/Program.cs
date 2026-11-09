@@ -1390,12 +1390,72 @@ internal static class NativeTests
                 var restartLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(storePath));
                 var restartRuntime = new WindowsServiceProcessRuntime(restartLedger, useCurrentUserTestLauncher: true);
 
+                // A durable null PID proves ResumeThread never ran (MarkRunning persists
+                // the PID before resume) and the Job is gone: the launch never started.
+                // Release as launch_not_started, never as terminal success.
                 var afterCrash = restartRuntime.Inspect(request.Identity, callerSid);
-                if (afterCrash.Phase != ServiceAttemptPhase.TerminationUnknown || !afterCrash.ReservationHeld)
-                    throw new Exception("Dispatch without verified Job membership must not synthesize terminal success");
-                var cancelWithoutMembership = restartRuntime.Cancel(request.Identity, callerSid);
-                if (cancelWithoutMembership.Phase != ServiceAttemptPhase.TerminationUnknown || !cancelWithoutMembership.ReservationHeld)
-                    throw new Exception("Cancellation without verified membership must retain admission");
+                if (afterCrash.Phase != ServiceAttemptPhase.LaunchNotStarted || afterCrash.ReservationHeld
+                    || afterCrash.Outcome is not null || afterCrash.ExitCode is not null)
+                    throw new Exception("Never-resumed dispatch was not released as launch_not_started");
+                var durable = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(storePath)).Inspect(request.Identity, callerSid);
+                if (durable.Phase != ServiceAttemptPhase.LaunchNotStarted || durable.ReservationHeld)
+                    throw new Exception("Never-resumed reconciliation was not durable");
+                if (restartRuntime.Run(request.Identity, callerSid, request.OperationDigest,
+                        new ServiceProcessOperation("run_process", Executable, ["mark", Path.Combine(directory, "never-resumed-replay")], Environment.CurrentDirectory, 10_000, false, EnvironmentBlock, 1024), 0).Phase
+                    != ServiceAttemptPhase.LaunchNotStarted || File.Exists(Path.Combine(directory, "never-resumed-replay")))
+                    throw new Exception("Never-resumed tombstone allowed a launch replay");
+                var admittedAfterNeverResumed = restartLedger.Prepare(NewServiceAttemptRequest(Guid.NewGuid().ToString("D"), request.ReservationKey) with { AuthenticatedCallerSid = callerSid });
+                if (admittedAfterNeverResumed.Phase != ServiceAttemptPhase.Prepared)
+                    throw new Exception("Released never-resumed reservation still blocked a new writer");
+
+                // The same evidence must not release an import hold: the import
+                // transaction (abort_import) owns that decision.
+                var heldStore = Path.Combine(directory, "scenario3-held-attempts.json");
+                var heldRequest = NewServiceAttemptRequest(Guid.NewGuid().ToString("D"), Path.Combine(directory, "crash-dispatch-import")) with { AuthenticatedCallerSid = callerSid, HoldForImport = true };
+                var heldInitial = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(heldStore));
+                heldInitial.Prepare(heldRequest);
+                if (!heldInitial.TryCommitDispatch(heldRequest.Identity, callerSid, heldRequest.OperationDigest))
+                    throw new Exception("Held TryCommitDispatch failed");
+                var heldRuntime = new WindowsServiceProcessRuntime(new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(heldStore)), useCurrentUserTestLauncher: true);
+                var heldAfterCrash = heldRuntime.Inspect(heldRequest.Identity, callerSid);
+                if (heldAfterCrash.Phase != ServiceAttemptPhase.LaunchNotStarted || !heldAfterCrash.ReservationHeld)
+                    throw new Exception("Never-resumed import attempt released its import hold");
+
+                // Startup reconciliation releases a never-resumed attempt nobody inspects.
+                var sweepStore = Path.Combine(directory, "scenario3-sweep-attempts.json");
+                var sweepRequest = NewServiceAttemptRequest(Guid.NewGuid().ToString("D"), Path.Combine(directory, "crash-dispatch-sweep")) with { AuthenticatedCallerSid = callerSid };
+                var sweepInitial = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(sweepStore));
+                sweepInitial.Prepare(sweepRequest);
+                if (!sweepInitial.TryCommitDispatch(sweepRequest.Identity, callerSid, sweepRequest.OperationDigest))
+                    throw new Exception("Sweep TryCommitDispatch failed");
+                var sweepLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(sweepStore));
+                new WindowsServiceProcessRuntime(sweepLedger, useCurrentUserTestLauncher: true).ReconcileHeldUnknownAttempts();
+                var swept = sweepLedger.Inspect(sweepRequest.Identity, callerSid);
+                if (swept.Phase != ServiceAttemptPhase.LaunchNotStarted || swept.ReservationHeld)
+                    throw new Exception("Startup reconciliation did not release a never-resumed attempt");
+
+                // Same-lifetime launch failure before resume: the next Inspect must
+                // reconcile from Job evidence without waiting for a service restart.
+                var liveStore = Path.Combine(directory, "scenario3-live-attempts.json");
+                var liveRequest = NewServiceAttemptRequest(Guid.NewGuid().ToString("D"), Path.Combine(directory, "live-never-resumed")) with { AuthenticatedCallerSid = callerSid };
+                var liveLedger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(liveStore));
+                liveLedger.Prepare(liveRequest);
+                var liveRuntime = new WindowsServiceProcessRuntime(liveLedger, useCurrentUserTestLauncher: true);
+                var liveMarker = Path.Combine(directory, "live-never-resumed-marker");
+                ServiceAttemptObservation liveFailed;
+                ContainedProcess.Fault = (stage, _) => { if (stage == "before_resume") throw new IOException("INJECTED_PRE_RESUME_FAILURE"); };
+                try
+                {
+                    liveFailed = liveRuntime.Run(liveRequest.Identity, callerSid, liveRequest.OperationDigest,
+                        new ServiceProcessOperation("run_process", Executable, ["mark", liveMarker], Environment.CurrentDirectory, 10_000, false, EnvironmentBlock, 1024), 0);
+                }
+                finally { ContainedProcess.Fault = null; }
+                if (liveFailed.Phase != ServiceAttemptPhase.TerminationUnknown || !liveFailed.ReservationHeld || liveFailed.TargetPid is not null)
+                    throw new Exception("Injected pre-resume failure did not leave an unresolved held attempt");
+                var liveSettled = liveRuntime.Inspect(liveRequest.Identity, callerSid);
+                Thread.Sleep(300);
+                if (liveSettled.Phase != ServiceAttemptPhase.LaunchNotStarted || liveSettled.ReservationHeld || File.Exists(liveMarker))
+                    throw new Exception("Same-lifetime never-resumed launch was not released (or its target ran)");
             }
             storePath = Path.Combine(directory, "scenario4-attempts.json");
             // Scenario 4: The service persisted verified Job membership, then

@@ -159,7 +159,32 @@ internal sealed class WindowsServiceProcessRuntime
             attempt.DisposePipes();
             try { _ = ledger.MarkUnknown(identity, callerSid, "SERVICE_LAUNCH_OUTCOME_UNKNOWN"); }
             catch { }
+            if (!launchReturned)
+            {
+                // StartCore already closed the Job (kill-on-close) on failure, so this
+                // lifetime no longer owns a target. Retire the runtime slot so the next
+                // Inspect reconciles from Job evidence instead of waiting for a restart.
+                lock (gate)
+                {
+                    attempt.MarkTerminal();
+                    attempts.Remove(identity.AttemptId);
+                }
+            }
             return ledger.Inspect(identity, callerSid);
+        }
+    }
+
+    /// <summary>
+    /// Reconciles held TerminationUnknown attempts once at service start, so a
+    /// reservation does not stay blocked when no client inspects that attempt again.
+    /// Each attempt is released only on the same Job evidence Inspect requires.
+    /// </summary>
+    internal void ReconcileHeldUnknownAttempts()
+    {
+        foreach (var (identity, callerSid) in ledger.HeldUnknownAttempts())
+        {
+            try { _ = Inspect(identity, callerSid); }
+            catch { }
         }
     }
 
@@ -185,11 +210,17 @@ internal sealed class WindowsServiceProcessRuntime
             var probe = ContainedProcess.QueryJob(jobName);
             if (probe.Status is ContainedProcess.JobProbeStatus.NotFound or ContainedProcess.JobProbeStatus.Empty)
             {
-                // The PID is recorded only after verified Job membership. A committed
-                // dispatch without that marker could have failed before containment;
-                // missing Job state alone does not prove no target survived.
+                // The target is created suspended inside its Job (creation-time
+                // JOB_LIST), and MarkRunning durably records the PID *before*
+                // ResumeThread. A durable null PID therefore proves the first thread
+                // was never resumed: no target code ran. With the Job absent or
+                // empty (kill-on-close), the launch provably never started.
                 if (observation.TargetPid is null)
-                    return observation with { Reason = "SERVICE_RESTART_LAUNCH_UNVERIFIED" };
+                {
+                    _ = ledger.MarkLaunchNeverResumed(identity, callerSid);
+                    _ = ledger.Release(identity, callerSid);
+                    return ledger.Inspect(identity, callerSid);
+                }
                 // Kill-on-close and zero-active Job evidence prove termination, not
                 // the process exit status. Never fabricate successful exit code 0.
                 _ = ledger.RecordTerminal(identity, callerSid, ServiceProcessOutcome.Interrupted, 125, 0);

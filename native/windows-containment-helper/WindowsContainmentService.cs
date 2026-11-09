@@ -103,6 +103,7 @@ internal static class WindowsContainmentService
     {
         ArgumentNullException.ThrowIfNull(ledger);
         var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher);
+        runtime.ReconcileHeldUnknownAttempts();
         var imports = new ServiceImportTransactionRuntime(ledger, ledger.ImportStoreDirectory, useCurrentUserTestLauncher);
         try
         {

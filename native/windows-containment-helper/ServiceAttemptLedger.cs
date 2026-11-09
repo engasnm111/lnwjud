@@ -233,6 +233,39 @@ internal sealed class ServiceAttemptLedger
         }
     }
 
+    /// <summary>
+    /// Records that a committed dispatch never resumed its target. Callers must hold
+    /// proof: MarkRunning durably records the target PID before ResumeThread, so a
+    /// durable null PID means no target code ran; the Job must also be absent or empty.
+    /// </summary>
+    internal ServiceAttemptObservation MarkLaunchNeverResumed(ServiceAttemptIdentity identity, string callerSid)
+    {
+        lock (gate)
+        {
+            var entry = Require(identity, callerSid);
+            if (entry.Phase == ServiceAttemptPhase.LaunchNotStarted) return Observe(entry);
+            if (entry.Phase is not (ServiceAttemptPhase.DispatchCommitted or ServiceAttemptPhase.TerminationUnknown)
+                || entry.TargetPid is not null || !entry.ReservationHeld)
+                throw new IOException("ATTEMPT_PHASE_CONFLICT");
+            entry.Phase = ServiceAttemptPhase.LaunchNotStarted;
+            entry.Reason = "SERVICE_LAUNCH_NEVER_RESUMED";
+            entry.ActiveProcesses = null;
+            Persist();
+            return Observe(entry);
+        }
+    }
+
+    internal IReadOnlyList<(ServiceAttemptIdentity Identity, string CallerSid)> HeldUnknownAttempts()
+    {
+        lock (gate)
+        {
+            return attempts.Values
+                .Where(entry => entry.Phase == ServiceAttemptPhase.TerminationUnknown && entry.ReservationHeld)
+                .Select(entry => (entry.Request.Identity, entry.Request.AuthenticatedCallerSid))
+                .ToArray();
+        }
+    }
+
     internal ServiceAttemptObservation MarkUnknown(ServiceAttemptIdentity identity, string callerSid, string reason)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Length > 128) throw new IOException("ATTEMPT_REASON_INVALID");
