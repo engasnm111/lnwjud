@@ -59,13 +59,18 @@ internal static class McpStdioProxy
                     if (outputCopy.IsFaulted || errorCopy.IsFaulted) throw new IOException("MCP_PROXY_PIPE_FAILED");
                 }
             }
+            // Preserve a naturally exited target's status before Job cleanup can change it.
+            // A still-running target cancelled after client EOF is normal proxy shutdown.
+            var rootExitedBeforeCleanup = child.WaitForRootExit(0);
+            var terminalExitCode = rootExitedBeforeCleanup ? child.ExitCode : 0;
             if (child.ActiveProcesses > 0) child.Cancel();
             await WaitForEmptyJob(child).ConfigureAwait(false);
             if (!inputCopy.IsCompleted) input.Dispose();
             try { await inputCopy.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
             catch when (child.ActiveProcesses == 0 && child.WaitForRootExit(0)) { }
             await Task.WhenAll(outputCopy, errorCopy).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-            return 0;
+            // A drained Job proves cleanup, not success; propagate only a naturally observed root exit.
+            return terminalExitCode;
         }
         catch
         {

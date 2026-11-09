@@ -76,10 +76,11 @@ internal static class NativeTests
                 case "mcp-stdio-proxy": return McpStdioProxy.RunAsync().GetAwaiter().GetResult();
                 case "mcp-proxy-target": return RunMcpProxyTarget(args[1]);
                 case "mcp-proxy-descendant": Thread.Sleep(30_000); return 0;
-                case "mcp-proxy-tests": TestMcpStdioProxy(); TestMcpStdioProxyClientEof(); Console.WriteLine("PASS native MCP stdio proxy preserves bytes, forwards client EOF, and kills descendants before a zero exit"); return 0;
+                case "mcp-proxy-tests": TestMcpStdioProxy(); TestMcpStdioProxyClientEof(); TestMcpStdioProxyNonzeroExit(); Console.WriteLine("PASS native MCP stdio proxy preserves bytes, forwards client EOF, propagates target failure, and kills descendants before a zero exit"); return 0;
                 case "mcp-proxy-crash-tests": TestMcpStdioProxyCrash(); Console.WriteLine("PASS proxy crash closes its Job and terminates the target tree without a success receipt"); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
                 case "mcp-proxy-eof-target": return RunMcpProxyEofTarget(args[1]);
+                case "mcp-proxy-nonzero-target": return 17;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
                 case "stale-tunnel-alias": StaleTunnelAliasTests.Run(); return 0;
@@ -2411,6 +2412,25 @@ internal static class NativeTests
         {
             if (!proxy.HasExited) { try { proxy.Kill(entireProcessTree: true); } catch { } }
             DeleteMcpProxyTestRoot(root);
+        }
+    }
+
+    private static void TestMcpStdioProxyNonzeroExit()
+    {
+        using var proxy = StartMcpProxy("unused", "mcp-proxy-nonzero-target");
+        var output = proxy.StandardOutput.ReadToEndAsync();
+        var error = proxy.StandardError.ReadToEndAsync();
+        try
+        {
+            proxy.StandardInput.Close();
+            if (!proxy.WaitForExit(5_000)) throw new Exception("MCP proxy did not finish after target failure");
+            if (proxy.ExitCode != 17) throw new Exception("MCP proxy masked target exit status: " + proxy.ExitCode);
+            if (output.GetAwaiter().GetResult().Length != 0 || error.GetAwaiter().GetResult().Length != 0)
+                throw new Exception("MCP proxy injected output for a failed target");
+        }
+        finally
+        {
+            if (!proxy.HasExited) { try { proxy.Kill(entireProcessTree: true); } catch { } }
         }
     }
 
