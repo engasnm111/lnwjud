@@ -394,6 +394,9 @@ internal sealed class WindowsServiceProcessRuntime
         private bool stdoutComplete;
         private bool stderrComplete;
         private bool outputFailed;
+        // Once a reader fails or drain times out, no other reader may mutate
+        // the published incomplete output receipt after terminal release.
+        private bool outputFinalized;
         private bool persistenceFailed;
         private bool outputPersisted;
 
@@ -445,6 +448,7 @@ internal sealed class WindowsServiceProcessRuntime
             lock (outputGate)
             {
                 outputFailed = true;
+                outputFinalized = true;
                 PersistOutput();
             }
         }
@@ -480,6 +484,9 @@ internal sealed class WindowsServiceProcessRuntime
                     var count = await stream.ReadAsync(buffer.AsMemory()).ConfigureAwait(false);
                     lock (outputGate)
                     {
+                        // A timed-out or failed peer reader may have finalized
+                        // the incomplete receipt while this read was pending.
+                        if (outputFinalized) return;
                         if (count == 0)
                         {
                             if (stdout) stdoutComplete = true; else stderrComplete = true;
