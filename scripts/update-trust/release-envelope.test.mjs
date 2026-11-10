@@ -234,6 +234,9 @@ test('verified result selector binds certificate observations, subjects and time
     statement: { predicateType: 'https://slsa.dev/provenance/v1', subject: [{ name: fixture.payload.artifact.name, digest: { sha256: fixture.payload.artifact.sha256 } }] } } };
   const select = value => selectVerifiedAttestation(Buffer.from(JSON.stringify([value])), fixture.payload, fixture.payload.artifact, authority);
   assert.equal(select(result), 1);
+  assert.throws(() => selectVerifiedAttestation(Buffer.from(JSON.stringify([result, result])),
+    fixture.payload, fixture.payload.artifact, authority), /RELEASE_ATTESTATION_REFUSED/,
+    'two matching attestations must not silently authorize an ambiguous signing input');
   for (const timestamp of ['2027-01-15T15:00:00+07:00', '2027-01-15T03:00:00-05:00']) {
     const offsetResult = globalThis.structuredClone(result);
     offsetResult.verificationResult.verifiedTimestamps[0].timestamp = timestamp;

@@ -86,8 +86,10 @@ export function selectVerifiedAttestation(resultBytes, payload, identity, author
       && statement?.predicateType === 'https://slsa.dev/provenance/v1' && Array.isArray(statement.subject)
       && statement.subject.some(subject => subject?.name === identity.name && subject.digest?.sha256 === identity.sha256);
   });
-  if (matched.length === 0) refuse('RELEASE_ATTESTATION_REFUSED');
-  return matched.length;
+  // More than one matching attestation is ambiguous. The key-free verifier
+  // already requires a unique match; the production signer must do likewise.
+  if (matched.length !== 1) refuse('RELEASE_ATTESTATION_REFUSED');
+  return 1;
 }
 
 export async function authenticateBuildEvidence(payload, paths, policy) {
