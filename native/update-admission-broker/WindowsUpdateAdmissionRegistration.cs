@@ -115,13 +115,15 @@ internal static class WindowsUpdateAdmissionRegistration
     }
 
     internal static void Validate(string command, string account, uint serviceType,
-        uint startType, uint errorControl, uint sidType, string commonProgramFiles)
+        uint startType, uint errorControl, uint sidType, string commonProgramFiles,
+        string? loadOrderGroup = null, string? dependencies = null, uint tagId = 0)
     {
         var expected = "\"" + ExpectedImagePath(commonProgramFiles) + "\" service";
         if (!string.Equals(command, expected, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(account, @"NT AUTHORITY\LocalService", StringComparison.OrdinalIgnoreCase)
             || serviceType != ServiceOwnProcess || startType != ServiceAutoStart
-            || errorControl != ServiceErrorNormal || sidType != ServiceSidUnrestricted)
+            || errorControl != ServiceErrorNormal || sidType != ServiceSidUnrestricted
+            || !string.IsNullOrEmpty(loadOrderGroup) || !string.IsNullOrEmpty(dependencies) || tagId != 0)
             throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
     }
 
@@ -245,7 +247,8 @@ internal static class WindowsUpdateAdmissionRegistration
                     throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
                 Validate(command, account, config.Type, config.StartType, config.ErrorControl,
                     unchecked((uint)Marshal.ReadInt32(sidBuffer)),
-                    Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles));
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles),
+                    Marshal.PtrToStringUni(config.LoadOrderGroup), Marshal.PtrToStringUni(config.Dependencies), config.TagId);
                 var daclBytes = RequiredSize((nint buffer, uint size, out uint needed) =>
                     QueryServiceObjectSecurity(service, OwnerAndDaclSecurityInformation, buffer, size, out needed));
                 var daclBuffer = Marshal.AllocHGlobal(checked((int)daclBytes));

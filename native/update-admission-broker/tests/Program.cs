@@ -186,6 +186,9 @@ internal static class Program
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 3, 1, 1, commonFiles), badRegistration);
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 0, 1, commonFiles), badRegistration);
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 0, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, loadOrderGroup: "UntrustedGroup"), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, dependencies: "UntrustedService"), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, tagId: 1), badRegistration);
         var safeServiceDacl = new RawSecurityDescriptor("O:SYG:SYD:(A;;0x000F01FF;;;SY)(A;;0x000F01FF;;;BA)(A;;0x00020004;;;AU)");
         WindowsUpdateAdmissionRegistration.ValidateServiceDacl(safeServiceDacl);
         Check(true, "service DACL allows read-only unprivileged observers");
