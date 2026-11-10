@@ -26,6 +26,13 @@ internal static class WindowsUpdateAdmissionRegistration
     private const uint ServiceConfigSidInfo = 5;
     private const int ErrorInsufficientBuffer = 122;
     private const uint MaximumConfigurationBytes = 64 * 1024;
+    private const uint FileReadAttributes = 0x00000080;
+    private const uint FileOpenReparsePoint = 0x00200000;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+    private const uint FileAttributeReparsePoint = 0x00000400;
+    private const uint FileAttributeDirectory = 0x00000010;
+    private const int ProtectedImageWriteRights = unchecked((int)0x520D0156);
+    private const string TrustedInstallerSid = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ServiceConfig
@@ -69,6 +76,32 @@ internal static class WindowsUpdateAdmissionRegistration
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseServiceHandle(nint handle);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ImageFileInformation
+    {
+        internal uint Attributes;
+        internal long CreationTime, AccessTime, WriteTime;
+        internal uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
+    private static extern SafeFileHandle OpenImageComponent(string path, uint access, uint share, nint security,
+        uint creation, uint flags, nint template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ImageFileInformation info);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern uint GetSecurityInfo(SafeFileHandle handle, int objectType, uint securityInformation,
+        out nint owner, out nint group, out nint dacl, out nint sacl, out nint descriptor);
+
+    [DllImport("advapi32.dll")]
+    private static extern uint GetSecurityDescriptorLength(nint descriptor);
+
+    [DllImport("kernel32.dll")]
+    private static extern nint LocalFree(nint pointer);
 
     internal static string ExpectedImagePath(string commonProgramFiles)
     {
@@ -120,10 +153,73 @@ internal static class WindowsUpdateAdmissionRegistration
         }
     }
 
+    // This is a read-only filesystem protection check, not a signer or
+    // content provenance verifier. Inherit-only ACEs do not grant rights on
+    // the object being inspected; inherited effective ACEs are evaluated.
+    internal static void ValidateImageDacl(RawSecurityDescriptor descriptor)
+    {
+        static bool Trusted(SecurityIdentifier? sid) =>
+            sid?.Value is "S-1-5-18" or "S-1-5-32-544" or TrustedInstallerSid;
+        if (!Trusted(descriptor.Owner)
+            || (descriptor.ControlFlags & ControlFlags.DiscretionaryAclPresent) == 0
+            || descriptor.DiscretionaryAcl is not { } acl)
+            throw new Refusal("MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        foreach (GenericAce ace in acl)
+        {
+            if (ace is not QualifiedAce qualified || qualified.IsCallback)
+                throw new Refusal("MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+            if (qualified.AceQualifier != AceQualifier.AccessAllowed
+                || (qualified.AceFlags & AceFlags.InheritOnly) != 0)
+                continue;
+            if ((qualified.AccessMask & ProtectedImageWriteRights) != 0
+                && !Trusted(qualified.SecurityIdentifier))
+                throw new Refusal("MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        }
+    }
+
+    // Inspect every existing component below the drive root, including
+    // Program Files, Common Files and the broker executable. No component
+    // may be a reparse point or writable by an unprivileged identity.
+    internal static void VerifyImageFilesystem(string commonProgramFiles)
+    {
+        var image = ExpectedImagePath(commonProgramFiles);
+        var volume = Path.GetPathRoot(image)!;
+        var current = volume;
+        var components = image[volume.Length..].Split(Path.DirectorySeparatorChar,
+            StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < components.Length; i++)
+        {
+            current = Path.Combine(current, components[i]);
+            var isFile = i == components.Length - 1;
+            using var handle = OpenImageComponent(current, FileReadAttributes | ReadControl, 7, 0, 3,
+                FileOpenReparsePoint | FileFlagBackupSemantics, 0);
+            if (handle.IsInvalid || !GetFileInformationByHandle(handle, out var info)
+                || (info.Attributes & FileAttributeReparsePoint) != 0
+                || ((info.Attributes & FileAttributeDirectory) == 0) != isFile
+                || (isFile && info.Links != 1))
+                throw new Refusal("MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+            if (GetSecurityInfo(handle, 1, OwnerAndDaclSecurityInformation,
+                    out _, out _, out _, out _, out var descriptor) != 0)
+                throw new Refusal("MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+            try
+            {
+                var size = GetSecurityDescriptorLength(descriptor);
+                if (size == 0 || size > MaximumConfigurationBytes)
+                    throw new Refusal("MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+                var bytes = new byte[checked((int)size)];
+                Marshal.Copy(descriptor, bytes, 0, bytes.Length);
+                ValidateImageDacl(new RawSecurityDescriptor(bytes, 0));
+            }
+            finally { _ = LocalFree(descriptor); }
+        }
+    }
+
     internal static void VerifyInstalled()
     {
         if (!OperatingSystem.IsWindows()) throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
-        ValidateRunningImage(Environment.ProcessPath, Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles));
+        var commonFiles = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
+        ValidateRunningImage(Environment.ProcessPath, commonFiles);
+        VerifyImageFilesystem(commonFiles);
         using var manager = OpenScManager(null, null, ScManagerConnect);
         if (manager.IsInvalid) throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
         using var service = OpenService(manager, WindowsUpdateAdmissionService.ServiceName, ServiceQueryConfig | ReadControl);

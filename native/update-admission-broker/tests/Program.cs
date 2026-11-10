@@ -196,6 +196,17 @@ internal static class Program
             "O:SYG:SYD:(A;;0x10000000;;;WD)",
             "O:AUG:SYD:(A;;0x000F01FF;;;BA)" })
             Refuses(() => WindowsUpdateAdmissionRegistration.ValidateServiceDacl(new RawSecurityDescriptor(sddl)), badDacl);
+        var safeImageDacl = new RawSecurityDescriptor("O:SYG:SYD:(A;;0x001F01FF;;;SY)(A;;0x001F01FF;;;BA)(A;;0x001200A9;;;AU)");
+        WindowsUpdateAdmissionRegistration.ValidateImageDacl(safeImageDacl);
+        Check(true, "protected image ACL permits unprivileged read and execute only");
+        foreach (var sddl in new[] {
+            "O:SYG:SYD:(A;;0x00000002;;;BU)",
+            "O:SYG:SYD:(A;;0x00010000;;;AU)",
+            "O:SYG:SYD:(A;;0x40000000;;;WD)",
+            "O:AUG:SYD:(A;;0x001F01FF;;;BA)" })
+            Refuses(() => WindowsUpdateAdmissionRegistration.ValidateImageDacl(new RawSecurityDescriptor(sddl)), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        WindowsUpdateAdmissionRegistration.ValidateImageDacl(new RawSecurityDescriptor("O:SYG:SYD:(A;OIIO;0x001F01FF;;;CO)(A;;0x001200A9;;;AU)"));
+        Check(true, "inherit-only creator owner ACE is not effective on inspected image path");
         WindowsUpdateAdmissionRegistration.ValidateRunningImage(image, commonFiles);
         Check(true, "running image path must match fixed service registration");
         Refuses(() => WindowsUpdateAdmissionRegistration.ValidateRunningImage(image + ".old", commonFiles), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
