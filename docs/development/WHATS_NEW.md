@@ -42,9 +42,9 @@ Before packaging a new public version:
 
 `scripts/set-version.mjs` synchronizes version surfaces but intentionally does **not** invent release notes. The release-note entry is a reviewed product artifact.
 
-## Current source v5.9.0 candidate release-note coverage
+## Published v5.9.0 release-note coverage
 
-The offline `5.9.0` registry entry provides localized Thai and English notes for the current candidate:
+The offline `5.9.0` registry entry provides localized Thai and English notes for the published v5.9.0 series:
 
 - Issue #213: Windows process-lifetime and writer-reservation evidence, plus authenticated named-pipe RPC recovery proven in a local disposable fixture; installed SCM pipe and interactive-session acceptance remain open;
 - Issue #214: Engineering Gate applicability that preserves required evidence and reports unavailable or stale proof instead of treating it as passed;
@@ -55,7 +55,7 @@ The offline `5.9.0` registry entry provides localized Thai and English notes for
 - Tunnel Stop and Factory Reset recovery for a stale Windows alias, without deleting remote Tunnel state; Start stays disabled while that persistent alias may still be active, preventing a duplicate runtime;
 - WSL/tooling intent, unresolved Dashboard startup, large Tunnel history, and pinned Ponytail v5.3.2 document-only skills.
 
-These notes describe the source candidate and its current limitations. They are **not** evidence that security verification, protected merge, exact-main-SHA CI, official packages, or publication has passed. The updater item explicitly describes an unavailable capability. The latest public release remains v5.8.7 until the release gates complete.
+These notes describe v5.9.0 functionality and its limitations; they are **not** acceptance evidence for v5.9.1 or its native silent updater. The updater item explicitly describes an unavailable capability. The latest published Windows/Linux release is v5.9.0; v5.9.1 remains a development candidate until its own release gates complete.
 
 ## Historical v5.8.7 candidate release-note coverage
 
