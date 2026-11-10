@@ -16,23 +16,26 @@ internal sealed class WindowsUpdateAdmissionPeerObservation : IDisposable
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const uint TokenQuery = 0x0008;
     private const int TokenUser = 1;
+    private const int TokenSessionId = 12;
     private const uint MaxTokenUserBytes = 8192;
     private readonly SafeProcessHandle process;
 
     private WindowsUpdateAdmissionPeerObservation(SafeProcessHandle process, uint pid,
-        long creationTime, string imagePath, string userSid)
+        long creationTime, string imagePath, string userSid, uint sessionId)
     {
         this.process = process;
         ProcessId = pid;
         CreationTime = creationTime;
         ImagePath = imagePath;
         UserSid = userSid;
+        SessionId = sessionId;
     }
 
     internal uint ProcessId { get; }
     internal long CreationTime { get; }
     internal string ImagePath { get; }
     internal string UserSid { get; }
+    internal uint SessionId { get; }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct TokenUserValue
@@ -44,6 +47,14 @@ internal sealed class WindowsUpdateAdmissionPeerObservation : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetNamedPipeClientSessionId(SafePipeHandle pipe, out uint sessionId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ProcessIdToSessionId(uint pid, out uint sessionId);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
@@ -65,6 +76,11 @@ internal sealed class WindowsUpdateAdmissionPeerObservation : IDisposable
     private static extern bool GetTokenInformation(SafeAccessTokenHandle token, int informationClass,
         nint buffer, uint bufferLength, out uint required);
 
+    [DllImport("advapi32.dll", EntryPoint = "GetTokenInformation", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenSessionId(SafeAccessTokenHandle token, int informationClass,
+        out uint sessionId, uint bufferLength, out uint returned);
+
     internal static WindowsUpdateAdmissionPeerObservation Capture(SafePipeHandle connectedServerPipe)
     {
         if (!OperatingSystem.IsWindows() || connectedServerPipe.IsInvalid || connectedServerPipe.IsClosed
@@ -79,6 +95,9 @@ internal sealed class WindowsUpdateAdmissionPeerObservation : IDisposable
         }
         try
         {
+            if (!GetNamedPipeClientSessionId(connectedServerPipe, out var pipeSession)
+                || !ProcessIdToSessionId(pid, out var processSession) || pipeSession != processSession)
+                throw new Refusal("MAINTENANCE_PEER_UNVERIFIED");
             if (!GetProcessTimes(process, out var created, out var exited, out _, out _)
                 || created <= 0 || exited != 0)
                 throw new Refusal("MAINTENANCE_PEER_UNVERIFIED");
@@ -106,12 +125,17 @@ internal sealed class WindowsUpdateAdmissionPeerObservation : IDisposable
                     userSid = new SecurityIdentifier(user.Sid).Value;
                 }
                 finally { Marshal.FreeHGlobal(buffer); }
+                if (!GetTokenSessionId(token, TokenSessionId, out var tokenSession, sizeof(uint), out var returnedSessionBytes)
+                    || returnedSessionBytes != sizeof(uint) || tokenSession != pipeSession)
+                    throw new Refusal("MAINTENANCE_PEER_UNVERIFIED");
             }
             if (!GetNamedPipeClientProcessId(connectedServerPipe, out var confirmedPid) || confirmedPid != pid
                 || !GetProcessTimes(process, out var confirmedCreated, out var confirmedExit, out _, out _)
-                || confirmedCreated != created || confirmedExit != 0)
+                || confirmedCreated != created || confirmedExit != 0
+                || !GetNamedPipeClientSessionId(connectedServerPipe, out var confirmedSession) || confirmedSession != pipeSession
+                || !ProcessIdToSessionId(pid, out var confirmedProcessSession) || confirmedProcessSession != pipeSession)
                 throw new Refusal("MAINTENANCE_PEER_UNVERIFIED");
-            return new WindowsUpdateAdmissionPeerObservation(process, pid, created, image.ToString(), userSid);
+            return new WindowsUpdateAdmissionPeerObservation(process, pid, created, image.ToString(), userSid, pipeSession);
         }
         catch
         {

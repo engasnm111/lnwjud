@@ -74,6 +74,7 @@ internal static class Program
         using var observation = WindowsUpdateAdmissionPeerObservation.Capture(server.SafePipeHandle);
         Check(observation.ProcessId == (uint)Environment.ProcessId && observation.CreationTime > 0, "peer observation pins process creation identity");
         Check(observation.UserSid == WindowsIdentity.GetCurrent().User!.Value, "peer observation reads kernel token user");
+        Check(observation.SessionId == (uint)Process.GetCurrentProcess().SessionId, "pipe, process and token session identities agree");
         Check(string.Equals(Path.GetFullPath(observation.ImagePath), Path.GetFullPath(Environment.ProcessPath!), StringComparison.OrdinalIgnoreCase), "peer observation reads process image");
         Check(observation.IsObservedProcessAlive(), "peer observation checks retained process handle");
         observation.Dispose();
