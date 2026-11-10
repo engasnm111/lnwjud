@@ -23,7 +23,13 @@ internal static class WindowsUpdateAdmissionRegistration
     private const uint ServiceAutoStart = 0x0002;
     private const uint ServiceErrorNormal = 0x0001;
     private const uint ServiceSidUnrestricted = 0x0001;
+    private const uint ServiceConfigFailureActions = 2;
+    private const uint ServiceConfigDelayedAutoStart = 3;
+    private const uint ServiceConfigFailureActionsFlag = 4;
     private const uint ServiceConfigSidInfo = 5;
+    private const uint ServiceConfigRequiredPrivileges = 6;
+    private const uint ServiceConfigTriggerInfo = 8;
+    private const uint ServiceConfigLaunchProtected = 12;
     private const int ErrorInsufficientBuffer = 122;
     private const uint MaximumConfigurationBytes = 64 * 1024;
     private const uint FileReadAttributes = 0x00000080;
@@ -46,6 +52,24 @@ internal static class WindowsUpdateAdmissionRegistration
         internal nint Dependencies;
         internal nint Account;
         internal nint DisplayName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ServiceFailureActions
+    {
+        internal uint ResetPeriod;
+        internal nint RebootMessage;
+        internal nint Command;
+        internal uint ActionCount;
+        internal nint Actions;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ServiceTriggerInfo
+    {
+        internal uint TriggerCount;
+        internal nint Triggers;
+        internal nint Reserved;
     }
 
     private sealed class SafeServiceHandle : SafeHandleZeroOrMinusOneIsInvalid
@@ -124,6 +148,17 @@ internal static class WindowsUpdateAdmissionRegistration
             || serviceType != ServiceOwnProcess || startType != ServiceAutoStart
             || errorControl != ServiceErrorNormal || sidType != ServiceSidUnrestricted
             || !string.IsNullOrEmpty(loadOrderGroup) || !string.IsNullOrEmpty(dependencies) || tagId != 0)
+            throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
+    }
+
+    // SCM failure actions may execute an arbitrary command outside the pinned
+    // image. Triggered/delayed starts and extra privilege/launch settings are
+    // also outside this intentionally narrow service registration contract.
+    internal static void ValidateOptionalConfiguration(bool recoveryAction, bool delayedStart,
+        bool failureActionsOnNonCrash, bool requiredPrivileges, bool triggers, bool protectedLaunch)
+    {
+        if (recoveryAction || delayedStart || failureActionsOnNonCrash || requiredPrivileges
+            || triggers || protectedLaunch)
             throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
     }
 
@@ -249,6 +284,7 @@ internal static class WindowsUpdateAdmissionRegistration
                     unchecked((uint)Marshal.ReadInt32(sidBuffer)),
                     Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles),
                     Marshal.PtrToStringUni(config.LoadOrderGroup), Marshal.PtrToStringUni(config.Dependencies), config.TagId);
+                VerifyOptionalConfiguration(service);
                 var daclBytes = RequiredSize((nint buffer, uint size, out uint needed) =>
                     QueryServiceObjectSecurity(service, OwnerAndDaclSecurityInformation, buffer, size, out needed));
                 var daclBuffer = Marshal.AllocHGlobal(checked((int)daclBytes));
@@ -265,6 +301,45 @@ internal static class WindowsUpdateAdmissionRegistration
             finally { Marshal.FreeHGlobal(sidBuffer); }
         }
         finally { Marshal.FreeHGlobal(configBuffer); }
+    }
+
+    private static void VerifyOptionalConfiguration(SafeServiceHandle service)
+    {
+        bool Default(uint level, Func<nint, uint, bool> inspect)
+        {
+            var bytes = RequiredSize((nint buffer, uint size, out uint needed) =>
+                QueryServiceConfig2(service, level, buffer, size, out needed));
+            var buffer = Marshal.AllocHGlobal(checked((int)bytes));
+            try
+            {
+                return QueryServiceConfig2(service, level, buffer, bytes, out _)
+                    && inspect(buffer, bytes);
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+
+        var noRecovery = Default(ServiceConfigFailureActions, (buffer, size) =>
+        {
+            if (size < Marshal.SizeOf<ServiceFailureActions>()) return false;
+            var value = Marshal.PtrToStructure<ServiceFailureActions>(buffer);
+            return value.ActionCount == 0 && value.Actions == 0 && value.Command == 0 && value.RebootMessage == 0;
+        });
+        var noDelayedStart = Default(ServiceConfigDelayedAutoStart, (buffer, size) =>
+            size >= sizeof(uint) && Marshal.ReadInt32(buffer) == 0);
+        var noNonCrashActions = Default(ServiceConfigFailureActionsFlag, (buffer, size) =>
+            size >= sizeof(uint) && Marshal.ReadInt32(buffer) == 0);
+        var noPrivilegesOverride = Default(ServiceConfigRequiredPrivileges, (buffer, size) =>
+            size >= IntPtr.Size && Marshal.ReadIntPtr(buffer) == 0);
+        var noTriggers = Default(ServiceConfigTriggerInfo, (buffer, size) =>
+        {
+            if (size < Marshal.SizeOf<ServiceTriggerInfo>()) return false;
+            var value = Marshal.PtrToStructure<ServiceTriggerInfo>(buffer);
+            return value.TriggerCount == 0 && value.Triggers == 0 && value.Reserved == 0;
+        });
+        var noProtectedLaunch = Default(ServiceConfigLaunchProtected, (buffer, size) =>
+            size >= sizeof(uint) && Marshal.ReadInt32(buffer) == 0);
+        ValidateOptionalConfiguration(!noRecovery, !noDelayedStart, !noNonCrashActions,
+            !noPrivilegesOverride, !noTriggers, !noProtectedLaunch);
     }
 
     private delegate bool Query(nint buffer, uint size, out uint needed);

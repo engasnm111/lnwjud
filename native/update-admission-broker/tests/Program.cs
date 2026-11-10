@@ -189,6 +189,14 @@ internal static class Program
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, loadOrderGroup: "UntrustedGroup"), badRegistration);
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, dependencies: "UntrustedService"), badRegistration);
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, tagId: 1), badRegistration);
+        WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, false, false, false);
+        const string badOptionalConfig = "MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED";
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(true, false, false, false, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, true, false, false, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, true, false, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, true, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, false, true, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, false, false, true), badOptionalConfig);
         var safeServiceDacl = new RawSecurityDescriptor("O:SYG:SYD:(A;;0x000F01FF;;;SY)(A;;0x000F01FF;;;BA)(A;;0x00020004;;;AU)");
         WindowsUpdateAdmissionRegistration.ValidateServiceDacl(safeServiceDacl);
         Check(true, "service DACL allows read-only unprivileged observers");
