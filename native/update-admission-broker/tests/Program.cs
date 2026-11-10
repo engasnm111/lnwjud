@@ -152,7 +152,7 @@ internal static class Program
         Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD800\"}"), 100), "ADMISSION_JSON_INVALID");
         Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"\\uD800\":1}"), 100), "ADMISSION_JSON_INVALID");
         Check(AdmissionProtocol.Text(AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD83D\\uDE00\"}"), 100), "x") == "😀", "valid paired surrogate accepted");
-        Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_REGISTRY_UNCONFIGURED");
+        Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_SERVICE_IDENTITY_UNAVAILABLE");
         foreach (var path in new[] { "relative", "\\\\server\\share", "C:\\", "C:\\root:stream" }) Refuses(() => AdmissionStore.ValidatePath(path), "STATE_ROOT_UNSAFE");
     }
     private static void CorruptJournal()
