@@ -174,6 +174,19 @@ internal static class Program
         Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"\\uD800\":1}"), 100), "ADMISSION_JSON_INVALID");
         Check(AdmissionProtocol.Text(AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD83D\\uDE00\"}"), 100), "x") == "😀", "valid paired surrogate accepted");
         Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_SERVICE_IDENTITY_UNAVAILABLE");
+        // ProgramData grants Users child creation. Only a protected trusted
+        // immediate parent can prevent pre-created/replaced journal roots.
+        var testServiceSid = WindowsIdentity.GetCurrent().User!.Value;
+        var protectedParent = $"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000004;;;{testServiceSid})(A;;GR;;;WD)";
+        AdmissionStore.ValidateProtectedParentDacl(new RawSecurityDescriptor(protectedParent), testServiceSid);
+        Check(true, "trusted protected journal parent permits service-only child creation");
+        const string badParent = "STATE_PARENT_ACL_UNSAFE";
+        foreach (var unsafeParent in new[] {
+            $"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{testServiceSid})",
+            "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GW;;;WD)",
+            "O:AUG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)",
+            "O:BAG:BAD:(A;;GA;;;SY)(A;;GA;;;BA)" })
+            Refuses(() => AdmissionStore.ValidateProtectedParentDacl(new RawSecurityDescriptor(unsafeParent), testServiceSid), badParent);
         Check(WindowsUpdateAdmissionService.Run() == 125, "SCM-only admission service refuses non-SCM launch");
         var commonFiles = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
         var image = WindowsUpdateAdmissionRegistration.ExpectedImagePath(commonFiles);
