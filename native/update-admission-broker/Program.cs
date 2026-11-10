@@ -36,6 +36,21 @@ internal static class Program
                 return 125;
             }
         }
+        if (OperatingSystem.IsWindows() && args.Length == 1 && args[0] == "provision-store-parent")
+        {
+            try
+            {
+                WindowsUpdateAdmissionStoreParentProvisioner.ProvisionParent();
+                Console.WriteLine("MAINTENANCE_STORE_PARENT_PROTECTED_NOT_ENROLLED");
+                return 0;
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(error is Refusal refusal
+                    ? refusal.Reason : "MAINTENANCE_STORE_PARENT_PROVISIONING_REFUSED");
+                return 125;
+            }
+        }
         Console.Error.WriteLine("MAINTENANCE_REGISTRY_UNCONFIGURED");
         return 125;
     }

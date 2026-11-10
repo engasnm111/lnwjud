@@ -193,6 +193,12 @@ internal sealed class AdmissionStore : IDisposable
         finally { _ = LocalFree(descriptor); }
     }
 
+    internal static void VerifyProtectedParentPath(string path, string serviceSid)
+    {
+        using var handle = OpenDirectory(path);
+        ValidateProtectedParent(handle, serviceSid);
+    }
+
     private static string Identity(FileInformation info) => $"{info.Volume:x8}:{info.IndexHigh:x8}{info.IndexLow:x8}";
 
     internal NativeFile? Read(string name)

@@ -180,6 +180,16 @@ internal static class Program
         var protectedParent = $"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000004;;;{testServiceSid})(A;;GR;;;WD)";
         AdmissionStore.ValidateProtectedParentDacl(new RawSecurityDescriptor(protectedParent), testServiceSid);
         Check(true, "trusted protected journal parent permits service-only child creation");
+        var protectedParentSecurity = WindowsUpdateAdmissionStoreParentProvisioner.ProtectedParentSecurity(
+            WindowsIdentity.GetCurrent().User!);
+        AdmissionStore.ValidateProtectedParentDacl(
+            new RawSecurityDescriptor(protectedParentSecurity.GetSecurityDescriptorBinaryForm(), 0), testServiceSid);
+        Check(true, "provisioned parent ACL passes installed-store readback validator");
+        var provisionedAcl = new RawSecurityDescriptor(protectedParentSecurity.GetSecurityDescriptorBinaryForm(), 0);
+        Check(provisionedAcl.DiscretionaryAcl!.Cast<GenericAce>().OfType<QualifiedAce>()
+            .Where(ace => ace.SecurityIdentifier.Value == testServiceSid)
+            .All(ace => (ace.AceFlags & (AceFlags.ContainerInherit | AceFlags.ObjectInherit)) == 0),
+            "service child-creation ACE does not propagate into journal root");
         const string badParent = "STATE_PARENT_ACL_UNSAFE";
         foreach (var unsafeParent in new[] {
             $"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{testServiceSid})",

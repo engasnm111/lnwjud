@@ -15,6 +15,7 @@
     <Compile Include="../WindowsUpdateAdmissionRegistration.cs" Link="Core/WindowsUpdateAdmissionRegistration.cs" />
     <Compile Include="../WindowsUpdateAdmissionProvisioner.cs" Link="Core/WindowsUpdateAdmissionProvisioner.cs" />
     <Compile Include="../WindowsUpdateAdmissionImageStager.cs" Link="Core/WindowsUpdateAdmissionImageStager.cs" />
+    <Compile Include="../WindowsUpdateAdmissionStoreParentProvisioner.cs" Link="Core/WindowsUpdateAdmissionStoreParentProvisioner.cs" />
     <Compile Include="../WindowsUpdateAdmissionPeerObservation.cs" Link="Core/WindowsUpdateAdmissionPeerObservation.cs" />
   </ItemGroup>
 </Project>
