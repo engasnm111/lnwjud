@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -224,6 +225,25 @@ internal static class Program
             "attended SCM provisioner accepts exact SHA-256 pin");
         foreach (var invalidPin in new[] { "", new string('a', 63), new string('g', 64), new string('a', 65) })
             Refuses(() => WindowsUpdateAdmissionProvisioner.ValidatePin(invalidPin),
+                "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        var imageBytes = Encoding.UTF8.GetBytes("immutable broker image fixture");
+        var imagePin = SHA256.HashData(imageBytes);
+        using (var source = new MemoryStream(imageBytes))
+        using (var destination = new MemoryStream())
+        {
+            WindowsUpdateAdmissionImageStager.CopyVerified(source, destination, imagePin);
+            Check(destination.ToArray().SequenceEqual(imageBytes), "staged image bytes match authenticated pin");
+        }
+        using (var source = new MemoryStream(imageBytes))
+        using (var destination = new MemoryStream())
+        {
+            Refuses(() => WindowsUpdateAdmissionImageStager.CopyVerified(source, destination, new byte[32]),
+                "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+            Check(destination.Length == 0, "mismatched image pin refuses before any staging writes");
+        }
+        using (var empty = new MemoryStream())
+        using (var destination = new MemoryStream())
+            Refuses(() => WindowsUpdateAdmissionImageStager.CopyVerified(empty, destination, SHA256.HashData([])),
                 "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
         Refuses(() => WindowsUpdateAdmissionRegistration.ValidateRunningImage(image + ".old", commonFiles), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
         Refuses(() => WindowsUpdateAdmissionRegistration.ExpectedImagePath(@"\\server\share"), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
