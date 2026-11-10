@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 
 namespace Lnwjud.UpdateAdmission;
@@ -12,6 +14,11 @@ internal static class WindowsUpdateAdmissionRegistration
 {
     private const uint ScManagerConnect = 0x0001;
     private const uint ServiceQueryConfig = 0x0001;
+    private const uint ReadControl = 0x00020000;
+    private const uint OwnerAndDaclSecurityInformation = 0x00000005;
+    // A non-administrator may inspect status, but must not reconfigure,
+    // start/stop, delete, take ownership of or change this service's DACL.
+    private const int PrivilegedServiceRights = 0x000D0172 | 0x70000000;
     private const uint ServiceOwnProcess = 0x0010;
     private const uint ServiceAutoStart = 0x0002;
     private const uint ServiceErrorNormal = 0x0001;
@@ -54,6 +61,11 @@ internal static class WindowsUpdateAdmissionRegistration
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool QueryServiceConfig2(SafeServiceHandle service, uint level, nint buffer, uint size, out uint needed);
 
+    [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "QueryServiceObjectSecurity")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryServiceObjectSecurity(SafeServiceHandle service, uint securityInformation,
+        nint buffer, uint size, out uint needed);
+
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseServiceHandle(nint handle);
@@ -86,13 +98,35 @@ internal static class WindowsUpdateAdmissionRegistration
             throw new Refusal("MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
     }
 
+    // Read-only service-object ACL check; this is not proof of image bytes or
+    // protected parent-directory ACLs. Unknown/conditional allow ACEs refuse.
+    internal static void ValidateServiceDacl(RawSecurityDescriptor descriptor)
+    {
+        static bool PrivilegedSid(SecurityIdentifier? sid) => sid?.Value is "S-1-5-18" or "S-1-5-32-544";
+        if (!PrivilegedSid(descriptor.Owner)
+            || (descriptor.ControlFlags & ControlFlags.DiscretionaryAclPresent) == 0
+            || descriptor.DiscretionaryAcl is not { } acl)
+            throw new Refusal("MAINTENANCE_SERVICE_DACL_UNVERIFIED");
+        foreach (GenericAce ace in acl)
+        {
+            if (ace is not QualifiedAce qualified)
+                throw new Refusal("MAINTENANCE_SERVICE_DACL_UNVERIFIED");
+            if (qualified.AceQualifier != AceQualifier.AccessAllowed) continue;
+            if ((qualified.AccessMask & PrivilegedServiceRights) != 0
+                && !PrivilegedSid(qualified.SecurityIdentifier))
+                throw new Refusal("MAINTENANCE_SERVICE_DACL_UNVERIFIED");
+            if (qualified.IsCallback)
+                throw new Refusal("MAINTENANCE_SERVICE_DACL_UNVERIFIED");
+        }
+    }
+
     internal static void VerifyInstalled()
     {
         if (!OperatingSystem.IsWindows()) throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
         ValidateRunningImage(Environment.ProcessPath, Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles));
         using var manager = OpenScManager(null, null, ScManagerConnect);
         if (manager.IsInvalid) throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
-        using var service = OpenService(manager, WindowsUpdateAdmissionService.ServiceName, ServiceQueryConfig);
+        using var service = OpenService(manager, WindowsUpdateAdmissionService.ServiceName, ServiceQueryConfig | ReadControl);
         if (service.IsInvalid) throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
 
         var configBytes = RequiredSize((nint buffer, uint size, out uint needed) =>
@@ -116,6 +150,18 @@ internal static class WindowsUpdateAdmissionRegistration
                 Validate(command, account, config.Type, config.StartType, config.ErrorControl,
                     unchecked((uint)Marshal.ReadInt32(sidBuffer)),
                     Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles));
+                var daclBytes = RequiredSize((nint buffer, uint size, out uint needed) =>
+                    QueryServiceObjectSecurity(service, OwnerAndDaclSecurityInformation, buffer, size, out needed));
+                var daclBuffer = Marshal.AllocHGlobal(checked((int)daclBytes));
+                try
+                {
+                    if (!QueryServiceObjectSecurity(service, OwnerAndDaclSecurityInformation, daclBuffer, daclBytes, out _))
+                        throw new Refusal("MAINTENANCE_SERVICE_DACL_UNVERIFIED");
+                    var bytes = new byte[checked((int)daclBytes)];
+                    Marshal.Copy(daclBuffer, bytes, 0, bytes.Length);
+                    ValidateServiceDacl(new RawSecurityDescriptor(bytes, 0));
+                }
+                finally { Marshal.FreeHGlobal(daclBuffer); }
             }
             finally { Marshal.FreeHGlobal(sidBuffer); }
         }

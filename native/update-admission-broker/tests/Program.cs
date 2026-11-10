@@ -186,6 +186,16 @@ internal static class Program
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 3, 1, 1, commonFiles), badRegistration);
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 0, 1, commonFiles), badRegistration);
         Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 0, commonFiles), badRegistration);
+        var safeServiceDacl = new RawSecurityDescriptor("O:SYG:SYD:(A;;0x000F01FF;;;SY)(A;;0x000F01FF;;;BA)(A;;0x00020004;;;AU)");
+        WindowsUpdateAdmissionRegistration.ValidateServiceDacl(safeServiceDacl);
+        Check(true, "service DACL allows read-only unprivileged observers");
+        const string badDacl = "MAINTENANCE_SERVICE_DACL_UNVERIFIED";
+        foreach (var sddl in new[] {
+            "O:SYG:SYD:(A;;0x00000002;;;AU)",
+            "O:SYG:SYD:(A;;0x00040000;;;LS)",
+            "O:SYG:SYD:(A;;0x10000000;;;WD)",
+            "O:AUG:SYD:(A;;0x000F01FF;;;BA)" })
+            Refuses(() => WindowsUpdateAdmissionRegistration.ValidateServiceDacl(new RawSecurityDescriptor(sddl)), badDacl);
         WindowsUpdateAdmissionRegistration.ValidateRunningImage(image, commonFiles);
         Check(true, "running image path must match fixed service registration");
         Refuses(() => WindowsUpdateAdmissionRegistration.ValidateRunningImage(image + ".old", commonFiles), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
