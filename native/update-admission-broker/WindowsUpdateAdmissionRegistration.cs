@@ -257,6 +257,12 @@ internal static class WindowsUpdateAdmissionRegistration
         var commonFiles = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
         ValidateRunningImage(Environment.ProcessPath, commonFiles);
         VerifyImageFilesystem(commonFiles);
+        VerifyServiceConfiguration(commonFiles);
+    }
+
+    internal static void VerifyServiceConfiguration(string commonFiles)
+    {
+        if (!OperatingSystem.IsWindows()) throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
         using var manager = OpenScManager(null, null, ScManagerConnect);
         if (manager.IsInvalid) throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
         using var service = OpenService(manager, WindowsUpdateAdmissionService.ServiceName, ServiceQueryConfig | ReadControl);
@@ -282,7 +288,7 @@ internal static class WindowsUpdateAdmissionRegistration
                     throw new Refusal("MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED");
                 Validate(command, account, config.Type, config.StartType, config.ErrorControl,
                     unchecked((uint)Marshal.ReadInt32(sidBuffer)),
-                    Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles),
+                    commonFiles,
                     Marshal.PtrToStringUni(config.LoadOrderGroup), Marshal.PtrToStringUni(config.Dependencies), config.TagId);
                 VerifyOptionalConfiguration(service);
                 var daclBytes = RequiredSize((nint buffer, uint size, out uint needed) =>

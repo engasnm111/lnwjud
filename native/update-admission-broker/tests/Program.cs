@@ -220,6 +220,11 @@ internal static class Program
         Check(true, "inherit-only creator owner ACE is not effective on inspected image path");
         WindowsUpdateAdmissionRegistration.ValidateRunningImage(image, commonFiles);
         Check(true, "running image path must match fixed service registration");
+        Check(WindowsUpdateAdmissionProvisioner.ValidatePin(new string('A', 64)).Length == 32,
+            "attended SCM provisioner accepts exact SHA-256 pin");
+        foreach (var invalidPin in new[] { "", new string('a', 63), new string('g', 64), new string('a', 65) })
+            Refuses(() => WindowsUpdateAdmissionProvisioner.ValidatePin(invalidPin),
+                "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
         Refuses(() => WindowsUpdateAdmissionRegistration.ValidateRunningImage(image + ".old", commonFiles), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
         Refuses(() => WindowsUpdateAdmissionRegistration.ExpectedImagePath(@"\\server\share"), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
         foreach (var path in new[] { "relative", "\\\\server\\share", "C:\\", "C:\\root:stream" }) Refuses(() => AdmissionStore.ValidatePath(path), "STATE_ROOT_UNSAFE");
