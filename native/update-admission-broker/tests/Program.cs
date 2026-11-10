@@ -177,6 +177,29 @@ internal static class Program
             Check(File.ReadAllBytes(file).SequenceEqual(corrupt), "invalid current journal is preserved");
         }
         finally { Directory.Delete(root, true); }
+        root = Root();
+        try
+        {
+            var identity = StoreIdentity.Isolated(root);
+            var runtime = RuntimePrincipal.Isolated("parent-journal-owner");
+            string participant;
+            using (var core = new AdmissionCore(identity))
+            {
+                participant = core.Register(runtime);
+                core.Enter(runtime, participant, 1, "call");
+                core.Promote(runtime, participant, 2, "parent-attempt", $"{participant}.1");
+            }
+            var file = Path.Combine(root, "admission.json");
+            var original = AdmissionProtocol.Object(File.ReadAllBytes(file), AdmissionStore.MaximumJournalBytes);
+            var permits = (JsonObject)((JsonObject)original["state"]!)["permits"]!;
+            ((JsonObject)permits[$"{participant}.2"]!).Remove("parent");
+            File.WriteAllBytes(file, AdmissionProtocol.Encode(original));
+            Refuses(() => new AdmissionCore(identity), "ADMISSION_FIELDS_INVALID");
+            ((JsonObject)permits[$"{participant}.2"]!)["parent"] = $"{participant}.01";
+            File.WriteAllBytes(file, AdmissionProtocol.Encode(original));
+            Refuses(() => new AdmissionCore(identity), "ADMISSION_STATE_INVALID");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void Lifecycle()
     {
@@ -198,7 +221,8 @@ internal static class Program
                 var quarantined = core.Register(other); Check(core.Status().UnquiescedParticipants == 1, "late participant quarantined");
                 Refuses(() => core.Enter(other, quarantined, 1, "startup"), "ADMISSION_PARTICIPANT_QUIESCENT");
                 Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.Granted, "promotion grants a new job permit");
-                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "promotion retry with unverified parent requires reconciliation");
+                Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.ExistingRequiresReconciliation, "matching promotion retry requires reconciliation");
+                Refuses(() => core.Promote(runtime, participant, 2, "attempt1", "different-parent"), "ADMISSION_PERMIT_CONFLICT");
                 Refuses(() => core.Promote(runtime, participant, 2, "different-attempt", $"{participant}.1"), "ADMISSION_PERMIT_CONFLICT");
                 core.Settle(runtime, $"{participant}.1", Evidence(SettlementKind.OperationSettled, $"{participant}.1"));
                 Check(core.Status().HeldPermits == 1, "background job retains drain reservation");
@@ -210,7 +234,8 @@ internal static class Program
             using (var core = new AdmissionCore(StoreIdentity.Isolated(root)))
             {
                 Check(core.Status().Phase == "closing" && core.Status().HeldPermits == 1, "restart retains closure and job");
-                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "restart does not regrant a held job");
+                Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.ExistingRequiresReconciliation, "restart retains matching promotion parent without regrant");
+                Refuses(() => core.Promote(runtime, participant, 2, "attempt1", "different-parent"), "ADMISSION_PERMIT_CONFLICT");
                 core.Settle(runtime, $"{participant}.2", Evidence(SettlementKind.NativeJobZeroAndReleased, $"{participant}.2"));
                 Refuses(() => core.Seal(owner, core.Status().Revision), "ADMISSION_DRAIN_INCOMPLETE");
                 core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{core.Status().Epoch}"));
