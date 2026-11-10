@@ -80,6 +80,7 @@ internal static class WindowsUpdateAdmissionService
             Report(handle, ServiceStartPending, 0, 0, 30_000);
             // The service token must be LocalService with this exact enabled
             // service SID; journal ownership is not inferred from a PID or name.
+            WindowsUpdateAdmissionRegistration.VerifyInstalled();
             var identity = StoreIdentity.Installed();
             AdmissionCore.RecoverPublication(identity);
             using var core = new AdmissionCore(identity);

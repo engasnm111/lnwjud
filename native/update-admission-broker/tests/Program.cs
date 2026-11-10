@@ -154,6 +154,22 @@ internal static class Program
         Check(AdmissionProtocol.Text(AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD83D\\uDE00\"}"), 100), "x") == "😀", "valid paired surrogate accepted");
         Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_SERVICE_IDENTITY_UNAVAILABLE");
         Check(WindowsUpdateAdmissionService.Run() == 125, "SCM-only admission service refuses non-SCM launch");
+        var commonFiles = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
+        var image = WindowsUpdateAdmissionRegistration.ExpectedImagePath(commonFiles);
+        var command = "\"" + image + "\" service";
+        WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles);
+        Check(true, "exact protected-layout SCM registration shape accepted for inspection only");
+        const string badRegistration = "MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED";
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command + " extra", @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"LocalSystem", 0x10, 2, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x20, 2, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 3, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 0, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 0, commonFiles), badRegistration);
+        WindowsUpdateAdmissionRegistration.ValidateRunningImage(image, commonFiles);
+        Check(true, "running image path must match fixed service registration");
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateRunningImage(image + ".old", commonFiles), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        Refuses(() => WindowsUpdateAdmissionRegistration.ExpectedImagePath(@"\\server\share"), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
         foreach (var path in new[] { "relative", "\\\\server\\share", "C:\\", "C:\\root:stream" }) Refuses(() => AdmissionStore.ValidatePath(path), "STATE_ROOT_UNSAFE");
     }
     private static void CorruptJournal()
