@@ -13,5 +13,6 @@
     <Compile Include="../Admission*.cs" Link="Core/%(Filename)%(Extension)" />
     <Compile Include="../WindowsUpdateAdmissionService.cs" Link="Core/WindowsUpdateAdmissionService.cs" />
     <Compile Include="../WindowsUpdateAdmissionRegistration.cs" Link="Core/WindowsUpdateAdmissionRegistration.cs" />
+    <Compile Include="../WindowsUpdateAdmissionPeerObservation.cs" Link="Core/WindowsUpdateAdmissionPeerObservation.cs" />
   </ItemGroup>
 </Project>

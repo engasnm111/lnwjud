@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
@@ -58,9 +59,27 @@ internal static class Program
             core.AfterStage = () => Environment.Exit(42);
             core.Close(UpdatePrincipal.Isolated("crash-update", 1), core.Status().Revision); return 12;
         }
-        try { Protocol(); CorruptJournal(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
+        try { Protocol(); PeerObservation(); CorruptJournal(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
+    private static void PeerObservation()
+    {
+        var name = "lnwjud-admission-observe-" + Guid.NewGuid().ToString("N");
+        using var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        Refuses(() => WindowsUpdateAdmissionPeerObservation.Capture(server.SafePipeHandle), "MAINTENANCE_PEER_UNVERIFIED");
+        using var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+        var connected = server.WaitForConnectionAsync();
+        client.Connect(5000);
+        if (!connected.Wait(5000)) throw new Exception("Observation pipe connection timed out");
+        using var observation = WindowsUpdateAdmissionPeerObservation.Capture(server.SafePipeHandle);
+        Check(observation.ProcessId == (uint)Environment.ProcessId && observation.CreationTime > 0, "peer observation pins process creation identity");
+        Check(observation.UserSid == WindowsIdentity.GetCurrent().User!.Value, "peer observation reads kernel token user");
+        Check(string.Equals(Path.GetFullPath(observation.ImagePath), Path.GetFullPath(Environment.ProcessPath!), StringComparison.OrdinalIgnoreCase), "peer observation reads process image");
+        Check(observation.IsObservedProcessAlive(), "peer observation checks retained process handle");
+        observation.Dispose();
+        Check(!observation.IsObservedProcessAlive(), "disposed observation cannot assert process liveness");
+    }
+
     private static void DuplicateEntryRace()
     {
         var root = Root();
