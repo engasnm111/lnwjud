@@ -11,5 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Admission*.cs" Link="Core/%(Filename)%(Extension)" />
+    <Compile Include="../WindowsUpdateAdmissionService.cs" Link="Core/WindowsUpdateAdmissionService.cs" />
   </ItemGroup>
 </Project>
