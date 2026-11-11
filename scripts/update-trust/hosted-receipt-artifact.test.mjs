@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchHostedReceiptMetadata, selectHostedReceiptArtifact } from './hosted-receipt-artifact.mjs';
+import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
+import { fetchHostedReceiptMetadata, selectHostedReceiptArtifact, withDigestCheckedHostedReceiptArchive } from './hosted-receipt-artifact.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const expected = { runId: 987654321, sourceSha };
@@ -102,4 +104,52 @@ test('rejects unauthenticated input, pagination, malformed and mismatched GitHub
     mode = next;
     await assert.rejects(fetchHostedReceiptMetadata(expected, token), /HOSTED_RECEIPT_ARTIFACT_REFUSED/);
   }
+});
+
+test('acquires a digest-checked hosted ZIP through a bounded quarantined spool, without claiming attestation', async t => {
+  const archive = Buffer.from('fixture ZIP bytes: digest only');
+  const archiveSha256 = createHash('sha256').update(archive).digest('hex');
+  let discarded = false, sealed = false, exposed = false;
+  const addon = { createArchiveSpool(_filename, capacity, digest) {
+    assert.equal(capacity, archive.length);
+    assert.equal(digest, archiveSha256);
+    const chunks = [];
+    return {
+      write(chunk) { chunks.push(Buffer.from(chunk)); },
+      seal() { sealed = true; },
+      readAt(offset, count) {
+        assert.equal(sealed, true);
+        return Buffer.concat(chunks).subarray(offset, offset + count);
+      },
+      discard() { discarded = true; },
+      close() { discarded = true; },
+    };
+  } };
+  const hosted = { total_count: 1, artifacts: [{ ...artifact,
+    size_in_bytes: archive.length, digest: `sha256:${archiveSha256}` }] };
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/attempts/1')) return json(run);
+    if (url.includes('/artifacts?per_page=100')) return json(hosted);
+    if (url.endsWith('/artifacts/12345/zip')) return new globalThis.Response(null, {
+      status: 302, headers: { location: 'https://productionresultssa8.blob.core.windows.net/archive' },
+    });
+    return new globalThis.Response(archive, { headers: { 'content-length': String(archive.length) } });
+  });
+  const result = await withDigestCheckedHostedReceiptArchive({
+    expected, token, addon, filename: 'quarantined-receipt.zip',
+  }, (reader, selected) => {
+    exposed = true;
+    assert.equal(selected.status, 'github-artifact-metadata-observed-only');
+    assert.equal(selected.archiveSha256, archiveSha256);
+    assert.equal(reader.size, archive.length);
+    assert.deepEqual(reader.readAt(0, reader.size), archive);
+    return 'digest-checked-only';
+  });
+  assert.equal(result, 'digest-checked-only');
+  assert.equal(exposed, true);
+  assert.equal(discarded, true);
+  assert.equal(calls.length, 4);
+  assert.equal(calls[3].options.headers.authorization, undefined);
 });

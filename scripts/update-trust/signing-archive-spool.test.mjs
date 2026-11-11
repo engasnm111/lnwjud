@@ -51,6 +51,16 @@ async function fixture(run) {
   finally { await unlink(filename).catch(() => undefined); await rmdir(root); }
 }
 
+test('rejects a strict archive cap before allocating a native spool', async () => {
+  let created = false;
+  await assert.rejects(withDownloadedSigningArchive({
+    addon: { createArchiveSpool() { created = true; throw new Error('unexpected spool'); } },
+    filename: 'not-created.zip', token: 'fixture', maxArchiveBytes: 32 * 1024 * 1024,
+    artifact: { ...artifact, archiveSizeBytes: 32 * 1024 * 1024 + 1 },
+  }, () => {}), /SIGNING_ARCHIVE_INPUT_INVALID/);
+  assert.equal(created, false);
+});
+
 test('downloads into one spool, seals before reading and closes the reader scope', { skip: !windows }, async () => {
   await fixture(async filename => {
     let saved;

@@ -39,6 +39,23 @@ test('downloads the exact artifact and never forwards its token to redirected ho
   }
 });
 
+test('enforces caller-pinned archive byte limits on declared and streamed bytes', async () => {
+  const fetchImpl = async url => url.startsWith('https://api.github.com/')
+    ? redirected()
+    : new globalThis.Response(bytes);
+  const valid = request(fetchImpl, { maxArchiveBytes: bytes.length });
+  assert.deepEqual(await valid.promise, { sizeBytes: bytes.length, sha256 });
+  const exceeded = request(fetchImpl, { maxArchiveBytes: bytes.length - 1 });
+  await assert.rejects(exceeded.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
+  const invalid = request(fetchImpl, { maxArchiveBytes: 0 });
+  await assert.rejects(invalid.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
+  const declared = request(async url => url.startsWith('https://api.github.com/')
+    ? redirected()
+    : new globalThis.Response(bytes, { headers: { 'content-length': String(bytes.length) } }),
+  { maxArchiveBytes: bytes.length - 1 });
+  await assert.rejects(declared.promise, { message: 'SIGNING_ARCHIVE_DOWNLOAD_REFUSED' });
+});
+
 test('accepts the additional observed GitHub artifact storage host without forwarding credentials', async () => {
   const calls = [];
   const fetchImpl = async (url, options) => {

@@ -32,7 +32,8 @@ export class ArchiveQuarantineError extends Error {
   }
 }
 
-export async function withDownloadedSigningArchive({ addon, filename, artifact, token, fetchImpl }, consume) {
+export async function withDownloadedSigningArchive({ addon, filename, artifact, token, fetchImpl,
+  maxArchiveBytes = 5 * 1024 * 1024 * 1024 }, consume) {
   if (!addon || typeof addon.createArchiveSpool !== 'function' || typeof filename !== 'string'
     || !artifact || typeof artifact !== 'object' || typeof consume !== 'function') throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
   const { artifactId, archiveSha256, archiveSizeBytes } = artifact;
@@ -41,7 +42,8 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
   if (typeof artifactId !== 'string' || !/^[1-9][0-9]{0,14}$/.test(artifactId)
     || !Number.isSafeInteger(Number(artifactId)) || typeof archiveSha256 !== 'string'
     || !/^[a-f0-9]{64}$/.test(archiveSha256) || !Number.isSafeInteger(archiveSizeBytes)
-    || archiveSizeBytes < 1 || archiveSizeBytes > 5 * 1024 * 1024 * 1024
+    || !Number.isSafeInteger(maxArchiveBytes) || maxArchiveBytes < 1 || maxArchiveBytes > 5 * 1024 * 1024 * 1024
+    || archiveSizeBytes < 1 || archiveSizeBytes > maxArchiveBytes
     || typeof token !== 'string' || token.length < 1 || token.length > 4096
     || (fetchImpl !== undefined && typeof fetchImpl !== 'function')) throw new Error('SIGNING_ARCHIVE_INPUT_INVALID');
   const spool = addon.createArchiveSpool(filename, archiveSizeBytes, archiveSha256);
@@ -95,7 +97,7 @@ export async function withDownloadedSigningArchive({ addon, filename, artifact, 
   } });
   try {
     const download = await downloadSigningArtifactArchive({ artifactId, expectedSha256: archiveSha256, token, destination,
-      ...(fetchImpl === undefined ? {} : { fetchImpl }) });
+      maxArchiveBytes, ...(fetchImpl === undefined ? {} : { fetchImpl }) });
     if (download.sizeBytes !== archiveSizeBytes) throw new Error('SIGNING_ARCHIVE_SIZE_MISMATCH');
     // The signer secret must remain absent after the asynchronous network read
     // and throughout consumer inspection; the guard is process-local only.

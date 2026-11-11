@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { parseStrictJson } from './release-envelope.mjs';
+import { withDownloadedSigningArchive } from './signing-archive-spool.mjs';
 
 // Read-only GitHub API metadata selector for a future authenticated receipt fetch.
 // This does NOT download or authenticate archive bytes, verify the OIDC receipt,
@@ -108,4 +109,25 @@ export async function fetchHostedReceiptMetadata(expected, token) {
   } catch {
     refuse();
   }
+}
+
+/**
+ * Acquire one hosted receipt ZIP using authenticated run/artifact metadata,
+ * exact archive SHA-256 and a native quarantined spool limited to 32 MiB.
+ * The consumer receives digest-checked ZIP bytes only; it MUST independently
+ * inspect receipt.json and verify receipt.bundle.json with the pinned OIDC
+ * verifier before any signing or production authorization decision.
+ */
+export async function withDigestCheckedHostedReceiptArchive({ expected, token, addon, filename, fetchImpl }, consume) {
+  if (typeof consume !== 'function') refuse();
+  const selected = await fetchHostedReceiptMetadata(expected, token);
+  return withDownloadedSigningArchive({
+    addon, filename, token, maxArchiveBytes: 32 * 1024 * 1024,
+    artifact: {
+      artifactId: selected.artifactId,
+      archiveSha256: selected.archiveSha256,
+      archiveSizeBytes: Number(selected.archiveSizeBytes),
+    },
+    ...(fetchImpl === undefined ? {} : { fetchImpl }),
+  }, reader => consume(reader, selected));
 }
