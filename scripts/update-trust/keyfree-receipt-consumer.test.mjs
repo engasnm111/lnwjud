@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import process from 'node:process';
 import { inspectKeyFreeReceiptAttestation } from './keyfree-receipt-consumer.mjs';
 
 const sha = 'a'.repeat(40);
@@ -109,6 +110,26 @@ test('snapshots caller metadata and receipt bytes across asynchronous verificati
     },
   });
   assert.equal(output.verifierRunId, '600');
+});
+
+test('refuses signer secret present before or injected during receipt verification', async () => {
+  const key = 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM';
+  const before = process.env[key];
+  try {
+    process.env[key] = 'test-only';
+    await assert.rejects(inspect(), /KEYFREE_RECEIPT_CONSUMER_REFUSED/);
+    delete process.env[key];
+    await assert.rejects(inspectKeyFreeReceiptAttestation({
+      receiptBytes: bytes(receipt), expected,
+      verify: async args => {
+        process.env[key] = 'test-only';
+        return verified(args);
+      },
+    }), /KEYFREE_RECEIPT_CONSUMER_REFUSED/);
+  } finally {
+    if (before === undefined) delete process.env[key];
+    else process.env[key] = before;
+  }
 });
 
 test('rejects unauthenticated or duplicated verification output', async () => {

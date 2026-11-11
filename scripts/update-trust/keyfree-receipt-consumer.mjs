@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import process from 'node:process';
 import { hash, parseStrictJson } from './release-envelope.mjs';
 import { selectVerifiedAttestation } from './verify-build-evidence.mjs';
 
@@ -20,6 +21,9 @@ const runId = value => typeof value === 'string' && /^[1-9][0-9]{0,14}$/.test(va
 const shape = (value, keys) => value !== null && typeof value === 'object'
   && !Array.isArray(value) && Object.keys(value).sort().join(',') === keys.join(',');
 const refuse = () => { throw new Error('KEYFREE_RECEIPT_CONSUMER_REFUSED'); };
+const requireKeyFree = () => {
+  if (Object.keys(process.env).some(name => name.toUpperCase() === 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM')) refuse();
+};
 
 /**
  * Read-only receipt consumer for a future independent signer. The callback
@@ -29,6 +33,7 @@ const refuse = () => { throw new Error('KEYFREE_RECEIPT_CONSUMER_REFUSED'); };
  * Never use this diagnostic result to enable production authorities.
  */
 export async function inspectKeyFreeReceiptAttestation({ receiptBytes, expected, verify }) {
+  requireKeyFree();
   if (!Buffer.isBuffer(receiptBytes) || receiptBytes.length > 2048
     || !shape(expected, expectedFields) || typeof verify !== 'function'
     || !sha1(expected.sourceSha) || !runId(expected.sourceRunId)
@@ -66,10 +71,12 @@ export async function inspectKeyFreeReceiptAttestation({ receiptBytes, expected,
   let output;
   try {
     output = await verify({ identity, source, authority, receiptBytes: Buffer.from(boundReceiptBytes) });
+    requireKeyFree();
     if (!Buffer.isBuffer(output)
       || selectVerifiedAttestation(output, { source, issuedAt: bound.verifiedAt },
         identity, authority) !== 1) refuse();
   } catch { refuse(); }
+  requireKeyFree();
   return Object.freeze({
     schema: 'lnwjud.keyfree-receipt-consumer/v1',
     status: 'receipt-attestation-metadata-matched-only',
