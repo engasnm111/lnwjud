@@ -65,7 +65,7 @@ const apiMaximum = 4 * 1024 * 1024;
 async function readAuthenticatedGithubJson(relative, token) {
   const response = await globalThis.fetch(`https://api.github.com/repos/${repo}/${relative}`, {
     redirect: 'error',
-    signal: AbortSignal.timeout(30000),
+    signal: globalThis.AbortSignal.timeout(30000),
     headers: {
       accept: 'application/vnd.github+json',
       authorization: `Bearer ${token}`,
