@@ -185,7 +185,8 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
         var parent = Path.Combine(basePath, "lnwjud");
         if (File.Exists(parent)) throw new Refusal("STATE_PARENT_ACL_UNSAFE");
         if (!Directory.Exists(parent))
-            FileSystemAclExtensions.CreateDirectory(ProtectedParentSecurity(serviceSid), parent);
+            CreateProtectedDirectoryOnce(parent, ProtectedParentSecurity(serviceSid),
+                "MAINTENANCE_STORE_PARENT_PROVISIONING_REFUSED");
         AdmissionStore.VerifyProtectedParentPath(parent, serviceSid.Value);
         ValidateProgramDataBase(basePath);
     }
@@ -225,7 +226,19 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
             || Directory.Exists(root) || File.Exists(root))
             throw new Refusal("MAINTENANCE_STORE_ROOT_ALREADY_EXISTS");
 
-        var bytes = ProtectedRootSecurity(serviceSid).GetSecurityDescriptorBinaryForm();
+        CreateProtectedDirectoryOnce(root, ProtectedRootSecurity(serviceSid),
+            "MAINTENANCE_STORE_ROOT_PROVISIONING_REFUSED");
+        AdmissionStore.VerifyProtectedRootPath(root, serviceSid.Value);
+    }
+
+    // Atomic create-only operation. A competing directory or reparse point
+    // cannot be adopted or have its ACL changed by the provisioner.
+    internal static void CreateProtectedDirectoryOnce(string path, DirectorySecurity security, string refusal)
+    {
+        if (!Path.IsPathFullyQualified(path) || path.StartsWith(@"\\", StringComparison.Ordinal)
+            || Directory.Exists(path) || File.Exists(path))
+            throw new Refusal(refusal);
+        var bytes = security.GetSecurityDescriptorBinaryForm();
         var descriptor = Marshal.AllocHGlobal(bytes.Length);
         try
         {
@@ -235,12 +248,9 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
                 Length = Marshal.SizeOf<SecurityAttributes>(),
                 SecurityDescriptor = descriptor,
             };
-            // CreateDirectoryW is atomic create-only, unlike convenience
-            // helpers that may open and change an already existing directory.
-            if (!CreateDirectoryWithSecurity(root, ref attributes))
-                throw new Refusal("MAINTENANCE_STORE_ROOT_PROVISIONING_REFUSED");
+            if (!CreateDirectoryWithSecurity(path, ref attributes))
+                throw new Refusal(refusal);
         }
         finally { Marshal.FreeHGlobal(descriptor); }
-        AdmissionStore.VerifyProtectedRootPath(root, serviceSid.Value);
     }
 }
