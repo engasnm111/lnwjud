@@ -84,7 +84,7 @@ describe('desktop packaged startup regression contract', () => {
   it('reveals the existing main window for a second instance', () => {
     const instances = section('const gotInstanceLock', 'if (wantsMcpStdio');
     expect(instances).toContain("app.on('second-instance'");
-    expect(instances).toContain('revealMainWindow();');
+    expect(instances).toContain('desktopStartupIntents.receive(argv)');
   });
 
   it('applies a staged factory reset in a temporary-userData bootstrap before normal runtime startup', () => {

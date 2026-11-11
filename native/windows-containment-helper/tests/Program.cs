@@ -814,6 +814,29 @@ internal static class NativeTests
         var expected = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(image))).ToLowerInvariant();
         if (String.Equals(image, Executable, StringComparison.OrdinalIgnoreCase)) throw new Exception("Image policy test did not use a distinct client executable");
         WindowsContainmentServiceClient.ValidateServerImage(image, programFiles, expected);
+        if (ServiceEndpointIdentity.InspectSlotImage(image, programFiles) is not null)
+            throw new Exception("A protected manual package was interpreted as a slot");
+        foreach (var (slot, result) in new[] { ("A", "UPDATE_SLOT_AUTHORITY_REQUIRED"), ("b", "UPDATE_SLOT_AUTHORITY_REQUIRED"),
+            ("staging", "UPDATE_SLOT_LAYOUT_UNVERIFIED") })
+        {
+            var role = Path.Combine(programFiles, "vendor", "custom", "slots", slot, "resources", "native-containment", "lnwjud-containment.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(role)!);
+            File.WriteAllText(role, "slot role fixture");
+            if (ServiceEndpointIdentity.InspectSlotImage(role, programFiles) != result)
+                throw new Exception("Custom protected slot did not hold: " + slot);
+            if (slot == "A")
+            {
+                var alias = Path.Combine(root, "helper-alias.exe");
+                File.CreateSymbolicLink(alias, role);
+                if (ServiceEndpointIdentity.InspectSlotImage(alias, programFiles) != result)
+                    throw new Exception("A resolved protected slot role was treated as an unmanaged helper");
+            }
+        }
+        var devRole = Path.Combine(root, "checkout", "slots", "A", "resources", "native-containment", "lnwjud-containment.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(devRole)!);
+        File.WriteAllText(devRole, "development fixture");
+        if (ServiceEndpointIdentity.InspectSlotImage(devRole, programFiles) is not null)
+            throw new Exception("A developer directory outside Program Files was interpreted as a protected slot");
         var linked = Path.Combine(programFiles, "lnwjud-linked", "resources", "native-containment", "lnwjud-containment.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(linked)!);
         File.CreateSymbolicLink(linked, image);
@@ -1598,14 +1621,58 @@ internal static class NativeTests
     {
         var pipeName = "lnwjud-service-rpc-" + Guid.NewGuid().ToString("N");
         var storeDirectory = Path.Combine(Path.GetTempPath(), "lnwjud-service-rpc-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(storeDirectory);
+        var fixtureSecurity = new DirectorySecurity();
+        var fixtureOwner = WindowsIdentity.GetCurrent().User!.Value;
+        fixtureSecurity.SetSecurityDescriptorSddlForm($"O:{fixtureOwner}D:P(A;OICI;FA;;;{fixtureOwner})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+        fixtureSecurity.CreateDirectory(storeDirectory);
         var storePath = Path.Combine(storeDirectory, "attempts.json");
         var reservationKey = Path.GetFullPath(Path.Combine(storeDirectory, "workspace"));
         var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(storePath));
+        var install = Directory.CreateDirectory(Path.Combine(storeDirectory, "install")).FullName;
+        var registered = false;
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var server = WindowsContainmentService.RunPipeServerAsync(pipeName, ledger, stopping.Token, useCurrentUserTestLauncher: true);
+        var server = WindowsContainmentService.RunPipeServerAsync(pipeName, ledger, stopping.Token, useCurrentUserTestLauncher: true,
+            startup: UpdateStartupGate.Isolated(install, storeDirectory, () => Volatile.Read(ref registered)));
         try
         {
+            async Task CheckStartup(string kind, string reason)
+            {
+                using var reply = await SendServiceRpcAsync(pipeName, """{"protocol":3,"command":"update_startup"}"""u8.ToArray());
+                if (!reply.RootElement.GetProperty("ok").GetBoolean()
+                    || reply.RootElement.GetProperty("result").GetProperty("kind").GetString() != kind
+                    || reply.RootElement.GetProperty("result").GetProperty("reason").GetString() != reason)
+                    throw new Exception("Unexpected update startup disposition: " + reply.RootElement);
+            }
+            await CheckStartup("unmanaged", "MANUAL_INSTALLATION");
+            Volatile.Write(ref registered, true);
+            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            Volatile.Write(ref registered, false);
+            var slots = Directory.CreateDirectory(Path.Combine(install, "slots"));
+            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            slots.Delete();
+            var enrollment = Path.Combine(storeDirectory, "update-authority");
+            File.WriteAllText(enrollment, "incomplete");
+            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            File.Delete(enrollment);
+            Directory.Delete(install);
+            await CheckStartup("held", "UPDATE_STARTUP_INSPECTION_UNAVAILABLE");
+            var scratch = Directory.CreateDirectory(Path.Combine(storeDirectory, "footprint")).FullName;
+            var privateStore = Path.Combine(scratch, "lnwjud-containment");
+            if (UpdateStartupGate.HasPrivateAuthority(scratch)) throw new Exception("Missing ledger reported managed state");
+            File.WriteAllText(privateStore, "");
+            try
+            {
+                _ = UpdateStartupGate.HasPrivateAuthority(scratch);
+                throw new Exception("A file in place of the service's private ledger did not hold startup");
+            }
+            catch (IOException error) when (error.Message == "SERVICE_FOOTPRINT_DIRECTORY_UNSAFE") { }
+            File.Delete(privateStore);
+            Directory.CreateDirectory(privateStore);
+            if (UpdateStartupGate.HasPrivateAuthority(scratch)) throw new Exception("Empty ledger reported managed state");
+            Directory.CreateDirectory(Path.Combine(privateStore, "update-authority"));
+            if (!UpdateStartupGate.HasPrivateAuthority(scratch)) throw new Exception("Private update state went undetected");
+            using (var extra = await SendServiceRpcAsync(pipeName, """{"protocol":3,"command":"update_startup","controlRequest":null}"""u8.ToArray()))
+                if (extra.RootElement.GetProperty("ok").GetBoolean()) throw new Exception("startup accepted extraneous fields");
             var terminalSid = WindowsIdentity.GetCurrent().User!.Value;
             var terminalRequest = NewServiceAttemptRequest("rpc-terminal-recovery", Path.Combine(storeDirectory, "terminal-recovery")) with { AuthenticatedCallerSid = terminalSid };
             ledger.Prepare(terminalRequest);

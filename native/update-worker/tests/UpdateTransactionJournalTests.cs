@@ -86,8 +86,14 @@ internal static class UpdateTransactionJournalTests
             "rollback advances selection revision without changing transaction generation");
         Check(rollbackSelection.SelectPrevious(priorSelectionIntent, rollbackSelection.Digest, owner) == rollbackSelection,
             "rollback selection is idempotent after readback");
-        Check(previous.SelectPrevious(priorSelectionIntent, previous.Digest, owner) == previous,
-            "rollback before candidate selection retains the exact predecessor pair");
+        var earlyRollback = previous.SelectPrevious(priorSelectionIntent, previous.Digest, owner);
+        Check(earlyRollback.Slot == previous.Slot && earlyRollback.SlotDigest == previous.SlotDigest
+            && earlyRollback.DataGeneration == previous.DataGeneration && earlyRollback.PreviousDigest == previous.Digest
+            && earlyRollback.Generation == priorSelectionIntent.Generation && earlyRollback.Revision == 1
+            && earlyRollback.TransactionId == priorSelectionIntent.TransactionId,
+            "rollback before selection records this transaction while retaining the exact predecessor pair");
+        Check(earlyRollback.SelectPrevious(priorSelectionIntent, earlyRollback.Digest, owner) == earlyRollback,
+            "a retry of a pre-switch rollback retains the published selection");
         ExpectRefusal(() => crossedCandidate.SelectPrevious(priorSelectionIntent, crossedCandidate.Digest, owner),
             "UPDATE_SLOT_SELECTION_CONFLICT", "rollback rejects a candidate application paired with predecessor data");
         ExpectRefusal(() => changedCandidateManifest.SelectPrevious(priorSelectionIntent, changedCandidateManifest.Digest, owner),

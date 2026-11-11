@@ -515,14 +515,18 @@ internal static class WindowsContainmentServiceInstaller
                 throw new IOException("SERVICE_INSTALL_CONFIG_UNAVAILABLE");
             var configuration = Marshal.PtrToStructure<QueryServiceConfiguration>(buffer);
             var command = Marshal.PtrToStringUni(configuration.BinaryPathName) ?? throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
-            if (command.Length < 3 || command[0] != '"')
-                throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
-            var endQuote = command.IndexOf('"', 1);
-            if (endQuote <= 1 || command[(endQuote + 1)..].Trim() != "service")
-                throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
-            return Path.GetFullPath(command[1..endQuote]);
+            return ParseRegisteredImagePath(command);
         }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    internal static string ParseRegisteredImagePath(string command)
+    {
+        if (command.Length < 3 || command[0] != '"') throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
+        var endQuote = command.IndexOf('"', 1);
+        if (endQuote <= 1 || command[(endQuote + 1)..].Trim() != "service"
+            || !Path.IsPathFullyQualified(command[1..endQuote])) throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
+        return Path.GetFullPath(command[1..endQuote]);
     }
 
     private static void StopAndWait(SafeServiceHandle service)

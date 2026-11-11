@@ -125,6 +125,7 @@ internal sealed class UpdateWorkerCore : IDisposable
                 if (!TerminalSelectionMatches(transaction, selection))
                     return Held(command.RequestId, current, "UPDATE_SLOT_SELECTION_CONFLICT");
             }
+            else UpdateTransactionStore.RequireInitialOrEmptySelection(transactions.ReadSelection());
             var pending = io.Read("journal.pending.json");
             if (pending is not null)
             {

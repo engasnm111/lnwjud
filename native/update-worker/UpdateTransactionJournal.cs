@@ -79,6 +79,7 @@ internal sealed record SlotSelection(
     DataGeneration DataGeneration)
 {
     internal string Digest => Hash(Encode());
+    internal bool IsInitialPublication => Revision == 1 && PreviousDigest == "none";
 
     internal static SlotSelection Create(string installationId, ulong generation, ulong revision, string previousDigest,
         ProcessOwner owner, string transactionId, string slot, string slotDigest, DataGeneration dataGeneration)
@@ -170,7 +171,8 @@ internal sealed record SlotSelection(
         if (Digest == transaction.PreviousSelectionDigest && Generation != ulong.MaxValue && Generation + 1 == transaction.Generation
             && Slot == transaction.PreviousSlot && SlotDigest == transaction.PreviousSlotDigest
             && DataGeneration == transaction.PreviousDataGeneration)
-            return this;
+            return Create(InstallationId, transaction.Generation, 1, Digest, owner, transaction.TransactionId,
+                Slot, SlotDigest, DataGeneration);
         if (Generation != transaction.Generation || TransactionId != transaction.TransactionId)
             throw new Refusal("UPDATE_SLOT_SELECTION_CONFLICT");
         if (Slot == transaction.PreviousSlot && SlotDigest == transaction.PreviousSlotDigest

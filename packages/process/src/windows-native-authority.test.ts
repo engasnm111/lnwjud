@@ -5,8 +5,53 @@ import path from 'node:path';
 import os from 'node:os';
 import { describe, it, expect } from 'vitest';
 import { readWindowsContainmentReceipt } from './windows-contained-launch.js';
-import { WindowsNativeAuthority } from './windows-native-authority.js';
+import { WindowsNativeAuthority, type WindowsContainmentServiceClient } from './windows-native-authority.js';
 import { nativeFixture } from '../test/native-fixture.js';
+
+describe('native update startup boundary', () => {
+  function authority(inspectUpdateStartup?: () => Promise<unknown>): WindowsNativeAuthority {
+    const client: WindowsContainmentServiceClient = {
+      request: async () => { throw new Error('Process RPC must not authorize startup'); },
+      startWatcher: async () => undefined,
+      ...(inspectUpdateStartup === undefined ? {} : { inspectUpdateStartup }),
+    };
+    return new WindowsNativeAuthority({
+      helper: { executable: process.execPath, sha256: 'a'.repeat(64), buildId: 'lnwjud-containment-v2' },
+      pin: { modulePath: path.resolve('unused-pin.node'), sha256: 'b'.repeat(64) },
+    }, client);
+  }
+
+  it.each([
+    { kind: 'unmanaged', reason: 'MANUAL_INSTALLATION' },
+  ])('permits only an explicit manual-installation footprint: %j', async (reply) => {
+    expect(await authority(async () => reply).inspectUpdateStartup())
+      .toEqual({ kind: 'unmanaged', reason: 'MANUAL_INSTALLATION' });
+  });
+
+  it('keeps the native enrollment hold and never treats it as manual', async () => {
+    expect(await authority(async () => ({ kind: 'held', reason: 'UPDATE_ENROLLMENT_UNVERIFIED' })).inspectUpdateStartup())
+      .toEqual({ kind: 'held', reason: 'UPDATE_ENROLLMENT_UNVERIFIED' });
+  });
+
+  it.each([
+    null, undefined, {},
+    { kind: 'ready' },
+    { protocol: 3, kind: 'unmanaged', reason: 'MANUAL_INSTALLATION' },
+    { kind: 'unmanaged', reason: 'MISSING_JOURNAL' },
+    { protocol: 2, kind: 'unmanaged', reason: 'MANUAL_INSTALLATION' },
+    { kind: 'unmanaged', reason: 'MANUAL_INSTALLATION', slot: 'candidate' },
+    { kind: 'held', reason: 'untrusted path detail' },
+  ])('holds incomplete or invented startup authorization: %j', async (reply) => {
+    expect(await authority(async () => reply).inspectUpdateStartup())
+      .toEqual({ kind: 'held', reason: 'UPDATE_STARTUP_INSPECTION_UNAVAILABLE' });
+  });
+
+  it('holds absent capability and inspection failures', async () => {
+    expect((await authority().inspectUpdateStartup()).kind).toBe('held');
+    expect((await authority(async () => { throw new Error('private detail'); }).inspectUpdateStartup()))
+      .toEqual({ kind: 'held', reason: 'UPDATE_STARTUP_INSPECTION_UNAVAILABLE' });
+  });
+});
 
 describe('native receipt issuer boundary', () => {
   it('does not release a writer for a fabricated shape-compatible legacy receipt', async () => {

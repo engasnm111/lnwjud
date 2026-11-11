@@ -59,6 +59,8 @@ Worker startup and the `status` command check A/B transaction records under the 
 
 The schema-2 `SlotSelection` and `UpdateTransactionJournal` records bind an application slot to a required immutable `DataGeneration`. A data generation contains a canonical nonempty GUID and a lowercase SHA-256 manifest digest. Candidate and predecessor selections compare both values during retries, rollback, successor validation, and interrupted publication. Schema-1 records without the data pair are refused.
 
+If the transaction journal disappears after a slot switch, writable startup and new transaction creation hold. A rollback requested before the candidate becomes active publishes the exact previous application/data pair under the interrupted transaction's generation. Retrying that selection preserves its revision, and the previous application still requires independent health verification.
+
 These values record identity. They do not create a data snapshot or verify its bytes. The worker still refuses evidence-free health, commit, and verified rollback states. Automatic installation remains unavailable.
 
 ## Verification

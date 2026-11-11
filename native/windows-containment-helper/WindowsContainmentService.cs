@@ -85,21 +85,23 @@ internal static class WindowsContainmentService
     }
 
 #if NATIVE_CONTAINMENT_TESTS
-    internal static Task RunPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken, bool useCurrentUserTestLauncher = false) =>
-        RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher);
+    internal static Task RunPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken,
+        bool useCurrentUserTestLauncher = false, UpdateStartupGate? startup = null) =>
+        RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher, startup: startup);
 
     internal static Task RunAuthenticatedTestPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken) =>
         RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher: false, useCurrentUserTestPipeSecurity: true);
 #endif
 
-    private static Task RunProductionPipeServerAsync(ServiceEndpointIdentity.ProductionServiceAuthority authority, ServiceAttemptLedger ledger, CancellationToken cancellationToken)
+    private static Task RunProductionPipeServerAsync(ServiceEndpointIdentity.ProductionServiceAuthority authority, ServiceAttemptLedger ledger,
+        string serviceStore, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authority);
-        authority.RequireActive();
-        return RunPipeServerCoreAsync(PipeName, ledger, cancellationToken, false);
+        return RunPipeServerCoreAsync(PipeName, ledger, cancellationToken, false, startup: UpdateStartupGate.Installed(authority, serviceStore));
     }
 
-    private static async Task RunPipeServerCoreAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken, bool useCurrentUserTestLauncher, bool useCurrentUserTestPipeSecurity = false)
+    private static async Task RunPipeServerCoreAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken,
+        bool useCurrentUserTestLauncher, bool useCurrentUserTestPipeSecurity = false, UpdateStartupGate? startup = null)
     {
         ArgumentNullException.ThrowIfNull(ledger);
         var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher);
@@ -128,7 +130,7 @@ internal static class WindowsContainmentService
                 try
                 {
                     await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-                    workers.Add(HandleClientAndDisposeAsync(pipe, ledger, runtime, imports, cancellationToken));
+                    workers.Add(HandleClientAndDisposeAsync(pipe, ledger, runtime, imports, startup, cancellationToken));
                 }
                 catch
                 {
@@ -146,7 +148,7 @@ internal static class WindowsContainmentService
     }
 
     private static async Task HandleClientAndDisposeAsync(NamedPipeServerStream pipe, ServiceAttemptLedger ledger, WindowsServiceProcessRuntime runtime,
-        ServiceImportTransactionRuntime imports, CancellationToken serviceStopping)
+        ServiceImportTransactionRuntime imports, UpdateStartupGate? startup, CancellationToken serviceStopping)
     {
         using (pipe)
         using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(serviceStopping))
@@ -155,15 +157,26 @@ internal static class WindowsContainmentService
             try
             {
                 var requestBytes = await ReadFrameAsync(pipe, timeout.Token).ConfigureAwait(false);
-                var request = JsonSerializer.Deserialize<RpcRequest>(requestBytes, Json)
-                    ?? throw new IOException("SERVICE_REQUEST_INVALID");
-                CryptographicOperations.ZeroMemory(requestBytes);
+                RpcRequest request;
+                try
+                {
+                    request = JsonSerializer.Deserialize<RpcRequest>(requestBytes, Json)
+                        ?? throw new IOException("SERVICE_REQUEST_INVALID");
+                    if (request.Command == "update_startup")
+                    {
+                        using var envelope = JsonDocument.Parse(requestBytes);
+                        if (envelope.RootElement.EnumerateObject().Count() != 2)
+                            throw new IOException("SERVICE_UPDATE_STARTUP_REQUEST_INVALID");
+                    }
+                }
+                finally { CryptographicOperations.ZeroMemory(requestBytes); }
                 if (request.Protocol != 3) throw new IOException("SERVICE_PROTOCOL_INVALID");
                 if (request.Command == "control") timeout.CancelAfter(TimeSpan.FromSeconds(120));
 
                 using var caller = AuthenticatedPipeCaller.Capture(pipe);
                 object result = request.Command switch
                 {
+                    "update_startup" => startup?.Inspect() ?? UpdateStartupGate.Unavailable,
                     "prepare" => Prepare(ledger, request, caller.Sid),
                     "run" => Run(ledger, runtime, request, caller),
                     "inspect" => Inspect(runtime, request, caller.Sid),
@@ -429,7 +442,7 @@ internal static class WindowsContainmentService
             var directory = EnsureStoreDirectory();
             var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(Path.Combine(directory, "attempts.json")), Path.Combine(directory, "imports"));
             SetStatus(ServiceRunning, AcceptStop, 0);
-            RunProductionPipeServerAsync(authority, ledger, stopping.Token).GetAwaiter().GetResult();
+            RunProductionPipeServerAsync(authority, ledger, directory, stopping.Token).GetAwaiter().GetResult();
             SetStatus(ServiceStopped, 0, 0);
         }
         catch

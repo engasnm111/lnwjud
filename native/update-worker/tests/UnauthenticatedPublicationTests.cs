@@ -24,6 +24,7 @@ internal static class UnauthenticatedPublicationTests
             foreach (var rollback in new[] { false, true })
                 ForgedTerminal(Path.Combine(directory, "terminal-" + rollback), rollback);
             TerminalSelectionPairing(Path.Combine(directory, "terminal-selection-pairing"));
+            MissingJournalAfterSwitch(Path.Combine(directory, "missing-journal-after-switch"));
             RejectMalformedStage(Path.Combine(directory, "malformed-transaction"), false);
             RejectMalformedStage(Path.Combine(directory, "malformed-slot"), true);
             return assertions;
@@ -42,6 +43,37 @@ internal static class UnauthenticatedPublicationTests
         var before = ReadExisting(root);
         using (var store = new UpdateTransactionStore(root, Installation))
             Refuses(() => store.RecoverPublications(), slot ? "UPDATE_SLOT_SELECTION_INVALID" : "UPDATE_TRANSACTION_INVALID");
+        CheckUnchanged(root, before);
+    }
+
+    private static void MissingJournalAfterSwitch(string root)
+    {
+        var owner = WindowsStoreIO.CurrentOwner();
+        var (initial, transaction) = Initialize(root, owner);
+        foreach (var phase in new[] { UpdateTransactionPhase.QuiesceIntent, UpdateTransactionPhase.Quiesced,
+            UpdateTransactionPhase.TunnelStopIntent, UpdateTransactionPhase.TunnelStopped, UpdateTransactionPhase.CandidateSelectionIntent })
+            transaction = Advance(root, transaction, phase, owner);
+        SlotSelection selected;
+        using (var store = new UpdateTransactionStore(root, Installation))
+            selected = store.SelectCandidate(transaction, transaction.Digest, initial.Digest, owner);
+        File.Delete(Path.Combine(root, "transaction.json"));
+        var before = ReadExisting(root);
+        using (var core = new UpdateWorkerCore(root, Installation))
+        foreach (var command in new[] { "status", "recover" })
+        {
+            var result = core.Execute(new Command("missing-journal-" + command, command))["result"]!;
+            Check(result["kind"]!.GetValue<string>() == "held" && !result["safeToStart"]!.GetValue<bool>()
+                && result["reason"]!.GetValue<string>() == "UPDATE_SELECTION_WITHOUT_TRANSACTION",
+                "a missing journal after slot activation holds writable startup");
+        }
+        using (var store = new UpdateTransactionStore(root, Installation))
+        {
+            Refuses(() => store.RecoverPublications(), "UPDATE_SELECTION_WITHOUT_TRANSACTION");
+            var next = UpdateTransactionJournal.Create(selected, "none", owner, "next-request", "next-release", 1,
+                Digest('e'), "6.0.1", initial.SlotDigest, initial.DataGeneration, new TunnelSnapshot(false, false, null),
+                Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+            Refuses(() => store.PersistTransaction(next, "none"), "UPDATE_SELECTION_WITHOUT_TRANSACTION");
+        }
         CheckUnchanged(root, before);
     }
 

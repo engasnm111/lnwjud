@@ -95,8 +95,12 @@ export type WindowsContainmentRpcRequest = { readonly protocol: 3; readonly iden
 );
 export interface WindowsContainmentServiceClient {
   request<T = unknown>(request: WindowsContainmentRpcRequest): Promise<T>;
+  inspectUpdateStartup?(): Promise<unknown>;
   startWatcher(child: ChildProcess, identity: NativeAttemptBinding): Promise<void>;
 }
+export type WindowsUpdateStartupDisposition =
+  | { readonly kind: 'unmanaged'; readonly reason: 'MANUAL_INSTALLATION' }
+  | { readonly kind: 'held'; readonly reason: string };
 interface AttemptLocation { readonly directory?: string; readonly binding: NativeAttemptBinding }
 const BINDING_FIELDS = ['taskId', 'reservationId', 'attemptId', 'generation', 'requestDigest', 'ownerClientId', 'ownerSessionId', 'workspaceId'] as const;
 const MAX_RPC_BYTES = 1024 * 1024;
@@ -118,6 +122,21 @@ export class WindowsNativeAuthority {
     this.client = client ?? new ProcessWindowsContainmentServiceClient(configuration);
   }
   public get config(): WindowsNativeAuthorityConfiguration { return this.configuration; }
+
+  public async inspectUpdateStartup(): Promise<WindowsUpdateStartupDisposition> {
+    try {
+      const result = await this.client.inspectUpdateStartup?.();
+      if (isRecord(result) && Object.keys(result).length === 2) {
+        if (result.kind === 'unmanaged' && result.reason === 'MANUAL_INSTALLATION') {
+          return { kind: 'unmanaged', reason: 'MANUAL_INSTALLATION' };
+        }
+        if (result.kind === 'held' && typeof result.reason === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(result.reason)) {
+          return { kind: 'held', reason: result.reason };
+        }
+      }
+    } catch { /* An unreadable footprint cannot authorize writable startup. */ }
+    return { kind: 'held', reason: 'UPDATE_STARTUP_INSPECTION_UNAVAILABLE' };
+  }
 
   public async clearStaleTunnelAlias(request: StaleTunnelAliasCleanupRequest): Promise<void> {
     if (process.platform !== 'win32') throw new Error('TUNNEL_STALE_WINDOWS_REQUIRED');
@@ -385,15 +404,32 @@ export class WindowsNativeAuthority {
 
 class ProcessWindowsContainmentServiceClient implements WindowsContainmentServiceClient {
   public constructor(private readonly configuration: WindowsNativeAuthorityConfiguration) {}
-  public async request<T>(request: WindowsContainmentRpcRequest): Promise<T> {
+  public request<T>(request: WindowsContainmentRpcRequest): Promise<T> {
+    return this.invoke(request);
+  }
+  public async inspectUpdateStartup(): Promise<unknown> {
+    try {
+      const result = await this.invoke<unknown>({ protocol: 3, command: 'update_startup' });
+      if (!isRecord(result) || Object.keys(result).length !== 2
+        || result.kind !== 'unmanaged' || result.reason !== 'MANUAL_INSTALLATION') return result;
+    } catch { /* Only a fresh local footprint can permit an unavailable service's manual installation. */ }
+    return this.invoke({ protocol: 3, command: 'update_startup' }, 'update-startup-footprint');
+  }
+  private async invoke<T>(request: WindowsContainmentRpcRequest | { readonly protocol: 3; readonly command: 'update_startup' },
+    command: 'service-rpc' | 'update-startup-footprint' = 'service-rpc'): Promise<T> {
     if (process.platform !== 'win32') throw new Error('NATIVE_WINDOWS_REQUIRED');
     const payload = Buffer.from(JSON.stringify(request), 'utf8');
     if (payload.length > MAX_RPC_BYTES) throw new Error('NATIVE_SERVICE_REQUEST_TOO_LARGE');
     const pinned = await pinVerifiedHelper(this.configuration);
-    const child = spawn(this.configuration.helper.executable, ['service-rpc', this.configuration.helper.sha256.toLowerCase()], {
-      windowsHide: true, shell: false, env: helperEnvironment(), stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    if (child.stdout === null) { pinned.close(); throw new Error('NATIVE_SERVICE_STDOUT_UNAVAILABLE'); }
+    let child: ChildProcess;
+    try {
+      child = spawn(this.configuration.helper.executable, command === 'service-rpc'
+        ? [command, this.configuration.helper.sha256.toLowerCase()] : [command], {
+        windowsHide: true, shell: false, env: helperEnvironment(), stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) { pinned.close(); throw error; }
+    child.once('close', () => pinned.close());
+    if (child.stdout === null) { child.kill(); throw new Error('NATIVE_SERVICE_STDOUT_UNAVAILABLE'); }
     const chunks: Buffer[] = [];
     let outputBytes = 0;
     let overflow = false;
@@ -402,25 +438,33 @@ class ProcessWindowsContainmentServiceClient implements WindowsContainmentServic
       if (outputBytes > MAX_RPC_BYTES) { overflow = true; child.kill(); return; }
       chunks.push(Buffer.from(chunk));
     });
-    child.stderr.resume();
+    child.stderr?.resume();
     let completed = false;
     try {
       // A Windows service process launch can incur antivirus/profile activation
       // latency. Bound run separately from short observation RPCs; failure
       // remains termination_unknown and never authorizes a duplicate launch.
       const completion = childCompletion(child, request.command === 'control' ? 120_000 : request.command === 'run' ? 40_000 : 15_000);
-      await writePrivateFrame(child, payload, true);
-      const exitCode = await completion;
+      const input = command === 'service-rpc' ? writePrivateFrame(child, payload, true) : Promise.resolve().then(() => {
+        child.stdin?.on('error', () => undefined);
+        child.stdin?.end();
+      });
+      const [exitCode] = await Promise.all([completion, input]);
       completed = true;
       if (overflow || outputBytes === 0) throw new Error('NATIVE_SERVICE_RPC_FAILED');
       const output = Buffer.concat(chunks, outputBytes);
       if (exitCode !== 0) throw new Error(serviceEndpointFailure(exitCode, output) ?? 'NATIVE_SERVICE_RPC_FAILED');
       const envelope: unknown = JSON.parse(output.toString('utf8'));
+      if (command === 'update-startup-footprint') {
+        if (!isRecord(envelope) || Object.keys(envelope).length !== 3 || envelope.protocol !== 3
+          || !Object.hasOwn(envelope, 'kind') || !Object.hasOwn(envelope, 'reason')) throw new Error('NATIVE_SERVICE_RESPONSE_INVALID');
+        return { kind: envelope.kind, reason: envelope.reason } as T;
+      }
       if (!isRecord(envelope) || envelope.protocol !== 3 || typeof envelope.ok !== 'boolean') throw new Error('NATIVE_SERVICE_RESPONSE_INVALID');
       if (!envelope.ok) throw new Error(serviceResponseFailure(envelope.error));
       if (!Object.hasOwn(envelope, 'result')) throw new Error('NATIVE_SERVICE_RESPONSE_INVALID');
       return envelope.result as T;
-    } finally { if (!completed) child.kill(); pinned.close(); }
+    } finally { if (!completed) child.kill(); }
   }
   public startWatcher(child: ChildProcess, identity: NativeAttemptBinding): Promise<void> {
     const payload = Buffer.from(JSON.stringify({ protocol: 3, command: 'watch', identity }), 'utf8');
@@ -664,11 +708,11 @@ function delay(ms: number): Promise<void> { return new Promise((resolve) => setT
 function childCompletion(child: ChildProcess, timeoutMs: number): Promise<number | null> {
   return new Promise((resolve, reject) => {
     const cleanup = (): void => { clearTimeout(timer); child.removeListener('error', onError); child.removeListener('close', onClose); };
-    const onError = (error: Error): void => { cleanup(); reject(error); };
+    const onError = (error: Error): void => { clearTimeout(timer); reject(error); };
     const onClose = (code: number | null): void => { cleanup(); resolve(code); };
-    const timer = setTimeout(() => { child.kill(); cleanup(); reject(new Error('NATIVE_SERVICE_RPC_TIMEOUT')); }, timeoutMs);
+    const timer = setTimeout(() => { reject(new Error('NATIVE_SERVICE_RPC_TIMEOUT')); child.kill(); }, timeoutMs);
     timer.unref();
-    child.once('error', onError);
+    child.on('error', onError);
     child.once('close', onClose);
   });
 }
@@ -679,13 +723,16 @@ async function writePrivateFrame(child: ChildProcess, payload: Buffer, end: bool
   await new Promise<void>((resolve, reject) => {
     const input = child.stdin;
     if (input === null) { reject(new Error('NATIVE_PRIVATE_PIPE_REQUIRED')); return; }
-    const onError = (error: Error): void => { input.removeListener('error', onError); reject(error); };
-    input.once('error', onError);
-    input.write(frame, (error?: Error | null) => {
+    const onError = (error: Error): void => { reject(error); };
+    input.on('error', onError);
+    input.once('close', () => {
       input.removeListener('error', onError);
+      reject(new Error('NATIVE_PRIVATE_PIPE_CLOSED'));
+    });
+    input.write(frame, (error?: Error | null) => {
       if (error) { reject(error); return; }
-      if (end) input.end();
-      resolve();
+      if (end) input.end(resolve);
+      else resolve();
     });
   });
 }

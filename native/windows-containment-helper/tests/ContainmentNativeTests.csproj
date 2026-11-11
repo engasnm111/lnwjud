@@ -20,6 +20,7 @@
     <Compile Include="../AuthenticatedPipeCaller.cs" Link="AuthenticatedPipeCaller.cs" />
     <Compile Include="../ServicePipeSecurity.cs" Link="ServicePipeSecurity.cs" />
     <Compile Include="../WindowsContainmentService.cs" Link="WindowsContainmentService.cs" />
+    <Compile Include="../UpdateStartupGate.cs" Link="UpdateStartupGate.cs" />
     <Compile Include="../WindowsContainmentServiceInstaller.cs" Link="WindowsContainmentServiceInstaller.cs" />
     <Compile Include="../WindowsServiceProcessRuntime.cs" Link="WindowsServiceProcessRuntime.cs" />
     <Compile Include="../WindowsContainmentServiceClient.cs" Link="WindowsContainmentServiceClient.cs" />

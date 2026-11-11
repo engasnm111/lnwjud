@@ -34,6 +34,8 @@ Before writable startup, the main process asks the installed authority to reconc
 
 ## Shape
 
+Windows managed installs use an installer-selected directory beneath the 64-bit Program Files Known Folder. The stable launcher is `<installRoot>/lnwjud.exe`. The enrolled containment service stays outside the slots at `<installRoot>/resources/native-containment/lnwjud-containment.exe`. An application slot is exactly `<installRoot>/slots/A` or `<installRoot>/slots/B` and contains the ordinary Electron executable and resources. Its pinned helper is `resources/native-containment/lnwjud-containment.exe` relative to that slot. Windows compares these names case-insensitively. The kernel-reported, resolved image of a pinned helper running in this protected role requires managed startup admission even if the machine registration disappears. Another slot name in the same protected layout holds for investigation. A folder named `slots` elsewhere does not establish enrollment.
+
 The caller sees one `UpdateTransactions` interface. The service owns package authentication, the transaction journal, slot selection, restart supervision, health checks, and rollback.
 
 ```ts

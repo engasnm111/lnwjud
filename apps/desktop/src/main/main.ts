@@ -1,4 +1,5 @@
 import { isEngineeringWorkerTarget } from '@lnwjud/shared';
+import { assertHostWindowsUpdateStartup } from '@lnwjud/capabilities';
 import { app, BrowserWindow, clipboard, ClipboardItem, crashReporter, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
@@ -103,7 +104,7 @@ import { installPdfProvider } from './pdf-provider-installer.js';
 import { DesktopShutdownCoordinator } from './desktop-shutdown.js';
 import { DesktopIpcDrainBarrier } from './desktop-ipc-drain.js';
 import { parseOpenExternalSetupPageRequest, resolveExternalSetupUrl } from './external-setup-links.js';
-import { shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
+import { DesktopStartupIntents, shouldHoldSingleInstanceLock, wantsMcpStdio } from './instance-lock.js';
 import { createLogViewerWindow, createMainWindow, createMutationApprovalWindow, getRendererEntryPath, isAllowedRendererUrl } from './window.js';
 import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, getTrayIconPath, shouldHideMainWindowOnClose } from './tray.js';
 import { fingerprintDownloadedUpdate, installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from './update-install.js';
@@ -1577,6 +1578,18 @@ function isPermissionProfile(value: unknown): value is PermissionProfileName {
 
 let mainWindow: BrowserWindow | null = null;
 let logViewerWindow: BrowserWindow | null = null;
+const desktopStartupIntents = new DesktopStartupIntents((intent) => {
+  const existing = logViewerWindow !== null && !logViewerWindow.isDestroyed() ? logViewerWindow : null;
+  if (existing !== null) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+  } else if (intent === 'log-viewer') {
+    openLogViewerWindow();
+  } else {
+    revealMainWindow();
+  }
+});
 interface PendingMutationApproval {
   readonly prompt: MutationApprovalPrompt;
   readonly complete: (approved: boolean) => void;
@@ -2057,8 +2070,6 @@ function redirectConsoleToStderr(): void {
 
 function bootstrapMcpStdio(): void {
   redirectConsoleToStderr();
-  app.commandLine.appendSwitch('disable-gpu');
-  app.commandLine.appendSwitch('disable-software-rasterizer');
   const dataPath = configureDataPath();
   void app.whenReady().then(async () => {
     assertSupportedPlatform();
@@ -2994,7 +3005,6 @@ function toElectronSaveDialogOptions(options: NativeDialogOptions): Electron.Sav
 }
 
 function bootstrapDesktop(configuredDataPath?: string): void {
-  if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   const dataPath = configureDataPath(configuredDataPath);
   recordDesktopStartup('app-ready:waiting');
   void app.whenReady().then(async () => {
@@ -3027,6 +3037,7 @@ function bootstrapDesktop(configuredDataPath?: string): void {
     createDesktopWindow();
     recordDesktopStartup('window:create:end');
     createDesktopTray();
+    desktopStartupIntents.ready();
     recordDesktopStartup('desktop:started');
     crashDiagnostics?.record({ type: 'desktop-lifecycle', processType: 'main', reason: 'desktop-started' });
     void runtime.autoStartMcp().catch((error: unknown) => {
@@ -3061,7 +3072,6 @@ function bootstrapDesktop(configuredDataPath?: string): void {
 
 function bootstrapLogViewerOnly(configuredDataPath?: string): void {
   const dataPath = configureDataPath(configuredDataPath);
-  if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
   void app.whenReady().then(async () => {
     assertSupportedPlatform();
     await prepareDataPath(dataPath);
@@ -3080,6 +3090,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
         if (mainWindow === viewer) mainWindow = null;
       });
     }
+    desktopStartupIntents.ready();
   }).catch((error: unknown) => handleDesktopStartupFailure('log viewer', error));
   app.on('window-all-closed', () => {
     handleDesktopWindowsClosed('log-viewer');
@@ -3088,6 +3099,7 @@ function bootstrapLogViewerOnly(configuredDataPath?: string): void {
 }
 
 function handleDesktopStartupFailure(scope: string, error: unknown): void {
+  desktopStartupIntents.cancel();
   const message = error instanceof Error ? error.message : 'unknown error';
   recordDesktopStartup(`${scope}:failed`, error);
   console.error('[Startup] ' + scope + ' failed: ' + message);
@@ -3329,61 +3341,73 @@ export async function prepareDataPath(dataPath: string): Promise<void> {
   if (restore.applied) console.log(`Database restore applied from ${restore.backupId ?? 'scheduled backup'}`);
 }
 
-const factoryResetApplyRequested = process.argv.includes(FACTORY_RESET_APPLY_ARG);
-if (factoryResetApplyRequested) {
-  const dataPath = resolveLnwjudDataPath(process.env, app.getPath('appData'), process.platform);
-  try {
-    if (!applyPendingFactoryResetSync(dataPath, resolveTunnelProfileDirectory())) {
-      throw new Error('Factory reset marker is missing');
-    }
-    const args = process.argv.slice(1).filter((argument) =>
-      argument !== FACTORY_RESET_APPLY_ARG && !argument.startsWith('--user-data-dir='));
-    app.relaunch({ args });
-    app.exit(0);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'unknown reset error';
-    console.error(`Factory reset failed: ${message}`);
-    try { dialog.showErrorBox('lnwjud reset failed', message); } catch { /* stderr remains available if native dialogs fail. */ }
-    app.exit(1);
+async function bootstrapEntrypoint(): Promise<void> {
+  if (platformCompatibility.disableHardwareAcceleration) app.disableHardwareAcceleration();
+  if (wantsMcpStdio(process.argv)) {
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-software-rasterizer');
   }
-} else {
+  const inspectUpdateStartup = async (dataPath: string): Promise<void> => {
+    if (process.platform !== 'win32') return;
+    await assertHostWindowsUpdateStartup(dataPath, app.isPackaged
+      ? path.join(process.resourcesPath, 'native-containment')
+      : path.join(app.getAppPath(), 'build', 'native-containment'));
+  };
+  const factoryResetApplyRequested = process.argv.includes(FACTORY_RESET_APPLY_ARG);
+  if (factoryResetApplyRequested) {
+    const dataPath = resolveLnwjudDataPath(process.env, app.getPath('appData'), process.platform);
+    await inspectUpdateStartup(dataPath);
+    try {
+      if (!applyPendingFactoryResetSync(dataPath, resolveTunnelProfileDirectory())) {
+        throw new Error('Factory reset marker is missing');
+      }
+      const args = process.argv.slice(1).filter((argument) =>
+        argument !== FACTORY_RESET_APPLY_ARG && !argument.startsWith('--user-data-dir='));
+      app.relaunch({ args });
+      app.exit(0);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'unknown reset error';
+      console.error(`Factory reset failed: ${message}`);
+      try { dialog.showErrorBox('lnwjud reset failed', message); } catch { /* stderr remains available if native dialogs fail. */ }
+      app.exit(1);
+    }
+    return;
+  }
   const holdsSingleInstanceLock = shouldHoldSingleInstanceLock(process.argv);
   const configuredUserDataPath = holdsSingleInstanceLock ? configureUserDataPath() : undefined;
+  const gotInstanceLock = holdsSingleInstanceLock ? app.requestSingleInstanceLock() : true;
+  if (!gotInstanceLock) {
+    app.quit();
+    return;
+  }
+  if (holdsSingleInstanceLock) {
+    app.on('second-instance', (_event, argv) => desktopStartupIntents.receive(argv));
+  }
+  await inspectUpdateStartup(configuredUserDataPath ?? resolveLnwjudDataPath(process.env, app.getPath('appData'), process.platform));
   if (configuredUserDataPath !== undefined) {
     try { clearFactoryResetBootstrapSync(configuredUserDataPath); } catch (error: unknown) {
       console.error(`Factory reset bootstrap cleanup failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
+    configureCrashRecovery(configuredUserDataPath);
+    recordDesktopStartup('entrypoint');
+    recordDesktopStartup('instance-lock:acquired');
+    configureDesktopSessionDiagnostics(configuredUserDataPath);
   }
-  const gotInstanceLock = holdsSingleInstanceLock ? app.requestSingleInstanceLock() : true;
-  if (!gotInstanceLock) {
-    app.quit();
+  if (wantsMcpStdio(process.argv)) {
+    bootstrapMcpStdio();
+  } else if (process.argv.includes('--log-viewer')) {
+    bootstrapLogViewerOnly(configuredUserDataPath);
   } else {
-    if (configuredUserDataPath !== undefined) {
-      configureCrashRecovery(configuredUserDataPath);
-      recordDesktopStartup('entrypoint');
-      recordDesktopStartup('instance-lock:acquired');
-      configureDesktopSessionDiagnostics(configuredUserDataPath);
-    }
-    if (holdsSingleInstanceLock) {
-      app.on('second-instance', (_event, argv) => {
-        const existing = logViewerWindow !== null && !logViewerWindow.isDestroyed() ? logViewerWindow : null;
-        if (existing !== null) {
-          if (existing.isMinimized()) existing.restore();
-          existing.show();
-          existing.focus();
-        } else if (argv.includes('--log-viewer')) {
-          openLogViewerWindow();
-        } else {
-          revealMainWindow();
-        }
-      });
-    }
-    if (wantsMcpStdio(process.argv)) {
-      bootstrapMcpStdio();
-    } else if (process.argv.includes('--log-viewer')) {
-      bootstrapLogViewerOnly(configuredUserDataPath);
-    } else {
-      bootstrapDesktop(configuredUserDataPath);
-    }
+    bootstrapDesktop(configuredUserDataPath);
   }
 }
+
+void bootstrapEntrypoint().catch((error: unknown) => {
+  desktopStartupIntents.cancel();
+  if (wantsMcpStdio(process.argv) || process.argv.includes(FACTORY_RESET_APPLY_ARG)) {
+    process.stderr.write(`lnwjud update admission failed: ${error instanceof Error ? error.message : 'unknown error'}\n`);
+    app.exit(1);
+    return;
+  }
+  handleDesktopStartupFailure('update admission', error);
+});
