@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { selectHostedReceiptArtifact } from './hosted-receipt-artifact.mjs';
+import { fetchHostedReceiptMetadata, selectHostedReceiptArtifact } from './hosted-receipt-artifact.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const expected = { runId: 987654321, sourceSha };
@@ -61,4 +61,45 @@ test('rejects untrusted expected identity shape and unsafe numeric run ids', () 
   const accessor = { ...expected };
   Object.defineProperty(accessor, 'sourceSha', { get() { throw new Error('GETTER_EXECUTED'); } });
   reject(run, listing, accessor);
+});
+
+const token = 'github_pat_example_token_for_metadata_only';
+const json = (value, headers = {}) => new Response(JSON.stringify(value), {
+  status: 200, headers: { 'content-type': 'application/json', ...headers },
+});
+
+test('fetches only the pinned authenticated GitHub API run and artifact listing', async t => {
+  const urls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    urls.push(url);
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.headers.authorization, `Bearer ${token}`);
+    assert.equal(new URL(url).origin, 'https://api.github.com');
+    return json(url.includes('/attempts/1') ? run : listing);
+  });
+  const selected = await fetchHostedReceiptMetadata(expected, token);
+  assert.equal(selected.status, 'github-artifact-metadata-observed-only');
+  assert.equal(selected.archiveSha256, 'b'.repeat(64));
+  assert.deepEqual(urls, [
+    'https://api.github.com/repos/engasnm111/lnwjud/actions/runs/987654321/attempts/1',
+    'https://api.github.com/repos/engasnm111/lnwjud/actions/runs/987654321/artifacts?per_page=100',
+  ]);
+});
+
+test('rejects unauthenticated input, pagination, malformed and mismatched GitHub responses', async t => {
+  await assert.rejects(fetchHostedReceiptMetadata(expected, ''), /HOSTED_RECEIPT_ARTIFACT_REFUSED/);
+  await assert.rejects(fetchHostedReceiptMetadata(expected, 'bad\\ntoken'), /HOSTED_RECEIPT_ARTIFACT_REFUSED/);
+  let mode = 'pagination';
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.includes('/attempts/1')) return json(run);
+    if (mode === 'pagination') return json(listing, { link: '<https://api.github.com/next>; rel="next"' });
+    if (mode === 'incomplete') return json({ total_count: 101, artifacts: [artifact] });
+    if (mode === 'wrong-run') return json({ total_count: 1, artifacts: [{ ...artifact, workflow_run: { id: 42, head_sha: sourceSha } }] });
+    if (mode === 'non-json') return new Response('not-json', { headers: { 'content-type': 'text/plain' } });
+    return json(listing);
+  });
+  for (const next of ['pagination', 'incomplete', 'wrong-run', 'non-json']) {
+    mode = next;
+    await assert.rejects(fetchHostedReceiptMetadata(expected, token), /HOSTED_RECEIPT_ARTIFACT_REFUSED/);
+  }
 });

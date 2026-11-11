@@ -1,3 +1,6 @@
+import { Buffer } from 'node:buffer';
+import { parseStrictJson } from './release-envelope.mjs';
+
 // Read-only GitHub API metadata selector for a future authenticated receipt fetch.
 // This does NOT download or authenticate archive bytes, verify the OIDC receipt,
 // establish a signer identity, or grant release/installation permission.
@@ -12,7 +15,7 @@ function snapshotExpected(value) {
   if (!plain(value)) refuse();
   const fields = Object.getOwnPropertyDescriptors(value);
   if (Object.keys(fields).sort().join(',') !== 'runId,sourceSha'
-    || !Object.hasOwn(fields.runId, 'value') || !Object.hasOwn(fields.sourceSha, 'value')
+    || !Object.prototype.hasOwnProperty.call(fields.runId, 'value') || !Object.prototype.hasOwnProperty.call(fields.sourceSha, 'value')
     || !positiveId(fields.runId.value) || !sha1(fields.sourceSha.value)) refuse();
   return Object.freeze({ runId: fields.runId.value, sourceSha: fields.sourceSha.value });
 }
@@ -55,4 +58,54 @@ export function selectHostedReceiptArtifact(run, listing, expected) {
     archiveSizeBytes: String(artifact.size_in_bytes),
     archiveApiPath: `repos/${repo}/actions/artifacts/${artifact.id}/zip`,
   });
+}
+
+const apiMaximum = 4 * 1024 * 1024;
+
+async function readAuthenticatedGithubJson(relative, token) {
+  const response = await globalThis.fetch(`https://api.github.com/repos/${repo}/${relative}`, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(30000),
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${token}`,
+      'x-github-api-version': '2022-11-28',
+      'user-agent': 'lnwjud-receipt-metadata-reader',
+    },
+  });
+  const body = response.body;
+  if (response.status !== 200 || response.headers.get('link') !== null
+    || !response.headers.get('content-type')?.toLowerCase().startsWith('application/json'))
+    refuse();
+  if (!body) throw new Error('HOSTED_RECEIPT_ARTIFACT_REFUSED');
+  const chunks = [Buffer.alloc(0)];
+  let length = 0;
+  for await (const chunk of body) {
+    length += chunk.byteLength;
+    if (length > apiMaximum) refuse();
+    chunks.push(Buffer.from(chunk));
+  }
+  return parseStrictJson(Buffer.concat(chunks), apiMaximum, 64);
+}
+
+/**
+ * Fetch the exact run and complete artifact listing from GitHub's authenticated
+ * API without accepting redirects or caller-provided URLs. This authenticates
+ * only the API transport and metadata, NOT archive bytes, receipt attestation,
+ * independent signing authority or installation permission.
+ */
+export async function fetchHostedReceiptMetadata(expected, token) {
+  const bound = snapshotExpected(expected);
+  if (typeof token !== 'string' || token.length < 10 || token.length > 4096
+    || !/^[A-Za-z0-9_]+$/.test(token)) refuse();
+  try {
+    const [run, listing] = await Promise.all([
+      readAuthenticatedGithubJson(`actions/runs/${bound.runId}/attempts/1`, token),
+      readAuthenticatedGithubJson(`actions/runs/${bound.runId}/artifacts?per_page=100`, token),
+    ]);
+    if (listing.total_count > 100) refuse();
+    return selectHostedReceiptArtifact(run, listing, bound);
+  } catch {
+    refuse();
+  }
 }
