@@ -179,7 +179,11 @@ describe('checked workflows through registered tools', () => {
   it.skipIf(process.platform === 'darwin')('keeps Full Bypass recipe children fenced and hands the current proof to checked benchmark dispatch', async () => {
     const fixture = await createFixture();
     const fence = createFence();
-    const registry = new ToolRegistry({ ...fixture.services, goalMutationFence: fence }, actor, fixture.options);
+    const validateGoalLease = vi.fn(async (_actor: FileActor, request: { goalId: string; leaseToken: string }) =>
+      request.goalId === proof.goalId && request.leaseToken === proof.leaseToken
+        ? ok({ workspaceId: fixture.workspace.id, leaseGeneration: proof.leaseGeneration })
+        : err(appError('CONFLICT', 'Stale goal lease', true)));
+    const registry = new ToolRegistry({ ...fixture.services, goalMutationFence: fence, goals: { validateGoalLease } as never }, actor, fixture.options);
     const input = { name: 'release-check', workspaceId: fixture.workspace.id, dryRun: false };
     const denied = await registry.invoke('recipe_run', input);
     expect(denied.structuredContent).toMatchObject({ status: 'failed', steps: [
@@ -190,6 +194,7 @@ describe('checked workflows through registered tools', () => {
     expect(await fixture.process.list(actor, fixture.workspace.id)).toMatchObject({ ok: true, value: [] });
     const admitted = await registry.invoke('recipe_run', { ...input, goalLease: proof });
     expect(admitted.structuredContent).toMatchObject({ status: 'completed' });
+    expect(validateGoalLease).toHaveBeenCalledWith(actor, { goalId: proof.goalId, leaseToken: proof.leaseToken });
     expect(fence.begin).toHaveBeenCalledTimes(1);
     expect(fence.begin.mock.calls[0]?.[3]).toEqual(proof);
     expect(fence.end).toHaveBeenCalledTimes(1);

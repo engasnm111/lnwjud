@@ -4,6 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./goal-event-authorization": {
+      "types": "./src/goal-event-authorization.ts",
+      "import": {
+        "development": "./src/goal-event-authorization.ts",
+        "default": "./dist/goal-event-authorization.js"
+      }
+    },
     ".": {
       "types": "./src/index.ts",
       "import": {

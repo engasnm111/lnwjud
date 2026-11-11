@@ -4,6 +4,11 @@ Release history is maintained here for release authoring; the [README](README.md
 
 ### What's new in v5.9.1
 
+- Recovered Goals continue through a newly acquired lease for both reads and mutations. Current lease validation fences cancelled and stale requests.
+- A local companion can pair through native workspace approval and consume signed committed Goal status events with durable replay, acknowledgement, credential rotation and revocation. See the [Goal Event API](docs/development/GOAL_EVENT_API.md).
+- Goal ที่กู้คืนใช้ lease รุ่นใหม่ทำงานต่อได้ทั้งคำสั่งอ่านและแก้ไข พร้อมป้องกันสิทธิ์เก่าและงานที่ถูกยกเลิก
+- Companion ในเครื่องรับ event สถานะ Goal หลังบันทึกจริงได้เมื่อผู้ใช้อนุญาตเฉพาะโปรเจกต์ พร้อมตรวจลายเซ็น รับซ้ำหลังเชื่อมต่อใหม่ และเพิกถอนสิทธิ์
+
 - **Packaged Windows installer safety regression (7 November 2026; unreleased source):** The hosted Windows [development installer run #42384358846](https://github.com/engasnm111/lnwjud/actions/runs/42384358846) at source SHA `f7f5f33c2e7d8d9ab71106a485d2632bb8099c99` passed the real NSIS silent `/currentuser` negative test: installation without authority for the protected service is refused before application extraction or unintended registration. The matching [Draft PR CI #42384163561](https://github.com/engasnm111/lnwjud/actions/runs/42384163561) and [push CI #42384159991](https://github.com/engasnm111/lnwjud/actions/runs/42384159991) also succeeded. This proves only the guarded refusal path, **not** a successful silent update, relaunch, Tunnel restoration or rollback; release trust and native transaction remain unconfigured.
 
 - **Hourly continuation early-wake repair:** A recurring Scheduled Continuation claimed before its first due time now returns a non-mutating `not_due` result. It preserves the exact hourly native task instead of incorrectly requesting a forbidden same-task retime and reporting `CONFLICT`. Focused regression coverage verifies no task update, successor or lease theft; installed recurring-wake acceptance remains separate.

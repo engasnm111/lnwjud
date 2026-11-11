@@ -11,6 +11,7 @@ import { SqliteDatabase } from './database.js';
 import { SqliteWorkspaceRepository } from './workspace-repository.js';
 import { SqliteGoalRepository } from './goal-repository.js';
 import { SqliteBackupService, applyPendingSqliteRestoreSync } from './backup-service.js';
+import { GOAL_CONTRACT_READER_VERSION } from './goal-contract-compatibility.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -55,13 +56,13 @@ describe('versioned Engineering authority', () => {
     const f = await fixture();
     try {
       f.database.connection.exec('CREATE TABLE IF NOT EXISTS runtime_compatibility (scope TEXT PRIMARY KEY, minimum_reader INTEGER NOT NULL);');
-      f.database.connection.prepare('INSERT OR REPLACE INTO runtime_compatibility VALUES (?, ?)').run('goal_contract', 3);
+      f.database.connection.prepare('INSERT OR REPLACE INTO runtime_compatibility VALUES (?, ?)').run('goal_contract', GOAL_CONTRACT_READER_VERSION + 1);
       expect(() => f.database.connection.prepare('UPDATE goals SET current_phase = ? WHERE id = ?').run('stale reader', f.goal.goalId)).toThrow('requires a newer lnwjud');
       f.database.close();
       expect(() => { const incompatible = new SqliteDatabase(f.filename); incompatible.close(); }).toThrow('requires a newer lnwjud');
       const legacy = new DatabaseSync(f.filename, { readOnly: true });
       try {
-        expect(legacy.prepare('SELECT minimum_reader FROM runtime_compatibility WHERE scope = ?').get('goal_contract')).toEqual({ minimum_reader: 3 });
+        expect(legacy.prepare('SELECT minimum_reader FROM runtime_compatibility WHERE scope = ?').get('goal_contract')).toEqual({ minimum_reader: GOAL_CONTRACT_READER_VERSION + 1 });
         expect(legacy.prepare('SELECT engineering_metadata_json FROM goals WHERE id = ?').get(f.goal.goalId)).toBeDefined();
       } finally { legacy.close(); }
     } finally { f.database.close(); }
@@ -75,7 +76,7 @@ describe('versioned Engineering authority', () => {
       const snapshot = await backup.create('manual');
       await backup.scheduleRestore(snapshot.id);
       const future = new DatabaseSync(path.join(backupDirectory, snapshot.id + '.sqlite'));
-      try { future.prepare('UPDATE runtime_compatibility SET minimum_reader = 3 WHERE scope = ?').run('goal_contract'); }
+      try { future.prepare('UPDATE runtime_compatibility SET minimum_reader = ? WHERE scope = ?').run(GOAL_CONTRACT_READER_VERSION + 1, 'goal_contract'); }
       finally { future.close(); }
       f.database.connection.prepare('UPDATE goals SET current_phase = ? WHERE id = ?').run('preserve current data', f.goal.goalId);
       await expect(backup.scheduleRestore(snapshot.id)).rejects.toThrow('requires a newer lnwjud');

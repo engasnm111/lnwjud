@@ -27,6 +27,7 @@ import { WORKFLOW_METADATA_MIGRATION_SQL } from './migrations/workflow-metadata-
 import { CALL_OBSERVABILITY_MIGRATION_SQL } from './migrations/call-observability-migration.js';
 import { AUDIT_CALL_HISTORY_PAGING_MIGRATION_SQL } from './migrations/audit-call-history-paging-migration.js';
 import { GOAL_CONTRACT_COMPATIBILITY_MIGRATION_SQL, configureGoalContractConnection } from './goal-contract-compatibility.js';
+import { GOAL_EVENTS_MIGRATION_SQL } from './migrations/goal-events-migration.js';
 
 export interface SqliteDatabaseOptions {
   readonly backupDirectory?: string;
@@ -117,6 +118,7 @@ export class SqliteDatabase {
       { id: '023_call_observability', sql: CALL_OBSERVABILITY_MIGRATION_SQL },
       { id: '024_audit_call_history_paging', sql: AUDIT_CALL_HISTORY_PAGING_MIGRATION_SQL },
       { id: '025_goal_contract_compatibility', sql: GOAL_CONTRACT_COMPATIBILITY_MIGRATION_SQL },
+      { id: '026_goal_events', sql: GOAL_EVENTS_MIGRATION_SQL },
     ]);
   }
 

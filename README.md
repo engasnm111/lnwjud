@@ -55,6 +55,8 @@
 
 ## Current source version: v5.9.1
 
+The development source includes the [local Goal Event API](docs/development/GOAL_EVENT_API.md) for explicitly approved workspace companions. v5.9.1 is not published yet.
+
 ### Ponytail developer skills (v5.9.0 source)
 
 The six bundled Ponytail document skills are pinned to [upstream v5.3.2](https://github.com/DietrichGebert/ponytail/releases/tag/v5.3.2), the latest stable release verified on 2026-10-21. They provide Lite/Full/Ultra coding guidance, review, audit, debt, impact and help; **there is no separate upstream hook/plugin installation**. Ponytail is OFF by default unless enabled explicitly through Global, Workspace or Current Goal settings. Coding actions remain subject to exact bundled-skill activation and normal workspace/Goal safety checks. See [Ponytail integration and package acceptance](docs/PONYTAIL.md) for pinned SHA, commands, provenance, validation and limitations.

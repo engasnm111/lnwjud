@@ -2,6 +2,8 @@
 
 ## v5.9.1 development candidate (not released)
 
+The candidate also includes recovered-Goal successor lease admission for reads and mutations, and the [local Goal Event API](GOAL_EVENT_API.md). The API requires native workspace consent and publishes signed committed status metadata with revocation and acknowledged replay. Release publication remains pending.
+
 The offline What's New registry includes a `5.9.1` entry with Thai and English descriptions of the single top-left titlebar update action (the duplicate Settings → General update test button has been removed), explicitly confirmed proven-idle same-client writer-lease recovery (ordinary acquisitions cannot reclaim active leases), and MCP refusal diagnostics. The current local Windows Setup and Portable packages are **unsigned test builds**, not production auto-update acceptance.
 
 Activity logs distinguish actual MCP-level `CONFLICT` (expired or missing Goal lease, writer-lease owner not idle), `EXECUTABLE_NOT_FOUND` (e.g. `pwsh` on Windows), and successful tool execution. **Host Safety refusals before dispatch are not necessarily recorded by lnwjud**, and therefore cannot be attributed to `shell` from the server-side audit alone. `shell` preserves restart-safe durable tasks; `process_start` owns an immediate managed process. Keep both until evidence justifies a backward-compatible change, not a safety bypass.

@@ -39,6 +39,7 @@ import type {
   ResourceSnapshotService,
 } from '@lnwjud/application';
 import { z } from 'zod';
+import { withGoalEventAuthorization } from '@lnwjud/shared/goal-event-authorization';
 import type { ContextEconomyRuntime } from '../context-economy.js';
 import type { OfficeDataWorkflowService } from '../office-data-workflow.js';
 import type { EccRuntimeOptions } from '../ecc-provider.js';
@@ -247,7 +248,7 @@ export function defineTool<T extends z.ZodType>(config: ToolConfig<T>): McpToolD
       authorization?: InvocationAuthorization,
       internal?: McpInternalInvocationContext,
     ): Promise<Result<unknown>> {
-      return config.handler(input as z.infer<T>, signal, authorization, internal);
+      return withGoalEventAuthorization(authorization, () => config.handler(input as z.infer<T>, signal, authorization, internal));
     },
   };
 }

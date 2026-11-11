@@ -288,6 +288,7 @@ function applyPendingSqliteRestoreUnlocked(
         targetArch: arch,
       })
       : emptyCrossHostRestore(stored.manifest, platform, arch, now);
+    const revokedGoalEventSubscriptions = revokeRestoredGoalEventAuthority(temporary, now().toISOString());
     validateDatabase(temporary);
     if (existsSync(dbPath)) createEmergencyBackup(dbPath, directory, platform, arch);
     const oldPath = dbPath + '.pre-restore';
@@ -304,8 +305,8 @@ function applyPendingSqliteRestoreUnlocked(
     rmSync(dbPath + '-wal', { force: true });
     rmSync(dbPath + '-shm', { force: true });
     const quarantinedFiles = crossHost ? quarantineHostBoundFiles(dbPath, marker.backupId, options.hostBoundPaths) : [];
-    const allQuarantinedItems = [...new Set([...restore.quarantinedItems, ...quarantinedFiles])];
-    if (crossHost && quarantinedFiles.length > 0) {
+    const allQuarantinedItems = [...new Set([...restore.quarantinedItems, ...quarantinedFiles, ...revokedGoalEventSubscriptions])];
+    if (crossHost && (quarantinedFiles.length > 0 || revokedGoalEventSubscriptions.length > 0)) {
       try { appendRestoreNotice(dbPath, restore.notice, allQuarantinedItems); } catch { /* the database replacement itself remains authoritative */ }
     }
     rmSync(claimPath, { force: true });
@@ -321,6 +322,28 @@ function applyPendingSqliteRestoreUnlocked(
     try { renameSync(claimPath, failedPath); } catch { /* best effort */ }
     return { applied: false, error: errorMessage(error) };
   }
+}
+
+function revokeRestoredGoalEventAuthority(filename: string, now: string): readonly string[] {
+  const database = new DatabaseSync(filename);
+  try {
+    if (!hasTable(database, 'goal_event_subscribers')) return [];
+    const rows = database.prepare('SELECT id FROM goal_event_subscribers WHERE revoked_at IS NULL').all();
+    database.prepare('UPDATE goal_event_subscribers SET revoked_at = ?, epoch = epoch + 1 WHERE revoked_at IS NULL').run(now);
+    const items = rows.map((row) => {
+      if (typeof row.id !== 'string') throw new Error('Goal event subscription state is invalid');
+      return `goal-event-subscription:${row.id}`;
+    });
+    if (hasTable(database, 'goal_event_signing_keys')) {
+      const keys = database.prepare('SELECT key_id FROM goal_event_signing_keys').all();
+      for (const key of keys) {
+        if (typeof key.key_id !== 'string') throw new Error('Goal event signing key state is invalid');
+        items.push(`goal-event-signing-key:${key.key_id}`);
+      }
+      database.exec('DELETE FROM goal_event_signing_keys');
+    }
+    return items;
+  } finally { database.close(); }
 }
 
 function createEmergencyBackup(dbPath: string, directory: string, platform: NodeJS.Platform, arch: string): void {
