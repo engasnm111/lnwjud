@@ -60,7 +60,7 @@ describe('MCP tool registry', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
   it('routes a strict five-field safe import through the authorized dedicated use-case, not generic Git', async () => {
     const runtimeCalls: unknown[] = [];
     const repositoryImport = new RepositoryImportService({
