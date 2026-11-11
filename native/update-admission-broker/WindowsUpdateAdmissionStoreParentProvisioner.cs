@@ -39,7 +39,11 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
             || (File.GetAttributes(basePath) & FileAttributes.ReparsePoint) != 0)
             throw new Refusal("STATE_PARENT_ACL_UNVERIFIED");
         var security = new DirectoryInfo(basePath).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
-        var descriptor = new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0);
+        ValidateProgramDataDacl(new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0));
+    }
+
+    internal static void ValidateProgramDataDacl(RawSecurityDescriptor descriptor)
+    {
         if (descriptor.Owner?.Value is not ("S-1-5-18" or "S-1-5-32-544")
             || descriptor.DiscretionaryAcl is not { } acl)
             throw new Refusal("STATE_PARENT_ACL_UNVERIFIED");
@@ -53,8 +57,9 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
                 continue;
             // Users may create ProgramData children but may not delete or
             // replace a protected child or modify the parent's security.
-            const int dangerous = 0x10000000 | 0x40000000 | 0x00010000 | 0x00000040
-                | 0x00040000 | 0x00080000;
+            // Allow only FILE_ADD_FILE and FILE_ADD_SUBDIRECTORY writes on
+            // ProgramData itself. Other write/attribute/ACL rights are unsafe.
+            const int dangerous = 0x520D0156 & ~0x6;
             if ((rule.AccessMask & dangerous) != 0)
                 throw new Refusal("STATE_PARENT_ACL_UNSAFE");
         }

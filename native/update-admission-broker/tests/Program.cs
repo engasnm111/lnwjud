@@ -185,6 +185,12 @@ internal static class Program
         AdmissionStore.ValidateProtectedParentDacl(
             new RawSecurityDescriptor(protectedParentSecurity.GetSecurityDescriptorBinaryForm(), 0), testServiceSid);
         Check(true, "provisioned parent ACL passes installed-store readback validator");
+        WindowsUpdateAdmissionStoreParentProvisioner.ValidateProgramDataDacl(
+            new RawSecurityDescriptor("O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000006;;;AU)"));
+        Check(true, "ProgramData permits unprivileged creation without deletion or attribute writes");
+        Refuses(() => WindowsUpdateAdmissionStoreParentProvisioner.ValidateProgramDataDacl(
+            new RawSecurityDescriptor("O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000100;;;AU)")),
+            "STATE_PARENT_ACL_UNSAFE");
         var provisionedAcl = new RawSecurityDescriptor(protectedParentSecurity.GetSecurityDescriptorBinaryForm(), 0);
         Check(provisionedAcl.DiscretionaryAcl!.Cast<GenericAce>().OfType<QualifiedAce>()
             .Where(ace => ace.SecurityIdentifier.Value == testServiceSid)
