@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import os from 'node:os';
@@ -113,7 +113,7 @@ describe('automatic updater release gate', () => {
   });
 
   it('reads a bounded ordinary receipt and rejects an oversized file', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-'));
+    const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-')));
     const file = path.join(directory, 'receipt.json');
     try {
       await writeFile(file, '{"schemaVersion":1}');
@@ -131,7 +131,7 @@ describe('automatic updater release gate', () => {
   });
 
   it('applies the release guard to a complete receipt read from disk', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-'));
+    const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-')));
     const file = path.join(directory, 'receipt.json');
     try {
       const { receipt, provenance, context } = fixture('win32', 'x64');
