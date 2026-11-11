@@ -1,6 +1,8 @@
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 
 namespace Lnwjud.UpdateAdmission;
 
@@ -11,6 +13,97 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
 {
     private static readonly SecurityIdentifier SystemSid = new(WellKnownSidType.LocalSystemSid, null);
     private static readonly SecurityIdentifier AdministratorsSid = new(WellKnownSidType.BuiltinAdministratorsSid, null);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SecurityAttributes
+    {
+        internal int Length;
+        internal nint SecurityDescriptor;
+        [MarshalAs(UnmanagedType.Bool)] internal bool InheritHandle;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateDirectoryW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateDirectoryWithSecurity(string path, ref SecurityAttributes security);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid { internal uint Low; internal int High; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LuidAndAttributes { internal Luid Luid; internal uint Attributes; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TokenPrivileges
+    {
+        internal uint Count;
+        internal LuidAndAttributes Entry;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern nint GetCurrentProcess();
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(nint process, uint access, out SafeAccessTokenHandle token);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "LookupPrivilegeValueW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValue(string? system, string privilege, out Luid luid);
+
+    [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "AdjustTokenPrivileges")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AdjustTokenPrivileges(SafeAccessTokenHandle token, bool disableAll,
+        ref TokenPrivileges desired, uint bufferLength, out TokenPrivileges previous, out uint returned);
+
+    [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "AdjustTokenPrivileges")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RestoreTokenPrivileges(SafeAccessTokenHandle token, bool disableAll,
+        ref TokenPrivileges previous, uint bufferLength, nint ignoredPrevious, nint ignoredLength);
+
+    private static void WithRestorePrivilege(Action action)
+    {
+        const uint tokenAdjustPrivileges = 0x20, tokenQuery = 0x8, enabled = 0x2;
+        if (!OpenProcessToken(GetCurrentProcess(), tokenAdjustPrivileges | tokenQuery, out var token))
+            throw new Refusal("MAINTENANCE_STORE_ROOT_PRIVILEGE_UNAVAILABLE");
+        using (token)
+        {
+            if (!LookupPrivilegeValue(null, "SeRestorePrivilege", out var luid))
+                throw new Refusal("MAINTENANCE_STORE_ROOT_PRIVILEGE_UNAVAILABLE");
+            var desired = new TokenPrivileges
+            {
+                Count = 1,
+                Entry = new LuidAndAttributes { Luid = luid, Attributes = enabled },
+            };
+            if (!AdjustTokenPrivileges(token, false, ref desired,
+                    (uint)Marshal.SizeOf<TokenPrivileges>(), out var previous, out _)
+                || Marshal.GetLastWin32Error() == 1300)
+                throw new Refusal("MAINTENANCE_STORE_ROOT_PRIVILEGE_UNAVAILABLE");
+            try { action(); }
+            finally
+            {
+                // Restore the exact prior privilege state, even on refusal.
+                if (previous.Count != 0 && !RestoreTokenPrivileges(token, false,
+                        ref previous, 0, 0, 0))
+                    throw new Refusal("MAINTENANCE_STORE_ROOT_PRIVILEGE_RESTORE_UNVERIFIED");
+            }
+        }
+    }
+
+    internal static DirectorySecurity ProtectedRootSecurity(SecurityIdentifier serviceSid)
+    {
+        if (serviceSid is null || serviceSid.Value is "S-1-5-18" or "S-1-5-32-544")
+            throw new Refusal("STATE_ROOT_ACL_UNSAFE");
+        var security = new DirectorySecurity();
+        security.SetOwner(serviceSid);
+        security.SetAccessRuleProtection(true, false);
+        const InheritanceFlags inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        foreach (var owner in new[] { serviceSid, SystemSid, AdministratorsSid })
+            security.AddAccessRule(new FileSystemAccessRule(owner, FileSystemRights.FullControl,
+                inherit, PropagationFlags.None, AccessControlType.Allow));
+        AdmissionStore.ValidateRootDacl(
+            new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0), serviceSid.Value);
+        return security;
+    }
 
     internal static DirectorySecurity ProtectedParentSecurity(SecurityIdentifier serviceSid)
     {
@@ -65,23 +158,26 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
         }
     }
 
-    internal static void ProvisionParent()
+    private static SecurityIdentifier ResolveServiceSid()
     {
-        if (!OperatingSystem.IsWindows()
-            || !new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
-            throw new Refusal("MAINTENANCE_STORE_PARENT_REQUIRES_ELEVATION");
-
-        SecurityIdentifier serviceSid;
         try
         {
-            serviceSid = (SecurityIdentifier)new NTAccount(@"NT SERVICE\LnwjudUpdateAdmission")
+            return (SecurityIdentifier)new NTAccount(@"NT SERVICE\LnwjudUpdateAdmission")
                 .Translate(typeof(SecurityIdentifier));
         }
         catch (IdentityNotMappedException)
         {
             throw new Refusal("MAINTENANCE_STORE_SERVICE_IDENTITY_UNAVAILABLE");
         }
+    }
 
+    internal static void ProvisionParent()
+    {
+        if (!OperatingSystem.IsWindows()
+            || !new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
+            throw new Refusal("MAINTENANCE_STORE_PARENT_REQUIRES_ELEVATION");
+
+        var serviceSid = ResolveServiceSid();
         var basePath = Path.GetFullPath(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData))
             .TrimEnd(Path.DirectorySeparatorChar);
@@ -92,5 +188,59 @@ internal static class WindowsUpdateAdmissionStoreParentProvisioner
             FileSystemAclExtensions.CreateDirectory(ProtectedParentSecurity(serviceSid), parent);
         AdmissionStore.VerifyProtectedParentPath(parent, serviceSid.Value);
         ValidateProgramDataBase(basePath);
+    }
+
+    // Create-only root staging. The root is owned by the dedicated service SID
+    // and has no journal, initial snapshot, trust enrollment or update permit.
+    // A failed ACL readback leaves the root untouched rather than deleting an
+    // object whose identity or contents cannot be proved safe to remove.
+    internal static void ProvisionRoot()
+    {
+        if (!OperatingSystem.IsWindows()
+            || !new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
+            throw new Refusal("MAINTENANCE_STORE_ROOT_REQUIRES_ELEVATION");
+
+        var serviceSid = ResolveServiceSid();
+        var commonFiles = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
+        WindowsUpdateAdmissionRegistration.VerifyServiceConfiguration(commonFiles);
+        WindowsUpdateAdmissionRegistration.VerifyImageFilesystem(commonFiles);
+
+        var basePath = Path.GetFullPath(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData))
+            .TrimEnd(Path.DirectorySeparatorChar);
+        ValidateProgramDataBase(basePath);
+        var parent = Path.Combine(basePath, "lnwjud");
+        AdmissionStore.VerifyProtectedParentPath(parent, serviceSid.Value);
+        var root = Path.Combine(parent, "update-admission");
+        // Elevated Administrators may need SeRestorePrivilege to assign a
+        // dedicated service SID as owner. Enable only for create/readback.
+        WithRestorePrivilege(() => CreateProtectedRootDirectory(root, serviceSid));
+        AdmissionStore.VerifyProtectedParentPath(parent, serviceSid.Value);
+        ValidateProgramDataBase(basePath);
+    }
+
+    internal static void CreateProtectedRootDirectory(string root, SecurityIdentifier serviceSid)
+    {
+        if (!Path.IsPathFullyQualified(root) || root.StartsWith(@"\\", StringComparison.Ordinal)
+            || Directory.Exists(root) || File.Exists(root))
+            throw new Refusal("MAINTENANCE_STORE_ROOT_ALREADY_EXISTS");
+
+        var bytes = ProtectedRootSecurity(serviceSid).GetSecurityDescriptorBinaryForm();
+        var descriptor = Marshal.AllocHGlobal(bytes.Length);
+        try
+        {
+            Marshal.Copy(bytes, 0, descriptor, bytes.Length);
+            var attributes = new SecurityAttributes
+            {
+                Length = Marshal.SizeOf<SecurityAttributes>(),
+                SecurityDescriptor = descriptor,
+            };
+            // CreateDirectoryW is atomic create-only, unlike convenience
+            // helpers that may open and change an already existing directory.
+            if (!CreateDirectoryWithSecurity(root, ref attributes))
+                throw new Refusal("MAINTENANCE_STORE_ROOT_PROVISIONING_REFUSED");
+        }
+        finally { Marshal.FreeHGlobal(descriptor); }
+        AdmissionStore.VerifyProtectedRootPath(root, serviceSid.Value);
     }
 }

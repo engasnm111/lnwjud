@@ -185,6 +185,34 @@ internal static class Program
         AdmissionStore.ValidateProtectedParentDacl(
             new RawSecurityDescriptor(protectedParentSecurity.GetSecurityDescriptorBinaryForm(), 0), testServiceSid);
         Check(true, "provisioned parent ACL passes installed-store readback validator");
+        var protectedRootSecurity = WindowsUpdateAdmissionStoreParentProvisioner.ProtectedRootSecurity(
+            WindowsIdentity.GetCurrent().User!);
+        AdmissionStore.ValidateRootDacl(
+            new RawSecurityDescriptor(protectedRootSecurity.GetSecurityDescriptorBinaryForm(), 0), testServiceSid);
+        Check(true, "create-only root ACL binds service owner and protected write authority");
+        const string badRoot = "STATE_ROOT_ACL_UNSAFE";
+        foreach (var unsafeRoot in new[] {
+            "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)",
+            $"O:{testServiceSid}G:SYD:(A;;FA;;;{testServiceSid})(A;;FA;;;SY)",
+            $"O:{testServiceSid}G:SYD:P(A;;FA;;;{testServiceSid})(A;;FA;;;WD)",
+            $"O:{testServiceSid}G:SYD:P(A;;FA;;;{testServiceSid})(A;OIIO;FA;;;WD)" })
+            Refuses(() => AdmissionStore.ValidateRootDacl(new RawSecurityDescriptor(unsafeRoot), testServiceSid), badRoot);
+        var rootFixture = Path.Combine(Path.GetTempPath(), "lnwjud-protected-root-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(rootFixture);
+        try
+        {
+            var testRoot = Path.Combine(rootFixture, "update-admission");
+            WindowsUpdateAdmissionStoreParentProvisioner.CreateProtectedRootDirectory(
+                testRoot, WindowsIdentity.GetCurrent().User!);
+            AdmissionStore.VerifyProtectedRootPath(testRoot, testServiceSid);
+            Check(Directory.Exists(testRoot), "protected root created and verified by handle");
+            var marker = Path.Combine(testRoot, "existing-data.txt");
+            File.WriteAllText(marker, "preserve");
+            Refuses(() => WindowsUpdateAdmissionStoreParentProvisioner.CreateProtectedRootDirectory(
+                testRoot, WindowsIdentity.GetCurrent().User!), "MAINTENANCE_STORE_ROOT_ALREADY_EXISTS");
+            Check(File.ReadAllText(marker) == "preserve", "create-only root retry preserves existing contents");
+        }
+        finally { Directory.Delete(rootFixture, true); }
         WindowsUpdateAdmissionStoreParentProvisioner.ValidateProgramDataDacl(
             new RawSecurityDescriptor("O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000006;;;AU)"));
         Check(true, "ProgramData permits unprivileged creation without deletion or attribute writes");
@@ -200,6 +228,7 @@ internal static class Program
         foreach (var unsafeParent in new[] {
             $"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{testServiceSid})",
             "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GW;;;WD)",
+            "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;OIIO;GW;;;WD)",
             "O:AUG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)",
             "O:BAG:BAD:(A;;GA;;;SY)(A;;GA;;;BA)" })
             Refuses(() => AdmissionStore.ValidateProtectedParentDacl(new RawSecurityDescriptor(unsafeParent), testServiceSid), badParent);
