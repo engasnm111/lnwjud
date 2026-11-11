@@ -195,7 +195,13 @@ test('key-free verifier checks both exact attestation subjects without authorizi
       return verified(f.release[calls === 1 ? 'artifact' : 'provenance']);
     });
     assert.equal(calls, 2);
+    assert.equal(result.schema, 'lnwjud.keyfree-evidence/v1');
     assert.equal(result.status, 'key-free-attestations-observed-only');
+    assert.equal(result.sourceSha, source.commit);
+    assert.equal(result.sourceRunId, source.runId);
+    assert.equal(result.builderSha, builderSha);
+    assert.equal(result.policySha256, hash(f.policyBytes));
+    assert.equal(result.candidateSha256, hash(f.files.candidate[1]));
     assert.equal(result.manifestSha256, hash(f.manifest));
     assert.equal(Object.hasOwn(result, 'signed'), false);
   });

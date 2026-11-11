@@ -195,8 +195,9 @@ export async function inspectKeyFreeSigningCandidate({ root, policyBytes, source
   const finalManifest = await readBoundedFile(path.join(root, 'manifest.json'), 32768n);
   if (finalManifest.sha256 !== manifestFile.sha256) refuse();
   requireKeyFree();
-  return Object.freeze({ status: 'key-free-attestations-observed-only', sourceSha: boundSource.commit,
-    sourceRunId: boundSource.runId, candidateSha256: candidate.sha256, manifestSha256: manifestFile.sha256 });
+  return Object.freeze({ schema: 'lnwjud.keyfree-evidence/v1', status: 'key-free-attestations-observed-only',
+    sourceSha: boundSource.commit, sourceRunId: boundSource.runId, builderSha: boundSource.builderSha,
+    policySha256: hash(boundPolicy), candidateSha256: candidate.sha256, manifestSha256: manifestFile.sha256 });
 }
 
 export async function withIsolatedGhConfig(action) {

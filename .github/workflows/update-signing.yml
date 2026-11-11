@@ -65,6 +65,8 @@ jobs:
     permissions:
       actions: read
       contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -106,11 +108,56 @@ jobs:
       - name: Provision exact SHA-256-pinned GitHub attestation verifier
         shell: pwsh
         run: ./scripts/update-trust/provision-gh-verifier.ps1
-      - name: Inspect baseline candidate bytes and hosted attestations without signing key
+      - name: Verify candidate and produce key-free evidence receipt
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
         run: |
-          node scripts/update-trust/keyfree-signing-evidence.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED' }
+          $ErrorActionPreference = 'Stop'
+          $lines = @(& node scripts/update-trust/keyfree-signing-evidence.mjs)
+          if ($LASTEXITCODE -ne 0 -or $lines.Count -ne 1) { throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED' }
+          $receipt = $lines[0] | ConvertFrom-Json
+          $policyHash = (Get-FileHash -LiteralPath config/update-release-policy.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($receipt.schema -cne 'lnwjud.keyfree-evidence/v1' -or
+              $receipt.status -cne 'key-free-attestations-observed-only' -or
+              $receipt.sourceSha -cne $env:GITHUB_SHA -or
+              $receipt.sourceRunId -cne $env:LNWJUD_SOURCE_RUN_ID -or
+              $receipt.builderSha -cne 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406' -or
+              $receipt.policySha256 -cne $policyHash -or
+              $receipt.candidateSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+              $receipt.manifestSha256 -cnotmatch '^[a-f0-9]{64}$') {
+            throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED'
+          }
+          $directory = Join-Path $PWD '_verified-evidence'
+          [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+          $receiptPath = Join-Path $directory 'receipt.json'
+          $stream = [System.IO.File]::Open($receiptPath, [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+          try {
+            $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($lines[0] + "`n")
+            $stream.Write($bytes, 0, $bytes.Length)
+          } finally { $stream.Dispose() }
+      - id: evidence-attestation
+        name: Attest exact key-free receipt using hosted OIDC identity
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: _verified-evidence/receipt.json
+      - name: Retain receipt attestation bundle without signer credentials
+        shell: pwsh
+        env:
+          LNWJUD_RECEIPT_BUNDLE: ${{ steps.evidence-attestation.outputs.bundle-path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath $env:LNWJUD_RECEIPT_BUNDLE -PathType Leaf)) {
+            throw 'KEYFREE_RECEIPT_BUNDLE_MISSING'
+          }
+          Copy-Item -LiteralPath $env:LNWJUD_RECEIPT_BUNDLE -Destination _verified-evidence/receipt.bundle.json -ErrorAction Stop
+      - name: Retain evidence for a future independently authenticated signer handoff
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: update-keyfree-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _verified-evidence/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
