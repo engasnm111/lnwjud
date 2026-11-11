@@ -73,4 +73,35 @@ describe('GoalRequestCancellationService', () => {
     pending.release();
     fresh.release();
   });
+
+  it('aborts prior-generation requests when a verified successor lease is admitted', async () => {
+    const service = new GoalRequestCancellationService({ waitMs: 1 });
+    const sameGenerationController = new AbortController();
+    const sameGeneration = service.register('goal-successor', 'same-generation', sameGenerationController, 7);
+    expect(service.admitRecoveredGeneration('goal-successor', 7)).toBe(true);
+    expect(sameGenerationController.signal.aborted).toBe(false);
+    await service.cancelForGoal('goal-successor', 7);
+    sameGeneration.release();
+    expect(service.admitRecoveredGeneration('goal-successor', 8)).toBe(true);
+    const previousController = new AbortController();
+    const previous = service.register('goal-successor', 'previous', previousController, 8);
+    expect(previous.accepted).toBe(true);
+    previousController.signal.addEventListener('abort', () => { void service.cancelForGoal('goal-successor', 8); }, { once: true });
+
+    expect(service.admitRecoveredGeneration('goal-successor', 9)).toBe(true);
+    expect(previousController.signal.aborted).toBe(true);
+    expect(service.register('goal-successor', 'stale', new AbortController(), 8).accepted).toBe(false);
+    const currentController = new AbortController();
+    const current = service.register('goal-successor', 'current', currentController, 9);
+    expect(current.accepted).toBe(true);
+    await service.cancelForGoal('goal-successor', 8);
+    expect(currentController.signal.aborted).toBe(false);
+    expect(service.admitRecoveredGeneration('goal-successor', 9)).toBe(false);
+    expect(currentController.signal.aborted).toBe(false);
+    await service.cancelForGoal('goal-successor', 9);
+    expect(currentController.signal.aborted).toBe(true);
+    expect(service.register('goal-successor', 'cancelled', new AbortController(), 9).accepted).toBe(false);
+    previous.release();
+    current.release();
+  });
 });

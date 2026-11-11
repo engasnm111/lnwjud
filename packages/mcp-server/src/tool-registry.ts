@@ -668,7 +668,7 @@ export class ToolRegistry {
           admitted.value.leaseGeneration,
         );
       }
-      if (goalLease !== undefined && mutationDecision.kind !== 'read') {
+      if (goalLease !== undefined) {
         // An admitted Goal mutation fence has already verified this exact proof and
         // workspace; do not require a second validator from hosts that expose only
         // the fenced mutation contract. Without a fence, validate independently.
@@ -684,6 +684,7 @@ export class ToolRegistry {
             return response;
           }
         }
+        this.services.goalRequestCancellation?.admitRecoveredGeneration?.(goalLease.goalId, goalLease.leaseGeneration);
         this.activity.bindVerifiedGoal(callId, goalLease.goalId);
       }
       if (mutationDecision.kind !== 'read'

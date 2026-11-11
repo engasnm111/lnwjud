@@ -35,6 +35,7 @@ const DEFAULT_WAIT_MS = 5_000;
 interface Entry {
   readonly goalId: string;
   readonly requestId: string;
+  readonly leaseGeneration: number | undefined;
   readonly controller: AbortController;
   readonly done: Promise<void>;
   readonly resolveDone: () => void;
@@ -72,6 +73,7 @@ export class GoalRequestCancellationService implements GoalRequestCancellationPo
     const entry: Entry = {
       goalId: normalizedGoalId,
       requestId: normalizedRequestId,
+      leaseGeneration,
       controller,
       done,
       resolveDone,
@@ -96,9 +98,11 @@ export class GoalRequestCancellationService implements GoalRequestCancellationPo
     if (!Number.isSafeInteger(leaseGeneration) || leaseGeneration < 1) return false;
     if (leaseGeneration <= (this.cancelledGoals.get(id) ?? -1)
       || leaseGeneration <= (this.admittedGenerations.get(id) ?? -1)) return false;
-    // Called only after the durable blocked-goal recovery CAS commits.
-    // Preserve the tombstone: registrations require the exact new generation.
+    // Only a committed recovery or independently validated successor lease can advance admission.
     this.admittedGenerations.set(id, leaseGeneration);
+    for (const entry of [...(this.entries.get(id)?.values() ?? [])]) {
+      if (entry.leaseGeneration !== leaseGeneration && !entry.controller.signal.aborted) entry.controller.abort();
+    }
     return true;
   }
 
