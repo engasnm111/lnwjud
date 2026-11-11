@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { fetchHostedReceiptMetadata, selectHostedReceiptArtifact, withDigestCheckedHostedReceiptArchive } from './hosted-receipt-artifact.mjs';
+import { fetchHostedReceiptMetadata, selectHostedReceiptArtifact, withDigestCheckedHostedReceiptArchive, withInspectedHostedReceiptArchive } from './hosted-receipt-artifact.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const expected = { runId: 987654321, sourceSha };
@@ -152,4 +152,9 @@ test('acquires a digest-checked hosted ZIP through a bounded quarantined spool, 
   assert.equal(discarded, true);
   assert.equal(calls.length, 4);
   assert.equal(calls[3].options.headers.authorization, undefined);
+  let inspected = false;
+  await assert.rejects(withInspectedHostedReceiptArchive({
+    expected, token, addon, filename: 'quarantined-receipt.zip',
+  }, () => { inspected = true; }), /HOSTED_RECEIPT_ZIP_REFUSED/);
+  assert.equal(inspected, false, 'invalid ZIP members must not reach the consumer');
 });

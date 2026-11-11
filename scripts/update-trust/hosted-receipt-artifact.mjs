@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { parseStrictJson } from './release-envelope.mjs';
 import { withDownloadedSigningArchive } from './signing-archive-spool.mjs';
+import { inspectHostedReceiptZip } from './hosted-receipt-zip.mjs';
 
 // Read-only GitHub API metadata selector for a future authenticated receipt fetch.
 // This does NOT download or authenticate archive bytes, verify the OIDC receipt,
@@ -130,4 +131,11 @@ export async function withDigestCheckedHostedReceiptArchive({ expected, token, a
     },
     ...(fetchImpl === undefined ? {} : { fetchImpl }),
   }, reader => consume(reader, selected));
+}
+
+/** Expose only the two bounded receipt ZIP members after archive digest validation. */
+export function withInspectedHostedReceiptArchive(options, consume) {
+  if (typeof consume !== 'function') refuse();
+  return withDigestCheckedHostedReceiptArchive(options, (reader, selected) =>
+    consume(inspectHostedReceiptZip(reader), selected));
 }
