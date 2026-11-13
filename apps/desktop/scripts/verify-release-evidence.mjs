@@ -11,6 +11,7 @@ import { validateContainmentEvidence } from './verify-containment-artifacts.mjs'
 import { VERIFIER_SHA256 } from './stage-update-attestation-verifier.mjs';
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
 import { readUpdateAcceptanceReceipt, verifyUpdateAcceptanceForRelease } from './verify-update-acceptance.mjs';
+import { verifyInstalledLayoutAsset } from '../../../scripts/update-trust/prepare-installed-layout.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
@@ -106,6 +107,11 @@ if (provenance.platform === 'win32') {
 
 const provenanceHash = await sha256File(provenancePath);
 if (sums.get('PROVENANCE.json') !== provenanceHash) throw new Error('PROVENANCE.json SHA-256 mismatch');
+if (Object.hasOwn(provenance, 'installedLayout')) {
+  if (provenance.platform !== 'win32' || provenance.arch !== 'x64') throw new Error('Installed layout requires Windows x64');
+  await verifyInstalledLayoutAsset(installerDirectory, provenance.installedLayout);
+  if (sums.get('INSTALL-LAYOUT.json') !== provenance.installedLayout.sha256) throw new Error('INSTALL-LAYOUT.json SHA256SUMS mismatch');
+}
 
 if (process.env.LNWJUD_REQUIRE_UPDATE_ACCEPTANCE === '1') {
   if (!['win32', 'darwin'].includes(provenance.platform)) {

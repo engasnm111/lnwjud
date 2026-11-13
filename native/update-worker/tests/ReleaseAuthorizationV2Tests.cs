@@ -15,6 +15,7 @@ internal static class ReleaseAuthorizationV2Tests
         var policy = ReleaseTrustPolicy.Parse(Wire.Utf8.GetBytes(fixture.GetProperty("policy").GetRawText()));
         var now = Wire.Decimal(fixture.GetProperty("now").GetString()!);
         var time = new ReleaseTimeObservation(true, now);
+        assertions += WindowsBaselineLayoutTests.Run(fixture, time);
         byte[] Bytes(string name) => Convert.FromBase64String(fixture.GetProperty(name).GetString()!);
         var first = ReleaseAuthorizationV2.Authenticate(Bytes("baselineEnvelope"), policy, time, ReleaseAuthorizationPurpose.Baseline);
         var renewed = ReleaseAuthorizationV2.Authenticate(Bytes("renewedEnvelope"), policy, new(true, now + 86_400), ReleaseAuthorizationPurpose.Baseline);

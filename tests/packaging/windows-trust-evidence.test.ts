@@ -1,9 +1,35 @@
-import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+// @ts-expect-error Standalone Node packaging script.
+import { prepareInstalledLayout, verifyPreparedInstalledLayout, verifyInstalledLayoutAsset } from '../../scripts/update-trust/prepare-installed-layout.mjs';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..', '..');
 const desktopRoot = path.join(repositoryRoot, 'apps', 'desktop');
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  for (const root of temporaryRoots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
+async function installedFixture(): Promise<{ rootDirectory: string; outputDirectory: string; platform: 'win32'; architecture: 'x64' }> {
+  const base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-layout-')));
+  temporaryRoots.push(base);
+  const rootDirectory = path.join(base, 'stage');
+  const outputDirectory = path.join(base, 'release');
+  await mkdir(path.join(rootDirectory, 'resources', 'native-containment'), { recursive: true });
+  await mkdir(path.join(rootDirectory, 'slots', 'A', 'resources'), { recursive: true });
+  await mkdir(outputDirectory);
+  await writeFile(path.join(rootDirectory, 'lnwjud.exe'), 'stable launcher');
+  await writeFile(path.join(rootDirectory, 'resources', 'native-containment', 'lnwjud-containment.exe'), 'stable service');
+  await writeFile(path.join(rootDirectory, 'slots', 'A', 'lnwjud.exe'), 'candidate application');
+  await writeFile(path.join(rootDirectory, 'slots', 'A', 'resources', 'app.asar'), 'application archive');
+  await writeFile(path.join(rootDirectory, 'slots', 'A', 'empty.txt'), '');
+  return { rootDirectory, outputDirectory, platform: 'win32', architecture: 'x64' };
+}
 
 describe('Windows release trust evidence', () => {
   it('captures a clean exact-SHA checkout before dev packaging mutates tracked build outputs', async () => {
@@ -49,6 +75,9 @@ describe('Windows release trust evidence', () => {
     expect(evidenceWriter).toContain('GITHUB_SHA');
     expect(evidenceWriter).toContain('LNWJUD_SOURCE_DIRTY_AT_START');
     expect(evidenceWriter).toContain('workingTreeDirtyAtEvidence');
+    expect(evidenceWriter).toContain('LNWJUD_VALIDATION_INSTALLED_ROOT');
+    expect(evidenceWriter).toContain('await verifyPreparedInstalledLayout');
+    expect(evidenceVerifier).toContain('await verifyInstalledLayoutAsset');
     expect(evidenceWriter).toContain("git(['rev-parse', 'HEAD'])");
     expect(evidenceWriter).toContain('capabilityBridge');
     expect(evidenceVerifier).toContain('LNWJUD_RELEASE_ARTIFACT_ONLY');
@@ -114,4 +143,94 @@ describe('Windows release trust evidence', () => {
     expect(release).toContain('LNWJUD_EXPECTED_COMMIT_SHA');
     expect(release).toContain('verify-release-evidence.mjs');
   });
+});
+
+describe('Windows installed layout producer', () => {
+  it('runs before packaging and binds every immutable slot file without a hash cycle', async () => {
+    const fixture = await installedFixture();
+    const stdout = execFileSync(process.execPath, [path.join(repositoryRoot, 'scripts', 'update-trust', 'prepare-installed-layout.mjs'),
+      fixture.rootDirectory, fixture.outputDirectory], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+    const identity = JSON.parse(stdout);
+    const layoutBytes = await readFile(path.join(fixture.outputDirectory, 'INSTALL-LAYOUT.json'));
+    const layout = JSON.parse(layoutBytes.toString());
+    const manifestBytes = await readFile(path.join(fixture.rootDirectory, 'slots', 'A', 'manifest.json'));
+    const manifest = JSON.parse(manifestBytes.toString());
+    expect(identity).toEqual({ name: 'INSTALL-LAYOUT.json', sizeBytes: String(layoutBytes.length),
+      sha256: createHash('sha256').update(layoutBytes).digest('hex') });
+    expect(layout).toMatchObject({ schemaVersion: 1, product: 'lnwjud', platform: 'win32', architecture: 'x64', slot: 'A' });
+    expect(layout.roles.slotManifest).toEqual({ path: 'slots/A/manifest.json', sizeBytes: String(manifestBytes.length),
+      sha256: createHash('sha256').update(manifestBytes).digest('hex') });
+    expect(manifest.files.map((file: { path: string }) => file.path)).toEqual(['empty.txt', 'lnwjud.exe', 'resources/app.asar']);
+    expect(manifest.files[0]).toMatchObject({ sizeBytes: '0', sha256: createHash('sha256').update('').digest('hex') });
+    expect(layout.roles.slotApplication).toEqual({ ...manifest.files[1], path: 'slots/A/lnwjud.exe' });
+    expect(layoutBytes.toString()).not.toContain('PROVENANCE');
+    expect(layoutBytes.toString()).not.toContain('RELEASE.json');
+    await expect(verifyPreparedInstalledLayout(fixture)).resolves.toEqual(identity);
+    await expect(prepareInstalledLayout(fixture)).resolves.toEqual(identity);
+    await expect(verifyInstalledLayoutAsset(fixture.outputDirectory, identity)).resolves.toBeUndefined();
+  }, 30_000);
+
+  it('refuses changed immutable bytes after layout production', async () => {
+    const fixture = await installedFixture();
+    await prepareInstalledLayout(fixture);
+    await writeFile(path.join(fixture.rootDirectory, 'slots', 'A', 'resources', 'app.asar'), 'modified application archive');
+    await expect(verifyPreparedInstalledLayout(fixture)).rejects.toThrow('INSTALLED_LAYOUT_REFUSED');
+    await expect(prepareInstalledLayout(fixture)).rejects.toThrow();
+  }, 30_000);
+
+  it('refuses forged layout identity and manifest tampering', async () => {
+    const fixture = await installedFixture();
+    const identity = await prepareInstalledLayout(fixture);
+    for (const invalid of [null, { ...identity, name: '../INSTALL-LAYOUT.json' }, { ...identity, sizeBytes: '01' },
+      { ...identity, sha256: '0'.repeat(64) }, { ...identity, extra: true }]) {
+      await expect(verifyInstalledLayoutAsset(fixture.outputDirectory, invalid)).rejects.toThrow();
+    }
+    const manifestPath = path.join(fixture.rootDirectory, 'slots', 'A', 'manifest.json');
+    await writeFile(manifestPath, '{"schemaVersion":1,"files":[]}');
+    await expect(verifyPreparedInstalledLayout(fixture)).rejects.toThrow('INSTALLED_LAYOUT_REFUSED');
+  }, 30_000);
+
+  it('refuses flat manual packages and unsupported targets before writing metadata', async () => {
+    const fixture = await installedFixture();
+    for (const override of [{ platform: 'linux' }, { architecture: 'arm64' }, { outputDirectory: fixture.rootDirectory }]) {
+      await expect(prepareInstalledLayout({ ...fixture, ...override })).rejects.toThrow('INSTALLED_LAYOUT_REFUSED');
+    }
+    await rm(path.join(fixture.rootDirectory, 'slots'), { recursive: true });
+    await expect(prepareInstalledLayout(fixture)).rejects.toThrow();
+    await expect(readFile(path.join(fixture.outputDirectory, 'INSTALL-LAYOUT.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 30_000);
+
+  it('refuses hard-linked payloads', async () => {
+    const fixture = await installedFixture();
+    const slot = path.join(fixture.rootDirectory, 'slots', 'A');
+    await link(path.join(slot, 'lnwjud.exe'), path.join(slot, 'alias.exe'));
+    await expect(prepareInstalledLayout(fixture)).rejects.toThrow('RELEASE_INPUT_INVALID');
+  }, 30_000);
+
+  it('refuses a junction or directory symlink instead of traversing it', async () => {
+    const fixture = await installedFixture();
+    await symlink(fixture.outputDirectory, path.join(fixture.rootDirectory, 'slots', 'A', 'linked'), 'junction');
+    await expect(prepareInstalledLayout(fixture)).rejects.toThrow();
+    await expect(readFile(path.join(fixture.outputDirectory, 'INSTALL-LAYOUT.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 30_000);
+
+  it.skipIf(process.platform === 'win32')('rejects Windows-unsafe names on POSIX build hosts', async () => {
+    for (const name of ['CON.txt', 'CON .txt', 'data:stream', 'trailing.', 'trailing ', 'non-ascii-\u00e9', 'delete-\u007f']) {
+      const fixture = await installedFixture();
+      await writeFile(path.join(fixture.rootDirectory, 'slots', 'A', name), 'unsafe');
+      await expect(prepareInstalledLayout(fixture)).rejects.toThrow('INSTALLED_LAYOUT_REFUSED');
+    }
+  }, 30_000);
+
+  it('refuses distinct case aliases when the filesystem supports them', async ({ skip }) => {
+    const fixture = await installedFixture();
+    const slot = path.join(fixture.rootDirectory, 'slots', 'A');
+    await writeFile(path.join(slot, 'Foo.txt'), 'one');
+    try { await writeFile(path.join(slot, 'foo.txt'), 'two', { flag: 'wx' }); }
+    catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') return skip();
+      throw error;
+    }
+    await expect(prepareInstalledLayout(fixture)).rejects.toThrow('INSTALLED_LAYOUT_REFUSED');
+  }, 30_000);
 });
