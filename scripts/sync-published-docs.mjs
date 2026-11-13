@@ -57,9 +57,7 @@ const tasks = [
         /<p align="center">(?:Choose your platform and download the current v\d+\.\d+\.\d+ release directly\.|Download Windows and Linux v\d+\.\d+\.\d+ directly; macOS remains on v\d+\.\d+\.\d+ pending containment verification\.)<\/p>/,
         `<p align="center">${macIncluded ? `Choose your platform and download the current ${tag} release directly.` : `Download Windows and Linux ${tag} directly; macOS remains on v${macBaseline} pending containment verification.`}</p>`,
         'README download copy');
-      result = replaceRequired(result, /^Latest published release: \*\*v\d+\.\d+\.\d+\*\*\.[^\r\n]*$/m,
-        `Latest published release: **${tag}**. ${macIncluded ? 'The download buttons above point directly to the verified release assets.' : `Windows/Linux assets are published for ${tag}; macOS downloads remain pinned to v${macBaseline} pending Issue #216.`} The release was published after the exact tagged main commit passed the target-native release gates.`,
-        'README latest version');
+      result = result.replace(` v${version} is not published yet.`, '');
       result = pinHeldMacDownloads(updateFileNames(result));
       for (const file of assetFiles) {
         if (!result.includes(`${repoUrl}/releases/latest/download/${file}`)) {
@@ -73,9 +71,6 @@ const tasks = [
     file: 'FULL_README.md',
     transform(original) {
       let result = replaceRequired(original, /^## Current published version: v\d+\.\d+\.\d+$/m, `## Current published version: ${tag}`, 'Full README published heading');
-      result = replaceRequired(result, /^Latest published release: \*\*v\d+\.\d+\.\d+\*\*\.[^\r\n]*$/m,
-        `Latest published release: **${tag}**. ${macIncluded ? 'Windows, macOS, and Linux artifacts were published' : 'Windows and Linux artifacts were published; macOS v5.9.0 is withheld pending Issue #216'} after the exact tagged main commit passed the target-native release gates described below.`,
-        'Full README latest version');
       result = replaceRequired(result, /Current published Windows 10\/11 x64 v\d+\.\d+\.\d+ artifacts/, `Current published Windows 10/11 x64 ${tag} artifacts`, 'Full README install chapter');
       result = replaceRequired(result, /สำหรับ v\d+\.\d+\.\d+ คือ Remote MCP/, `สำหรับ ${tag} คือ Remote MCP`, 'Full README Thai install chapter');
       result = pinHeldMacDownloads(updateFileNames(result));
