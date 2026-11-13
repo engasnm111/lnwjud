@@ -3350,7 +3350,14 @@ async function bootstrapEntrypoint(): Promise<void> {
   }
   const inspectUpdateStartup = async (dataPath: string): Promise<void> => {
     if (process.platform !== 'win32') return;
-    await assertHostWindowsUpdateStartup(dataPath, resolveDesktopNativeContainmentDirectory(app.isPackaged, process.resourcesPath, import.meta.url));
+    process.stderr.write('[Startup] update preflight begin\n');
+    try {
+      await assertHostWindowsUpdateStartup(dataPath, resolveDesktopNativeContainmentDirectory(app.isPackaged, process.resourcesPath, import.meta.url));
+      process.stderr.write('[Startup] update preflight end\n');
+    } catch (error: unknown) {
+      process.stderr.write('[Startup] update preflight refused\n');
+      throw error;
+    }
   };
   const factoryResetApplyRequested = process.argv.includes(FACTORY_RESET_APPLY_ARG);
   if (factoryResetApplyRequested) {

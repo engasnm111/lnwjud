@@ -412,6 +412,8 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
   });
   const stderr: string[] = [];
   process.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString()));
+  let stdout = '';
+  process.stdout?.on('data', (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(-16_384); });
   let browser: Browser | undefined;
   try {
     await waitForDevTools(devToolsPort, process, stderr);
@@ -432,10 +434,12 @@ async function launchDesktop(options: { readonly dataRoot?: string; readonly fix
     }, { timeout: 30_000, intervals: [50, 100, 250, 500] }).toBe(true);
     return { process, browser, page, dataRoot, fixtureRoot, devToolsPort };
   } catch (cause: unknown) {
+    const startup = await readFile(path.join(dataRoot, 'crashes', 'crash-events.ndjson'), 'utf8').catch(() => '');
+    const state = JSON.stringify({ exitCode: process.exitCode, signalCode: process.signalCode, contextPageCounts: browser?.contexts().map((context) => context.pages().length) ?? [] });
     await browser?.close().catch(() => undefined);
     await terminateProcessTree(process);
     await Promise.all([removeTemporaryRoot(dataRoot), removeTemporaryRoot(fixtureRoot)]);
-    throw new Error(`Electron launch failed: ${stderr.join('').slice(-16_384)}`, { cause });
+    throw new Error(`Electron launch failed: ${state}\n${stderr.join('').slice(-16_384)}\n${stdout}\n${startup.slice(-16_384)}`, { cause });
   }
 }
 

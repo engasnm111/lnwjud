@@ -47,6 +47,7 @@ describe.skipIf(process.platform !== 'win32')('native admission before Desktop e
     vi.resetModules();
     for (const mock of Object.values(harness)) mock.mockClear();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-startup-admission-'));
     temporaryDirectories.push(root);
     const dataPath = path.join(root, 'profile');
@@ -57,6 +58,7 @@ describe.skipIf(process.platform !== 'win32')('native admission before Desktop e
     harness.inspect.mockImplementation(() => new Promise<void>((_resolve, reject) => { deny = reject; }));
     await import('../src/main/main.js');
     expect(harness.inspect).toHaveBeenCalledOnce();
+    expect(progress.mock.calls).toEqual([['[Startup] update preflight begin\n']]);
     expect(harness.whenReady).not.toHaveBeenCalled();
     expect(harness.clearReset).not.toHaveBeenCalled();
     expect(harness.applyReset).not.toHaveBeenCalled();
@@ -69,6 +71,8 @@ describe.skipIf(process.platform !== 'win32')('native admission before Desktop e
     }
     deny(new Error('UPDATE_ENROLLMENT_UNVERIFIED'));
     await vi.waitFor(() => expect(mode === 'gui' ? harness.quit : harness.exit).toHaveBeenCalledOnce());
+    expect(progress).toHaveBeenCalledWith('[Startup] update preflight refused\n');
+    expect(progress).not.toHaveBeenCalledWith('[Startup] update preflight end\n');
     expect(harness.clearReset).not.toHaveBeenCalled();
     expect(harness.applyReset).not.toHaveBeenCalled();
     await expect(lstat(dataPath)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -77,5 +81,26 @@ describe.skipIf(process.platform !== 'win32')('native admission before Desktop e
       expect(harness.exit).toHaveBeenCalledWith(1);
     }
     expect(harness.inspect).toHaveBeenCalledWith(dataPath, fileURLToPath(new URL('../build/native-containment', import.meta.url)));
+  });
+
+  it('reports completed admission separately from a later factory reset failure', async () => {
+    vi.resetModules();
+    for (const mock of Object.values(harness)) mock.mockClear();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-startup-admission-'));
+    temporaryDirectories.push(root);
+    const dataPath = path.join(root, 'profile');
+    harness.appPath.mockReturnValue(fileURLToPath(new URL('../dist/main/', import.meta.url)));
+    harness.inspect.mockResolvedValue(undefined);
+    harness.applyReset.mockReturnValue(false);
+    vi.stubEnv('LNWJUD_DATA_PATH', dataPath);
+    process.argv = [process.execPath, 'lnwjud', '--lnwjud-apply-factory-reset'];
+    await import('../src/main/main.js');
+    await vi.waitFor(() => expect(harness.exit).toHaveBeenCalledWith(1));
+    expect(progress.mock.calls).toEqual([['[Startup] update preflight begin\n'], ['[Startup] update preflight end\n']]);
+    expect(progress).not.toHaveBeenCalledWith('[Startup] update preflight refused\n');
+    expect(harness.applyReset).toHaveBeenCalledOnce();
+    await expect(lstat(dataPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
