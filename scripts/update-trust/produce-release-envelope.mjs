@@ -38,7 +38,7 @@ export async function publishEnvelope(filename, bytes, beforePublish = () => {})
     const file = await open(temporary, 'wx', 0o600);
     created = true;
     try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
-    beforePublish();
+    await beforePublish();
     await link(temporary, destination);
   } finally {
     if (created) await unlink(temporary);

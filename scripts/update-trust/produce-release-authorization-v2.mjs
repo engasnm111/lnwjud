@@ -1,12 +1,14 @@
 import { Buffer } from 'node:buffer';
 import { createPrivateKey, createPublicKey, sign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, URL } from 'node:url';
 import { canonicalBase64, hash, loadProductionPolicy, parseStrictJson, refuse, requireConfigured, rootKey } from './release-envelope.mjs';
 import { authenticateAuthorizationV2, inspectAuthorizationPayloadV2 } from './release-authorization-v2.mjs';
 import { publishEnvelope } from './produce-release-envelope.mjs';
-import { authenticateBuildEvidence, readBoundedFile } from './verify-build-evidence.mjs';
+import { readBoundedFile } from './verify-build-evidence.mjs';
+import { signerBinding, signerBindingFromReceipt, signerHostContext, signerReceiptAudience, withAuthenticatedSignerReceipt } from './authenticated-signer-receipt.mjs';
 
 export function validatePreviousTimeV2(previous, policy, now) {
   if (typeof now !== 'bigint' || now < BigInt(previous.payload.issuedAt) || now > 253402300799n) refuse('RELEASE_TIME_INVALID');
@@ -55,6 +57,16 @@ export async function authenticatePreviousV2(candidate, paths, policy, now) {
   return previous;
 }
 
+async function verifyCandidateFiles(release, options) {
+  for (const kind of ['artifact', 'provenance']) {
+    const expected = release[kind];
+    const actual = await readBoundedFile(options[kind], BigInt(expected.sizeBytes));
+    const bundle = await readBoundedFile(options[`${kind}Bundle`], 16n * 1024n * 1024n);
+    if (path.basename(options[kind]) !== expected.name || actual.sha256 !== expected.sha256 || actual.sizeBytes !== expected.sizeBytes
+      || bundle.sha256 !== release.buildEvidence[`${kind}AttestationSha256`]) refuse('RELEASE_SUBJECT_CHANGED');
+  }
+}
+
 export async function produceReleaseAuthorizationV2(options) {
   let secret;
   try {
@@ -66,40 +78,67 @@ export async function produceReleaseAuthorizationV2(options) {
     const inspected = inspectAuthorizationPayloadV2(source.bytes, policy, now, options.purpose, options.keyId);
     let previous;
     if (options.purpose === 'update') previous = await authenticatePreviousV2(inspected, options, policy, now);
-    await authenticateBuildEvidence({ ...inspected.payload.release, issuedAt: inspected.payload.issuedAt }, options, policy);
-    if ((await readBoundedFile(options.payload, 32768n)).sha256 !== source.sha256) refuse('RELEASE_INPUT_CHANGED');
-    if (options.purpose === 'update') previous = await authenticatePreviousV2(inspected, options, policy, BigInt(Math.floor(Date.now() / 1000)));
-    const signingTime = BigInt(Math.floor(Date.now() / 1000));
-    inspectAuthorizationPayloadV2(source.bytes, policy, signingTime, options.purpose, options.keyId);
-    if (previous) validatePreviousTimeV2(previous, policy, signingTime);
-    const { spki } = rootKey(policy, options.keyId, signingTime);
-    secret = process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
-    delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
-    if (typeof secret !== 'string' || secret.length === 0 || secret.length > 16384) refuse('RELEASE_SIGNER_INVALID');
-    const keyBytes = Buffer.from(secret, 'utf8'); secret = undefined;
-    let bytes;
-    try {
-      const key = createPrivateKey(keyBytes);
-      if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1'
-        || !createPublicKey(key).export({ type: 'spki', format: 'der' }).equals(spki)) refuse('RELEASE_SIGNER_INVALID');
-      const signature = sign('sha256', Buffer.concat([Buffer.from('lnwjud-update-release-v2\0', 'ascii'), source.bytes]), { key, dsaEncoding: 'ieee-p1363' });
-      bytes = Buffer.from(JSON.stringify({ protocol: 2, keyId: options.keyId, payload: source.bytes.toString('base64'), signature: signature.toString('base64') }));
-    } finally { keyBytes.fill(0); }
-    const authenticated = authenticateAuthorizationV2(bytes, policy, signingTime, options.purpose);
-    if (authenticated.identitySha256 !== inspected.identitySha256) refuse('RELEASE_INPUT_CHANGED');
-    await publishEnvelope(options.output, bytes, () => {
-      const publicationTime = BigInt(Math.floor(Date.now() / 1000));
-      authenticateAuthorizationV2(bytes, policy, publicationTime, options.purpose);
-      if (previous) validatePreviousTimeV2(previous, policy, publicationTime);
+    const context = signerHostContext(process.env, 'receive-signing-evidence');
+    const { root: recipient } = rootKey(policy, options.keyId, now);
+    const receipt = parseStrictJson((await readBoundedFile(options.receipt, 4096n)).bytes, 4096);
+    const previousSha256 = previous?.envelopeSha256 ?? 'none';
+    const binding = signerBindingFromReceipt(receipt, context, process.env.LNWJUD_SIGNER_CHALLENGE,
+      recipient.spkiSha256, options.purpose, previousSha256);
+    const release = inspected.payload.release;
+    const authorities = policy.authorities.filter(authority => authority.repository === release.source.repository
+      && authority.workflow === release.source.workflow && authority.ref === release.source.ref);
+    if (binding.candidateSha256 !== source.sha256 || binding.sourceSha !== release.source.commit
+      || binding.sourceRunId !== release.source.runId || binding.sourceRunAttempt !== release.source.runAttempt
+      || binding.policySha256 !== hash(readFileSync(new URL('../../config/update-release-policy.json', import.meta.url)))
+      || authorities.length !== 1 || authorities[0].builderDigest !== binding.builderSha) refuse('RELEASE_ATTESTATION_REFUSED');
+    const offered = signerBinding(parseStrictJson((await readBoundedFile(options.request, 4096n)).bytes, 4096));
+    if (signerReceiptAudience(offered) !== signerReceiptAudience(binding)) refuse('RELEASE_ATTESTATION_REFUSED');
+    const token = (await readBoundedFile(options.proof, 32768n)).bytes.toString('utf8');
+    async function reauthenticatePrevious() {
+      if (!previous) return;
+      previous = await authenticatePreviousV2(inspected, options, policy, BigInt(Math.floor(Date.now() / 1000)));
+      if (previous.envelopeSha256 !== binding.previousEnvelopeSha256) refuse('RELEASE_INPUT_CHANGED');
+    }
+    return await withAuthenticatedSignerReceipt({ token, request: binding, context, replayDirectory: process.env.RUNNER_TEMP }, async proof => {
+      await verifyCandidateFiles(release, options);
+      if ((await readBoundedFile(options.payload, 32768n)).sha256 !== source.sha256) refuse('RELEASE_INPUT_CHANGED');
+      await reauthenticatePrevious();
+      const signingTime = BigInt(Math.floor(Date.now() / 1000));
+      if (signingTime >= BigInt(proof.expiresAt)) refuse('RELEASE_TIME_INVALID');
+      inspectAuthorizationPayloadV2(source.bytes, policy, signingTime, options.purpose, options.keyId);
+      if (previous) validatePreviousTimeV2(previous, policy, signingTime);
+      const { spki } = rootKey(policy, options.keyId, signingTime);
+      secret = process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
+      delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
+      if (typeof secret !== 'string' || secret.length === 0 || secret.length > 16384) refuse('RELEASE_SIGNER_INVALID');
+      const keyBytes = Buffer.from(secret, 'utf8'); secret = undefined;
+      let bytes;
+      try {
+        const key = createPrivateKey(keyBytes);
+        if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1'
+          || !createPublicKey(key).export({ type: 'spki', format: 'der' }).equals(spki)) refuse('RELEASE_SIGNER_INVALID');
+        const signature = sign('sha256', Buffer.concat([Buffer.from('lnwjud-update-release-v2\0', 'ascii'), source.bytes]), { key, dsaEncoding: 'ieee-p1363' });
+        bytes = Buffer.from(JSON.stringify({ protocol: 2, keyId: options.keyId, payload: source.bytes.toString('base64'), signature: signature.toString('base64') }));
+      } finally { keyBytes.fill(0); }
+      const authenticated = authenticateAuthorizationV2(bytes, policy, signingTime, options.purpose);
+      if (authenticated.identitySha256 !== inspected.identitySha256) refuse('RELEASE_INPUT_CHANGED');
+      await verifyCandidateFiles(release, options);
+      await publishEnvelope(options.output, bytes, async () => {
+        await reauthenticatePrevious();
+        const publicationTime = BigInt(Math.floor(Date.now() / 1000));
+        if (publicationTime >= BigInt(proof.expiresAt)) refuse('RELEASE_TIME_INVALID');
+        authenticateAuthorizationV2(bytes, policy, publicationTime, options.purpose);
+        if (previous) validatePreviousTimeV2(previous, policy, publicationTime);
+      });
+      return { envelopeSha256: hash(bytes), identitySha256: authenticated.identitySha256 };
     });
-    return { envelopeSha256: hash(bytes), identitySha256: authenticated.identitySha256 };
   } finally {
     delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
     secret = undefined;
   }
 }
 
-const common = ['purpose', 'payload', 'artifact', 'provenance', 'artifactBundle', 'provenanceBundle', 'keyId', 'output'];
+const common = ['purpose', 'payload', 'artifact', 'provenance', 'artifactBundle', 'provenanceBundle', 'keyId', 'output', 'receipt', 'request', 'proof'];
 const previous = ['previousPurpose', 'previousEnvelope', 'previousArtifact', 'previousProvenance'];
 export function parseArgumentsV2(args) {
   if (args.length % 2 !== 0) refuse('RELEASE_ARGUMENTS_INVALID');

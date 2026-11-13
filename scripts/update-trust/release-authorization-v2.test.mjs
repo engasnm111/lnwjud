@@ -12,6 +12,7 @@ import { authenticateAuthorizationV2, inspectAuthorizationPayloadV2 } from './re
 import { authenticatePreviousMetadataV2, authenticatePreviousV2, parseArgumentsV2, produceReleaseAuthorizationV2, validatePreviousTimeV2 } from './produce-release-authorization-v2.mjs';
 import { publishEnvelope } from './produce-release-envelope.mjs';
 import { hash, loadProductionPolicy } from './release-envelope.mjs';
+import './authenticated-signer-receipt.test.mjs';
 
 const fixture = JSON.parse(await readFile(new URL('../../tests/fixtures/update-release/release-identity-v1.json', import.meta.url), 'utf8'));
 const interop = JSON.parse(await readFile(new URL('../../tests/fixtures/update-release/authorization-v2.json', import.meta.url), 'utf8'));
@@ -229,7 +230,7 @@ test('producer rejects accessor-backed options before consulting trust', async (
 });
 
 test('producer CLI distinguishes baseline and update without trust overrides', () => {
-  const common = ['--purpose', 'baseline', '--payload', 'p', '--artifact', 'a', '--provenance', 'p', '--artifactBundle', 'ab', '--provenanceBundle', 'pb', '--keyId', 'k', '--output', 'o'];
+  const common = ['--purpose', 'baseline', '--payload', 'p', '--artifact', 'a', '--provenance', 'p', '--artifactBundle', 'ab', '--provenanceBundle', 'pb', '--keyId', 'k', '--output', 'o', '--receipt', 'r', '--request', 'q', '--proof', 't'];
   assert.equal(parseArgumentsV2(common).purpose, 'baseline');
   assert.throws(() => parseArgumentsV2([...common, '--previousEnvelope', 'old']), /RELEASE_ARGUMENTS_INVALID/);
   assert.throws(() => parseArgumentsV2([...common, '--policy', 'override']), /RELEASE_ARGUMENTS_INVALID/);
@@ -242,7 +243,7 @@ test('production producer refuses empty trust before inputs or signing', () => {
   const cli = fileURLToPath(new URL('./produce-release-authorization-v2.mjs', import.meta.url));
   const args = [cli, '--purpose', 'baseline', '--payload', 'missing-payload', '--artifact', 'missing-artifact',
     '--provenance', 'missing-provenance', '--artifactBundle', 'missing-bundle', '--provenanceBundle', 'missing-bundle',
-    '--keyId', 'fixture-only', '--output', 'missing-output'];
+    '--keyId', 'fixture-only', '--output', 'missing-output', '--receipt', 'missing-receipt', '--request', 'missing-request', '--proof', 'missing-proof'];
   const child = spawnSync(process.execPath, args, { encoding: 'utf8', windowsHide: true,
     env: { SystemRoot: process.env.SystemRoot || '', PATH: process.env.PATH || '', LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM: 'invalid-disposable-fixture' } });
   assert.notEqual(child.status, 0);

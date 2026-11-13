@@ -6,6 +6,11 @@ name: Update Signing Preflight (No Private Key)
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'Key-free preflight or authenticated receiver validation; neither signs a release'
+        type: choice
+        options: [preflight, validate-receiver]
+        default: preflight
       source_run_id:
         description: 'Completed protected-main push CI run ID (attempt 1) for the exact main commit'
         type: string
@@ -28,6 +33,7 @@ jobs:
       candidate_artifact_id: ${{ steps.source.outputs.candidate_artifact_id }}
       candidate_archive_sha256: ${{ steps.source.outputs.candidate_archive_sha256 }}
       candidate_archive_size_bytes: ${{ steps.source.outputs.candidate_archive_size_bytes }}
+      signer_challenge: ${{ steps.source.outputs.signer_challenge }}
     permissions:
       actions: read
       contents: read
@@ -55,6 +61,7 @@ jobs:
             printf 'candidate_artifact_id=%s\n' "$(jq -er '.signingCandidateArtifactId' <<< "$observed")"
             printf 'candidate_archive_sha256=%s\n' "$(jq -er '.signingCandidateArchiveSha256' <<< "$observed")"
             printf 'candidate_archive_size_bytes=%s\n' "$(jq -er '.signingCandidateArchiveSizeBytes' <<< "$observed")"
+            printf 'signer_challenge=%s\n' "$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"
           } >> "$GITHUB_OUTPUT"
 
   verify-candidate-evidence:
@@ -153,7 +160,17 @@ jobs:
             throw 'KEYFREE_RECEIPT_BUNDLE_MISSING'
           }
           Copy-Item -LiteralPath $env:LNWJUD_RECEIPT_BUNDLE -Destination _verified-evidence/receipt.bundle.json -ErrorAction Stop
-      - name: Retain evidence for a future independently authenticated signer handoff
+      - name: Bind a verifier OIDC proof to this receiver request
+        if: ${{ inputs.operation == 'validate-receiver' }}
+        shell: pwsh
+        env:
+          LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
+          LNWJUD_SIGNER_CHALLENGE: ${{ needs.verify-protected-source.outputs.signer_challenge }}
+          LNWJUD_SIGNING_KEY_ID: lnwjud-update-release-2026-11
+        run: |
+          node scripts/update-trust/authenticated-signer-receipt.mjs mint-proof
+          if ($LASTEXITCODE -ne 0) { throw 'SIGNER_PROOF_REFUSED' }
+      - name: Retain key-free evidence and optional receiver proof
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: update-keyfree-evidence-${{ github.run_id }}-${{ github.run_attempt }}
@@ -161,3 +178,60 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+
+  inspect-verifier-job:
+    name: Select the exact verifier check-run without signing credentials
+    if: ${{ inputs.operation == 'validate-receiver' }}
+    needs: verify-candidate-evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      verifier_check_run_id: ${{ steps.verifier.outputs.verifier_check_run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.2'
+      - id: verifier
+        name: Read only the current attempt's successful verifier identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/update-trust/authenticated-signer-receipt.mjs inspect-verifier-job
+
+  receive-signing-evidence:
+    name: Validate the authenticated handoff without a release key
+    if: ${{ inputs.operation == 'validate-receiver' }}
+    needs: [verify-protected-source, verify-candidate-evidence, inspect-verifier-job]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.2'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: update-keyfree-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _verified-evidence
+          digest-mismatch: error
+      - name: Verify issuer signature, exact job, request, lifetime and one-use challenge in process
+        env:
+          LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
+          LNWJUD_SIGNER_CHALLENGE: ${{ needs.verify-protected-source.outputs.signer_challenge }}
+          LNWJUD_VERIFIER_CHECK_RUN_ID: ${{ needs.inspect-verifier-job.outputs.verifier_check_run_id }}
+          LNWJUD_SIGNING_KEY_ID: lnwjud-update-release-2026-11
+        run: node scripts/update-trust/authenticated-signer-receipt.mjs receive-proof
