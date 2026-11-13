@@ -88,15 +88,10 @@ jobs:
         if: matrix.name != 'Windows'
         shell: bash
         run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            if [[ "$RUNNER_OS" == "macOS" ]]; then
-              brew install ripgrep
-            else
-              sudo apt-get update
-              sudo apt-get install -y --no-install-recommends ripgrep
-            fi
-          fi
-          rg --version
+          node apps/desktop/scripts/prepare-runtime-tools.mjs --ripgrep-only
+          tool_dir="$GITHUB_WORKSPACE/apps/desktop/build/runtime-tools/ripgrep"
+          printf '%s\n' "$tool_dir" >> "$GITHUB_PATH"
+          "$tool_dir/rg" --version
 
       - name: Run native platform contract tests
         shell: bash
@@ -287,6 +282,12 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         run: |
+          # Avoid the failing Azure mirror while retaining Ubuntu's signed sources.
+          mirror=https://archive.ubuntu.com/ubuntu
+          if [[ "$(dpkg --print-architecture)" == arm64 ]]; then
+            mirror=https://ports.ubuntu.com/ubuntu-ports
+          fi
+          printf '%s\n' "$mirror" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gnome-keyring libsecret-1-0 dbus dbus-x11 xvfb xauth ripgrep \
