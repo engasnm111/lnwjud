@@ -76,7 +76,7 @@ import {
   type WorkspaceScope,
 } from '@lnwjud/mcp-server';
 import { permissionProfiles, type PermissionProfile, type PermissionProfileName } from '@lnwjud/permissions';
-import type { ManagedProcess } from '@lnwjud/process';
+import { createWindowsMcpStdioOwner, type ManagedProcess } from '@lnwjud/process';
 import { PathExecutableResolver } from '@lnwjud/search';
 import {
   ALLOW_AI_DELETE_SETTING_KEY,
@@ -246,6 +246,9 @@ import { OAuthTunnelAuthProvider, type TunnelOAuthProvisioningBackend } from './
 import { TunnelOAuthLoginManager } from './tunnel-oauth-login-manager.js';
 import { TunnelOAuthSessionStore } from './tunnel-oauth-store.js';
 import { startWatcherServer, type WatcherActivityEvent, type WatcherServerHandle, type WatcherSnapshot, type WatcherStatus } from './watcher-server.js';
+import { startGoalEventServer, type GoalEventServerHandle } from './goal-event-server.js';
+import { GoalEventSigner } from './goal-event-signing.js';
+import { SqliteGoalEventStore } from '@lnwjud/storage';
 import { watcherGoalFromRecord, watcherPluginsFromServers } from './watcher-projection.js';
 
 const actor: FileActor = { clientId: 'desktop-renderer', clientName: `${APP_NAME} desktop` };
@@ -284,6 +287,7 @@ export interface DesktopRuntime {
   ensureDefaultWorkspace(rootPath: string): Promise<string>;
   autoStartMcp(): Promise<McpConnectionStatus>;
   autoStartWatcher(): Promise<string | null>;
+  autoStartGoalEvents(): Promise<string | null>;
   autoStartTunnel(): Promise<TunnelStatus | null>;
   autoStartRemoteMcp(): Promise<RemoteMcpStatus>;
   prepareFactoryReset(): Promise<void>;
@@ -559,6 +563,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     protectCriticalFiles: (): boolean => !desktopFullBypassEnabled() && destructivePolicyProvider().protectCriticalFiles,
     recoverableDelete: (): boolean => destructivePolicyProvider().recoverableDelete,
     recoveryTrashRoot,
+    writeOperationJournalRoot: path.join(dataPath, 'file-write-operations'),
   });
   const ponytailProfilePath = '.lnwjud/project-profile.json';
   const readWorkspaceProfile = async (workspaceId: string): Promise<Record<string, unknown>> => {
@@ -771,6 +776,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     settingsJsonProvider: () => settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
+    ...(nativeAuthority === undefined ? {} : { windowsMcpStdioOwner: createWindowsMcpStdioOwner(nativeAuthority.configuration) }),
     workspaceRootProvider: async (): Promise<string | undefined> => {
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       return selected?.realRootPath;
@@ -1346,6 +1352,45 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     }
     if (!approved) throw new Error('Native host approval was denied for this administrative mutation');
   }
+
+  let goalEventHandle: GoalEventServerHandle | null = null;
+  let goalEventStart: Promise<string | null> | null = null;
+  let goalEventClosing = false;
+  const startGoalEvents = (): Promise<string | null> => {
+    if (goalEventClosing || options.secretProtector === undefined || options.hostMutationApprovalProvider === undefined) return Promise.resolve(null);
+    if (goalEventHandle !== null) return Promise.resolve(goalEventHandle.endpoint.toString());
+    if (goalEventStart !== null) return goalEventStart;
+    const store = new SqliteGoalEventStore(database);
+    const signer = new GoalEventSigner(store, options.secretProtector);
+    goalEventStart = startGoalEventServer({
+      port: 17892, store, signer,
+      authorizationMode: () => desktopFullBypassEnabled() ? 'full_bypass' : 'standard',
+      activeWorkspaceId: async () => (await resolveSelectedWorkspace(workspaceService, settingsRepository))?.id ?? null,
+      approve: async (request) => {
+        const workspace = await workspaceRepository.get(request.workspaceId);
+        if (workspace === null || desktopFullBypassEnabled()) return false;
+        await requireNativeAdministrativeApproval({
+          toolName: `goal_event_${request.operation}`, mutationKind: 'replace',
+          reason: request.operation === 'rotate_key'
+            ? 'Rotate the Host signing key for every paired local companion'
+            : 'Authorize a local companion to receive signed Goal lifecycle metadata for this workspace',
+          summary: `${request.operation} for companion "${request.companionName}" in workspace "${workspace.displayName}". `
+            + 'Events contain Goal identifiers and statuses, with no objective, prompt, transcript, paths or checkpoint text. '
+            + (request.operation === 'rotate_key' ? 'This changes the Host key for every paired companion; existing pins require its signed successor certificate. ' : '')
+            + `Host signing key SHA-256: ${request.hostKeyId ?? signer.publicKey().keyId}. `
+            + (request.nonce === undefined ? '' : `Pairing nonce SHA-256: ${createHash('sha256').update(request.nonce).digest('hex')}. `)
+            + 'This approval does not authorize writing to any external memory service.',
+          workspaceId: workspace.id, workspaceRoot: workspace.realRootPath,
+        });
+        return true;
+      },
+    }).then(async (handle): Promise<string | null> => {
+      if (goalEventClosing) { await handle.close(); return null; }
+      goalEventHandle = handle;
+      return handle.endpoint.toString();
+    }).finally(() => { goalEventStart = null; });
+    return goalEventStart;
+  };
 
   const requirementProbeFromDoctor = async (probe: () => Promise<DoctorProbeResult>): Promise<RequirementProbeResult> => {
     const result = await probe();
@@ -2304,6 +2349,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
     await tunnelController.shutdownForDesktopExit();
     stopToolAvailabilityWatch();
     await remoteMcpController.close();
+    goalEventClosing = true;
+    await goalEventStart?.catch(() => undefined);
+    if (goalEventHandle !== null) {
+      await goalEventHandle.close();
+      goalEventHandle = null;
+    }
     if (watcherHandle !== null) {
       await watcherHandle.close();
       watcherHandle = null;
@@ -2397,6 +2448,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       return mcpLifecycle.start();
     },
     autoStartWatcher: (): Promise<string | null> => startWatcher(),
+    autoStartGoalEvents: (): Promise<string | null> => startGoalEvents(),
     autoStartTunnel: async (): Promise<TunnelStatus | null> => autoStartPersistentTunnel(
       tunnelController,
       readSettings().tunnelAutoReconnect,

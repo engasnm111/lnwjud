@@ -30,7 +30,7 @@ internal static class Program
             while (true)
             {
                 var next = input.ReadByte();
-                if (next < 0) return 0;
+                if (next < 0) return line.Count == 0 && !oversized ? 0 : 125;
                 if (++consumed > 1_048_576) return 125;
                 if (next != 10)
                 {

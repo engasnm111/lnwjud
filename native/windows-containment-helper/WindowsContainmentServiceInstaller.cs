@@ -259,6 +259,29 @@ internal static class WindowsContainmentServiceInstaller
                 if (error != ErrorServiceMarkedForDelete) throw new IOException("SERVICE_REMOVE_DELETE_FAILED");
             }
         }
+
+        // DeleteService only marks an entry for deletion. The service may still
+        // be present while SCM holds its final references, and NSIS must not
+        // proceed to delete its protected image until disappearance is proven.
+        WaitForServiceDeletion(manager);
+    }
+
+    private static void WaitForServiceDeletion(SafeServiceHandle manager)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (deadline.Elapsed < TimeSpan.FromSeconds(30))
+        {
+            using var observed = OpenService(manager, WindowsContainmentService.ServiceName, ServiceAllAccess);
+            if (observed.IsInvalid)
+            {
+                var error = Marshal.GetLastWin32Error();
+                if (error == ErrorServiceDoesNotExist) return;
+                if (error != ErrorServiceMarkedForDelete)
+                    throw new IOException("SERVICE_REMOVE_CONFIRMATION_UNAVAILABLE");
+            }
+            Thread.Sleep(100);
+        }
+        throw new IOException("SERVICE_REMOVE_DELETION_TIMEOUT");
     }
 
     internal static string ValidateImagePath(string helperPath, string programFilesRoot)
@@ -492,14 +515,18 @@ internal static class WindowsContainmentServiceInstaller
                 throw new IOException("SERVICE_INSTALL_CONFIG_UNAVAILABLE");
             var configuration = Marshal.PtrToStructure<QueryServiceConfiguration>(buffer);
             var command = Marshal.PtrToStringUni(configuration.BinaryPathName) ?? throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
-            if (command.Length < 3 || command[0] != '"')
-                throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
-            var endQuote = command.IndexOf('"', 1);
-            if (endQuote <= 1 || command[(endQuote + 1)..].Trim() != "service")
-                throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
-            return Path.GetFullPath(command[1..endQuote]);
+            return ParseRegisteredImagePath(command);
         }
         finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    internal static string ParseRegisteredImagePath(string command)
+    {
+        if (command.Length < 3 || command[0] != '"') throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
+        var endQuote = command.IndexOf('"', 1);
+        if (endQuote <= 1 || command[(endQuote + 1)..].Trim() != "service"
+            || !Path.IsPathFullyQualified(command[1..endQuote])) throw new IOException("SERVICE_INSTALL_CONFIG_INVALID");
+        return Path.GetFullPath(command[1..endQuote]);
     }
 
     private static void StopAndWait(SafeServiceHandle service)

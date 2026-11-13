@@ -27,7 +27,15 @@ internal sealed class AdmissionStore : IDisposable
         try
         {
             PinDirectories(root);
-            ValidateSecurity(directories[^1], "STATE_ROOT");
+            // The installed store lives below a ProgramData directory that is
+            // writable for new child creation by Users. Its immediate parent
+            // must therefore be independently protected before path-based IO.
+            if (identity.RequireProtectedParent)
+            {
+                if (directories.Count < 3) throw new Refusal("STATE_PARENT_ACL_UNSAFE");
+                ValidateProtectedParent(directories[^2], sid);
+            }
+            ValidateSecurity(directories[^1], "STATE_ROOT", sid);
             ownerLock = OpenFile(Path.Combine(root, "owner.lock"), GenericRead | GenericWrite, 4, WriteThrough, 3);
             ValidateFile(ownerLock, 0);
             var overlap = new OverlappedData();
@@ -116,11 +124,11 @@ internal sealed class AdmissionStore : IDisposable
     {
         if (!GetFileInformationByHandle(handle, out var info) || (info.Attributes & (Reparse | DirectoryAttribute)) != 0
             || info.Links != 1 || info.SizeHigh != 0 || info.SizeLow > maximum) throw new Refusal("JOURNAL_FILE_UNSAFE");
-        ValidateSecurity(handle, "JOURNAL");
+        ValidateSecurity(handle, "JOURNAL", sid);
         return info;
     }
 
-    private void ValidateSecurity(SafeFileHandle handle, string scope)
+    private static void ValidateSecurity(SafeFileHandle handle, string scope, string ownerSid)
     {
         if (GetSecurityInfo(handle, 1, 5, out _, out _, out _, out _, out var descriptor) != 0)
             throw new Refusal(scope + "_ACL_UNVERIFIED");
@@ -129,18 +137,84 @@ internal sealed class AdmissionStore : IDisposable
             var length = GetSecurityDescriptorLength(descriptor);
             if (length == 0 || length > 65_536) throw new Refusal(scope + "_ACL_UNVERIFIED");
             var bytes = new byte[length]; Marshal.Copy(descriptor, bytes, 0, bytes.Length);
-            var security = new RawSecurityDescriptor(bytes, 0);
-            if (security.Owner?.Value != sid || security.DiscretionaryAcl is null || (security.ControlFlags & ControlFlags.DiscretionaryAclProtected) == 0) throw new Refusal(scope + "_ACL_UNSAFE");
-            foreach (GenericAce ace in security.DiscretionaryAcl)
-            {
-                if (ace is not QualifiedAce common) throw new Refusal(scope + "_ACL_UNVERIFIED");
-                if (common.AceQualifier != AceQualifier.AccessAllowed) continue;
-                const int writes = 0x40000000 | 0x10000000 | 0x000D0156;
-                if ((common.AccessMask & writes) != 0 && common.SecurityIdentifier.Value != sid
-                    && common.SecurityIdentifier.Value is not "S-1-5-18" and not "S-1-5-32-544") throw new Refusal(scope + "_ACL_UNSAFE");
-            }
+            ValidateSecurityDescriptor(new RawSecurityDescriptor(bytes, 0), ownerSid, scope);
         }
         finally { _ = LocalFree(descriptor); }
+    }
+
+    internal static void ValidateRootDacl(RawSecurityDescriptor security, string ownerSid) =>
+        ValidateSecurityDescriptor(security, ownerSid, "STATE_ROOT");
+
+    private static void ValidateSecurityDescriptor(RawSecurityDescriptor security, string ownerSid, string scope)
+    {
+        if (security.Owner?.Value != ownerSid || security.DiscretionaryAcl is null
+            || (security.ControlFlags & ControlFlags.DiscretionaryAclProtected) == 0)
+            throw new Refusal(scope + "_ACL_UNSAFE");
+        foreach (GenericAce ace in security.DiscretionaryAcl)
+        {
+            if (ace is not QualifiedAce common || common.IsCallback)
+                throw new Refusal(scope + "_ACL_UNVERIFIED");
+            if (common.AceQualifier != AceQualifier.AccessAllowed) continue;
+            const int writes = 0x40000000 | 0x10000000 | 0x000D0156;
+            if ((common.AccessMask & writes) != 0 && common.SecurityIdentifier.Value != ownerSid
+                && common.SecurityIdentifier.Value is not "S-1-5-18" and not "S-1-5-32-544")
+                throw new Refusal(scope + "_ACL_UNSAFE");
+        }
+    }
+
+    internal static void VerifyProtectedRootPath(string path, string serviceSid)
+    {
+        using var handle = OpenDirectory(path);
+        ValidateSecurity(handle, "STATE_ROOT", serviceSid);
+    }
+
+    // ProgramData itself permits ordinary Users to create child directories.
+    // The installed journal's immediate parent must not permit those Users to
+    // replace or mutate the journal root. The service SID may only create its
+    // own child directory; SYSTEM and Administrators retain full control.
+    internal static void ValidateProtectedParentDacl(RawSecurityDescriptor security, string serviceSid)
+    {
+        if (security.Owner?.Value is not ("S-1-5-18" or "S-1-5-32-544")
+            || (security.ControlFlags & ControlFlags.DiscretionaryAclPresent) == 0
+            || (security.ControlFlags & ControlFlags.DiscretionaryAclProtected) == 0
+            || security.DiscretionaryAcl is not { } acl)
+            throw new Refusal("STATE_PARENT_ACL_UNSAFE");
+        foreach (GenericAce ace in acl)
+        {
+            if (ace is not QualifiedAce qualified || qualified.IsCallback)
+                throw new Refusal("STATE_PARENT_ACL_UNVERIFIED");
+            // Inherit-only allows do not grant access to the parent itself,
+            // but may grant write access to the future journal root or files.
+            if (qualified.AceQualifier != AceQualifier.AccessAllowed)
+                continue;
+            const int writes = 0x40000000 | 0x10000000 | 0x000D0156;
+            var granted = qualified.AccessMask & writes;
+            var principal = qualified.SecurityIdentifier.Value;
+            if (principal is "S-1-5-18" or "S-1-5-32-544") continue;
+            if (principal == serviceSid && (granted & ~0x4) == 0) continue;
+            if (granted != 0) throw new Refusal("STATE_PARENT_ACL_UNSAFE");
+        }
+    }
+
+    private static void ValidateProtectedParent(SafeFileHandle handle, string serviceSid)
+    {
+        if (GetSecurityInfo(handle, 1, 5, out _, out _, out _, out _, out var descriptor) != 0)
+            throw new Refusal("STATE_PARENT_ACL_UNVERIFIED");
+        try
+        {
+            var length = GetSecurityDescriptorLength(descriptor);
+            if (length == 0 || length > 65_536) throw new Refusal("STATE_PARENT_ACL_UNVERIFIED");
+            var bytes = new byte[length];
+            Marshal.Copy(descriptor, bytes, 0, bytes.Length);
+            ValidateProtectedParentDacl(new RawSecurityDescriptor(bytes, 0), serviceSid);
+        }
+        finally { _ = LocalFree(descriptor); }
+    }
+
+    internal static void VerifyProtectedParentPath(string path, string serviceSid)
+    {
+        using var handle = OpenDirectory(path);
+        ValidateProtectedParent(handle, serviceSid);
     }
 
     private static string Identity(FileInformation info) => $"{info.Volume:x8}:{info.IndexHigh:x8}{info.IndexLow:x8}";

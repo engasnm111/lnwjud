@@ -120,6 +120,7 @@ internal static class UpdateTransactionStoreTests
             RejectCorruptTransactionSuccessors(testDirectory, owner);
             RejectCrossedSelections(testDirectory, owner);
             RecoverPairedSelectionPublications(testDirectory, owner);
+            EarlyRollback(Path.Combine(testDirectory, "before-switch"), owner);
             return assertions;
         }
         finally
@@ -169,6 +170,29 @@ internal static class UpdateTransactionStoreTests
                 && File.ReadAllBytes(Path.Combine(root, "active-slot.json")).SequenceEqual(selectionBytes),
                 "recovery preserves all bytes when a data-bound journal successor is corrupt");
         }
+    }
+
+    private static void EarlyRollback(string root, ProcessOwner owner)
+    {
+        var (ready, initial) = PrepareSelectionIntent(root, owner, rollback: false);
+        var rollingBack = PersistAdvance(root, ready, UpdateTransactionPhase.RollbackIntent, owner);
+        var intent = PersistAdvance(root, rollingBack, UpdateTransactionPhase.PreviousSelectionIntent, owner);
+        ExpectRefusal(() => PersistAdvance(root, intent, UpdateTransactionPhase.PreviousSelected, owner),
+            "UPDATE_SLOT_SELECTION_PHASE_CONFLICT", "unchanged old selection cannot settle a new rollback");
+        CrashAtBoundary(root, "select-previous", "active-slot-publication-readback");
+        using var store = new UpdateTransactionStore(root, Installation);
+        ExpectRefusal(() => store.RecoverPublications(), "UPDATE_SLOT_PUBLICATION_UNVERIFIED",
+            "interrupted early rollback keeps the selection held until its publication is verified");
+        var restored = store.ReadSelection()!;
+        Check(restored.Slot == initial.Slot && restored.SlotDigest == initial.SlotDigest
+            && restored.DataGeneration == initial.DataGeneration && restored.PreviousDigest == initial.Digest
+            && restored.Generation == intent.Generation && restored.TransactionId == intent.TransactionId,
+            "early rollback atomically publishes the original application/data pair for this attempt");
+        Check(store.SelectPrevious(intent, intent.Digest, restored.Digest, owner) == restored,
+            "retry after publication does not switch or increment the generation a second time");
+        var settled = store.PersistTransaction(intent.Advance(UpdateTransactionPhase.PreviousSelected, intent.Digest, owner), intent.Digest);
+        Check(store.RecoverPublications().Transaction == settled && !settled.SafeToStart,
+            "early rollback publication still requires independently verified predecessor health");
     }
 
     private static UpdateTransactionJournal ChangeDataGeneration(UpdateTransactionJournal transaction, string field) => field switch

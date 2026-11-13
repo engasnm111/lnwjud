@@ -234,6 +234,14 @@ test('verified result selector binds certificate observations, subjects and time
     statement: { predicateType: 'https://slsa.dev/provenance/v1', subject: [{ name: fixture.payload.artifact.name, digest: { sha256: fixture.payload.artifact.sha256 } }] } } };
   const select = value => selectVerifiedAttestation(Buffer.from(JSON.stringify([value])), fixture.payload, fixture.payload.artifact, authority);
   assert.equal(select(result), 1);
+  assert.throws(() => selectVerifiedAttestation(Buffer.from(JSON.stringify([result, result])),
+    fixture.payload, fixture.payload.artifact, authority), /RELEASE_ATTESTATION_REFUSED/,
+    'two matching attestations must not silently authorize an ambiguous signing input');
+  for (const timestamp of ['2027-01-15T15:00:00+07:00', '2027-01-15T03:00:00-05:00']) {
+    const offsetResult = globalThis.structuredClone(result);
+    offsetResult.verificationResult.verifiedTimestamps[0].timestamp = timestamp;
+    assert.equal(select(offsetResult), 1, 'verified GitHub timestamp with numeric UTC offset');
+  }
   assert.notEqual(certificate.buildConfigDigest, authority.builderDigest);
   const wrongCaller = globalThis.structuredClone(result); wrongCaller.verificationResult.signature.certificate.buildConfigDigest = authority.builderDigest;
   assert.throws(() => select(wrongCaller));
@@ -245,6 +253,8 @@ test('verified result selector binds certificate observations, subjects and time
   for (const timestamps of [[{}], [{ type: 'Tlog' }], [{ type: 'CurrentTime', uri: '', timestamp: '2027-01-15T08:00:00Z' }],
     [{ type: 'Tlog', uri: 'http://rekor.sigstore.dev', timestamp: '2027-01-15T08:00:00Z' }],
     [{ type: 'Tlog', uri: 'https://rekor.sigstore.dev', timestamp: '2027-02-31T08:00:00Z' }],
+    [{ type: 'Tlog', uri: 'https://rekor.sigstore.dev', timestamp: '2027-02-31T15:00:00+07:00' }],
+    [{ type: 'Tlog', uri: 'https://rekor.sigstore.dev', timestamp: '2027-01-15T22:00:00+14:01' }],
     [{ type: 'Tlog', uri: 'https://rekor.sigstore.dev', timestamp: '2028-01-15T08:00:00Z' }]]) {
     const changed = globalThis.structuredClone(result); changed.verificationResult.verifiedTimestamps = timestamps; assert.throws(() => select(changed));
   }

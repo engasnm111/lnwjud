@@ -86,6 +86,7 @@ internal static class Program
         worker = args[0];
         var metadataFixture = Path.GetFullPath(args.Length == 2 ? args[1] : Path.Combine("tests", "fixtures", "update-release", "metadata-v1.json"));
         DefaultOwnerProbe();
+        await OwnerObservation();
         assertions += StoreCreationTests.Run();
         assertions += ReleaseMetadataTests.Run();
         assertions += ReleaseBuildEvidenceTests.Run();
@@ -123,6 +124,19 @@ internal static class Program
         return "kind=" + Symbol(value["result"]?["kind"]) + " reason=" + Symbol(value["result"]?["reason"])
             + " generation=" + Symbol(value["generation"]) + " revision=" + Symbol(value["revision"]);
     }
+    private static async Task OwnerObservation()
+    {
+        Check(WindowsStoreIO.Observe(WindowsStoreIO.CurrentOwner()) == "live", "current owner must be observed live");
+        var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var arg in new[] { "/d", "/c", "exit", "/b", "259" }) start.ArgumentList.Add(arg);
+        using var child = Process.Start(start) ?? throw new Exception("owner exit-code fixture failed to start");
+        var owner = new ProcessOwner(child.Id,
+            child.StartTime.ToFileTimeUtc().ToString(System.Globalization.CultureInfo.InvariantCulture), "cmd.exe");
+        await child.WaitForExitAsync();
+        Check(child.ExitCode == 259, "owner fixture must exit with STILL_ACTIVE code 259");
+        Check(WindowsStoreIO.Observe(owner) == "gone", "signaled owner with exit code 259 must be terminal");
+    }
+
     private static void DefaultOwnerProbe()
     {
         using var identity = WindowsIdentity.GetCurrent();
@@ -296,6 +310,21 @@ internal static class Program
         }
         using var successor = new Child(root);
         Check(Kind(await successor.Send(CommandLine("recover"))) == "none", "new owner terminal safe");
+
+        // A truncated JSON frame must not be reported as a clean worker shutdown.
+        using (var truncated = new Child(Root()))
+        {
+            await truncated.Process.StandardInput.WriteAsync("{\"protocol\":1");
+            truncated.Process.StandardInput.Close();
+            await truncated.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            Check(truncated.Process.ExitCode == 125, "partial stdin frame fails closed on EOF");
+        }
+        using (var empty = new Child(Root()))
+        {
+            empty.Process.StandardInput.Close();
+            await empty.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            Check(empty.Process.ExitCode == 0, "clean stdin EOF remains successful");
+        }
     }
     private static async Task CrashRecovery(string boundary)
     {

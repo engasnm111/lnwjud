@@ -41,8 +41,9 @@ if (!['win32', 'darwin', 'linux'].includes(platform)
 const target = { name: platform === 'win32' ? 'windows' : platform };
 
 await stageRipgrep({ platform, rawArch, target, ripgrep });
-await runTunnelStager(platform, rawArch);
-process.stdout.write(`Prepared target-native runtime tools for ${platform}/${rawArch}\n`);
+const ripgrepOnly = process.argv.includes('--ripgrep-only');
+if (!ripgrepOnly) await runTunnelStager(platform, rawArch);
+process.stdout.write(`Prepared ${ripgrepOnly ? 'ripgrep' : 'target-native runtime tools'} for ${platform}/${rawArch}\n`);
 
 async function stageRipgrep({ platform, rawArch, target, ripgrep }) {
   const archivePath = path.join(vendorRoot, ripgrep.archive);

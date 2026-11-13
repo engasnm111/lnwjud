@@ -1,0 +1,163 @@
+# This workflow is a key-free source-run preflight, NOT a signing or deployment authority.
+# Until attestation, independent verifier/signer and native installed rollback gates exist,
+# it produces no signed envelope, no release artifact and no update permission.
+name: Update Signing Preflight (No Private Key)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Completed protected-main push CI run ID (attempt 1) for the exact main commit'
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: lnwjud-update-signing-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify-protected-source:
+    name: Verify protected source run (diagnostic only)
+    if: ${{ github.repository == 'engasnm111/lnwjud' && github.ref == 'refs/heads/main' && github.ref_protected == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      source_run_id: ${{ steps.source.outputs.source_run_id }}
+      candidate_artifact_id: ${{ steps.source.outputs.candidate_artifact_id }}
+      candidate_archive_sha256: ${{ steps.source.outputs.candidate_archive_sha256 }}
+      candidate_archive_size_bytes: ${{ steps.source.outputs.candidate_archive_size_bytes }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.2'
+      - id: source
+        name: Verify exact protected CI run and hosted jobs without signer credentials
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LNWJUD_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          observed="$(node scripts/update-trust/protected-source-run.mjs)"
+          jq -e --arg sha "$GITHUB_SHA" '.sourceSha == $sha and .status == "source-ci-observed-only"' <<< "$observed"
+          {
+            printf 'source_run_id=%s\n' "$(jq -er '.sourceRunId' <<< "$observed")"
+            printf 'candidate_artifact_id=%s\n' "$(jq -er '.signingCandidateArtifactId' <<< "$observed")"
+            printf 'candidate_archive_sha256=%s\n' "$(jq -er '.signingCandidateArchiveSha256' <<< "$observed")"
+            printf 'candidate_archive_size_bytes=%s\n' "$(jq -er '.signingCandidateArchiveSizeBytes' <<< "$observed")"
+          } >> "$GITHUB_OUTPUT"
+
+  verify-candidate-evidence:
+    name: Verify signing evidence (key-free diagnostic)
+    needs: verify-protected-source
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: engasnm111/lnwjud
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.22.2'
+      - name: Independently recheck selected protected source and exact artifact identity
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
+          LNWJUD_EXPECTED_CANDIDATE_ID: ${{ needs.verify-protected-source.outputs.candidate_artifact_id }}
+          LNWJUD_EXPECTED_CANDIDATE_SHA256: ${{ needs.verify-protected-source.outputs.candidate_archive_sha256 }}
+          LNWJUD_EXPECTED_CANDIDATE_SIZE_BYTES: ${{ needs.verify-protected-source.outputs.candidate_archive_size_bytes }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $observed = & node scripts/update-trust/protected-source-run.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'SIGNING_SOURCE_RECHECK_REFUSED' }
+          $selected = $observed | ConvertFrom-Json
+          if ($selected.status -cne 'source-ci-observed-only' -or
+              $selected.sourceSha -cne $env:GITHUB_SHA -or
+              $selected.sourceRunId -cne $env:LNWJUD_SOURCE_RUN_ID -or
+              $selected.signingCandidateArtifactId -cne $env:LNWJUD_EXPECTED_CANDIDATE_ID -or
+              $selected.signingCandidateArchiveSha256 -cne $env:LNWJUD_EXPECTED_CANDIDATE_SHA256 -or
+              [string]$selected.signingCandidateArchiveSizeBytes -cne $env:LNWJUD_EXPECTED_CANDIDATE_SIZE_BYTES) {
+            throw 'SIGNING_SOURCE_RECHECK_REFUSED'
+          }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.verify-protected-source.outputs.candidate_artifact_id }}
+          run-id: ${{ needs.verify-protected-source.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: _candidate
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Provision exact SHA-256-pinned GitHub attestation verifier
+        shell: pwsh
+        run: ./scripts/update-trust/provision-gh-verifier.ps1
+      - name: Verify candidate and produce key-free evidence receipt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lines = @(& node scripts/update-trust/keyfree-signing-evidence.mjs)
+          if ($LASTEXITCODE -ne 0 -or $lines.Count -ne 1) { throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED' }
+          $receipt = $lines[0] | ConvertFrom-Json
+          $policyHash = (Get-FileHash -LiteralPath config/update-release-policy.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($receipt.schema -cne 'lnwjud.keyfree-evidence/v1' -or
+              $receipt.status -cne 'key-free-attestations-observed-only' -or
+              $receipt.sourceSha -cne $env:GITHUB_SHA -or
+              $receipt.sourceRunId -cne $env:LNWJUD_SOURCE_RUN_ID -or
+              $receipt.builderSha -cne 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406' -or
+              $receipt.policySha256 -cne $policyHash -or
+              $receipt.candidateSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+              $receipt.manifestSha256 -cnotmatch '^[a-f0-9]{64}$') {
+            throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED'
+          }
+          $directory = Join-Path $PWD '_verified-evidence'
+          [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+          $receiptPath = Join-Path $directory 'receipt.json'
+          $stream = [System.IO.File]::Open($receiptPath, [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+          try {
+            $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($lines[0] + "`n")
+            $stream.Write($bytes, 0, $bytes.Length)
+          } finally { $stream.Dispose() }
+      - id: evidence-attestation
+        name: Attest exact key-free receipt using hosted OIDC identity
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: _verified-evidence/receipt.json
+      - name: Retain receipt attestation bundle without signer credentials
+        shell: pwsh
+        env:
+          LNWJUD_RECEIPT_BUNDLE: ${{ steps.evidence-attestation.outputs.bundle-path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath $env:LNWJUD_RECEIPT_BUNDLE -PathType Leaf)) {
+            throw 'KEYFREE_RECEIPT_BUNDLE_MISSING'
+          }
+          Copy-Item -LiteralPath $env:LNWJUD_RECEIPT_BUNDLE -Destination _verified-evidence/receipt.bundle.json -ErrorAction Stop
+      - name: Retain evidence for a future independently authenticated signer handoff
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: update-keyfree-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _verified-evidence/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

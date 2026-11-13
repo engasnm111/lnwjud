@@ -44,6 +44,7 @@ export interface DurableTaskReservation {
   /** Trusted native proof path; never accepted from MCP caller input. */
   readonly nativeReceiptPath?: string;
   readonly nativeBinding?: NativeAttemptBinding;
+  readonly reservedAt?: string;
   readonly launchRecord?: DurableTaskLaunchRecord;
 }
 
@@ -120,7 +121,10 @@ export class DurableShellTaskIndex {
         || input.nativeBinding.ownerClientId !== input.ownerClientId || input.nativeBinding.workspaceId !== input.ownerWorkspaceId))
       || !isSafeTaskId(input.taskId)
       || !/^[a-f0-9]{64}$/i.test(input.requestDigest)
-      || (input.launchRecord !== undefined && (!isLaunchRecord(input.launchRecord) || input.launchRecord.taskId !== input.taskId))) {
+      || (input.launchRecord !== undefined && (!isLaunchRecord(input.launchRecord) || input.launchRecord.taskId !== input.taskId
+        || input.launchRecord.ownerClientId !== input.ownerClientId
+        || input.launchRecord.ownerWorkspaceId !== input.ownerWorkspaceId
+        || (input.nativeBinding !== undefined && input.launchRecord.ownerSessionId !== input.nativeBinding.ownerSessionId)))) {
       return err(appError('INVALID_INPUT', 'Durable task reservation identity is invalid'));
     }
     try {
@@ -130,7 +134,24 @@ export class DurableShellTaskIndex {
       if (!isReady(ready) || ready.markerFormatVersion !== 2) {
         await this.withLock(async () => this.initializeUnlocked());
       }
-      const observations = await this.observeMarkersOutsideLock(input.taskId);
+      // When admission has spare capacity and no import holds the exclusive fence,
+      // native termination RPCs are not needed to admit another ordinary operation.
+      // Preserve every unverified marker; inspect again under capacity pressure or
+      // for exclusive imports. This also avoids N slow RPCs on a missing-service host.
+      const capacityClass = input.capacityClass ?? this.options.capacityClass ?? 'durable_shell';
+      const currentMarkers = await this.readMarkers();
+      const spareCapacity = currentMarkers.filter((marker) => marker.record === undefined
+        || reservationCapacityClass(marker.record) === capacityClass).length < this.maxConcurrentTasks;
+      const noImport = !currentMarkers.some((marker) => marker.record?.mutationKind === 'repository_import');
+      // A mixed legacy/native backlog must not force N slow service probes
+      // when an ordinary request has spare capacity. Keep all markers held;
+      // exclusive imports and capacity pressure still require observation.
+      const bulkNativeBacklog = currentMarkers.length >= 8
+        && currentMarkers.some((marker) => marker.record?.mutationKind === 'opaque_contained_process');
+      const skipObservation = input.mutationKind !== 'repository_import' && noImport && spareCapacity
+        && ((input.mutationKind === 'synchronous_mutation' && capacityClass === 'managed_writer')
+          || bulkNativeBacklog);
+      const observations = skipObservation ? null : await this.observeMarkersOutsideLock(input.taskId);
       return await this.withLock(async () => {
         await this.initializeUnlocked();
         await this.ensureJournalUnlocked();
@@ -150,7 +171,9 @@ export class DurableShellTaskIndex {
             if (marker.record.requestDigest !== input.requestDigest || marker.record.mutationKind !== (input.mutationKind ?? 'opaque')
               || reservationCapacityClass(marker.record) !== capacityClass
               || marker.record.ownerClientId !== input.ownerClientId
-              || marker.record.ownerWorkspaceId !== input.ownerWorkspaceId) {
+              || marker.record.ownerWorkspaceId !== input.ownerWorkspaceId
+              || marker.record.nativeReceiptPath !== input.nativeReceiptPath
+              || JSON.stringify(parseNativeAttemptBinding(marker.record.nativeBinding)) !== JSON.stringify(parseNativeAttemptBinding(input.nativeBinding))) {
               return err(appError('CONFLICT', 'Durable task ID is already reserved for another request', true));
             }
             return ok({ activeTasks: activeTasks + 1, created: false, markerPath: marker.path });
@@ -158,7 +181,7 @@ export class DurableShellTaskIndex {
           if (marker.record === undefined) {
             return err(appError('CONFLICT', 'A managed writer reservation is unreadable; resolve its state before launching another writer', true));
           }
-          const observed = observations.get(marker.path);
+          const observed = observations?.get(marker.path);
           const unchanged = observed !== undefined && JSON.stringify(observed.record) === JSON.stringify(marker.record);
           const nativeTerminated = unchanged && observed.nativeTerminated;
           if (marker.record.mutationKind === 'opaque_contained_process') {
@@ -388,6 +411,7 @@ export class DurableShellTaskIndex {
         mutationKind: marker.mutationKind ?? 'opaque',
         nativeReceiptPath: marker.nativeReceiptPath,
         ...(marker.nativeBinding === undefined ? {} : { nativeBinding: marker.nativeBinding }),
+        ...(marker.reservedAt === undefined ? {} : { reservedAt: marker.reservedAt }),
       });
     } catch {
       return false;

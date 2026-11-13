@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
 import { validateContainmentEvidence } from './verify-containment-artifacts.mjs';
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
+import { sourceRecoveryContracts } from '../../../scripts/update-trust/source-recovery-contracts.mjs';
+import { verifyPreparedInstalledLayout } from '../../../scripts/update-trust/prepare-installed-layout.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
@@ -37,6 +39,7 @@ const capabilityBridge = platform === 'win32' ? validateCapabilityBridge(runtime
 const macSigning = platform === 'darwin' ? validateMacSigning(runtimeEvidence) : null;
 const containment = validateContainmentEvidence(runtimeEvidence.containment, runtimeEvidence.files, platform);
 const updateWorker = validateUpdateWorkerEvidence(runtimeEvidence.updateWorker, runtimeEvidence.files, platform);
+const recoveryCompatibility = platform === 'win32' ? await sourceRecoveryContracts(repositoryRoot) : null;
 
 const artifactNames = expectedArtifactNames(platform, version, runtimeEvidence.arch);
 const artifacts = [];
@@ -46,6 +49,10 @@ for (const name of artifactNames) {
   artifacts.push({ name, sizeBytes: metadata.size, sha256: await sha256File(filePath) });
 }
 const windowsAuthenticode = platform === 'win32' ? inspectWindowsAuthenticode(artifacts) : null;
+const installedLayoutRoot = optionalEnv('LNWJUD_VALIDATION_INSTALLED_ROOT');
+const installedLayout = installedLayoutRoot === null ? null : await verifyPreparedInstalledLayout({
+  rootDirectory: installedLayoutRoot, outputDirectory: installerDirectory, platform, architecture: runtimeEvidence.arch,
+});
 
 const provenance = {
   schemaVersion: 1,
@@ -72,8 +79,10 @@ const provenance = {
   capabilityBridge,
   containment,
   updateWorker,
+  recoveryCompatibility,
   artifacts,
   runtime: runtimeEvidence.files,
+  ...(installedLayout === null ? {} : { installedLayout }),
 };
 
 const provenancePath = path.join(installerDirectory, 'PROVENANCE.json');
@@ -83,6 +92,7 @@ const provenanceHash = await sha256File(provenancePath);
 const sumLines = [
   ...artifacts.map((entry) => `${entry.sha256}  ${entry.name}`),
   `${provenanceHash}  PROVENANCE.json`,
+  ...(installedLayout === null ? [] : [`${installedLayout.sha256}  ${installedLayout.name}`]),
   ...runtimeEvidence.files.map((entry) => `${entry.sha256}  installed/${entry.relativePath}`),
 ];
 await writeFile(path.join(installerDirectory, 'SHA256SUMS.txt'), `${sumLines.join('\n')}\n`, 'utf8');

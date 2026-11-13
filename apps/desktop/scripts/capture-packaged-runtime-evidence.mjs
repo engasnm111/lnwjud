@@ -6,6 +6,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-artifacts.mjs';
 import { verifyContainmentArtifacts } from './verify-containment-artifacts.mjs';
+import { VERIFIER_SHA256 } from './stage-update-attestation-verifier.mjs';
 import { verifyUpdateWorkerArtifacts } from './verify-update-worker-artifacts.mjs';
 import {
   readMacosSigningPolicyEvidence,
@@ -26,6 +27,7 @@ const TARGETS = Object.freeze({
       ['containment-pin', 'resources/native-containment/lnwjud-containment-pin.node'],
       ['containment-manifest', 'resources/native-containment/manifest.json'],
       ['containment-runtime', 'resources/native-containment/process-runtime.mjs'],
+      ['attestation-verifier', 'resources/native-containment/update-attestation/gh.exe'],
       ['update-worker', 'resources/update-worker/lnwjud-update-worker.exe'],
       ['update-worker-manifest', 'resources/update-worker/manifest.json'],
       ['windows-capability-bridge.ps1', 'resources/windows-capability-bridge.ps1'],
@@ -114,7 +116,11 @@ export async function collectPackagedRuntimeEvidence(context, { allowIncompleteM
     if (platform === 'darwin' && (isNativeHostManifestPath(resolvedRelativePath) || isRuntimeManifestPath(resolvedRelativePath))) {
       signingReceipts.push(JSON.parse(await readFile(absolutePath, 'utf8')).packagedSigning);
     }
-    files.push({ name, relativePath: resolvedRelativePath, sizeBytes: metadata.size, sha256: await sha256File(absolutePath) });
+    const sha256 = await sha256File(absolutePath);
+    if (name === 'attestation-verifier' && sha256 !== VERIFIER_SHA256) {
+      throw new Error('Packaged attestation verifier hash mismatch');
+    }
+    files.push({ name, relativePath: resolvedRelativePath, sizeBytes: metadata.size, sha256 });
   }
   const containment = await verifyContainmentArtifacts({
     directory: resolvePackagedPath(appOutDir, platform, `${platform === 'darwin' ? 'Contents/Resources' : 'resources'}/native-containment`),

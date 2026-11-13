@@ -156,10 +156,12 @@ describe('portable process contracts', () => {
       inspectGroup: async (): Promise<PosixProcessGroupObservation> => {
         probes += 1;
         return probes === 1
-          ? { state: 'unknown', reason: 'malformed_process_table' }
+          ? { state: 'unknown', reason: 'empty_process_table' }
           : probes === 2
-            ? { state: 'empty' }
-            : { state: 'live', livePids: [4242], rootStartedAt: '2026-10-29T00:00:00.000Z' };
+            ? { state: 'unknown', reason: 'malformed_process_table' }
+            : probes === 3
+              ? { state: 'empty' }
+              : { state: 'live', livePids: [4242], rootStartedAt: '2026-10-29T00:00:00.000Z' };
       },
       processKill: (pid, signal): void => { signals.push({ pid, signal }); },
       termGraceMs: 5,

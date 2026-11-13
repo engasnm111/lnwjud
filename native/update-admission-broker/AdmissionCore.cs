@@ -104,15 +104,19 @@ internal sealed class AdmissionCore : IDisposable
         }
         foreach (var entry in permits)
         {
-            var item = entry.Value as JsonObject ?? throw new Refusal("ADMISSION_STATE_INVALID"); AdmissionProtocol.Fields(item, "participant", "kind", "status", "attempt");
-            var participant = AdmissionProtocol.Text(item, "participant"); var kind = AdmissionProtocol.Text(item, "kind"); var status = AdmissionProtocol.Text(item, "status"); var attempt = AdmissionProtocol.Text(item, "attempt");
+            var item = entry.Value as JsonObject ?? throw new Refusal("ADMISSION_STATE_INVALID"); AdmissionProtocol.Fields(item, "participant", "kind", "status", "attempt", "parent");
+            var participant = AdmissionProtocol.Text(item, "participant"); var kind = AdmissionProtocol.Text(item, "kind"); var status = AdmissionProtocol.Text(item, "status"); var attempt = AdmissionProtocol.Text(item, "attempt"); var parent = AdmissionProtocol.Text(item, "parent");
             if (!AdmissionProtocol.Identifier(entry.Key) || participants[participant] is not JsonObject member || kind is not ("startup" or "call" or "background" or "job") || status is not ("held" or "settled")
                 || (kind == "job" ? !AdmissionProtocol.Identifier(attempt) : attempt.Length != 0)
                 || status == "held" && AdmissionProtocol.Text(member, "status") != "active") throw new Refusal("ADMISSION_STATE_INVALID");
             var prefix = participant + ".";
             if (!entry.Key.StartsWith(prefix, StringComparison.Ordinal)) throw new Refusal("ADMISSION_STATE_INVALID");
             var sequence = AdmissionProtocol.Decimal(entry.Key[prefix.Length..]);
-            if (sequence <= AdmissionProtocol.Number(member, "settledThrough") || sequence > AdmissionProtocol.Number(member, "issued")) throw new Refusal("ADMISSION_STATE_INVALID");
+            if (sequence <= AdmissionProtocol.Number(member, "settledThrough") || sequence > AdmissionProtocol.Number(member, "issued")
+                || (kind == "job" ? !AdmissionProtocol.Identifier(parent) || !parent.StartsWith(prefix, StringComparison.Ordinal)
+                    || !ulong.TryParse(parent[prefix.Length..], out var parentSequence) || parentSequence == 0 || parentSequence >= sequence
+                    || parent[prefix.Length..] != AdmissionProtocol.Decimal(parentSequence)
+                    : parent.Length != 0)) throw new Refusal("ADMISSION_STATE_INVALID");
         }
         foreach (var entry in participants)
         {
@@ -182,7 +186,7 @@ internal sealed class AdmissionCore : IDisposable
             if (!AdmissionProtocol.Identifier(id) || kind is not ("startup" or "call" or "background" or "job") || kind == "job" && !AdmissionProtocol.Identifier(attempt)) throw new Refusal("ADMISSION_PERMIT_INVALID");
             if (permits[id] is JsonObject old)
             {
-                if (Field(old, "participant") != participant || Field(old, "kind") != kind || Field(old, "attempt") != attempt) throw new Refusal("ADMISSION_PERMIT_CONFLICT");
+                if (Field(old, "participant") != participant || Field(old, "kind") != kind || Field(old, "attempt") != attempt || Field(old, "parent") != (parent ?? "")) throw new Refusal("ADMISSION_PERMIT_CONFLICT");
                 if (Field(old, "status") != "held") throw new Refusal("ADMISSION_PERMIT_ALREADY_SETTLED");
                 return new AdmissionGrant.ExistingRequiresReconciliation();
             }
@@ -192,7 +196,7 @@ internal sealed class AdmissionCore : IDisposable
             if (parent is null ? Field(state, "phase") != "open" : Field(state, "phase") == "sealed") throw new Refusal("ADMISSION_CLOSED");
             if (parent is not null && (permits[parent] is not JsonObject owned || Field(owned, "participant") != participant || Field(owned, "status") != "held" || Field(owned, "kind") == "job")) throw new Refusal("ADMISSION_PARENT_INVALID");
             if (permits.Count == 512) throw new Refusal("ADMISSION_PERMIT_LIMIT");
-            var next = (JsonObject)state.DeepClone(); ((JsonObject)next["permits"]!)[id] = new JsonObject { ["participant"] = participant, ["kind"] = kind, ["status"] = "held", ["attempt"] = attempt };
+            var next = (JsonObject)state.DeepClone(); ((JsonObject)next["permits"]!)[id] = new JsonObject { ["participant"] = participant, ["kind"] = kind, ["status"] = "held", ["attempt"] = attempt, ["parent"] = parent ?? "" };
             ((JsonObject)((JsonObject)next["participants"]!)[participant]!)["issued"] = AdmissionProtocol.Decimal(sequence); Save(next); return new AdmissionGrant.Granted(id);
         }
     }

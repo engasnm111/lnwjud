@@ -925,24 +925,31 @@ describe('ShellCapabilityBackend unrestricted', () => {
     const backendA = await durableBackend(root, taskStateDirectory);
     const started = await backendA.execute({
       operation: 'run', executable: process.execPath, arguments: ['-e', 'setTimeout(() => {}, 5000)'],
-      cwd: root, execution: 'background', timeout_seconds: 10, userConfirmed: true, ...owner('session-a'),
+      cwd: root, execution: 'background', timeout_seconds: 20, userConfirmed: true, ...owner('session-a'),
     });
     expect(started).toMatchObject({ ok: true, value: { task_id: expect.any(String) } });
     if (!started.ok) return;
     const taskId = String(started.value.task_id);
 
     const backendB = await durableBackend(root, taskStateDirectory);
-    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b') })).resolves.toMatchObject({ ok: true });
-    const sessionBList = await backendB.execute({ operation: 'list', ...owner('session-b') });
-    expect(sessionBList).toMatchObject({ ok: true, value: { tasks: expect.arrayContaining([expect.objectContaining({ task_id: taskId })]) } });
+    try {
+      await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b') })).resolves.toMatchObject({ ok: true });
+      const sessionBList = await backendB.execute({ operation: 'list', ...owner('session-b') });
+      expect(sessionBList).toMatchObject({ ok: true, value: { tasks: expect.arrayContaining([expect.objectContaining({ task_id: taskId })]) } });
 
-    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b', 'foreign-client') })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
-    await expect(backendB.execute({ operation: 'list', ...owner('session-b', 'foreign-client') })).resolves.toMatchObject({ ok: true, value: { tasks: [] } });
+      await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b', 'foreign-client') })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+      await expect(backendB.execute({ operation: 'list', ...owner('session-b', 'foreign-client') })).resolves.toMatchObject({ ok: true, value: { tasks: [] } });
 
-    await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b', 'client-1', 'foreign-workspace') })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
-    await expect(backendB.cancelForGoal('client-1', 'workspace-1', taskId))
-      .resolves.toMatchObject({ ok: true, value: { matched: true } });
-  }, 15_000);
+      await expect(backendB.execute({ operation: 'status', task_id: taskId, ...owner('session-b', 'client-1', 'foreign-workspace') })).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    } finally {
+      // The finite child exits even when native containment cannot attest a stop.
+      // This case checks task ownership, not independent terminal proof.
+      await expect(backendB.cancelForGoal('client-1', 'workspace-1', taskId))
+        .resolves.toMatchObject({ ok: true, value: { matched: true } });
+      await expect(backendB.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 10, ...owner('session-b') }))
+        .resolves.toMatchObject({ ok: true });
+    }
+  }, 45_000);
 
   it.skipIf(process.platform === 'darwin')('paginates durable foreground and background history and rejects malformed cursors', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-shell-pages-'));

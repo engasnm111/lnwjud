@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-export const GOAL_CONTRACT_READER_VERSION = 2;
+export const GOAL_CONTRACT_READER_VERSION = 3;
 
 export function configureGoalContractConnection(connection: DatabaseSync): void {
   const compatibility = connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runtime_compatibility'").get();

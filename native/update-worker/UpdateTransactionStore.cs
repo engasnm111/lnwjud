@@ -44,7 +44,7 @@ internal sealed class UpdateTransactionStore : IDisposable
 
     internal void InitializeSelection(SlotSelection selection)
     {
-        if (selection.InstallationId != installationId || selection.PreviousDigest != "none"
+        if (selection.InstallationId != installationId || !selection.IsInitialPublication
             || io.Read("active-slot.json") is not null || io.Read("active-slot.pending.json") is not null
             || io.Read("transaction.json") is not null || io.Read("transaction.pending.json") is not null)
             throw new Refusal("UPDATE_SLOT_ENROLLMENT_CONFLICT");
@@ -62,6 +62,7 @@ internal sealed class UpdateTransactionStore : IDisposable
         if (currentDigest != expectedCurrentDigest) throw new Refusal("UPDATE_TRANSACTION_CAS_CONFLICT");
         var current = currentFile is null ? null : DecodeTransaction(currentFile);
         var selection = selectionFile is null ? null : DecodeSelection(selectionFile);
+        if (current is null) RequireInitialOrEmptySelection(selection);
         ValidateTransactionSuccessor(current, currentDigest, selection, next);
         ValidateSelectionPhase(next, selection);
         PublishTransaction(next, currentDigest);
@@ -144,7 +145,8 @@ internal sealed class UpdateTransactionStore : IDisposable
     {
         if (transaction is null || selection is null) return;
         if (transaction.Phase == UpdateTransactionPhase.CandidateSelectionIntent && IsCandidateSelection(transaction, selection)
-            || transaction.Phase == UpdateTransactionPhase.PreviousSelectionIntent && IsPreviousSelection(transaction, selection))
+            || transaction.Phase == UpdateTransactionPhase.PreviousSelectionIntent
+                && selection.Generation == transaction.Generation && IsPreviousSelection(transaction, selection))
             throw new Refusal("UPDATE_SLOT_PUBLICATION_UNVERIFIED");
     }
 
@@ -153,8 +155,9 @@ internal sealed class UpdateTransactionStore : IDisposable
     {
         UpdateTransactionPhase.CandidateSelectionIntent => IsPreviousSelection(transaction, current)
             && IsCandidateSelection(transaction, staged) && staged.Revision == 1,
-        UpdateTransactionPhase.PreviousSelectionIntent => IsCandidateSelection(transaction, current)
-            && IsPreviousSelection(transaction, staged) && staged.Revision == checked(current.Revision + 1),
+        UpdateTransactionPhase.PreviousSelectionIntent => IsPreviousSelection(transaction, staged)
+            && ((current.Digest == transaction.PreviousSelectionDigest && staged.Revision == 1)
+                || (IsCandidateSelection(transaction, current) && current.Revision < ulong.MaxValue && staged.Revision == current.Revision + 1)),
         _ => false,
     };
 
@@ -169,13 +172,17 @@ internal sealed class UpdateTransactionStore : IDisposable
         && ((selection.Generation < transaction.Generation && selection.Digest == transaction.PreviousSelectionDigest)
             || (selection.Generation == transaction.Generation && selection.TransactionId == transaction.TransactionId));
 
-    private void ValidateSelectionPhase(UpdateTransactionJournal? transaction, SlotSelection? selection)
+    internal static void RequireInitialOrEmptySelection(SlotSelection? selection)
+    {
+        if (selection is { IsInitialPublication: false }) throw new Refusal("UPDATE_SELECTION_WITHOUT_TRANSACTION");
+    }
+
+    private static void ValidateSelectionPhase(UpdateTransactionJournal? transaction, SlotSelection? selection)
     {
         if (transaction is null)
         {
-            if (io.Read("transaction.json") is null && selection is not null) return;
-            if (selection is null) return;
-            throw new Refusal("UPDATE_SELECTION_WITHOUT_TRANSACTION");
+            RequireInitialOrEmptySelection(selection);
+            return;
         }
         if (selection is null) throw new Refusal("UPDATE_SLOT_SELECTION_MISSING");
         var previous = IsPreviousSelection(transaction, selection);
@@ -191,7 +198,8 @@ internal sealed class UpdateTransactionStore : IDisposable
                 or UpdateTransactionPhase.CommitIntent or UpdateTransactionPhase.Committed => candidate,
             UpdateTransactionPhase.PreviousSelected or UpdateTransactionPhase.PreviousLaunchIntent
                 or UpdateTransactionPhase.PreviousStarted or UpdateTransactionPhase.RollbackVerified
-                or UpdateTransactionPhase.RollbackUnverified => previous,
+                => previous && selection.Generation == transaction.Generation,
+            UpdateTransactionPhase.RollbackUnverified => previous,
             _ => false,
         };
         if (!valid) throw new Refusal("UPDATE_SLOT_SELECTION_PHASE_CONFLICT");

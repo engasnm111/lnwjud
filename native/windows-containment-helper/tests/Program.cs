@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json;
 
 namespace Lnwjud.Containment;
 
@@ -14,6 +15,75 @@ internal static class NativeTests
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcess(string application, StringBuilder command, nint processSecurity, nint threadSecurity, bool inherit, uint flags, nint environment, string cwd, ref Startup startup, out ProcessInfo info);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
     [DllImport("kernel32.dll")] private static extern bool TerminateProcess(nint handle, uint exit);
+    private static void TestEndpointExit259()
+    {
+        using var self = Process.GetCurrentProcess();
+        using (var handle = new Microsoft.Win32.SafeHandles.SafeProcessHandle(self.Handle, ownsHandle: false))
+            if (!ServiceEndpointIdentity.ProcessStillRunning(handle)) throw new Exception("Live endpoint process misclassified");
+        var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var argument in new[] { "/d", "/c", "exit", "/b", "259" }) start.ArgumentList.Add(argument);
+        using var child = Process.Start(start) ?? throw new Exception("Endpoint exit fixture unavailable");
+        child.WaitForExit();
+        if (child.ExitCode != 259) throw new Exception("Endpoint exit fixture did not return 259");
+        using var terminated = new Microsoft.Win32.SafeHandles.SafeProcessHandle(child.Handle, ownsHandle: false);
+        if (ServiceEndpointIdentity.ProcessStillRunning(terminated)) throw new Exception("Terminated endpoint exit code 259 misclassified as live");
+        Console.WriteLine("PASS endpoint liveness uses terminal exit time, not ambiguous exit code 259");
+    }
+
+    private sealed class NeverWritableStream : Stream
+    {
+        internal bool ObservedCancellation { get; private set; }
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+            catch (OperationCanceledException) { ObservedCancellation = true; throw; }
+        }
+    }
+
+    private static async Task TestBoundedServiceFailureReply()
+    {
+        using var blocked = new NeverWritableStream();
+        var elapsed = Stopwatch.StartNew();
+        try
+        {
+            await WindowsContainmentService.WriteFailureFrameAsync(blocked, "SERVICE_REQUEST_FAILED", CancellationToken.None);
+            throw new Exception("Unresponsive service error reply completed without a write");
+        }
+        catch (OperationCanceledException) { }
+        if (!blocked.ObservedCancellation || elapsed.Elapsed > TimeSpan.FromSeconds(5))
+            throw new Exception("Unresponsive service error reply was not cancelled within its deadline");
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        using var cancelledStream = new NeverWritableStream();
+        try
+        {
+            await WindowsContainmentService.WriteFailureFrameAsync(cancelledStream, "SERVICE_REQUEST_FAILED", cancelled.Token);
+            throw new Exception("Service shutdown did not cancel the error reply");
+        }
+        catch (OperationCanceledException) { }
+        if (!cancelledStream.ObservedCancellation)
+            throw new Exception("Service shutdown token did not reach the response writer");
+
+        using var normal = new MemoryStream();
+        await WindowsContainmentService.WriteFailureFrameAsync(normal, "SERVICE_REQUEST_FAILED", CancellationToken.None);
+        var frame = normal.ToArray();
+        if (frame.Length < 4 || BitConverter.ToInt32(frame, 0) != frame.Length - 4
+            || JsonDocument.Parse(frame.AsMemory(4)).RootElement.GetProperty("error").GetString() != "SERVICE_REQUEST_FAILED")
+            throw new Exception("Bounded error reply changed the wire response contract");
+        Console.WriteLine("PASS service error replies are bounded on stalled clients and shutdown, with unchanged wire framing");
+    }
+
     private static readonly string Executable = Environment.ProcessPath ?? throw new Exception("No test executable");
     private static readonly Dictionary<string, string> EnvironmentBlock = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().ToDictionary(entry => (string)entry.Key, entry => (string)(entry.Value ?? ""));
 
@@ -40,6 +110,7 @@ internal static class NativeTests
                 case "updater-crash-authority": return UpdaterCrashBoundaryFixture.RunAuthority(args);
                 case "updater-crash-child": return UpdaterCrashBoundaryFixture.RunChild(args);
                 case "updater-crash-boundaries": UpdaterCrashBoundaryFixture.RunSuite(); return 0;
+                case "service-error-reply-timeout": TestBoundedServiceFailureReply().GetAwaiter().GetResult(); return 0;
                 case "pipe-acl": ServicePipeSecurityTests.Run(); return 0;
                 case "authenticated-pipe-caller": TestAuthenticatedPipeCallerCapture(); return 0;
                 case "pipe-revert-failure-child":
@@ -52,11 +123,19 @@ internal static class NativeTests
                 case "unknown-cancel-collision-test": TestUnknownCancelCollision(); return 0;
                 case "job-collision-release-test": TestJobCollisionRelease(); return 0;
                 case "terminal-release-recovery-test": TestTerminalReleaseRecovery(); return 0;
+                case "post-reboot-recovery-test": TestPostRebootRecovery(); return 0;
                 case "rpc-absent-child":
                     WindowsContainmentServiceClient.ServiceNameForAbsenceTest = "lnwjud-absent-" + Guid.NewGuid().ToString("N");
                     return Program.Main(["service-rpc", new string('0', 64)]).GetAwaiter().GetResult();
                 case "rpc-absent-test": TestAbsentServiceRpc(); return 0;
+                case "mcp-stdio-proxy": return McpStdioProxy.RunAsync().GetAwaiter().GetResult();
+                case "mcp-proxy-target": return RunMcpProxyTarget(args[1]);
+                case "mcp-proxy-descendant": Thread.Sleep(30_000); return 0;
+                case "mcp-proxy-tests": TestMcpStdioProxy(); TestMcpStdioProxyClientEof(); TestMcpStdioProxyNonzeroExit(); Console.WriteLine("PASS native MCP stdio proxy preserves bytes, forwards client EOF, propagates target failure, and kills descendants before a zero exit"); return 0;
+                case "mcp-proxy-crash-tests": TestMcpStdioProxyCrash(); Console.WriteLine("PASS proxy crash closes its Job and terminates the target tree without a success receipt"); return 0;
                 case "preexisting-pipe-test": TestServicePipeRefusesPreexistingInstance(); return 0;
+                case "mcp-proxy-eof-target": return RunMcpProxyEofTarget(args[1]);
+                case "mcp-proxy-nonzero-target": return 17;
                 case "session-policy-test": TestCallerLaunchSessionPolicy(); return 0;
                 case "profile-key-test": TestProfileKeyIsNotExported(); return 0;
                 case "stale-tunnel-alias": StaleTunnelAliasTests.Run(); return 0;
@@ -169,6 +248,7 @@ internal static class NativeTests
                         Directory.Delete(absolute, true);
                     }
                 }
+                case "endpoint-exit259-tests": TestEndpointExit259(); return 0;
                 case "service-failure-reason-tests": TestServiceFailureReason(); Console.WriteLine("PASS safe service installer failure codes"); return 0;
                 case "service-restart-tests":
                     TestServiceRestartAndJobReconciliation();
@@ -215,7 +295,9 @@ internal static class NativeTests
                 || WindowsContainmentServiceClient.ShouldWaitForOutput(ServiceAttemptPhase.TerminationUnknown))
                 throw new Exception("SERVICE_WATCHER_OUTPUT_PUBLICATION_ORDER_INVALID");
             Console.WriteLine("PASS service watcher waits for output publication after native dispatch");
+            TestWatcherRequiresServiceOwnedTerminalPublication();
             TestServiceFailureReason();
+            TestBoundedServiceFailureReply().GetAwaiter().GetResult();
             Console.WriteLine("PASS service installer reports only stable diagnostic codes");
             TestServiceStoreCreation(root);
             Console.WriteLine("PASS protected store DACL applies at creation and existing untrusted store remains unchanged");
@@ -224,7 +306,8 @@ internal static class NativeTests
             TestServiceInstallPathValidation();
             Console.WriteLine("PASS protected service install layout and command quoting");
             TestServiceEndpointImagePolicy(root);
-            Console.WriteLine("PASS protected service image may differ from the portable client and rejects hash or account mismatch");
+            TestEndpointExit259();
+            Console.WriteLine("PASS protected service image policy and unambiguous process exit-time liveness");
             TestJobCollision();
             TestUnknownCancelCollision();
             TestJobCollisionRelease();
@@ -250,6 +333,8 @@ internal static class NativeTests
             TestDurableServiceAttemptLedger();
             TestTerminalReleaseRecovery();
             Console.WriteLine("PASS crash recovery keeps unknown reservations and persists terminal release");
+            TestPostRebootRecovery();
+            Console.WriteLine("PASS missing attempt recovery requires new boot, absent Job, and exact owner");
             TestServiceRestartAndJobReconciliation();
             Console.WriteLine("PASS service restart reconciles dead jobs, preserves live descendants, and cancels cleanly");
             UpdaterCrashBoundaryFixture.RunSuite();
@@ -729,6 +814,29 @@ internal static class NativeTests
         var expected = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(image))).ToLowerInvariant();
         if (String.Equals(image, Executable, StringComparison.OrdinalIgnoreCase)) throw new Exception("Image policy test did not use a distinct client executable");
         WindowsContainmentServiceClient.ValidateServerImage(image, programFiles, expected);
+        if (ServiceEndpointIdentity.InspectSlotImage(image, programFiles) is not null)
+            throw new Exception("A protected manual package was interpreted as a slot");
+        foreach (var (slot, result) in new[] { ("A", "UPDATE_SLOT_AUTHORITY_REQUIRED"), ("b", "UPDATE_SLOT_AUTHORITY_REQUIRED"),
+            ("staging", "UPDATE_SLOT_LAYOUT_UNVERIFIED") })
+        {
+            var role = Path.Combine(programFiles, "vendor", "custom", "slots", slot, "resources", "native-containment", "lnwjud-containment.exe");
+            Directory.CreateDirectory(Path.GetDirectoryName(role)!);
+            File.WriteAllText(role, "slot role fixture");
+            if (ServiceEndpointIdentity.InspectSlotImage(role, programFiles) != result)
+                throw new Exception("Custom protected slot did not hold: " + slot);
+            if (slot == "A")
+            {
+                var alias = Path.Combine(root, "helper-alias.exe");
+                File.CreateSymbolicLink(alias, role);
+                if (ServiceEndpointIdentity.InspectSlotImage(alias, programFiles) != result)
+                    throw new Exception("A resolved protected slot role was treated as an unmanaged helper");
+            }
+        }
+        var devRole = Path.Combine(root, "checkout", "slots", "A", "resources", "native-containment", "lnwjud-containment.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(devRole)!);
+        File.WriteAllText(devRole, "development fixture");
+        if (ServiceEndpointIdentity.InspectSlotImage(devRole, programFiles) is not null)
+            throw new Exception("A developer directory outside Program Files was interpreted as a protected slot");
         var linked = Path.Combine(programFiles, "lnwjud-linked", "resources", "native-containment", "lnwjud-containment.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(linked)!);
         File.CreateSymbolicLink(linked, image);
@@ -1064,6 +1172,46 @@ internal static class NativeTests
             return;
         }
         throw new Exception("Expected " + typeof(T).Name + " with " + expectedMessage);
+    }
+
+    private static void TestPostRebootRecovery()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "lnwjud-reboot-recovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = Path.Combine(directory, "attempts.json");
+            var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            var request = NewServiceAttemptRequest("reboot-missing-" + Guid.NewGuid().ToString("N"),
+                ServiceAttemptLedger.GlobalReservationKey);
+            var now = DateTimeOffset.UtcNow;
+            var reservedAt = now.AddHours(-2);
+            var bootTime = now.AddHours(-1);
+            var absentJob = new ContainedProcess.JobProbeResult(ContainedProcess.JobProbeStatus.NotFound, 0, 0);
+            var activeJob = new ContainedProcess.JobProbeResult(ContainedProcess.JobProbeStatus.Active, 1, 0);
+            ExpectFailure<IOException>(() => ledger.RecoverAfterReboot(request.Identity,
+                request.AuthenticatedCallerSid, now, bootTime, absentJob), "SERVICE_RECOVERY_NEW_BOOT_REQUIRED");
+            ExpectFailure<IOException>(() => ledger.RecoverAfterReboot(request.Identity,
+                request.AuthenticatedCallerSid, reservedAt, bootTime, activeJob), "SERVICE_RECOVERY_JOB_UNVERIFIED");
+            var recovered = ledger.RecoverAfterReboot(request.Identity,
+                request.AuthenticatedCallerSid, reservedAt, bootTime, absentJob);
+            if (recovered.Phase != ServiceAttemptPhase.TerminalVerified || recovered.Outcome != ServiceProcessOutcome.Interrupted
+                || recovered.ExitCode != 125 || recovered.ActiveProcesses != 0 || recovered.ReservationHeld)
+                throw new Exception("Post-reboot reconciliation created a false success or retained the writer");
+            var persisted = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (persisted.Inspect(request.Identity, request.AuthenticatedCallerSid) != recovered
+                || persisted.RecoverAfterReboot(request.Identity, request.AuthenticatedCallerSid, reservedAt, bootTime, absentJob) != recovered)
+                throw new Exception("Reboot recovery proof was not persisted or idempotent");
+            ExpectFailure<UnauthorizedAccessException>(() => persisted.RecoverAfterReboot(request.Identity,
+                "S-1-5-21-2000", reservedAt, bootTime, absentJob), "ATTEMPT_OWNER_MISMATCH");
+            var running = NewServiceAttemptRequest("reboot-running-" + Guid.NewGuid().ToString("N"),
+                ServiceAttemptLedger.GlobalReservationKey);
+            persisted.Prepare(running);
+            persisted.TryCommitDispatch(running.Identity, running.AuthenticatedCallerSid, running.OperationDigest);
+            ExpectFailure<IOException>(() => persisted.RecoverAfterReboot(running.Identity,
+                running.AuthenticatedCallerSid, reservedAt, bootTime, absentJob), "SERVICE_RECOVERY_EXISTING_ATTEMPT_UNVERIFIED");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
     }
 
     private static void TestTerminalReleaseRecovery()
@@ -1473,14 +1621,58 @@ internal static class NativeTests
     {
         var pipeName = "lnwjud-service-rpc-" + Guid.NewGuid().ToString("N");
         var storeDirectory = Path.Combine(Path.GetTempPath(), "lnwjud-service-rpc-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(storeDirectory);
+        var fixtureSecurity = new DirectorySecurity();
+        var fixtureOwner = WindowsIdentity.GetCurrent().User!.Value;
+        fixtureSecurity.SetSecurityDescriptorSddlForm($"O:{fixtureOwner}D:P(A;OICI;FA;;;{fixtureOwner})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+        fixtureSecurity.CreateDirectory(storeDirectory);
         var storePath = Path.Combine(storeDirectory, "attempts.json");
         var reservationKey = Path.GetFullPath(Path.Combine(storeDirectory, "workspace"));
         var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(storePath));
+        var install = Directory.CreateDirectory(Path.Combine(storeDirectory, "install")).FullName;
+        var registered = false;
         using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var server = WindowsContainmentService.RunPipeServerAsync(pipeName, ledger, stopping.Token, useCurrentUserTestLauncher: true);
+        var server = WindowsContainmentService.RunPipeServerAsync(pipeName, ledger, stopping.Token, useCurrentUserTestLauncher: true,
+            startup: UpdateStartupGate.Isolated(install, storeDirectory, () => Volatile.Read(ref registered)));
         try
         {
+            async Task CheckStartup(string kind, string reason)
+            {
+                using var reply = await SendServiceRpcAsync(pipeName, """{"protocol":3,"command":"update_startup"}"""u8.ToArray());
+                if (!reply.RootElement.GetProperty("ok").GetBoolean()
+                    || reply.RootElement.GetProperty("result").GetProperty("kind").GetString() != kind
+                    || reply.RootElement.GetProperty("result").GetProperty("reason").GetString() != reason)
+                    throw new Exception("Unexpected update startup disposition: " + reply.RootElement);
+            }
+            await CheckStartup("unmanaged", "MANUAL_INSTALLATION");
+            Volatile.Write(ref registered, true);
+            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            Volatile.Write(ref registered, false);
+            var slots = Directory.CreateDirectory(Path.Combine(install, "slots"));
+            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            slots.Delete();
+            var enrollment = Path.Combine(storeDirectory, "update-authority");
+            File.WriteAllText(enrollment, "incomplete");
+            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            File.Delete(enrollment);
+            Directory.Delete(install);
+            await CheckStartup("held", "UPDATE_STARTUP_INSPECTION_UNAVAILABLE");
+            var scratch = Directory.CreateDirectory(Path.Combine(storeDirectory, "footprint")).FullName;
+            var privateStore = Path.Combine(scratch, "lnwjud-containment");
+            if (UpdateStartupGate.HasPrivateAuthority(scratch)) throw new Exception("Missing ledger reported managed state");
+            File.WriteAllText(privateStore, "");
+            try
+            {
+                _ = UpdateStartupGate.HasPrivateAuthority(scratch);
+                throw new Exception("A file in place of the service's private ledger did not hold startup");
+            }
+            catch (IOException error) when (error.Message == "SERVICE_FOOTPRINT_DIRECTORY_UNSAFE") { }
+            File.Delete(privateStore);
+            Directory.CreateDirectory(privateStore);
+            if (UpdateStartupGate.HasPrivateAuthority(scratch)) throw new Exception("Empty ledger reported managed state");
+            Directory.CreateDirectory(Path.Combine(privateStore, "update-authority"));
+            if (!UpdateStartupGate.HasPrivateAuthority(scratch)) throw new Exception("Private update state went undetected");
+            using (var extra = await SendServiceRpcAsync(pipeName, """{"protocol":3,"command":"update_startup","controlRequest":null}"""u8.ToArray()))
+                if (extra.RootElement.GetProperty("ok").GetBoolean()) throw new Exception("startup accepted extraneous fields");
             var terminalSid = WindowsIdentity.GetCurrent().User!.Value;
             var terminalRequest = NewServiceAttemptRequest("rpc-terminal-recovery", Path.Combine(storeDirectory, "terminal-recovery")) with { AuthenticatedCallerSid = terminalSid };
             ledger.Prepare(terminalRequest);
@@ -1798,7 +1990,9 @@ internal static class NativeTests
                 var terminal = await WaitForOutputReservationRelease(ledger, identity, callerSid);
                 if (terminal.Phase != ServiceAttemptPhase.TerminalVerified || terminal.ReservationHeld)
                     throw new Exception($"Output persistence state prevented native terminal proof and release. phase={terminal.Phase} held={terminal.ReservationHeld} reason={terminal.Reason} persistenceFailure={failPersistence}");
-                using var output = await SendServiceRpcAsync(pipeName, Request("read_output"));
+                // Verified process termination can precede the final output pipe drain.
+                using var output = await WaitForBoundedOutputAsync(
+                    () => SendServiceRpcAsync(pipeName, Request("read_output")), failPersistence);
                 if (!output.RootElement.GetProperty("ok").GetBoolean()) throw new Exception("Output scenario read failed");
                 var result = output.RootElement.GetProperty("result");
                 var stdout = Convert.FromBase64String(result.GetProperty("stdoutBase64").GetString()!);
@@ -1824,6 +2018,38 @@ internal static class NativeTests
                 }
             }
         }
+    }
+
+    private static async Task<System.Text.Json.JsonDocument> WaitForBoundedOutputAsync(
+        Func<Task<System.Text.Json.JsonDocument>> read, bool failPersistence)
+    {
+        var lastState = "unobserved";
+        for (var poll = 0; poll < 200; poll++)
+        {
+            var response = await read();
+            try
+            {
+                if (!response.RootElement.GetProperty("ok").GetBoolean())
+                    throw new Exception("Output scenario read failed");
+                var result = response.RootElement.GetProperty("result");
+                var stdoutLength = Convert.FromBase64String(result.GetProperty("stdoutBase64").GetString()!).Length;
+                var stderrLength = Convert.FromBase64String(result.GetProperty("stderrBase64").GetString()!).Length;
+                var stdoutTruncated = result.GetProperty("stdoutTruncated").GetBoolean();
+                var stderrTruncated = result.GetProperty("stderrTruncated").GetBoolean();
+                var persisted = result.GetProperty("persisted").GetBoolean();
+                var complete = result.GetProperty("complete").GetBoolean();
+                var ready = stdoutLength == ServiceOutputStore.MaximumStreamBytes
+                    && stderrLength == ServiceOutputStore.MaximumStreamBytes
+                    && stdoutTruncated && stderrTruncated && persisted != failPersistence
+                    && (failPersistence ? !complete && result.GetProperty("incompleteReason").GetString() == "SERVICE_OUTPUT_PERSISTENCE_FAILED" : complete);
+                if (ready) return response;
+                lastState = $"stdout={stdoutLength} stderr={stderrLength} truncated={stdoutTruncated}/{stderrTruncated} persisted={persisted} complete={complete}";
+            }
+            catch { response.Dispose(); throw; }
+            response.Dispose();
+            await Task.Delay(50);
+        }
+        throw new Exception($"Output snapshot did not reach verified per-stream bounds: {lastState}");
     }
 
     private static async Task<ServiceAttemptObservation> WaitForOutputReservationRelease(ServiceAttemptLedger ledger, ServiceAttemptIdentity identity, string callerSid)
@@ -1852,6 +2078,26 @@ internal static class NativeTests
             await Task.Delay(20);
         }
         return null;
+    }
+
+    private static void TestWatcherRequiresServiceOwnedTerminalPublication()
+    {
+        var identity = new ServiceAttemptIdentity("watch", "reservation", "attempt", 1, new string('a', 64), "client", "session", "workspace");
+        var terminal = new ServiceAttemptObservation(identity, ServiceAttemptPhase.TerminalVerified, null, ServiceProcessOutcome.Completed, 0, 0, null, false);
+        var cursor = new ServiceOutputCursor(0, 0);
+        var output = new ServiceOutputObservation("", "", false, false, true, cursor, cursor, true, "persisted", null, identity);
+        static bool Verified(ServiceAttemptObservation observation, ServiceOutputObservation snapshot) =>
+            WindowsContainmentServiceClient.HasVerifiedPublishedOutput(observation, snapshot);
+        if (!Verified(terminal, output)
+            || Verified(terminal with { ReservationHeld = true }, output)
+            || Verified(terminal with { ActiveProcesses = 1 }, output)
+            || Verified(terminal with { Phase = ServiceAttemptPhase.Running }, output)
+            || Verified(terminal, output with { Complete = false, FinalCursor = null })
+            || Verified(terminal, output with { Persisted = false })
+            || Verified(terminal, output with { FinalCursor = null })
+            || Verified(terminal, output with { Identity = identity with { AttemptId = "other" } }))
+            throw new Exception("Service watcher accepted unverified Job release or incomplete output publication");
+        Console.WriteLine("PASS watcher requires Job-zero, reservation release, matching identity and persisted final output");
     }
 
     private static async Task TestCancellationWaitsForReservationRelease()
@@ -2183,5 +2429,221 @@ internal static class NativeTests
             || AuthenticatedPipeCaller.SecurityFingerprint(caller.AccessToken) != before
             || AuthenticatedPipeCaller.ReadSessionId(caller.AccessToken.DangerousGetHandle()) != originalSession)
             throw new Exception("Launch duplication changed caller security or its original session");
+    }
+
+    private static void TestMcpStdioProxy()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lnwjud-native-mcp-proxy-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidencePath = Path.Combine(root, "descendant.json");
+        using var proxy = StartMcpProxy(evidencePath);
+        var output = proxy.StandardOutput.ReadToEndAsync();
+        var errorLines = new List<string>();
+        var errorMarker = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        proxy.ErrorDataReceived += (_, eventArgs) =>
+        {
+            if (eventArgs.Data is null) return;
+            errorLines.Add(eventArgs.Data);
+            if (eventArgs.Data == "MCP_PROXY_CLEANUP_VERIFIED") errorMarker.TrySetResult(true);
+        };
+        proxy.BeginErrorReadLine();
+        try
+        {
+            var deadline = Stopwatch.StartNew();
+            while (!File.Exists(evidencePath))
+            {
+                if (proxy.HasExited || deadline.Elapsed >= TimeSpan.FromSeconds(5)) throw new Exception("MCP proxy target did not start");
+                Thread.Sleep(10);
+            }
+            proxy.StandardInput.BaseStream.Write(new byte[] { 0, 1, 254, 255 });
+            proxy.StandardInput.BaseStream.Flush();
+            if (!errorMarker.Task.Wait(TimeSpan.FromSeconds(5))) throw new Exception("MCP proxy did not forward the target stderr marker");
+            if (proxy.HasExited) throw new Exception("Forwarded stderr was mistaken for a terminal-cleanup receipt");
+            using var evidence = JsonDocument.Parse(File.ReadAllBytes(evidencePath));
+            var rootPid = evidence.RootElement.GetProperty("rootPid").GetInt32();
+            var rootStartedAt = ReadProxyProcessStart(evidence.RootElement, "rootStartedAt");
+            var descendantPid = evidence.RootElement.GetProperty("descendantPid").GetInt32();
+            var descendantStartedAt = ReadProxyProcessStart(evidence.RootElement, "descendantStartedAt");
+            proxy.StandardInput.Close();
+            if (!proxy.WaitForExit(5_000)) throw new Exception("MCP proxy did not verify Job-zero termination");
+            if (proxy.ExitCode != 0) throw new Exception("MCP proxy returned failure after shutdown: " + proxy.ExitCode);
+            if (output.GetAwaiter().GetResult() != "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"echo\":\"AAH+/w==\"}}\n")
+                throw new Exception("MCP proxy changed target stdout bytes");
+            if (!errorLines.SequenceEqual(["MCP_PROXY_CLEANUP_VERIFIED"])) throw new Exception("MCP proxy changed target stderr bytes");
+            if (IsSameProcessAlive(rootPid, rootStartedAt) || IsSameProcessAlive(descendantPid, descendantStartedAt))
+                throw new Exception("MCP proxy reported success while an owned process remained alive");
+        }
+        finally
+        {
+            if (!proxy.HasExited) { try { proxy.Kill(entireProcessTree: true); } catch { } }
+            DeleteMcpProxyTestRoot(root);
+        }
+    }
+
+    private static void TestMcpStdioProxyCrash()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lnwjud-native-mcp-proxy-crash-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidencePath = Path.Combine(root, "descendant.json");
+        using var proxy = StartMcpProxy(evidencePath);
+        _ = proxy.StandardOutput.ReadToEndAsync();
+        _ = proxy.StandardError.ReadToEndAsync();
+        try
+        {
+            var deadline = Stopwatch.StartNew();
+            while (!File.Exists(evidencePath))
+            {
+                if (proxy.HasExited || deadline.Elapsed >= TimeSpan.FromSeconds(5)) throw new Exception("MCP proxy crash fixture target did not start");
+                Thread.Sleep(10);
+            }
+            using var evidence = JsonDocument.Parse(File.ReadAllBytes(evidencePath));
+            var rootPid = evidence.RootElement.GetProperty("rootPid").GetInt32();
+            var rootStartedAt = ReadProxyProcessStart(evidence.RootElement, "rootStartedAt");
+            var descendantPid = evidence.RootElement.GetProperty("descendantPid").GetInt32();
+            var descendantStartedAt = ReadProxyProcessStart(evidence.RootElement, "descendantStartedAt");
+            proxy.Kill();
+            if (!proxy.WaitForExit(5_000) || proxy.ExitCode == 0) throw new Exception("MCP proxy crash produced a success exit");
+            WaitForProxyProcessGone(rootPid, rootStartedAt);
+            WaitForProxyProcessGone(descendantPid, descendantStartedAt);
+        }
+        finally
+        {
+            if (!proxy.HasExited) { try { proxy.Kill(entireProcessTree: true); } catch { } }
+            DeleteMcpProxyTestRoot(root);
+        }
+    }
+
+    private static void TestMcpStdioProxyClientEof()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lnwjud-native-mcp-proxy-eof-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var evidencePath = Path.Combine(root, "target.txt");
+        using var proxy = StartMcpProxy(evidencePath, "mcp-proxy-eof-target");
+        var output = proxy.StandardOutput.ReadToEndAsync();
+        _ = proxy.StandardError.ReadToEndAsync();
+        try
+        {
+            proxy.StandardInput.BaseStream.Write(new byte[] { 0, 1, 254, 255 });
+            proxy.StandardInput.Close();
+            if (!proxy.WaitForExit(5_000)) throw new Exception("MCP proxy did not wait for a target response after client EOF");
+            if (proxy.ExitCode != 0) throw new Exception("MCP proxy did not verify the target's EOF shutdown: " + proxy.ExitCode);
+            var actual = output.GetAwaiter().GetResult();
+            if (actual != "MCP_PROXY_EOF_RESPONSE:AAH+/w==\r\n")
+                throw new Exception("MCP proxy EOF response mismatch; exit=" + proxy.ExitCode + ", stdout=" + Convert.ToBase64String(Encoding.UTF8.GetBytes(actual)));
+        }
+        finally
+        {
+            if (!proxy.HasExited) { try { proxy.Kill(entireProcessTree: true); } catch { } }
+            DeleteMcpProxyTestRoot(root);
+        }
+    }
+
+    private static void TestMcpStdioProxyNonzeroExit()
+    {
+        using var proxy = StartMcpProxy("unused", "mcp-proxy-nonzero-target");
+        var output = proxy.StandardOutput.ReadToEndAsync();
+        var error = proxy.StandardError.ReadToEndAsync();
+        try
+        {
+            proxy.StandardInput.Close();
+            if (!proxy.WaitForExit(5_000)) throw new Exception("MCP proxy did not finish after target failure");
+            if (proxy.ExitCode != 17) throw new Exception("MCP proxy masked target exit status: " + proxy.ExitCode);
+            if (output.GetAwaiter().GetResult().Length != 0 || error.GetAwaiter().GetResult().Length != 0)
+                throw new Exception("MCP proxy injected output for a failed target");
+        }
+        finally
+        {
+            if (!proxy.HasExited) { try { proxy.Kill(entireProcessTree: true); } catch { } }
+        }
+    }
+
+    private static Process StartMcpProxy(string evidencePath, string target = "mcp-proxy-target")
+    {
+        return Process.Start(new ProcessStartInfo(Executable)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            ArgumentList = { "mcp-stdio-proxy" },
+            Environment =
+            {
+                [McpStdioProxy.ConfigurationVariable] = JsonSerializer.Serialize(new
+                {
+                    command = Executable,
+                    args = new[] { target, evidencePath },
+                    cwd = Environment.CurrentDirectory,
+                    environment = EnvironmentBlock,
+                }),
+            },
+        }) ?? throw new Exception("Unable to start the native MCP stdio proxy fixture");
+    }
+
+    private static DateTime ReadProxyProcessStart(JsonElement evidence, string property) => DateTime.Parse(
+        evidence.GetProperty(property).GetString()!, null, System.Globalization.DateTimeStyles.RoundtripKind);
+
+    private static bool IsSameProcessAlive(int pid, DateTime startedAt)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited && process.StartTime.ToUniversalTime() == startedAt.ToUniversalTime();
+        }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static void WaitForProxyProcessGone(int pid, DateTime startedAt)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (IsSameProcessAlive(pid, startedAt))
+        {
+            if (deadline.Elapsed >= TimeSpan.FromSeconds(5)) throw new Exception("Proxy crash left an owned process alive");
+            Thread.Sleep(10);
+        }
+    }
+
+    private static void DeleteMcpProxyTestRoot(string root)
+    {
+        var absolute = Path.GetFullPath(root);
+        var temporary = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!absolute.StartsWith(temporary, StringComparison.OrdinalIgnoreCase)
+            || !Path.GetFileName(absolute).StartsWith("lnwjud-native-mcp-proxy", StringComparison.Ordinal))
+            throw new Exception("Refusing MCP proxy test cleanup outside its temporary root");
+        Directory.Delete(absolute, true);
+    }
+
+    private static int RunMcpProxyTarget(string evidencePath)
+    {
+        using var descendant = Process.Start(new ProcessStartInfo(Executable)
+        {
+            UseShellExecute = false,
+            ArgumentList = { "mcp-proxy-descendant" },
+        }) ?? throw new Exception("Unable to start the MCP proxy descendant fixture");
+        using var rootProcess = Process.GetCurrentProcess();
+        File.WriteAllText(evidencePath, JsonSerializer.Serialize(new
+        {
+            rootPid = rootProcess.Id,
+            rootStartedAt = rootProcess.StartTime.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+            descendantPid = descendant.Id,
+            descendantStartedAt = descendant.StartTime.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+        }));
+        var request = new byte[4];
+        Console.OpenStandardInput().ReadExactly(request);
+        if (!request.AsSpan().SequenceEqual(new byte[] { 0, 1, 254, 255 })) return 11;
+        Console.Write("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"echo\":\"" + Convert.ToBase64String(request) + "\"}}\n");
+        Console.Out.Flush();
+        Console.Error.WriteLine("MCP_PROXY_CLEANUP_VERIFIED");
+        Console.Error.Flush();
+        Thread.Sleep(30_000);
+        return 0;
+    }
+
+    private static int RunMcpProxyEofTarget(string _)
+    {
+        using var input = new MemoryStream();
+        Console.OpenStandardInput().CopyTo(input);
+        Console.WriteLine("MCP_PROXY_EOF_RESPONSE:" + Convert.ToBase64String(input.ToArray()));
+        Console.Out.Flush();
+        return 0;
     }
 }

@@ -5,10 +5,13 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-artifacts.mjs';
+import { sourceRecoveryContracts, assertSourceRecoveryContracts } from '../../../scripts/update-trust/source-recovery-contracts.mjs';
 import { validateMacosSigningPolicyEvidence } from './inspect-macos-signing-policy.mjs';
 import { validateContainmentEvidence } from './verify-containment-artifacts.mjs';
+import { VERIFIER_SHA256 } from './stage-update-attestation-verifier.mjs';
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
 import { readUpdateAcceptanceReceipt, verifyUpdateAcceptanceForRelease } from './verify-update-acceptance.mjs';
+import { verifyInstalledLayoutAsset } from '../../../scripts/update-trust/prepare-installed-layout.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
@@ -29,6 +32,12 @@ const sums = parseSums(sumsText);
 if (provenance?.schemaVersion !== 1 || provenance.product !== 'lnwjud') throw new Error('PROVENANCE.json schema/product is invalid');
 if (provenance.version !== packageJson.version) throw new Error(`Provenance version mismatch: ${String(provenance.version)} != ${String(packageJson.version)}`);
 if (!isPlatform(provenance.platform)) throw new Error('Provenance platform is invalid');
+if (provenance.platform === 'win32') {
+  const contracts = await sourceRecoveryContracts(path.resolve(desktopRoot, '../..'));
+  assertSourceRecoveryContracts(provenance.recoveryCompatibility, contracts);
+} else if (provenance.recoveryCompatibility !== null) {
+  throw new Error('Non-Windows provenance must not claim native recovery compatibility');
+}
 let macSigning = null;
 if (provenance.platform === 'darwin') {
   const signing = provenance.build?.macSigning ?? { mode: 'unsigned' };
@@ -98,6 +107,11 @@ if (provenance.platform === 'win32') {
 
 const provenanceHash = await sha256File(provenancePath);
 if (sums.get('PROVENANCE.json') !== provenanceHash) throw new Error('PROVENANCE.json SHA-256 mismatch');
+if (Object.hasOwn(provenance, 'installedLayout')) {
+  if (provenance.platform !== 'win32' || provenance.arch !== 'x64') throw new Error('Installed layout requires Windows x64');
+  await verifyInstalledLayoutAsset(installerDirectory, provenance.installedLayout);
+  if (sums.get('INSTALL-LAYOUT.json') !== provenance.installedLayout.sha256) throw new Error('INSTALL-LAYOUT.json SHA256SUMS mismatch');
+}
 
 if (process.env.LNWJUD_REQUIRE_UPDATE_ACCEPTANCE === '1') {
   if (!['win32', 'darwin'].includes(provenance.platform)) {
@@ -125,6 +139,10 @@ for (const runtime of provenance.runtime) {
   requiredRuntime.delete(runtime.relativePath);
   const sumName = `installed/${runtime.relativePath}`;
   if (sums.get(sumName) !== runtime.sha256.toLowerCase()) throw new Error(`SHA256SUMS mismatch for ${sumName}`);
+  if (provenance.platform === 'win32' && runtime.relativePath === 'resources/native-containment/update-attestation/gh.exe'
+    && runtime.sha256.toLowerCase() !== VERIFIER_SHA256) {
+    throw new Error('Runtime provenance attestation verifier hash does not match pinned trust');
+  }
   if (provenance.platform === 'win32' && runtime.relativePath === 'resources/windows-capability-bridge.ps1'
     && (runtime.sha256 !== verifiedCapabilityBridge.sha256 || runtime.sizeBytes !== verifiedCapabilityBridge.sizeBytes)) {
     throw new Error('Runtime provenance capability bridge entry does not match verified packaged bytes');
@@ -182,6 +200,7 @@ function requiredRuntimePaths(platform, arch) {
       'resources/native-containment/lnwjud-containment-pin.node',
       'resources/native-containment/manifest.json',
       'resources/native-containment/process-runtime.mjs',
+      'resources/native-containment/update-attestation/gh.exe',
       'resources/update-worker/lnwjud-update-worker.exe',
       'resources/update-worker/manifest.json',
       'resources/windows-capability-bridge.ps1',

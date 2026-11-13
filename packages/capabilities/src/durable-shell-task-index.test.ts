@@ -104,6 +104,63 @@ describe('DurableShellTaskIndex', () => {
     expect(await pending).toMatchObject({ ok: true, value: { created: true } });
   });
 
+  it('admits ordinary writers without probing a mixed native and legacy backlog', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-missing-service-'));
+    temporaryRoots.push(root);
+    const initial = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10_000, inspectTask: async () => 'unknown' as const,
+      verifyContainedTermination: async (): Promise<boolean> => false,
+    });
+    for (let index = 0; index < 29; index += 1) {
+      const taskId = `held-${index}`;
+      const requestDigest = createHash('sha256').update(taskId).digest('hex');
+      expect(await initial.reserve({
+        taskId, requestDigest, ownerClientId: 'owner', ownerWorkspaceId: 'workspace',
+        capacityClass: index < 16 ? 'durable_shell' : 'managed_writer',
+        mutationKind: 'opaque_contained_process',
+        nativeReceiptPath: path.join(root, `${taskId}.receipt.json`),
+        nativeBinding: {
+          taskId, reservationId: taskId, attemptId: `attempt-${index}`, generation: 1,
+          requestDigest, ownerClientId: 'owner', ownerSessionId: 'session', workspaceId: 'workspace',
+        },
+      })).toMatchObject({ ok: true, value: { created: true } });
+    }
+    // One legacy/uncontained marker makes the backlog mixed; native probes
+    // must still be deferred while capacity is available.
+    expect(await initial.reserve({
+      taskId: 'legacy-held', requestDigest: 'e'.repeat(64), ownerClientId: 'owner',
+      ownerWorkspaceId: 'workspace', capacityClass: 'durable_shell',
+      mutationKind: 'opaque_uncontained',
+    })).toMatchObject({ ok: true, value: { created: true } });
+    const verifyNative = vi.fn(async () => false);
+    const inspectTask = vi.fn(async () => 'unknown' as const);
+    const writer = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10_000, capacityClass: 'managed_writer',
+      inspectTask, verifyContainedTermination: verifyNative,
+    });
+    // A non-import background operation must not incur 29 slow native RPCs
+    // when it has spare capacity; no held marker may be reclaimed without proof.
+    expect(await writer.reserve({
+      taskId: 'background', requestDigest: 'd'.repeat(64), ownerClientId: 'writer',
+      capacityClass: 'durable_shell', mutationKind: 'opaque',
+    })).toMatchObject({ ok: true, value: { created: true } });
+    expect(await writer.reserve({
+      taskId: 'write', requestDigest: 'b'.repeat(64), ownerClientId: 'writer',
+      capacityClass: 'managed_writer', mutationKind: 'synchronous_mutation',
+    })).toMatchObject({ ok: true, value: { created: true } });
+    expect(verifyNative).not.toHaveBeenCalled();
+    expect(inspectTask).not.toHaveBeenCalled();
+    expect(await writer.diagnostics()).toMatchObject({
+      durable_shell_reservations: 18, managed_writer_reservations: 14,
+      unresolved_reservations: 32, unreadable_reservations: 0,
+    });
+    expect(await writer.reserve({
+      taskId: 'exclusive-import', requestDigest: 'c'.repeat(64),
+      ownerClientId: 'import', mutationKind: 'repository_import',
+    })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(verifyNative).toHaveBeenCalled();
+  }, 15_000);
+
   it('does not reclaim a marker replaced while terminal evidence is in flight', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-terminal-race-'));
     temporaryRoots.push(root);
@@ -271,6 +328,35 @@ describe('DurableShellTaskIndex', () => {
     expect(await index.reserve({ ...owned, ownerWorkspaceId: 'other-workspace' })).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
   });
 
+  it('refuses to adopt a native reservation with changed receipt or attempt identity', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-native-reservation-identity-'));
+    temporaryRoots.push(root);
+    const index = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 10,
+      inspectTask: async (): Promise<'active'> => 'active',
+      verifyContainedTermination: async (): Promise<boolean> => false,
+    });
+    const nativeBinding = {
+      taskId: 'same-native', reservationId: 'same-native', attemptId: 'attempt-1',
+      generation: 1, requestDigest: 'a'.repeat(64), ownerClientId: 'owner',
+      ownerSessionId: 'session-1', workspaceId: 'workspace',
+    };
+    const owned = {
+      taskId: 'same-native', requestDigest: 'a'.repeat(64), ownerClientId: 'owner',
+      ownerWorkspaceId: 'workspace', mutationKind: 'opaque_contained_process' as const,
+      nativeReceiptPath: path.join(root, 'attempt-1.receipt.json'), nativeBinding,
+    };
+    expect(await index.reserve(owned)).toMatchObject({ ok: true, value: { created: true } });
+    expect(await index.reserve(owned)).toMatchObject({ ok: true, value: { created: false } });
+    expect(await index.reserve({ ...owned, nativeReceiptPath: path.join(root, 'other.receipt.json') }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.reserve({ ...owned, nativeBinding: { ...nativeBinding, attemptId: 'attempt-2' } }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.reserve({ ...owned, nativeBinding: { ...nativeBinding, ownerSessionId: 'session-2' } }))
+      .toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.hasReservation('same-native', 'a'.repeat(64))).toBe(true);
+  });
+
   it.each(['active', 'unknown', 'missing'] as const)('blocks import across workspaces while an opaque writer is %s', async (state) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-import-admission-'));
     temporaryRoots.push(root);
@@ -330,7 +416,10 @@ describe('DurableShellTaskIndex', () => {
       'history-unverified',
     ]);
 
-    const warmInspector = vi.fn(async () => 'active' as const);
+    const warmInspector = vi.fn(async (taskId: string) => {
+      expect(taskId).toBeTruthy();
+      return 'active' as const;
+    });
     const replacement = new DurableShellTaskIndex(root, {
       maxConcurrentTasks: 3,
       inspectTask: warmInspector,
@@ -564,6 +653,35 @@ describe('DurableShellTaskIndex', () => {
     expect(JSON.stringify(diagnostics)).not.toContain(taskId);
     expect(JSON.stringify(diagnostics)).not.toContain('private-workspace');
     expect(JSON.stringify(diagnostics)).not.toContain('private-client');
+  });
+
+  it('refuses launch journal identities that disagree with reservation or native attempt ownership', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-journal-identity-'));
+    temporaryRoots.push(root);
+    const index = new DurableShellTaskIndex(root, { maxConcurrentTasks: 2, inspectTask: async () => 'active' as const });
+    await index.initialize();
+    const taskId = 'journal-identity';
+    const requestDigest = 'a'.repeat(64);
+    const launchRecord = {
+      version: 1 as const, taskId, startedAt: '2026-11-09T00:00:00.000Z',
+      ownerClientId: 'client-a', ownerSessionId: 'session-a', ownerWorkspaceId: 'workspace-a',
+    };
+    const reservation = { taskId, requestDigest, ownerClientId: 'client-a', ownerWorkspaceId: 'workspace-a', launchRecord };
+    for (const mismatched of [
+      { ...launchRecord, ownerClientId: 'client-b' },
+      { ...launchRecord, ownerWorkspaceId: 'workspace-b' },
+    ]) {
+      expect(await index.reserve({ ...reservation, launchRecord: mismatched }))
+        .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    }
+    const nativeBinding = {
+      taskId, reservationId: taskId, attemptId: 'attempt-a', generation: 1, requestDigest,
+      ownerClientId: 'client-a', ownerSessionId: 'session-b', workspaceId: 'workspace-a',
+    };
+    expect(await index.reserve({ ...reservation, nativeBinding }))
+      .toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    expect(await index.hasReservation(taskId, requestDigest)).toBe(false);
+    expect(await index.listLaunches({ limit: 10 })).toMatchObject({ ok: true, value: { records: [] } });
   });
 
   it('bootstraps and pages the compact launch journal without hydrating filtered histories', async () => {

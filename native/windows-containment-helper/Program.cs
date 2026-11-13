@@ -26,10 +26,17 @@ internal static class Program
                 return await StaleTunnelAlias.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput()).ConfigureAwait(false);
             if (args.Length == 1 && args[0] == "stop-owned-tunnel")
                 return await StaleTunnelAlias.RunStopOwnedAsync(Console.OpenStandardInput(), Console.OpenStandardOutput()).ConfigureAwait(false);
+            if (args.Length == 1 && args[0] == "update-startup-footprint")
+            {
+                var footprint = UpdateStartupGate.InspectFootprint();
+                Console.WriteLine(JsonSerializer.Serialize(new { protocol = 3, kind = footprint.Kind, reason = footprint.Reason }));
+                return 0;
+            }
             if (args.Length == 2 && args[0] == "service-rpc") return await RunServiceRpcAsync(args[1]).ConfigureAwait(false);
             if (args.Length == 2 && args[0] == "service-watch") return await WindowsContainmentServiceClient.RunWatcherAsync(args[1], Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.OpenStandardError()).ConfigureAwait(false);
             if (args.Length == 2 && args[0] == "service-enroll-preflight") return RunEnrollmentPreflight(args[1]);
             if (args.Length == 2 && args[0] == "service-enroll-attestation-preflight") return RunEnrollmentAttestationPreflight(args[1]);
+            if (args.Length == 1 && args[0] == "mcp-stdio-proxy") return await McpStdioProxy.RunAsync().ConfigureAwait(false);
 #if !NATIVE_CONTAINMENT_TESTS
             if (args.Length == 1 && args[0] == "service") { WindowsContainmentService.Run(); return 0; }
             if (args.Length == 1 && args[0] == "service-install") { WindowsContainmentServiceInstaller.Install(); return 0; }

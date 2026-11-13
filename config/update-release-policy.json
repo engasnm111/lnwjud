@@ -15,7 +15,11 @@
     }
   ],
   "authorities": [],
-  "verifier": null,
+  "verifier": {
+    "filename": "gh.exe",
+    "version": "2.103.3",
+    "sha256": "d303d8ac3f5e9438bf7c977b64dd6425513eae46218f8881d30694f28c1d0dfd"
+  },
   "limits": {
     "maximumValiditySeconds": "86400",
     "maximumFutureSkewSeconds": "300",

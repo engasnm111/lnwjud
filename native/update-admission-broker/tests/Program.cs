@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -58,9 +60,28 @@ internal static class Program
             core.AfterStage = () => Environment.Exit(42);
             core.Close(UpdatePrincipal.Isolated("crash-update", 1), core.Status().Revision); return 12;
         }
-        try { Protocol(); CorruptJournal(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
+        try { Protocol(); PeerObservation(); CorruptJournal(); Lifecycle(); EpochBoundQuiescence(); SequenceAndRetirement(); Concurrency(); DuplicateEntryRace(); DurableStore(); UnsafeSuccessor(); Console.WriteLine($"PASS {assertions} admission assertions"); return 0; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
+    private static void PeerObservation()
+    {
+        var name = "lnwjud-admission-observe-" + Guid.NewGuid().ToString("N");
+        using var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        Refuses(() => WindowsUpdateAdmissionPeerObservation.Capture(server.SafePipeHandle), "MAINTENANCE_PEER_UNVERIFIED");
+        using var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+        var connected = server.WaitForConnectionAsync();
+        client.Connect(5000);
+        if (!connected.Wait(5000)) throw new Exception("Observation pipe connection timed out");
+        using var observation = WindowsUpdateAdmissionPeerObservation.Capture(server.SafePipeHandle);
+        Check(observation.ProcessId == (uint)Environment.ProcessId && observation.CreationTime > 0, "peer observation pins process creation identity");
+        Check(observation.UserSid == WindowsIdentity.GetCurrent().User!.Value, "peer observation reads kernel token user");
+        Check(observation.SessionId == (uint)Process.GetCurrentProcess().SessionId, "pipe, process and token session identities agree");
+        Check(string.Equals(Path.GetFullPath(observation.ImagePath), Path.GetFullPath(Environment.ProcessPath!), StringComparison.OrdinalIgnoreCase), "peer observation reads process image");
+        Check(observation.IsObservedProcessAlive(), "peer observation checks retained process handle");
+        observation.Dispose();
+        Check(!observation.IsObservedProcessAlive(), "disposed observation cannot assert process liveness");
+    }
+
     private static void DuplicateEntryRace()
     {
         var root = Root();
@@ -152,7 +173,138 @@ internal static class Program
         Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD800\"}"), 100), "ADMISSION_JSON_INVALID");
         Refuses(() => AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"\\uD800\":1}"), 100), "ADMISSION_JSON_INVALID");
         Check(AdmissionProtocol.Text(AdmissionProtocol.Object(Encoding.UTF8.GetBytes("{\"x\":\"\\uD83D\\uDE00\"}"), 100), "x") == "😀", "valid paired surrogate accepted");
-        Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_REGISTRY_UNCONFIGURED");
+        Refuses(() => StoreIdentity.Installed(), "MAINTENANCE_SERVICE_IDENTITY_UNAVAILABLE");
+        // ProgramData grants Users child creation. Only a protected trusted
+        // immediate parent can prevent pre-created/replaced journal roots.
+        var testServiceSid = WindowsIdentity.GetCurrent().User!.Value;
+        var protectedParent = $"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000004;;;{testServiceSid})(A;;GR;;;WD)";
+        AdmissionStore.ValidateProtectedParentDacl(new RawSecurityDescriptor(protectedParent), testServiceSid);
+        Check(true, "trusted protected journal parent permits service-only child creation");
+        var protectedParentSecurity = WindowsUpdateAdmissionStoreParentProvisioner.ProtectedParentSecurity(
+            WindowsIdentity.GetCurrent().User!);
+        AdmissionStore.ValidateProtectedParentDacl(
+            new RawSecurityDescriptor(protectedParentSecurity.GetSecurityDescriptorBinaryForm(), 0), testServiceSid);
+        Check(true, "provisioned parent ACL passes installed-store readback validator");
+        var protectedRootSecurity = WindowsUpdateAdmissionStoreParentProvisioner.ProtectedRootSecurity(
+            WindowsIdentity.GetCurrent().User!);
+        AdmissionStore.ValidateRootDacl(
+            new RawSecurityDescriptor(protectedRootSecurity.GetSecurityDescriptorBinaryForm(), 0), testServiceSid);
+        Check(true, "create-only root ACL binds service owner and protected write authority");
+        const string badRoot = "STATE_ROOT_ACL_UNSAFE";
+        foreach (var unsafeRoot in new[] {
+            "O:SYG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)",
+            $"O:{testServiceSid}G:SYD:(A;;FA;;;{testServiceSid})(A;;FA;;;SY)",
+            $"O:{testServiceSid}G:SYD:P(A;;FA;;;{testServiceSid})(A;;FA;;;WD)",
+            $"O:{testServiceSid}G:SYD:P(A;;FA;;;{testServiceSid})(A;OIIO;FA;;;WD)" })
+            Refuses(() => AdmissionStore.ValidateRootDacl(new RawSecurityDescriptor(unsafeRoot), testServiceSid), badRoot);
+        var rootFixture = Path.Combine(Path.GetTempPath(), "lnwjud-protected-root-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(rootFixture);
+        try
+        {
+            var testRoot = Path.Combine(rootFixture, "update-admission");
+            WindowsUpdateAdmissionStoreParentProvisioner.CreateProtectedRootDirectory(
+                testRoot, WindowsIdentity.GetCurrent().User!);
+            AdmissionStore.VerifyProtectedRootPath(testRoot, testServiceSid);
+            Check(Directory.Exists(testRoot), "protected root created and verified by handle");
+            var marker = Path.Combine(testRoot, "existing-data.txt");
+            File.WriteAllText(marker, "preserve");
+            Refuses(() => WindowsUpdateAdmissionStoreParentProvisioner.CreateProtectedRootDirectory(
+                testRoot, WindowsIdentity.GetCurrent().User!), "MAINTENANCE_STORE_ROOT_ALREADY_EXISTS");
+            Check(File.ReadAllText(marker) == "preserve", "create-only root retry preserves existing contents");
+        }
+        finally { Directory.Delete(rootFixture, true); }
+        WindowsUpdateAdmissionStoreParentProvisioner.ValidateProgramDataDacl(
+            new RawSecurityDescriptor("O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000006;;;AU)"));
+        Check(true, "ProgramData permits unprivileged creation without deletion or attribute writes");
+        Refuses(() => WindowsUpdateAdmissionStoreParentProvisioner.ValidateProgramDataDacl(
+            new RawSecurityDescriptor("O:SYG:SYD:(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x00000100;;;AU)")),
+            "STATE_PARENT_ACL_UNSAFE");
+        var provisionedAcl = new RawSecurityDescriptor(protectedParentSecurity.GetSecurityDescriptorBinaryForm(), 0);
+        Check(provisionedAcl.DiscretionaryAcl!.Cast<GenericAce>().OfType<QualifiedAce>()
+            .Where(ace => ace.SecurityIdentifier.Value == testServiceSid)
+            .All(ace => (ace.AceFlags & (AceFlags.ContainerInherit | AceFlags.ObjectInherit)) == 0),
+            "service child-creation ACE does not propagate into journal root");
+        const string badParent = "STATE_PARENT_ACL_UNSAFE";
+        foreach (var unsafeParent in new[] {
+            $"O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{testServiceSid})",
+            "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GW;;;WD)",
+            "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;OIIO;GW;;;WD)",
+            "O:AUG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)",
+            "O:BAG:BAD:(A;;GA;;;SY)(A;;GA;;;BA)" })
+            Refuses(() => AdmissionStore.ValidateProtectedParentDacl(new RawSecurityDescriptor(unsafeParent), testServiceSid), badParent);
+        Check(WindowsUpdateAdmissionService.Run() == 125, "SCM-only admission service refuses non-SCM launch");
+        var commonFiles = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
+        var image = WindowsUpdateAdmissionRegistration.ExpectedImagePath(commonFiles);
+        var command = "\"" + image + "\" service";
+        WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles);
+        Check(true, "exact protected-layout SCM registration shape accepted for inspection only");
+        const string badRegistration = "MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED";
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command + " extra", @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"LocalSystem", 0x10, 2, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x20, 2, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 3, 1, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 0, 1, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 0, commonFiles), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, loadOrderGroup: "UntrustedGroup"), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, dependencies: "UntrustedService"), badRegistration);
+        Refuses(() => WindowsUpdateAdmissionRegistration.Validate(command, @"NT AUTHORITY\LocalService", 0x10, 2, 1, 1, commonFiles, tagId: 1), badRegistration);
+        WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, false, false, false);
+        const string badOptionalConfig = "MAINTENANCE_SERVICE_REGISTRATION_UNVERIFIED";
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(true, false, false, false, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, true, false, false, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, true, false, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, true, false, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, false, true, false), badOptionalConfig);
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateOptionalConfiguration(false, false, false, false, false, true), badOptionalConfig);
+        var safeServiceDacl = new RawSecurityDescriptor("O:SYG:SYD:(A;;0x000F01FF;;;SY)(A;;0x000F01FF;;;BA)(A;;0x00020004;;;AU)");
+        WindowsUpdateAdmissionRegistration.ValidateServiceDacl(safeServiceDacl);
+        Check(true, "service DACL allows read-only unprivileged observers");
+        const string badDacl = "MAINTENANCE_SERVICE_DACL_UNVERIFIED";
+        foreach (var sddl in new[] {
+            "O:SYG:SYD:(A;;0x00000002;;;AU)",
+            "O:SYG:SYD:(A;;0x00040000;;;LS)",
+            "O:SYG:SYD:(A;;0x10000000;;;WD)",
+            "O:AUG:SYD:(A;;0x000F01FF;;;BA)" })
+            Refuses(() => WindowsUpdateAdmissionRegistration.ValidateServiceDacl(new RawSecurityDescriptor(sddl)), badDacl);
+        var safeImageDacl = new RawSecurityDescriptor("O:SYG:SYD:(A;;0x001F01FF;;;SY)(A;;0x001F01FF;;;BA)(A;;0x001200A9;;;AU)");
+        WindowsUpdateAdmissionRegistration.ValidateImageDacl(safeImageDacl);
+        Check(true, "protected image ACL permits unprivileged read and execute only");
+        foreach (var sddl in new[] {
+            "O:SYG:SYD:(A;;0x00000002;;;BU)",
+            "O:SYG:SYD:(A;;0x00010000;;;AU)",
+            "O:SYG:SYD:(A;;0x40000000;;;WD)",
+            "O:AUG:SYD:(A;;0x001F01FF;;;BA)" })
+            Refuses(() => WindowsUpdateAdmissionRegistration.ValidateImageDacl(new RawSecurityDescriptor(sddl)), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        WindowsUpdateAdmissionRegistration.ValidateImageDacl(new RawSecurityDescriptor("O:SYG:SYD:(A;OIIO;0x001F01FF;;;CO)(A;;0x001200A9;;;AU)"));
+        Check(true, "inherit-only creator owner ACE is not effective on inspected image path");
+        WindowsUpdateAdmissionRegistration.ValidateRunningImage(image, commonFiles);
+        Check(true, "running image path must match fixed service registration");
+        Check(WindowsUpdateAdmissionProvisioner.ValidatePin(new string('A', 64)).Length == 32,
+            "attended SCM provisioner accepts exact SHA-256 pin");
+        foreach (var invalidPin in new[] { "", new string('a', 63), new string('g', 64), new string('a', 65) })
+            Refuses(() => WindowsUpdateAdmissionProvisioner.ValidatePin(invalidPin),
+                "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        var imageBytes = Encoding.UTF8.GetBytes("immutable broker image fixture");
+        var imagePin = SHA256.HashData(imageBytes);
+        using (var source = new MemoryStream(imageBytes))
+        using (var destination = new MemoryStream())
+        {
+            WindowsUpdateAdmissionImageStager.CopyVerified(source, destination, imagePin);
+            Check(destination.ToArray().SequenceEqual(imageBytes), "staged image bytes match authenticated pin");
+        }
+        using (var source = new MemoryStream(imageBytes))
+        using (var destination = new MemoryStream())
+        {
+            Refuses(() => WindowsUpdateAdmissionImageStager.CopyVerified(source, destination, new byte[32]),
+                "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+            Check(destination.Length == 0, "mismatched image pin refuses before any staging writes");
+        }
+        using (var empty = new MemoryStream())
+        using (var destination = new MemoryStream())
+            Refuses(() => WindowsUpdateAdmissionImageStager.CopyVerified(empty, destination, SHA256.HashData([])),
+                "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        Refuses(() => WindowsUpdateAdmissionRegistration.ValidateRunningImage(image + ".old", commonFiles), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
+        Refuses(() => WindowsUpdateAdmissionRegistration.ExpectedImagePath(@"\\server\share"), "MAINTENANCE_SERVICE_IMAGE_UNVERIFIED");
         foreach (var path in new[] { "relative", "\\\\server\\share", "C:\\", "C:\\root:stream" }) Refuses(() => AdmissionStore.ValidatePath(path), "STATE_ROOT_UNSAFE");
     }
     private static void CorruptJournal()
@@ -177,6 +329,29 @@ internal static class Program
             Check(File.ReadAllBytes(file).SequenceEqual(corrupt), "invalid current journal is preserved");
         }
         finally { Directory.Delete(root, true); }
+        root = Root();
+        try
+        {
+            var identity = StoreIdentity.Isolated(root);
+            var runtime = RuntimePrincipal.Isolated("parent-journal-owner");
+            string participant;
+            using (var core = new AdmissionCore(identity))
+            {
+                participant = core.Register(runtime);
+                core.Enter(runtime, participant, 1, "call");
+                core.Promote(runtime, participant, 2, "parent-attempt", $"{participant}.1");
+            }
+            var file = Path.Combine(root, "admission.json");
+            var original = AdmissionProtocol.Object(File.ReadAllBytes(file), AdmissionStore.MaximumJournalBytes);
+            var permits = (JsonObject)((JsonObject)original["state"]!)["permits"]!;
+            ((JsonObject)permits[$"{participant}.2"]!).Remove("parent");
+            File.WriteAllBytes(file, AdmissionProtocol.Encode(original));
+            Refuses(() => new AdmissionCore(identity), "ADMISSION_FIELDS_INVALID");
+            ((JsonObject)permits[$"{participant}.2"]!)["parent"] = $"{participant}.01";
+            File.WriteAllBytes(file, AdmissionProtocol.Encode(original));
+            Refuses(() => new AdmissionCore(identity), "ADMISSION_STATE_INVALID");
+        }
+        finally { Directory.Delete(root, true); }
     }
     private static void Lifecycle()
     {
@@ -198,7 +373,8 @@ internal static class Program
                 var quarantined = core.Register(other); Check(core.Status().UnquiescedParticipants == 1, "late participant quarantined");
                 Refuses(() => core.Enter(other, quarantined, 1, "startup"), "ADMISSION_PARTICIPANT_QUIESCENT");
                 Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.Granted, "promotion grants a new job permit");
-                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "promotion retry with unverified parent requires reconciliation");
+                Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.ExistingRequiresReconciliation, "matching promotion retry requires reconciliation");
+                Refuses(() => core.Promote(runtime, participant, 2, "attempt1", "different-parent"), "ADMISSION_PERMIT_CONFLICT");
                 Refuses(() => core.Promote(runtime, participant, 2, "different-attempt", $"{participant}.1"), "ADMISSION_PERMIT_CONFLICT");
                 core.Settle(runtime, $"{participant}.1", Evidence(SettlementKind.OperationSettled, $"{participant}.1"));
                 Check(core.Status().HeldPermits == 1, "background job retains drain reservation");
@@ -210,7 +386,8 @@ internal static class Program
             using (var core = new AdmissionCore(StoreIdentity.Isolated(root)))
             {
                 Check(core.Status().Phase == "closing" && core.Status().HeldPermits == 1, "restart retains closure and job");
-                Check(core.Promote(runtime, participant, 2, "attempt1", "different-parent") is AdmissionGrant.ExistingRequiresReconciliation, "restart does not regrant a held job");
+                Check(core.Promote(runtime, participant, 2, "attempt1", $"{participant}.1") is AdmissionGrant.ExistingRequiresReconciliation, "restart retains matching promotion parent without regrant");
+                Refuses(() => core.Promote(runtime, participant, 2, "attempt1", "different-parent"), "ADMISSION_PERMIT_CONFLICT");
                 core.Settle(runtime, $"{participant}.2", Evidence(SettlementKind.NativeJobZeroAndReleased, $"{participant}.2"));
                 Refuses(() => core.Seal(owner, core.Status().Revision), "ADMISSION_DRAIN_INCOMPLETE");
                 core.Quiesce(runtime, participant, Evidence(SettlementKind.ParticipantQuiesced, $"{participant}:{core.Status().Epoch}"));

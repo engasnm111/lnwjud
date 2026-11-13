@@ -39,6 +39,7 @@ import type {
   ResourceSnapshotService,
 } from '@lnwjud/application';
 import { z } from 'zod';
+import { withGoalEventAuthorization } from '@lnwjud/shared/goal-event-authorization';
 import type { ContextEconomyRuntime } from '../context-economy.js';
 import type { OfficeDataWorkflowService } from '../office-data-workflow.js';
 import type { EccRuntimeOptions } from '../ecc-provider.js';
@@ -106,7 +107,7 @@ export interface McpApplicationServices {
   readonly project?: Pick<ProjectService, 'detect'>;
   readonly engineeringPreparation?: Pick<EngineeringPreparationService, 'prepare'>;
   readonly engineeringCapture?: Pick<EngineeringBuildCaptureService, 'start' | 'complete' | 'uploadWorker'>;
-  readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
+  readonly file?: Pick<FileService, 'readFile' | 'readFiles' | 'writeFile' | 'writeFileStatus' | 'applyPatch' | 'editFile' | 'moveFile' | 'copyFile' | 'deleteFile' | 'listRecoveryItems' | 'restoreDeletedFile' | 'prepareExternalFileMutation'>;
   readonly checkpoint?: Pick<CheckpointService, 'list' | 'restore'>;
   readonly callHistory?: Pick<CallHistoryService, 'history'>;
   readonly taskResults?: Pick<TaskResultService, 'get'>;
@@ -247,7 +248,7 @@ export function defineTool<T extends z.ZodType>(config: ToolConfig<T>): McpToolD
       authorization?: InvocationAuthorization,
       internal?: McpInternalInvocationContext,
     ): Promise<Result<unknown>> {
-      return config.handler(input as z.infer<T>, signal, authorization, internal);
+      return withGoalEventAuthorization(authorization, () => config.handler(input as z.infer<T>, signal, authorization, internal));
     },
   };
 }

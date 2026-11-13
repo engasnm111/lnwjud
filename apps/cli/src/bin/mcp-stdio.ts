@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertHostWindowsUpdateStartup } from '@lnwjud/capabilities';
 import { startMcpStdio } from '@lnwjud/mcp-server';
 import {
   STDIO_ALLOWED_ROOTS_SETTING_KEY,
@@ -125,6 +126,7 @@ function securityPolicyFingerprint(policy: EffectiveStdioSecurityPolicy): string
 
 async function main(): Promise<void> {
   const dataPath = resolveDataPath();
+  await assertHostWindowsUpdateStartup(dataPath);
   fs.mkdirSync(dataPath, { recursive: true });
   // Resolve the pure-Node checkpoint key before opening SQLite. Packaged
   // Electron STDIO supplies this through safeStorage instead; this entrypoint

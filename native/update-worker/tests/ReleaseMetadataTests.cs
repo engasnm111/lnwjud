@@ -87,8 +87,8 @@ internal static class ReleaseMetadataTests
         Check(pinnedRoot.Roles.Contains("release") && pinnedRoot.Roles.Contains("recovery") && !pinnedRoot.Revoked,
             "embedded bootstrap root carries both authorization roles required by native verifiers");
         Check(pinnedRoot.AllowHistoricalRecovery, "embedded root permits expired predecessor validation without extending candidate validity");
-        Check(!embeddedTrust.Configured && embeddedTrust.Sources.Count == 0 && embeddedTrust.Verifier is null,
-            "a pinned root without immutable source authorities and verifier remains unusable for updates");
+        Check(!embeddedTrust.Configured && embeddedTrust.Sources.Count == 0 && embeddedTrust.Verifier is { Filename: "gh.exe", Version: "2.103.3", Sha256: "d303d8ac3f5e9438bf7c977b64dd6425513eae46218f8881d30694f28c1d0dfd" },
+            "a pinned root and exact verifier without immutable source authorities remain unusable for updates");
         foreach (var mutation in new Action<JsonObject>[] {
             p => p["authorities"]!.AsArray().Add(p["authorities"]![0]!.DeepClone()),
             p => p["authorities"]![0]!["builderDigest"] = "not-a-digest",

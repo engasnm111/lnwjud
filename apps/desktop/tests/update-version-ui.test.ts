@@ -77,7 +77,7 @@ describe('titlebar update notification', () => {
     expect(main).toContain('if (!verifiedAutomaticUpdateAuthority || currentUpdateStatus.phase');
     expect(main).toContain("return patchUpdateStatus({ phase: 'unavailable', message: messages.updaterUnavailableTransactionAuthority, canInstall: false });");
     expect(main).toContain('autoUpdater.checkForUpdates()');
-    const downloadedHandler = main.slice(main.indexOf("autoUpdater.on('update-downloaded', (info) => {"), main.indexOf("autoUpdater.on('error', (err) => {"));
+    const downloadedHandler = main.slice(main.indexOf("autoUpdater.on('update-downloaded', async (info) => {"), main.indexOf("autoUpdater.on('error', (err) => {"));
     expect(downloadedHandler).toContain('if (!verifiedAutomaticUpdateAuthority) {');
     expect(downloadedHandler.indexOf('if (!verifiedAutomaticUpdateAuthority) {')).toBeLessThan(downloadedHandler.indexOf("phase: 'ready'"));
     expect(downloadedHandler).toContain("phase: 'unavailable'");

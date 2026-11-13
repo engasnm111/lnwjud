@@ -95,11 +95,28 @@ internal static class ReleaseBuildEvidence
         var uriText = Text(value, "uri"); var timestamp = Text(value, "timestamp");
         if (uriText is null || uriText.Length > 2048 || !Uri.TryCreate(uriText, UriKind.Absolute, out var uri)
             || uri.Scheme != "https" || uri.Host.Length == 0 || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0
-            || timestamp is null || !Regex.IsMatch(timestamp, @"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z\z")
-            || !DateTimeOffset.TryParseExact(timestamp[..19] + "Z", "yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)) return false;
-        var seconds = parsed.ToUnixTimeSeconds();
-        return seconds >= 0 && (ulong)seconds <= issued + 300;
+            || timestamp is null) return false;
+        // GitHub's verified Sigstore Tlog timestamps may carry a numeric UTC offset.
+        // Parse the wall clock exactly before applying that offset; never treat +07:00 as Z.
+        var match = Regex.Match(timestamp,
+            @"\A(?<clock>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]{1,9})?(?<zone>Z|[+-][0-9]{2}:[0-9]{2})\z");
+        if (!match.Success || !DateTime.TryParseExact(match.Groups["clock"].Value,
+                "yyyy-MM-dd'T'HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var clock)) return false;
+        var zone = match.Groups["zone"].Value;
+        var offset = TimeSpan.Zero;
+        if (zone != "Z")
+        {
+            var hours = int.Parse(zone.AsSpan(1, 2), CultureInfo.InvariantCulture);
+            var minutes = int.Parse(zone.AsSpan(4, 2), CultureInfo.InvariantCulture);
+            if (hours > 14 || minutes > 59 || (hours == 14 && minutes != 0)) return false;
+            offset = TimeSpan.FromMinutes((hours * 60 + minutes) * (zone[0] == '-' ? -1 : 1));
+        }
+        try
+        {
+            var seconds = new DateTimeOffset(clock, offset).ToUnixTimeSeconds();
+            return seconds >= 0 && (ulong)seconds <= issued + 300;
+        }
+        catch (ArgumentOutOfRangeException) { return false; }
     }
 
     internal static void RequireProvenance(ReadOnlySpan<byte> bytes, ReleaseEvidenceCandidate release)

@@ -633,8 +633,11 @@ describe('durable shell background tasks', () => {
     const taskId = String((started.value as Record<string, unknown>).task_id);
 
     const replacementRuntime = new ShellCapabilityBackend({ allowedRoots: [root], taskStateDirectory });
-    const waited = await replacementRuntime.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 5 });
-    expect(waited).toMatchObject({
+    // A bounded wait may return 'running' even after stdout; require an authenticated terminal receipt.
+    await expect.poll(
+      async () => replacementRuntime.execute({ operation: 'wait', task_id: taskId, timeout_seconds: 1 }),
+      { interval: 100, timeout: 20_000 },
+    ).toMatchObject({
       ok: true,
       value: { task_id: taskId, state: 'completed', exit_code: 0, stdout: 'durable-done', durable: true },
     });
@@ -642,7 +645,7 @@ describe('durable shell background tasks', () => {
       ok: true,
       value: { tasks: expect.arrayContaining([expect.objectContaining({ task_id: taskId, state: 'completed', durable: true })]) },
     });
-  }, 15_000);
+  }, 30_000);
 
   it('does not overwrite terminal metadata when Windows-style PID reuse is observed during reconciliation', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-durable-pid-reuse-'));

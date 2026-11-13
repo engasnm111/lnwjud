@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
-import { installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
+import { fingerprintDownloadedUpdate, installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from '../src/main/update-install.js';
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe('downloaded update installation', () => {
-  const offer: DownloadedUpdateOffer = { generation: 1, version: '4.0.2', artifactIdentity: 'sha256:offer-1' };
+  const offer: DownloadedUpdateOffer = { generation: 1, version: '4.0.2', artifactIdentity: 'sha256:offer-1', artifactSha256: 'a'.repeat(64) };
 
   it('asks the user to confirm the exact downloaded version before queuing installation', async () => {
     const confirmVersion = vi.fn(async (): Promise<boolean> => true);
@@ -133,6 +136,37 @@ describe('downloaded update installation', () => {
     expect(queueInstall).not.toHaveBeenCalled();
   });
 
+  it('rejects a same-version same-path offer whose downloaded bytes changed during consent', async () => {
+    let currentOffer: DownloadedUpdateOffer = offer;
+    const queueInstall = vi.fn(() => true);
+    const controller = new UpdateInstallConsentController({
+      getCurrentOffer: (): DownloadedUpdateOffer => currentOffer,
+      hasPendingInstall: (): boolean => false,
+      confirmVersion: async (): Promise<boolean> => {
+        currentOffer = { ...offer, artifactSha256: 'b'.repeat(64) };
+        return true;
+      },
+      queueInstall,
+    });
+    await expect(controller.requestInstall()).resolves.toBe(false);
+    expect(queueInstall).not.toHaveBeenCalled();
+  });
+
+  it('fingerprints the bytes rather than the pathname of a downloaded installer', async () => {
+    const folder = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-fingerprint-'));
+    try {
+      const installer = path.join(folder, 'lnwjud-Setup.exe');
+      await writeFile(installer, 'first verified artifact');
+      const first = await fingerprintDownloadedUpdate(installer);
+      expect(first).toMatch(/^[a-f0-9]{64}$/);
+      await writeFile(installer, 'second verified artifact');
+      const second = await fingerprintDownloadedUpdate(installer);
+      expect(second).not.toBe(first);
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
   it('coalesces simultaneous tray and renderer confirmations', async () => {
     const confirmation = deferred<boolean>();
     const confirmVersion = vi.fn(() => confirmation.promise);
@@ -176,6 +210,48 @@ describe('downloaded update installation', () => {
 
     expect(install).not.toHaveBeenCalled();
     active = 0;
+  });
+
+  it('holds installation while local activity sampling fails, then requires a trustworthy quiet period', async () => {
+    vi.useFakeTimers();
+    let failedSamples = 2;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => {
+        if (failedSamples > 0) { failedSamples -= 1; throw new Error('Activity unavailable'); }
+        return 0;
+      },
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    expect(coordinator.requestInstall(offer)).toBe(true);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('restarts the quiet period if local activity observation fails after initial admission', async () => {
+    vi.useFakeTimers();
+    let samples = 0;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => {
+        if (++samples === 3) throw new Error('Activity temporarily unavailable');
+        return 0;
+      },
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    expect(coordinator.requestInstall(offer)).toBe(true);
+    await vi.advanceTimersByTimeAsync(19);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
   });
 
   it('installs after MCP becomes idle for the quiet period', async () => {
@@ -239,6 +315,64 @@ describe('downloaded update installation', () => {
     expect(install).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(install).toHaveBeenCalledOnce();
+  });
+
+  it('does not install when local activity count is invalid', async () => {
+    vi.useFakeTimers();
+    let localCount = Number.NaN;
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => localCount,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    localCount = 0;
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('refuses a malformed shared activity count instead of treating negative work as idle', async () => {
+    vi.useFakeTimers();
+    let shared: UpdateSharedActivitySnapshot = { state: 'available', activeCallCount: -1, revision: 0 };
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<boolean> => true,
+      sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => shared,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    shared = { state: 'available', activeCallCount: 0, revision: 1 };
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('does not install while another MCP client works even when the Tunnel is stopped', async () => {
+    vi.useFakeTimers();
+    let shared: UpdateSharedActivitySnapshot = { state: 'available', activeCallCount: 1, revision: 3 };
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<boolean> => false,
+      sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => shared,
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+    coordinator.requestInstall(offer);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(install).not.toHaveBeenCalled();
+    shared = { state: 'available', activeCallCount: 0, revision: 4 };
+    await vi.advanceTimersByTimeAsync(30);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
   });
 
   it('fails closed while a running tunnel has no trustworthy shared STDIO activity snapshot', async () => {

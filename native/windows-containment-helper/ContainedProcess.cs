@@ -40,6 +40,7 @@ internal sealed class ContainedProcess : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool UpdateProcThreadAttribute(nint list, uint flags, nuint attribute, nint value, nuint size, nint previous, nint returnedSize);
     [DllImport("kernel32.dll")] private static extern void DeleteProcThreadAttributeList(nint list);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(nint thread);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(nint handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateJobObject(nint job, uint code);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(nint process, out uint code);
     [DllImport("kernel32.dll")] private static extern nint GetStdHandle(int handle);
@@ -88,6 +89,9 @@ internal sealed class ContainedProcess : IDisposable
     internal static ContainedProcess Start(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null, ServiceAttemptIdentity? attemptIdentity = null) =>
         StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, attemptIdentity: attemptIdentity);
 
+    internal static ContainedProcess StartRedirected(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint standardInput, nint standardOutput, nint standardError) =>
+        StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, null, null, null, standardInput: standardInput);
+
     internal sealed class LaunchOwnership
     {
         private ContainedProcess? instance;
@@ -132,7 +136,7 @@ internal sealed class ContainedProcess : IDisposable
         return StartCore(primaryToken, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, attemptIdentity: attemptIdentity);
     }
 
-    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName, LaunchOwnership? ownership = null, ServiceAttemptIdentity? attemptIdentity = null)
+    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName, LaunchOwnership? ownership = null, ServiceAttemptIdentity? attemptIdentity = null, nint? standardInput = null)
     {
         if (!Path.IsPathFullyQualified(executable) || !Path.IsPathFullyQualified(cwd)) throw new IOException("CONTAINMENT_ABSOLUTE_PATH_REQUIRED");
         var instance = new ContainedProcess();
@@ -156,9 +160,13 @@ internal sealed class ContainedProcess : IDisposable
                 command.Append(' ').Append(verbatim ? argument : Quote(argument));
             }
             if (command.Length >= 32767) throw new IOException("CONTAINMENT_COMMAND_TOO_LONG");
-            var nullInput = CreateFile("NUL", 0x80000000, 3, 0, 3, 0, 0);
-            Check(nullInput != -1, "NULL_INPUT");
-            try { input = Inherit(nullInput); } finally { CloseHandle(nullInput); }
+            if (standardInput is { } inputHandle) input = Inherit(inputHandle);
+            else
+            {
+                var nullInput = CreateFile("NUL", 0x80000000, 3, 0, 3, 0, 0);
+                Check(nullInput != -1, "NULL_INPUT");
+                try { input = Inherit(nullInput); } finally { CloseHandle(nullInput); }
+            }
             output = Inherit(standardOutput ?? GetStdHandle(-11)); error = Inherit(standardError ?? GetStdHandle(-12));
             nuint size = 0;
             InitializeProcThreadAttributeList(0, 2, 0, ref size);
@@ -233,6 +241,13 @@ internal sealed class ContainedProcess : IDisposable
         }
     }
     internal int ExitCode { get { Check(GetExitCodeProcess(process, out var code), "EXIT_CODE"); return unchecked((int)code); } }
+    internal bool WaitForRootExit(int timeoutMs)
+    {
+        var result = WaitForSingleObject(process, checked((uint)timeoutMs));
+        if (result == 0) return true;
+        if (result == 0x102) return false;
+        throw new IOException("CONTAINMENT_PROCESS_WAIT_" + Marshal.GetLastWin32Error());
+    }
     internal void Cancel()
     {
 #if NATIVE_CONTAINMENT_TESTS

@@ -35,4 +35,73 @@ describe('GoalRequestCancellationService', () => {
     expect(result).toMatchObject({ goalId: 'goal-3', requested: 1, stopped: 0, remaining: 1, timedOut: true });
     registration.release();
   });
+
+  it('rejects duplicate in-flight request IDs without losing the original cancellation owner', async () => {
+    const service = new GoalRequestCancellationService({ waitMs: 100 });
+    const originalController = new AbortController();
+    const duplicateController = new AbortController();
+    const original = service.register('goal-duplicate', 'same-call', originalController, 5);
+    const duplicate = service.register('goal-duplicate', 'same-call', duplicateController, 5);
+    expect(original.accepted).toBe(true);
+    expect(duplicate.accepted).toBe(false);
+    duplicate.release();
+    originalController.signal.addEventListener('abort', () => original.release(), { once: true });
+
+    const result = await service.cancelForGoal('goal-duplicate', 5);
+    expect(result).toMatchObject({ requested: 1, stopped: 1, remaining: 0, timedOut: false, requestIds: ['same-call'] });
+    expect(originalController.signal.aborted).toBe(true);
+    expect(duplicateController.signal.aborted).toBe(false);
+  });
+
+  it('admits only a verified newer generation and keeps old requests fenced', async () => {
+    const service = new GoalRequestCancellationService({ waitMs: 1 });
+    const old = new AbortController();
+    const pending = service.register('goal-4', 'old', old, 7);
+    await service.cancelForGoal('goal-4', 7);
+    expect(old.signal.aborted).toBe(true);
+    expect(service.admitRecoveredGeneration('goal-4', 7)).toBe(false);
+    expect(service.admitRecoveredGeneration('goal-4', 8)).toBe(true);
+    expect(service.register('goal-4', 'stale', new AbortController(), 7).accepted).toBe(false);
+    expect(service.register('goal-4', 'unbound', new AbortController()).accepted).toBe(false);
+    const fresh = service.register('goal-4', 'new', new AbortController(), 8);
+    expect(fresh.accepted).toBe(true);
+    await service.cancelForGoal('goal-4', 7); // late old-generation cancellation cannot kill new work
+    expect(fresh.accepted).toBe(true);
+    expect(service.admitRecoveredGeneration('goal-4', 8)).toBe(false);
+    await service.cancelForGoal('goal-4', 8);
+    expect(service.register('goal-4', 'after-terminal', new AbortController(), 8).accepted).toBe(false);
+    pending.release();
+    fresh.release();
+  });
+
+  it('aborts prior-generation requests when a verified successor lease is admitted', async () => {
+    const service = new GoalRequestCancellationService({ waitMs: 1 });
+    const sameGenerationController = new AbortController();
+    const sameGeneration = service.register('goal-successor', 'same-generation', sameGenerationController, 7);
+    expect(service.admitRecoveredGeneration('goal-successor', 7)).toBe(true);
+    expect(sameGenerationController.signal.aborted).toBe(false);
+    await service.cancelForGoal('goal-successor', 7);
+    sameGeneration.release();
+    expect(service.admitRecoveredGeneration('goal-successor', 8)).toBe(true);
+    const previousController = new AbortController();
+    const previous = service.register('goal-successor', 'previous', previousController, 8);
+    expect(previous.accepted).toBe(true);
+    previousController.signal.addEventListener('abort', () => { void service.cancelForGoal('goal-successor', 8); }, { once: true });
+
+    expect(service.admitRecoveredGeneration('goal-successor', 9)).toBe(true);
+    expect(previousController.signal.aborted).toBe(true);
+    expect(service.register('goal-successor', 'stale', new AbortController(), 8).accepted).toBe(false);
+    const currentController = new AbortController();
+    const current = service.register('goal-successor', 'current', currentController, 9);
+    expect(current.accepted).toBe(true);
+    await service.cancelForGoal('goal-successor', 8);
+    expect(currentController.signal.aborted).toBe(false);
+    expect(service.admitRecoveredGeneration('goal-successor', 9)).toBe(false);
+    expect(currentController.signal.aborted).toBe(false);
+    await service.cancelForGoal('goal-successor', 9);
+    expect(currentController.signal.aborted).toBe(true);
+    expect(service.register('goal-successor', 'cancelled', new AbortController(), 9).accepted).toBe(false);
+    previous.release();
+    current.release();
+  });
 });

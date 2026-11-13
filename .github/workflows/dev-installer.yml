@@ -18,6 +18,20 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Capture clean source checkout provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $checkoutSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkoutSha -ne $env:GITHUB_SHA) {
+            throw 'DEV_INSTALLER_SOURCE_SHA_MISMATCH'
+          }
+          $sourceStatus = @(git status --porcelain=v1 --untracked-files=normal)
+          if ($LASTEXITCODE -ne 0 -or (($sourceStatus -join "`n").Trim().Length -gt 0)) {
+            throw 'DEV_INSTALLER_SOURCE_CHECKOUT_DIRTY'
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value 'LNWJUD_SOURCE_DIRTY_AT_START=0'
+
       - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
@@ -63,6 +77,101 @@ jobs:
         env:
           LNWJUD_COSIGN_PATH: cosign
         run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+
+      - name: Verify silent current-user setup refuses without extracting application files
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -LiteralPath 'apps/desktop/dist/installers' -Filter 'lnwjud-Setup-*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'EXPECTED_ONE_NSIS_INSTALLER' }
+          $target = Join-Path $env:RUNNER_TEMP 'lnwjud-currentuser-refusal'
+          if (Test-Path -LiteralPath $target) { throw 'INSTALL_TEST_TARGET_ALREADY_EXISTS' }
+          $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\com.lnwjud.desktop'
+          $hadUninstallKey = Test-Path -LiteralPath $uninstallKey
+          $hadService = $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)
+          if ($hadUninstallKey -or $hadService) { throw 'INSTALL_TEST_RUNNER_NOT_CLEAN' }
+          $installer = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', '/currentuser', "/D=$target") -PassThru -WindowStyle Hidden
+          if (-not $installer.WaitForExit(90000)) {
+            $installer.Kill()
+            throw 'SILENT_CURRENTUSER_INSTALLER_TIMEOUT'
+          }
+          if ($installer.ExitCode -ne 125) { throw "SILENT_CURRENTUSER_EXPECTED_REFUSAL_125_ACTUAL_$($installer.ExitCode)" }
+          if ((Test-Path -LiteralPath $target) -and @(Get-ChildItem -LiteralPath $target -Force).Count -ne 0) {
+            throw 'SILENT_CURRENTUSER_EXTRACTED_FILES'
+          }
+          if ((Test-Path -LiteralPath $uninstallKey) -or
+              $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)) {
+            throw 'SILENT_CURRENTUSER_CREATED_INSTALL_REGISTRATION'
+          }
+          Write-Output 'SILENT_CURRENTUSER_CLEAN_REFUSAL_VERIFIED'
+
+      - name: Verify protected all-users silent install and uninstall on hosted Windows
+        shell: pwsh
+        timeout-minutes: 6
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -LiteralPath 'apps/desktop/dist/installers' -Filter 'lnwjud-Setup-*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'EXPECTED_ONE_NSIS_INSTALLER' }
+          $target = Join-Path $env:ProgramFiles 'lnwjud'
+          if ((Test-Path -LiteralPath $target) -or
+              $null -ne (Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue)) {
+            throw 'ALLUSERS_INSTALL_TEST_RUNNER_NOT_CLEAN'
+          }
+          $installer = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', '/allusers') -PassThru -WindowStyle Hidden
+          if (-not $installer.WaitForExit(120000)) {
+            $installer.Kill()
+            throw 'ALLUSERS_SILENT_INSTALL_TIMEOUT'
+          }
+          if ($installer.ExitCode -ne 0) { throw "ALLUSERS_SILENT_INSTALL_EXIT_$($installer.ExitCode)" }
+          $application = Join-Path $target 'lnwjud.exe'
+          $uninstaller = Join-Path $target 'uninstall.exe'
+          $helper = Join-Path $target 'resources/native-containment/lnwjud-containment.exe'
+          foreach ($file in @($application, $uninstaller, $helper)) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "ALLUSERS_INSTALLED_FILE_MISSING_$file" }
+          }
+          $service = Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue
+          try {
+            if ($null -eq $service -or $service.Status -ne 'Running') {
+              throw 'ALLUSERS_PROTECTED_SERVICE_NOT_RUNNING'
+            }
+          } finally {
+            # ServiceController may retain a native SCM handle even after Status.
+            # Holding it across DeleteService prevents the entry from disappearing.
+            if ($null -ne $service) { $service.Dispose() }
+          }
+          $serviceConfig = Get-CimInstance Win32_Service -Filter "Name='LnwjudContainment'"
+          if ($null -eq $serviceConfig -or $serviceConfig.StartName -ne 'LocalSystem' -or
+              $serviceConfig.PathName -notlike "*lnwjud-containment.exe*") {
+            throw 'ALLUSERS_PROTECTED_SERVICE_IDENTITY_INVALID'
+          }
+          $remover = Start-Process -FilePath $uninstaller -ArgumentList @('/S', '/allusers') -PassThru -WindowStyle Hidden
+          if (-not $remover.WaitForExit(120000)) {
+            $remover.Kill()
+            throw 'ALLUSERS_SILENT_UNINSTALL_TIMEOUT'
+          }
+          if ($remover.ExitCode -ne 0) { throw "ALLUSERS_SILENT_UNINSTALL_EXIT_$($remover.ExitCode)" }
+          # NSIS may spawn its actual uninstaller as a second process and let
+          # the initial bootstrap exit 0 first. Verify final state, not only
+          # the bootstrap exit; a broken teardown must still fail after a bound.
+          $verification = [Diagnostics.Stopwatch]::StartNew()
+          while ($true) {
+            $applicationRemains = Test-Path -LiteralPath $application -PathType Leaf
+            $helperRemains = Test-Path -LiteralPath $helper -PathType Leaf
+            $remainingService = Get-Service -Name 'LnwjudContainment' -ErrorAction SilentlyContinue
+            try {
+              $serviceState = if ($null -eq $remainingService) { 'absent' } else { $remainingService.Status.ToString() }
+            } finally {
+              if ($null -ne $remainingService) { $remainingService.Dispose() }
+            }
+            if (-not $applicationRemains -and -not $helperRemains -and $serviceState -eq 'absent') { break }
+            if ($verification.Elapsed -ge [TimeSpan]::FromSeconds(90)) {
+              throw ("ALLUSERS_SILENT_UNINSTALL_INCOMPLETE application={0} helper={1} service={2}" -f
+                $applicationRemains, $helperRemains, $serviceState)
+            }
+            Start-Sleep -Milliseconds 250
+          }
+          Write-Output 'ALLUSERS_SILENT_INSTALL_PROTECTED_SERVICE_UNINSTALL_VERIFIED'
 
       - name: Run packaged Windows Electron MCP and security smoke
         shell: pwsh

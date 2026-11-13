@@ -37,19 +37,33 @@ internal sealed class UnsignedEvidencePackage : IDisposable
         {
             var bytes = files.Read("CANDIDATE.json", ReleaseSchema.AuthorizationV2().PayloadBytes);
             var candidate = ReleaseAuthorizationV2.InspectUnsigned(bytes, policy, time, purpose, keyId);
-            var payload = candidate.Payload;
-            var provenance = SignedRelease.Identity(payload.GetProperty("provenance"));
-            files.Verify(candidate.Artifact.Name, candidate.Artifact, policy.MaximumPackage);
-            files.Verify(provenance.Name, provenance, policy.MaximumProvenance);
-            var evidence = payload.GetProperty("buildEvidence");
-            files.PinBundle("artifact.bundle.json", ReleaseValues.Text(evidence, "artifactAttestationSha256"));
-            files.PinBundle("provenance.bundle.json", ReleaseValues.Text(evidence, "provenanceAttestationSha256"));
-            files.RecheckAll();
+            // The Windows signer preflight must enforce the same target, identity and
+            // pinned-file contract as authenticated baseline/update package readers.
+            AuthenticatedPackageFiles.Pin(files, candidate.Payload, policy);
             return new UnsignedEvidencePackage(candidate, ReleaseTrustPolicy.Hash(bytes), files);
         }
         catch { files.Dispose(); throw; }
     }
     public void Dispose() => Files.Dispose();
+}
+
+internal static class AuthenticatedPackageFiles
+{
+    internal static void Pin(EnrollmentPackageFiles files, JsonElement release, ReleaseTrustPolicy policy)
+    {
+        var artifact = SignedRelease.Identity(release.GetProperty("artifact"));
+        var provenance = SignedRelease.Identity(release.GetProperty("provenance"));
+        if (ReleaseValues.Text(release, "platform") != "win32"
+            || ReleaseValues.Text(release, "architecture") != "x64"
+            || ReleaseValues.Text(release, "distribution") != "windows-nsis")
+            throw new Refusal("RELEASE_TARGET_UNSUPPORTED");
+        files.Verify(artifact.Name, artifact, policy.MaximumPackage);
+        files.Verify(provenance.Name, provenance, policy.MaximumProvenance);
+        var evidence = release.GetProperty("buildEvidence");
+        files.PinBundle("artifact.bundle.json", ReleaseValues.Text(evidence, "artifactAttestationSha256"));
+        files.PinBundle("provenance.bundle.json", ReleaseValues.Text(evidence, "provenanceAttestationSha256"));
+        files.RecheckAll();
+    }
 }
 
 internal static class EnrollmentPreflight

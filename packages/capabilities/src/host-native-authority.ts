@@ -19,6 +19,13 @@ export function createHostWindowsNativeAuthority(dataPath: string, trustedRuntim
   });
 }
 
+export async function assertHostWindowsUpdateStartup(dataPath: string, trustedRuntimeDirectory?: string): Promise<void> {
+  const authority = createHostWindowsNativeAuthority(dataPath, trustedRuntimeDirectory);
+  if (authority === undefined) return;
+  const disposition = await authority.inspectUpdateStartup();
+  if (disposition.kind === 'held') throw new Error(`Update authority holds writable startup (${disposition.reason})`);
+}
+
 export function createHostPosixProcessRuntime(trustedRuntimeDirectory?: string): { readonly modulePath: string; readonly sha256: string } {
   return { modulePath: path.join(resolveRuntimeDirectory(trustedRuntimeDirectory), 'process-runtime.mjs'), sha256: CONTAINMENT_RUNTIME_SHA256 };
 }

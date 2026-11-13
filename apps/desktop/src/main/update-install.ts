@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { lstat, open } from 'node:fs/promises';
+import path from 'node:path';
 import type { TunnelStatus } from '@lnwjud/ipc-contracts';
 
 export function updateInstallNeedsTunnelStopConfirmation(status: TunnelStatus): boolean {
@@ -8,10 +11,44 @@ export function updateInstallNeedsTunnelStopConfirmation(status: TunnelStatus): 
   return persistent.state === 'starting' || persistent.state === 'running' || persistent.state === 'reconnecting';
 }
 
+/** Hash the exact downloaded file and recheck its identity around the stream.
+ * This binds in-memory consent to bytes, not only a version and cache pathname.
+ * Package provenance and signer trust are separate mandatory native checks.
+ */
+export async function fingerprintDownloadedUpdate(filename: string): Promise<string> {
+  if (typeof filename !== 'string' || !path.isAbsolute(filename) || filename.includes('\0')) {
+    throw new Error('UPDATE_DOWNLOADED_ARTIFACT_INVALID');
+  }
+  const target = path.resolve(filename);
+  const original = await lstat(target);
+  if (!original.isFile() || original.isSymbolicLink() || original.nlink !== 1
+    || original.size < 1 || original.size > 2_147_483_648) throw new Error('UPDATE_DOWNLOADED_ARTIFACT_INVALID');
+  const handle = await open(target, 'r');
+  try {
+    const before = await handle.stat();
+    if (before.dev !== original.dev || before.ino !== original.ino || before.size !== original.size) {
+      throw new Error('UPDATE_DOWNLOADED_ARTIFACT_CHANGED');
+    }
+    const digest = createHash('sha256');
+    for await (const chunk of handle.createReadStream({ autoClose: false })) digest.update(chunk);
+    const after = await handle.stat();
+    const current = await lstat(target);
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size
+      || after.mtimeMs !== before.mtimeMs || current.dev !== before.dev
+      || current.ino !== before.ino || current.size !== before.size || current.mtimeMs !== before.mtimeMs) {
+      throw new Error('UPDATE_DOWNLOADED_ARTIFACT_CHANGED');
+    }
+    return digest.digest('hex');
+  } finally {
+    await handle.close();
+  }
+}
+
 export interface DownloadedUpdateOffer {
   readonly generation: number;
   readonly version: string;
   readonly artifactIdentity: string;
+  readonly artifactSha256: string;
 }
 
 export async function installAfterPreUpdateBackup(
@@ -88,7 +125,8 @@ function sameDownloadedOffer(left: DownloadedUpdateOffer, right: DownloadedUpdat
   return right !== null
     && left.generation === right.generation
     && left.version === right.version
-    && left.artifactIdentity === right.artifactIdentity;
+    && left.artifactIdentity === right.artifactIdentity
+    && left.artifactSha256 === right.artifactSha256;
 }
 
 export interface UpdateInstallCoordinatorOptions {
@@ -151,6 +189,9 @@ export class UpdateInstallCoordinator {
     let activity: { readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string };
     try {
       activity = await this.observeActivity();
+    } catch {
+      // Unknown local activity must never authorize an install or strand the request.
+      activity = { trustworthy: false, activeCount: 0, revision: 'local:unverifiable' };
     } finally {
       this.evaluating = false;
     }
@@ -169,7 +210,16 @@ export class UpdateInstallCoordinator {
     if (!this.pending || this.shutdown) return;
     // Poll the existing tracker throughout the quiet period so a short call
     // that starts and ends inside the interval restarts the quiet clock.
-    const activity = await this.observeActivity();
+    let activity: { readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string };
+    try {
+      activity = await this.observeActivity();
+    } catch {
+      if (this.pending && !this.shutdown) {
+        this.quietUntil = 0;
+        this.schedule(this.pollIntervalMs, () => { void this.evaluate(); });
+      }
+      return;
+    }
     if (!this.pending || this.shutdown) return;
     if (!activity.trustworthy || activity.activeCount > 0 || activity.revision !== this.quietRevision) {
       void this.evaluate();
@@ -212,7 +262,9 @@ export class UpdateInstallCoordinator {
 
     const afterTunnel = this.sampleLocalActivity();
     if (!sameLocalActivity(initialLocal, afterTunnel)) return staleLocalActivity(afterTunnel);
-    if (tunnelState === false) {
+    // A stopped Tunnel does not prove other local STDIO/MCP clients are idle.
+    // Require the shared activity observer whenever one is configured.
+    if (tunnelState === false && this.options.sharedActivitySnapshot === undefined) {
       return { trustworthy: true, activeCount: afterTunnel.activeCount, revision: localRevisionKey(afterTunnel) };
     }
     if (this.options.sharedActivitySnapshot === undefined) {
@@ -223,6 +275,11 @@ export class UpdateInstallCoordinator {
       const afterShared = this.sampleLocalActivity();
       if (!sameLocalActivity(afterTunnel, afterShared)) return staleLocalActivity(afterShared);
       if (shared.state !== 'available') return { trustworthy: false, activeCount: afterShared.activeCount, revision: `${localRevisionKey(afterShared)}:shared:${shared.state}` };
+      if (!Number.isSafeInteger(shared.activeCallCount) || shared.activeCallCount < 0
+        || !Number.isSafeInteger(shared.revision) || shared.revision < 0
+        || (shared.ownerKey !== undefined && typeof shared.ownerKey !== 'string')) {
+        return { trustworthy: false, activeCount: afterShared.activeCount, revision: `${localRevisionKey(afterShared)}:shared:invalid` };
+      }
       return { trustworthy: true, activeCount: afterShared.activeCount + shared.activeCallCount, revision: `${localRevisionKey(afterShared)}:shared:${shared.ownerKey ?? ''}:${shared.revision}` };
     } catch {
       const afterShared = this.sampleLocalActivity();
@@ -231,7 +288,12 @@ export class UpdateInstallCoordinator {
   }
 
   private sampleLocalActivity(): LocalActivityObservation {
-    return { activeCount: this.options.activeCallCount(), revision: this.options.activityRevision?.() ?? 0 };
+    const activeCount = this.options.activeCallCount();
+    const revision = this.options.activityRevision?.() ?? 0;
+    if (!Number.isSafeInteger(activeCount) || activeCount < 0 || !Number.isSafeInteger(revision) || revision < 0) {
+      throw new Error('UPDATE_LOCAL_ACTIVITY_UNVERIFIABLE');
+    }
+    return { activeCount, revision };
   }
 
   private schedule(delayMs: number, action: () => void): void {

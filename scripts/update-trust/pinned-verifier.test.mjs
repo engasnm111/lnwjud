@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +13,175 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 test('verifier executable path is fixed and rejects caller paths', async () => {
   await assert.rejects(acquirePinnedVerifier({ filename: process.execPath, sha256: '0'.repeat(64) }), /RELEASE_VERIFIER_UNTRUSTED/);
+});
+
+test('pinned verifier provisioning retries transport timeouts but refuses other download errors', { skip: !windows }, () => {
+  for (const [failure, expectedAttempts] of [['timeout', 4], ['gateway-timeout', 4], ['httpclient-timeout', 4], ['forbidden', 1], ['unexpected', 1]]) {
+    const script = `
+      $global:attempts = 0
+      $global:apiAttempts = 0
+      function Invoke-WebRequest {
+        [CmdletBinding()]
+        param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)
+        $global:attempts++
+        if ($TimeoutSec -ne 55) { throw 'Verifier download exceeded bounded request budget' }
+        if ($Uri -eq 'https://api.github.com/repos/cli/cli/releases/assets/679195750') {
+          $global:apiAttempts++
+          if ($Headers.Accept -ne 'application/octet-stream') { throw 'Invalid fallback accept header' }
+        } elseif ($Uri -notmatch '^https://github[.]com/cli/cli/releases/download/') { throw 'Unreviewed download URL' }
+        if ('${failure}' -eq 'timeout') {
+          throw [System.Net.WebException]::new('timeout', [System.Net.WebExceptionStatus]::Timeout)
+        }
+        if ('${failure}' -eq 'gateway-timeout') {
+          throw [System.Net.WebException]::new('504 Gateway Time-out', [System.Net.WebExceptionStatus]::ProtocolError)
+        }
+        if ('${failure}' -eq 'httpclient-timeout') {
+          throw [System.Threading.Tasks.TaskCanceledException]::new('The request was canceled due to the configured HttpClient.Timeout of 90 seconds elapsing.')
+        }
+        if ('${failure}' -eq 'forbidden') {
+          throw [System.Net.WebException]::new('403 Forbidden', [System.Net.WebExceptionStatus]::ProtocolError)
+        }
+        throw [System.InvalidOperationException]::new('unexpected failure')
+      }
+      function Start-Sleep { param([int]$Seconds) }
+      try { & './scripts/update-trust/provision-gh-verifier.ps1'; exit 10 }
+      catch {
+        if ($global:attempts -ne ${expectedAttempts}) { Write-Error "attempts=$global:attempts"; exit 11 }
+        if ($global:apiAttempts -ne ${expectedAttempts > 2 ? 2 : 0}) { Write-Error "apiAttempts=$global:apiAttempts"; exit 12 }
+        exit 0
+      }
+    `;
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000,
+    });
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 0, `${failure}: ${result.stdout}\n${result.stderr}`);
+  }
+});
+
+
+test('Windows CI ripgrep pinned fallback handles CDN 502, refuses 403 and rejects corrupt archives', { skip: !windows }, async () => {
+  const workflow = await readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8');
+  for (const destination of ['ripgrep-native-contract', 'ripgrep-workspace-tests', 'ripgrep-e2e']) {
+    assert.ok(workflow.includes('./scripts/ci-install-ripgrep.ps1 -DestinationName ' + destination),
+      'Windows ' + destination + ' must use the common pinned installer');
+  }
+  const script = await readFile(path.join(root, 'scripts/ci-install-ripgrep.ps1'), 'utf8');
+  assert.match(script, /d0f534024c42afd6cb4d38907c25cd2b249b79bbe6cc1dbee8e3e37c2b6e25a1/);
+  assert.match(script, /releases\/assets\/191354245/);
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-ripgrep-ci-'));
+  try {
+    for (const [failure, attempts, apiAttempts, expectedError] of [
+      ['gateway', 6, 3, '502 Bad Gateway'],
+      ['httpclient-timeout', 6, 3, 'HttpClient.Timeout'],
+      ['forbidden', 1, 0, '403 Forbidden'],
+      ['corrupt', 1, 0, 'RIPGREP_CI_ARCHIVE_DIGEST_MISMATCH'],
+    ]) {
+      const runnerTemp = path.join(temp, failure);
+      await mkdir(runnerTemp);
+      const fixture = [
+        // Mask only external rg.exe on PATH, not PowerShell command/module discovery.
+        // Overriding Get-Command can prevent Get-FileHash auto-load on fresh CI runners.
+        '$env:PATH = [string]::Join(";", @((Join-Path $env:SystemRoot "System32"), $env:SystemRoot, (Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0")))',
+        '$global:attempts = 0',
+        '$global:apiAttempts = 0',
+        'function Invoke-WebRequest {',
+        '  [CmdletBinding()]',
+        '  param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection, [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)',
+        '  $global:attempts++',
+        '  if ($Uri -eq "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/191354245") {',
+        '    $global:apiAttempts++',
+        '    if ($Headers.Accept -ne "application/octet-stream") { throw "Bad Accept header" }',
+        '  } elseif ($Uri -notmatch "^https://github[.]com/BurntSushi/ripgrep/releases/download/") { throw "Unreviewed download URL" }',
+        '  if ("' + failure + '" -eq "corrupt") { Set-Content -LiteralPath $OutFile -Value "not the official archive" -Encoding ascii; return }',
+        '  if ("' + failure + '" -eq "gateway") {',
+        '    throw [System.Net.WebException]::new("502 Bad Gateway", [System.Net.WebExceptionStatus]::ProtocolError)',
+        '  }',
+        '  if ("' + failure + '" -eq "httpclient-timeout") {',
+        '    throw [System.Threading.Tasks.TaskCanceledException]::new("The request was canceled due to the configured HttpClient.Timeout of 90 seconds elapsing.")',
+        '  }',
+        '  throw [System.Net.WebException]::new("403 Forbidden", [System.Net.WebExceptionStatus]::ProtocolError)',
+        '}',
+        'function Start-Sleep { param([int]$Seconds) }',
+        'try { & "./scripts/ci-install-ripgrep.ps1" -DestinationName "ripgrep-' + failure + '"; exit 10 }',
+        'catch {',
+        '  if ($global:attempts -ne ' + attempts + ' -or $global:apiAttempts -ne ' + apiAttempts + ') {',
+        '    Write-Error "attempts=$global:attempts apiAttempts=$global:apiAttempts"; exit 11',
+        '  }',
+        '  if ($_.Exception.Message -notmatch "' + expectedError + '") {',
+        '    Write-Error ("wrong refusal: " + $_.Exception.Message); exit 12',
+        '  }',
+        '  exit 0',
+        '}',
+      ].join('\n');
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', fixture], {
+        cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000,
+        env: { ...process.env, RUNNER_TEMP: runnerTemp },
+      });
+      assert.equal(result.error, undefined, result.error?.message);
+      assert.equal(result.status, 0, failure + ': ' + result.stdout + '\n' + result.stderr);
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('Windows CI cosign fallback retries CDN 504 via its pinned official API asset, not HTTP 403', { skip: !windows }, async () => {
+  const workflow = await readFile(path.join(root, '.github/workflows/ci.yml'), 'utf8');
+  const label = '      - name: Install checksum-pinned cosign fallback';
+  const begin = workflow.indexOf(label);
+  assert.ok(begin >= 0, 'missing checksum-pinned cosign step');
+  const scriptStart = workflow.indexOf('        run: |', begin);
+  const nextStep = workflow.indexOf('      - name: Verify cosign release verifier', scriptStart);
+  assert.ok(scriptStart > begin && nextStep > scriptStart, 'unexpected CI step boundaries');
+  const raw = workflow.slice(scriptStart + '        run: |'.length, nextStep).trimEnd();
+  const script = raw.split(/\r?\n/).filter(Boolean).map(line => {
+    assert.ok(line.startsWith('          '), 'unexpected CI script indentation');
+    return line.slice(10);
+  }).join('\n');
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-cosign-ci-'));
+  try {
+    for (const [failure, expectedAttempts, expectedApi] of [['gateway-timeout', 8, 4], ['httpclient-timeout', 8, 4], ['forbidden', 1, 0]]) {
+      const fixture = `
+        $global:attempts = 0
+        $global:apiAttempts = 0
+        function Invoke-WebRequest {
+          [CmdletBinding()]
+          param([string]$Uri, [string]$OutFile, [int]$MaximumRedirection,
+                [int]$TimeoutSec, [switch]$UseBasicParsing, [hashtable]$Headers)
+          $global:attempts++
+          if ($Uri -eq 'https://api.github.com/repos/sigstore/cosign/releases/assets/503286236') {
+            $global:apiAttempts++
+            if ($Headers.Accept -ne 'application/octet-stream') { throw 'Invalid asset accept header' }
+          } elseif ($Uri -notmatch '^https://github[.]com/sigstore/cosign/releases/download/') {
+            throw 'Unreviewed asset URL'
+          }
+          if ('${failure}' -eq 'gateway-timeout') {
+            throw [System.Net.WebException]::new('504 Gateway Time-out', [System.Net.WebExceptionStatus]::ProtocolError)
+          }
+          if ('${failure}' -eq 'httpclient-timeout') {
+            throw [System.Threading.Tasks.TaskCanceledException]::new('The request was canceled due to the configured HttpClient.Timeout of 120 seconds elapsing.')
+          }
+          throw [System.Net.WebException]::new('403 Forbidden', [System.Net.WebExceptionStatus]::ProtocolError)
+        }
+        function Start-Sleep { param([int]$Seconds) }
+        try {
+          ${script}
+          exit 10
+        } catch {
+          if ($global:attempts -ne ${expectedAttempts} -or $global:apiAttempts -ne ${expectedApi}) {
+            Write-Error "attempts=$global:attempts apiAttempts=$global:apiAttempts"
+            exit 11
+          }
+          exit 0
+        }
+      `;
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', fixture], {
+        cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000,
+        env: { ...process.env, RUNNER_TEMP: temp },
+      });
+      assert.equal(result.error, undefined, result.error?.message);
+      assert.equal(result.status, 0, `${failure}: ${result.stdout}\n${result.stderr}`);
+    }
+  } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
 test('actual native addon pins file and ancestors, rejecting writes/renames until release', { skip: !windows }, async () => {
@@ -82,11 +251,24 @@ test('real pinned executor retains executable and exact input through child clos
         await assert.rejects(writeFile(path.join(observed.config, 'hosts.yml'), 'redirect'));
         await writeFile(input, '{"bundle":"bound"}'); await session.pinInputs([input]);
         process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = 'sentinel-test-only';
+        await assert.rejects(acquirePinnedVerifier({ filename: 'gh.exe', sha256 }), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = '';
+        await assert.rejects(acquirePinnedVerifier({ filename: 'gh.exe', sha256 }), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = 'sentinel-test-only';
+        assert.throws(() => session.run(['-e', 'process.stdout.write("unsafe")']), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        await assert.rejects(session.pinInputs([input]), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = '';
+        assert.throws(() => session.run(['-e', 'process.stdout.write("unsafe")']), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
         const completion = session.run(['-e', 'setTimeout(() => process.stdout.write("SIGNER=" + String(process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM)), 150)']);
         const closing = session.close();
         await assert.rejects(writeFile(filename, 'changed')); await assert.rejects(rename(filename, filename + '.moved'));
         await assert.rejects(writeFile(input, 'swapped')); await assert.rejects(rename(input, input + '.moved'));
         assert.equal((await completion).toString(), 'SIGNER=undefined'); await closing;
+        delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
+        process.env.lnwjud_update_release_private_key_pem = '';
+        await assert.rejects(acquirePinnedVerifier({ filename: 'gh.exe', sha256 }), /RELEASE_VERIFIER_SIGNER_ENVIRONMENT_REFUSED/);
+        delete process.env.lnwjud_update_release_private_key_pem;
         await writeFile(input, 'released');
         await rename(filename, filename + '.moved'); await rename(filename + '.moved', filename);
         assert.throws(() => session.run(['version']), /RELEASE_VERIFIER_ARGUMENTS_INVALID/);

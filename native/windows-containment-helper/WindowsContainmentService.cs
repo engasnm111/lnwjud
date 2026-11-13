@@ -58,7 +58,7 @@ internal static class WindowsContainmentService
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate uint HandlerCallback(uint control, uint eventType, nint eventData, nint context);
     private sealed record RpcRequest(int Protocol, string Command, ServiceAttemptIdentity? Identity, string? ReservationKey, string? OperationDigest, ServiceProcessOperation? Operation,
-        string? ControlCommand = null, JsonElement? ControlRequest = null, ServiceOutputCursor? OutputCursor = null);
+        string? ControlCommand = null, JsonElement? ControlRequest = null, ServiceOutputCursor? OutputCursor = null, string? RecordedAt = null);
     private sealed record RpcResponse(int Protocol, bool Ok, object? Result, string? Error);
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "StartServiceCtrlDispatcherW")]
@@ -85,21 +85,23 @@ internal static class WindowsContainmentService
     }
 
 #if NATIVE_CONTAINMENT_TESTS
-    internal static Task RunPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken, bool useCurrentUserTestLauncher = false) =>
-        RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher);
+    internal static Task RunPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken,
+        bool useCurrentUserTestLauncher = false, UpdateStartupGate? startup = null) =>
+        RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher, startup: startup);
 
     internal static Task RunAuthenticatedTestPipeServerAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken) =>
         RunPipeServerCoreAsync(pipeName, ledger, cancellationToken, useCurrentUserTestLauncher: false, useCurrentUserTestPipeSecurity: true);
 #endif
 
-    private static Task RunProductionPipeServerAsync(ServiceEndpointIdentity.ProductionServiceAuthority authority, ServiceAttemptLedger ledger, CancellationToken cancellationToken)
+    private static Task RunProductionPipeServerAsync(ServiceEndpointIdentity.ProductionServiceAuthority authority, ServiceAttemptLedger ledger,
+        string serviceStore, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authority);
-        authority.RequireActive();
-        return RunPipeServerCoreAsync(PipeName, ledger, cancellationToken, false);
+        return RunPipeServerCoreAsync(PipeName, ledger, cancellationToken, false, startup: UpdateStartupGate.Installed(authority, serviceStore));
     }
 
-    private static async Task RunPipeServerCoreAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken, bool useCurrentUserTestLauncher, bool useCurrentUserTestPipeSecurity = false)
+    private static async Task RunPipeServerCoreAsync(string pipeName, ServiceAttemptLedger ledger, CancellationToken cancellationToken,
+        bool useCurrentUserTestLauncher, bool useCurrentUserTestPipeSecurity = false, UpdateStartupGate? startup = null)
     {
         ArgumentNullException.ThrowIfNull(ledger);
         var runtime = new WindowsServiceProcessRuntime(ledger, useCurrentUserTestLauncher);
@@ -128,7 +130,7 @@ internal static class WindowsContainmentService
                 try
                 {
                     await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-                    workers.Add(HandleClientAndDisposeAsync(pipe, ledger, runtime, imports, cancellationToken));
+                    workers.Add(HandleClientAndDisposeAsync(pipe, ledger, runtime, imports, startup, cancellationToken));
                 }
                 catch
                 {
@@ -146,7 +148,7 @@ internal static class WindowsContainmentService
     }
 
     private static async Task HandleClientAndDisposeAsync(NamedPipeServerStream pipe, ServiceAttemptLedger ledger, WindowsServiceProcessRuntime runtime,
-        ServiceImportTransactionRuntime imports, CancellationToken serviceStopping)
+        ServiceImportTransactionRuntime imports, UpdateStartupGate? startup, CancellationToken serviceStopping)
     {
         using (pipe)
         using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(serviceStopping))
@@ -155,18 +157,30 @@ internal static class WindowsContainmentService
             try
             {
                 var requestBytes = await ReadFrameAsync(pipe, timeout.Token).ConfigureAwait(false);
-                var request = JsonSerializer.Deserialize<RpcRequest>(requestBytes, Json)
-                    ?? throw new IOException("SERVICE_REQUEST_INVALID");
-                CryptographicOperations.ZeroMemory(requestBytes);
+                RpcRequest request;
+                try
+                {
+                    request = JsonSerializer.Deserialize<RpcRequest>(requestBytes, Json)
+                        ?? throw new IOException("SERVICE_REQUEST_INVALID");
+                    if (request.Command == "update_startup")
+                    {
+                        using var envelope = JsonDocument.Parse(requestBytes);
+                        if (envelope.RootElement.EnumerateObject().Count() != 2)
+                            throw new IOException("SERVICE_UPDATE_STARTUP_REQUEST_INVALID");
+                    }
+                }
+                finally { CryptographicOperations.ZeroMemory(requestBytes); }
                 if (request.Protocol != 3) throw new IOException("SERVICE_PROTOCOL_INVALID");
                 if (request.Command == "control") timeout.CancelAfter(TimeSpan.FromSeconds(120));
 
                 using var caller = AuthenticatedPipeCaller.Capture(pipe);
                 object result = request.Command switch
                 {
+                    "update_startup" => startup?.Inspect() ?? UpdateStartupGate.Unavailable,
                     "prepare" => Prepare(ledger, request, caller.Sid),
                     "run" => Run(ledger, runtime, request, caller),
                     "inspect" => Inspect(runtime, request, caller.Sid),
+                    "recover_after_reboot" => RecoverAfterReboot(ledger, request, caller.Sid),
                     "cancel" => Cancel(runtime, request, caller.Sid),
                     "read_output" => ReadOutput(runtime, request, caller.Sid),
                     "abort" => Abort(ledger, request, caller.Sid),
@@ -196,7 +210,7 @@ internal static class WindowsContainmentService
                             || w32.Message.StartsWith("SERVICE_", StringComparison.Ordinal) => w32.Message,
                         _ => "SERVICE_REQUEST_FAILED",
                     };
-                    await WriteFrameAsync(pipe, new RpcResponse(3, false, null, safeError), CancellationToken.None).ConfigureAwait(false);
+                    await WriteFailureFrameAsync(pipe, safeError, serviceStopping).ConfigureAwait(false);
                 }
                 catch { }
             }
@@ -293,6 +307,24 @@ internal static class WindowsContainmentService
     private static ServiceAttemptObservation Inspect(WindowsServiceProcessRuntime runtime, RpcRequest request, string sid) =>
         runtime.Inspect(request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED"), sid);
 
+    // A service replacement is not termination proof; only a later OS boot
+    // plus a missing native Job may reconcile a missing ledger attempt.
+    private static ServiceAttemptObservation RecoverAfterReboot(ServiceAttemptLedger ledger, RpcRequest request, string sid)
+    {
+        var identity = request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED");
+        if (request.RecordedAt is null || !request.RecordedAt.EndsWith("Z", StringComparison.Ordinal)
+            || !DateTimeOffset.TryParse(request.RecordedAt,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var recordedAt))
+            throw new IOException("SERVICE_RECOVERY_TIME_INVALID");
+        var uptime = Environment.TickCount64;
+        if (uptime < 0) throw new IOException("SERVICE_RECOVERY_BOOT_UNVERIFIED");
+        var bootTime = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(uptime);
+        var job = ContainedProcess.QueryJob(ContainedProcess.GetJobName(identity.AttemptId));
+        return ledger.RecoverAfterReboot(identity, sid, recordedAt, bootTime, job);
+    }
+
     private static ServiceAttemptObservation Abort(ServiceAttemptLedger ledger, RpcRequest request, string sid)
     {
         var identity = request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED");
@@ -322,6 +354,15 @@ internal static class WindowsContainmentService
         var payload = new byte[length];
         await stream.ReadExactlyAsync(payload, cancellationToken).ConfigureAwait(false);
         return payload;
+    }
+
+    // An unresponsive or disconnected client must not retain a service worker forever
+    // while the error reply is being written. Cancellation never changes the ledger.
+    internal static async Task WriteFailureFrameAsync(Stream stream, string error, CancellationToken serviceStopping)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(serviceStopping);
+        deadline.CancelAfter(TimeSpan.FromSeconds(2));
+        await WriteFrameAsync(stream, new RpcResponse(3, false, null, error), deadline.Token).ConfigureAwait(false);
     }
 
     private static async Task WriteFrameAsync(Stream stream, object response, CancellationToken cancellationToken)
@@ -401,7 +442,7 @@ internal static class WindowsContainmentService
             var directory = EnsureStoreDirectory();
             var ledger = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(Path.Combine(directory, "attempts.json")), Path.Combine(directory, "imports"));
             SetStatus(ServiceRunning, AcceptStop, 0);
-            RunProductionPipeServerAsync(authority, ledger, stopping.Token).GetAwaiter().GetResult();
+            RunProductionPipeServerAsync(authority, ledger, directory, stopping.Token).GetAwaiter().GetResult();
             SetStatus(ServiceStopped, 0, 0);
         }
         catch

@@ -1,4 +1,6 @@
-import { mkdtemp, readFile, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -30,6 +32,57 @@ type AcceptanceFixture = {
 };
 
 describe('automatic updater release gate', () => {
+  it.each([
+    'current manual release',
+    'wrong version',
+    'automatic installation enabled',
+    'source authority enrolled',
+    'missing native installation guard',
+  ])('executes the release scope verifier for %s', async (scenario) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-manual-scope-'));
+    const repositoryRoot = path.resolve(import.meta.dirname, '../..');
+    try {
+      for (const file of [
+        'scripts/verify-manual-release-scope.mjs',
+        'config/release-scope.json',
+        'config/update-release-policy.json',
+        'package.json',
+        'apps/desktop/src/main/main.ts',
+        '.github/workflows/release.yml',
+      ]) {
+        await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+        await copyFile(path.join(repositoryRoot, file), path.join(root, file));
+      }
+      const scopePath = path.join(root, 'config/release-scope.json');
+      const scope = JSON.parse(await readFile(scopePath, 'utf8'));
+      if (scenario === 'wrong version') scope.version = '0.0.0';
+      if (scenario === 'automatic installation enabled') scope.automaticUpdaterEnabled = true;
+      await writeFile(scopePath, JSON.stringify(scope));
+      if (scenario === 'source authority enrolled') {
+        const policyPath = path.join(root, 'config/update-release-policy.json');
+        const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+        policy.authorities = [{ repository: 'unexpected/source' }];
+        await writeFile(policyPath, JSON.stringify(policy));
+      }
+      if (scenario === 'missing native installation guard') {
+        const mainPath = path.join(root, 'apps/desktop/src/main/main.ts');
+        await writeFile(mainPath, (await readFile(mainPath, 'utf8'))
+          .replace('if (!verifiedAutomaticUpdateAuthority || !app.isPackaged', 'if (!app.isPackaged'));
+      }
+      const verification = promisify(execFile)(process.execPath, [path.join(root, 'scripts/verify-manual-release-scope.mjs')], {
+        cwd: root, windowsHide: true,
+      });
+      if (scenario === 'current manual release') {
+        const result = await verification;
+        expect(result.stdout).toContain(`MANUAL_RELEASE_SCOPE_VERIFIED v${scope.version}`);
+      } else {
+        await expect(verification).rejects.toThrow('RELEASE_SCOPE_INVALID');
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the current manual-install release separate from the future authenticated auto-update receipt contract', async () => {
     const workflow = await readFile(releaseWorkflowUrl, 'utf8');
 
@@ -60,7 +113,7 @@ describe('automatic updater release gate', () => {
   });
 
   it('reads a bounded ordinary receipt and rejects an oversized file', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-'));
+    const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-')));
     const file = path.join(directory, 'receipt.json');
     try {
       await writeFile(file, '{"schemaVersion":1}');
@@ -78,7 +131,7 @@ describe('automatic updater release gate', () => {
   });
 
   it('applies the release guard to a complete receipt read from disk', async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-'));
+    const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-update-receipt-')));
     const file = path.join(directory, 'receipt.json');
     try {
       const { receipt, provenance, context } = fixture('win32', 'x64');

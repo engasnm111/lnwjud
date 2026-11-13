@@ -7,11 +7,36 @@ internal sealed class StoreIdentity
 {
     internal string Directory { get; }
     internal string OwnerSid { get; }
-    private StoreIdentity(string directory, string ownerSid) { Directory = directory; OwnerSid = ownerSid; }
-    internal static StoreIdentity Installed() => throw new Refusal("MAINTENANCE_REGISTRY_UNCONFIGURED");
+    internal bool RequireProtectedParent { get; }
+    private StoreIdentity(string directory, string ownerSid, bool requireProtectedParent)
+    {
+        Directory = directory;
+        OwnerSid = ownerSid;
+        RequireProtectedParent = requireProtectedParent;
+    }
+    // This identity is granted by the Windows Service Control Manager, never by
+    // a caller-supplied SID or a shared LocalService process. The service and
+    // protected store must already have been provisioned independently.
+    [SupportedOSPlatform("windows")]
+    internal static StoreIdentity Installed()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        if (identity.User?.Value != "S-1-5-19") throw new Refusal("MAINTENANCE_SERVICE_IDENTITY_UNAVAILABLE");
+        SecurityIdentifier serviceSid;
+        try
+        {
+            serviceSid = (SecurityIdentifier)new NTAccount(@"NT SERVICE\LnwjudUpdateAdmission").Translate(typeof(SecurityIdentifier));
+        }
+        catch (IdentityNotMappedException) { throw new Refusal("MAINTENANCE_SERVICE_IDENTITY_UNAVAILABLE"); }
+        if (!new WindowsPrincipal(identity).IsInRole(serviceSid)) throw new Refusal("MAINTENANCE_SERVICE_IDENTITY_UNAVAILABLE");
+        var commonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        if (string.IsNullOrWhiteSpace(commonData)) throw new Refusal("MAINTENANCE_STORE_ROOT_UNAVAILABLE");
+        var root = AdmissionStore.ValidatePath(Path.Combine(commonData, "lnwjud", "update-admission"));
+        return new StoreIdentity(root, serviceSid.Value, requireProtectedParent: true);
+    }
 #if ADMISSION_ISOLATED_TESTS
     [SupportedOSPlatform("windows")]
-    internal static StoreIdentity Isolated(string directory) => new(directory, WindowsIdentity.GetCurrent().User!.Value);
+    internal static StoreIdentity Isolated(string directory) => new(directory, WindowsIdentity.GetCurrent().User!.Value, requireProtectedParent: false);
 #endif
 }
 

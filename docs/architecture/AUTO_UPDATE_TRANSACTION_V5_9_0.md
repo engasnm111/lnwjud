@@ -6,6 +6,10 @@ The current v5.9.0 source keeps automatic updates unavailable: `initAutoUpdater(
 
 Any release **that enables automatic installation** must remain blocked until a real signed update and an injected-failure rollback pass on each advertised platform. The separately scoped v5.9.0 manual-install release does not enable this feature or claim these receipts, and excludes macOS until #216 is accepted. Local tests, package provenance, or a release receipt fixture do not prove those operations. The release verifier currently refuses every structurally valid updater receipt because it cannot authenticate the producer; matching self-reported fields against package provenance is not proof of an observed update. This guard must be replaced only by a verified target-native producer and independent evidence validation.
 
+## v5.9.1 hosted installer regression evidence (7 November 2026)
+
+The [Windows dev installer run #42384358846](https://github.com/engasnm111/lnwjud/actions/runs/42384358846) completed successfully at exact commit `f7f5f33c2e7d8d9ab71106a485d2632bb8099c99`, including the packaged NSIS `/currentuser` refusal check. The test verifies the installer exits with the expected refusal and does not leave extracted app files, an uninstall registration or a protected service registration. The [Draft PR](https://github.com/engasnm111/lnwjud/actions/runs/42384163561) and [push](https://github.com/engasnm111/lnwjud/actions/runs/42384159991) CI runs for the same SHA passed. This is a **negative installation-safety test**. It does not demonstrate a valid authorized install, independently verified production signer, successful in-place update, app relaunch, Tunnel recovery or rollback. Keep automatic installation unavailable and PR #246 in Draft until the separate production gates pass.
+
 ## Usage
 
 The Electron main process owns update offers and user intent. It does not receive a package path or ask a privileged process to execute a caller-provided command.
@@ -29,6 +33,8 @@ const outcome = await updateTransactions.request({
 Before writable startup, the main process asks the installed authority to reconcile any interrupted transaction. A held result prevents the normal runtime and Tunnel from starting. After startup, the app can report one challenge-bound readiness observation. The authority independently checks the process image, version, application health, and Tunnel connection before it commits.
 
 ## Shape
+
+Windows managed installs use an installer-selected directory beneath the 64-bit Program Files Known Folder. The stable launcher is `<installRoot>/lnwjud.exe`. The enrolled containment service stays outside the slots at `<installRoot>/resources/native-containment/lnwjud-containment.exe`. An application slot is exactly `<installRoot>/slots/A` or `<installRoot>/slots/B` and contains the ordinary Electron executable and resources. Its pinned helper is `resources/native-containment/lnwjud-containment.exe` relative to that slot. Windows compares these names case-insensitively. The kernel-reported, resolved image of a pinned helper running in this protected role requires managed startup admission even if the machine registration disappears. Another slot name in the same protected layout holds for investigation. A folder named `slots` elsewhere does not establish enrollment.
 
 The caller sees one `UpdateTransactions` interface. The service owns package authentication, the transaction journal, slot selection, restart supervision, health checks, and rollback.
 

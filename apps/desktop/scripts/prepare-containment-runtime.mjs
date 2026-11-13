@@ -6,6 +6,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
+import { stageUpdateAttestationVerifier } from './stage-update-attestation-verifier.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '../..');
@@ -62,6 +63,7 @@ export async function prepareContainmentRuntime() {
     }) + '\n';
     await writeFile(path.join(outputDirectory, 'manifest.json'), manifest);
     await writeFile(path.join(stageDirectory, 'manifest.json'), manifest);
+    await stageUpdateAttestationVerifier(repositoryRoot, stageDirectory);
   }
   const runtimeSha256 = digest(await readFile(runtimePath));
   await writeFile(generatedPath, [

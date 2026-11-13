@@ -26,10 +26,21 @@ internal static class ServiceEndpointIdentity
     [StructLayout(LayoutKind.Sequential)]
     private struct AttributeTag { internal uint Attributes, ReparseTag; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileStandardInfo
+    {
+        internal long AllocationSize, EndOfFile;
+        internal uint NumberOfLinks;
+        internal byte DeletePending, Directory;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "GetFileInformationByHandleEx")]
+    private static extern bool GetStandardInfo(SafeFileHandle file, int informationClass, out FileStandardInfo info, uint size);
+
     [DllImport("kernel32.dll")] private static extern nint GetCurrentProcess();
     [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, uint pid);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(SafeProcessHandle process, out uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(SafeProcessHandle process, out long creation, out long exit, out long kernel, out long user);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool QueryFullProcessImageName(nint process, uint flags, StringBuilder path, ref uint size);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(nint process, uint access, out SafeAccessTokenHandle token);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool GetKernelObjectSecurity(nint handle, uint information, byte[]? descriptor, uint size, out uint needed);
@@ -49,6 +60,7 @@ internal static class ServiceEndpointIdentity
     {
         private readonly PackagePin package;
         private ProductionServiceAuthority(PackagePin package) => this.package = package;
+        internal string InstallationRoot => package.InstallationRoot;
 
         internal static ProductionServiceAuthority Activate()
         {
@@ -131,7 +143,7 @@ internal static class ServiceEndpointIdentity
         {
             package.RequireActive();
             RequireService(service, pid);
-            if (PipePid(pipe) != pid || !GetExitCodeProcess(process, out var exitCode) || exitCode != 259)
+            if (PipePid(pipe) != pid || !ProcessStillRunning(process))
                 throw new IOException("SERVICE_ENDPOINT_RESTARTED");
         }
 
@@ -141,6 +153,14 @@ internal static class ServiceEndpointIdentity
             process.Dispose();
             _ = CloseServiceHandle(service);
         }
+    }
+
+    internal static bool ProcessStillRunning(SafeProcessHandle process)
+    {
+        // A terminated process can legitimately return exit code 259 (STILL_ACTIVE).
+        // Exit FILETIME is zero only while the pinned process instance is running;
+        // querying it needs no extra rights beyond PROCESS_QUERY_LIMITED_INFORMATION.
+        return !process.IsInvalid && GetProcessTimes(process, out _, out var exit, out _, out _) && exit == 0;
     }
 
     // This is a negative availability check, never evidence that a service is trusted or running.
@@ -166,8 +186,9 @@ internal static class ServiceEndpointIdentity
     private sealed class PackagePin : IDisposable
     {
         internal FileStream Image { get; }
+        internal string InstallationRoot { get; }
         internal List<SafeFileHandle> Ancestors { get; } = new();
-        internal PackagePin(FileStream image) => Image = image;
+        internal PackagePin(FileStream image, string installationRoot) => (Image, InstallationRoot) = (image, installationRoot);
         internal void RequireActive()
         {
             if (Image.SafeFileHandle.IsClosed) throw new ObjectDisposedException(nameof(PackagePin));
@@ -181,6 +202,33 @@ internal static class ServiceEndpointIdentity
 
     internal static ProductionServiceAuthority ActivateProductionService() => ProductionServiceAuthority.Activate();
     internal static VerifiedEndpoint VerifyConnectedServer(SafePipeHandle pipe, string expectedSha256) => VerifiedEndpoint.Connect(pipe, expectedSha256);
+
+    internal static string? CurrentSlotHold(string programFiles) => InspectSlotImage(QueryImagePath(GetCurrentProcess()), programFiles);
+
+    internal static string? InspectSlotImage(string imagePath, string programFiles)
+    {
+        using var handle = CreateFile(imagePath, 0x80, 1, 0, 3, 0, 0);
+        if (handle.IsInvalid || !GetStandardInfo(handle, 1, out var info, (uint)Marshal.SizeOf<FileStandardInfo>())
+            || info.NumberOfLinks != 1 || info.Directory != 0 || info.DeletePending != 0)
+            throw new IOException("SERVICE_ENDPOINT_IMAGE_UNAVAILABLE");
+        var resolved = FinalPath(handle);
+        var reason = SlotHold(imagePath);
+        return reason ?? SlotHold(resolved);
+
+        string? SlotHold(string path)
+        {
+            var relative = Path.GetRelativePath(programFiles, path);
+            var parts = relative.Split(Path.DirectorySeparatorChar);
+            if (Path.IsPathRooted(relative) || parts.Length < 6 || parts[0] == ".."
+                || !parts[^5].Equals("slots", StringComparison.OrdinalIgnoreCase)
+                || !parts[^3].Equals("resources", StringComparison.OrdinalIgnoreCase)
+                || !parts[^2].Equals("native-containment", StringComparison.OrdinalIgnoreCase)
+                || !parts[^1].Equals("lnwjud-containment.exe", StringComparison.OrdinalIgnoreCase)) return null;
+            using var role = PinInstalledImage(path, programFiles);
+            return parts[^4].Equals("A", StringComparison.OrdinalIgnoreCase) || parts[^4].Equals("B", StringComparison.OrdinalIgnoreCase)
+                ? "UPDATE_SLOT_AUTHORITY_REQUIRED" : "UPDATE_SLOT_LAYOUT_UNVERIFIED";
+        }
+    }
 
     private static void RequirePrimarySystemToken()
     {
@@ -286,11 +334,13 @@ internal static class ServiceEndpointIdentity
 #endif
         );
 
-    internal static void ValidateProtectedDescriptor(RawSecurityDescriptor descriptor)
+    internal static void ValidateProtectedDescriptor(RawSecurityDescriptor descriptor) =>
+        ValidateProtectedAccess(descriptor, 0x40000000 | 0x10000000 | 0x000d0156);
+
+    internal static void ValidateProtectedAccess(RawSecurityDescriptor descriptor, int mutation)
     {
         if (!IsTrusted(descriptor.Owner) || (descriptor.ControlFlags & ControlFlags.DiscretionaryAclPresent) == 0 || descriptor.DiscretionaryAcl is null)
             throw new IOException("SERVICE_ENDPOINT_IMAGE_OWNER_UNTRUSTED");
-        const int mutation = 0x40000000 | 0x10000000 | 0x000d0156;
         foreach (GenericAce entry in descriptor.DiscretionaryAcl)
         {
             if (entry is not CommonAce ace || ace.IsCallback) throw new IOException("SERVICE_ENDPOINT_IMAGE_ACL_INVALID");
@@ -301,18 +351,23 @@ internal static class ServiceEndpointIdentity
         }
     }
 
-    private static SafeFileHandle OpenProtected(string path, bool directory)
+    internal static SafeFileHandle PinKnownFolder(string path) => OpenObject(path, directory: true, verifySecurity: false);
+
+    internal static SafeFileHandle OpenProtected(string path, bool directory) => OpenObject(path, directory, verifySecurity: true);
+
+    private static SafeFileHandle OpenObject(string path, bool directory, bool verifySecurity)
     {
-        var handle = CreateFile(path, directory ? 0x20080u : 0x80000000u, directory ? 3u : 1u, 0, 3, 0x00200000 | (directory ? 0x02000000u : 0u), 0);
+        var access = verifySecurity ? (directory ? 0x20080u : 0x80000000u) : 0u;
+        var handle = CreateFile(path, access, directory ? 3u : 1u, 0, 3, 0x00200000 | (directory ? 0x02000000u : 0u), 0);
         try
         {
             if (handle.IsInvalid || !GetFileInformationByHandleEx(handle, 9, out var attributes, (uint)Marshal.SizeOf<AttributeTag>()))
                 throw new IOException("SERVICE_ENDPOINT_IMAGE_UNAVAILABLE");
             if ((attributes.Attributes & 0x400) != 0) throw new IOException("SERVICE_ENDPOINT_REPARSE_PATH");
-            var final = new StringBuilder(32768);
-            var length = GetFinalPathNameByHandle(handle, final, (uint)final.Capacity, 0);
-            if (length == 0 || length >= final.Capacity || !String.Equals(final.ToString(), @"\\?\" + Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+            if (((attributes.Attributes & 0x10) != 0) != directory) throw new IOException("SERVICE_ENDPOINT_IMAGE_PATH_MISMATCH");
+            if (!String.Equals(FinalPath(handle), Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
                 throw new IOException("SERVICE_ENDPOINT_IMAGE_PATH_MISMATCH");
+            if (!verifySecurity) return handle;
             if (GetSecurityInfo(handle, 1, OwnerGroupDacl, out _, out _, out _, out _, out var descriptor) != 0)
                 throw new IOException("SERVICE_ENDPOINT_IMAGE_ACL_UNAVAILABLE");
             try
@@ -327,10 +382,22 @@ internal static class ServiceEndpointIdentity
         catch { handle.Dispose(); throw; }
     }
 
+    private static string FinalPath(SafeFileHandle file)
+    {
+        var path = new StringBuilder(32768);
+        var length = GetFinalPathNameByHandle(file, path, (uint)path.Capacity, 0);
+        if (length == 0 || length >= path.Capacity) throw new IOException("SERVICE_ENDPOINT_IMAGE_PATH_MISMATCH");
+        var value = path.ToString();
+        if (value.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + value[8..];
+        if (value.StartsWith(@"\\?\", StringComparison.Ordinal) && value.Length >= 7 && value[5] == ':' && value[6] == '\\')
+            return value[4..];
+        throw new IOException("SERVICE_ENDPOINT_IMAGE_PATH_MISMATCH");
+    }
+
     private static PackagePin PinInstalledImage(string imagePath, string programFilesRoot)
     {
-        _ = WindowsContainmentServiceInstaller.ValidateImagePath(imagePath, programFilesRoot);
-        var package = new PackagePin(new FileStream(OpenProtected(imagePath, false), FileAccess.Read));
+        var installationRoot = WindowsContainmentServiceInstaller.ValidateImagePath(imagePath, programFilesRoot);
+        var package = new PackagePin(new FileStream(OpenProtected(imagePath, false), FileAccess.Read), installationRoot);
         try
         {
             var current = Path.GetDirectoryName(imagePath);

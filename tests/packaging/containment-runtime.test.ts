@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { verifyContainmentArtifacts, validateContainmentEvidence, type ContainmentPlatform } from '../../apps/desktop/scripts/verify-containment-artifacts.mjs';
+import { stageUpdateAttestationVerifier } from '../../apps/desktop/scripts/stage-update-attestation-verifier.mjs';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -31,6 +32,17 @@ async function fixture(): Promise<{ directory: string; compiledBundlePath: strin
   await writeFile(path.join(directory, 'manifest.json'), JSON.stringify({ schemaVersion: 2, buildId: 'lnwjud-containment-v2', platform: 'win32', architecture: 'x64', filename: 'lnwjud-containment.exe', sha256: helperSha256, pinFilename: 'lnwjud-containment-pin.node', pinSha256 }));
   return { directory, compiledBundlePath, platform: 'win32' };
 }
+
+it('refuses to stage untrusted GitHub attestation verifier bytes into a packaged helper', async () => {
+  const repository = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-verifier-refusal-'));
+  roots.push(repository);
+  const source = path.join(repository, 'tools/update-attestation/gh.exe');
+  const stage = path.join(repository, 'staged-native-containment');
+  await mkdir(path.dirname(source), { recursive: true });
+  await writeFile(source, 'untrusted gh.exe replacement');
+  await expect(stageUpdateAttestationVerifier(repository, stage)).rejects.toThrow('UPDATE_VERIFIER_DIGEST_MISMATCH');
+  await expect(stat(path.join(stage, 'update-attestation/gh.exe'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
 
 it('bundles identical process runtime bytes from different working directories', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-cwd-'));

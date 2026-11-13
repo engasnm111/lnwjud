@@ -14,6 +14,26 @@ describe('wrapWindowsCommandShim', () => {
     });
   });
 
+  it('preserves empty arguments in the cmd command line', () => {
+    expect(wrapWindowsCommandShim('C:\\tools\\npx.cmd', ['--version', ''], {}, 'win32')).toMatchObject({
+      ok: true,
+      value: {
+        args: ['/d', '/s', '/c', '"C:\\tools\\npx.cmd --version """'],
+        windowsVerbatimArguments: true,
+      },
+    });
+  });
+
+  it('preserves terminal backslashes before the next argument', () => {
+    expect(wrapWindowsCommandShim('C:\\tools\\fixture.cmd', ['C:\\Program Files\\', 'next'], {}, 'win32')).toMatchObject({
+      ok: true,
+      value: {
+        args: ['/d', '/s', '/c', '"C:\\tools\\fixture.cmd "C:\\Program Files\\\\" next"'],
+        windowsVerbatimArguments: true,
+      },
+    });
+  });
+
   it('rejects shell metacharacters unless they are explicitly allowed', () => {
     expect(wrapWindowsCommandShim('C:\\tools\\tool.cmd', ['&', 'whoami'], {}, 'win32')).toMatchObject({
       ok: false,

@@ -82,33 +82,16 @@ jobs:
       - name: Install ripgrep for native search acceptance (Windows)
         if: matrix.name == 'Windows'
         shell: powershell
-        run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            $rgDir = Join-Path $env:RUNNER_TEMP 'ripgrep-native-contract'
-            New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
-            $zip = Join-Path $rgDir 'ripgrep.zip'
-            Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip' -OutFile $zip -UseBasicParsing
-            Expand-Archive -Path $zip -DestinationPath $rgDir -Force
-            $rgExe = (Get-ChildItem -Path $rgDir -Filter 'rg.exe' -Recurse | Select-Object -First 1).FullName
-            Copy-Item -LiteralPath $rgExe -Destination (Join-Path $rgDir 'rg.exe') -Force
-            $rgDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            $env:PATH = "$rgDir;$env:PATH"
-          }
-          rg --version
+        run: ./scripts/ci-install-ripgrep.ps1 -DestinationName ripgrep-native-contract
 
       - name: Install ripgrep for native search acceptance (macOS/Linux)
         if: matrix.name != 'Windows'
         shell: bash
         run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            if [[ "$RUNNER_OS" == "macOS" ]]; then
-              brew install ripgrep
-            else
-              sudo apt-get update
-              sudo apt-get install -y --no-install-recommends ripgrep
-            fi
-          fi
-          rg --version
+          node apps/desktop/scripts/prepare-runtime-tools.mjs --ripgrep-only
+          tool_dir="$GITHUB_WORKSPACE/apps/desktop/build/runtime-tools/ripgrep"
+          printf '%s\n' "$tool_dir" >> "$GITHUB_PATH"
+          "$tool_dir/rg" --version
 
       - name: Run native platform contract tests
         shell: bash
@@ -299,6 +282,12 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         run: |
+          # Avoid the failing Azure mirror while retaining Ubuntu's signed sources.
+          mirror=https://archive.ubuntu.com/ubuntu
+          if [[ "$(dpkg --print-architecture)" == arm64 ]]; then
+            mirror=https://ports.ubuntu.com/ubuntu-ports
+          fi
+          printf '%s\n' "$mirror" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gnome-keyring libsecret-1-0 dbus dbus-x11 xvfb xauth ripgrep \
@@ -761,19 +750,7 @@ jobs:
 
       - name: Install ripgrep for workspace search integration
         shell: powershell
-        run: |
-          if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-            $rgDir = Join-Path $env:RUNNER_TEMP 'ripgrep-workspace-tests'
-            New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
-            $zip = Join-Path $rgDir 'ripgrep.zip'
-            Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip' -OutFile $zip -UseBasicParsing
-            Expand-Archive -Path $zip -DestinationPath $rgDir -Force
-            $rgExe = (Get-ChildItem -Path $rgDir -Filter 'rg.exe' -Recurse | Select-Object -First 1).FullName
-            Copy-Item -LiteralPath $rgExe -Destination (Join-Path $rgDir 'rg.exe') -Force
-            $rgDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            $env:PATH = "$rgDir;$env:PATH"
-          }
-          rg --version
+        run: ./scripts/ci-install-ripgrep.ps1 -DestinationName ripgrep-workspace-tests
 
       - name: Run complete Windows workspace release suite
         run: pnpm test:release
@@ -818,17 +795,45 @@ jobs:
           $target = Join-Path $installDir 'cosign.exe'
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           $url = "https://github.com/sigstore/cosign/releases/download/$version/cosign-windows-amd64.exe"
+          # Fixed official release asset ID: alternate GitHub API route bypasses
+          # the release-download front door when it returns HTTP 504.
+          $apiUrl = 'https://api.github.com/repos/sigstore/cosign/releases/assets/503286236'
           $downloaded = $false
-          for ($attempt = 1; $attempt -le 4; $attempt++) {
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $target -UseBasicParsing
-              $downloaded = $true
-              break
+          foreach ($sourceUrl in @($url, $apiUrl)) {
+            for ($attempt = 1; $attempt -le 4; $attempt++) {
+              try {
+                $params = @{ Uri = $sourceUrl; OutFile = $target; UseBasicParsing = $true
+                             ErrorAction = 'Stop'; MaximumRedirection = 5; TimeoutSec = 120 }
+                if ($sourceUrl -eq $apiUrl) {
+                  $params.Headers = @{ Accept = 'application/octet-stream'; 'User-Agent' = 'lnwjud-pinned-cosign' }
+                }
+                Invoke-WebRequest @params
+                $downloaded = $true
+                break
+              }
+              catch {
+                $statusCode = $null
+                $response = $_.Exception.PSObject.Properties['Response']
+                if ($null -ne $response -and $null -ne $response.Value) {
+                  $statusCode = [int]$response.Value.StatusCode
+                }
+                if ($null -eq $statusCode -and $_.Exception.Message -match '^(?:HTTP\s+)?(408|429|500|502|503|504)(?:\b|\s)') {
+                  $statusCode = [int]$Matches[1]
+                }
+                $transient = $statusCode -in @(408, 429, 500, 502, 503, 504)
+                $transport = $_.Exception -is [System.Net.WebException] -and
+                  $_.Exception.Status -in @([System.Net.WebExceptionStatus]::Timeout, [System.Net.WebExceptionStatus]::ConnectionClosed)
+                $httpClientTimeout = $_.Exception.Message -match 'configured HttpClient[.]Timeout of [0-9]+ seconds elapsing'
+                if (-not $transient -and -not $transport -and -not $httpClientTimeout) { throw }
+                if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }
+                if ($attempt -eq 4) {
+                  if ($sourceUrl -eq $apiUrl) { throw }
+                  break
+                }
+                Start-Sleep -Seconds (2 * $attempt)
+              }
             }
-            catch {
-              if ($attempt -eq 4) { throw }
-              Start-Sleep -Seconds (2 * $attempt)
-            }
+            if ($downloaded) { break }
           }
           if (-not $downloaded) { throw 'Failed to download cosign fallback.' }
           $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $target).Hash.ToLowerInvariant()
@@ -855,27 +860,7 @@ jobs:
 
       - name: Install ripgrep for E2E search
         shell: powershell
-        run: |
-          if (Get-Command rg -ErrorAction SilentlyContinue) {
-            rg --version
-          }
-          else {
-            try {
-              choco install ripgrep -y --no-progress
-            } catch {}
-            if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-              $rgDir = Join-Path $env:RUNNER_TEMP 'ripgrep'
-              New-Item -ItemType Directory -Force -Path $rgDir | Out-Null
-              $zip = Join-Path $rgDir 'ripgrep.zip'
-              Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip' -OutFile $zip -UseBasicParsing
-              Expand-Archive -Path $zip -DestinationPath $rgDir -Force
-              $rgExe = (Get-ChildItem -Path $rgDir -Filter 'rg.exe' -Recurse | Select-Object -First 1).FullName
-              Copy-Item -LiteralPath $rgExe -Destination (Join-Path $rgDir 'rg.exe') -Force
-              $rgDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-              $env:PATH = "$rgDir;$env:PATH"
-            }
-            rg --version
-          }
+        run: ./scripts/ci-install-ripgrep.ps1 -DestinationName ripgrep-e2e
 
 
 
@@ -930,9 +915,10 @@ jobs:
   update-package-attestation:
     name: Attested Windows Update Package
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    uses: ./.github/workflows/update-package-builder.yml
+    uses: engasnm111/lnwjud/.github/workflows/update-package-builder.yml@cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
 

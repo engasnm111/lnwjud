@@ -114,8 +114,7 @@ describe('MVP release verification gate', () => {
   it('provisions ripgrep on fresh Windows CI before both verification modes', async () => {
     const workflow = await readFile(path.join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
     expect(workflow).toContain('Install ripgrep for E2E search');
-    expect(workflow).toContain('Get-Command rg');
-    expect(workflow).toContain('choco install ripgrep -y --no-progress');
+    expect(workflow).toContain('run: ./scripts/ci-install-ripgrep.ps1 -DestinationName ripgrep-e2e');
     expect(workflow.indexOf('Install ripgrep for E2E search')).toBeLessThan(workflow.indexOf('Run pull-request verification gate'));
     expect(workflow.indexOf('Install ripgrep for E2E search')).toBeLessThan(workflow.indexOf('Run authoritative release verification gate'));
   });

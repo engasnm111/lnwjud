@@ -141,6 +141,11 @@ export class SharedManagedWriterAdmission {
     if (proof.state === 'termination_unknown' && proof.reason === 'NATIVE_SERVICE_ATTEMPT_NOT_DISPATCHED') {
       proof = await this.nativeAuthority.abortBeforeLaunch({ directory: path.dirname(reservation.nativeReceiptPath), binding });
     }
+    if (proof.state === 'termination_unknown' && reservation.reservedAt !== undefined) {
+      proof = await this.nativeAuthority.recoverAfterReboot({
+        directory: path.dirname(reservation.nativeReceiptPath), binding, recordedAt: reservation.reservedAt,
+      });
+    }
     return proof.state === 'terminal_verified' || proof.state === 'launch_not_started';
   }
 }

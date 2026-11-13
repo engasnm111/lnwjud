@@ -184,8 +184,7 @@ public static class LnwjudNative
 }
 '@
 
-try { Add-Type -TypeDefinition $nativeSource -ErrorAction Stop | Out-Null } catch { }
-$physicalPixelCoordinates = [LnwjudNative]::EnsurePhysicalPixelCoordinates()
+$physicalPixelCoordinates = $false
 
 function Resolve-Window {
   param([object]$Parameters, [switch]$PreferCapturable, [object]$WindowIndexOverride = $null)
@@ -730,8 +729,6 @@ public static class LnwjudAudio
     }
 }
 '@
-try { Add-Type -TypeDefinition $audioSource -ErrorAction Stop | Out-Null } catch { }
-
 function Invoke-AudioAction {
   param([string]$Action, [object]$Parameters)
   switch ($Action) {
@@ -3033,6 +3030,16 @@ try {
   $capability = [string](Get-Field $request 'capability')
   $payload = Get-Field $request 'input'
   $parameters = Get-Field $payload 'parameters'; if ($null -eq $parameters) { $parameters = $payload }
+  # Native window/DPI and audio types are not needed for Office/system commands.
+  # Compile only at the capability boundary; eager Add-Type can stall PowerShell
+  # startup on a resource-constrained Windows CI runner before any request runs.
+  if ($capability -in @('window', 'accessibility', 'input_event', 'vision')) {
+    try { Add-Type -TypeDefinition $nativeSource -ErrorAction Stop | Out-Null } catch { }
+    $physicalPixelCoordinates = [LnwjudNative]::EnsurePhysicalPixelCoordinates()
+  }
+  if ($capability -eq 'audio') {
+    try { Add-Type -TypeDefinition $audioSource -ErrorAction Stop | Out-Null } catch { }
+  }
   $value = switch ($capability) {
     'window' { Invoke-WindowAction ([string](Get-Field $payload 'operation')) $parameters }
     'accessibility' { Invoke-AccessibilityAction ([string](Get-Field $payload 'action')) $parameters }

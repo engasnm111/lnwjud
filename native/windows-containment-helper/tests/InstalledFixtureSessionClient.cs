@@ -61,7 +61,7 @@ internal static class InstalledFixtureSessionClient
 
     internal sealed class OwnedClientJob : IDisposable
     {
-        private readonly nint job;
+        private nint job;
         private readonly string name;
         private ContainedProcess? client;
         private SafeProcessHandle? child;
@@ -74,9 +74,6 @@ internal static class InstalledFixtureSessionClient
         internal OwnedClientJob()
         {
             name = @"Local\lnwjud-fixture-client-" + Guid.NewGuid().ToString("N");
-            job = CreateJobObject(0, name);
-            Native(job != 0, "CLIENT_JOB_CREATE");
-            if (Marshal.GetLastWin32Error() == 183) { CloseHandle(job); throw new IOException("CLIENT_JOB_ALREADY_EXISTS"); }
         }
 
         internal void Start(NormalParentSource source, string image, string scenario, string action, string sid, int session, Action<int, long> beforeResume)
@@ -95,6 +92,11 @@ internal static class InstalledFixtureSessionClient
                     standardOutput: nul.DangerousGetHandle(), standardError: nul.DangerousGetHandle(), jobName: name,
                     beforeResume: pid =>
                     {
+                        // Open the Job created by StartAsUser; pre-creating its name now correctly fails containment.
+                        job = CreateJobObject(0, name);
+                        var jobError = Marshal.GetLastWin32Error();
+                        Native(job != 0, "CLIENT_JOB_OPEN");
+                        if (jobError != 183) throw new IOException("CLIENT_JOB_IDENTITY_UNVERIFIED");
                         child = OpenProcess(0x101000, false, checked((int)pid));
                         Require(!child.IsInvalid, "CLIENT_PROCESS_HANDLE");
                         Native(IsProcessInJob(child, job, out var member), "CLIENT_JOB_MEMBERSHIP_QUERY");
@@ -108,7 +110,7 @@ internal static class InstalledFixtureSessionClient
                         beforeResume(Id, ticks);
                     });
             }
-            catch { TerminateAndProveZero(); throw; }
+            catch { if (job != 0) TerminateAndProveZero(); throw; }
         }
 
         internal int WaitForExit(Func<bool>? cancelled = null)
@@ -148,8 +150,8 @@ internal static class InstalledFixtureSessionClient
 
         public void Dispose()
         {
-            try { if (!terminal) TerminateAndProveZero(); }
-            finally { child?.Dispose(); client?.Dispose(); CloseHandle(job); }
+            try { if (!terminal && job != 0) TerminateAndProveZero(); }
+            finally { child?.Dispose(); client?.Dispose(); if (job != 0) CloseHandle(job); }
         }
     }
 

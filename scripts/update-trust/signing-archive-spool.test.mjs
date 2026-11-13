@@ -51,6 +51,16 @@ async function fixture(run) {
   finally { await unlink(filename).catch(() => undefined); await rmdir(root); }
 }
 
+test('rejects a strict archive cap before allocating a native spool', async () => {
+  let created = false;
+  await assert.rejects(withDownloadedSigningArchive({
+    addon: { createArchiveSpool() { created = true; throw new Error('unexpected spool'); } },
+    filename: 'not-created.zip', token: 'fixture', maxArchiveBytes: 32 * 1024 * 1024,
+    artifact: { ...artifact, archiveSizeBytes: 32 * 1024 * 1024 + 1 },
+  }, () => {}), /SIGNING_ARCHIVE_INPUT_INVALID/);
+  assert.equal(created, false);
+});
+
 test('downloads into one spool, seals before reading and closes the reader scope', { skip: !windows }, async () => {
   await fixture(async filename => {
     let saved;
@@ -119,6 +129,95 @@ test('rejects metadata size mismatch and key-bearing preflight without leaving a
   });
 });
 
+test('refuses signing-key injection after download or during archive inspection', { skip: !windows }, async () => {
+  const name = 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', original = process.env[name];
+  try {
+    await fixture(async filename => {
+      let exposed = false;
+      const lateFetch = async url => {
+        if (url.startsWith('https://api.github.com/')) return fetchFixture(url);
+        process.env[name] = '';
+        return new globalThis.Response(payload);
+      };
+      await assert.rejects(withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: lateFetch },
+        () => { exposed = true; }), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+      assert.equal(exposed, false, 'download-time key injection must not expose archive bytes');
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+    delete process.env[name];
+    await fixture(async filename => {
+      let reader;
+      await assert.rejects(withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: fetchFixture },
+        value => { reader = value; process.env[name] = 'fixture-only'; return 'not-authorized'; }),
+      /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+      assert.throws(() => reader.readAt(0, 1), /SIGNING_ARCHIVE_READ_INVALID/);
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+  } finally {
+    if (original === undefined) delete process.env[name];
+    else process.env[name] = original;
+  }
+});
+
+test('refuses archive reads while a signer secret appears transiently during consumption', { skip: !windows }, async () => {
+  const name = 'LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM', original = process.env[name];
+  try {
+    await fixture(async filename => {
+      const result = await withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: fetchFixture },
+        reader => {
+          process.env[name] = 'transient-fixture';
+          try {
+            assert.throws(() => reader.readAt(0, 1), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+            assert.throws(() => reader.stream(0, 1), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+          } finally { delete process.env[name]; }
+          assert.deepEqual(reader.readAt(0, 1), payload.subarray(0, 1));
+          return 'read-guard-checked';
+        });
+      assert.equal(result, 'read-guard-checked');
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+    await fixture(async filename => {
+      await assert.rejects(withDownloadedSigningArchive({ addon, filename, artifact, token: 'fixture', fetchImpl: fetchFixture },
+        async reader => {
+          const stream = reader.stream(0, 4);
+          process.env[name] = 'transient-fixture';
+          try {
+            await assert.rejects(async () => {
+              for await (const chunk of stream) assert.fail(`unexpected archive chunk: ${chunk.length}`);
+            }, /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+          } finally { delete process.env[name]; }
+        }), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+      await assert.rejects(readFile(filename), { code: 'ENOENT' });
+    });
+  } finally {
+    if (original === undefined) delete process.env[name];
+    else process.env[name] = original;
+  }
+});
+
+test('rejects untrusted archive metadata and signing-key environments before native spool creation', async () => {
+  let created = 0;
+  const unsafeAddon = { createArchiveSpool() { created++; throw new Error('UNEXPECTED_NATIVE_SPOOL_CREATION'); } };
+  const base = { addon: unsafeAddon, filename: 'fixture', artifact, token: 'fixture', fetchImpl: fetchFixture };
+  for (const changed of [
+    { artifact: { ...artifact, artifactId: 'invalid' } },
+    { artifact: { ...artifact, archiveSha256: 'A'.repeat(64) } },
+    { artifact: { ...artifact, archiveSizeBytes: 0 } },
+    { artifact: { ...artifact, archiveSizeBytes: 5 * 1024 * 1024 * 1024 + 1 } },
+    { token: '' }, { fetchImpl: null },
+  ]) {
+    await assert.rejects(withDownloadedSigningArchive({ ...base, ...changed }, () => {}), /SIGNING_ARCHIVE_INPUT_INVALID/);
+    assert.equal(created, 0);
+  }
+  const name = 'lnwjud_update_release_private_key_pem';
+  const original = process.env[name];
+  try {
+    process.env[name] = '';
+    await assert.rejects(withDownloadedSigningArchive(base, () => {}), /SIGNING_ARCHIVE_DOWNLOAD_REFUSED/);
+    assert.equal(created, 0);
+  } finally { if (original === undefined) delete process.env[name]; else process.env[name] = original; }
+});
+
 test('refuses abandoned reader streams and preserves a thrown undefined', { skip: !windows }, async () => {
   await fixture(async filename => {
     let stream;
@@ -173,6 +272,24 @@ test('propagates a retained-handle read failure and still discards the spool', a
     for await (const chunk of stream) assert.ok(chunk);
   }), error => error === primary);
   assert.equal(discarded, true);
+});
+
+test('rejects truncated or oversized native reads without exposing archive bytes', async () => {
+  for (const delta of [-1, 1]) {
+    let discarded = false;
+    const spool = {
+      write() {}, seal() {},
+      readAt(_offset, length) { return Buffer.alloc(length + delta); },
+      discard() { discarded = true; }, close() {},
+    };
+    const options = { addon: { createArchiveSpool: () => spool }, filename: 'fixture', artifact,
+      token: 'fixture', fetchImpl: fetchFixture };
+    await assert.rejects(withDownloadedSigningArchive(options, reader => {
+      assert.throws(() => reader.readAt(0, 4), /SIGNING_ARCHIVE_READ_INVALID/);
+      return (async () => { for await (const chunk of reader.stream(0, 4)) assert.ok(chunk); })();
+    }), /SIGNING_ARCHIVE_READ_INVALID/);
+    assert.equal(discarded, true);
+  }
 });
 
 test('can explicitly release a retained quarantine without claiming deletion', async () => {

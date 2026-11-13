@@ -60,6 +60,15 @@ internal static class WindowsContainmentServiceClient
     internal static bool ShouldWaitForOutput(ServiceAttemptPhase phase) =>
         phase is ServiceAttemptPhase.Prepared or ServiceAttemptPhase.DispatchCommitted;
 
+    internal static bool HasVerifiedPublishedOutput(ServiceAttemptObservation observation, ServiceOutputObservation output) =>
+        observation.Phase == ServiceAttemptPhase.TerminalVerified
+        && !observation.ReservationHeld
+        && observation.ActiveProcesses == 0
+        && output.Identity == observation.Identity
+        && output.Persisted
+        && output.Complete
+        && output.FinalCursor is not null;
+
     internal static async Task<int> RunWatcherAsync(string expectedSha256, Stream input, Stream stdout, Stream stderr)
     {
         try
@@ -74,6 +83,7 @@ internal static class WindowsContainmentServiceClient
             var ownerDisconnected = WaitForOwnerDisconnectAsync(input);
             var stdoutOffset = 0;
             var stderrOffset = 0;
+            Stopwatch? terminalPublicationWait = null;
             while (true)
             {
                 if (ownerDisconnected.IsCompleted)
@@ -108,6 +118,16 @@ internal static class WindowsContainmentServiceClient
 
                 if (observation.Phase == ServiceAttemptPhase.TerminalVerified)
                 {
+                    if (!HasVerifiedPublishedOutput(observation, output))
+                    {
+                        terminalPublicationWait ??= Stopwatch.StartNew();
+                        if (output.Identity != observation.Identity
+                            || output.IncompleteReason is "SERVICE_OUTPUT_PERSISTENCE_FAILED" or "SERVICE_OUTPUT_READ_FAILED"
+                            || terminalPublicationWait.Elapsed >= TimeSpan.FromSeconds(30))
+                            throw new IOException("SERVICE_OUTPUT_PUBLICATION_UNVERIFIED");
+                        await Task.Delay(50).ConfigureAwait(false);
+                        continue;
+                    }
                     await stdout.FlushAsync().ConfigureAwait(false);
                     await stderr.FlushAsync().ConfigureAwait(false);
                     return 0;
