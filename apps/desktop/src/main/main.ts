@@ -143,6 +143,7 @@ import { InstallActivityCoordinator } from './install-activity.js';
 import { canInstallMacosUpdates } from './macos-update-trust.js';
 import { installWindowsUpdate } from './windows-update-install.js';
 import { createNativeUpdateBootstrapClient, hasVerifiedAutomaticUpdateAuthority, type NativeUpdateBootstrapClient } from './native-update-client.js';
+import { resolveDesktopNativeContainmentDirectory } from './native-containment-directory.js';
 
 const ECC_UPSTREAM_VERSION = '2.2.1';
 
@@ -2081,7 +2082,7 @@ function bootstrapMcpStdio(): void {
       hostMutationApprovalProvider: requestMutationApproval,
       nativeCapabilityApi: createElectronNativeCapabilityApi(() => null),
       eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
-      nativeContainmentDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native-containment') : path.join(app.getAppPath(), 'build', 'native-containment'),
+      nativeContainmentDirectory: resolveDesktopNativeContainmentDirectory(app.isPackaged, process.resourcesPath, import.meta.url),
       ...secrets,
       watchToolAvailability: true,
     });
@@ -2805,7 +2806,7 @@ async function createNativeDesktopRuntime(dataPath: string): Promise<DesktopRunt
     ...secrets,
     nativeCapabilityApi: createElectronNativeCapabilityApi(() => mainWindow),
     eccRuntimeOptions: resolveDesktopEccRuntimeOptions(),
-    nativeContainmentDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native-containment') : path.join(app.getAppPath(), 'build', 'native-containment'),
+    nativeContainmentDirectory: resolveDesktopNativeContainmentDirectory(app.isPackaged, process.resourcesPath, import.meta.url),
     collectIncidentMemory,
     captureRuntimeDiagnostics: () => { runtimeDiagnosticsHistory?.captureNow(); },
     ...(desktopLogSession === null ? {} : {
@@ -3349,9 +3350,7 @@ async function bootstrapEntrypoint(): Promise<void> {
   }
   const inspectUpdateStartup = async (dataPath: string): Promise<void> => {
     if (process.platform !== 'win32') return;
-    await assertHostWindowsUpdateStartup(dataPath, app.isPackaged
-      ? path.join(process.resourcesPath, 'native-containment')
-      : path.join(app.getAppPath(), 'build', 'native-containment'));
+    await assertHostWindowsUpdateStartup(dataPath, resolveDesktopNativeContainmentDirectory(app.isPackaged, process.resourcesPath, import.meta.url));
   };
   const factoryResetApplyRequested = process.argv.includes(FACTORY_RESET_APPLY_ARG);
   if (factoryResetApplyRequested) {
