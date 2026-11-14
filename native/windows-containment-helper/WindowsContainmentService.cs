@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Buffers.Binary;
+using Lnwjud.UpdateWorker;
 
 namespace Lnwjud.Containment;
 
@@ -58,7 +59,8 @@ internal static class WindowsContainmentService
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate uint HandlerCallback(uint control, uint eventType, nint eventData, nint context);
     private sealed record RpcRequest(int Protocol, string Command, ServiceAttemptIdentity? Identity, string? ReservationKey, string? OperationDigest, ServiceProcessOperation? Operation,
-        string? ControlCommand = null, JsonElement? ControlRequest = null, ServiceOutputCursor? OutputCursor = null, string? RecordedAt = null);
+        string? ControlCommand = null, JsonElement? ControlRequest = null, ServiceOutputCursor? OutputCursor = null, string? RecordedAt = null,
+        ServiceAttemptIdentity? Connection = null, ServiceMcpHandles? McpHandles = null, JsonElement? Update = null);
     private sealed record RpcResponse(int Protocol, bool Ok, object? Result, string? Error);
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "StartServiceCtrlDispatcherW")]
@@ -144,6 +146,7 @@ internal static class WindowsContainmentService
         finally
         {
             await runtime.StopAsync().ConfigureAwait(false);
+            startup?.Dispose();
         }
     }
 
@@ -162,7 +165,7 @@ internal static class WindowsContainmentService
                 {
                     request = JsonSerializer.Deserialize<RpcRequest>(requestBytes, Json)
                         ?? throw new IOException("SERVICE_REQUEST_INVALID");
-                    if (request.Command == "update_startup")
+                    if (request.Command is "update_startup" or "update_opaque" or "update_capabilities")
                     {
                         using var envelope = JsonDocument.Parse(requestBytes);
                         if (envelope.RootElement.EnumerateObject().Count() != 2)
@@ -172,11 +175,66 @@ internal static class WindowsContainmentService
                 finally { CryptographicOperations.ZeroMemory(requestBytes); }
                 if (request.Protocol != 3) throw new IOException("SERVICE_PROTOCOL_INVALID");
                 if (request.Command == "control") timeout.CancelAfter(TimeSpan.FromSeconds(120));
+                if (request.Command is "update_enroll" or "update_prepare") timeout.CancelAfter(TimeSpan.FromSeconds(180));
 
                 using var caller = AuthenticatedPipeCaller.Capture(pipe);
+                if (request.Command == "update_launch")
+                {
+                    if (startup is null) throw new IOException("SERVICE_UPDATE_AUTHORITY_UNAVAILABLE");
+                    using var pipes = ServiceMcpPipes.Capture(pipe, request.McpHandles ?? throw new IOException("SERVICE_MCP_PIPES_REQUIRED"));
+                    timeout.CancelAfter(Timeout.InfiniteTimeSpan);
+                    Task ReplyUpdate(object value) => WriteFrameAsync(pipe, new RpcResponse(3, true, value, null), serviceStopping);
+                    await startup.RunUpdateSessionAsync(request.Update ?? throw new IOException("UPDATE_REQUEST_REQUIRED"), caller,
+                        pipes, pipe, ReplyUpdate, serviceStopping).ConfigureAwait(false);
+                    return;
+                }
+                if (request.Command == "update_health")
+                {
+                    if (startup is null) throw new IOException("SERVICE_UPDATE_AUTHORITY_UNAVAILABLE");
+                    timeout.CancelAfter(TimeSpan.FromSeconds(45));
+                    var health = await startup.UpdateHealthAsync(request.Update ?? throw new IOException("UPDATE_REQUEST_REQUIRED"), caller.Sid).ConfigureAwait(false);
+                    await WriteFrameAsync(pipe, new RpcResponse(3, true, health, null), timeout.Token).ConfigureAwait(false);
+                    return;
+                }
+                if (request.Command.StartsWith("mcp_", StringComparison.Ordinal) && request.Connection is { } owner)
+                {
+                    var session = AuthenticatedPipeCaller.ReadSessionId(caller.PrimaryToken.DangerousGetHandle());
+                    if (!owner.OwnerSessionId.StartsWith(session.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":", StringComparison.Ordinal))
+                        throw new UnauthorizedAccessException("SERVICE_MCP_SESSION_MISMATCH");
+                }
+                if (request.Command is "mcp_connection" or "mcp_attach")
+                {
+                    var operation = ValidateOperation(request, out var digest, mcp: true);
+                    timeout.CancelAfter(Timeout.InfiniteTimeSpan);
+                    Task Reply(object result) => WriteFrameAsync(pipe, new RpcResponse(3, true, result, null), serviceStopping);
+                    if (request.Command == "mcp_connection")
+                        await runtime.OwnMcpConnectionAsync(caller.Sid, digest, AuthenticatedPipeCaller.ReadSessionId(caller.PrimaryToken.DangerousGetHandle()), pipe, Reply, serviceStopping).ConfigureAwait(false);
+                    else
+                    {
+                        BeforeOpaqueLaunch(startup, caller.Sid);
+                        using var pipes = ServiceMcpPipes.Capture(pipe, request.McpHandles ?? throw new IOException("SERVICE_MCP_PIPES_REQUIRED"));
+                        using var token = AuthenticatedPipeCaller.CreateLaunchToken(caller.PrimaryToken);
+                        await runtime.RunMcpAsync(request.Connection ?? throw new IOException("SERVICE_MCP_CONNECTION_REQUIRED"),
+                            request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED"), caller.Sid, digest, operation,
+                            token.DangerousGetHandle(), pipes, pipe, Reply, serviceStopping).ConfigureAwait(false);
+                    }
+                    return;
+                }
+                if (!request.Command.StartsWith("mcp_", StringComparison.Ordinal) && request.Identity is { } generic && ServiceAttemptLedger.IsMcp(generic))
+                    throw new IOException("SERVICE_MCP_COMMAND_REQUIRED");
+                if (request.Command is "run" or "control") BeforeOpaqueLaunch(startup, caller.Sid);
                 object result = request.Command switch
                 {
                     "update_startup" => startup?.Inspect() ?? UpdateStartupGate.Unavailable,
+                    "update_opaque" => RecordOpaqueDispatch(startup, caller.Sid),
+                    "update_capabilities" => startup?.InspectUpdate(caller.Sid) ?? new System.Text.Json.Nodes.JsonObject { ["kind"] = "unavailable", ["reason"] = "SERVICE_UPDATE_AUTHORITY_UNAVAILABLE" },
+                    "update_enroll" or "update_prepare" or "update_abort" or "update_execute" or "update_status" or "update_boot" =>
+                        (startup ?? throw new IOException("SERVICE_UPDATE_AUTHORITY_UNAVAILABLE")).HandleUpdate(request.Command,
+                            request.Update ?? throw new IOException("UPDATE_REQUEST_REQUIRED"), caller),
+                    "mcp_child" => runtime.PrepareMcpChild(request.Connection ?? throw new IOException("SERVICE_MCP_CONNECTION_REQUIRED"), caller.Sid),
+                    "mcp_close_child" => new ServiceMcpChildObservation(await runtime.CloseMcpChildAsync(request.Connection ?? throw new IOException("SERVICE_MCP_CONNECTION_REQUIRED"),
+                        request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED"), caller.Sid).ConfigureAwait(false)),
+                    "mcp_close_connection" => await runtime.CloseMcpConnectionAsync(request.Connection ?? throw new IOException("SERVICE_MCP_CONNECTION_REQUIRED"), caller.Sid).ConfigureAwait(false),
                     "prepare" => Prepare(ledger, request, caller.Sid),
                     "run" => Run(ledger, runtime, request, caller),
                     "inspect" => Inspect(runtime, request, caller.Sid),
@@ -199,6 +257,7 @@ internal static class WindowsContainmentService
                 {
                     var safeError = exception switch
                     {
+                        Refusal refusal => refusal.Reason,
                         UnauthorizedAccessException => "SERVICE_OWNER_MISMATCH",
                         IOException io when io.Message.StartsWith("SERVICE_", StringComparison.Ordinal)
                             || io.Message.StartsWith("ATTEMPT_", StringComparison.Ordinal)
@@ -206,6 +265,7 @@ internal static class WindowsContainmentService
                             || io.Message.StartsWith("TERMINAL_", StringComparison.Ordinal)
                             || io.Message.StartsWith("PIPE_", StringComparison.Ordinal)
                             || io.Message.StartsWith("ACTIVE_", StringComparison.Ordinal) => io.Message,
+                        IOException io when io.Message.StartsWith("UPDATE_", StringComparison.Ordinal) => io.Message,
                         Win32Exception w32 when w32.Message.StartsWith("PIPE_", StringComparison.Ordinal)
                             || w32.Message.StartsWith("SERVICE_", StringComparison.Ordinal) => w32.Message,
                         _ => "SERVICE_REQUEST_FAILED",
@@ -215,6 +275,21 @@ internal static class WindowsContainmentService
                 catch { }
             }
         }
+    }
+
+    private static object RecordOpaqueDispatch(UpdateStartupGate? startup, string authenticatedSid)
+    {
+        if (startup is null) throw new IOException("SERVICE_UPDATE_AUTHORITY_UNAVAILABLE");
+        startup.BeforeOpaqueDispatch(authenticatedSid);
+        return new { kind = "opaque_dispatch_recorded" };
+    }
+
+    private static void BeforeOpaqueLaunch(UpdateStartupGate? startup, string authenticatedSid)
+    {
+#if NATIVE_CONTAINMENT_TESTS
+        if (startup is null) return;
+#endif
+        _ = RecordOpaqueDispatch(startup, authenticatedSid);
     }
 
     private static ServiceAttemptObservation Run(ServiceAttemptLedger ledger, WindowsServiceProcessRuntime runtime, RpcRequest request, AuthenticatedPipeCaller caller)
@@ -252,10 +327,10 @@ internal static class WindowsContainmentService
     private static ServiceOutputObservation ReadOutput(WindowsServiceProcessRuntime runtime, RpcRequest request, string sid) =>
         runtime.ReadOutput(request.Identity ?? throw new IOException("SERVICE_IDENTITY_REQUIRED"), sid, request.OutputCursor);
 
-    private static ServiceProcessOperation ValidateOperation(RpcRequest request, out string operationDigest)
+    private static ServiceProcessOperation ValidateOperation(RpcRequest request, out string operationDigest, bool mcp = false)
     {
         var operation = request.Operation ?? throw new IOException("SERVICE_OPERATION_REQUIRED");
-        if (operation.Kind != "run_process"
+        if (operation.Kind != (mcp ? "run_mcp_stdio" : "run_process")
             || string.IsNullOrWhiteSpace(operation.Executable)
             || operation.Executable.Length > 32767
             || !Path.IsPathFullyQualified(operation.Executable)
@@ -264,7 +339,7 @@ internal static class WindowsContainmentService
             || operation.Cwd.Length > 32767
             || !Path.IsPathFullyQualified(operation.Cwd)
             || operation.Cwd.Contains('\0')
-            || operation.TimeoutMs is < 1 or > 604_800_000
+            || (mcp ? operation.TimeoutMs != 0 || operation.MaximumOutputBytes != 0 : operation.TimeoutMs is < 1 or > 604_800_000)
             || operation.MaximumOutputBytes is < 0 or > 1_048_576
             || operation.Args is null
             || operation.Args.Length > 2048

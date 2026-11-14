@@ -69,7 +69,7 @@ internal static class McpStdioProxy
             try { await inputCopy.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
             catch when (child.ActiveProcesses == 0 && child.WaitForRootExit(0)) { }
             await Task.WhenAll(outputCopy, errorCopy).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-            // A drained Job proves cleanup, not success; propagate only a naturally observed root exit.
+            // Local Job membership cannot attest escaped descendants or authorize global writer drain.
             return terminalExitCode;
         }
         catch

@@ -17,12 +17,20 @@
     <Compile Include="../ServiceImportTransactionRuntime.cs" Link="ServiceImportTransactionRuntime.cs" />
     <Compile Include="../ContainedProcess.cs" Link="ContainedProcess.cs" />
     <Compile Include="../McpStdioProxy.cs" Link="McpStdioProxy.cs" />
+    <Compile Include="../ServiceMcpStdioProxy.cs" Link="ServiceMcpStdioProxy.cs" />
     <Compile Include="../AuthenticatedPipeCaller.cs" Link="AuthenticatedPipeCaller.cs" />
     <Compile Include="../ServicePipeSecurity.cs" Link="ServicePipeSecurity.cs" />
     <Compile Include="../WindowsContainmentService.cs" Link="WindowsContainmentService.cs" />
     <Compile Include="../UpdateStartupGate.cs" Link="UpdateStartupGate.cs" />
+    <Compile Include="../WindowsServiceUpdateRuntime.cs" Link="WindowsServiceUpdateRuntime.cs" />
+    <Compile Include="../NativeUpdatePayload.cs" Link="NativeUpdatePayload.cs" />
+    <Compile Include="../NativeUpdateData.cs" Link="NativeUpdateData.cs" />
+    <Compile Include="../NativeUpdateAuthorityState.cs" Link="NativeUpdateAuthorityState.cs" />
+    <Compile Include="../WindowsServiceUpdateSession.cs" Link="WindowsServiceUpdateSession.cs" />
+    <Compile Include="../WindowsServiceUpdateRecovery.cs" Link="WindowsServiceUpdateRecovery.cs" />
     <Compile Include="../WindowsContainmentServiceInstaller.cs" Link="WindowsContainmentServiceInstaller.cs" />
     <Compile Include="../WindowsServiceProcessRuntime.cs" Link="WindowsServiceProcessRuntime.cs" />
+    <Compile Include="../WindowsServiceMcpRuntime.cs" Link="WindowsServiceMcpRuntime.cs" />
     <Compile Include="../WindowsContainmentServiceClient.cs" Link="WindowsContainmentServiceClient.cs" />
     <Compile Include="../Platform.cs" Link="Platform.cs" />
     <Compile Include="../Program.cs" Link="HelperProgram.cs" />
@@ -33,6 +41,14 @@
     <Compile Include="../../update-worker/ReleaseAuthorizationV2.cs" Link="UpdateWorker/ReleaseAuthorizationV2.cs" />
     <Compile Include="../../update-worker/EnrollmentPreflight.cs" Link="UpdateWorker/EnrollmentPreflight.cs" />
     <Compile Include="../../update-worker/ReleaseBuildEvidence.cs" Link="UpdateWorker/ReleaseBuildEvidence.cs" />
+    <Compile Include="../../update-worker/AuthenticatedBaselinePackage.cs" Link="UpdateWorker/AuthenticatedBaselinePackage.cs" />
+    <Compile Include="../../update-worker/AuthenticatedUpdatePackage.cs" Link="UpdateWorker/AuthenticatedUpdatePackage.cs" />
+    <Compile Include="../../update-worker/UpdateTransactionJournal.cs" Link="UpdateWorker/UpdateTransactionJournal.cs" />
+    <Compile Include="../../update-worker/UpdateTransactionStore.cs" Link="UpdateWorker/UpdateTransactionStore.cs" />
+    <Compile Include="../../update-worker/NativeUpdateHealthEvidence.cs" Link="UpdateWorker/NativeUpdateHealthEvidence.cs" />
+    <Compile Include="../../update-worker/WindowsStoreIO.cs" Link="UpdateWorker/WindowsStoreIO.cs" />
+    <Compile Include="../../update-worker/NativeUpdateEligibility.cs" Link="UpdateWorker/NativeUpdateEligibility.cs" />
+    <Compile Include="../../update-worker/NativeUpdateWriterWitness.cs" Link="UpdateWorker/NativeUpdateWriterWitness.cs" />
     <Compile Include="../EnrollmentAttestationPreflight.cs" Link="EnrollmentAttestationPreflight.cs" />
     <Compile Include="../../update-worker/tests/ReleaseMetadataTests.cs" Link="ReleaseMetadataTests.cs" />
     <Compile Include="../../update-worker/tests/ReleaseBuildEvidenceTests.cs" Link="ReleaseBuildEvidenceTests.cs" />

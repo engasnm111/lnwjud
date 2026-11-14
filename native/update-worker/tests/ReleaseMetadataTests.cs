@@ -87,8 +87,8 @@ internal static class ReleaseMetadataTests
         Check(pinnedRoot.Roles.Contains("release") && pinnedRoot.Roles.Contains("recovery") && !pinnedRoot.Revoked,
             "embedded bootstrap root carries both authorization roles required by native verifiers");
         Check(pinnedRoot.AllowHistoricalRecovery, "embedded root permits expired predecessor validation without extending candidate validity");
-        Check(!embeddedTrust.Configured && embeddedTrust.Sources.Count == 0 && embeddedTrust.Verifier is { Filename: "gh.exe", Version: "2.103.3", Sha256: "d303d8ac3f5e9438bf7c977b64dd6425513eae46218f8881d30694f28c1d0dfd" },
-            "a pinned root and exact verifier without immutable source authorities remain unusable for updates");
+        Check(embeddedTrust.Configured && embeddedTrust.Sources.Count == 1 && embeddedTrust.Verifier is { Filename: "gh.exe", Version: "2.103.3", Sha256: "d303d8ac3f5e9438bf7c977b64dd6425513eae46218f8881d30694f28c1d0dfd" },
+            "production update trust combines the pinned root, immutable source authority and exact verifier");
         foreach (var mutation in new Action<JsonObject>[] {
             p => p["authorities"]!.AsArray().Add(p["authorities"]![0]!.DeepClone()),
             p => p["authorities"]![0]!["builderDigest"] = "not-a-digest",
@@ -107,9 +107,10 @@ internal static class ReleaseMetadataTests
         Check(metadata.HistoricalPreviousEligibilityOnly && metadata.Receipt.ExpectedGeneration == 4 && metadata.Receipt.ExpectedRevision == 6, "metadata receipt bound to snapshot with recovery eligibility only");
         var before = fixture.Snapshot.Digest;
         _ = fixture.Verify(); Check(fixture.Snapshot.Digest == before, "verification never mutates trust floor");
-        Check(fixture.Verify(policy: ReleaseTrustPolicy.Embedded()) is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" },
-            "production embedded policy has no source authorities or verifier");
-        Check(EnrollmentPreflight.VerifyPackage("not-an-absolute-path", ReleaseTrustPolicy.Embedded(), Schema, fixture.Time)
+        Check(fixture.Verify(policy: embeddedTrust) is ReleaseMetadataVerification.Refused { Reason: not "RELEASE_TRUST_UNCONFIGURED" },
+            "configured production trust rejects metadata signed by an unrelated fixture key");
+        var unconfigured = (JsonObject)fixture.Policy.DeepClone(); unconfigured["authorities"] = new JsonArray();
+        Check(EnrollmentPreflight.VerifyPackage("not-an-absolute-path", ReleaseTrustPolicy.Parse(Wire.Encode(unconfigured)), Schema, fixture.Time)
             is EnrollmentPreflightResult.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" }, "enrollment preflight refuses empty policy before opening a package");
         RunEnrollment(fixture);
         Check(ReleaseMetadataVerifier.VerifyOffer(fixture.Sign(fixture.Offer), ReleaseTrustPolicy.Parse(Wire.Encode(fixture.Policy)), Schema, null, fixture.Snapshot, fixture.Time)
@@ -429,7 +430,7 @@ internal static class ReleaseMetadataTests
         var result = ReleaseMetadataVerifier.VerifyOffer(candidate, policy, Schema, baseline, snapshot, time);
         Check(result is ReleaseMetadataVerification.Authenticated, "actual Node to .NET metadata interoperability " + result);
         Check(ReleaseMetadataVerifier.VerifyOffer(candidate, ReleaseTrustPolicy.Embedded(), Schema, baseline, snapshot, time)
-            is ReleaseMetadataVerification.Refused { Reason: "RELEASE_TRUST_UNCONFIGURED" }, "Node disposable fixture cannot enter production policy");
+            is ReleaseMetadataVerification.Refused { Reason: "RELEASE_KEY_UNTRUSTED" }, "Node disposable fixture cannot enter production policy");
         var changed = candidate.ToArray(); changed[^3] ^= 1;
         Check(ReleaseMetadataVerifier.VerifyOffer(changed, policy, Schema, baseline, snapshot, time) is ReleaseMetadataVerification.Refused, "changed Node envelope refused");
         if (fixture.TryGetProperty("malformedCases", out var malformed))

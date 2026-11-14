@@ -10,3 +10,4 @@ export * from './windows-spawn.js';
 export * from './spawn-invocation.js';
 export * from './windows-contained-launch.js';
 export * from './windows-native-authority.js';
+export * from './macos-native-authority.js';

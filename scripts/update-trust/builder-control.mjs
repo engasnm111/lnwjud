@@ -76,16 +76,42 @@ export function validateProvenance(provenance, context) {
 
 async function readSubjectPair(directory, context) {
   const provenance = await readBoundedFile(path.join(directory, 'PROVENANCE.json'), 1048576n);
-  const identity = validateProvenance(parseStrictJson(provenance.bytes, 1048576, 64), context);
+  const metadata = parseStrictJson(provenance.bytes, 1048576, 64);
+  const identity = validateProvenance(metadata, context);
   const artifact = await readBoundedFile(path.join(directory, identity.name), 2147483648n);
   if (artifact.sha256 !== identity.sha256 || artifact.sizeBytes !== String(identity.sizeBytes)) refuse();
-  return { artifact: { ...artifact, name: identity.name }, provenance };
+  const additional = [];
+  if (metadata.installedLayout !== undefined || metadata.updatePayload !== undefined) {
+    if (metadata.installedLayout?.name !== 'INSTALL-LAYOUT.json'
+      || metadata.updatePayload?.name !== `lnwjud-Update-${metadata.version}-win32-x64.zip`) refuse();
+    for (const declared of [...metadata.artifacts.filter(item => item.name !== identity.name), metadata.installedLayout, metadata.updatePayload]) {
+      if (!declared || typeof declared.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(declared.name)
+        || ['PROVENANCE.json', 'SHA256SUMS.txt', 'artifact.bundle.json', 'provenance.bundle.json'].includes(declared.name)
+        || declared.name === identity.name || additional.some(item => item.name === declared.name)
+        || !/^[a-f0-9]{64}$/.test(declared.sha256) || !/^[1-9][0-9]{0,9}$/.test(String(declared.sizeBytes))
+        || BigInt(declared.sizeBytes) > 2147483648n) refuse();
+      const actual = await readBoundedFile(path.join(directory, declared.name), 2147483648n);
+      if (actual.sha256 !== declared.sha256 || actual.sizeBytes !== String(declared.sizeBytes)) refuse();
+      additional.push({ name: declared.name, ...actual });
+    }
+    const sums = await readBoundedFile(path.join(directory, 'SHA256SUMS.txt'), 16777216n);
+    const entries = new Map();
+    for (const line of sums.bytes.toString('utf8').trimEnd().split(/\r?\n/)) {
+      const match = /^([a-f0-9]{64}) {2}(.+)$/.exec(line);
+      if (!match || entries.has(match[2])) refuse();
+      entries.set(match[2], match[1]);
+    }
+    for (const [name, digest] of [[identity.name, artifact.sha256], ['PROVENANCE.json', provenance.sha256],
+      ...additional.map(item => [item.name, item.sha256])]) if (entries.get(name) !== digest) refuse();
+    additional.push({ name: 'SHA256SUMS.txt', ...sums });
+  }
+  return { artifact: { ...artifact, name: identity.name }, provenance, additional };
 }
 
 export async function inspectSubjectDirectory(directory, context, bundleNames = []) {
   const entries = await readdir(directory, { withFileTypes: true });
   const subjects = await readSubjectPair(directory, context);
-  const expected = [subjects.artifact.name, 'PROVENANCE.json', ...bundleNames].sort();
+  const expected = [subjects.artifact.name, 'PROVENANCE.json', ...subjects.additional.map(item => item.name), ...bundleNames].sort();
   if (entries.some(entry => !entry.isFile()) || entries.map(entry => entry.name).sort().join('\0') !== expected.join('\0')) refuse();
   return subjects;
 }
@@ -128,7 +154,8 @@ async function buildSubjects(environment) {
   const installers = path.join(source, 'apps/desktop/dist/installers'); const subjects = await readSubjectPair(installers, context);
   if (subjects.artifact.name !== `lnwjud-Setup-${version}.exe`) refuse();
   const output = path.join(workspace, '_subject-output'); await mkdir(output);
-  for (const name of [subjects.artifact.name, 'PROVENANCE.json']) await copyFile(path.join(installers, name), path.join(output, name), constants.COPYFILE_EXCL);
+  for (const name of [subjects.artifact.name, 'PROVENANCE.json', ...subjects.additional.map(item => item.name)])
+    await copyFile(path.join(installers, name), path.join(output, name), constants.COPYFILE_EXCL);
   const copied = await inspectSubjectDirectory(output, context);
   if (copied.artifact.sha256 !== subjects.artifact.sha256 || copied.provenance.sha256 !== subjects.provenance.sha256) refuse();
 }

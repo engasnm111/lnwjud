@@ -111,7 +111,7 @@ test('wrong domain, expired offers, malformed recovery and unconfigured trust re
   assert.throws(() => authenticateAuthorizationV2(f.envelope(f.payload), f.policy, now + 3600n, 'baseline'), /RELEASE_TIME_INVALID/);
   const bad = { ...f.payload, kind: 'update', recovery: { purpose: 'failed-candidate-only', previousReleaseIdentity: 'a'.repeat(64), maximumAttempts: 2 } };
   assert.throws(() => authenticateAuthorizationV2(f.envelope(bad), f.policy, now, 'update'), /RELEASE_SCHEMA_INVALID/);
-  assert.throws(() => authenticateAuthorizationV2(f.envelope(f.payload), loadProductionPolicy(), now, 'baseline'), /RELEASE_TRUST_UNCONFIGURED/);
+  assert.throws(() => authenticateAuthorizationV2(f.envelope(f.payload), { ...loadProductionPolicy(), authorities: [] }, now, 'baseline'), /RELEASE_TRUST_UNCONFIGURED/);
   const otherArtifact = globalThis.structuredClone(f.payload); otherArtifact.release.artifact.name = 'different.exe';
   assert.throws(() => authenticateAuthorizationV2(f.envelope(otherArtifact), f.policy, now, 'baseline'), /RELEASE_ARTIFACT_INVALID/);
 });
@@ -239,7 +239,7 @@ test('producer CLI distinguishes baseline and update without trust overrides', (
   assert.equal(parseArgumentsV2([...update, '--previousPurpose', 'baseline', '--previousEnvelope', 'e', '--previousArtifact', 'a', '--previousProvenance', 'p']).purpose, 'update');
 });
 
-test('production producer refuses empty trust before inputs or signing', () => {
+test('production producer refuses an untrusted host context before inputs or signing', () => {
   const cli = fileURLToPath(new URL('./produce-release-authorization-v2.mjs', import.meta.url));
   const args = [cli, '--purpose', 'baseline', '--payload', 'missing-payload', '--artifact', 'missing-artifact',
     '--provenance', 'missing-provenance', '--artifactBundle', 'missing-bundle', '--provenanceBundle', 'missing-bundle',
@@ -248,5 +248,5 @@ test('production producer refuses empty trust before inputs or signing', () => {
     env: { SystemRoot: process.env.SystemRoot || '', PATH: process.env.PATH || '', LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM: 'invalid-disposable-fixture' } });
   assert.notEqual(child.status, 0);
   assert.equal(child.stdout, '');
-  assert.match(child.stderr, /^RELEASE_TRUST_UNCONFIGURED\r?\n$/);
+  assert.match(child.stderr, /^RELEASE_PRODUCTION_REFUSED\r?\n$/);
 });

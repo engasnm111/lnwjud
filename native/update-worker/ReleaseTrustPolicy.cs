@@ -52,7 +52,7 @@ internal sealed class ReleaseTrustPolicy
         Revision = 1; Digest = Hash(bytes);
         var limits = value.GetProperty("limits");
         Fields(limits, "maximumValiditySeconds", "maximumFutureSkewSeconds", "maximumPackageBytes", "maximumProvenanceBytes");
-        MaximumValidity = Bound(limits, "maximumValiditySeconds", 86_400);
+        MaximumValidity = Bound(limits, "maximumValiditySeconds", 31_536_000);
         FutureSkew = Bound(limits, "maximumFutureSkewSeconds", 300, true);
         MaximumPackage = Bound(limits, "maximumPackageBytes", 2_147_483_648);
         MaximumProvenance = Bound(limits, "maximumProvenanceBytes", 1_048_576);

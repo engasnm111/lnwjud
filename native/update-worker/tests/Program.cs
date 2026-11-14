@@ -17,6 +17,7 @@ internal static class Program
     {
         if (args.Length == 1 && args[0] == "metadata-unit") { _ = ReleaseMetadataTests.Run(); return 0; }
         if (args.Length == 1 && args[0] == "build-evidence") { ReleaseBuildEvidenceTests.Run(); return 0; }
+        if (args.Length == 1 && args[0] == "transaction-store-tests") { _ = UpdateTransactionStoreTests.Run(); return 0; }
         if (args.Length == 2 && args[0] == "identity-tests") { _ = ReleaseIdentityTests.Run(args[1]); return 0; }
         if (args.Length == 2 && args[0] == "authorization-v2-tests") { _ = ReleaseAuthorizationV2Tests.Run(args[1]); return 0; }
         if (args.Length == 2 && args[0] == "metadata-tests")

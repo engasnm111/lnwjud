@@ -1,8 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { inspectPosixProcessGroup, PosixProcessTree, parseNativeAttemptBinding, type PosixProcessGroupInspector, type NativeAttemptBinding, type WindowsNativeAuthority, type WindowsNativeAuthorityConfiguration } from '@lnwjud/process';
+import { createHash, randomUUID } from 'node:crypto';
+import { inspectPosixProcessGroup, PosixProcessTree, parseNativeAttemptBinding, type PosixProcessGroupInspector, type NativeAttemptBinding, type MacosNativeAuthority, type WindowsNativeAuthority, type WindowsNativeAuthorityConfiguration } from '@lnwjud/process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { appError, err, ok, type GoalTaskCancellationObservation, type Result } from '@lnwjud/domain';
@@ -36,7 +36,7 @@ export interface DurableShellLaunchRequest {
 }
 
 interface DurableTaskMetadata {
-  readonly containment?: 'windows_job_v1' | 'windows_job_v2' | 'posix_group_v1';
+  readonly containment?: 'windows_job_v1' | 'windows_job_v2' | 'posix_group_v1' | 'macos_endpoint_security_v1';
   posix_launch_not_started?: boolean;
   posix_stop_target?: 'cancelled' | 'timed_out';
   readonly containmentBinding?: NativeAttemptBinding;
@@ -130,6 +130,7 @@ export interface DurableShellTaskStoreOptions {
   readonly maxConcurrentTasks?: number;
   readonly platform?: NodeJS.Platform;
   readonly windowsNativeAuthority?: WindowsNativeAuthority;
+  readonly macosNativeAuthority?: MacosNativeAuthority;
   readonly posixProcessRuntime?: { readonly modulePath: string; readonly sha256: string };
   readonly posixGroupInspector?: PosixProcessGroupInspector;
   readonly posixProcessIdentityProbe?: (pid: number) => Promise<PortableProcessProbe>;
@@ -142,6 +143,7 @@ export class DurableShellTaskStore {
   private readonly platform: NodeJS.Platform;
   private readonly activeIndex: DurableShellTaskIndex;
   private readonly windowsNativeAuthority: WindowsNativeAuthority | undefined;
+  private readonly macosNativeAuthority: MacosNativeAuthority | undefined;
   private readonly posixProcessRuntime: { readonly modulePath: string; readonly sha256: string };
   private readonly posixGroupInspector: PosixProcessGroupInspector;
   private readonly posixProcessIdentityProbe: (pid: number) => Promise<PortableProcessProbe>;
@@ -150,6 +152,7 @@ export class DurableShellTaskStore {
     this.maxConcurrentTasks = normalizeMaxConcurrentTasks(options.maxConcurrentTasks);
     this.platform = options.platform ?? process.platform;
     this.windowsNativeAuthority = options.windowsNativeAuthority;
+    this.macosNativeAuthority = options.macosNativeAuthority;
     this.posixProcessRuntime = options.posixProcessRuntime ?? createHostPosixProcessRuntime();
     this.posixGroupInspector = options.posixGroupInspector ?? inspectPosixProcessGroup;
     this.posixProcessIdentityProbe = options.posixProcessIdentityProbe ?? ((pid): Promise<PortableProcessProbe> => probeProcessIdentity(pid, this.platform));
@@ -196,13 +199,13 @@ export class DurableShellTaskStore {
 
     // macOS process-group cleanup is not a kernel-owned all-descendants fence.
     // A new opaque command cannot be safely accepted until native containment exists.
-    if (this.platform === 'darwin') {
-      return err(appError('CONFLICT', 'macOS durable shell unavailable: escaped descendants cannot be kernel-contained'));
+    if (this.platform === 'darwin' && !await this.macosNativeAuthority?.available()) {
+      return err(appError('CONFLICT', 'macOS durable shell requires an enrolled Endpoint Security process owner; no reservation or process was created'));
     }
     if (this.platform === 'win32' && this.windowsNativeAuthority === undefined) {
       return err(appError('INTERNAL_ERROR', 'Trusted Windows native containment is unavailable; repair the installed helper before launching work', true));
     }
-    if (this.platform !== 'win32') {
+    if (this.platform !== 'win32' && this.platform !== 'darwin') {
       try {
         const runtime = await readFile(this.posixProcessRuntime.modulePath);
         if (!path.isAbsolute(this.posixProcessRuntime.modulePath)
@@ -214,11 +217,14 @@ export class DurableShellTaskStore {
     const taskDirectory = this.taskDirectory(request.taskId);
     let nativeBinding: NativeAttemptBinding | undefined;
     try {
-      nativeBinding = this.platform === 'win32' ? durableShellNativeBinding(request, requestDigest) : undefined;
+      nativeBinding = this.platform === 'win32' || this.platform === 'darwin' ? durableShellNativeBinding(request, requestDigest) : undefined;
     } catch {
       return err(appError('INVALID_INPUT', 'Native containment requires a registered workspace identity'));
     }
     const startedAt = new Date().toISOString();
+    if (this.platform === 'darwin' && (nativeBinding === undefined || !await this.macosNativeAuthority?.register(nativeBinding))) {
+      return err(appError('CONFLICT', 'macOS native process owner could not register the exact attempt; no reservation was created'));
+    }
     const reservation = await this.activeIndex.reserve({
       mutationKind: request.mutationKind ?? 'opaque',
       taskId: request.taskId,
@@ -235,8 +241,12 @@ export class DurableShellTaskStore {
         ...(request.owner.workspaceId === undefined ? {} : { ownerWorkspaceId: request.owner.workspaceId }),
       },
     });
-    if (!reservation.ok) return reservation;
+    if (!reservation.ok) {
+      if (this.platform === 'darwin' && nativeBinding !== undefined) await this.macosNativeAuthority?.abortBeforeLaunch({ binding: nativeBinding });
+      return reservation;
+    }
     if (!reservation.value.created) {
+      if (this.platform === 'darwin' && nativeBinding !== undefined) await this.macosNativeAuthority?.abortBeforeLaunch({ binding: nativeBinding });
       const concurrent = await this.readMetadata(request.taskId);
       if (concurrent.ok && concurrent.value.request_digest === requestDigest) {
         const storedOwner = metadataOwner(concurrent.value);
@@ -258,8 +268,8 @@ export class DurableShellTaskStore {
     const stderrPath = path.join(taskDirectory, STDERR_FILENAME);
     const specPath = path.join(taskDirectory, SPEC_FILENAME);
     const metadata: DurableTaskMetadata = {
-      ...(this.platform === 'win32' ? {} : { containment: 'posix_group_v1' as const }),
-      ...(nativeBinding === undefined ? {} : { containment: 'windows_job_v2' as const, containmentBinding: nativeBinding }),
+      ...(this.platform === 'win32' || this.platform === 'darwin' ? {} : { containment: 'posix_group_v1' as const }),
+      ...(nativeBinding === undefined ? {} : { containment: this.platform === 'darwin' ? 'macos_endpoint_security_v1' as const : 'windows_job_v2' as const, containmentBinding: nativeBinding }),
       version: 2,
       task_id: request.taskId,
       ...(request.commandFingerprint === undefined ? {} : { command_fingerprint: request.commandFingerprint }),
@@ -312,6 +322,14 @@ export class DurableShellTaskStore {
       await mkdir(taskDirectory, { recursive: true });
       await mkdir(this.rootDirectory, { recursive: true });
       await writeMetadataAtomically(metadataPath, metadata);
+      if (this.platform === 'darwin' && nativeBinding !== undefined && this.macosNativeAuthority !== undefined) {
+        await this.macosNativeAuthority.submitProcess({ binding: nativeBinding, executable: request.executable, args: request.arguments,
+          cwd: request.cwd, timeoutMs: request.timeoutSeconds * 1000, maximumOutputBytes: Math.min(request.maxOutputBytes, 512 * 1024),
+          environment: process.env });
+        const observed = await this.reconcileMacos(metadata);
+        await this.releaseTerminalReservation(observed);
+        return ok(await this.snapshotFromMetadata(observed));
+      }
       await writeFile(specPath, JSON.stringify(spec), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
       const workerPath = await this.ensureWorkerScript();
       const worker = spawn(process.execPath, [workerPath, specPath], {
@@ -354,6 +372,12 @@ export class DurableShellTaskStore {
       if (this.platform !== 'win32' && !workerOwnsReservation) metadata.posix_launch_not_started = true;
       if (!workerOwnsReservation && nativeBinding !== undefined && this.windowsNativeAuthority !== undefined) {
         await this.windowsNativeAuthority.abortBeforeLaunch({ directory: taskDirectory, binding: nativeBinding }).catch(() => undefined);
+      }
+      if (this.platform === 'darwin' && nativeBinding !== undefined) {
+        await this.macosNativeAuthority?.abortBeforeLaunch({ binding: nativeBinding }).catch(() => undefined);
+        const observed = await this.reconcileMacos(metadata);
+        await this.releaseTerminalReservation(observed);
+        return ok(await this.snapshotFromMetadata(observed));
       }
       await writeMetadataAtomically(metadataPath, metadata).catch(() => undefined);
       if (!workerOwnsReservation) await this.activeIndex.release(request.taskId, requestDigest);
@@ -448,7 +472,7 @@ export class DurableShellTaskStore {
     const reconciled = projection.metadata;
     await this.releaseTerminalReservation(reconciled);
     if (reconciled.state !== 'completed' || reconciled.exit_code !== 0 || !reconciled.include_stdout || reconciled.stdout_truncated === true
-      || (reconciled.containment === 'windows_job_v2' && reconciled.output_finalized !== true)) {
+      || (isNativeManagedContainment(reconciled) && reconciled.output_finalized !== true)) {
       return err(appError('INVALID_INPUT', 'Engineering evidence requires complete stdout from a successful terminal task'));
     }
     const filename = path.join(this.taskDirectory(taskId), STDOUT_FILENAME);
@@ -561,11 +585,12 @@ export class DurableShellTaskStore {
       return ok(await this.snapshotFromMetadata(metadata));
     }
     if (metadata.containment === 'posix_group_v1') return this.cancelPosix(metadata);
-    if (metadata.containment === 'windows_job_v2') {
-      if (this.windowsNativeAuthority === undefined || metadata.containmentBinding === undefined) {
+    if (isNativeManagedContainment(metadata)) {
+      const authority = this.authorityFor(metadata);
+      if (authority === undefined || metadata.containmentBinding === undefined) {
         return ok(await this.snapshotFromMetadata({ ...metadata, state: 'termination_unverified', error: 'Native cancellation authority is unavailable' }));
       }
-      await this.windowsNativeAuthority.cancel({ directory: this.taskDirectory(taskId), binding: metadata.containmentBinding });
+      await authority.cancel({ directory: this.taskDirectory(taskId), binding: metadata.containmentBinding });
       const deadline = Date.now() + 2_000;
       do {
         const current = await this.readMetadata(taskId);
@@ -654,7 +679,7 @@ export class DurableShellTaskStore {
     if (metadata.value.containment === undefined) return 'unknown';
     const reconciled = await this.reconcile(metadata.value);
     if (isTerminal(reconciled.state)) {
-      if (reconciled.containment === 'windows_job_v2' && !await this.verifyNativeReservation({
+      if (isNativeManagedContainment(reconciled) && !await this.verifyNativeReservation({
         taskId, requestDigest: reconciled.request_digest ?? '', ownerClientId: reconciled.owner_client_id ?? '',
         ...(reconciled.owner_workspace_id === undefined ? {} : { ownerWorkspaceId: reconciled.owner_workspace_id }),
         ...(reconciled.containmentBinding === undefined ? {} : { nativeBinding: reconciled.containmentBinding }),
@@ -691,7 +716,7 @@ export class DurableShellTaskStore {
         || !await this.posixGroupIsEmpty(canonical.value)) return;
     }
     if (metadata.containment === 'windows_job_v1') return;
-    if (metadata.containment === 'windows_job_v2' && !await this.verifyNativeReservation({
+    if (isNativeManagedContainment(metadata) && !await this.verifyNativeReservation({
       taskId: metadata.task_id,
       requestDigest: metadata.request_digest ?? '',
       ownerClientId: metadata.owner_client_id ?? '',
@@ -704,15 +729,17 @@ export class DurableShellTaskStore {
 
   private async verifyNativeReservation(reservation: DurableTaskReservation): Promise<boolean> {
     const binding = reservation.nativeBinding;
-    if (this.windowsNativeAuthority === undefined || binding === undefined || binding.taskId !== reservation.taskId
+    if (binding === undefined || binding.taskId !== reservation.taskId
       || binding.reservationId !== reservation.taskId || binding.requestDigest !== reservation.requestDigest
       || binding.ownerClientId !== reservation.ownerClientId || binding.workspaceId !== reservation.ownerWorkspaceId) return false;
     const canonical = await this.readMetadata(reservation.taskId, false, 1);
-    if (!canonical.ok || canonical.value.containment !== 'windows_job_v2' || !isTerminal(canonical.value.state)
+    if (!canonical.ok || !isNativeManagedContainment(canonical.value) || !isTerminal(canonical.value.state)
       || !nativeBindingMatchesMetadata(canonical.value, binding)) return false;
-    let proof = await this.windowsNativeAuthority.inspect({ directory: this.taskDirectory(reservation.taskId), binding });
+    const authority = this.authorityFor(canonical.value);
+    if (authority === undefined) return false;
+    let proof = await authority.inspect({ directory: this.taskDirectory(reservation.taskId), binding });
     if (proof.state === 'termination_unknown' && canonical.value.state === 'failed' && canonical.value.exit_code === -1) {
-      const abortProof = await this.windowsNativeAuthority.abortBeforeLaunch({ directory: this.taskDirectory(reservation.taskId), binding });
+      const abortProof = await authority.abortBeforeLaunch({ directory: this.taskDirectory(reservation.taskId), binding });
       if (abortProof.state === 'launch_not_started' || abortProof.state === 'terminal_verified') proof = abortProof;
     }
     if (proof.state === 'launch_not_started') return canonical.value.state === 'failed' && canonical.value.exit_code === -1;
@@ -726,6 +753,7 @@ export class DurableShellTaskStore {
       return { ...metadata, state: 'termination_unverified', error: 'Legacy native task has no authenticated termination proof; recovery must not replay it' };
     }
     if (metadata.containment === 'windows_job_v2') return this.reconcileNative(metadata);
+    if (metadata.containment === 'macos_endpoint_security_v1') return this.reconcileMacos(metadata);
     if (metadata.containment === 'posix_group_v1') return this.reconcilePosix(metadata);
     if (this.platform !== 'win32' && !isTerminal(metadata.state)) {
       const unknown = { ...metadata, state: 'termination_unverified' as const,
@@ -924,6 +952,47 @@ export class DurableShellTaskStore {
     return finalized;
   }
 
+  private authorityFor(metadata: DurableTaskMetadata): WindowsNativeAuthority | MacosNativeAuthority | undefined {
+    return metadata.containment === 'macos_endpoint_security_v1' ? this.macosNativeAuthority : this.windowsNativeAuthority;
+  }
+
+  private async reconcileMacos(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
+    const binding = metadata.containmentBinding;
+    const authority = this.macosNativeAuthority;
+    const unresolved = { ...metadata, state: 'termination_unverified' as const, error: 'Authenticated macOS process-owner proof is unavailable' };
+    delete unresolved.finished_at;
+    if (binding === undefined || authority === undefined || !nativeBindingMatchesMetadata(metadata, binding)) return unresolved;
+    let proof = await authority.inspect({ binding });
+    if (proof.state === 'termination_unknown' && proof.reason !== 'MACOS_ATTEMPT_PREPARED') {
+      proof = await authority.recoverAfterReboot({ binding });
+    }
+    if (proof.state === 'running') return { ...metadata, state: 'running', child_pid: proof.targetPid };
+    if (proof.state === 'termination_unknown') return unresolved;
+    const finalized: DurableTaskMetadata = { ...metadata,
+      state: proof.state === 'launch_not_started' ? 'failed' : nativeOutcomeState(proof.outcome, proof.exitCode),
+      exit_code: proof.state === 'launch_not_started' ? -1 : proof.exitCode,
+      finished_at: metadata.finished_at ?? new Date().toISOString(),
+    };
+    delete finalized.error;
+    if (proof.state === 'launch_not_started') {
+      finalized.output_finalized = true;
+    } else {
+      const output = await authority.attachProcess(binding).readOutput({ stdoutOffset: 0, stderrOffset: 0 });
+      finalized.output_finalized = output.state === 'available' && output.complete && output.persistence.state === 'persisted';
+      if (output.state === 'available' && finalized.output_finalized) {
+        await writeTaskOutputAtomically(path.join(this.taskDirectory(metadata.task_id), STDOUT_FILENAME), output.stdout);
+        await writeTaskOutputAtomically(path.join(this.taskDirectory(metadata.task_id), STDERR_FILENAME), output.stderr);
+        finalized.stdout_truncated = output.stdoutTruncated;
+        finalized.stderr_truncated = output.stderrTruncated;
+      } else {
+        finalized.stderr_truncated = true;
+        finalized.error = 'Native process termination is verified but its final output is incomplete';
+      }
+    }
+    await this.writeMetadata(finalized);
+    return finalized;
+  }
+
   private async awaitTerminalMetadata(taskId: string): Promise<DurableTaskMetadata | undefined> {
     const deadline = Date.now() + PROCESS_EXIT_FINALIZATION_GRACE_MS;
     while (true) {
@@ -937,8 +1006,19 @@ export class DurableShellTaskStore {
 
   private async snapshotFromMetadata(metadata: DurableTaskMetadata, tailLines?: number, includeOutput = true): Promise<Record<string, unknown>> {
     const taskDirectory = this.taskDirectory(metadata.task_id);
-    const stdout = includeOutput && metadata.include_stdout ? await readBoundedText(path.join(taskDirectory, STDOUT_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
-    const stderr = includeOutput && metadata.include_stderr ? await readBoundedText(path.join(taskDirectory, STDERR_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
+    let stdout = includeOutput && metadata.include_stdout ? await readBoundedText(path.join(taskDirectory, STDOUT_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
+    let stderr = includeOutput && metadata.include_stderr ? await readBoundedText(path.join(taskDirectory, STDERR_FILENAME), metadata.max_output_bytes, tailLines) : undefined;
+    if (includeOutput && metadata.containment === 'macos_endpoint_security_v1' && metadata.containmentBinding !== undefined) {
+      const output = await this.macosNativeAuthority?.attachProcess(metadata.containmentBinding).readOutput({ stdoutOffset: 0, stderrOffset: 0 });
+      if (output?.state === 'available') {
+        const text = (bytes: Buffer): string => {
+          const value = bytes.subarray(0, metadata.max_output_bytes).toString('utf8');
+          return tailLines === undefined ? value : value.split(/\r?\n/).slice(-tailLines).join('\n');
+        };
+        if (metadata.include_stdout) stdout = text(output.stdout);
+        if (metadata.include_stderr) stderr = text(output.stderr);
+      }
+    }
     return {
       task_id: metadata.task_id,
       state: metadata.state,
@@ -1061,8 +1141,8 @@ function isMetadata(value: unknown): value is DurableTaskMetadata {
     && typeof record.task_id === 'string'
     && (record.request_digest === undefined || (typeof record.request_digest === 'string' && /^[a-f0-9]{64}$/i.test(record.request_digest)))
     && (isExecutingState(record.state) || record.state === 'termination_unverified' || isTerminalValue(record.state))
-    && (record.containment === undefined || record.containment === 'windows_job_v1' || record.containment === 'windows_job_v2' || record.containment === 'posix_group_v1')
-    && (record.containment !== 'windows_job_v2' || parseNativeAttemptBinding(record.containmentBinding) !== undefined)
+    && (record.containment === undefined || record.containment === 'windows_job_v1' || record.containment === 'windows_job_v2' || record.containment === 'posix_group_v1' || record.containment === 'macos_endpoint_security_v1')
+    && (!isNativeManagedContainment(record) || parseNativeAttemptBinding(record.containmentBinding) !== undefined)
     && typeof record.started_at === 'string'
     && typeof record.include_stdout === 'boolean'
     && typeof record.include_stderr === 'boolean'
@@ -1781,6 +1861,21 @@ export function durableShellRequestDigest(request: DurableShellLaunchRequest): s
     owner_workspace_id: request.owner.workspaceId ?? null,
   };
   return createHash('sha256').update(JSON.stringify(canonicalRequest)).digest('hex');
+}
+
+function isNativeManagedContainment(value: { readonly containment?: unknown }): boolean {
+  return value.containment === 'windows_job_v2' || value.containment === 'macos_endpoint_security_v1';
+}
+
+async function writeTaskOutputAtomically(filename: string, bytes: Buffer): Promise<void> {
+  const temporary = filename + '.native-' + randomUUID();
+  try {
+    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+    await rename(temporary, filename);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function normalizeMaxConcurrentTasks(value: number | undefined): number {

@@ -1,25 +1,51 @@
-# This workflow is a key-free source-run preflight, NOT a signing or deployment authority.
-# Until attestation, independent verifier/signer and native installed rollback gates exist,
-# it produces no signed envelope, no release artifact and no update permission.
-name: Update Signing Preflight (No Private Key)
+name: Protected Windows Update Signing
 
 on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Key-free preflight or authenticated receiver validation; neither signs a release'
+        description: 'Inspect evidence, validate the handoff, or sign an authenticated release'
         type: choice
-        options: [preflight, validate-receiver]
+        options: [preflight, validate-receiver, sign]
         default: preflight
       source_run_id:
         description: 'Completed protected-main push CI run ID (attempt 1) for the exact main commit'
         type: string
         required: true
+      purpose:
+        description: 'Baseline evidence or update evidence authenticated against a signed predecessor'
+        type: choice
+        options: [baseline, update]
+        default: baseline
+      predecessor_run_id:
+        description: 'Run containing the exact signed predecessor bundle; required only for update'
+        type: string
+        default: ''
+      predecessor_artifact_id:
+        description: 'Exact signed predecessor bundle artifact ID; required only for update'
+        type: string
+        default: ''
+      predecessor_envelope_sha256:
+        description: 'Expected SHA-256 of the signed predecessor RELEASE.json; required only for update'
+        type: string
+        default: ''
+      predecessor_release_tag:
+        description: 'Published signed baseline tag for update, e.g. v5.9.2; replaces expiring Actions IDs'
+        type: string
+        default: ''
 
 permissions: {}
 
+env:
+  LNWJUD_SIGNING_PURPOSE: ${{ inputs.purpose }}
+  LNWJUD_PREDECESSOR_RUN_ID: ${{ inputs.predecessor_run_id }}
+  LNWJUD_PREDECESSOR_ARTIFACT_ID: ${{ inputs.predecessor_artifact_id }}
+  LNWJUD_PREDECESSOR_ENVELOPE_SHA256: ${{ inputs.predecessor_envelope_sha256 }}
+  LNWJUD_PREDECESSOR_RELEASE_TAG: ${{ inputs.predecessor_release_tag }}
+  LNWJUD_SIGNING_KEY_ID: lnwjud-update-release-2026-11
+
 concurrency:
-  group: lnwjud-update-signing-preflight
+  group: lnwjud-update-signing
   cancel-in-progress: false
 
 jobs:
@@ -30,6 +56,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       source_run_id: ${{ steps.source.outputs.source_run_id }}
+      subjects_artifact_id: ${{ steps.source.outputs.subjects_artifact_id }}
       candidate_artifact_id: ${{ steps.source.outputs.candidate_artifact_id }}
       candidate_archive_sha256: ${{ steps.source.outputs.candidate_archive_sha256 }}
       candidate_archive_size_bytes: ${{ steps.source.outputs.candidate_archive_size_bytes }}
@@ -54,10 +81,12 @@ jobs:
           LNWJUD_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
         run: |
           set -euo pipefail
+          node scripts/update-trust/authenticated-signer-receipt.mjs inspect-purpose
           observed="$(node scripts/update-trust/protected-source-run.mjs)"
           jq -e --arg sha "$GITHUB_SHA" '.sourceSha == $sha and .status == "source-ci-observed-only"' <<< "$observed"
           {
             printf 'source_run_id=%s\n' "$(jq -er '.sourceRunId' <<< "$observed")"
+            printf 'subjects_artifact_id=%s\n' "$(jq -er '.artifactId' <<< "$observed")"
             printf 'candidate_artifact_id=%s\n' "$(jq -er '.signingCandidateArtifactId' <<< "$observed")"
             printf 'candidate_archive_sha256=%s\n' "$(jq -er '.signingCandidateArchiveSha256' <<< "$observed")"
             printf 'candidate_archive_size_bytes=%s\n' "$(jq -er '.signingCandidateArchiveSizeBytes' <<< "$observed")"
@@ -69,6 +98,8 @@ jobs:
     needs: verify-protected-source
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      LNWJUD_SIGNER_USE_FRESH_ISSUER_KEYS: '1'
     permissions:
       actions: read
       contents: read
@@ -112,6 +143,28 @@ jobs:
           path: _candidate
           merge-multiple: true
           digest-mismatch: error
+      - name: Read the selected signed predecessor bundle without executing its contents
+        if: ${{ inputs.purpose == 'update' && inputs.predecessor_release_tag == '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ inputs.predecessor_artifact_id }}
+          run-id: ${{ inputs.predecessor_run_id }}
+          github-token: ${{ github.token }}
+          path: _predecessor
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Authenticate published predecessor baseline and its actual files
+        if: ${{ inputs.purpose == 'update' && inputs.predecessor_release_tag != '' }}
+        shell: pwsh
+        run: |
+          node scripts/update-trust/fetch-published-predecessor.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'PUBLISHED_PREDECESSOR_REFUSED' }
+      - name: Derive an unsigned update from attested candidate files and the authenticated predecessor
+        if: ${{ inputs.purpose == 'update' }}
+        shell: pwsh
+        run: |
+          node scripts/update-trust/keyfree-signing-evidence.mjs prepare-update
+          if ($LASTEXITCODE -ne 0) { throw 'KEYFREE_UPDATE_DERIVATION_REFUSED' }
       - name: Provision exact SHA-256-pinned GitHub attestation verifier
         shell: pwsh
         run: ./scripts/update-trust/provision-gh-verifier.ps1
@@ -126,7 +179,8 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $lines.Count -ne 1) { throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED' }
           $receipt = $lines[0] | ConvertFrom-Json
           $policyHash = (Get-FileHash -LiteralPath config/update-release-policy.json -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($receipt.schema -cne 'lnwjud.keyfree-evidence/v1' -or
+          $expectedSchema = if ($env:LNWJUD_SIGNING_PURPOSE -ceq 'update') { 'lnwjud.keyfree-update-evidence/v1' } else { 'lnwjud.keyfree-evidence/v1' }
+          if ($receipt.schema -cne $expectedSchema -or
               $receipt.status -cne 'key-free-attestations-observed-only' -or
               $receipt.sourceSha -cne $env:GITHUB_SHA -or
               $receipt.sourceRunId -cne $env:LNWJUD_SOURCE_RUN_ID -or
@@ -135,6 +189,14 @@ jobs:
               $receipt.candidateSha256 -cnotmatch '^[a-f0-9]{64}$' -or
               $receipt.manifestSha256 -cnotmatch '^[a-f0-9]{64}$') {
             throw 'KEYFREE_SIGNING_EVIDENCE_REFUSED'
+          }
+          if ($env:LNWJUD_SIGNING_PURPOSE -ceq 'update' -and
+              (($env:LNWJUD_PREDECESSOR_ENVELOPE_SHA256 -cne '' -and $receipt.previousEnvelopeSha256 -cne $env:LNWJUD_PREDECESSOR_ENVELOPE_SHA256) -or
+               $receipt.previousEnvelopeSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+               $receipt.previousPurpose -cnotin @('baseline', 'update') -or
+               $receipt.previousVersion -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
+               $receipt.previousReleaseIdentity -cnotmatch '^[a-f0-9]{64}$')) {
+            throw 'KEYFREE_UPDATE_PREDECESSOR_REFUSED'
           }
           $directory = Join-Path $PWD '_verified-evidence'
           [System.IO.Directory]::CreateDirectory($directory) | Out-Null
@@ -160,8 +222,23 @@ jobs:
             throw 'KEYFREE_RECEIPT_BUNDLE_MISSING'
           }
           Copy-Item -LiteralPath $env:LNWJUD_RECEIPT_BUNDLE -Destination _verified-evidence/receipt.bundle.json -ErrorAction Stop
+      - name: Retain the exact verified candidate files for the isolated signer
+        if: ${{ inputs.operation == 'sign' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: update-verified-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ inputs.purpose == 'update' && '_update-candidate/*' || '_candidate/*' }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Acquire the fixed GitHub issuer public keys before any signing key is exposed
+        if: ${{ inputs.operation != 'preflight' }}
+        shell: pwsh
+        run: |
+          node scripts/update-trust/authenticated-signer-receipt.mjs prepare-issuer-keys
+          if ($LASTEXITCODE -ne 0) { throw 'SIGNER_ISSUER_KEYS_REFUSED' }
       - name: Bind a verifier OIDC proof to this receiver request
-        if: ${{ inputs.operation == 'validate-receiver' }}
+        if: ${{ inputs.operation != 'preflight' }}
         shell: pwsh
         env:
           LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
@@ -181,7 +258,7 @@ jobs:
 
   inspect-verifier-job:
     name: Select the exact verifier check-run without signing credentials
-    if: ${{ inputs.operation == 'validate-receiver' }}
+    if: ${{ inputs.operation != 'preflight' }}
     needs: verify-candidate-evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -206,11 +283,17 @@ jobs:
         run: node scripts/update-trust/authenticated-signer-receipt.mjs inspect-verifier-job
 
   receive-signing-evidence:
-    name: Validate the authenticated handoff without a release key
-    if: ${{ inputs.operation == 'validate-receiver' }}
+    name: Authenticate evidence and sign only in the protected environment
+    if: ${{ inputs.operation != 'preflight' }}
     needs: [verify-protected-source, verify-candidate-evidence, inspect-verifier-job]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
+    environment: lnwjud-update-signing
+    env:
+      LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
+      LNWJUD_SIGNER_CHALLENGE: ${{ needs.verify-protected-source.outputs.signer_challenge }}
+      LNWJUD_VERIFIER_CHECK_RUN_ID: ${{ needs.inspect-verifier-job.outputs.verifier_check_run_id }}
+      LNWJUD_SIGNER_USE_FRESH_ISSUER_KEYS: '1'
     permissions:
       actions: read
       contents: read
@@ -223,15 +306,52 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '24.22.2'
+      - name: Download candidate data without exposing the signing key
+        if: ${{ inputs.operation == 'sign' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: update-verified-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _candidate
+          digest-mismatch: error
+      - name: Download the attested package files before exposing the signing key
+        if: ${{ inputs.operation == 'sign' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.verify-protected-source.outputs.subjects_artifact_id }}
+          run-id: ${{ needs.verify-protected-source.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: _subjects
+          merge-multiple: true
+          digest-mismatch: error
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: update-keyfree-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: _verified-evidence
           digest-mismatch: error
+      - name: Acquire fixed issuer keys in a key-free step on the signer host
+        run: node scripts/update-trust/authenticated-signer-receipt.mjs prepare-issuer-keys
       - name: Verify issuer signature, exact job, request, lifetime and one-use challenge in process
+        if: ${{ inputs.operation == 'validate-receiver' }}
         env:
           LNWJUD_SOURCE_RUN_ID: ${{ needs.verify-protected-source.outputs.source_run_id }}
           LNWJUD_SIGNER_CHALLENGE: ${{ needs.verify-protected-source.outputs.signer_challenge }}
           LNWJUD_VERIFIER_CHECK_RUN_ID: ${{ needs.inspect-verifier-job.outputs.verifier_check_run_id }}
           LNWJUD_SIGNING_KEY_ID: lnwjud-update-release-2026-11
         run: node scripts/update-trust/authenticated-signer-receipt.mjs receive-proof
+      - name: Verify the one-use handoff and sign exact candidate bytes in process
+        if: ${{ inputs.operation == 'sign' }}
+        env:
+          LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM }}
+        run: node scripts/update-trust/signed-release-output.mjs sign
+      - name: Recheck signatures and package bytes without the private key
+        if: ${{ inputs.operation == 'sign' }}
+        run: node scripts/update-trust/signed-release-output.mjs prepare
+      - name: Retain authenticated public metadata and the exact attested Windows package
+        if: ${{ inputs.operation == 'sign' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: update-signed-${{ inputs.purpose }}-${{ inputs.source_run_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _signed-release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

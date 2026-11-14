@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import { createProcessTreeTerminator, createWindowsMcpStdioOwner, WindowsProcessTree, type ProcessTreeTerminator, type WindowsMcpStdioOwner } from '@lnwjud/process';
+import { createProcessTreeTerminator, createWindowsMcpStdioOwner, WindowsProcessTree, type ProcessTreeTerminator, type WindowsMcpStdioOwner, type WindowsMcpStdioChildLaunch, type WindowsMcpCleanupResult } from '@lnwjud/process';
 import { describe, expect, it, vi } from 'vitest';
 import { createDefaultMcpClientFactory, McpSessionManager, type McpClientFactory, type McpClientSession } from './mcp-session-manager.js';
 import { CONTAINMENT_HELPER_SHA256, CONTAINMENT_PIN_SHA256 } from '../../capabilities/src/containment-integrity.generated.js';
@@ -34,23 +34,32 @@ function createTestMcpClientFactory(
   hooks?: {
     readonly closeAndVerify?: (child: ChildProcess, verify: () => Promise<void>) => Promise<void>;
     readonly release?: () => void;
+    readonly prepareChild?: () => void | Promise<void>;
+    readonly connectionProof?: () => WindowsMcpCleanupResult;
   },
 ): McpClientFactory {
   const windowsMcpStdioOwner: WindowsMcpStdioOwner = {
     async prepare(target) {
       return {
-        command: target.command,
-        args: [...(target.args ?? [])],
-        env: target.env ?? {},
-        async closeAndVerify(child): Promise<void> {
+        containment: 'unisolated_same_user', cleanupScope: 'owned_job',
+        async prepareChild(): Promise<WindowsMcpStdioChildLaunch> {
+          await hooks?.prepareChild?.();
+          return {
+        command: target.command, args: [...(target.args ?? [])], env: target.env ?? {},
+        async closeResource(child): Promise<WindowsMcpCleanupResult> {
           const verify = async (): Promise<void> => {
+            if (child === undefined) return;
             if (child.exitCode === 0 && child.signalCode === null) return;
             if (child.pid === undefined) throw new Error('Fixture process identity unavailable');
             await terminator.stop(child, child.pid);
           };
-          if (hooks?.closeAndVerify === undefined) await verify();
+          if (hooks?.closeAndVerify === undefined || child === undefined) await verify();
           else await hooks.closeAndVerify(child, verify);
+          return { scope: 'owned_job', containment: 'unisolated_same_user', writerDrainVerified: false } as const;
         },
+        }; },
+        async closeOwnedConnection(): Promise<WindowsMcpCleanupResult> { return hooks?.connectionProof?.()
+          ?? { scope: 'owned_job', containment: 'unisolated_same_user', writerDrainVerified: false }; },
         release(): void { hooks?.release?.(); },
       };
     },
@@ -59,6 +68,57 @@ function createTestMcpClientFactory(
 }
 
 describe('default External MCP client protocol negotiation', () => {
+  it.skipIf(process.platform !== 'win32')('obtains a separate native ticket before spawning each SDK sibling', async () => {
+    let issued = 0;
+    let spawned = 0;
+    const start = StdioClientTransport.prototype.start;
+    const spy = vi.spyOn(StdioClientTransport.prototype, 'start').mockImplementation(function (this: StdioClientTransport): Promise<void> {
+      expect(issued).toBe(spawned + 1);
+      spawned++;
+      return start.call(this);
+    });
+    try {
+      const session = await connectFixture('modern', createTestMcpClientFactory(undefined, { prepareChild: () => { issued++; } }));
+      await session.close();
+      expect(issued).toBe(2);
+      expect(spawned).toBe(2);
+    } finally { spy.mockRestore(); }
+  });
+
+  it.skipIf(process.platform !== 'win32')('rejects promotion of an owned-Job receipt to global writer-drain proof', async () => {
+    let promoted = true;
+    const factory = createTestMcpClientFactory(undefined, { connectionProof: () => {
+      const proof: WindowsMcpCleanupResult = { scope: 'owned_job', containment: 'unisolated_same_user', writerDrainVerified: false };
+      if (promoted) Object.defineProperty(proof, 'writerDrainVerified', { value: true });
+      return proof;
+    } });
+    const session = await connectFixture('modern', factory);
+    try { await expect(session.close()).rejects.toThrow('MCP_NATIVE_JOB_SCOPE_INVALID'); }
+    finally { promoted = false; await session.close(); }
+  });
+
+  it.skipIf(process.platform !== 'win32')('fences a late SDK sibling when its native ticket resolves after close', async () => {
+    let allowTicket: () => void = () => undefined;
+    let ticketStarted: () => void = () => undefined;
+    const waiting = new Promise<void>(resolve => { ticketStarted = resolve; });
+    const ticket = new Promise<void>(resolve => { allowTicket = resolve; });
+    let transport: Parameters<Client['connect']>[0] | undefined;
+    const connect = Client.prototype.connect;
+    const observed = vi.spyOn(Client.prototype, 'connect').mockImplementation(function (this: Client, ...args: Parameters<Client['connect']>): ReturnType<Client['connect']> {
+      transport = args[0];
+      return connect.apply(this, args);
+    });
+    const spawned = vi.spyOn(StdioClientTransport.prototype, 'start');
+    const connection = connectFixture('modern', createTestMcpClientFactory(undefined, { prepareChild: () => { ticketStarted(); return ticket; } }));
+    connection.catch(() => undefined);
+    try {
+      await waiting;
+      await transport!.close();
+      allowTicket();
+      await expect(connection).rejects.toThrow();
+      expect(spawned).not.toHaveBeenCalled();
+    } finally { allowTicket(); observed.mockRestore(); spawned.mockRestore(); }
+  });
   it.skipIf(process.platform !== 'win32')('refuses Windows MCP launch without the pinned Job proxy owner', async () => {
     const taskkill = vi.fn(async (): Promise<number> => 0);
     const factory = createDefaultMcpClientFactory(new WindowsProcessTree({ platform: 'win32', taskkill }));
@@ -168,7 +228,7 @@ describe('default External MCP client protocol negotiation', () => {
     }
   });
 
-  it.skipIf(process.platform !== 'win32')('accepts the helper zero exit when its target exits before session close', async () => {
+  it.skipIf(process.platform !== 'win32')('cleans up the manual local-resource proxy when its target exits before session close', async () => {
     const helper = fileURLToPath(new URL('../../../apps/desktop/build/native-containment/lnwjud-containment.exe', import.meta.url));
     const pin = fileURLToPath(new URL('../../../apps/desktop/build/native-containment/lnwjud-containment-pin.node', import.meta.url));
     const owner = createWindowsMcpStdioOwner({
@@ -255,7 +315,7 @@ describe('default External MCP client protocol negotiation', () => {
     },
   );
 
-  it.skipIf(process.platform !== 'win32')('surfaces failed probe cleanup, fences replacement, and releases the pre-main pin once', async () => {
+  it.skipIf(process.platform !== 'win32')('surfaces failed probe cleanup and retains the pre-main pin until scoped cleanup succeeds', async () => {
     let cleanupAllowed = false;
     let cleanupAttempts = 0;
     let releaseCount = 0;
@@ -278,7 +338,7 @@ describe('default External MCP client protocol negotiation', () => {
       const failed = await manager.describe('fixture', config('legacy-exit-on-discover'));
       expect(failed.ok).toBe(false);
       expect(cleanupAttempts).toBeGreaterThanOrEqual(2);
-      expect(releaseCount).toBe(1);
+      expect(releaseCount).toBe(0);
       expect(manager.lifecycle('fixture')).toBe('termination_unverified');
 
       const blocked = await manager.describe('fixture', config('modern'));

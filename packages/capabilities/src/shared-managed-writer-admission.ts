@@ -23,8 +23,10 @@ export interface ManagedWriterAdmissionLease {
 export class SharedManagedWriterAdmission {
   private readonly index: DurableShellTaskIndex;
 
-  constructor(taskDirectory: string, private readonly nativeAuthority?: WindowsNativeAuthority, private readonly platform: NodeJS.Platform = process.platform) {
-    const store = new DurableShellTaskStore(taskDirectory, { ...(nativeAuthority === undefined ? {} : { windowsNativeAuthority: nativeAuthority }) });
+  constructor(taskDirectory: string, private readonly nativeAuthority?: WindowsNativeAuthority, private readonly platform: NodeJS.Platform = process.platform,
+    private readonly macosNativeAuthority?: import('@lnwjud/process').MacosNativeAuthority) {
+    const store = new DurableShellTaskStore(taskDirectory, { ...(nativeAuthority === undefined ? {} : { windowsNativeAuthority: nativeAuthority }),
+      ...(macosNativeAuthority === undefined ? {} : { macosNativeAuthority }) });
     this.index = new DurableShellTaskIndex(taskDirectory, {
       maxConcurrentTasks: 10000,
       capacityClass: 'managed_writer',
@@ -75,8 +77,9 @@ export class SharedManagedWriterAdmission {
       return err(appError('INVALID_INPUT', 'Managed writer admission identity is invalid'));
     }
     // A macOS detached child can outlive the original PGID and keep writing.
-    if (this.platform === 'darwin' && input.kind !== 'synchronous_mutation') {
-      return err(appError('CONFLICT', 'macOS process writer containment unavailable: escaped descendants are not kernel-fenced'));
+    if (this.platform === 'darwin' && input.kind !== 'synchronous_mutation'
+      && (input.kind !== 'contained_process' || !await this.macosNativeAuthority?.available())) {
+      return err(appError('CONFLICT', 'macOS process writer requires an enrolled Endpoint Security owner; no reservation was created'));
     }
     const id = 'managed-writer-' + randomUUID();
     const digest = createHash('sha256').update(JSON.stringify([id, input.actorClientId, input.actorSessionId, input.workspaceId])).digest('hex');
@@ -89,7 +92,7 @@ export class SharedManagedWriterAdmission {
       if (nativeBinding === undefined) {
         return err(appError('INVALID_INPUT', 'Contained writer native attempt or session identity is invalid'));
       }
-      if (this.nativeAuthority === undefined) {
+      if ((this.platform === 'darwin' ? this.macosNativeAuthority : this.nativeAuthority) === undefined) {
         return err(appError('INVALID_INPUT', 'Contained writer trusted native authority is unavailable'));
       }
       if (input.nativeReceiptPath === undefined || !path.isAbsolute(input.nativeReceiptPath)
@@ -97,6 +100,9 @@ export class SharedManagedWriterAdmission {
         || path.basename(path.dirname(input.nativeReceiptPath)) !== nativeBinding.taskId) {
         return err(appError('INVALID_INPUT', 'Contained writer receipt path does not match native attempt identity'));
       }
+    }
+    if (this.platform === 'darwin' && nativeBinding !== undefined && !await this.macosNativeAuthority?.register(nativeBinding)) {
+      return err(appError('CONFLICT', 'macOS native process owner could not register this attempt; no reservation was created'));
     }
     const reserved = await this.index.reserve({
       taskId: id,
@@ -110,7 +116,10 @@ export class SharedManagedWriterAdmission {
       ownerClientId: input.actorClientId,
       ownerWorkspaceId: input.workspaceId,
     });
-    if (!reserved.ok) return reserved;
+    if (!reserved.ok) {
+      if (this.platform === 'darwin' && nativeBinding !== undefined) await this.macosNativeAuthority?.abortBeforeLaunch({ binding: nativeBinding });
+      return reserved;
+    }
     const release = async (): Promise<void> => {
       await this.index.release(id, digest);
       if (await this.index.hasReservation(id, digest)) throw new Error('MANAGED_WRITER_RELEASE_UNVERIFIED');
@@ -122,7 +131,8 @@ export class SharedManagedWriterAdmission {
       releaseAfterVerifiedTermination: release,
       abortBeforeLaunch: async (): Promise<void> => {
         if (nativeBinding !== undefined && receiptPath !== undefined) {
-          const proof = await this.nativeAuthority?.abortBeforeLaunch({ directory: path.dirname(receiptPath), binding: nativeBinding });
+          const authority = this.platform === 'darwin' ? this.macosNativeAuthority : this.nativeAuthority;
+          const proof = await authority?.abortBeforeLaunch({ directory: path.dirname(receiptPath), binding: nativeBinding });
           if (proof?.state !== 'launch_not_started') throw new Error('MANAGED_WRITER_ABORT_UNVERIFIED');
         }
         await release();
@@ -132,17 +142,18 @@ export class SharedManagedWriterAdmission {
 
   private async verifyNativeTermination(reservation: DurableTaskReservation): Promise<boolean> {
     const binding = reservation.nativeBinding;
-    if (this.nativeAuthority === undefined || binding === undefined || reservation.nativeReceiptPath === undefined
+    const authority = this.platform === 'darwin' ? this.macosNativeAuthority : this.nativeAuthority;
+    if (authority === undefined || binding === undefined || reservation.nativeReceiptPath === undefined
       || binding.reservationId !== reservation.taskId || binding.requestDigest !== reservation.requestDigest
       || binding.ownerClientId !== reservation.ownerClientId || binding.workspaceId !== reservation.ownerWorkspaceId
       || path.basename(reservation.nativeReceiptPath) !== 'containment.receipt.json'
       || path.basename(path.dirname(reservation.nativeReceiptPath)) !== binding.taskId) return false;
-    let proof = await this.nativeAuthority.inspect({ directory: path.dirname(reservation.nativeReceiptPath), binding });
+    let proof = await authority.inspect({ directory: path.dirname(reservation.nativeReceiptPath), binding });
     if (proof.state === 'termination_unknown' && proof.reason === 'NATIVE_SERVICE_ATTEMPT_NOT_DISPATCHED') {
-      proof = await this.nativeAuthority.abortBeforeLaunch({ directory: path.dirname(reservation.nativeReceiptPath), binding });
+      proof = await authority.abortBeforeLaunch({ directory: path.dirname(reservation.nativeReceiptPath), binding });
     }
     if (proof.state === 'termination_unknown' && reservation.reservedAt !== undefined) {
-      proof = await this.nativeAuthority.recoverAfterReboot({
+      proof = await authority.recoverAfterReboot({
         directory: path.dirname(reservation.nativeReceiptPath), binding, recordedAt: reservation.reservedAt,
       });
     }

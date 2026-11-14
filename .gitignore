@@ -29,6 +29,12 @@ native/windows-containment-helper/tests/obj/
 native/windows-containment-helper/tests/bin/
 native/windows-ocr/bin/
 native/windows-ocr/obj/
+native/update-worker/bin/
+native/update-worker/obj/
+native/update-worker/tests/bin/
+native/update-worker/tests/obj/
+native/windows-update-launcher/bin/
+native/windows-update-launcher/obj/
 *.tsbuildinfo
 *.tsbuildinfo.*
 *.last-run.json

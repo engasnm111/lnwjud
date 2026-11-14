@@ -85,6 +85,10 @@ internal sealed class AttestationOwner
         return unsignedPackage.CandidateSha256;
     }
 
+    internal void VerifyAuthorizedRelease(System.Text.Json.JsonElement release, EnrollmentPackageFiles files,
+        ReleaseTrustPolicy policy, ulong issuedAt)
+        => VerifyEvidence(new ReleaseEvidenceCandidate(release, issuedAt), files, policy);
+
     private void VerifyEvidence(ReleaseEvidenceCandidate candidate, EnrollmentPackageFiles files, ReleaseTrustPolicy policy)
     {
         var source = candidate.Payload.GetProperty("source");

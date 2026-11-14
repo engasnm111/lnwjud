@@ -33,7 +33,7 @@ type AcceptanceFixture = {
 
 describe('automatic updater release gate', () => {
   it.each([
-    'current manual release',
+    'current in-app release',
     'wrong version',
     'automatic installation enabled',
     'source authority enrolled',
@@ -67,14 +67,14 @@ describe('automatic updater release gate', () => {
       if (scenario === 'missing native installation guard') {
         const mainPath = path.join(root, 'apps/desktop/src/main/main.ts');
         await writeFile(mainPath, (await readFile(mainPath, 'utf8'))
-          .replace('if (!verifiedAutomaticUpdateAuthority || !app.isPackaged', 'if (!app.isPackaged'));
+          .replaceAll("if (!operatorUpdateInstallAvailable() || currentUpdateStatus.phase !== 'ready'", "if (currentUpdateStatus.phase !== 'ready'"));
       }
       const verification = promisify(execFile)(process.execPath, [path.join(root, 'scripts/verify-manual-release-scope.mjs')], {
         cwd: root, windowsHide: true,
       });
-      if (scenario === 'current manual release') {
+      if (scenario === 'current in-app release') {
         const result = await verification;
-        expect(result.stdout).toContain(`MANUAL_RELEASE_SCOPE_VERIFIED v${scope.version}`);
+        expect(result.stdout).toContain(`RELEASE_SCOPE_VERIFIED v${scope.version}`);
       } else {
         await expect(verification).rejects.toThrow('RELEASE_SCOPE_INVALID');
       }
@@ -83,7 +83,7 @@ describe('automatic updater release gate', () => {
     }
   });
 
-  it('keeps the current manual-install release separate from the future authenticated auto-update receipt contract', async () => {
+  it('keeps the operator-confirmed in-app release separate from the future authenticated zero-click receipt contract', async () => {
     const workflow = await readFile(releaseWorkflowUrl, 'utf8');
 
     expect(workflow).toContain('--json databaseId,attempt,headSha,status,conclusion');

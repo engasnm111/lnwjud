@@ -1,13 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { URL } from 'node:url';
 import { hash } from './release-envelope.mjs';
-import { inspectKeyFreeSigningCandidate, inspectKeyFreeWorkflowContext, keyFreeGhEnvironment, withIsolatedGhConfig } from './keyfree-signing-evidence.mjs';
+import { authenticateAuthorizationV2 } from './release-authorization-v2.mjs';
+import { signingPurposeSelection } from './authenticated-signer-receipt.mjs';
+import { inspectKeyFreeSigningCandidate, inspectKeyFreeWorkflowContext, keyFreeGhEnvironment, prepareKeyFreeUpdateCandidate, withIsolatedGhConfig } from './keyfree-signing-evidence.mjs';
 
 const now = 1800000000n;
 const repo = 'https://github.com/engasnm111/lnwjud';
@@ -93,6 +97,136 @@ const inspect = (root, f, verify = ({ filename }) => {
   const kind = filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact';
   return verified(f.release[kind]);
 }) => inspectKeyFreeSigningCandidate({ root, policyBytes: f.policyBytes, source, now, verify });
+
+async function predecessorFixture(root, f, change = () => {}) {
+  const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const spki = pair.publicKey.export({ type: 'spki', format: 'der' });
+  const policy = JSON.parse(await readFile(new URL('../../config/update-release-policy.json', import.meta.url)));
+  policy.roots = [{ keyId: 'keyfree-fixture', algorithm: 'ecdsa-p256-sha256-p1363',
+    spkiBase64: spki.toString('base64'), spkiSha256: hash(spki), roles: ['release', 'recovery'],
+    notBefore: String(now - 10000n), expiresAt: String(now + 86400n), revoked: false, allowHistoricalRecovery: true }];
+  policy.authorities = [{ repository: repo, workflow: '.github/workflows/ci.yml', ref: 'refs/heads/main',
+    issuer: 'https://token.actions.githubusercontent.com', builderWorkflowUri: `${repo}/.github/workflows/update-package-builder.yml@refs/heads/main`,
+    builderDigest: builderSha, buildConfigUri: `${repo}/.github/workflows/ci.yml@refs/heads/main`, buildConfigDigestRule: 'source-commit',
+    runnerEnvironment: 'github-hosted' }];
+  f.release.buildEvidence.sourceTree = 'clean';
+  const payload = JSON.parse(f.files.candidate[1]); payload.release = f.release;
+  const oldArtifact = Buffer.from('older P256-authenticated installer fixture');
+  const oldProvenance = Buffer.from('older P256-authenticated provenance fixture');
+  const old = { ...JSON.parse(JSON.stringify(payload)), issuedAt: String(now - 2000n), notBefore: String(now - 2000n), expiresAt: String(now - 1000n) };
+  old.release.version = '5.9.0'; old.release.releaseSequence = '100'; old.release.releaseId = 'lnwjud-5.9.0-100';
+  old.release.source.runId = '100';
+  old.release.artifact = bind('lnwjud-Setup-5.9.0.exe', oldArtifact);
+  old.release.provenance = bind('PROVENANCE.json', oldProvenance);
+  change({ old, policy });
+  const oldBytes = Buffer.from(JSON.stringify(old));
+  const envelope = Buffer.from(JSON.stringify({ protocol: 2, keyId: 'keyfree-fixture', payload: oldBytes.toString('base64'),
+    signature: sign('sha256', Buffer.concat([Buffer.from('lnwjud-update-release-v2\0', 'ascii'), oldBytes]),
+      { key: pair.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64') }));
+  const directory = path.join(root, '_predecessor'); await mkdir(directory);
+  for (const [name, bytes] of [['RELEASE.json', envelope], [old.release.artifact.name, oldArtifact], ['PROVENANCE.json', oldProvenance]])
+    await writeFile(path.join(directory, name), bytes);
+  f.policyBytes = Buffer.from(JSON.stringify(policy));
+  const candidate = Buffer.from(JSON.stringify(payload));
+  f.files.candidate[1] = candidate;
+  await writeFile(path.join(f.candidateDir, 'CANDIDATE.json'), candidate);
+  const manifest = JSON.parse(f.manifest); manifest.policySha256 = hash(f.policyBytes); manifest.candidate.candidate = bind('CANDIDATE.json', candidate);
+  f.manifest = Buffer.from(JSON.stringify(manifest));
+  await writeFile(path.join(root, 'manifest.json'), f.manifest);
+  return { directory, envelope, policy, old };
+}
+const deriveUpdate = (root, f, previous, name = 'update') => prepareKeyFreeUpdateCandidate({ root,
+  predecessorRoot: previous.directory, outputRoot: path.join(root, name), policyBytes: f.policyBytes,
+  now, keyId: 'keyfree-fixture', previousEnvelopeSha256: hash(previous.envelope) });
+const inspectUpdate = (root, f, previous, verify = ({ filename }) => verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact'])) =>
+  inspectKeyFreeSigningCandidate({ root: path.join(root, 'update'), policyBytes: f.policyBytes, source, now, verify,
+    keyId: 'keyfree-fixture', purpose: 'update', previousEnvelopeSha256: hash(previous.envelope) });
+
+test('purpose selection preserves baseline and requires the complete immutable update selector', () => {
+  assert.equal(signingPurposeSelection({}).purpose, 'baseline');
+  const valid = { LNWJUD_SIGNING_PURPOSE: 'update', LNWJUD_PREDECESSOR_RUN_ID: '100',
+    LNWJUD_PREDECESSOR_ARTIFACT_ID: '200', LNWJUD_PREDECESSOR_ENVELOPE_SHA256: 'a'.repeat(64) };
+  assert.equal(signingPurposeSelection(valid).previousEnvelope, 'a'.repeat(64));
+  for (const key of Object.keys(valid)) assert.throws(() => signingPurposeSelection({ ...valid, [key]: '' }));
+  assert.throws(() => signingPurposeSelection({ ...valid, LNWJUD_SIGNING_PURPOSE: 'baseline' }));
+  assert.throws(() => signingPurposeSelection({ ...valid, LNWJUD_PREDECESSOR_RUN_ID: '100\n' }));
+});
+
+test('update derivation authenticates P256 predecessor and preserves the attested candidate bytes', async () => {
+  await withFixture(async (root, f) => {
+    const previous = await predecessorFixture(root, f);
+    const result = await deriveUpdate(root, f, previous);
+    assert.equal(result.status, 'unsigned-update-derived-only');
+    const candidate = JSON.parse(await readFile(path.join(root, 'update/files/candidate/CANDIDATE.json')));
+    const authenticated = authenticateAuthorizationV2(previous.envelope, previous.policy, BigInt(previous.old.issuedAt), 'baseline');
+    assert.deepEqual(candidate.release, f.release);
+    assert.equal(candidate.kind, 'update');
+    assert.equal(candidate.recovery.previousReleaseIdentity, authenticated.identitySha256);
+    const receipt = await inspectUpdate(root, f, previous);
+    assert.equal(receipt.schema, 'lnwjud.keyfree-update-evidence/v1');
+    assert.equal(receipt.previousPurpose, 'baseline'); assert.equal(receipt.previousVersion, '5.9.0');
+    assert.equal(receipt.previousEnvelopeSha256, hash(previous.envelope));
+    assert.equal(receipt.previousReleaseIdentity, authenticated.identitySha256);
+    assert.equal(receipt.candidateSha256, result.candidateSha256); assert.equal(receipt.manifestSha256, result.manifestSha256);
+  });
+});
+
+test('update derivation refuses forged or mismatched predecessors before verification', async () => {
+  for (const kind of ['signature', 'artifact', 'digest']) await withFixture(async (root, f) => {
+    const previous = await predecessorFixture(root, f);
+    if (kind === 'signature') {
+      const envelope = JSON.parse(previous.envelope), bytes = Buffer.from(envelope.signature, 'base64'); bytes[0] ^= 1;
+      envelope.signature = bytes.toString('base64'); await writeFile(path.join(previous.directory, 'RELEASE.json'), JSON.stringify(envelope));
+    } else if (kind === 'artifact') await writeFile(path.join(previous.directory, previous.old.release.artifact.name), 'changed');
+    else previous.envelope = Buffer.from('wrong requested digest');
+    await assert.rejects(deriveUpdate(root, f, previous));
+    await assert.rejects(lstat(path.join(root, 'update')), { code: 'ENOENT' });
+  });
+});
+
+test('update evidence authenticates a previously signed update as the predecessor', async () => {
+  await withFixture(async (root, f) => {
+    const previous = await predecessorFixture(root, f, ({ old }) => {
+      old.kind = 'update'; old.recovery = { purpose: 'failed-candidate-only', previousReleaseIdentity: 'd'.repeat(64), maximumAttempts: 1 };
+    });
+    await deriveUpdate(root, f, previous);
+    const receipt = await inspectUpdate(root, f, previous);
+    assert.equal(receipt.previousPurpose, 'update'); assert.equal(receipt.previousEnvelopeSha256, hash(previous.envelope));
+  });
+});
+
+test('update derivation rejects unauthorized expiry, source, version and recovery contracts', async () => {
+  for (const change of [({ policy }) => { policy.roots[0].allowHistoricalRecovery = false; },
+    ({ old }) => { old.release.source.ref = 'refs/heads/untrusted'; },
+    ({ policy }) => { policy.authorities[0].builderDigest = 'b'.repeat(40); },
+    ({ policy }) => { policy.authorities[0].builderWorkflowUri = `${repo}/.github/workflows/other.yml@refs/heads/main`; },
+    ({ old }) => { old.release.version = '5.9.2'; old.release.artifact.name = 'lnwjud-Setup-5.9.2.exe'; },
+    ({ old }) => { old.release.compatibility.workerContractSha256 = 'f'.repeat(64); }])
+    await withFixture(async (root, f) => { const previous = await predecessorFixture(root, f, change); await assert.rejects(deriveUpdate(root, f, previous)); });
+});
+
+test('update verifier refuses replaced predecessor and missing candidate bundle before any attestation callback', async () => {
+  for (const kind of ['previous', 'bundle']) await withFixture(async (root, f) => {
+    const previous = await predecessorFixture(root, f); await deriveUpdate(root, f, previous);
+    if (kind === 'previous') await writeFile(path.join(root, 'update/files/predecessor/RELEASE.json'), 'changed');
+    else await rm(path.join(root, 'update/files/candidate/artifact.bundle.json'));
+    let called = false;
+    await assert.rejects(inspectUpdate(root, f, previous, () => { called = true; return verified(f.release.artifact); }));
+    assert.equal(called, false);
+  });
+});
+
+test('update verifier rechecks exact predecessor bytes after an asynchronous verifier callback', async () => {
+  await withFixture(async (root, f) => {
+    const previous = await predecessorFixture(root, f); await deriveUpdate(root, f, previous);
+    let calls = 0;
+    await assert.rejects(inspectUpdate(root, f, previous, async ({ filename }) => {
+      if (++calls === 2) await writeFile(path.join(root, 'update/files/predecessor/RELEASE.json'), 'replaced after verification');
+      return verified(f.release[filename.endsWith('PROVENANCE.json') ? 'provenance' : 'artifact']);
+    }));
+    assert.equal(calls, 2);
+  });
+});
 
 test('key-free verifier accepts only the exact protected workflow identity', () => {
   const environment = {
@@ -207,7 +341,7 @@ test('key-free verifier checks both exact attestation subjects without authorizi
   });
 });
 
-test('key-free verifier rejects changed package bytes, source substitution and unsupported update', async () => {
+test('key-free verifier rejects changed package bytes, source substitution and unauthenticated update', async () => {
   await withFixture(async (root, f) => {
     await assert.rejects(inspectKeyFreeSigningCandidate({ root, policyBytes: f.policyBytes,
       source: { ...source, commit: 'b'.repeat(40) }, now, verify: () => verified(f.release.artifact) }));

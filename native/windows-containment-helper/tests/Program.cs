@@ -89,6 +89,12 @@ internal static class NativeTests
 
     private static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] is "mcp-stdio-owner" or "mcp-stdio-proxy" or "service-rpc")
+        {
+            var fixturePipe = Path.Combine(AppContext.BaseDirectory, "mcp-service-test.pipe");
+            if (Environment.GetEnvironmentVariable("LNWJUD_MCP_TEST_PIPE") is null && File.Exists(fixturePipe))
+                Environment.SetEnvironmentVariable("LNWJUD_MCP_TEST_PIPE", File.ReadAllText(fixturePipe));
+        }
         if (args.Length > 0)
         {
             switch (args[0])
@@ -110,6 +116,8 @@ internal static class NativeTests
                 case "updater-crash-authority": return UpdaterCrashBoundaryFixture.RunAuthority(args);
                 case "updater-crash-child": return UpdaterCrashBoundaryFixture.RunChild(args);
                 case "updater-crash-boundaries": UpdaterCrashBoundaryFixture.RunSuite(); return 0;
+                case "update-eligibility-tests": UpdateEligibilityTests.Run(); return 0;
+                case "native-update-transaction-tests": NativeUpdateTransactionTests.Run(); return 0;
                 case "service-error-reply-timeout": TestBoundedServiceFailureReply().GetAwaiter().GetResult(); return 0;
                 case "pipe-acl": ServicePipeSecurityTests.Run(); return 0;
                 case "authenticated-pipe-caller": TestAuthenticatedPipeCallerCapture(); return 0;
@@ -128,7 +136,16 @@ internal static class NativeTests
                     WindowsContainmentServiceClient.ServiceNameForAbsenceTest = "lnwjud-absent-" + Guid.NewGuid().ToString("N");
                     return Program.Main(["service-rpc", new string('0', 64)]).GetAwaiter().GetResult();
                 case "rpc-absent-test": TestAbsentServiceRpc(); return 0;
-                case "mcp-stdio-proxy": return McpStdioProxy.RunAsync().GetAwaiter().GetResult();
+                case "mcp-stdio-owner": return Program.Main(args).GetAwaiter().GetResult();
+                case "mcp-stdio-local-resource": return Program.Main(args).GetAwaiter().GetResult();
+                case "mcp-service-tests": ServiceMcpTests.RunAsync().GetAwaiter().GetResult(); return 0;
+                case "mcp-service-test-server": ServiceMcpTests.RunServerAsync().GetAwaiter().GetResult(); return 0;
+                case "service-rpc" when Environment.GetEnvironmentVariable("LNWJUD_MCP_TEST_PIPE") is { } testPipe:
+                    return ServiceMcpTests.RunRpcAsync(testPipe).GetAwaiter().GetResult();
+                case "mcp-service-zero-exit":
+                    ServiceMcpStdioProxy.AfterStartedForTests = () => Environment.Exit(0);
+                    return Program.Main(["mcp-stdio-proxy", new string('0', 64)]).GetAwaiter().GetResult();
+                case "mcp-stdio-proxy": return args.Length == 2 ? Program.Main(args).GetAwaiter().GetResult() : McpStdioProxy.RunAsync().GetAwaiter().GetResult();
                 case "mcp-proxy-target": return RunMcpProxyTarget(args[1]);
                 case "mcp-proxy-descendant": Thread.Sleep(30_000); return 0;
                 case "mcp-proxy-tests": TestMcpStdioProxy(); TestMcpStdioProxyClientEof(); TestMcpStdioProxyNonzeroExit(); Console.WriteLine("PASS native MCP stdio proxy preserves bytes, forwards client EOF, propagates target failure, and kills descendants before a zero exit"); return 0;
@@ -298,6 +315,7 @@ internal static class NativeTests
             TestWatcherRequiresServiceOwnedTerminalPublication();
             TestServiceFailureReason();
             TestBoundedServiceFailureReply().GetAwaiter().GetResult();
+            ServiceMcpTests.RunAsync().GetAwaiter().GetResult();
             Console.WriteLine("PASS service installer reports only stable diagnostic codes");
             TestServiceStoreCreation(root);
             Console.WriteLine("PASS protected store DACL applies at creation and existing untrusted store remains unchanged");
@@ -1673,6 +1691,14 @@ internal static class NativeTests
             if (!UpdateStartupGate.HasPrivateAuthority(scratch)) throw new Exception("Private update state went undetected");
             using (var extra = await SendServiceRpcAsync(pipeName, """{"protocol":3,"command":"update_startup","controlRequest":null}"""u8.ToArray()))
                 if (extra.RootElement.GetProperty("ok").GetBoolean()) throw new Exception("startup accepted extraneous fields");
+            Directory.CreateDirectory(install);
+            await CheckStartup("unmanaged", "MANUAL_INSTALLATION");
+            using (var admitted = await SendServiceRpcAsync(pipeName, """{"protocol":3,"command":"update_opaque"}"""u8.ToArray()))
+                if (!admitted.RootElement.GetProperty("ok").GetBoolean()
+                    || admitted.RootElement.GetProperty("result").GetProperty("kind").GetString() != "opaque_dispatch_recorded")
+                    throw new Exception("Manual opaque dispatch admission failed");
+            using (var extra = await SendServiceRpcAsync(pipeName, """{"protocol":3,"command":"update_opaque","controlRequest":null}"""u8.ToArray()))
+                if (extra.RootElement.GetProperty("ok").GetBoolean()) throw new Exception("opaque admission accepted caller-controlled fields");
             var terminalSid = WindowsIdentity.GetCurrent().User!.Value;
             var terminalRequest = NewServiceAttemptRequest("rpc-terminal-recovery", Path.Combine(storeDirectory, "terminal-recovery")) with { AuthenticatedCallerSid = terminalSid };
             ledger.Prepare(terminalRequest);
@@ -1776,6 +1802,13 @@ internal static class NativeTests
                 || abortSecond.RootElement.GetProperty("result").GetProperty("reservationHeld").GetBoolean())
                 throw new Exception("Shared ordinary process did not release after prelaunch abort");
 
+            Volatile.Write(ref registered, true);
+            using (var denied = await SendServiceRpcAsync(pipeName,
+                Request("run", Identity("rpc-attempt-1", operationDigest), reservationKey, operation, operationDigest)))
+                if (denied.RootElement.GetProperty("ok").GetBoolean()
+                    || ledger.Inspect(persistedIdentity, callerSid).Phase != ServiceAttemptPhase.Prepared)
+                    throw new Exception("Unverified update enrollment allowed an opaque process dispatch");
+            Volatile.Write(ref registered, false);
             using var started = await SendServiceRpcAsync(pipeName,
                 Request("run", Identity("rpc-attempt-1", operationDigest), reservationKey, operation, operationDigest));
             if (!started.RootElement.GetProperty("ok").GetBoolean()

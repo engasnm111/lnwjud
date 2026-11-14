@@ -14,6 +14,13 @@
 !macro customInstall
   ; The LocalSystem containment service belongs only to a protected all-users install.
   ${if} $installMode == "all"
+    CreateDirectory "$INSTDIR\update-baseline"
+    ClearErrors
+    CopyFiles /SILENT "$EXEPATH" "$INSTDIR\update-baseline\lnwjud-Setup-${VERSION}.exe"
+    ${if} ${Errors}
+      SetErrorLevel 125
+      Abort
+    ${endif}
     ; Capture a stable, path-free native failure code for troubleshooting.
     nsExec::ExecToStack '"$INSTDIR\resources\native-containment\lnwjud-containment.exe" service-install'
     Pop $0

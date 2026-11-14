@@ -71,6 +71,7 @@ export async function produceReleaseAuthorizationV2(options) {
   let secret;
   try {
     options = snapshotOptions(options);
+    const context = signerHostContext(process.env, 'receive-signing-evidence');
     const policy = loadProductionPolicy();
     requireConfigured(policy);
     const now = BigInt(Math.floor(Date.now() / 1000));
@@ -78,12 +79,11 @@ export async function produceReleaseAuthorizationV2(options) {
     const inspected = inspectAuthorizationPayloadV2(source.bytes, policy, now, options.purpose, options.keyId);
     let previous;
     if (options.purpose === 'update') previous = await authenticatePreviousV2(inspected, options, policy, now);
-    const context = signerHostContext(process.env, 'receive-signing-evidence');
     const { root: recipient } = rootKey(policy, options.keyId, now);
     const receipt = parseStrictJson((await readBoundedFile(options.receipt, 4096n)).bytes, 4096);
     const previousSha256 = previous?.envelopeSha256 ?? 'none';
     const binding = signerBindingFromReceipt(receipt, context, process.env.LNWJUD_SIGNER_CHALLENGE,
-      recipient.spkiSha256, options.purpose, previousSha256);
+      recipient.spkiSha256, options.purpose, previousSha256, previous);
     const release = inspected.payload.release;
     const authorities = policy.authorities.filter(authority => authority.repository === release.source.repository
       && authority.workflow === release.source.workflow && authority.ref === release.source.ref);

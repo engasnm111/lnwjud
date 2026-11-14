@@ -7,18 +7,19 @@ namespace Lnwjud.Containment;
 
 internal sealed record UpdateStartupDisposition(string Kind, string Reason);
 
-internal sealed class UpdateStartupGate
+internal sealed class UpdateStartupGate : IDisposable
 {
     private readonly string installationRoot;
     private readonly string serviceStore;
     private readonly Func<bool> machineEnrolled;
-    private UpdateStartupGate(string installationRoot, string serviceStore, Func<bool> machineEnrolled)
-        => (this.installationRoot, this.serviceStore, this.machineEnrolled) = (installationRoot, serviceStore, machineEnrolled);
+    private readonly WindowsServiceUpdateRuntime? updates;
+    private UpdateStartupGate(string installationRoot, string serviceStore, Func<bool> machineEnrolled, WindowsServiceUpdateRuntime? updates = null)
+        => (this.installationRoot, this.serviceStore, this.machineEnrolled, this.updates) = (installationRoot, serviceStore, machineEnrolled, updates);
 
     internal static UpdateStartupGate Installed(ServiceEndpointIdentity.ProductionServiceAuthority owner, string serviceStore)
     {
         owner.RequireActive();
-        return new(owner.InstallationRoot, serviceStore, MachineEnrolled);
+        return new(owner.InstallationRoot, serviceStore, MachineEnrolled, WindowsServiceUpdateRuntime.Installed(owner, serviceStore));
     }
 
 #if NATIVE_CONTAINMENT_TESTS
@@ -51,6 +52,29 @@ internal sealed class UpdateStartupGate
         catch (System.ComponentModel.Win32Exception) { return Unavailable; }
         catch (System.Security.SecurityException) { return Unavailable; }
     }
+
+    internal void BeforeOpaqueDispatch(string authenticatedCallerSid)
+    {
+        var disposition = Inspect();
+        if (disposition.Kind == "unmanaged") return;
+        if (updates is null) throw new IOException(disposition.Reason);
+        updates.BeforeOpaqueDispatch(authenticatedCallerSid);
+    }
+
+    internal System.Text.Json.Nodes.JsonObject InspectUpdate(string authenticatedCallerSid) => updates?.Inspect(authenticatedCallerSid)
+        ?? new() { ["kind"] = "unavailable", ["reason"] = Inspect().Reason };
+
+    internal System.Text.Json.Nodes.JsonObject HandleUpdate(string command, System.Text.Json.JsonElement arguments, AuthenticatedPipeCaller caller)
+        => (updates ?? throw new IOException("SERVICE_UPDATE_AUTHORITY_UNAVAILABLE")).Handle(command, arguments, caller);
+
+    internal Task RunUpdateSessionAsync(System.Text.Json.JsonElement arguments, AuthenticatedPipeCaller caller, ServiceMcpPipes pipes,
+        Stream control, Func<object, Task> reply, CancellationToken stopping)
+        => (updates ?? throw new IOException("SERVICE_UPDATE_AUTHORITY_UNAVAILABLE")).RunSessionAsync(arguments, caller, pipes, control, reply, stopping);
+
+    internal Task<System.Text.Json.Nodes.JsonObject> UpdateHealthAsync(System.Text.Json.JsonElement arguments, string sid)
+        => (updates ?? throw new IOException("SERVICE_UPDATE_AUTHORITY_UNAVAILABLE")).HealthAsync(arguments, sid);
+
+    public void Dispose() => updates?.Dispose();
 
     internal static UpdateStartupDisposition InspectFootprint()
     {

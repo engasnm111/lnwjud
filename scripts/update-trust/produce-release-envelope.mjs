@@ -1,12 +1,10 @@
 import { open, realpath, link, unlink } from 'node:fs/promises';
-import { Buffer } from 'node:buffer';
 import process from 'node:process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { authenticateEnvelope, authenticateHistoricalEnvelope, hash, loadProductionPolicy, parseStrictJson,
-  refuse, requireConfigured, schema, signAuthenticatedPayload, validateRelationships } from './release-envelope.mjs';
-import { authenticateBuildEvidence, readBoundedFile } from './verify-build-evidence.mjs';
+import { authenticateEnvelope, authenticateHistoricalEnvelope, refuse, schema } from './release-envelope.mjs';
+import { readBoundedFile } from './verify-build-evidence.mjs';
 
 export async function authenticatePrevious(payload, paths, policy, now) {
   const envelope = await readBoundedFile(paths.previousEnvelope, BigInt(schema.limits.envelopeBytes));
@@ -45,32 +43,8 @@ export async function publishEnvelope(filename, bytes, beforePublish = () => {})
   }
 }
 
-export async function produceReleaseEnvelope(options) {
-  const policy = loadProductionPolicy();
-  requireConfigured(policy);
-  const now = BigInt(Math.floor(Date.now() / 1000));
-  const source = await readBoundedFile(options.payload, BigInt(schema.limits.payloadBytes));
-  const payload = parseStrictJson(source.bytes, schema.limits.payloadBytes);
-  validateRelationships(payload, policy, now);
-  await authenticatePrevious(payload, options, policy, now);
-  await authenticateBuildEvidence(payload, options, policy);
-  if (hash((await readBoundedFile(options.payload, BigInt(schema.limits.payloadBytes))).bytes) !== source.sha256) refuse('RELEASE_INPUT_CHANGED');
-  let secret;
-  try {
-    secret = process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
-    delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
-    if (typeof secret !== 'string' || secret.length === 0 || secret.length > 16384) refuse('RELEASE_SIGNER_INVALID');
-    const keyBytes = Buffer.from(secret, 'utf8');
-    secret = undefined;
-    let bytes;
-    try { bytes = signAuthenticatedPayload(payload, policy, options.keyId, keyBytes, BigInt(Math.floor(Date.now() / 1000))); }
-    finally { keyBytes.fill(0); }
-    await publishEnvelope(options.output, bytes);
-    return { envelopeSha256: hash(bytes) };
-  } finally {
-    delete process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM;
-    secret = undefined;
-  }
+export async function produceReleaseEnvelope() {
+  refuse('RELEASE_SIGNER_LEGACY_DISABLED');
 }
 
 const required = ['payload', 'artifact', 'provenance', 'artifactBundle', 'provenanceBundle', 'previousEnvelope',

@@ -36,7 +36,17 @@ internal static class Program
             if (args.Length == 2 && args[0] == "service-watch") return await WindowsContainmentServiceClient.RunWatcherAsync(args[1], Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.OpenStandardError()).ConfigureAwait(false);
             if (args.Length == 2 && args[0] == "service-enroll-preflight") return RunEnrollmentPreflight(args[1]);
             if (args.Length == 2 && args[0] == "service-enroll-attestation-preflight") return RunEnrollmentAttestationPreflight(args[1]);
+            if (args.Length == 2 && args[0] == "mcp-stdio-proxy") return await ServiceMcpStdioProxy.RunAsync(args[1]).ConfigureAwait(false);
+            if (args.Length == 2 && args[0] == "mcp-stdio-owner") return await ServiceMcpStdioProxy.OwnConnectionAsync(args[1]).ConfigureAwait(false);
+            if (args.Length == 2 && args[0] == "mcp-stdio-local-resource")
+            {
+                await AuthorizeLocalMcpDispatchAsync(UpdateStartupGate.InspectFootprint(), () => WindowsContainmentServiceClient.SendAsync(args[1],
+                    JsonSerializer.SerializeToUtf8Bytes(new { protocol = 3, command = "update_opaque" }))).ConfigureAwait(false);
+                return await McpStdioProxy.RunAsync().ConfigureAwait(false);
+            }
+#if NATIVE_CONTAINMENT_TESTS
             if (args.Length == 1 && args[0] == "mcp-stdio-proxy") return await McpStdioProxy.RunAsync().ConfigureAwait(false);
+#endif
 #if !NATIVE_CONTAINMENT_TESTS
             if (args.Length == 1 && args[0] == "service") { WindowsContainmentService.Run(); return 0; }
             if (args.Length == 1 && args[0] == "service-install") { WindowsContainmentServiceInstaller.Install(); return 0; }
@@ -68,7 +78,7 @@ internal static class Program
         catch (Exception failure)
         {
             var rpcFailure = ServiceRpcFailureEnvelope(failure);
-            if (args.Length == 2 && args[0] == "service-rpc" && rpcFailure is not null)
+            if (args.Length == 2 && args[0] is "service-rpc" or "mcp-stdio-owner" && rpcFailure is not null)
             {
                 try { Console.WriteLine(rpcFailure); }
                 catch { }
@@ -142,6 +152,21 @@ internal static class Program
             reason = "ENROLLMENT_ACCEPTANCE_UNAVAILABLE", metadata.ReleaseId, metadata.Version,
             metadata.ReleaseEnvelopeSha256, metadata.LayoutEnvelopeSha256, metadata.PolicySha256 }));
         return 0;
+    }
+
+    internal static async Task AuthorizeLocalMcpDispatchAsync(UpdateStartupDisposition footprint, Func<Task<byte[]>> recordOpaqueDispatch)
+    {
+        if (footprint.Kind == "unmanaged") return;
+        var response = await recordOpaqueDispatch().ConfigureAwait(false);
+        try
+        {
+            using var document = JsonDocument.Parse(response);
+            var root = document.RootElement;
+            if (root.GetProperty("protocol").GetInt32() != 3 || !root.GetProperty("ok").GetBoolean()
+                || root.GetProperty("result").GetProperty("kind").GetString() != "opaque_dispatch_recorded")
+                throw new IOException("SERVICE_UPDATE_OPAQUE_ADMISSION_UNVERIFIED");
+        }
+        finally { CryptographicOperations.ZeroMemory(response); }
     }
 
     private static async Task<int> RunServiceRpcAsync(string expectedSha256)

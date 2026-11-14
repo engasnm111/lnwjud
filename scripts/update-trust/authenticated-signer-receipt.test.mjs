@@ -12,7 +12,7 @@ import { pathToFileURL, URL } from 'node:url';
 import { hash } from './release-envelope.mjs';
 import { authenticateAuthorizationV2 } from './release-authorization-v2.mjs';
 import { inspectSignerVerifierJob, signerBinding, signerBindingFromReceipt, signerHostContext, signerReceiptAudience,
-  trustedSignerOidcKeys, verifySignerReceipt, withAuthenticatedSignerReceipt } from './authenticated-signer-receipt.mjs';
+  prepareSignerIssuerKeys, trustedSignerOidcKeys, verifySignerReceipt, withAuthenticatedSignerReceipt } from './authenticated-signer-receipt.mjs';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'receiver-fixture', alg: 'RS256', use: 'sig' };
@@ -82,6 +82,64 @@ test('RS256 proof binds the exact recipient, request and independently selected 
   assert.deepEqual(signerBindingFromReceipt(receipt, context, request.challenge, request.recipientSpkiSha256, 'baseline', 'none'), request);
   assert.deepEqual(signerHostContext(env(), 'receive-signing-evidence'), context);
 });
+
+test('update proof binds predecessor purpose, version, identity and exact envelope', () => {
+  const updateReceipt = { ...receipt, schema: 'lnwjud.keyfree-update-evidence/v1', previousPurpose: 'baseline',
+    previousVersion: '5.9.0', previousReleaseIdentity: '6'.repeat(64), previousEnvelopeSha256: '7'.repeat(64) };
+  const binding = signerBindingFromReceipt(updateReceipt, context, request.challenge, request.recipientSpkiSha256, 'update', updateReceipt.previousEnvelopeSha256);
+  const token = jwt({ ...claims(), aud: signerReceiptAudience(binding) });
+  assert.equal(verify(token, binding).bindingSha256, hash(Buffer.from(JSON.stringify(binding))));
+  for (const [field, value] of [['previousPurpose', 'update'], ['previousVersion', '5.8.0'],
+    ['previousReleaseIdentity', '8'.repeat(64)], ['previousEnvelopeSha256', '9'.repeat(64)]])
+    assert.throws(() => verify(token, { ...binding, [field]: value }), /SIGNER_RECEIPT_REFUSED/);
+  assert.throws(() => signerBindingFromReceipt(receipt, context, request.challenge, request.recipientSpkiSha256, 'update', '7'.repeat(64)));
+});
+
+test('actual key-free mint and receiver CLIs carry update proof and reject receipt substitution', async () => fixture(async directory => {
+  const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const spki = ec.publicKey.export({ type: 'spki', format: 'der' });
+  const policy = JSON.parse(await readFile(new URL('../../config/update-release-policy.json', import.meta.url)));
+  policy.roots = [{ keyId: 'mint-fixture', algorithm: 'ecdsa-p256-sha256-p1363', spkiBase64: spki.toString('base64'),
+    spkiSha256: hash(spki), roles: ['release', 'recovery'], notBefore: String(now - 60), expiresAt: String(now + 86400),
+    revoked: false, allowHistoricalRecovery: true }];
+  const policyBytes = Buffer.from(JSON.stringify(policy));
+  await writeFile(path.join(directory, 'config/update-release-policy.json'), policyBytes);
+  const updateReceipt = { ...receipt, schema: 'lnwjud.keyfree-update-evidence/v1', policySha256: hash(policyBytes), previousPurpose: 'baseline',
+    previousVersion: '5.9.0', previousReleaseIdentity: '6'.repeat(64), previousEnvelopeSha256: '7'.repeat(64) };
+  const binding = signerBindingFromReceipt(updateReceipt, context, request.challenge, hash(spki), 'update', updateReceipt.previousEnvelopeSha256);
+  const token = jwt({ ...claims(), aud: signerReceiptAudience(binding), jti: 'workflow-update-fixture' });
+  const evidence = path.join(directory, '_verified-evidence'); await mkdir(evidence);
+  const receiptPath = path.join(evidence, 'receipt.json'); await writeFile(receiptPath, JSON.stringify(updateReceipt));
+  const script = path.join(directory, 'scripts/update-trust/authenticated-signer-receipt.mjs');
+  const environment = { SystemRoot: process.env.SystemRoot, TEMP: os.tmpdir(), TMP: os.tmpdir(), ...env(),
+    GITHUB_WORKSPACE: directory, RUNNER_TEMP: directory, LNWJUD_SOURCE_RUN_ID: receipt.sourceRunId,
+    LNWJUD_SIGNER_CHALLENGE: request.challenge, LNWJUD_SIGNING_KEY_ID: 'mint-fixture', LNWJUD_SIGNING_PURPOSE: 'update',
+    LNWJUD_PREDECESSOR_RUN_ID: '100', LNWJUD_PREDECESSOR_ARTIFACT_ID: '200',
+    LNWJUD_PREDECESSOR_ENVELOPE_SHA256: updateReceipt.previousEnvelopeSha256,
+    ACTIONS_ID_TOKEN_REQUEST_URL: 'https://pipelines.actions.githubusercontent.com/unit-only', ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'unit-only-request-token',
+    LNWJUD_TEST_SCRIPT: script, LNWJUD_TEST_PROOF: token, LNWJUD_TEST_AUDIENCE: signerReceiptAudience(binding) };
+  const entry = `import child from 'node:child_process'; import { syncBuiltinESMExports } from 'node:module'; import { pathToFileURL } from 'node:url';
+    for (const method of ['exec','execFile','spawn','fork','execSync','execFileSync','spawnSync']) child[method] = () => { throw Error('CHILD_FORBIDDEN'); };
+    syncBuiltinESMExports();
+    globalThis.fetch = async resource => {
+      if (process.env.LNWJUD_TEST_MODE !== 'mint-proof' || new URL(resource).searchParams.get('audience') !== process.env.LNWJUD_TEST_AUDIENCE) throw Error('NETWORK_FORBIDDEN');
+      return { ok:true, redirected:false, body:(async function*(){ yield Buffer.from(JSON.stringify({value:process.env.LNWJUD_TEST_PROOF})); })() };
+    };
+    process.argv = [process.execPath, process.env.LNWJUD_TEST_SCRIPT, process.env.LNWJUD_TEST_MODE];
+    await import(pathToFileURL(process.env.LNWJUD_TEST_SCRIPT).href);`;
+  const run = mode => childProcess.spawnSync(process.execPath, ['--input-type=module', '-e', entry], {
+    cwd: directory, env: { ...environment, LNWJUD_TEST_MODE: mode,
+      GITHUB_JOB: mode === 'mint-proof' ? 'verify-candidate-evidence' : 'receive-signing-evidence' }, encoding: 'utf8', windowsHide: true });
+  const minted = run('mint-proof'); assert.equal(minted.status, 0, minted.stderr);
+  assert.equal(JSON.parse(minted.stdout).status, 'signer-proof-minted-only');
+  assert.deepEqual(JSON.parse(await readFile(path.join(evidence, 'signer-request.json'))), binding);
+  await writeFile(receiptPath, JSON.stringify({ ...updateReceipt, previousVersion: '5.8.9' }));
+  const changed = run('receive-proof'); assert.notEqual(changed.status, 0); assert.equal(changed.stdout, '');
+  await writeFile(receiptPath, JSON.stringify(updateReceipt));
+  const received = run('receive-proof'); assert.equal(received.status, 0, received.stderr);
+  assert.equal(JSON.parse(received.stdout).status, 'authenticated-signer-receiver-validation-only');
+  const replay = run('receive-proof'); assert.notEqual(replay.status, 0); assert.equal(replay.stdout, '');
+}));
 
 test('correctly signed cross-job, cross-run, cross-repository and unprotected proofs refuse', () => {
   for (const [name, value] of Object.entries({ iss: 'https://other.invalid', aud: 'other', sub: 'repo:engasnm111/lnwjud:ref:refs/heads/main',
@@ -337,10 +395,13 @@ process.env = new Proxy(process.env, { get(target, name) {
   await writeFile(path.join(directory, 'CANDIDATE.json'), nextBytes);
   await writeFile(path.join(directory, next.release.artifact.name), nextArtifact);
   await writeFile(path.join(directory, next.release.provenance.name), nextProvenanceBytes);
-  for (const [point, nonce] of [['before-key', '6'], ['before-publication', '7'], ['proof-expired-publication', '9'], ['', '8']]) {
+  for (const [point, nonce] of [['before-key', '6'], ['before-publication', '7'], ['proof-expired-publication', '9'], ['receipt-mismatch', 'a'], ['', '8']]) {
     await rm(keyMarker, { force: true });
     await writeFile(previousPath, envelope);
-    const updateReceipt = { ...fixtureReceipt, candidateSha256: hash(nextBytes) };
+    const updateReceipt = { ...fixtureReceipt, schema: 'lnwjud.keyfree-update-evidence/v1', candidateSha256: hash(nextBytes),
+      previousPurpose: 'baseline', previousVersion: authenticated.payload.release.version,
+      previousReleaseIdentity: authenticated.identitySha256, previousEnvelopeSha256: hash(envelope) };
+    if (point === 'receipt-mismatch') updateReceipt.previousVersion = '5.8.9';
     const updateBinding = signerBindingFromReceipt(updateReceipt, context, nonce.repeat(64), hash(spki), 'update', hash(envelope));
     await writeFile(path.join(directory, 'receipt.json'), JSON.stringify(updateReceipt));
     await writeFile(path.join(directory, 'request.json'), JSON.stringify(updateBinding));
@@ -358,8 +419,8 @@ process.env = new Proxy(process.env, { get(target, name) {
       assert.notEqual(attempt.status, 0, point);
       assert.equal(attempt.stdout, '');
       await assert.rejects(readFile(updateOutput), { code: 'ENOENT' });
-      assert.equal(hash(await readFile(previousPath)), hash(point === 'proof-expired-publication' ? envelope : renewedEnvelope), 'controlled publication boundary');
-      if (point === 'before-key') await assert.rejects(readFile(keyMarker), { code: 'ENOENT' });
+      assert.equal(hash(await readFile(previousPath)), hash(['before-key', 'before-publication'].includes(point) ? renewedEnvelope : envelope), 'controlled publication boundary');
+      if (['before-key', 'receipt-mismatch'].includes(point)) await assert.rejects(readFile(keyMarker), { code: 'ENOENT' });
       else assert.equal(await readFile(keyMarker, 'utf8'), 'key-read\n');
     } else {
       assert.equal(attempt.status, 0, attempt.stderr);
@@ -369,7 +430,27 @@ process.env = new Proxy(process.env, { get(target, name) {
   }
 }));
 
-test('validation workflow grants OIDC only to verifier and keeps receiver key-free', async () => {
+test('fresh issuer keys come only from the fixed HTTPS issuer before key access and bind the current job', async () => fixture(async directory => {
+  const environment = { ...env(), GITHUB_JOB: 'verify-candidate-evidence', RUNNER_TEMP: directory,
+    LNWJUD_SIGNER_USE_FRESH_ISSUER_KEYS: '1' };
+  let requests = 0;
+  const fetch = async (url, options) => {
+    requests++;
+    assert.equal(url, 'https://token.actions.githubusercontent.com/.well-known/jwks');
+    assert.equal(options.redirect, 'error');
+    return { ok: true, body: (async function* () { yield Buffer.from(JSON.stringify({ keys: [jwk] })); })() };
+  };
+  await prepareSignerIssuerKeys(environment, fetch);
+  assert.equal(requests, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(trustedSignerOidcKeys(Math.floor(Date.now() / 1000), environment))), [jwk]);
+  assert.throws(() => trustedSignerOidcKeys(Math.floor(Date.now() / 1000), { ...environment, GITHUB_RUN_ID: '601' }));
+  assert.throws(() => trustedSignerOidcKeys(Math.floor(Date.now() / 1000) + 601, environment));
+  await assert.rejects(prepareSignerIssuerKeys(environment, fetch), { code: 'EEXIST' });
+  await assert.rejects(prepareSignerIssuerKeys({ ...environment, GITHUB_REF: 'refs/heads/dev' }, fetch));
+  assert.equal(requests, 2);
+}));
+
+test('workflow grants OIDC only to verifier and exposes the release key only to the in-process signer step', async () => {
   const workflow = await readFile(new URL('../../.github/workflows/update-signing.yml', import.meta.url), 'utf8');
   assert.match(workflow, /^permissions: \{\}\r?$/m);
   assert.equal([...workflow.matchAll(/^ {6}id-token: write\r?$/gm)].length, 1);
@@ -381,8 +462,17 @@ test('validation workflow grants OIDC only to verifier and keeps receiver key-fr
   const verifier = workflow.split('  verify-candidate-evidence:')[1].split('\n  inspect-verifier-job:')[0];
   const receiver = workflow.split('  receive-signing-evidence:')[1];
   assert.match(verifier, / {6}id-token: write/);
-  assert.doesNotMatch(receiver, /id-token:|secrets\./);
-  assert.doesNotMatch(workflow, /LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM|produce-release-authorization-v2\.mjs/);
+  assert.doesNotMatch(receiver, /id-token:/);
+  assert.doesNotMatch(verifier, /secrets\.|LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM/);
+  assert.match(receiver, /environment: lnwjud-update-signing/);
+  const keySteps = receiver.split(/^ {6}- /m).filter(step => /secrets\./.test(step));
+  assert.equal(keySteps.length, 1);
+  assert.match(keySteps[0], /if: \$\{\{ inputs.operation == 'sign' \}\}/);
+  assert.match(keySteps[0], /LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM: \$\{\{ secrets.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM \}\}/);
+  assert.match(keySteps[0], /run: node scripts\/update-trust\/signed-release-output\.mjs sign/);
+  assert.doesNotMatch(keySteps[0], /curl|fetch|download|gh |npm|pnpm|exec|GITHUB_TOKEN/);
+  assert.ok(receiver.indexOf('authenticated-signer-receipt.mjs prepare-issuer-keys') < receiver.indexOf('secrets.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM'));
+  assert.ok(receiver.indexOf('path: _subjects') < receiver.indexOf('secrets.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM'));
   assert.ok(verifier.indexOf('keyfree-signing-evidence.mjs') < verifier.indexOf('authenticated-signer-receipt.mjs mint-proof'));
   assert.match(receiver, /needs\.inspect-verifier-job\.outputs\.verifier_check_run_id/);
   assert.match(receiver, /runs-on: ubuntu-24.04/);

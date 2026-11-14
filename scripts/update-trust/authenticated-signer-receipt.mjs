@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createPublicKey, verify } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { appendFile, lstat, mkdir, open, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -16,6 +16,7 @@ const workflowRef = `${repository}/.github/workflows/update-signing.yml@refs/hea
 const bindingFields = ['schema', 'purpose', 'sourceSha', 'sourceRunId', 'sourceRunAttempt', 'builderSha', 'policySha256',
   'candidateSha256', 'manifestSha256', 'recipientSpkiSha256', 'challenge', 'signerRunId', 'signerRunAttempt',
   'signerWorkflowSha', 'previousEnvelopeSha256'];
+const previousFields = ['previousPurpose', 'previousVersion', 'previousReleaseIdentity'];
 const contextFields = ['workflowSha', 'runId', 'runAttempt', 'verifierCheckRunId'];
 const receiptFields = ['schema', 'status', 'sourceSha', 'sourceRunId', 'builderSha', 'policySha256', 'candidateSha256', 'manifestSha256'];
 const hex = (value, size) => typeof value === 'string' && new RegExp(`^[a-f0-9]{${size}}$`).test(value);
@@ -34,7 +35,9 @@ function strings(value, fields) {
 }
 
 export function signerBinding(value) {
-  const binding = strings(value, bindingFields);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) refuse();
+  const purpose = Object.getOwnPropertyDescriptor(value ?? {}, 'purpose')?.value;
+  const binding = strings(value, purpose === 'update' ? [...bindingFields, ...previousFields] : bindingFields);
   if (binding.schema !== 'lnwjud.signer-request/v1' || !['baseline', 'update'].includes(binding.purpose)
     || !hex(binding.sourceSha, 40) || !hex(binding.builderSha, 40) || !hex(binding.signerWorkflowSha, 40)
     || !decimal(binding.sourceRunId) || binding.sourceRunAttempt !== '1'
@@ -43,6 +46,9 @@ export function signerBinding(value) {
   for (const field of ['policySha256', 'candidateSha256', 'manifestSha256', 'recipientSpkiSha256', 'challenge'])
     if (!hex(binding[field], 64)) refuse();
   if (binding.purpose === 'baseline' ? binding.previousEnvelopeSha256 !== 'none' : !hex(binding.previousEnvelopeSha256, 64)) refuse();
+  if (binding.purpose === 'update' && (!['baseline', 'update'].includes(binding.previousPurpose)
+    || !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(binding.previousVersion)
+    || binding.previousVersion.length > 32 || !hex(binding.previousReleaseIdentity, 64))) refuse();
   return binding;
 }
 
@@ -68,14 +74,34 @@ export function signerHostContext(environment, job) {
   return strings({ ...context, verifierCheckRunId: environment.LNWJUD_VERIFIER_CHECK_RUN_ID }, contextFields);
 }
 
-export function signerBindingFromReceipt(value, context, challenge, recipientSpkiSha256, purpose, previousEnvelopeSha256) {
-  const receipt = strings(value, receiptFields);
-  if (receipt.schema !== 'lnwjud.keyfree-evidence/v1' || receipt.status !== 'key-free-attestations-observed-only') refuse();
+export function signerBindingFromReceipt(value, context, challenge, recipientSpkiSha256, purpose, previousEnvelopeSha256, previous) {
+  const receipt = strings(value, purpose === 'update' ? [...receiptFields, ...previousFields, 'previousEnvelopeSha256'] : receiptFields);
+  if (receipt.schema !== (purpose === 'update' ? 'lnwjud.keyfree-update-evidence/v1' : 'lnwjud.keyfree-evidence/v1')
+    || receipt.status !== 'key-free-attestations-observed-only'
+    || purpose === 'update' && (receipt.previousEnvelopeSha256 !== previousEnvelopeSha256
+      || previous && (receipt.previousPurpose !== previous.payload.kind || receipt.previousVersion !== previous.payload.release.version
+        || receipt.previousReleaseIdentity !== previous.identitySha256))) refuse();
   return signerBinding({ schema: 'lnwjud.signer-request/v1', purpose, sourceSha: receipt.sourceSha,
     sourceRunId: receipt.sourceRunId, sourceRunAttempt: '1', builderSha: receipt.builderSha,
     policySha256: receipt.policySha256, candidateSha256: receipt.candidateSha256, manifestSha256: receipt.manifestSha256,
     recipientSpkiSha256, challenge, signerRunId: context.runId, signerRunAttempt: context.runAttempt,
-    signerWorkflowSha: context.workflowSha, previousEnvelopeSha256 });
+    signerWorkflowSha: context.workflowSha, previousEnvelopeSha256,
+    ...(purpose === 'update' ? Object.fromEntries(previousFields.map(field => [field, receipt[field]])) : {}) });
+}
+
+export function signingPurposeSelection(environment) {
+  const purpose = environment.LNWJUD_SIGNING_PURPOSE || 'baseline';
+  const previousRun = environment.LNWJUD_PREDECESSOR_RUN_ID || '';
+  const previousArtifact = environment.LNWJUD_PREDECESSOR_ARTIFACT_ID || '';
+  const previousEnvelope = environment.LNWJUD_PREDECESSOR_ENVELOPE_SHA256 || '';
+  const previousTag = environment.LNWJUD_PREDECESSOR_RELEASE_TAG || '';
+  if (purpose === 'baseline' ? previousRun !== '' || previousArtifact !== '' || previousEnvelope !== '' || previousTag !== ''
+    : purpose !== 'update' || (previousTag !== ''
+      ? !/^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(previousTag) || previousTag.length > 33
+        || previousRun !== '' || previousArtifact !== '' || previousEnvelope !== '' && !hex(previousEnvelope, 64)
+      : !decimal(previousRun) || !decimal(previousArtifact) || !Number.isSafeInteger(Number(previousRun))
+        || !Number.isSafeInteger(Number(previousArtifact)) || !hex(previousEnvelope, 64))) refuse();
+  return Object.freeze({ purpose, previousRun, previousArtifact, previousEnvelope, ...(previousTag ? { previousTag } : {}) });
 }
 
 function base64url(text, maximum) {
@@ -86,13 +112,53 @@ function base64url(text, maximum) {
 }
 
 // Issuer rotation requires a reviewed public-key pin update, never a signer-side download.
-export function trustedSignerOidcKeys(now = Math.floor(Date.now() / 1000)) {
-  const pins = parseStrictJson(readFileSync(new URL('./github-oidc-pins.json', import.meta.url)), 16384, 4);
+export function trustedSignerOidcKeys(now = Math.floor(Date.now() / 1000), environment = process.env) {
+  let pins;
+  if (environment.LNWJUD_SIGNER_USE_FRESH_ISSUER_KEYS === '1') {
+    const context = workflowContext(environment, environment.GITHUB_JOB);
+    if (!['verify-candidate-evidence', 'receive-signing-evidence'].includes(environment.GITHUB_JOB)
+      || !path.isAbsolute(environment.RUNNER_TEMP ?? '')) refuse();
+    const filename = path.join(environment.RUNNER_TEMP, 'lnwjud-github-oidc-keys.json');
+    const info = lstatSync(filename);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 32768 || realpathSync(filename) !== filename) refuse();
+    pins = parseStrictJson(readFileSync(filename), 32768, 4);
+    if (pins.workflowSha !== context.workflowSha || pins.runId !== context.runId || pins.runAttempt !== context.runAttempt
+      || pins.job !== environment.GITHUB_JOB || pins.expiresAt - pins.notBefore > 600) refuse();
+  } else {
+    pins = parseStrictJson(readFileSync(new URL('./github-oidc-pins.json', import.meta.url)), 16384, 4);
+  }
   if (pins.issuer !== issuer || !Number.isSafeInteger(pins.notBefore) || !Number.isSafeInteger(pins.expiresAt)
     || !Number.isSafeInteger(now) || pins.notBefore < 0 || pins.expiresAt <= pins.notBefore
     || pins.expiresAt - pins.notBefore > 604800 || now < pins.notBefore || now >= pins.expiresAt
     || !Array.isArray(pins.keys) || pins.keys.length === 0 || pins.keys.length > 16) refuse();
   return pins.keys;
+}
+
+export async function prepareSignerIssuerKeys(environment, fetch = globalThis.fetch) {
+  requireKeyFree();
+  const context = workflowContext(environment, environment.GITHUB_JOB);
+  if (!['verify-candidate-evidence', 'receive-signing-evidence'].includes(environment.GITHUB_JOB)
+    || !path.isAbsolute(environment.RUNNER_TEMP ?? '')
+    || await realpath(environment.RUNNER_TEMP) !== environment.RUNNER_TEMP) refuse();
+  const response = await fetch(`${issuer}/.well-known/jwks`, {
+    redirect: 'error', signal: globalThis.AbortSignal.timeout(20000),
+  });
+  const document = await responseJson(response, 16384);
+  if (!Array.isArray(document.keys) || document.keys.length === 0 || document.keys.length > 16) refuse();
+  const seen = new Set();
+  for (const key of document.keys) {
+    if (typeof key.kid !== 'string' || !/^[!-~]{1,128}$/.test(key.kid) || seen.has(key.kid)
+      || key.kty !== 'RSA' || key.alg !== 'RS256' || key.use !== 'sig' || key.e !== 'AQAB') refuse();
+    seen.add(key.kid);
+    base64url(key.n, 512);
+    const publicKey = createPublicKey({ key, format: 'jwk' });
+    if (![2048, 3072, 4096].includes(publicKey.asymmetricKeyDetails?.modulusLength)) refuse();
+  }
+  requireKeyFree();
+  const now = Math.floor(Date.now() / 1000);
+  const snapshot = { issuer, notBefore: now, expiresAt: now + 600, keys: document.keys, ...context, job: environment.GITHUB_JOB };
+  await writeFile(path.join(environment.RUNNER_TEMP, 'lnwjud-github-oidc-keys.json'), JSON.stringify(snapshot), { flag: 'wx', mode: 0o600 });
+  trustedSignerOidcKeys(now, { ...environment, LNWJUD_SIGNER_USE_FRESH_ISSUER_KEYS: '1' });
 }
 
 export function verifySignerReceipt(token, request, expectedContext, keys, now) {
@@ -233,7 +299,9 @@ async function handoffInputs(context) {
   const directory = path.join(root, '_verified-evidence');
   const receiptFile = await readBoundedFile(path.join(directory, 'receipt.json'), 4096n);
   const receipt = parseStrictJson(receiptFile.bytes, 4096);
-  const request = signerBindingFromReceipt(receipt, context, process.env.LNWJUD_SIGNER_CHALLENGE, recipient.spkiSha256, 'baseline', 'none');
+  const selection = signingPurposeSelection(process.env);
+  const request = signerBindingFromReceipt(receipt, context, process.env.LNWJUD_SIGNER_CHALLENGE, recipient.spkiSha256,
+    selection.purpose, selection.purpose === 'update' ? selection.previousEnvelope || receipt.previousEnvelopeSha256 : 'none');
   if (request.policySha256 !== policyFile.sha256 || request.sourceRunId !== process.env.LNWJUD_SOURCE_RUN_ID) refuse();
   return { request, directory };
 }
@@ -242,6 +310,17 @@ async function main() {
   if (process.argv.length !== 3) refuse();
   requireKeyFree();
   const operation = process.argv[2];
+  if (operation === 'prepare-issuer-keys') {
+    await prepareSignerIssuerKeys(process.env);
+    process.stdout.write(JSON.stringify({ status: 'issuer-keys-prepared-key-free' }) + '\n');
+    return;
+  }
+  if (operation === 'inspect-purpose') {
+    workflowContext(process.env, 'verify-protected-source');
+    const selection = signingPurposeSelection(process.env);
+    process.stdout.write(JSON.stringify({ status: 'signing-purpose-selected-only', purpose: selection.purpose }) + '\n');
+    return;
+  }
   if (operation === 'inspect-verifier-job') {
     const context = workflowContext(process.env, 'inspect-verifier-job');
     const run = await githubApi(`actions/runs/${context.runId}/attempts/${context.runAttempt}`);

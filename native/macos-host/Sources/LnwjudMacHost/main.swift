@@ -87,6 +87,8 @@ private func run() {
     }
 }
 
+if CommandLine.arguments.contains("--process-owner-daemon") { exit(MacProcessOwnerDaemon.run()) }
+
 umask(0o077)
 signal(SIGTERM, SIG_IGN)
 let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global(qos: .utility))

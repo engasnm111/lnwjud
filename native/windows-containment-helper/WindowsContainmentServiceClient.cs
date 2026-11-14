@@ -60,6 +60,55 @@ internal static class WindowsContainmentServiceClient
     internal static bool ShouldWaitForOutput(ServiceAttemptPhase phase) =>
         phase is ServiceAttemptPhase.Prepared or ServiceAttemptPhase.DispatchCommitted;
 
+    internal sealed class McpChannel(NamedPipeClientStream pipe, ServiceEndpointIdentity.VerifiedEndpoint? endpoint) : IDisposable
+    {
+        internal async Task<T> ReadResultAsync<T>(CancellationToken token)
+        {
+            var response = await ReadFrameAsync(pipe, token).ConfigureAwait(false);
+            endpoint?.Revalidate();
+            using var document = JsonDocument.Parse(response);
+            var root = document.RootElement;
+            if (root.GetProperty("protocol").GetInt32() != 3 || !root.GetProperty("ok").GetBoolean())
+                throw new IOException("SERVICE_MCP_REQUEST_REFUSED");
+            return root.GetProperty("result").Deserialize<T>(Json) ?? throw new IOException("SERVICE_MCP_RESPONSE_INVALID");
+        }
+        public void Dispose() { endpoint?.Dispose(); pipe.Dispose(); }
+        internal Task SignalCloseAsync(CancellationToken token) => pipe.WriteAsync(new byte[] { 0 }, token).AsTask();
+    }
+
+    internal static async Task<McpChannel> OpenMcpChannelAsync(string expectedSha256, object request, CancellationToken token)
+    {
+        ValidateSha256(expectedSha256);
+        if (ServiceEndpointIdentity.IsServiceDefinitelyAbsent(WindowsContainmentService.ServiceName)) throw new ServiceEndpointNotInstalledException();
+        var pipe = await ServicePipeSecurity.ConnectClientAsync(WindowsContainmentService.PipeName, token).ConfigureAwait(false);
+        try { return await SendMcpRequestAsync(pipe, VerifyServerIdentity(pipe.SafePipeHandle, expectedSha256), request, token).ConfigureAwait(false); }
+        catch { pipe.Dispose(); throw; }
+    }
+
+#if NATIVE_CONTAINMENT_TESTS
+    internal static async Task<McpChannel> OpenMcpTestChannelAsync(string pipeName, object request, CancellationToken token)
+    {
+        var pipe = await ServicePipeSecurity.ConnectClientAsync(pipeName, token).ConfigureAwait(false);
+        try { return await SendMcpRequestAsync(pipe, null, request, token).ConfigureAwait(false); }
+        catch { pipe.Dispose(); throw; }
+    }
+#endif
+
+    private static async Task<McpChannel> SendMcpRequestAsync(NamedPipeClientStream pipe, ServiceEndpointIdentity.VerifiedEndpoint? endpoint, object request, CancellationToken token)
+    {
+        try
+        {
+            var payload = JsonSerializer.SerializeToUtf8Bytes(request, Json);
+            if (payload.Length is < 2 or > MaximumFrameBytes) throw new IOException("SERVICE_REQUEST_SIZE_INVALID");
+            var header = new byte[4]; BinaryPrimitives.WriteInt32LittleEndian(header, payload.Length);
+            await pipe.WriteAsync(header, token).ConfigureAwait(false);
+            await pipe.WriteAsync(payload, token).ConfigureAwait(false);
+            await pipe.FlushAsync(token).ConfigureAwait(false);
+            return new(pipe, endpoint);
+        }
+        catch { endpoint?.Dispose(); throw; }
+    }
+
     internal static bool HasVerifiedPublishedOutput(ServiceAttemptObservation observation, ServiceOutputObservation output) =>
         observation.Phase == ServiceAttemptPhase.TerminalVerified
         && !observation.ReservationHeld
@@ -224,7 +273,9 @@ internal static class WindowsContainmentServiceClient
         // SCM validates and launches under the caller's token. Leave a bounded
         // window for slow Windows profile/AV initialization, without making
         // observation or preflight RPCs indefinitely block the gateway.
-        if (command.GetString() == "run") return TimeSpan.FromSeconds(25);
+        if (command.GetString() is "run" or "mcp_close_child" or "mcp_close_connection") return TimeSpan.FromSeconds(25);
+        if (command.GetString() is "update_enroll" or "update_prepare") return TimeSpan.FromSeconds(175);
+        if (command.GetString() == "update_health") return TimeSpan.FromSeconds(40);
         return TimeSpan.FromSeconds(10);
     }
 
