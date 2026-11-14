@@ -2,7 +2,7 @@
 
 Operational release sequencing is defined by [`docs/development/RELEASE_PROCESS.md`](../docs/development/RELEASE_PROCESS.md). This checklist records current-version acceptance evidence and does not override that sequence.
 
-**Current version:** `v5.9.1` - Windows installer `lnwjud-Setup-5.9.1.exe` and portable executable `lnwjud-Portable-5.9.1.exe`; MCP registry **299 total definitions / 287 advertised by default / all 299 with Codex delegation plus Agent Swarm enabled**.
+**Current version:** `v5.9.2` - Windows installer `lnwjud-Setup-5.9.2.exe` and portable executable `lnwjud-Portable-5.9.2.exe`; MCP registry **299 total definitions / 287 advertised by default / all 299 with Codex delegation plus Agent Swarm enabled**.
 
 ## v5.9.0 manual-only release; automatic updater acceptance deferred
 

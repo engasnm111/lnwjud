@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WindowsNativeAuthority } from '@lnwjud/process';
+import { resolveInstalledResourcesPath } from '@lnwjud/shared';
 import { CONTAINMENT_HELPER_SHA256, CONTAINMENT_PIN_SHA256, CONTAINMENT_RUNTIME_SHA256 } from './containment-integrity.generated.js';
 
 export function createHostWindowsNativeAuthority(dataPath: string, trustedRuntimeDirectory?: string): WindowsNativeAuthority | undefined {
@@ -34,5 +35,5 @@ function resolveRuntimeDirectory(trustedRuntimeDirectory?: string): string {
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   return trustedRuntimeDirectory ?? (resourcesPath === undefined
     ? fileURLToPath(new URL('../../../apps/desktop/build/native-containment/', import.meta.url))
-    : path.join(resourcesPath, 'native-containment'));
+    : path.join(resolveInstalledResourcesPath(resourcesPath), 'native-containment'));
 }

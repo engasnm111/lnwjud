@@ -10,6 +10,7 @@ import { validateContainmentEvidence } from './verify-containment-artifacts.mjs'
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
 import { sourceRecoveryContracts } from '../../../scripts/update-trust/source-recovery-contracts.mjs';
 import { verifyPreparedInstalledLayout } from '../../../scripts/update-trust/prepare-installed-layout.mjs';
+import { verifyWindowsUpdatePayloadAsset, windowsRuntimePath } from './windows-update-layout.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(desktopRoot, '..', '..');
@@ -49,10 +50,16 @@ for (const name of artifactNames) {
   artifacts.push({ name, sizeBytes: metadata.size, sha256: await sha256File(filePath) });
 }
 const windowsAuthenticode = platform === 'win32' ? inspectWindowsAuthenticode(artifacts) : null;
-const installedLayoutRoot = optionalEnv('LNWJUD_VALIDATION_INSTALLED_ROOT');
+const installedLayoutRoot = optionalEnv('LNWJUD_VALIDATION_INSTALLED_ROOT')
+  ?? (platform === 'win32' && runtimeEvidence.installedLayout ? path.join(installerDirectory, 'win-unpacked') : null);
 const installedLayout = installedLayoutRoot === null ? null : await verifyPreparedInstalledLayout({
   rootDirectory: installedLayoutRoot, outputDirectory: installerDirectory, platform, architecture: runtimeEvidence.arch,
 });
+const updatePayload = runtimeEvidence.updatePayload ?? null;
+if (updatePayload !== null) {
+  if (platform !== 'win32' || installedLayout === null) throw new Error('Native update payload requires a verified Windows installed layout');
+  await verifyWindowsUpdatePayloadAsset(installerDirectory, updatePayload, version);
+}
 
 const provenance = {
   schemaVersion: 1,
@@ -83,6 +90,7 @@ const provenance = {
   artifacts,
   runtime: runtimeEvidence.files,
   ...(installedLayout === null ? {} : { installedLayout }),
+  ...(updatePayload === null ? {} : { updatePayload }),
 };
 
 const provenancePath = path.join(installerDirectory, 'PROVENANCE.json');
@@ -93,6 +101,7 @@ const sumLines = [
   ...artifacts.map((entry) => `${entry.sha256}  ${entry.name}`),
   `${provenanceHash}  PROVENANCE.json`,
   ...(installedLayout === null ? [] : [`${installedLayout.sha256}  ${installedLayout.name}`]),
+  ...(updatePayload === null ? [] : [`${updatePayload.sha256}  ${updatePayload.name}`]),
   ...runtimeEvidence.files.map((entry) => `${entry.sha256}  installed/${entry.relativePath}`),
 ];
 await writeFile(path.join(installerDirectory, 'SHA256SUMS.txt'), `${sumLines.join('\n')}\n`, 'utf8');
@@ -206,7 +215,8 @@ function signingConfigured(platformName) {
 
 function validateCapabilityBridge(evidence) {
   if (!isCapabilityBridgeIdentity(evidence.capabilityBridge)) throw new Error('Packaged capability bridge identity is missing or invalid');
-  const runtime = evidence.files.find((entry) => entry?.relativePath === 'resources/windows-capability-bridge.ps1');
+  const bridgePath = evidence.installedLayout ? windowsRuntimePath('resources/windows-capability-bridge.ps1') : 'resources/windows-capability-bridge.ps1';
+  const runtime = evidence.files.find((entry) => entry?.relativePath === bridgePath);
   if (!runtime || runtime.sha256 !== evidence.capabilityBridge.sha256 || runtime.sizeBytes !== evidence.capabilityBridge.sizeBytes) {
     throw new Error('Packaged capability bridge runtime evidence does not match the verified bridge identity');
   }

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "5.9.1",
-  "installationMode": "manual",
+  "version": "5.9.2",
+  "installationMode": "in-app",
   "automaticUpdaterEnabled": false,
   "targets": [
     "win32-x64",

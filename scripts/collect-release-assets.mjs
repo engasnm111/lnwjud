@@ -4,6 +4,10 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { copyFile, lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { verifyInstalledLayoutAsset } from './update-trust/prepare-installed-layout.mjs';
+import { verifyWindowsUpdatePayloadAsset } from '../apps/desktop/scripts/windows-update-layout.mjs';
+import { readBoundedFile } from './update-trust/verify-build-evidence.mjs';
+import { parseStrictJson } from './update-trust/release-envelope.mjs';
 
 const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8'));
@@ -16,6 +20,8 @@ if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`In
 if (!/^[0-9a-f]{40}$/i.test(expectedCommit)) throw new Error(`Invalid release commit SHA: ${expectedCommit}`);
 await assertRegularDirectory(stagingDirectory, 'Release staging directory');
 await prepareEmptyAssetsDirectory(assetsDirectory);
+const signedSidecarsDirectory = process.env.LNWJUD_SIGNED_WINDOWS_SIDECARS?.trim();
+const signedWindowsSidecars = signedSidecarsDirectory ? await readSignedWindowsSidecars(path.resolve(signedSidecarsDirectory)) : [];
 
 const targetCatalog = [
   { key: 'win32-x64', platform: 'win32', arch: 'x64' },
@@ -25,11 +31,11 @@ const targetCatalog = [
   { key: 'linux-arm64', platform: 'linux', arch: 'arm64' },
 ];
 const releaseScope = JSON.parse(await readFile(path.join(repositoryRoot, 'config', 'release-scope.json'), 'utf8'));
-if (releaseScope.schemaVersion !== 1 || releaseScope.version !== version || releaseScope.installationMode !== 'manual'
+if (releaseScope.schemaVersion !== 1 || releaseScope.version !== version || releaseScope.installationMode !== 'in-app'
   || releaseScope.automaticUpdaterEnabled !== false || !Array.isArray(releaseScope.targets)
   || releaseScope.targets.length !== 3
   || JSON.stringify(releaseScope.targets) !== JSON.stringify(['win32-x64', 'linux-x64', 'linux-arm64'])) {
-  throw new Error('Release target scope must be the explicit v5.9.0 manual-install Windows/Linux policy');
+  throw new Error('Release target scope must be the explicit in-app Windows/Linux policy');
 }
 const targets = targetCatalog.filter((target) => releaseScope.targets.includes(target.key));
 
@@ -51,11 +57,23 @@ for (const target of targets) {
   validateProvenance(provenance, target);
 
   const artifactNames = expectedArtifactNames(target.platform, version, target.arch);
+  if (Object.hasOwn(provenance, 'installedLayout')) {
+    if (target.platform !== 'win32' || target.arch !== 'x64') throw new Error('Installed layout requires Windows x64');
+    await verifyInstalledLayoutAsset(installerDirectory, provenance.installedLayout);
+    artifactNames.push('INSTALL-LAYOUT.json');
+  }
+  if (Object.hasOwn(provenance, 'updatePayload')) {
+    if (target.platform !== 'win32' || !provenance.installedLayout) throw new Error('Native payload requires Windows installed layout');
+    await verifyWindowsUpdatePayloadAsset(installerDirectory, provenance.updatePayload, version);
+    artifactNames.push(provenance.updatePayload.name);
+  }
   const sourceArtifacts = [];
   for (const artifactName of artifactNames) {
     const artifactPath = path.join(installerDirectory, artifactName);
     await assertRegularFile(artifactPath, artifactName);
-    const provenanceEntry = provenance.artifacts?.find((entry) => entry?.name === artifactName);
+    const provenanceEntry = provenance.artifacts?.find((entry) => entry?.name === artifactName)
+      ?? (provenance.installedLayout?.name === artifactName ? provenance.installedLayout : undefined)
+      ?? (provenance.updatePayload?.name === artifactName ? provenance.updatePayload : undefined);
     if (!provenanceEntry) throw new Error(`${target.key} provenance is missing ${artifactName}`);
     const actualHash = await sha256File(artifactPath);
     if (actualHash !== String(provenanceEntry.sha256).toLowerCase()) {
@@ -116,6 +134,13 @@ for (const target of targets) {
 
 if (macManifests.length !== 0) throw new Error('Manual-only v5.9.0 release must not publish macOS update manifests or binaries');
 
+for (const sidecar of signedWindowsSidecars) {
+  const destination = path.join(assetsDirectory, sidecar.name);
+  await writeFile(destination, sidecar.bytes, { flag: 'wx' });
+  await assertRegularFile(destination, sidecar.name);
+  if (await sha256File(destination) !== sidecar.sha256) throw new Error(`Signed sidecar copy changed: ${sidecar.name}`);
+}
+
 const payloadFiles = (await listDirectRegularFiles(assetsDirectory))
   .filter((name) => name !== 'RELEASE_MANIFEST.json' && name !== 'SHA256SUMS.txt')
   .sort();
@@ -168,6 +193,29 @@ function requiredValue(name) {
 
 function requiredDirectory(name) {
   return path.resolve(requiredValue(name));
+}
+
+async function readSignedWindowsSidecars(directory) {
+  await assertRegularDirectory(directory, 'Signed Windows sidecars directory');
+  const limits = new Map([
+    ['BASELINE-win32-x64.json', 1024n * 1024n],
+    ['ARTIFACT-win32-x64.bundle.json', 16n * 1024n * 1024n],
+    ['PROVENANCE-win32-x64.bundle.json', 16n * 1024n * 1024n],
+    ['INSTALL-LAYOUT-win32-x64.json', 65_536n],
+    ['RELEASE-win32-x64.json', 1024n * 1024n],
+  ]);
+  const names = await listDirectRegularFiles(directory);
+  if (names.some(name => !limits.has(name))
+    || [...limits.keys()].slice(0, 4).some(name => !names.includes(name))) throw new Error('Signed Windows sidecar filenames are invalid or incomplete');
+  const files = [];
+  for (const name of names.sort()) {
+    const maximum = limits.get(name);
+    const file = await readBoundedFile(path.join(directory, name), maximum);
+    const json = parseStrictJson(file.bytes, Number(maximum), 64);
+    if (json === null || typeof json !== 'object' || Array.isArray(json)) throw new Error(`Signed sidecar JSON is invalid: ${name}`);
+    files.push({ name, ...file });
+  }
+  return files;
 }
 
 async function prepareEmptyAssetsDirectory(directory) {

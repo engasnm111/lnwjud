@@ -68,8 +68,10 @@ describe('Windows release trust evidence', () => {
 
     expect(packageScript).toContain('write-release-evidence.mjs');
     expect(packageScript).toContain('verify-release-evidence.mjs');
-    expect(builderConfig).toContain('afterPack: scripts/capture-packaged-runtime-evidence.mjs');
+    expect(builderConfig).toContain('beforePack: scripts/prepare-windows-update-launcher.mjs');
+    expect(builderConfig).toContain('afterPack: scripts/capture-before-signing.mjs');
     expect(builderConfig).toContain('afterSign: scripts/capture-packaged-runtime-evidence.mjs');
+    expect(builderConfig).toContain('to: lnwjud-update-launcher.exe');
     expect(evidenceWriter).toContain('SHA256SUMS.txt');
     expect(evidenceWriter).toContain('PROVENANCE.json');
     expect(evidenceWriter).toContain('GITHUB_SHA');

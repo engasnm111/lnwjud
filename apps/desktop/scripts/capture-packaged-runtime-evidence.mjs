@@ -8,6 +8,7 @@ import { verifyCapabilityBridgeArtifacts } from './verify-capability-bridge-arti
 import { verifyContainmentArtifacts } from './verify-containment-artifacts.mjs';
 import { VERIFIER_SHA256 } from './stage-update-attestation-verifier.mjs';
 import { verifyUpdateWorkerArtifacts } from './verify-update-worker-artifacts.mjs';
+import { hasWindowsSlotLayout, prepareWindowsUpdateLayout, windowsRuntimePath } from './windows-update-layout.mjs';
 import {
   readMacosSigningPolicyEvidence,
   validateMacosSigningPolicyEvidence,
@@ -69,10 +70,24 @@ const TARGETS = Object.freeze({
 });
 
 export default async function capturePackagedRuntimeEvidence(context) {
+  const layout = context?.electronPlatformName === 'win32'
+    ? await prepareWindowsUpdateLayout({
+      rootDirectory: context.appOutDir,
+      outputDirectory: context.outDir ?? path.dirname(context.appOutDir),
+      version: context.packager?.appInfo?.version ?? JSON.parse(await readFile(path.join(desktopRoot, 'package.json'), 'utf8')).version,
+    }) : null;
   const evidence = await collectPackagedRuntimeEvidence(context);
   if (evidence === undefined) return;
+  if (layout !== null) Object.assign(evidence, layout);
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+}
+
+export async function captureBeforeSigning(context) {
+  if (context?.electronPlatformName !== 'win32') return capturePackagedRuntimeEvidence(context);
+  await collectPackagedRuntimeEvidence(context);
+  // Windows signing edits the root executables after afterPack; only afterSign can seal slot files.
+  await invalidatePackagedRuntimeEvidence();
 }
 
 // A signing or notarization failure must not leave pre-sign evidence usable by
@@ -91,9 +106,10 @@ export async function collectPackagedRuntimeEvidence(context, { allowIncompleteM
 
   const arch = normalizeArch(context?.arch);
   if (arch !== 'x64' && arch !== 'arm64') throw new Error(`Packaged ${platform} architecture is unsupported: ${arch}`);
+  const windowsSlots = platform === 'win32' && await hasWindowsSlotLayout(appOutDir);
   const capabilityBridge = platform === 'win32'
     ? await verifyCapabilityBridgeArtifacts({
-      packagedBridgePath: path.join(appOutDir, 'resources', 'windows-capability-bridge.ps1'),
+      packagedBridgePath: path.join(appOutDir, windowsSlots ? windowsRuntimePath('resources/windows-capability-bridge.ps1') : 'resources/windows-capability-bridge.ps1'),
       compiledBundlePath: path.join(desktopRoot, 'dist', 'main', 'main.js'),
     })
     : null;
@@ -101,11 +117,13 @@ export async function collectPackagedRuntimeEvidence(context, { allowIncompleteM
   const files = [];
   const signingReceipts = [];
   const required = [...target.required];
+  if (windowsSlots) required.push(['stable-launcher', 'lnwjud.exe']);
   for (const entry of tunnelEvidenceEntries(platform, arch)) {
     if (!required.some((candidate) => candidate[1] === entry[1])) required.push(entry);
   }
   for (const [name, relativePath] of required) {
-    const resolvedRelativePath = relativePath.replaceAll('{arch}', arch);
+    const logicalPath = relativePath.replaceAll('{arch}', arch);
+    const resolvedRelativePath = windowsSlots && name !== 'stable-launcher' ? windowsRuntimePath(logicalPath) : logicalPath;
     const absolutePath = resolvePackagedPath(appOutDir, platform, resolvedRelativePath);
     const metadata = await assertRegularCanonicalFile(absolutePath, `Required packaged runtime file: ${resolvedRelativePath}`);
     if (platform !== 'win32' && isExecutablePath(resolvedRelativePath) && (metadata.mode & 0o111) === 0) {

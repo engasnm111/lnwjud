@@ -238,9 +238,10 @@ describe('MVP release verification gate', () => {
     expect(release).toContain('--commit "$sha"');
     expect((release.match(/--branch main/g) ?? []).length).toBe(1);
     expect(release).toContain('candidate="$(find_ci_run push)"');
-    expect(release).toContain('scope.automaticUpdaterEnabled !== false');
-    const dispatchFallback = release.match(/if \[\[ -z "\$candidate" && "\$automatic_updater_enabled" != "true" \]\]; then\s+candidate="\$\(find_ci_run workflow_dispatch\)"\s+fi/);
-    expect(dispatchFallback).not.toBeNull();
+    expect(release).not.toContain('automatic_updater_enabled');
+    // A dispatch run cannot carry the protected main-push package attestation,
+    // so the release only accepts a completed push CI run for the exact SHA.
+    expect(release).not.toContain('find_ci_run workflow_dispatch');
     expect(release).toContain('gh run download');
     expect(release).toContain('windows-release-$sha');
     expect(release).not.toContain('native-darwin-arm64-$sha');

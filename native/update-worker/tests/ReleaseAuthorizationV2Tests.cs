@@ -29,8 +29,11 @@ internal static class ReleaseAuthorizationV2Tests
         Refused(() => ReleaseAuthorizationV2.InspectUnsigned(unsigned, policy, time, ReleaseAuthorizationPurpose.Update, "unknown"), "unsigned unknown key refuses");
         var badCandidate = JsonNode.Parse(unsigned)!.AsObject(); badCandidate["release"]!["source"]!["commit"] = "bad";
         Refused(() => ReleaseAuthorizationV2.InspectUnsigned(Wire.Encode(badCandidate), policy, time, ReleaseAuthorizationPurpose.Update, update.KeyId), "unsigned malformed candidate refuses");
+        var unconfiguredJson = (JsonObject)JsonNode.Parse(fixture.GetProperty("policy").GetRawText())!;
+        unconfiguredJson["authorities"] = new JsonArray();
+        var unconfiguredPolicy = ReleaseTrustPolicy.Parse(Wire.Encode(unconfiguredJson));
         var directory = Path.Combine(Path.GetTempPath(), "lnwjud-unsigned-evidence-" + Guid.NewGuid().ToString("N"));
-        try { _ = UnsignedEvidencePackage.Open(directory, ReleaseTrustPolicy.Embedded(), time, ReleaseAuthorizationPurpose.Update, update.KeyId); throw new Exception("unconfigured package accepted"); }
+        try { _ = UnsignedEvidencePackage.Open(directory, unconfiguredPolicy, time, ReleaseAuthorizationPurpose.Update, update.KeyId); throw new Exception("unconfigured package accepted"); }
         catch (Refusal error) { Check(error.Reason == "RELEASE_TRUST_UNCONFIGURED", "unconfigured policy refuses before opening files"); }
         Directory.CreateDirectory(directory);
         try

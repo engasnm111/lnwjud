@@ -192,7 +192,7 @@ internal sealed class WindowsStoreIO : IDisposable
 
     internal void Stage(string name, byte[] bytes)
     {
-        if (name is not ("journal.pending.json" or "transaction.pending.json" or "active-slot.pending.json"))
+        if (name is not ("journal.pending.json" or "transaction.pending.json" or "active-slot.pending.json" or "eligibility.pending.json" or "installation.pending.json" or "offer.pending.json"))
             throw new Refusal("STORE_NAME_INVALID");
         if (bytes.Length > MaximumJournalBytes) throw new Refusal("JOURNAL_TOO_LARGE");
         using var handle = OpenFile(Path.Combine(root, name), GenericRead | GenericWrite, 1, WriteThrough);
@@ -219,12 +219,16 @@ internal sealed class WindowsStoreIO : IDisposable
     }
 
     private static bool IsRecordName(string name) => name is "journal.json" or "journal.pending.json"
-        or "transaction.json" or "transaction.pending.json" or "active-slot.json" or "active-slot.pending.json";
+        or "transaction.json" or "transaction.pending.json" or "active-slot.json" or "active-slot.pending.json"
+        or "eligibility.json" or "eligibility.pending.json" or "installation.json" or "installation.pending.json" or "offer.json" or "offer.pending.json";
 
     private static bool IsStagePair(string stageName, string targetName) => (stageName, targetName) is
         ("journal.pending.json", "journal.json") or
         ("transaction.pending.json", "transaction.json") or
-        ("active-slot.pending.json", "active-slot.json");
+        ("active-slot.pending.json", "active-slot.json") or
+        ("eligibility.pending.json", "eligibility.json") or
+        ("installation.pending.json", "installation.json") or
+        ("offer.pending.json", "offer.json");
 
     internal static ProcessOwner CurrentOwner()
     {

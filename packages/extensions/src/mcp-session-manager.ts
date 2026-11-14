@@ -6,6 +6,7 @@ import { appError, err, ok, type Result } from '@lnwjud/domain';
 import {
   createProcessTreeTerminator,
   type WindowsMcpStdioOwner,
+  type WindowsMcpStdioChildLaunch,
   type ProcessTreeTerminator,
 } from '@lnwjud/process';
 import type { ExternalMcpContractDrift, McpResourceSummary, McpServerLaunchConfig, McpSessionLifecycle, McpToolSummary } from './types.js';
@@ -526,19 +527,20 @@ export function createDefaultMcpClientFactory(
       ? await windowsMcpStdioOwner!.prepare(config)
       : undefined;
     const useSessionWrapper = process.platform === 'linux';
-    const command = windowsLaunch?.command ?? (useSessionWrapper ? 'setsid' : config.command);
-    const args = windowsLaunch === undefined
-      ? useSessionWrapper ? [config.command, ...(config.args ?? [])] : [...(config.args ?? [])]
-      : [...windowsLaunch.args];
-    type OwnedChildRecord = { readonly child: ChildProcess; readonly pid: number | null; verified: boolean };
+    const command = useSessionWrapper ? 'setsid' : config.command;
+    const args = useSessionWrapper ? [config.command, ...(config.args ?? [])] : [...(config.args ?? [])];
+    type OwnedChildRecord = { readonly child: ChildProcess; readonly pid: number | null; readonly ticket?: WindowsMcpStdioChildLaunch; verified: boolean };
     const ownedChildren = new Map<StdioClientTransport, OwnedChildRecord>();
     const mainTransport: { current?: StdioClientTransport } = {};
     let pinReleaseRequested = false;
     let pinReleased = false;
+    let connectionClosed = windowsLaunch === undefined;
+    let connectionClosing = false;
     let probeCleanupFailure: unknown;
     const maybeReleasePin = (): void => {
       if (windowsLaunch === undefined || pinReleased || !pinReleaseRequested) return;
-      if ([...ownedChildren.values()].some(({ child }) => child.pid !== undefined && child.exitCode === null && child.signalCode === null)) return;
+      if (!connectionClosed || [...ownedChildren.values()].some(record => !record.verified
+        || record.child.pid !== undefined && record.child.exitCode === null && record.child.signalCode === null)) return;
       pinReleased = true;
       windowsLaunch.release();
     };
@@ -546,8 +548,8 @@ export function createDefaultMcpClientFactory(
       pinReleaseRequested = true;
       maybeReleasePin();
     };
-    const registerOwnedChild = (owner: StdioClientTransport, child: ChildProcess): void => {
-      ownedChildren.set(owner, { child, pid: owner.pid, verified: false });
+    const registerOwnedChild = (owner: StdioClientTransport, child: ChildProcess, ticket?: WindowsMcpStdioChildLaunch): void => {
+      ownedChildren.set(owner, { child, pid: owner.pid, verified: false, ...(ticket === undefined ? {} : { ticket }) });
       child.once('close', () => {
         if (owner === mainTransport.current) pinReleaseRequested = true;
         maybeReleasePin();
@@ -555,16 +557,23 @@ export function createDefaultMcpClientFactory(
     };
     const sdkSiblingDispose: unknown = Reflect.get(StdioClientTransport.prototype, '_dispose');
     if (typeof sdkSiblingDispose !== 'function') {
-      windowsLaunch?.release();
+      if (windowsLaunch !== undefined) { await windowsLaunch.closeOwnedConnection(); windowsLaunch.release(); }
       pinReleased = windowsLaunch !== undefined;
       throw new Error('MCP_SDK_STDIO_DISPOSAL_UNAVAILABLE');
     }
     const verifyOwnedChild = async (owner: StdioClientTransport): Promise<void> => {
       const record = ownedChildren.get(owner);
-      if (record === undefined || record.verified || process.platform === 'darwin') return;
+      if (record === undefined) {
+        if (owner instanceof OwnedStdioClientTransport) await owner.ticket?.closeResource();
+        return;
+      }
+      if (record.verified || process.platform === 'darwin') return;
       if (process.platform === 'win32') {
         if (windowsLaunch === undefined) throw new Error('MCP_WINDOWS_JOB_PROXY_REQUIRED');
-        await windowsLaunch.closeAndVerify(record.child);
+        if (record.ticket === undefined) throw new Error('MCP_NATIVE_CHILD_TICKET_REQUIRED');
+        const proof = await record.ticket.closeResource(record.child);
+        if (proof.scope !== windowsLaunch.cleanupScope || proof.containment !== 'unisolated_same_user' || proof.writerDrainVerified !== false)
+          throw new Error('MCP_NATIVE_JOB_SCOPE_INVALID');
       } else {
         if (record.pid === null) throw new Error('MCP_CHILD_IDENTITY_UNVERIFIED');
         await processTreeTerminator.stop(record.child, record.pid);
@@ -583,13 +592,29 @@ export function createDefaultMcpClientFactory(
       if (record !== undefined) record.verified = true;
     };
     class OwnedStdioClientTransport extends StdioClientTransport {
-      public override start(): Promise<void> {
+      public ticket: WindowsMcpStdioChildLaunch | undefined;
+      private readonly parameters: ConstructorParameters<typeof StdioClientTransport>[0];
+      public constructor(parameters: ConstructorParameters<typeof StdioClientTransport>[0]) {
+        const owned = { ...parameters, args: [...(parameters.args ?? [])], env: { ...parameters.env } };
+        super(owned);
+        if (windowsLaunch !== undefined && Reflect.get(this, '_serverParams') !== owned) throw new Error('MCP_SDK_STDIO_PARAMETERS_UNAVAILABLE');
+        this.parameters = owned;
+      }
+      public override async start(): Promise<void> {
+        if (connectionClosing) throw new Error('MCP_NATIVE_CONNECTION_CLOSED');
         if (this === mainTransport.current && probeCleanupFailure !== undefined) {
-          return Promise.reject(new Error('MCP_PROBE_CLEANUP_UNVERIFIED', { cause: probeCleanupFailure }));
+          throw new Error('MCP_PROBE_CLEANUP_UNVERIFIED', { cause: probeCleanupFailure });
+        }
+        if (windowsLaunch !== undefined) {
+          this.ticket = await windowsLaunch.prepareChild();
+          if (connectionClosing) { await this.ticket.closeResource(); throw new Error('MCP_NATIVE_CONNECTION_CLOSED'); }
+          this.parameters.command = this.ticket.command;
+          this.parameters.args = [...this.ticket.args];
+          this.parameters.env = { ...this.ticket.env };
         }
         const started = super.start();
         const child: unknown = Reflect.get(this, '_process');
-        if (child instanceof ChildProcess) registerOwnedChild(this, child);
+        if (child instanceof ChildProcess) registerOwnedChild(this, child, this.ticket);
         return started.then(() => {
           const record = ownedChildren.get(this);
           if (record === undefined || process.platform !== 'win32' && (record.pid === null || record.child.pid !== record.pid)) {
@@ -613,12 +638,12 @@ export function createDefaultMcpClientFactory(
         ...(windowsLaunch === undefined && config.cwd !== undefined ? { cwd: config.cwd } : {}),
         env: {
           ...definedEnv(process.env),
-          ...(windowsLaunch?.env ?? config.env ?? {}),
+          ...(config.env ?? {}),
         },
         stderr: 'pipe',
       });
     } catch (error: unknown) {
-      windowsLaunch?.release();
+      if (windowsLaunch !== undefined) { await windowsLaunch.closeOwnedConnection(); windowsLaunch.release(); }
       pinReleased = windowsLaunch !== undefined;
       throw error;
     }
@@ -642,8 +667,16 @@ export function createDefaultMcpClientFactory(
     let transportCloseAttempt: Promise<void> | undefined;
     let transportCleanupFailure: unknown;
     const stopChildTree = (): Promise<void> => {
+      connectionClosing = true;
       treeStopAttempt ??= (async (): Promise<void> => {
         let firstError: unknown;
+        if (windowsLaunch !== undefined) {
+          try {
+            const proof = await windowsLaunch.closeOwnedConnection();
+            if (proof.scope !== windowsLaunch.cleanupScope || proof.containment !== 'unisolated_same_user' || proof.writerDrainVerified !== false) throw new Error('MCP_NATIVE_JOB_SCOPE_INVALID');
+            connectionClosed = true;
+          } catch (error: unknown) { firstError = error; }
+        }
         for (const [owner, record] of ownedChildren) {
           if (record.verified || process.platform === 'darwin' && owner === transport) continue;
           try {

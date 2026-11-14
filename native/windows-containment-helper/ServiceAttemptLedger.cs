@@ -58,7 +58,8 @@ internal sealed record ServiceAttemptRequest(
     bool Shared = false,
     bool HoldForImport = false,
     bool CancellationRequested = false,
-    bool PublicationCommitted = false);
+    bool PublicationCommitted = false,
+    bool RegistryOnly = false);
 
 internal sealed class ServiceAttemptLedger
 {
@@ -123,6 +124,12 @@ internal sealed class ServiceAttemptLedger
                 entry.ActiveProcesses = null;
                 recovered = true;
             }
+            if (IsMcp(entry.Request.Identity) && entry.Phase == ServiceAttemptPhase.Prepared)
+            {
+                entry.Phase = ServiceAttemptPhase.LaunchNotStarted;
+                entry.ReservationHeld = false;
+                recovered = true;
+            }
             if (!attempts.TryAdd(entry.Request.Identity.AttemptId, entry))
                 throw new IOException("ATTEMPT_STORE_CORRUPT");
             if (entry.ReservationHeld && HasConflict(entry.Request, entry.Request.Identity.AttemptId))
@@ -143,7 +150,7 @@ internal sealed class ServiceAttemptLedger
                 return Observe(existing);
             }
             if (HasConflict(request)) throw new IOException("WRITER_RESERVATION_BUSY");
-            var entry = new Entry(request);
+            var entry = new Entry(request) { ReservationHeld = !request.RegistryOnly };
             attempts.Add(request.Identity.AttemptId, entry);
             Persist();
             return Observe(entry);
@@ -432,6 +439,101 @@ internal sealed class ServiceAttemptLedger
         lock (gate) return Observe(Require(identity, callerSid));
     }
 
+    internal static bool IsMcp(ServiceAttemptIdentity identity) => identity.TaskId.StartsWith("mcp:", StringComparison.Ordinal);
+
+    internal ServiceAttemptIdentity PrepareMcpConnection(string callerSid, string operationDigest, uint sessionId = 0)
+    {
+        var id = Guid.NewGuid().ToString("N");
+        var identity = new ServiceAttemptIdentity("mcp:" + id, id, id, 1, operationDigest, id,
+            sessionId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(), id);
+        _ = Prepare(new(identity, callerSid, GlobalReservationKey, operationDigest, Shared: true, RegistryOnly: true));
+        return identity;
+    }
+
+    internal ServiceAttemptIdentity PrepareMcpChild(ServiceAttemptIdentity connection, string callerSid)
+    {
+        lock (gate)
+        {
+            var owner = RequireMcpConnection(connection, callerSid);
+            if (owner.Phase != ServiceAttemptPhase.Prepared) throw new IOException("SERVICE_MCP_CONNECTION_CLOSED");
+            var siblings = McpChildren(connection, callerSid);
+            if (siblings.Length >= 64) throw new IOException("SERVICE_MCP_CHILD_LIMIT");
+            if (siblings.Any(child => child.Phase is not (ServiceAttemptPhase.TerminalVerified or ServiceAttemptPhase.LaunchNotStarted)))
+                throw new IOException("SERVICE_MCP_SIBLING_UNRESOLVED");
+            var id = Guid.NewGuid().ToString("N");
+            var child = connection with { AttemptId = id, ReservationId = id, Generation = siblings.Length + 2 };
+            _ = Prepare(new(child, callerSid, GlobalReservationKey, owner.Request.OperationDigest, Shared: true, RegistryOnly: true));
+            return child;
+        }
+    }
+
+    internal bool TryCommitMcpDispatch(ServiceAttemptIdentity connection, ServiceAttemptIdentity child, string callerSid, string digest)
+    {
+        lock (gate)
+        {
+            var owner = RequireMcpConnection(connection, callerSid);
+            _ = RequireMcpChild(connection, child, callerSid);
+            if (owner.Phase != ServiceAttemptPhase.Prepared)
+            {
+                _ = AbortBeforeLaunch(new(child, callerSid, GlobalReservationKey, digest, Shared: true, RegistryOnly: true));
+                return false;
+            }
+            if (owner.Request.OperationDigest != digest) throw new IOException("SERVICE_MCP_OPERATION_MISMATCH");
+            return TryCommitDispatch(child, callerSid, digest);
+        }
+    }
+
+    internal ServiceAttemptObservation[] McpChildren(ServiceAttemptIdentity connection, string callerSid)
+    {
+        lock (gate)
+        {
+            _ = RequireMcpConnection(connection, callerSid);
+            return attempts.Values.Where(entry => entry.Request.Identity.TaskId == connection.TaskId
+                && entry.Request.Identity.AttemptId != connection.AttemptId)
+                .Select(entry => Observe(RequireMcpChild(connection, entry.Request.Identity, callerSid))).ToArray();
+        }
+    }
+
+    internal void CloseMcpConnection(ServiceAttemptIdentity connection, string callerSid)
+    {
+        lock (gate)
+        {
+            var owner = RequireMcpConnection(connection, callerSid);
+            _ = AbortBeforeLaunch(owner.Request);
+            _ = Release(connection, callerSid);
+        }
+    }
+
+    internal ServiceAttemptObservation AbortMcpChild(ServiceAttemptIdentity connection, ServiceAttemptIdentity child, string callerSid)
+    {
+        lock (gate)
+        {
+            var entry = RequireMcpChild(connection, child, callerSid);
+            var observation = AbortBeforeLaunch(entry.Request);
+            if (observation.Phase == ServiceAttemptPhase.LaunchNotStarted) _ = Release(child, callerSid);
+            return Inspect(child, callerSid);
+        }
+    }
+
+    private Entry RequireMcpConnection(ServiceAttemptIdentity connection, string callerSid)
+    {
+        var owner = Require(connection, callerSid);
+        if (!IsMcp(connection) || !owner.Request.RegistryOnly || connection.Generation != 1 || connection.ReservationId != connection.AttemptId)
+            throw new IOException("SERVICE_MCP_CONNECTION_INVALID");
+        return owner;
+    }
+
+    private Entry RequireMcpChild(ServiceAttemptIdentity connection, ServiceAttemptIdentity child, string callerSid)
+    {
+        _ = RequireMcpConnection(connection, callerSid);
+        var entry = Require(child, callerSid);
+        if (!entry.Request.RegistryOnly || child.TaskId != connection.TaskId || child.Generation < 2 || child.AttemptId == connection.AttemptId
+            || child.OwnerClientId != connection.OwnerClientId || child.OwnerSessionId != connection.OwnerSessionId
+            || child.WorkspaceId != connection.WorkspaceId || child.RequestDigest != connection.RequestDigest)
+            throw new IOException("SERVICE_MCP_CHILD_INVALID");
+        return entry;
+    }
+
     private Entry Require(ServiceAttemptIdentity identity, string callerSid)
     {
         EnsureAvailable();
@@ -456,6 +558,7 @@ internal sealed class ServiceAttemptLedger
 
     private static bool SameRequest(ServiceAttemptRequest left, ServiceAttemptRequest right) =>
         left.Identity == right.Identity
+        && left.RegistryOnly == right.RegistryOnly
         && String.Equals(left.AuthenticatedCallerSid, right.AuthenticatedCallerSid, StringComparison.Ordinal)
         && String.Equals(left.ReservationKey, right.ReservationKey, StringComparison.OrdinalIgnoreCase)
         && String.Equals(left.OperationDigest, right.OperationDigest, StringComparison.Ordinal);
@@ -473,6 +576,7 @@ internal sealed class ServiceAttemptLedger
             || !Sid.IsMatch(request.AuthenticatedCallerSid)
             || !Path.IsPathFullyQualified(request.ReservationKey)
             || request.HoldForImport && request.Shared
+            || request.RegistryOnly != IsMcp(identity) || request.RegistryOnly && (!request.Shared || request.HoldForImport)
             || !Digest.IsMatch(request.OperationDigest))
             throw new IOException("ATTEMPT_REQUEST_INVALID");
     }
@@ -524,7 +628,8 @@ internal sealed class ServiceAttemptLedger
                 : stored.Outcome is not null || stored.ExitCode is not null || stored.ActiveProcesses is not null)
             || (stored.Phase is ServiceAttemptPhase.Prepared or ServiceAttemptPhase.DispatchCommitted or ServiceAttemptPhase.LaunchNotStarted
                 && stored.TargetPid is not null)
-            || (!stored.ReservationHeld && stored.Phase is not (ServiceAttemptPhase.LaunchNotStarted or ServiceAttemptPhase.TerminalVerified)))
+            || (!stored.ReservationHeld && stored.Phase is not (ServiceAttemptPhase.LaunchNotStarted or ServiceAttemptPhase.TerminalVerified)
+                && !stored.Request.RegistryOnly))
             throw new IOException("ATTEMPT_STORE_CORRUPT");
     }
 }

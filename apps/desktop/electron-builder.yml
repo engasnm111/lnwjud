@@ -19,7 +19,8 @@ publish:
   owner: engasnm111
   repo: lnwjud
   releaseType: release
-afterPack: scripts/capture-packaged-runtime-evidence.mjs
+beforePack: scripts/prepare-windows-update-launcher.mjs
+afterPack: scripts/capture-before-signing.mjs
 afterSign: scripts/capture-packaged-runtime-evidence.mjs
 extraResources:
   - from: build/native-containment
@@ -61,6 +62,8 @@ win:
   extraFiles:
     - from: build/lnwjud-mcp-stdio.cmd
       to: lnwjud-mcp-stdio.cmd
+    - from: build/update-launcher/lnwjud.exe
+      to: lnwjud-update-launcher.exe
   extraResources:
     - from: build/update-worker
       to: update-worker

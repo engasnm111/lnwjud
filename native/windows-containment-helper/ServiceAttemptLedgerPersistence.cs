@@ -23,7 +23,7 @@ internal sealed record ServiceAttemptLedgerDocument(int SchemaVersion, Persisted
 /// </summary>
 internal sealed class ServiceAttemptLedgerPersistence
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private const int MaximumStoreBytes = 32 * 1024 * 1024;
     private const int MaximumAttempts = 100_000;
     private static readonly JsonSerializerOptions Json = new()
@@ -57,7 +57,8 @@ internal sealed class ServiceAttemptLedgerPersistence
             stream.CopyTo(memory);
             var document = JsonSerializer.Deserialize<ServiceAttemptLedgerDocument>(memory.ToArray(), Json)
                 ?? throw new InvalidDataException("ATTEMPT_STORE_EMPTY");
-            if (document.SchemaVersion != SchemaVersion || document.Attempts is null || document.Attempts.Length > MaximumAttempts)
+            if (document.SchemaVersion is not (1 or SchemaVersion) || document.Attempts is null || document.Attempts.Length > MaximumAttempts
+                || document.SchemaVersion == 1 && document.Attempts.Any(attempt => attempt.Request.RegistryOnly))
                 throw new InvalidDataException("ATTEMPT_STORE_SCHEMA_INVALID");
             return document.Attempts;
         }

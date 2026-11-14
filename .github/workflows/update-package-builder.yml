@@ -128,7 +128,7 @@ jobs:
           path: _subject-output/*
           if-no-files-found: error
           compression-level: 0
-          retention-days: 7
+          retention-days: 90
 
   attest-package:
     needs: [resolve-control, build-package]
@@ -188,7 +188,7 @@ jobs:
           path: _incoming/*
           if-no-files-found: error
           compression-level: 0
-          retention-days: 7
+          retention-days: 90
   prepare-signing-candidate:
     # No privileged attestation environment or signing secrets in this data preparation job.
     needs: [resolve-control, attest-package]
@@ -241,4 +241,4 @@ jobs:
           path: _signing-bundle/*
           if-no-files-found: error
           compression-level: 0
-          retention-days: 7
+          retention-days: 90

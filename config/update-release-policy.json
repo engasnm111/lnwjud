@@ -14,14 +14,26 @@
       "allowHistoricalRecovery": true
     }
   ],
-  "authorities": [],
+  "authorities": [
+    {
+      "repository": "https://github.com/engasnm111/lnwjud",
+      "workflow": ".github/workflows/ci.yml",
+      "ref": "refs/heads/main",
+      "builderWorkflowUri": "https://github.com/engasnm111/lnwjud/.github/workflows/update-package-builder.yml@refs/heads/main",
+      "builderDigest": "cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406",
+      "buildConfigUri": "https://github.com/engasnm111/lnwjud/.github/workflows/ci.yml@refs/heads/main",
+      "buildConfigDigestRule": "source-commit",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "runnerEnvironment": "github-hosted"
+    }
+  ],
   "verifier": {
     "filename": "gh.exe",
     "version": "2.103.3",
     "sha256": "d303d8ac3f5e9438bf7c977b64dd6425513eae46218f8881d30694f28c1d0dfd"
   },
   "limits": {
-    "maximumValiditySeconds": "86400",
+    "maximumValiditySeconds": "31536000",
     "maximumFutureSkewSeconds": "300",
     "maximumPackageBytes": "2147483648",
     "maximumProvenanceBytes": "1048576"

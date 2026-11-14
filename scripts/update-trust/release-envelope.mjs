@@ -153,7 +153,7 @@ export function requireConfigured(policy) {
     && Object.keys(value).sort().join(',') === fields.split(',').sort().join(',');
   if (!exact(policy, 'protocol,revision,roots,authorities,verifier,limits') || policy.roots.length > 16 || policy.authorities.length > 16
     || !exact(policy.limits, 'maximumValiditySeconds,maximumFutureSkewSeconds,maximumPackageBytes,maximumProvenanceBytes')
-    || Object.entries(policy.limits).some(([name, value]) => !decimal(value, ({ maximumValiditySeconds: 86400n, maximumFutureSkewSeconds: 300n,
+    || Object.entries(policy.limits).some(([name, value]) => !decimal(value, ({ maximumValiditySeconds: 31536000n, maximumFutureSkewSeconds: 300n,
       maximumPackageBytes: 2147483648n, maximumProvenanceBytes: 1048576n })[name], name !== 'maximumFutureSkewSeconds'))
     || !exact(policy.verifier, 'filename,version,sha256') || !['gh', 'gh.exe'].includes(policy.verifier.filename)
     || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(policy.verifier.version) || !/^[a-f0-9]{64}$/.test(policy.verifier.sha256)) refuse('RELEASE_POLICY_INVALID');

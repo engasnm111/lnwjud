@@ -32,7 +32,7 @@ internal sealed record ServiceOutputObservation(
 /// Owns every Windows Job handle, process handle, and output pipe for service-launched work.
 /// A terminal ledger transition is recorded only after the owned Job reports zero active processes.
 /// </summary>
-internal sealed class WindowsServiceProcessRuntime
+internal sealed partial class WindowsServiceProcessRuntime
 {
     private const int MaximumConcurrentProcesses = 64;
     private const int MaximumRetainedOutputs = 128;
@@ -81,7 +81,7 @@ internal sealed class WindowsServiceProcessRuntime
                 attempt.DisposePipes();
                 return ledger.Inspect(identity, callerSid);
             }
-            if (attempts.Values.Count(value => !value.IsTerminal) >= MaximumConcurrentProcesses)
+            if (attempts.Values.Count(value => !value.IsTerminal) + mcpAttempts.Count >= MaximumConcurrentProcesses)
             {
                 attempt.DisposePipes();
                 throw new IOException("SERVICE_CAPACITY_REACHED");
@@ -262,6 +262,7 @@ internal sealed class WindowsServiceProcessRuntime
 
     internal async Task StopAsync()
     {
+        await StopMcpAsync().ConfigureAwait(false);
         RuntimeAttempt[] running;
         lock (gate) running = attempts.Values.Where(value => !value.IsTerminal).ToArray();
 

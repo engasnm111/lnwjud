@@ -247,6 +247,7 @@ internal sealed record UpdateTransactionJournal(
     internal bool IsTerminal => Phase is UpdateTransactionPhase.Committed or UpdateTransactionPhase.RollbackVerified;
     internal bool SafeToStart => Phase is UpdateTransactionPhase.Committed or UpdateTransactionPhase.RollbackVerified;
     internal string Digest => Hash(Encode());
+    internal NativeUpdateHealthEvidence? NativeHealth { get; init; }
 
     internal static UpdateTransactionJournal Create(SlotSelection previousSelection, string previousJournalDigest,
         ProcessOwner owner, string requestId, string releaseId, int policyRevision, string releaseEnvelopeDigest,
@@ -278,11 +279,27 @@ internal sealed record UpdateTransactionJournal(
             throw new Refusal(IsTerminal ? "UPDATE_PHASE_TERMINAL" : "UPDATE_PHASE_TRANSITION_INVALID");
         try
         {
-            var value = this with { Revision = checked(Revision + 1), PreviousDigest = previousDigest, Owner = owner, Phase = next };
+            var value = this with { Revision = checked(Revision + 1), PreviousDigest = previousDigest, Owner = owner, Phase = next,
+                NativeHealth = next == UpdateTransactionPhase.RollbackIntent ? null : NativeHealth };
             value.Validate();
             return value;
         }
         catch (OverflowException) { throw new Refusal("UPDATE_TRANSACTION_INVALID"); }
+    }
+
+    internal UpdateTransactionJournal AdvanceWithNativeHealth(UpdateTransactionPhase next, string previousDigest,
+        ProcessOwner owner, NativeUpdateHealthEvidence evidence)
+    {
+        ValidateOwner(owner);
+        if (!ValidPreviousDigest(previousDigest) || !((Phase, next) is
+            (UpdateTransactionPhase.TrialStarted, UpdateTransactionPhase.HealthVerified)
+            or (UpdateTransactionPhase.CommitIntent, UpdateTransactionPhase.Committed)
+            or (UpdateTransactionPhase.PreviousStarted, UpdateTransactionPhase.RollbackVerified)))
+            throw new Refusal("UPDATE_PHASE_TRANSITION_INVALID");
+        var value = this with { Revision = checked(Revision + 1), PreviousDigest = previousDigest, Owner = owner,
+            Phase = next, NativeHealth = evidence };
+        value.Validate();
+        return value;
     }
 
     internal byte[] Encode()
@@ -308,6 +325,7 @@ internal sealed record UpdateTransactionJournal(
             ["phase"] = PhaseName(Phase),
             ["tunnel"] = EncodeTunnel(Tunnel),
         };
+        if (NativeHealth is not null) payload["nativeHealth"] = NativeHealth.Encode();
         return Wire.Encode(new JsonObject
         {
             ["schema"] = 2,
@@ -332,9 +350,10 @@ internal sealed record UpdateTransactionJournal(
             var actualInstallation = Wire.Text(value, "installationId");
             if (actualInstallation != installationId) throw new Refusal("UPDATE_TRANSACTION_IDENTITY_MISMATCH");
             var payload = value["payload"] as JsonObject ?? throw new Refusal("UPDATE_TRANSACTION_INVALID");
-            Wire.Fields(payload, "transactionId", "requestId", "releaseId", "policyRevision", "releaseEnvelopeDigest",
+            var fields = new[] { "transactionId", "requestId", "releaseId", "policyRevision", "releaseEnvelopeDigest",
                 "candidateVersion", "previousSelectionDigest", "previousSlot", "previousSlotDigest", "previousDataGeneration", "candidateSlot",
-                "candidateSlotDigest", "candidateDataGeneration", "maintenanceEpoch", "operationNonce", "phase", "tunnel");
+                "candidateSlotDigest", "candidateDataGeneration", "maintenanceEpoch", "operationNonce", "phase", "tunnel" };
+            Wire.Fields(payload, payload.ContainsKey("nativeHealth") ? [.. fields, "nativeHealth"] : fields);
             if (Wire.Text(value, "payloadDigest") != Hash(Wire.Encode(payload)))
                 throw new Refusal("UPDATE_TRANSACTION_CHECKSUM_INVALID");
             var result = new UpdateTransactionJournal(actualInstallation,
@@ -349,7 +368,11 @@ internal sealed record UpdateTransactionJournal(
                 DataGeneration.Decode(payload["candidateDataGeneration"] as JsonObject ?? throw new Refusal("UPDATE_TRANSACTION_INVALID")),
                 Wire.Text(payload, "maintenanceEpoch"), Wire.Text(payload, "operationNonce"),
                 DecodeTunnel(payload["tunnel"] as JsonObject ?? throw new Refusal("UPDATE_TRANSACTION_INVALID")),
-                ParsePhase(Wire.Text(payload, "phase")));
+                ParsePhase(Wire.Text(payload, "phase")))
+            {
+                NativeHealth = payload.ContainsKey("nativeHealth")
+                    ? NativeUpdateHealthEvidence.Decode(payload["nativeHealth"] as JsonObject ?? throw new Refusal("UPDATE_HEALTH_UNVERIFIED")) : null,
+            };
             result.Validate();
             return result;
         }
@@ -377,7 +400,10 @@ internal sealed record UpdateTransactionJournal(
         ValidateOwner(Owner);
         Tunnel.Validate();
         var evidenceRequired = EvidenceRequired(Phase);
-        if (evidenceRequired is not null) throw new Refusal(evidenceRequired);
+        if (evidenceRequired is not null && (NativeHealth is null
+            || !NativeHealth.Matches(this, Phase == UpdateTransactionPhase.RollbackVerified))) throw new Refusal(evidenceRequired);
+        if (NativeHealth is not null && !NativeHealth.Matches(this, Phase == UpdateTransactionPhase.RollbackVerified))
+            throw new Refusal("UPDATE_HEALTH_UNVERIFIED");
     }
 
     private static string? EvidenceRequired(UpdateTransactionPhase phase) => phase switch

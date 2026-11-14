@@ -71,7 +71,7 @@ system is never evidence for another.
     observation verifier are not implemented yet. Do not enable or advertise automatic updates until
     those components and real target-native acceptance are verified.
 
-**Manual-only v5.9.0 exception:** This release does not advertise or enable automatic installation. The version-locked `config/release-scope.json` permits only Windows x64 and Linux x64/arm64; macOS is withheld pending Issue #216. `scripts/verify-manual-release-scope.mjs` requires a fail-closed Desktop updater and empty update authority enrollment. Exact-main security/packaging tests, artifact provenance/hashes, and protected PRs remain mandatory. Genuine signed installation, restart and rollback receipts remain mandatory before any **future release enables** unattended updates; this manual mode does not treat self-reported fixtures as valid receipts.
+**v5.9.2 in-app install scope:** This release advertises an operator-confirmed install from inside the app for Windows x64 and Linux x64/arm64; macOS is withheld pending Issue #216. The version-locked `config/release-scope.json` records `installationMode: in-app` with `automaticUpdaterEnabled: false`, and `scripts/verify-manual-release-scope.mjs` requires every Desktop install path to be gated on a packaged operator confirmation with zero-click installation off. The app binds the downloaded package to the SHA-256 recorded at download time, waits for active work, stops the Tunnel, and hands off to the platform installer. Exact-main security/packaging tests, artifact provenance/hashes, and protected PRs remain mandatory. Signed zero-click installation, automatic rollback and authenticated update receipts remain mandatory before any **future release enables** unattended updates.
 
 ## Post-publication documentation synchronization
 
@@ -295,10 +295,9 @@ branch as mergeable/up to date under the configured protection rules.
 Merge through the protected-branch path and record the resulting exact `main`
 SHA. The authoritative CI for that exact SHA normally comes from the `main`
 push. If no push-event run is created because the protected merge credential
-suppresses downstream Actions, a manual-install release may dispatch `ci.yml`
-with `main` as the ref and verify that the run's `headSha` is still the exact
-SHA being prepared for release. A release that enables automatic updates must
-use the main-push run because it carries the update package attestation. In
+suppresses downstream Actions, the release is blocked: v5.9.2 and later only
+accept a completed `main`-push `ci.yml` run for the exact SHA being prepared,
+because a dispatch run cannot carry the package attestation. In
 either case, the run must complete all of these target boundaries:
 
 - The full Windows workspace suite and the remaining Windows release gate both
@@ -333,9 +332,8 @@ does not already exist. Create the tag at that exact `main` SHA and push it.
 Never force-replace an existing public release tag.
 
 The Release workflow checks the package-version/tag match and locates a
-successful exact-SHA `ci.yml` push run. For manual-install releases only, it may
-use a successful exact-main `workflow_dispatch` fallback; automatic-update
-releases require the push run and its update package attestation. It downloads
+successful exact-SHA `ci.yml` push run. A `workflow_dispatch` fallback is not
+accepted, because it cannot carry the package attestation. It downloads
 every target artifact and invokes `apps/desktop/scripts/verify-release-evidence.mjs`
 with an explicit installer directory for each target.
 `scripts/collect-release-assets.mjs` then produces:

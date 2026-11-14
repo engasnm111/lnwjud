@@ -86,8 +86,8 @@ internal sealed class ContainedProcess : IDisposable
         }
     }
 
-    internal static ContainedProcess Start(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null, ServiceAttemptIdentity? attemptIdentity = null) =>
-        StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, attemptIdentity: attemptIdentity);
+    internal static ContainedProcess Start(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null, ServiceAttemptIdentity? attemptIdentity = null, nint? standardInput = null) =>
+        StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, attemptIdentity: attemptIdentity, standardInput: standardInput);
 
     internal static ContainedProcess StartRedirected(string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint standardInput, nint standardOutput, nint standardError) =>
         StartCore(0, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, null, null, null, standardInput: standardInput);
@@ -128,21 +128,21 @@ internal sealed class ContainedProcess : IDisposable
         IReadOnlyDictionary<string, string> environment, nint standardOutput, nint standardError, LaunchOwnership ownership) =>
         StartCore(0, executable, arguments, cwd, false, environment, standardOutput, standardError, null, null, null, ownership);
 
-    internal static ContainedProcess StartAsUser(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null, ServiceAttemptIdentity? attemptIdentity = null)
+    internal static ContainedProcess StartAsUser(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput = null, nint? standardError = null, Func<bool>? cancellationRequested = null, Action<uint>? beforeResume = null, string? jobName = null, ServiceAttemptIdentity? attemptIdentity = null, nint? standardInput = null, bool interactive = false, LaunchOwnership? ownership = null)
     {
         if (primaryToken == 0 || primaryToken == -1) throw new IOException("CONTAINMENT_CALLER_TOKEN_INVALID");
         // CreateProcessAsUser uses the original authenticated caller's session.
         _ = AuthenticatedPipeCaller.ReadSessionId(primaryToken);
-        return StartCore(primaryToken, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, attemptIdentity: attemptIdentity);
+        return StartCore(primaryToken, executable, arguments, cwd, verbatim, environment, standardOutput, standardError, cancellationRequested, beforeResume, jobName, ownership, attemptIdentity, standardInput, interactive);
     }
 
-    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName, LaunchOwnership? ownership = null, ServiceAttemptIdentity? attemptIdentity = null, nint? standardInput = null)
+    private static ContainedProcess StartCore(nint primaryToken, string executable, string[] arguments, string cwd, bool verbatim, IReadOnlyDictionary<string, string> environment, nint? standardOutput, nint? standardError, Func<bool>? cancellationRequested, Action<uint>? beforeResume, string? jobName, LaunchOwnership? ownership = null, ServiceAttemptIdentity? attemptIdentity = null, nint? standardInput = null, bool interactive = false)
     {
         if (!Path.IsPathFullyQualified(executable) || !Path.IsPathFullyQualified(cwd)) throw new IOException("CONTAINMENT_ABSOLUTE_PATH_REQUIRED");
         var instance = new ContainedProcess();
         ownership?.Attach(instance);
         ProcessInfo child = default;
-        nint attributes = 0, jobList = 0, handles = 0, input = 0, output = 0, error = 0, environmentBlock = 0;
+        nint attributes = 0, jobList = 0, handles = 0, input = 0, output = 0, error = 0, environmentBlock = 0, desktop = 0;
         bool initialized = false;
         try
         {
@@ -181,7 +181,8 @@ internal sealed class ContainedProcess : IDisposable
             // Service-side CLI workers are headless and retain the authenticated
             // caller token's session. Never force the interactive WinSta0 desktop:
             // an unprivileged token may lack access to that desktop.
-            var startup = new StartupEx { Startup = new Startup { Size = (uint)Marshal.SizeOf<StartupEx>(), Flags = 0x100, Input = input, Output = output, Error = error, Desktop = 0 }, Attributes = attributes };
+            if (interactive) desktop = Marshal.StringToHGlobalUni("winsta0\\default");
+            var startup = new StartupEx { Startup = new Startup { Size = (uint)Marshal.SizeOf<StartupEx>(), Flags = 0x100, Input = input, Output = output, Error = error, Desktop = desktop }, Attributes = attributes };
             var environmentText = string.Join('\0', environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(pair => pair.Key + "=" + pair.Value)) + "\0\0";
             environmentBlock = Marshal.StringToHGlobalUni(environmentText);
 #if NATIVE_CONTAINMENT_TESTS
@@ -189,7 +190,7 @@ internal sealed class ContainedProcess : IDisposable
 #endif
             var created = primaryToken == 0
                 ? CreateProcess(executable, command, 0, 0, true, CreateSuspended | ExtendedStartup | UnicodeEnvironment | CreateNoWindow, environmentBlock, cwd, ref startup, out child)
-                : CreateProcessAsUser(primaryToken, executable, command, 0, 0, true, CreateSuspended | ExtendedStartup | UnicodeEnvironment | CreateNoWindow, environmentBlock, cwd, ref startup, out child);
+                : CreateProcessAsUser(primaryToken, executable, command, 0, 0, true, CreateSuspended | ExtendedStartup | UnicodeEnvironment | (interactive ? 0 : CreateNoWindow), environmentBlock, cwd, ref startup, out child);
             Check(created, "CREATE_PROCESS");
             instance.process = child.Process; instance.ProcessId = child.ProcessId;
 #if NATIVE_CONTAINMENT_TESTS
@@ -226,7 +227,7 @@ internal sealed class ContainedProcess : IDisposable
             if (child.Thread != 0) CloseHandle(child.Thread);
             foreach (var handle in new[] { input, output, error }) if (handle != 0) CloseHandle(handle);
             if (initialized) DeleteProcThreadAttributeList(attributes);
-            foreach (var allocation in new[] { attributes, jobList, handles, environmentBlock }) if (allocation != 0) Marshal.FreeHGlobal(allocation);
+            foreach (var allocation in new[] { attributes, jobList, handles, environmentBlock, desktop }) if (allocation != 0) Marshal.FreeHGlobal(allocation);
         }
     }
     internal uint ActiveProcesses

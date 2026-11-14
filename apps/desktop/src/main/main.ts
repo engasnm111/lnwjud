@@ -1839,7 +1839,7 @@ function requestUpdateCheck(source: UpdateCheckSource): UpdateStatus {
       : currentUpdateStatus;
   }
   if (currentUpdateStatus.phase === 'available') {
-    if (!verifiedAutomaticUpdateAuthority) {
+    if (!operatorUpdateInstallAvailable()) {
       return patchUpdateStatus({ phase: 'unavailable', message: messages.updaterUnavailableTransactionAuthority, canInstall: false });
     }
     if (source !== 'automatic' && !desktopUserSettings.updateAutoDownload) {
@@ -1917,7 +1917,7 @@ function boundedNativeDialogText(text: string): string {
 
 async function requestUpdateInstall(): Promise<{ readonly accepted: boolean; readonly status: UpdateStatus }> {
   const consent = updateInstallConsentController;
-  if (!verifiedAutomaticUpdateAuthority || !app.isPackaged || currentUpdateStatus.phase !== 'ready' || consent === null) {
+  if (!operatorUpdateInstallAvailable() || currentUpdateStatus.phase !== 'ready' || consent === null) {
     return { accepted: false, status: currentUpdateStatus };
   }
   try {
@@ -2164,7 +2164,7 @@ function applyDesktopUserSettings(settings: UserSettings): void {
     });
   }
   if (autoUpdaterInitialized) {
-    autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && settings.updateAutoDownload;
+    autoUpdater.autoDownload = operatorUpdateInstallAvailable() && settings.updateAutoDownload;
     configureUpdateCheckSchedule();
   }
 }
@@ -2182,7 +2182,7 @@ function configureUpdateCheckSchedule(): void {
 }
 
 async function installDownloadedUpdate(runtime: DesktopRuntime, offer: DownloadedUpdateOffer): Promise<void> {
-  if (!verifiedAutomaticUpdateAuthority || currentUpdateStatus.phase !== 'installing' || !isCurrentDownloadedUpdateOffer(offer)) return;
+  if (!operatorUpdateInstallAvailable() || currentUpdateStatus.phase !== 'installing' || !isCurrentDownloadedUpdateOffer(offer)) return;
 
   // Stop admitting renderer IPC before stopping Tunnel so no newly accepted
   // settings or workspace operation can race the install handoff.
@@ -2278,6 +2278,17 @@ async function installDownloadedUpdate(runtime: DesktopRuntime, offer: Downloade
   );
 }
 
+/**
+ * Operator-confirmed installation is available on packaged builds whose updater
+ * distribution can hand off to the platform installer. Unattended zero-click
+ * installation stays disabled until the native update transaction is accepted.
+ */
+function operatorUpdateInstallAvailable(): boolean {
+  return app.isPackaged
+    && updaterDistribution !== 'unsupported'
+    && (updaterDistribution !== 'macos' || canInstallMacosUpdates(process.execPath));
+}
+
 async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
   if (!app.isPackaged) {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePackagedOnly, canInstall: false });
@@ -2301,7 +2312,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
     }
     configureUpdaterForDistribution(autoUpdater, windowsDistribution);
     configureUpdaterForPlatform(autoUpdater, updaterDistribution);
-    autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && desktopUserSettings.updateAutoDownload;
+    autoUpdater.autoDownload = operatorUpdateInstallAvailable() && desktopUserSettings.updateAutoDownload;
     autoUpdater.autoInstallOnAppQuit = false;
     updateInstallCoordinator = new UpdateInstallCoordinator({
       activeCallCount: (): number => runtime.activityTracker.listInFlight().length,
@@ -2366,7 +2377,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         return result.response === 0;
       },
       queueInstall: (offer: DownloadedUpdateOffer): boolean => {
-        if (!verifiedAutomaticUpdateAuthority || currentUpdateStatus.phase !== 'ready' || !isCurrentDownloadedUpdateOffer(offer)) return false;
+        if (!operatorUpdateInstallAvailable() || currentUpdateStatus.phase !== 'ready' || !isCurrentDownloadedUpdateOffer(offer)) return false;
         if (updateInstallCoordinator?.requestInstall(offer) !== true) return false;
         patchUpdateStatus({
           phase: 'installing',
@@ -2386,7 +2397,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
     autoUpdater.on('update-available', (info) => {
       recordUpdaterEvent(`update-available:${info.version}`);
       const requestedFromTray = pendingUpdateCheckSource === 'tray';
-      const requestedByRendererWithoutNativeInstall = pendingUpdateCheckSource === 'renderer' && !verifiedAutomaticUpdateAuthority;
+      const requestedByRendererWithoutNativeInstall = pendingUpdateCheckSource === 'renderer' && !operatorUpdateInstallAvailable();
       pendingUpdateCheckSource = null;
       downloadedUpdateGeneration += 1;
       currentDownloadedUpdateOffer = null;
@@ -2399,7 +2410,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         availableVersion: info.version,
         progressPercent: 0,
         lastCheckedAt: new Date().toISOString(),
-        message: verifiedAutomaticUpdateAuthority ? messages.updateAvailableStatus(info.version) : messages.updaterUnavailableTransactionAuthority,
+        message: operatorUpdateInstallAvailable() ? messages.updateAvailableStatus(info.version) : messages.updaterUnavailableTransactionAuthority,
         canInstall: false,
       });
       if (requestedFromTray || requestedByRendererWithoutNativeInstall) {
@@ -2416,7 +2427,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
         timestamp: new Date().toISOString(),
         level: 'info',
         source: 'process',
-        text: verifiedAutomaticUpdateAuthority
+        text: operatorUpdateInstallAvailable()
           ? `[AutoUpdater] Version v${info.version} is available for installation after user confirmation.`
           : `[AutoUpdater] Version v${info.version} is available; trusted automatic installation is not yet supported.`,
       });
@@ -2460,7 +2471,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
       recordUpdaterDownload(info.version);
       const downloadedFile = typeof info.downloadedFile === 'string' ? info.downloadedFile.trim() : '';
       const generation = ++downloadedUpdateGeneration;
-      if (!verifiedAutomaticUpdateAuthority) {
+      if (!operatorUpdateInstallAvailable()) {
         currentDownloadedUpdateOffer = null;
         pendingPortableUpdate = null;
         pendingLinuxAppImageUpdate = null;

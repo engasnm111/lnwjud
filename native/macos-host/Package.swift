@@ -8,7 +8,8 @@ let package = Package(
         .executable(name: "lnwjud-macos-host", targets: ["LnwjudMacHost"]),
     ],
     targets: [
-        .executableTarget(name: "LnwjudMacHost"),
-        .testTarget(name: "LnwjudMacHostTests", dependencies: ["LnwjudMacHost"]),
+        .target(name: "MacProcessOwnerSupport", cSettings: [.unsafeFlags(["-fblocks"])], linkerSettings: [.linkedFramework("Security"), .linkedLibrary("bsm")]),
+        .executableTarget(name: "LnwjudMacHost", dependencies: ["MacProcessOwnerSupport"]),
+        .testTarget(name: "LnwjudMacHostTests", dependencies: ["LnwjudMacHost", "MacProcessOwnerSupport"]),
     ]
 )

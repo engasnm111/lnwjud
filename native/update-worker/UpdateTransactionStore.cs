@@ -220,7 +220,10 @@ internal sealed class UpdateTransactionStore : IDisposable
         if (selection is null) throw new Refusal("UPDATE_SLOT_SELECTION_MISSING");
         if (next.TransactionId == current.TransactionId)
         {
-            var expected = current.Advance(next.Phase, currentDigest, next.Owner);
+            var expected = next.Phase is UpdateTransactionPhase.HealthVerified or UpdateTransactionPhase.Committed or UpdateTransactionPhase.RollbackVerified
+                ? current.AdvanceWithNativeHealth(next.Phase, currentDigest, next.Owner,
+                    next.NativeHealth ?? throw new Refusal("UPDATE_HEALTH_UNVERIFIED"))
+                : current.Advance(next.Phase, currentDigest, next.Owner);
             if (expected != next) throw new Refusal("UPDATE_TRANSACTION_SUCCESSOR_INVALID");
             return;
         }

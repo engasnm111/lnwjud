@@ -14,7 +14,7 @@ import {
   type Result,
 } from '@lnwjud/domain';
 import { CommandPolicy, DefaultPermissionEngine, permissionProfiles, type PermissionEngine, type PermissionProfile } from '@lnwjud/permissions';
-import { ProcessManager, type WindowsNativeAuthority, type LogQuery, type ManagedProcess, type ManagedProcessStart, type ProcessLogResult } from '@lnwjud/process';
+import { ProcessManager, type NativeManagedProcessAuthority, type LogQuery, type ManagedProcess, type ManagedProcessStart, type ProcessLogResult } from '@lnwjud/process';
 import { JsCommandDetector, ProjectDetector, type ProjectCommandKind } from '@lnwjud/project';
 import { prohibitedAgentCommandReason, riskyAgentCommandReason } from '@lnwjud/shared';
 import { isAbsoluteHostPath, isHostPathWithin, resolveHostPath, WorkspacePathGuard, type Workspace, type WorkspaceRepository } from '@lnwjud/workspace';
@@ -44,7 +44,7 @@ export interface ProjectCommandSource {
 export interface ProcessServiceDependencies {
   readonly writerAdmission?: ManagedWriterAdmissionPort;
   readonly nativeContainmentRoot?: string;
-  readonly nativeAuthority?: WindowsNativeAuthority;
+  readonly nativeAuthority?: NativeManagedProcessAuthority;
   readonly processManager?: ProcessManagerPort;
   readonly projectService?: ProjectCommandSource;
   readonly guard?: WorkspacePathGuard;
@@ -257,7 +257,7 @@ export class ProcessService {
       return err(appError('CONFLICT', 'Windows native process containment is required while managed writer admission is enabled'));
     }
     const containmentId = this.writerAdmission === undefined ? undefined : randomUUID();
-    const nativeReceiptPath = containmentId !== undefined && this.nativeContainmentRoot !== undefined && process.platform === 'win32'
+    const nativeReceiptPath = containmentId !== undefined && this.nativeContainmentRoot !== undefined && (process.platform === 'win32' || process.platform === 'darwin')
       ? path.join(this.nativeContainmentRoot, containmentId, 'containment.receipt.json') : undefined;
     const reservation = this.writerAdmission === undefined ? undefined : await this.writerAdmission.enter({
       actorClientId: actor.clientId,

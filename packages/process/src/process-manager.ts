@@ -64,6 +64,7 @@ interface ServiceManagedRecord extends ManagedRecordBase {
 }
 
 type ManagedRecord = ChildManagedRecord | ServiceManagedRecord;
+export type NativeManagedProcessAuthority = Pick<WindowsNativeAuthority, 'attachProcess' | 'submitProcess'>;
 
 export class ProcessManager {
   private readonly records = new Map<string, ManagedRecord>();
@@ -74,7 +75,7 @@ export class ProcessManager {
     private readonly maxActiveProcesses: number = DEFAULT_MAX_ACTIVE_MANAGED_PROCESSES,
     private readonly invocationFactory: SpawnInvocationFactory = createSpawnInvocationFactory(),
     private readonly nativeContainmentRoot?: string,
-    private readonly nativeAuthority?: WindowsNativeAuthority,
+    private readonly nativeAuthority?: NativeManagedProcessAuthority,
     private readonly posixGroupInspector: PosixProcessGroupInspector | undefined = process.platform === 'win32' ? undefined : inspectPosixProcessGroup,
   ) {}
 
@@ -84,7 +85,7 @@ export class ProcessManager {
     onCreated?: (process: ManagedProcess) => void,
     onVerifiedNativeTermination?: () => void | Promise<void>,
   ): Promise<Result<ManagedProcess>> {
-    if (process.platform === 'win32' && this.nativeContainmentRoot !== undefined) {
+    if (this.nativeContainmentRoot !== undefined && (process.platform === 'win32' || process.platform === 'darwin' && this.nativeAuthority !== undefined)) {
       return this.startService(spec, signal, onCreated, onVerifiedNativeTermination);
     }
     // macOS has no kernel owner-loss boundary for escaped process descendants.
@@ -224,7 +225,7 @@ export class ProcessManager {
     onCreated?: (process: ManagedProcess) => void,
     onVerifiedNativeTermination?: () => void | Promise<void>,
   ): Result<ServiceManagedRecord> {
-    if (process.platform !== 'win32' || this.nativeContainmentRoot === undefined || this.nativeAuthority === undefined || spec.nativeBinding === undefined) {
+    if ((process.platform !== 'win32' && process.platform !== 'darwin') || this.nativeContainmentRoot === undefined || this.nativeAuthority === undefined || spec.nativeBinding === undefined) {
       return err(appError('INTERNAL_ERROR', 'Native process authority and attempt identity are required'));
     }
     const processId = spec.containmentId ?? spec.nativeBinding.taskId;

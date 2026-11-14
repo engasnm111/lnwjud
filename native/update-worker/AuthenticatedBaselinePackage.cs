@@ -39,20 +39,7 @@ internal sealed class AuthenticatedBaselinePackage : IDisposable
     public void Dispose() => Files.Dispose();
 
     internal WindowsBaselineLayout ReadInstalledLayout()
-    {
-        using var provenance = ReleaseJson.Parse(Files.Read("PROVENANCE.json", 1024 * 1024), 1024 * 1024, 64);
-        if (provenance.RootElement.ValueKind != JsonValueKind.Object
-            || !provenance.RootElement.TryGetProperty("installedLayout", out var identity))
-            throw new Refusal("ENROLLMENT_LAYOUT_BINDING_INVALID");
-        WindowsBaselineLayout.Fields(identity, "name", "sizeBytes", "sha256");
-        var expected = SignedRelease.Identity(identity);
-        if (expected.Name != "INSTALL-LAYOUT.json" || expected.SizeBytes is 0 or > 65536 || !Wire.Digest(expected.Sha256))
-            throw new Refusal("ENROLLMENT_LAYOUT_BINDING_INVALID");
-        var layout = Files.Read(expected.Name, 65536);
-        if ((ulong)layout.Length != expected.SizeBytes || ReleaseTrustPolicy.Hash(layout) != expected.Sha256)
-            throw new Refusal("ENROLLMENT_LAYOUT_BINDING_INVALID");
-        return WindowsBaselineLayout.Parse(layout, expected.Sha256);
-    }
+        => WindowsBaselineLayout.ReadInstalledLayout(Files);
 }
 
 internal sealed record InstalledFile(string Path, ulong SizeBytes, string Sha256);
@@ -62,6 +49,22 @@ internal sealed record WindowsBaselineLayout(string Sha256, InstalledFile Launch
     internal const int MaximumManifestBytes = 8 * 1024 * 1024;
     internal const int MaximumFiles = 16384;
     internal const ulong MaximumSlotBytes = 4UL * 1024 * 1024 * 1024;
+
+    internal static WindowsBaselineLayout ReadInstalledLayout(EnrollmentPackageFiles files)
+    {
+        using var provenance = ReleaseJson.Parse(files.Read("PROVENANCE.json", 1024 * 1024), 1024 * 1024, 64);
+        if (provenance.RootElement.ValueKind != JsonValueKind.Object
+            || !provenance.RootElement.TryGetProperty("installedLayout", out var identity))
+            throw new Refusal("ENROLLMENT_LAYOUT_BINDING_INVALID");
+        WindowsBaselineLayout.Fields(identity, "name", "sizeBytes", "sha256");
+        var expected = SignedRelease.Identity(identity);
+        if (expected.Name != "INSTALL-LAYOUT.json" || expected.SizeBytes is 0 or > 65536 || !Wire.Digest(expected.Sha256))
+            throw new Refusal("ENROLLMENT_LAYOUT_BINDING_INVALID");
+        var layout = files.Read(expected.Name, 65536);
+        if ((ulong)layout.Length != expected.SizeBytes || ReleaseTrustPolicy.Hash(layout) != expected.Sha256)
+            throw new Refusal("ENROLLMENT_LAYOUT_BINDING_INVALID");
+        return WindowsBaselineLayout.Parse(layout, expected.Sha256);
+    }
 
     internal static WindowsBaselineLayout Parse(byte[] bytes, string digest)
     {

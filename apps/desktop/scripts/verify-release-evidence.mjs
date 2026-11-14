@@ -12,6 +12,7 @@ import { VERIFIER_SHA256 } from './stage-update-attestation-verifier.mjs';
 import { validateUpdateWorkerEvidence } from './verify-update-worker-artifacts.mjs';
 import { readUpdateAcceptanceReceipt, verifyUpdateAcceptanceForRelease } from './verify-update-acceptance.mjs';
 import { verifyInstalledLayoutAsset } from '../../../scripts/update-trust/prepare-installed-layout.mjs';
+import { verifyWindowsUpdatePayloadAsset, windowsRuntimePath } from './windows-update-layout.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeDependencies = JSON.parse(await readFile(path.join(desktopRoot, 'src', 'main', 'runtime-dependencies.json'), 'utf8'));
@@ -61,9 +62,11 @@ if (process.env.LNWJUD_REQUIRE_CLEAN_PROVENANCE === '1' && provenance.source.dir
 }
 
 const releaseArtifactOnly = process.env.LNWJUD_RELEASE_ARTIFACT_ONLY === '1';
+const windowsSlots = provenance.platform === 'win32' && Object.hasOwn(provenance, 'installedLayout');
+const bridgeRelativePath = windowsSlots ? windowsRuntimePath('resources/windows-capability-bridge.ps1') : 'resources/windows-capability-bridge.ps1';
 const packagedBridgePath = releaseArtifactOnly
   ? undefined
-  : path.join(installerDirectory, 'win-unpacked', 'resources', 'windows-capability-bridge.ps1');
+  : path.join(installerDirectory, 'win-unpacked', bridgeRelativePath);
 const compiledBundlePath = releaseArtifactOnly
   ? undefined
   : path.join(desktopRoot, 'dist', 'main', 'main.js');
@@ -112,6 +115,11 @@ if (Object.hasOwn(provenance, 'installedLayout')) {
   await verifyInstalledLayoutAsset(installerDirectory, provenance.installedLayout);
   if (sums.get('INSTALL-LAYOUT.json') !== provenance.installedLayout.sha256) throw new Error('INSTALL-LAYOUT.json SHA256SUMS mismatch');
 }
+if (Object.hasOwn(provenance, 'updatePayload')) {
+  if (!windowsSlots || provenance.arch !== 'x64') throw new Error('Update payload requires Windows x64 installed layout');
+  await verifyWindowsUpdatePayloadAsset(installerDirectory, provenance.updatePayload, provenance.version);
+  if (sums.get(provenance.updatePayload.name) !== provenance.updatePayload.sha256) throw new Error('Update payload SHA256SUMS mismatch');
+}
 
 if (process.env.LNWJUD_REQUIRE_UPDATE_ACCEPTANCE === '1') {
   if (!['win32', 'darwin'].includes(provenance.platform)) {
@@ -143,7 +151,7 @@ for (const runtime of provenance.runtime) {
     && runtime.sha256.toLowerCase() !== VERIFIER_SHA256) {
     throw new Error('Runtime provenance attestation verifier hash does not match pinned trust');
   }
-  if (provenance.platform === 'win32' && runtime.relativePath === 'resources/windows-capability-bridge.ps1'
+  if (provenance.platform === 'win32' && runtime.relativePath === bridgeRelativePath
     && (runtime.sha256 !== verifiedCapabilityBridge.sha256 || runtime.sizeBytes !== verifiedCapabilityBridge.sizeBytes)) {
     throw new Error('Runtime provenance capability bridge entry does not match verified packaged bytes');
   }
@@ -220,7 +228,7 @@ function requiredRuntimePaths(platform, arch) {
       ? ['Contents/MacOS/lnwjud', 'Contents/Resources/lnwjud-mcp-stdio', 'Contents/Resources/runtime-tools/ripgrep/rg', 'Contents/Resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'Contents/Resources/tunnel-client/tunnel-client', 'Contents/Resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `Contents/Resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `Contents/Resources/tunnel-client/${tunnelPrefix}.spdx.json`, `Contents/Resources/tunnel-client/tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`, `Contents/Resources/native-host/macos/${provenance.arch}/lnwjud-macos-host`, `Contents/Resources/native-host/macos/${provenance.arch}/NATIVE_HOST.json`]
       : ['lnwjud', 'lnwjud-mcp-stdio', 'resources/runtime-tools/ripgrep/rg', 'resources/runtime-tools/ripgrep/BUNDLED_RIPGREP.json', 'resources/tunnel-client/tunnel-client', 'resources/tunnel-client/BUNDLED_TUNNEL_CLIENT.json', `resources/tunnel-client/${tunnelPrefix}-licenses.txt`, `resources/tunnel-client/${tunnelPrefix}.spdx.json`, `resources/tunnel-client/tunnel-client-v${BUNDLED_TUNNEL_CLIENT_VERSION}-provenance.sigstore.json`, `resources/native-host/linux/${provenance.arch}/lnwjud-linux-host`, `resources/native-host/linux/${provenance.arch}/NATIVE_HOST.json`];
   if (platform !== 'win32') paths.push(`${platform === 'darwin' ? 'Contents/Resources' : 'resources'}/native-containment/process-runtime.mjs`);
-  return new Set(paths);
+  return new Set(windowsSlots ? [...paths.map(windowsRuntimePath), 'lnwjud.exe'] : paths);
 }
 
 function normalizeTunnelArch(value) {

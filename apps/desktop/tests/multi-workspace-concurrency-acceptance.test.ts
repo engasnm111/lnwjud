@@ -192,8 +192,8 @@ describe('multi-workspace concurrency acceptance', () => {
         expect(testB.isError).toBe(true);
         await expect(access(path.join(workspaceRootA, 'build.started'))).rejects.toThrow();
         await expect(access(path.join(workspaceRootB, 'test.started'))).rejects.toThrow();
-        expect(buildCause).toBe('macOS process writer containment unavailable: escaped descendants are not kernel-fenced');
-        expect(testCause).toBe('macOS process writer containment unavailable: escaped descendants are not kernel-fenced');
+        expect(buildCause).toBe('macOS process writer requires an enrolled Endpoint Security owner; no reservation was created');
+        expect(testCause).toBe('macOS process writer requires an enrolled Endpoint Security owner; no reservation was created');
         allWorkCompleted = true;
         return;
       }

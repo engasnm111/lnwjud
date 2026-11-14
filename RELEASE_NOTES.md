@@ -2,6 +2,17 @@
 
 Release history is maintained here for release authoring; the [README](README.md) contains installation and product documentation, while each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) provides the public Highlights, Features, Fixes and downloads.
 
+### What's new in v5.9.2
+
+- **In-app update installation (Windows x64, Linux x64/arm64):** the top-left version control checks GitHub Releases, downloads the matching package, and asks for one confirmation of the exact version. lnwjud then waits for active work, stops the Tunnel, re-verifies the downloaded file against the SHA-256 recorded at download time, installs silently through the platform installer, and relaunches.
+- **Zero-click stays off:** installation never starts without that confirmation, and `config/release-scope.json` records `installationMode: in-app` with `automaticUpdaterEnabled: false`. `scripts/verify-manual-release-scope.mjs` fails the release if any Desktop install path loses its packaged-only operator-confirmation gate.
+- **Truthful update status:** a finished download reports that it is ready to install instead of an unsupported message, and the install is refused if the downloaded file changes before handoff.
+- **macOS remains held:** no macOS binaries in v5.9.2. Issue #216 still needs native macOS containment acceptance; the source now carries a fail-closed native termination proof path, but it has not been exercised on macOS hardware.
+- **Release pipeline:** Windows assets come from the exact-SHA CI build (`windows-release-<sha>`), with `latest.yml`/`portable.yml` published for the in-app updater. The protected signed-baseline pipeline stays staged for a future release once signing credentials are provisioned.
+
+- **ติดตั้งอัปเดตจากในแอป (Windows x64, Linux x64/arm64):** ปุ่มมุมซ้ายบนตรวจ ดาวน์โหลด และขอให้ยืนยันเวอร์ชันหนึ่งครั้ง จากนั้นรอให้งานจบ หยุด Tunnel ตรวจ SHA-256 ของไฟล์ที่ดาวน์โหลดอีกครั้ง ติดตั้งแบบ Silent และเปิดแอปใหม่
+- **ไม่มีการติดตั้งเองแบบ zero-click:** ต้องมีการยืนยันทุกครั้ง และ macOS ยังไม่มีการปล่อยไบน์นารีจนกว่า #216 จะผ่านการทดสอบบนเครื่องจริง
+
 ### What's new in v5.9.1
 
 - Recovered Goals continue through a newly acquired lease for both reads and mutations. Current lease validation fences cancelled and stale requests.

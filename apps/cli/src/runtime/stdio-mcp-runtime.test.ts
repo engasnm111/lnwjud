@@ -260,7 +260,7 @@ describe('stdio MCP runtime', { timeout: STDIO_RUNTIME_TEST_TIMEOUT_MS }, () => 
         } },
       });
       expect(attempt).toMatchObject({
-        ok: false, error: { code: 'CONFLICT', message: expect.stringContaining('macOS durable shell unavailable') },
+        ok: false, error: { code: 'CONFLICT', message: expect.stringContaining('macOS durable shell requires an enrolled Endpoint Security process owner') },
       });
       const tasks = await runtime.services.capabilities?.execute('shell', {
         operation: 'list', workspaceId: registered.id,

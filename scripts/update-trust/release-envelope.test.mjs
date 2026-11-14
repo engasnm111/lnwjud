@@ -43,11 +43,12 @@ function rawEnvelope(fixture, payloadBytes, messageDomain = domain, signatureOpt
   return Buffer.from(JSON.stringify({ protocol: 1, keyId: 'disposable-test-only', payload: payloadBytes.toString('base64'), signature: signature.toString('base64') }));
 }
 
-test('disposable signature authenticates exact bytes and empty production policy refuses', () => {
+test('disposable signature authenticates exact bytes and production policy rejects an untrusted fixture key', () => {
   const fixture = disposableFixture();
   assert.equal(authenticateEnvelope(fixture.bytes, fixture.policy, 1800000000n).envelopeSha256, hash(fixture.bytes));
   assert.throws(() => authenticateEnvelope(fixture.bytes, fixture.policy, 1799999999n), /RELEASE_TIME_INVALID/);
-  assert.throws(() => authenticateEnvelope(fixture.bytes, loadProductionPolicy(), 1800000000n), /RELEASE_TRUST_UNCONFIGURED/);
+  assert.throws(() => authenticateEnvelope(fixture.bytes, loadProductionPolicy(), 1800000000n), /RELEASE_KEY_UNTRUSTED/);
+  assert.throws(() => authenticateEnvelope(fixture.bytes, { ...loadProductionPolicy(), authorities: [] }, 1800000000n), /RELEASE_TRUST_UNCONFIGURED/);
 });
 
 test('signed same-version refresh requires a changed artifact and higher sequence', () => {
@@ -130,7 +131,7 @@ for (const [name, change] of Object.entries({
   workflow: payload => { payload.source.workflow = '.github/workflows/other.yml'; }, replay: payload => { payload.releaseSequence = '1'; },
   recoveryDigest: payload => { payload.recoveryAuthorization.previousArtifactSha256 = '0'.repeat(64); },
   recoveryBudget: payload => { payload.recoveryAuthorization.maximumAttempts = 2; },
-  ttl: payload => { payload.expiresAt = '1800086401'; }, issue: payload => { payload.issuedAt = '1800000301'; payload.notBefore = payload.issuedAt; },
+  ttl: payload => { payload.expiresAt = '1831536001'; }, issue: payload => { payload.issuedAt = '1800000301'; payload.notBefore = payload.issuedAt; },
   artifactPath: payload => { payload.artifact.name = '../lnwjud-Setup-2.0.0.exe'; },
   tooLarge: payload => { payload.artifact.sizeBytes = '2147483649'; },
 })) {
@@ -217,7 +218,7 @@ test('previous descriptor binds exact original envelope, package and provenance 
 test('production producer refuses before file reads/key access and accepts no policy/evidence boolean arguments', async () => {
   process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM = 'sentinel-test-only';
   try {
-    await assert.rejects(produceReleaseEnvelope({}), /RELEASE_TRUST_UNCONFIGURED/);
+    await assert.rejects(produceReleaseEnvelope({}), /RELEASE_SIGNER_LEGACY_DISABLED/);
     assert.equal(process.env.LNWJUD_UPDATE_RELEASE_PRIVATE_KEY_PEM, 'sentinel-test-only');
     assert.throws(() => parseArguments(['--policy', 'untrusted.json']));
     assert.throws(() => parseArguments(['--verified', 'true']));

@@ -67,19 +67,24 @@ describe('titlebar update notification', () => {
     expect(intent.isCurrentAttempt(attempt)).toBe(false);
   });
 
-  it('keeps read-only version checks usable while native package installation is unavailable', async () => {
+  it('gates in-app installation on a packaged operator confirmation while zero-click stays off', async () => {
     const main = await readFile(path.resolve(import.meta.dirname, '../src/main/main.ts'), 'utf8');
     expect(main).not.toContain('MANUAL_RELEASE_ONLY');
+    // The native zero-click authority is still probed and logged, but it can never
+    // stand in for the operator-confirmed install path.
     expect(main).toContain('verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority)');
-    expect(main).toContain('autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && desktopUserSettings.updateAutoDownload');
-    expect(main).toContain('autoUpdater.autoDownload = verifiedAutomaticUpdateAuthority && settings.updateAutoDownload');
-    expect(main).toContain('if (!verifiedAutomaticUpdateAuthority || !app.isPackaged');
-    expect(main).toContain('if (!verifiedAutomaticUpdateAuthority || currentUpdateStatus.phase');
+    expect(main).toContain('function operatorUpdateInstallAvailable(): boolean {');
+    expect(main).toContain('autoUpdater.autoDownload = operatorUpdateInstallAvailable() && desktopUserSettings.updateAutoDownload');
+    expect(main).toContain('autoUpdater.autoDownload = operatorUpdateInstallAvailable() && settings.updateAutoDownload');
+    expect(main).toContain('autoUpdater.autoInstallOnAppQuit = false;');
+    expect(main).toContain("if (!operatorUpdateInstallAvailable() || currentUpdateStatus.phase !== 'ready'");
+    expect(main).toContain("if (!operatorUpdateInstallAvailable() || currentUpdateStatus.phase !== 'installing'");
+    expect(main).toContain('const accepted = await consent.requestInstall();');
     expect(main).toContain("return patchUpdateStatus({ phase: 'unavailable', message: messages.updaterUnavailableTransactionAuthority, canInstall: false });");
     expect(main).toContain('autoUpdater.checkForUpdates()');
     const downloadedHandler = main.slice(main.indexOf("autoUpdater.on('update-downloaded', async (info) => {"), main.indexOf("autoUpdater.on('error', (err) => {"));
-    expect(downloadedHandler).toContain('if (!verifiedAutomaticUpdateAuthority) {');
-    expect(downloadedHandler.indexOf('if (!verifiedAutomaticUpdateAuthority) {')).toBeLessThan(downloadedHandler.indexOf("phase: 'ready'"));
+    expect(downloadedHandler).toContain('if (!operatorUpdateInstallAvailable()) {');
+    expect(downloadedHandler.indexOf('if (!operatorUpdateInstallAvailable()) {')).toBeLessThan(downloadedHandler.indexOf("phase: 'ready'"));
     expect(downloadedHandler).toContain("phase: 'unavailable'");
     const initializer = main.slice(main.indexOf('async function initAutoUpdater('));
     const authority = initializer.indexOf('verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority)');

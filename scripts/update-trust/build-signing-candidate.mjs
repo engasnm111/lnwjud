@@ -28,8 +28,7 @@ function compatibility(provenance) {
   return Object.freeze(Object.fromEntries(recoveryNames.map(name => [name, value[name]])));
 }
 
-async function readSignedPredecessor(workspace, policy, observedTime) {
-  const directory = path.join(workspace, '_predecessor');
+export async function readSignedPredecessor(directory, policy, observedTime) {
   const envelope = await readBoundedFile(path.join(directory, 'RELEASE.json'), 49152n);
   const outer = parseStrictJson(envelope.bytes, 49152, 12);
   const unsigned = parseStrictJson(canonicalBase64(outer.payload, 32768), 32768, 12);
@@ -55,7 +54,7 @@ async function readSignedPredecessor(workspace, policy, observedTime) {
 }
 
 function releaseCandidate(provenance, ctx, identities, observedTime, predecessor) {
-  if (!Number.isSafeInteger(observedTime) || observedTime <= 0 || observedTime + 86400 > 253402300799
+  if (!Number.isSafeInteger(observedTime) || observedTime <= 0 || observedTime + 31536000 > 253402300799
     || !/^[1-9][0-9]{0,14}$/.test(ctx.runId) || !/^[1-9][0-9]{0,14}$/.test(ctx.runAttempt)
     || ctx.runAttempt !== '1') refuse('UPDATE_SIGNING_CANDIDATE_UNVERIFIED');
   const installer = validateProvenance(provenance, ctx);
@@ -80,7 +79,7 @@ function releaseCandidate(provenance, ctx, identities, observedTime, predecessor
       compatibility: compatibility(provenance),
     },
     issuedAt: String(observedTime), notBefore: String(observedTime),
-    expiresAt: String(observedTime + 86400),
+    expiresAt: String(observedTime + 31536000),
     ...(predecessor ? { recovery: { purpose: 'failed-candidate-only',
       previousReleaseIdentity: predecessor.previous.identitySha256, maximumAttempts: 1 } } : {}),
   };
@@ -106,7 +105,7 @@ export async function prepareSigningBundle({ workspace, context, policyBytes, ob
   assertSourceRecoveryContracts(provenance.recoveryCompatibility, sourceContracts);
   const installer = validateProvenance(provenance, context);
   const selected = await inspectSubjectDirectory(incoming, context, Object.values(roleFiles));
-  const predecessor = purpose === 'update' ? await readSignedPredecessor(workspace, policy, observedTime) : null;
+  const predecessor = purpose === 'update' ? await readSignedPredecessor(path.join(workspace, '_predecessor'), policy, observedTime) : null;
   const observed = {};
   for (const [role, filename] of [
     ['artifact', installer.name], ['provenance', 'PROVENANCE.json'],

@@ -82,7 +82,7 @@ export interface NativeProcessRequest {
   readonly timeoutMs: number; readonly windowsVerbatimArguments?: boolean; readonly environment?: NodeJS.ProcessEnv;
   readonly maximumOutputBytes?: number; readonly signal?: AbortSignal;
 }
-export type WindowsContainmentRpcRequest = { readonly protocol: 3; readonly identity: NativeAttemptBinding } & (
+export type WindowsContainmentRpcRequest = ({ readonly protocol: 3; readonly identity: NativeAttemptBinding } & (
   | { readonly command: 'prepare' | 'run'; readonly operation: NativeServiceProcessOperation; readonly reservationKey?: string; readonly operationDigest?: string }
   | { readonly command: 'inspect' | 'cancel' }
   | { readonly command: 'recover_after_reboot'; readonly recordedAt: string }
@@ -92,6 +92,24 @@ export type WindowsContainmentRpcRequest = { readonly protocol: 3; readonly iden
     | { readonly operationDigest: string; readonly operation?: never }))
   | { readonly command: 'control'; readonly controlCommand: NativeControlCommand; readonly controlRequest: unknown }
   | { readonly command: 'inspect_control'; readonly controlCommand: NativeControlCommand }
+)) | { readonly protocol: 3; readonly command: 'mcp_child' | 'mcp_close_connection'; readonly connection: NativeAttemptBinding }
+  | { readonly protocol: 3; readonly command: 'mcp_close_child'; readonly connection: NativeAttemptBinding; readonly identity: NativeAttemptBinding }
+  | WindowsUpdateServiceRequest;
+
+export type WindowsUpdateServiceRequest = { readonly protocol: 3 } & (
+  | { readonly command: 'update_capabilities'; readonly update: Record<string, never> }
+  | { readonly command: 'update_enroll'; readonly update: { readonly packageDirectory: string } }
+  | { readonly command: 'update_prepare'; readonly update: {
+    readonly packageDirectory: string; readonly requestId: string;
+    readonly tunnel: { readonly enabled: boolean; readonly wasConnected: boolean; readonly profileDigest: string };
+  } }
+  | { readonly command: 'update_execute' | 'update_abort'; readonly update: { readonly transactionId: string; readonly challenge: string } }
+  | { readonly command: 'update_status'; readonly update: { readonly transactionId: string } }
+  | { readonly command: 'update_boot'; readonly update: { readonly launchId: string; readonly challenge: string } }
+  | { readonly command: 'update_health'; readonly update: {
+    readonly transactionId: string; readonly challenge: string; readonly version: string; readonly dataGenerationId: string;
+    readonly tunnelConnected: boolean; readonly profileDigest: string; readonly migrationReady: boolean; readonly runtimeReady: boolean;
+  } }
 );
 export interface WindowsContainmentServiceClient {
   request<T = unknown>(request: WindowsContainmentRpcRequest): Promise<T>;
@@ -122,6 +140,10 @@ export class WindowsNativeAuthority {
     this.client = client ?? new ProcessWindowsContainmentServiceClient(configuration);
   }
   public get config(): WindowsNativeAuthorityConfiguration { return this.configuration; }
+
+  public requestUpdate(request: WindowsUpdateServiceRequest): Promise<unknown> {
+    return this.client.request(request);
+  }
 
   public async inspectUpdateStartup(): Promise<WindowsUpdateStartupDisposition> {
     try {
@@ -444,7 +466,8 @@ class ProcessWindowsContainmentServiceClient implements WindowsContainmentServic
       // A Windows service process launch can incur antivirus/profile activation
       // latency. Bound run separately from short observation RPCs; failure
       // remains termination_unknown and never authorizes a duplicate launch.
-      const completion = childCompletion(child, request.command === 'control' ? 120_000 : request.command === 'run' ? 40_000 : 15_000);
+      const completion = childCompletion(child, request.command === 'control' ? 120_000
+        : ['run', 'mcp_close_child', 'mcp_close_connection'].includes(request.command) ? 40_000 : 15_000);
       const input = command === 'service-rpc' ? writePrivateFrame(child, payload, true) : Promise.resolve().then(() => {
         child.stdin?.on('error', () => undefined);
         child.stdin?.end();
@@ -483,17 +506,28 @@ export interface WindowsMcpStdioTarget {
   readonly env?: Readonly<Record<string, string>>;
 }
 export interface WindowsMcpStdioLaunch {
+  readonly containment: 'unisolated_same_user';
+  readonly cleanupScope: 'owned_job' | 'local_resource';
+  prepareChild(): Promise<WindowsMcpStdioChildLaunch>;
+  closeOwnedConnection(): Promise<WindowsMcpCleanupResult>;
+  release(): void;
+}
+export interface WindowsMcpCleanupResult {
+  readonly scope: 'owned_job' | 'local_resource';
+  readonly containment: 'unisolated_same_user';
+  readonly writerDrainVerified: false;
+}
+export interface WindowsMcpStdioChildLaunch {
   readonly command: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
-  closeAndVerify(child: ChildProcess): Promise<void>;
-  release(): void;
+  closeResource(child?: ChildProcess): Promise<WindowsMcpCleanupResult>;
 }
 export interface WindowsMcpStdioOwner {
   prepare(target: WindowsMcpStdioTarget): Promise<WindowsMcpStdioLaunch>;
 }
 
-export function createWindowsMcpStdioOwner(configuration: WindowsNativeAuthorityConfiguration): WindowsMcpStdioOwner {
+export function createWindowsMcpStdioOwner(configuration: WindowsNativeAuthorityConfiguration, mode: 'ordinary_manual' | 'require_service' = 'ordinary_manual'): WindowsMcpStdioOwner {
   return {
     async prepare(target: WindowsMcpStdioTarget): Promise<WindowsMcpStdioLaunch> {
       if (process.platform !== 'win32') throw new Error('NATIVE_WINDOWS_REQUIRED');
@@ -539,42 +573,173 @@ export function createWindowsMcpStdioOwner(configuration: WindowsNativeAuthority
         throw new Error('MCP_TARGET_COMMAND_UNAVAILABLE');
       const invocation = toWindowsSpawnInvocation(resolved.value, targetArgs, {}, 'win32');
       if (!invocation.ok) throw new Error('MCP_TARGET_COMMAND_UNAVAILABLE');
-      const request = JSON.stringify({
-        command: invocation.value.executable,
+      const operation = {
+        kind: 'run_mcp_stdio', executable: invocation.value.executable,
         args: [...invocation.value.args],
         cwd,
         environment: targetEnvironment,
         windowsVerbatimArguments: invocation.value.windowsVerbatimArguments === true,
-      });
+        timeoutMs: 0, maximumOutputBytes: 0,
+      };
+      const request = JSON.stringify(operation);
       const requestCharacters = invocation.value.executable.length + cwd.length
         + invocation.value.args.reduce((total, argument) => total + argument.length + 1, 0)
         + environmentEntries.reduce((total, [key, value]) => total + key.length + value.length + 2, 0);
       if (requestCharacters >= 32_000) throw new Error('MCP_PROXY_CONFIGURATION_TOO_LARGE');
       if (Buffer.byteLength(request, 'utf8') > 64 * 1024) throw new Error('MCP_PROXY_CONFIGURATION_TOO_LARGE');
       const pinned = await pinVerifiedHelper(configuration);
+      if (mode === 'ordinary_manual') {
+        let closed = false;
+        let released = false;
+        const localRequest = JSON.stringify({ command: operation.executable, args: operation.args, cwd,
+          environment: targetEnvironment, windowsVerbatimArguments: operation.windowsVerbatimArguments });
+        const proof: WindowsMcpCleanupResult = Object.freeze({ scope: 'local_resource', containment: 'unisolated_same_user', writerDrainVerified: false });
+        return {
+          containment: 'unisolated_same_user', cleanupScope: 'local_resource',
+          async prepareChild(): Promise<WindowsMcpStdioChildLaunch> {
+            if (closed) throw new Error('MCP_LOCAL_CONNECTION_CLOSED');
+            return {
+              command: configuration.helper.executable, args: ['mcp-stdio-local-resource', configuration.helper.sha256.toLowerCase()],
+              env: { ...helperEnvironment(), LNWJUD_MCP_STDIO_PROXY_CONFIG: localRequest },
+              async closeResource(child?: ChildProcess): Promise<WindowsMcpCleanupResult> {
+                if (child === undefined) return proof;
+                if (child.exitCode !== null || child.signalCode !== null) {
+                  if (child.exitCode === 0 && child.signalCode === null) return proof;
+                  throw new Error('MCP_LOCAL_RESOURCE_UNVERIFIED');
+                }
+                child.stdin?.end();
+                if (await childCompletion(child, 15_000) !== 0 || child.signalCode !== null) throw new Error('MCP_LOCAL_RESOURCE_UNVERIFIED');
+                return proof;
+              },
+            };
+          },
+          async closeOwnedConnection(): Promise<WindowsMcpCleanupResult> { closed = true; return proof; },
+          release(): void {
+            if (released) return;
+            if (!closed) throw new Error('MCP_LOCAL_CONNECTION_UNVERIFIED');
+            released = true; pinned.close();
+          },
+        };
+      }
+      const client = new ProcessWindowsContainmentServiceClient(configuration);
+      let owner: ChildProcess;
+      try { owner = spawn(configuration.helper.executable, ['mcp-stdio-owner', configuration.helper.sha256.toLowerCase()], {
+        windowsHide: true, shell: false, env: helperEnvironment(), stdio: ['pipe', 'pipe', 'pipe'],
+      }); } catch (error) { pinned.close(); throw error; }
+      let ownerClosed = false;
+      let preparingFailed = false;
+      owner.once('close', () => { ownerClosed = true; if (preparingFailed) pinned.close(); });
+      owner.stderr?.resume();
+      let connection: NativeAttemptBinding;
+      try {
+        [connection] = await Promise.all([readMcpConnection(owner), writePrivateFrame(owner, Buffer.from(request), false)]);
+      } catch (error) {
+        preparingFailed = true;
+        if (ownerClosed) pinned.close();
+        owner.kill();
+        throw error;
+      }
       let released = false;
+      let closed = false;
+      let closing: Promise<WindowsMcpCleanupResult> | undefined;
+      const proof: WindowsMcpCleanupResult = Object.freeze({ scope: 'owned_job', containment: 'unisolated_same_user', writerDrainVerified: false });
       return {
-        command: configuration.helper.executable,
-        args: ['mcp-stdio-proxy'],
-        env: { LNWJUD_MCP_STDIO_PROXY_CONFIG: request },
-        async closeAndVerify(child: ChildProcess): Promise<void> {
-          if (child.exitCode !== null || child.signalCode !== null) {
-            if (child.exitCode === 0 && child.signalCode === null) return;
-            throw new Error('MCP_PROXY_TERMINATION_UNVERIFIED');
-          }
-          if (child.stdin === null || child.stdin.destroyed) throw new Error('MCP_PROXY_INPUT_UNAVAILABLE');
-          if (!child.stdin.writableEnded) child.stdin.end();
-          const exitCode = await childCompletion(child, 15_000);
-          if (exitCode !== 0 || child.signalCode !== null) throw new Error('MCP_PROXY_TERMINATION_UNVERIFIED');
+        containment: 'unisolated_same_user', cleanupScope: 'owned_job',
+        async prepareChild(): Promise<WindowsMcpStdioChildLaunch> {
+          if (closed || closing !== undefined || owner.exitCode !== null || owner.signalCode !== null) throw new Error('MCP_NATIVE_CONNECTION_CLOSED');
+          const identity = requireMcpBinding(await client.request({ protocol: 3, command: 'mcp_child', connection }));
+          if (!belongsToMcpConnection(connection, identity)) throw new Error('MCP_NATIVE_CHILD_INVALID');
+          const payload = JSON.stringify({ connection, identity, operation });
+          if (Buffer.byteLength(payload) > 64 * 1024) throw new Error('MCP_PROXY_CONFIGURATION_TOO_LARGE');
+          return {
+            command: configuration.helper.executable,
+            args: ['mcp-stdio-proxy', configuration.helper.sha256.toLowerCase()],
+            env: { ...helperEnvironment(), LNWJUD_MCP_STDIO_PROXY_CONFIG: payload },
+            async closeResource(child?: ChildProcess): Promise<WindowsMcpCleanupResult> {
+              const value = await client.request({ protocol: 3, command: 'mcp_close_child', connection, identity });
+              requireMcpOwnedJob(value, identity);
+              if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+                child.stdin?.end();
+                try { await childCompletion(child, 5_000); }
+                catch { child.kill(); await childCompletion(child, 5_000); }
+              }
+              return proof;
+            },
+          };
+        },
+        closeOwnedConnection(): Promise<WindowsMcpCleanupResult> {
+          closing ??= (async (): Promise<WindowsMcpCleanupResult> => {
+            const value = await client.request({ protocol: 3, command: 'mcp_close_connection', connection });
+            if (!isRecord(value) || value.scope !== 'owned_job' || value.containment !== 'unisolated_same_user'
+              || value.writerDrainVerified !== false || value.state !== 'closed_verified'
+              || !sameBinding(requireMcpBinding(value.connection), connection) || !Array.isArray(value.children) || value.children.length > 64)
+              throw new Error('MCP_NATIVE_CONNECTION_UNVERIFIED');
+            const generations = new Set<number>();
+            for (const child of value.children) {
+              if (!isRecord(child) || !isRecord(child.process)) throw new Error('MCP_NATIVE_CHILD_INVALID');
+              const identity = requireMcpBinding(child.process.identity);
+              if (!belongsToMcpConnection(connection, identity) || generations.has(identity.generation)) throw new Error('MCP_NATIVE_CHILD_INVALID');
+              generations.add(identity.generation);
+              requireMcpOwnedJob(child, identity);
+            }
+            owner.stdin?.end();
+            if (owner.exitCode === null && owner.signalCode === null) await childCompletion(owner, 10_000);
+            closed = true;
+            return proof;
+          })().catch((error: unknown) => { closing = undefined; throw error; });
+          return closing;
         },
         release(): void {
           if (released) return;
+          if (!closed) throw new Error('MCP_NATIVE_CONNECTION_UNVERIFIED');
           released = true;
           pinned.close();
         },
       };
     },
   };
+}
+
+function belongsToMcpConnection(connection: NativeAttemptBinding, child: NativeAttemptBinding): boolean {
+  return connection.generation === 1 && connection.taskId.startsWith('mcp:') && child.taskId === connection.taskId
+    && child.attemptId !== connection.attemptId && child.generation >= 2 && child.requestDigest === connection.requestDigest
+    && child.ownerClientId === connection.ownerClientId && child.ownerSessionId === connection.ownerSessionId && child.workspaceId === connection.workspaceId;
+}
+function requireMcpBinding(value: unknown): NativeAttemptBinding {
+  const binding = parseNativeAttemptBinding(value);
+  if (binding === undefined) throw new Error('MCP_NATIVE_BINDING_INVALID');
+  return binding;
+}
+function requireMcpOwnedJob(value: unknown, identity: NativeAttemptBinding): void {
+  if (!isRecord(value) || value.scope !== 'owned_job' || value.containment !== 'unisolated_same_user' || value.writerDrainVerified !== false)
+    throw new Error('MCP_NATIVE_JOB_UNVERIFIED');
+  const observation = toObservation(value.process, identity);
+  if (observation.state !== 'terminal_verified' && observation.state !== 'launch_not_started') throw new Error('MCP_NATIVE_JOB_UNVERIFIED');
+}
+function readMcpConnection(child: ChildProcess): Promise<NativeAttemptBinding> {
+  return new Promise((resolve, reject) => {
+    let text = '';
+    const timer = setTimeout(() => finish(new Error('MCP_NATIVE_CONNECTION_UNAVAILABLE')), 30_000);
+    const failed = (): void => finish(new Error('MCP_NATIVE_CONNECTION_UNAVAILABLE'));
+    const finish = (error?: Error, value?: NativeAttemptBinding): void => {
+      clearTimeout(timer); child.off('error', failed); child.off('close', failed); child.stdout?.off('data', data);
+      child.stdout?.resume();
+      if (error !== undefined) reject(error); else resolve(value!);
+    };
+    const data = (chunk: Buffer): void => {
+      text += chunk.toString('utf8');
+      if (Buffer.byteLength(text) > 8192) { finish(new Error('MCP_NATIVE_CONNECTION_UNAVAILABLE')); return; }
+      if (!text.includes('\n')) return;
+      try {
+        const unavailable = serviceEndpointFailure(125, Buffer.from(text));
+        if (unavailable !== undefined) { finish(new Error(unavailable)); return; }
+        const value = requireMcpBinding(JSON.parse(text.trim()));
+        if (!value.taskId.startsWith('mcp:') || value.generation !== 1) throw new Error('MCP_NATIVE_CONNECTION_UNAVAILABLE');
+        finish(undefined, value);
+      } catch { finish(new Error('MCP_NATIVE_CONNECTION_UNAVAILABLE')); }
+    };
+    child.once('error', failed); child.once('close', failed); child.stdout?.on('data', data);
+  });
 }
 
 async function pinVerifiedHelper(config: WindowsNativeAuthorityConfiguration): Promise<ExecutablePin> {
