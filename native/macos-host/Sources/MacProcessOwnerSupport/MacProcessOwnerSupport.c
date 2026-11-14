@@ -1,6 +1,8 @@
 #include "MacProcessOwnerSupport.h"
 #include <EndpointSecurity/EndpointSecurity.h>
 #include <Security/Security.h>
+#include <dlfcn.h>
+#include <pthread.h>
 #include <bsm/libbsm.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -20,14 +22,56 @@
 
 static es_client_t *owner_client;
 
+// Some macOS SDK images expose the EndpointSecurity headers without a linkable
+// framework stub. Resolve the client API at runtime so the package always
+// links, and refuse to start the daemon when the framework is unavailable.
+typedef es_new_client_result_t (^LnwjudEsHandler)(es_client_t *, const es_message_t *);
+typedef es_new_client_result_t (*LnwjudEsNewClient)(es_client_t **, LnwjudEsHandler);
+typedef es_return_t (*LnwjudEsRespondAuth)(es_client_t *, const es_message_t *, es_auth_result_t, bool);
+typedef es_return_t (*LnwjudEsSubscribe)(es_client_t *, const es_event_type_t *, uint32_t);
+typedef es_return_t (*LnwjudEsUnmuteAllPaths)(es_client_t *);
+typedef es_clear_cache_result_t (*LnwjudEsClearCache)(es_client_t *);
+typedef void (*LnwjudEsDeleteClient)(es_client_t *);
+
+static pthread_once_t owner_es_once = PTHREAD_ONCE_INIT;
+static void *owner_es_library;
+static LnwjudEsNewClient owner_es_new_client;
+static LnwjudEsRespondAuth owner_es_respond_auth;
+static LnwjudEsSubscribe owner_es_subscribe;
+static LnwjudEsUnmuteAllPaths owner_es_unmute_all_paths;
+static LnwjudEsClearCache owner_es_clear_cache;
+static LnwjudEsDeleteClient owner_es_delete_client;
+
+static void owner_es_load(void) {
+    void *library = dlopen("/System/Library/Frameworks/EndpointSecurity.framework/EndpointSecurity", RTLD_NOW | RTLD_LOCAL);
+    if (library == NULL) return;
+    LnwjudEsNewClient created = (LnwjudEsNewClient)dlsym(library, "es_new_client");
+    LnwjudEsRespondAuth respond = (LnwjudEsRespondAuth)dlsym(library, "es_respond_auth_result");
+    LnwjudEsSubscribe subscribe = (LnwjudEsSubscribe)dlsym(library, "es_subscribe");
+    LnwjudEsUnmuteAllPaths unmute = (LnwjudEsUnmuteAllPaths)dlsym(library, "es_unmute_all_paths");
+    LnwjudEsClearCache clear = (LnwjudEsClearCache)dlsym(library, "es_clear_cache");
+    LnwjudEsDeleteClient delete_client = (LnwjudEsDeleteClient)dlsym(library, "es_delete_client");
+    if (created == NULL || respond == NULL || subscribe == NULL || unmute == NULL || clear == NULL || delete_client == NULL) {
+        dlclose(library); return;
+    }
+    owner_es_new_client = created; owner_es_respond_auth = respond; owner_es_subscribe = subscribe;
+    owner_es_unmute_all_paths = unmute; owner_es_clear_cache = clear; owner_es_delete_client = delete_client;
+    owner_es_library = library;
+}
+
+static int owner_es_ready(void) {
+    pthread_once(&owner_es_once, owner_es_load);
+    return owner_es_library != NULL;
+}
+
 int lnwjud_owner_disable_core_dumps(void) {
     struct rlimit limit = {0, 0};
     return setrlimit(RLIMIT_CORE, &limit);
 }
 
 int lnwjud_owner_monitor_start(void *context, LnwjudProcessEventHandler handler) {
-    if (geteuid() != 0 || owner_client != NULL) return -1;
-    es_new_client_result_t created = es_new_client(&owner_client, ^(es_client_t *client, const es_message_t *message) {
+    if (geteuid() != 0 || owner_client != NULL || !owner_es_ready()) return -1;
+    es_new_client_result_t created = owner_es_new_client(&owner_client, ^(es_client_t *client, const es_message_t *message) {
         LnwjudProcessEvent event = {0};
         event.sequenced = message->version >= 4;
         if (event.sequenced) event.sequence = message->global_seq_num;
@@ -57,13 +101,13 @@ int lnwjud_owner_monitor_start(void *context, LnwjudProcessEventHandler handler)
         }
         int allowed = handler(context, &event);
         if (message->action_type == ES_ACTION_TYPE_AUTH)
-            es_respond_auth_result(client, message, allowed ? ES_AUTH_RESULT_ALLOW : ES_AUTH_RESULT_DENY, false);
+            owner_es_respond_auth(client, message, allowed ? ES_AUTH_RESULT_ALLOW : ES_AUTH_RESULT_DENY, false);
     });
     if (created != ES_NEW_CLIENT_RESULT_SUCCESS) { owner_client = NULL; return (int)created + 100; }
     es_event_type_t events[] = { ES_EVENT_TYPE_NOTIFY_FORK, ES_EVENT_TYPE_NOTIFY_EXIT, ES_EVENT_TYPE_AUTH_EXEC };
-    if (es_unmute_all_paths(owner_client) != ES_RETURN_SUCCESS || es_clear_cache(owner_client) != ES_CLEAR_CACHE_RESULT_SUCCESS
-        || es_subscribe(owner_client, events, sizeof(events) / sizeof(events[0])) != ES_RETURN_SUCCESS) {
-        es_delete_client(owner_client); owner_client = NULL; return -2;
+    if (owner_es_unmute_all_paths(owner_client) != ES_RETURN_SUCCESS || owner_es_clear_cache(owner_client) != ES_CLEAR_CACHE_RESULT_SUCCESS
+        || owner_es_subscribe(owner_client, events, sizeof(events) / sizeof(events[0])) != ES_RETURN_SUCCESS) {
+        owner_es_delete_client(owner_client); owner_client = NULL; return -2;
     }
     return 0;
 }
