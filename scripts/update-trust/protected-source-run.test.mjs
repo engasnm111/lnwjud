@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer';
 import { inspectProtectedSourceContext, inspectProtectedSourceRun, inspectProtectedSourceArtifact } from './protected-source-run.mjs';
 
 const commit = 'a'.repeat(40);
-const builderSha = 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406';
+const builderSha = '1ce343b41aa79f9b0f6c9ce10bf32c3201610c16';
 const builderPath = `engasnm111/lnwjud/.github/workflows/update-package-builder.yml@${builderSha}`;
 const env = () => ({
   GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'engasnm111/lnwjud',

@@ -20,7 +20,7 @@
       "workflow": ".github/workflows/ci.yml",
       "ref": "refs/heads/main",
       "builderWorkflowUri": "https://github.com/engasnm111/lnwjud/.github/workflows/update-package-builder.yml@refs/heads/main",
-      "builderDigest": "cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406",
+      "builderDigest": "1ce343b41aa79f9b0f6c9ce10bf32c3201610c16",
       "buildConfigUri": "https://github.com/engasnm111/lnwjud/.github/workflows/ci.yml@refs/heads/main",
       "buildConfigDigestRule": "source-commit",
       "issuer": "https://token.actions.githubusercontent.com",

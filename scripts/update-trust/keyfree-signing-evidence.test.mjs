@@ -16,7 +16,7 @@ import { inspectKeyFreeSigningCandidate, inspectKeyFreeWorkflowContext, keyFreeG
 const now = 1800000000n;
 const repo = 'https://github.com/engasnm111/lnwjud';
 const commit = 'a'.repeat(40);
-const builderSha = 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406';
+const builderSha = '1ce343b41aa79f9b0f6c9ce10bf32c3201610c16';
 const source = { runId: '500', commit, builderSha };
 const bind = (name, bytes) => ({ name, sha256: hash(bytes), sizeBytes: String(bytes.length) });
 const cert = () => ({

@@ -184,7 +184,7 @@ jobs:
               $receipt.status -cne 'key-free-attestations-observed-only' -or
               $receipt.sourceSha -cne $env:GITHUB_SHA -or
               $receipt.sourceRunId -cne $env:LNWJUD_SOURCE_RUN_ID -or
-              $receipt.builderSha -cne 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406' -or
+              $receipt.builderSha -cne '1ce343b41aa79f9b0f6c9ce10bf32c3201610c16' -or
               $receipt.policySha256 -cne $policyHash -or
               $receipt.candidateSha256 -cnotmatch '^[a-f0-9]{64}$' -or
               $receipt.manifestSha256 -cnotmatch '^[a-f0-9]{64}$') {
