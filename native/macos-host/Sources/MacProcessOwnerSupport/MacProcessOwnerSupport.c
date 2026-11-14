@@ -25,7 +25,7 @@ static es_client_t *owner_client;
 // Some macOS SDK images expose the EndpointSecurity headers without a linkable
 // framework stub. Resolve the client API at runtime so the package always
 // links, and refuse to start the daemon when the framework is unavailable.
-typedef es_new_client_result_t (^LnwjudEsHandler)(es_client_t *, const es_message_t *);
+typedef void (^LnwjudEsHandler)(es_client_t *, const es_message_t *);
 typedef es_new_client_result_t (*LnwjudEsNewClient)(es_client_t **, LnwjudEsHandler);
 typedef es_return_t (*LnwjudEsRespondAuth)(es_client_t *, const es_message_t *, es_auth_result_t, bool);
 typedef es_return_t (*LnwjudEsSubscribe)(es_client_t *, const es_event_type_t *, uint32_t);
