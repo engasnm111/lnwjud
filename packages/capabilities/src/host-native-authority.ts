@@ -20,11 +20,24 @@ export function createHostWindowsNativeAuthority(dataPath: string, trustedRuntim
   });
 }
 
+/**
+ * Only a journaled update transaction may hold writable startup. An installation
+ * without an enrolled update authority, or a gate that cannot be inspected, must
+ * still open the application; the authority reports that state separately.
+ */
+export function updateStartupBlocksWritableStartup(reason: string): boolean {
+  return /^UPDATE_(?:TRANSACTION|SLOT_SELECTION)_/.test(reason);
+}
+
 export async function assertHostWindowsUpdateStartup(dataPath: string, trustedRuntimeDirectory?: string): Promise<void> {
   const authority = createHostWindowsNativeAuthority(dataPath, trustedRuntimeDirectory);
   if (authority === undefined) return;
   const disposition = await authority.inspectUpdateStartup();
-  if (disposition.kind === 'held') throw new Error(`Update authority holds writable startup (${disposition.reason})`);
+  if (disposition.kind !== 'held') return;
+  if (updateStartupBlocksWritableStartup(disposition.reason)) {
+    throw new Error(`Update authority holds writable startup (${disposition.reason})`);
+  }
+  process.stderr.write(`[UpdateAuthority] writable startup continues: ${disposition.reason}\n`);
 }
 
 export function createHostPosixProcessRuntime(trustedRuntimeDirectory?: string): { readonly modulePath: string; readonly sha256: string } {
