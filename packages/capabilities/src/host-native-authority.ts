@@ -32,8 +32,11 @@ export function updateStartupBlocksWritableStartup(reason: string): boolean {
 export async function assertHostWindowsUpdateStartup(dataPath: string, trustedRuntimeDirectory?: string): Promise<void> {
   const authority = createHostWindowsNativeAuthority(dataPath, trustedRuntimeDirectory);
   if (authority === undefined) return;
-  const disposition = await authority.inspectUpdateStartup();
-  if (disposition.kind !== 'held') return;
+  const disposition = await authority.inspectUpdateStartup().catch((error: unknown) => {
+    process.stderr.write(`[UpdateAuthority] inspection unavailable: ${error instanceof Error ? error.message : 'unknown'}\n`);
+    return null;
+  });
+  if (disposition === null || disposition.kind !== 'held') return;
   if (updateStartupBlocksWritableStartup(disposition.reason)) {
     throw new Error(`Update authority holds writable startup (${disposition.reason})`);
   }
