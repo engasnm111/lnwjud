@@ -121,6 +121,7 @@ apps/desktop/build/capability-bridge/
 apps/desktop/build/native-host/
 apps/desktop/build/native-containment/
 apps/desktop/build/update-worker/
+apps/desktop/build/update-launcher/
 !docs/benchmarks/
 docs/benchmarks/*
 !docs/benchmarks/BASELINE.md
