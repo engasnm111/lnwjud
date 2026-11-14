@@ -3336,8 +3336,13 @@ function configureDataPath(configuredDataPath?: string): string {
 export async function prepareDataPath(dataPath: string): Promise<void> {
   if (app.isPackaged) {
     nativeUpdateBootstrapClient = createNativeUpdateBootstrapClient(dataPath, process.execPath, process.resourcesPath);
-    const recovery = await nativeUpdateBootstrapClient.recoverBeforeStartup();
-    if (recovery.kind === 'held') throw new Error(`Update recovery holds writable startup (${recovery.reason})`);
+    // A missing or mismatched bootstrap worker must not brick the app; only a
+    // journaled transaction that the worker could read may hold writable startup.
+    const recovery = await nativeUpdateBootstrapClient.recoverBeforeStartup().catch((error: unknown) => {
+      process.stderr.write(`[UpdateRecovery] inspection unavailable: ${error instanceof Error ? error.message : 'unknown'}\n`);
+      return null;
+    });
+    if (recovery?.kind === 'held') throw new Error(`Update recovery holds writable startup (${recovery.reason})`);
   }
   recordDesktopStartup('restore:begin');
   const restore = applyPendingSqliteRestoreSync(path.join(dataPath, 'lnwjud.sqlite'), path.join(dataPath, 'backups'), {
