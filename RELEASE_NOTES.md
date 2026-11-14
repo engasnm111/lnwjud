@@ -2,6 +2,12 @@
 
 Release history is maintained here for release authoring; the [README](README.md) contains installation and product documentation, while each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) provides the public Highlights, Features, Fixes and downloads.
 
+### What's new in v5.9.3
+
+- **Fixed: the app could not open after a fresh v5.9.2 install.** The stable launcher required an enrolled native update baseline before starting anything, so a normal all-users installation stopped at `UPDATE_LAUNCH_UNVERIFIED`. The launcher now verifies the installed `slots/A` manifest and image hash and starts that slot when the update service has no baseline to launch from. The native update transaction itself stays fail-closed.
+- **One-click updates are the intended flow:** one press on the version control checks and downloads, one confirmation of the exact version, then wait for active work, stop the Tunnel, re-check SHA-256, silent install and relaunch. Unattended zero-click installation remains disabled.
+- **ติดตั้งแล้วเปิดแอปได้ทันที:** v5.9.2 ที่ติดตั้งใหม่เปิดไม่ได้เพราะ launcher รอ update baseline ที่ enroll แล้ว v5.9.3 ตรวจ slot และ hash ของไฟล์ก่อนเปิด แล้วเปิดจาก slot ที่ตรวจผ่านแทน ทำให้ใช้งานได้ทันที โดยกลไกอัปเดตยังคง fail-closed
+
 ### What's new in v5.9.2
 
 - **In-app update installation (Windows x64, Linux x64/arm64):** the top-left version control checks GitHub Releases, downloads the matching package, and asks for one confirmation of the exact version. lnwjud then waits for active work, stops the Tunnel, re-verifies the downloaded file against the SHA-256 recorded at download time, installs silently through the platform installer, and relaunches.

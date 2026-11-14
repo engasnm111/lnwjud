@@ -29,8 +29,14 @@ internal static class Program
             if (digest.Length != 64 || Convert.ToHexString(SHA256.HashData(helper)).ToLowerInvariant() != digest)
                 throw new IOException("UPDATE_LAUNCH_HELPER_INVALID");
             try { return await LaunchManaged(digest, args).ConfigureAwait(false); }
-            catch (Exception) when (UpdateStartupGate.InspectFootprint().Kind == "unmanaged")
+            catch (Exception managed)
             {
+                // The service launch requires an enrolled update baseline. A normal
+                // installation must still open from the verified slot, so fall back to
+                // the manual slot launcher instead of blocking the app behind a
+                // transaction that was never enrolled. LaunchManual re-verifies the
+                // slot manifest and image hash before starting anything.
+                try { Console.Error.WriteLine("UPDATE_LAUNCH_FALLBACK_MANUAL: " + managed.Message); } catch { }
                 return await LaunchManual(root, args).ConfigureAwait(false);
             }
         }
