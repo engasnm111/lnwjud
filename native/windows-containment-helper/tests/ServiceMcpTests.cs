@@ -49,7 +49,7 @@ internal static class ServiceMcpTests
             {
                 processes.Add(proxy);
                 await WaitFile(evidence);
-                using var observed = JsonDocument.Parse(await File.ReadAllBytesAsync(evidence));
+                using var observed = JsonDocument.Parse(await ReadPublishedAsync(evidence));
                 using var target = Process.GetProcessById(observed.RootElement.GetProperty("rootPid").GetInt32());
                 using var descendant = Process.GetProcessById(observed.RootElement.GetProperty("descendantPid").GetInt32());
                 await proxy.StandardInput.BaseStream.WriteAsync(new byte[] { 0, 1, 254, 255 });
@@ -121,7 +121,7 @@ internal static class ServiceMcpTests
             {
                 processes.Add(proxy);
                 await WaitFile(evidence);
-                using var observed = JsonDocument.Parse(await File.ReadAllBytesAsync(evidence));
+                using var observed = JsonDocument.Parse(await ReadPublishedAsync(evidence));
                 using var target = Process.GetProcessById(observed.RootElement.GetProperty("rootPid").GetInt32());
                 using var descendant = Process.GetProcessById(observed.RootElement.GetProperty("descendantPid").GetInt32());
                 secondOwner.Kill();
@@ -214,6 +214,18 @@ internal static class ServiceMcpTests
         var timer = Stopwatch.StartNew();
         while (!File.Exists(file) && timer.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(20);
         if (!File.Exists(file)) throw new Exception("MCP target did not start");
+    }
+
+    // The publishing child may still hold the handle with FileShare.None after the
+    // directory entry appears, so a bare existence check races the write.
+    private static async Task<byte[]> ReadPublishedAsync(string file)
+    {
+        var timer = Stopwatch.StartNew();
+        while (true)
+        {
+            try { return await File.ReadAllBytesAsync(file); }
+            catch (IOException) when (timer.Elapsed < TimeSpan.FromSeconds(10)) { await Task.Delay(20); }
+        }
     }
 
     internal static async Task RunServerAsync()
