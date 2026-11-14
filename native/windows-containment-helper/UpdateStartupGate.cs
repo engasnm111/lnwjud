@@ -43,9 +43,10 @@ internal sealed class UpdateStartupGate : IDisposable
         {
             using var install = ServiceEndpointIdentity.OpenProtected(installationRoot, directory: true);
             using var store = ServiceEndpointIdentity.OpenProtected(serviceStore, directory: true);
-            if (ExistsInPinnedDirectory(installationRoot, "slots") || ExistsInPinnedDirectory(serviceStore, "update-authority") || machineEnrolled())
-                return Unverified;
-            return Unmanaged;
+            // A slot layout or a service ledger without the protected machine registration is a
+            // manual installation: no update authority is enrolled, so no transaction can be
+            // pending and writable startup must not be held forever.
+            return machineEnrolled() ? Unverified : Unmanaged;
         }
         catch (IOException) { return Unavailable; }
         catch (UnauthorizedAccessException) { return Unavailable; }
@@ -86,7 +87,7 @@ internal sealed class UpdateStartupGate : IDisposable
             using var programs = ServiceEndpointIdentity.OpenProtected(programFiles, directory: true);
             if (ServiceEndpointIdentity.CurrentSlotHold(programFiles) is { } slotHold) return new("held", slotHold);
             using var data = ServiceEndpointIdentity.PinKnownFolder(programData);
-            if (HasSlots(programFiles, Path.Combine(programFiles, "lnwjud"), required: false)) return Unverified;
+            if (MachineEnrolled() && HasSlots(programFiles, Path.Combine(programFiles, "lnwjud"), required: false)) return Unverified;
             using var service = OpenMachineKey(@"SYSTEM\CurrentControlSet\Services\LnwjudContainment");
             if (service is not null)
             {
@@ -95,11 +96,11 @@ internal sealed class UpdateStartupGate : IDisposable
                 if (command is null || command.Length > 32767) return Unavailable;
                 var image = WindowsContainmentServiceInstaller.ParseRegisteredImagePath(command);
                 var root = WindowsContainmentServiceInstaller.ValidateImagePath(image, programFiles);
-                if (HasSlots(programFiles, root, required: true)) return Unverified;
+                if (MachineEnrolled() && HasSlots(programFiles, root, required: true)) return Unverified;
             }
             // Existing installations keep the ledger accessible only to SYSTEM and administrators.
             // The protected machine registration precedes all managed files and survives rollback.
-            if (HasPrivateAuthority(programData)) return Unverified;
+            _ = HasPrivateAuthority(programData);
             return MachineEnrolled() ? Unverified : Unmanaged;
         }
         catch (Exception) { return Unavailable; }

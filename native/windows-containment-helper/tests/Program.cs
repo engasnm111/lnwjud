@@ -1665,12 +1665,14 @@ internal static class NativeTests
             Volatile.Write(ref registered, true);
             await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
             Volatile.Write(ref registered, false);
+            // Slots or a stray ledger without the protected machine registration are a
+            // manual installation: no authority is enrolled, so startup stays writable.
             var slots = Directory.CreateDirectory(Path.Combine(install, "slots"));
-            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            await CheckStartup("unmanaged", "MANUAL_INSTALLATION");
             slots.Delete();
             var enrollment = Path.Combine(storeDirectory, "update-authority");
             File.WriteAllText(enrollment, "incomplete");
-            await CheckStartup("held", "UPDATE_ENROLLMENT_UNVERIFIED");
+            await CheckStartup("unmanaged", "MANUAL_INSTALLATION");
             File.Delete(enrollment);
             Directory.Delete(install);
             await CheckStartup("held", "UPDATE_STARTUP_INSPECTION_UNAVAILABLE");
