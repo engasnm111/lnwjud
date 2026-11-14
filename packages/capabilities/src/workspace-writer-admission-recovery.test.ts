@@ -173,7 +173,9 @@ async function fixture(currentTime = 10_000): Promise<FixtureContext> {
   const nowProvider = (): number => now;
 
   const mock = createMockAuthority(root);
-  const admission = new SharedManagedWriterAdmission(taskDirectory, mock.authority);
+  // This suite models the Windows service authority through a mock, so the
+  // admission must select the Windows proof path even on a macOS CI host.
+  const admission = new SharedManagedWriterAdmission(taskDirectory, mock.authority, 'win32');
   const lease = new SqliteWorkspaceWriterLease(dbPath, nowProvider, admission);
   const store = new DurableShellTaskStore(taskDirectory, { windowsNativeAuthority: mock.authority });
   const backend = new ShellCapabilityBackend({
