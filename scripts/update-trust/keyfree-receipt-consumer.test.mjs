@@ -14,7 +14,7 @@ const receipt = Object.freeze({
   schema: 'lnwjud.keyfree-evidence/v1',
   status: 'key-free-attestations-observed-only',
   sourceSha: sha, sourceRunId: '500',
-  builderSha: 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406',
+  builderSha: '1ce343b41aa79f9b0f6c9ce10bf32c3201610c16',
   policySha256: expected.policySha256,
   candidateSha256: expected.candidateSha256,
   manifestSha256: expected.manifestSha256,

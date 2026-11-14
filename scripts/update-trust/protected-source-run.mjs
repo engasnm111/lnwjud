@@ -9,7 +9,7 @@ const repositoryId = '1329830515';
 const workflow = '.github/workflows/update-signing.yml';
 const ciWorkflow = '.github/workflows/ci.yml';
 // Audited immutable reusable builder pinned by the protected caller, not a mutable ref.
-const builderSha = 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406';
+const builderSha = '1ce343b41aa79f9b0f6c9ce10bf32c3201610c16';
 const builderWorkflow = `${repository}/.github/workflows/update-package-builder.yml@${builderSha}`;
 const decimal = value => typeof value === 'string' && /^[1-9][0-9]{0,14}$/.test(value) && Number.isSafeInteger(Number(value));
 const identifier = value => Number.isSafeInteger(value) && value > 0 ? String(value) : '';

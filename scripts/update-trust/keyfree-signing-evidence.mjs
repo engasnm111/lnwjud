@@ -17,7 +17,7 @@ import { signingPurposeSelection } from './authenticated-signer-receipt.mjs';
 
 const exec = promisify(execFile);
 const repository = 'https://github.com/engasnm111/lnwjud';
-const builderSha = 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406';
+const builderSha = '1ce343b41aa79f9b0f6c9ce10bf32c3201610c16';
 const verifierSha256 = 'd303d8ac3f5e9438bf7c977b64dd6425513eae46218f8881d30694f28c1d0dfd';
 const sourceWorkflow = '.github/workflows/ci.yml';
 const authority = Object.freeze({

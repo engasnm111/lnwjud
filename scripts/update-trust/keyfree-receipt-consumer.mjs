@@ -5,7 +5,7 @@ import { selectVerifiedAttestation } from './verify-build-evidence.mjs';
 
 const repository = 'https://github.com/engasnm111/lnwjud';
 const workflow = `${repository}/.github/workflows/update-signing.yml@refs/heads/main`;
-const builderSha = 'cd833d7df45a8ecf2e87bc89ffb9ee3c85d20406';
+const builderSha = '1ce343b41aa79f9b0f6c9ce10bf32c3201610c16';
 const receiptFields = [
   'builderSha', 'candidateSha256', 'manifestSha256', 'policySha256',
   'schema', 'sourceRunId', 'sourceSha', 'status',
