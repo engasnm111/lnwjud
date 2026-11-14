@@ -21,6 +21,25 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.9.3',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          { id: 'launcher-slot-fallback', titleKey: 'whatsNew.593.launcherFallback.title', descriptionKey: 'whatsNew.593.launcherFallback.description', badge: 'fixed', tags: ['launcher', 'startup', 'hash verified'] },
+        ],
+      },
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          { id: 'one-click-update', titleKey: 'whatsNew.593.oneClick.title', descriptionKey: 'whatsNew.593.oneClick.description', badge: 'improved', tags: ['updates', 'one confirmation'] },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.9.2',
     categories: [
       {

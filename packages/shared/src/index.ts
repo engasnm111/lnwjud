@@ -1,5 +1,5 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.9.2';
+export const APP_VERSION = '5.9.3';
 export { engineeringCommandFingerprint, formatEngineeringCommand } from './engineering-command.js';
 export { isUnrestricted, unrestrictedFromEnv, unrestrictedFromSetting, UNRESTRICTED_SETTING_KEY, type ProcessEnvLike } from './unrestricted.js';
 
