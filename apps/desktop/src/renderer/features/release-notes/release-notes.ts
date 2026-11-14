@@ -21,6 +21,26 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.9.2',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          { id: 'updater-install-scope', titleKey: 'whatsNew.592.updateScope.title', descriptionKey: 'whatsNew.592.updateScope.description', badge: 'improved', tags: ['Updates', 'release scope', 'macOS held'] },
+          { id: 'updater-status-truthful', titleKey: 'whatsNew.592.updateStatus.title', descriptionKey: 'whatsNew.592.updateStatus.description', badge: 'fixed', tags: ['Updates', 'status', 'SHA-256'] },
+        ],
+      },
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          { id: 'in-app-update-install', titleKey: 'whatsNew.592.updateInstall.title', descriptionKey: 'whatsNew.592.updateInstall.description', badge: 'new', tags: ['Updates', 'version badge', 'confirmation'] },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.9.1',
     categories: [
       {

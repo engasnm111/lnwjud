@@ -1,9 +1,10 @@
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.9.1';
+export const APP_VERSION = '5.9.2';
 export { engineeringCommandFingerprint, formatEngineeringCommand } from './engineering-command.js';
 export { isUnrestricted, unrestrictedFromEnv, unrestrictedFromSetting, UNRESTRICTED_SETTING_KEY, type ProcessEnvLike } from './unrestricted.js';
 
 export { resolveLnwjudDataPath, type DataPathEnvironment } from './data-path.js';
+export { resolveInstalledResourcesPath } from './installed-resources.js';
 export {
   createPlatformProfile,
   currentPlatformProfile,

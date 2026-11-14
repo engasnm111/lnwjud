@@ -1,16 +1,16 @@
-# คู่มือใช้งาน lnwjud v5.9.1 (ภาษาไทย)
+# คู่มือใช้งาน lnwjud v5.9.2 (ภาษาไทย)
 
 lnwjud คือ cross-platform local AI-agent runtime / MCP gateway สำหรับให้ ChatGPT, Codex และ MCP client อื่นทำงานกับเครื่องของคุณ เช่น อ่าน/ค้น/แก้ไฟล์, Git, รันโปรเซส และเครื่องมือพัฒนาอื่น ๆ โดยงานจริงยังทำบนเครื่องของคุณ ความสามารถ Windows-only เช่น WSL, Registry และ Windows Sandbox จะไม่แสดงเป็นพร้อมใช้งานบน macOS/Linux
 
-คู่มือนี้อัปเดตตาม source `v5.9.1`; public release `v5.9.1` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.9.1)
+คู่มือนี้อัปเดตตาม source `v5.9.2`; public release `v5.9.2` คือรุ่นที่เผยแพร่แล้วบน [GitHub Releases](https://github.com/engasnm111/lnwjud/releases/tag/v5.9.2)
 
 > สำหรับผู้ใช้ package ของ lnwjud **ไม่ต้องติดตั้ง Node.js และไม่ต้องดาวน์โหลด `tunnel-client` เอง** ตัว build จาก source `v5.8.1` รวม official OpenAI `tunnel-client v0.0.16` ที่ตรงกับ OS/architecture พร้อม SHA-256/provenance ส่วน release รุ่นก่อนหน้าอาจ bundle เวอร์ชันต่างกัน ให้ยึดหลักฐานของไฟล์ที่ดาวน์โหลดจริง
 
-## Auto Updater v5.9.1: ตรวจเวอร์ชันได้ แต่ยังติดตั้งอัตโนมัติไม่ได้
+## Auto Updater v5.9.2: ติดตั้งอัปเดตได้จากในแอป ด้วยการยืนยันหนึ่งครั้ง
 
-Source build v5.9.1 ใช้ **ปุ่มเลขเวอร์ชันมุมซ้ายบนเพียงจุดเดียว** สำหรับตรวจ GitHub Releases และแสดงสถานะอัปเดต ปุ่มทดสอบอัปเดตซ้ำใน **Settings → General ถูกนำออกแล้ว** ตาม UI ปัจจุบัน เมื่อยังไม่มี Production Native Transaction Authority ที่ตรวจสอบได้ แอปจะรายงานว่าไม่สามารถติดตั้งอัตโนมัติได้ และจะไม่เรียก Installer แบบ Silent การยืนยันเวอร์ชันเพียงครั้งเดียว, การรอให้งานจบ, หยุดและคืน Tunnel, ติดตั้งโดยไม่กดหน้าจอ Installer เพิ่ม และเปิดแอปใหม่เองยังเป็นเป้าหมายที่ต้องพิสูจน์ก่อนเปิดใช้งานจริง
+v5.9.2 ใช้ **ปุ่มเลขเวอร์ชันมุมซ้ายบนเพียงจุดเดียว** สำหรับตรวจ GitHub Releases ดาวน์โหลดแพ็กเกจรุ่นใหม่ และขอให้ยืนยันเวอร์ชันเป้าหมายหนึ่งครั้ง เมื่อยืนยันแล้ว lnwjud จะรอให้งานที่กำลังทำจบ หยุด Tunnel ตรวจไฟล์ที่ดาวน์โหลดด้วย SHA-256 ที่บันทึกไว้ตอนดาวน์โหลด ติดตั้งแบบ Silent ผ่านตัวติดตั้งของแพลตฟอร์ม แล้วเปิดแอปใหม่ให้เอง UAC หรือสิทธิ์ของระบบปฏิบัติการยังต้องอนุญาตตามปกติ
 
-native transaction authority, การลงทะเบียนแพ็กเกจ, การสลับ app/data แบบ atomic, การตรวจสุขภาพหลังเปิดใหม่ และ rollback พร้อมคืน Tunnel ยังไม่ครบและไม่มี signed end-to-end acceptance ที่ยืนยันการติดตั้งจริง จึงห้ามเปิด updater หรือปล่อย Release จนกว่าจะทดสอบอัปเดตและ rollback บนแพ็กเกจที่เซ็นแล้วผ่านครบ ห้ามข้าม UAC หรือสิทธิ์ OS
+การติดตั้งอัตโนมัติแบบ zero-click (ติดตั้งเองเมื่อปิดโปรแกรมโดยไม่มีการยืนยัน) ยัง **ปิดอยู่** และ macOS ยังไม่มีการปล่อยไบนารีจนกว่าการทดสอบ native containment ของ #216 จะผ่าน Windows Setup ใช้ `latest.yml` ส่วน Portable ใช้ `portable.yml` และแทนที่ไฟล์ตัวเองแทนการใช้ตัวติดตั้ง
 
 ## ข้อจำกัดและสถานะรับมอบ v5.9.0
 
@@ -45,7 +45,7 @@ Outlook/COM ยังคงเป็น Windows-only และจะรายง
 สำหรับ v4.11.0 ตัวโปรแกรมแยก compatibility profile ตามระบบ: Windows 10 x64 ใช้ software rendering เป็นค่าเริ่มต้นเพื่อลดปัญหาหน้าจอ Electron/Chromium ค้าง, วาดไม่ครบ หรือบาง control กดไม่ได้บน GPU/driver รุ่นเก่า ส่วน Windows 11 x64 ยังใช้ hardware acceleration ตามปกติ
 
 งานภายในโปรแกรมที่ต้องเรียก PowerShell ใช้ `powershell.exe` ที่มากับ Windows ไม่บังคับให้ติดตั้ง PowerShell 7 และ child process ภายในถูกเปิดแบบซ่อนหน้าต่าง console. ใน v5.4.2 native input bridge รองรับ Windows PowerShell 5.1 โดยตรงทั้งการพิมพ์ข้อความหลายตัวอักษรและการปล่อย modifier ของ hotkey แบบย้อนลำดับพร้อม `finally` cleanup (Issue #114). ระบบยังจำกัด durable background task พร้อมกันไว้ 16 งาน และ managed process พร้อมกันไว้ 24 งาน เพื่อกันกรณีหลายแชทสั่งงานพร้อมกันจนเกิด `conhost.exe` จำนวนมาก/CPU เต็ม
-- public release ล่าสุด `lnwjud-Setup-5.9.1.exe` หรือ `lnwjud-Portable-5.9.1.exe`
+- public release ล่าสุด `lnwjud-Setup-5.9.2.exe` หรือ `lnwjud-Portable-5.9.2.exe`
 - OpenAI Platform tunnel ที่ผูกกับ ChatGPT workspace ที่จะใช้
 - Credential ตามโหมดที่เลือก: **OAuth** เมื่อ provider รองรับ Tunnel provisioning หรือ **Runtime API key** ที่มีสิทธิ์ **Tunnels Read + Use** สำหรับโหมดเดิม/สำรอง
 - อินเทอร์เน็ตขาออก HTTPS สำหรับ Secure MCP Tunnel
@@ -65,7 +65,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบแนะนำ: Installer
 
-1. ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.9.1.exe` จาก GitHub Releases
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Setup-5.9.2.exe` จาก GitHub Releases
 2. ติดตั้งตามปกติ
 3. เปิด **lnwjud Agent Control Center**
 4. เพิ่ม Project/Workspace ที่ต้องการใช้งาน
@@ -73,7 +73,7 @@ Node.js, pnpm และ Git จำเป็นเฉพาะกรณีพั�
 
 ### แบบไม่ต้องติดตั้ง: Portable EXE
 
-1. ดาวน์โหลด public release ล่าสุด `lnwjud-Portable-5.9.1.exe`
+1. ดาวน์โหลด public release ล่าสุด `lnwjud-Portable-5.9.2.exe`
 2. วางไว้ในโฟลเดอร์ที่ต้องการแล้วเปิดไฟล์ได้ทันที ไม่ต้องรัน installer
 3. เพิ่ม Project/Workspace และตั้ง Tunnel เหมือนเวอร์ชันติดตั้ง
 
@@ -461,8 +461,8 @@ corepack pnpm@10.15.0 package:windows
 ไฟล์ที่ได้จะอยู่ที่:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.9.1.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.9.1.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.2.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.9.2.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 ```
