@@ -30,26 +30,70 @@ describe('owned recovery plans', () => {
             exclusive_writer_blocked: true,
             status_basis: 'held_reservations_not_process_liveness',
             blockers: [
-              { reservation_id: 'private-one', mutation_kind: 'opaque_uncontained', capacity_class: 'managed_writer', state: 'held', recovery_requirement: 'trusted_termination_evidence' },
-              { reservation_id: 'private-two', mutation_kind: 'opaque_contained_process', capacity_class: 'managed_writer', state: 'held', recovery_requirement: 'trusted_termination_evidence' },
+              { reservation_id: 'private-one', mutation_kind: 'opaque_uncontained', capacity_class: 'managed_writer', state: 'held', marker_origin: 'v2_unbound', recovery_requirement: 'trusted_termination_evidence' },
+              { reservation_id: 'private-two', mutation_kind: 'opaque_contained_process', capacity_class: 'managed_writer', state: 'held', marker_origin: 'native_attempt_recorded_unverified', recovery_requirement: 'trusted_termination_evidence' },
             ],
           },
         });
       } },
     }, actor);
     const result = await runtime.execute('recovery_status', { workspaceId: 'ws-1' });
-    expect(result).toMatchObject({ ok: true, value: { observations: {
-      durableTasks: { status: 'observed', total: 0, running: 0 },
-      writerReservations: {
-        status: 'observed', scope: 'global_shared_index', durable_shell_limit: 16,
-        managed_writer_reservations: 2, unresolved_reservations: 2,
-        exclusive_writer_blocked: true, terminal_proof: 'not_observed',
-        recovery: 'no_automatic_reclamation',
-        by_mutation_kind: { opaque_uncontained: 1, opaque_contained_process: 1 },
+    expect(result).toMatchObject({ ok: true, value: {
+      recommendedActions: [expect.objectContaining({
+        id: 'reconcile-native-writer-reservations',
+        affected_reservations: 1,
+        tool: 'workspace_writer_lease_acquire',
+        requiresConfirmation: true,
+        args: expect.objectContaining({ workspaceId: 'ws-1', recoverAbandoned: true, userConfirmed: true }),
+      })],
+      observations: {
+        durableTasks: { status: 'observed', total: 0, running: 0 },
+        writerReservations: {
+          status: 'observed', scope: 'global_shared_index', durable_shell_limit: 16,
+          managed_writer_reservations: 2, unresolved_reservations: 2,
+          exclusive_writer_blocked: true, terminal_proof: 'not_observed',
+          recovery: 'no_automatic_reclamation',
+          by_mutation_kind: { opaque_uncontained: 1, opaque_contained_process: 1 },
+          by_marker_origin: { native_attempt_recorded_unverified: 1, v2_unbound: 1, legacy_unbound: 0, unreadable: 0, unknown: 0 },
+        },
       },
-    } } });
+    } });
     expect(JSON.stringify(result)).not.toContain('private-one');
     expect(JSON.stringify(result)).not.toContain('private-two');
+  });
+
+  it('surfaces the supported native reconciliation route without auto-reclaiming reservations', async () => {
+    const runtime = new UpgradeRuntimeService({
+      capabilities: { async execute(): Promise<ReturnType<typeof ok>> {
+        return ok({
+          tasks: [],
+          admission: {
+            capacity_population: 'durable_shell',
+            durable_shell_limit: 16,
+            durable_shell_reservations: 1,
+            managed_writer_reservations: 1,
+            unresolved_reservations: 2,
+            unreadable_reservations: 0,
+            exclusive_writer_blocked: true,
+            status_basis: 'held_reservations_not_process_liveness',
+            blockers: [
+              { reservation_id: 'hash-a', mutation_kind: 'opaque_contained_process', capacity_class: 'managed_writer', state: 'held', marker_origin: 'native_attempt_recorded_unverified', recovery_requirement: 'trusted_termination_evidence' },
+              { reservation_id: 'hash-b', mutation_kind: 'opaque', capacity_class: 'durable_shell', state: 'held', marker_origin: 'native_attempt_recorded_unverified', recovery_requirement: 'trusted_termination_evidence' },
+            ],
+          },
+        });
+      } },
+    }, actor);
+    const result = await runtime.execute('self_heal_plan', { workspaceId: 'ws-1' });
+    expect(result).toMatchObject({ ok: true, value: {
+      safeReversibleFixes: [],
+      supportedRecovery: [{ id: 'reconcile-native-writer-reservations', affected_reservations: 2, automatic: false, requiresConfirmation: true,
+        preconditions: expect.arrayContaining([expect.stringContaining('full Windows restart')]) }],
+      manualIssues: [expect.objectContaining({ provider: 'writer-reservations', affectedReservations: 2 })],
+      observationState: 'partial',
+    } });
+    if (!result.ok) return;
+    expect(JSON.stringify(result)).not.toContain('hash-a');
   });
 
   it('reads existing Goal and continuation receipts without claiming native liveness', async () => {

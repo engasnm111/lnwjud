@@ -158,6 +158,19 @@ interface SelfHealFix {
   readonly requiresConfirmation: boolean;
 }
 
+interface SelfHealSupportedRecovery {
+  readonly id: 'reconcile-native-writer-reservations';
+  readonly kind: 'authenticated_native_reconciliation';
+  readonly applies_to: 'native_attempt_recorded_unverified';
+  readonly affected_reservations: number;
+  readonly tool: 'workspace_writer_lease_acquire';
+  readonly args: Record<string, unknown>;
+  readonly description: string;
+  readonly preconditions: readonly string[];
+  readonly automatic: false;
+  readonly requiresConfirmation: true;
+}
+
 interface SelfHealPlan {
   readonly tool: 'self_heal_plan';
   readonly status: 'ready';
@@ -166,6 +179,7 @@ interface SelfHealPlan {
   readonly planId: string;
   readonly mutationRequired: boolean;
   readonly safeReversibleFixes: readonly SelfHealFix[];
+  readonly supportedRecovery: readonly SelfHealSupportedRecovery[];
   readonly manualIssues: readonly Record<string, unknown>[];
   readonly observationState: 'complete' | 'partial';
   readonly automaticDestructiveRetry: false;
@@ -1422,6 +1436,7 @@ export class UpgradeRuntimeService {
     return ok({
       policy: { reconnect: 'transport-managed', safeReadRetry: true, destructiveRetry: false, staleContinuationDetection: 'owner-and-liveness-evidence-required', indexRecovery: 'explicit-rebuild', taskOwnership: 'client-session-workspace' },
       observations,
+      recommendedActions: plan.value.supportedRecovery,
       observationState: Object.values(observations).every((value) => isRecord(value) && value.status === 'observed') ? 'complete' : 'partial',
       automaticDestructiveRetry: false,
       sideEffectsStarted: false,
@@ -1437,6 +1452,7 @@ export class UpgradeRuntimeService {
     };
     const fixes: SelfHealFix[] = [];
     const manualIssues: Record<string, unknown>[] = [];
+    const supportedRecovery: SelfHealSupportedRecovery[] = [];
     let indexObserved = false;
     let tasksObserved = false;
     let reservationsObserved = false;
@@ -1481,10 +1497,16 @@ export class UpgradeRuntimeService {
             && numberFields.every((field) => typeof admission[field] === 'number' && Number.isSafeInteger(admission[field]) && (admission[field] as number) >= 0)
             && Array.isArray(admission.blockers) && admission.blockers.length === admission.unresolved_reservations) {
             const byKind = { opaque: 0, repository_import: 0, synchronous_mutation: 0, opaque_uncontained: 0, opaque_contained_process: 0, unreadable: 0, unknown: 0 };
+            const byMarkerOrigin = { native_attempt_recorded_unverified: 0, v2_unbound: 0, legacy_unbound: 0, unreadable: 0, unknown: 0 };
+            let nativeBound = 0;
             for (const blocker of admission.blockers) {
               const kind = isRecord(blocker) ? blocker.mutation_kind : undefined;
               if (typeof kind === 'string' && Object.hasOwn(byKind, kind)) byKind[kind as keyof typeof byKind] += 1;
               else byKind.unknown += 1;
+              const origin = isRecord(blocker) ? blocker.marker_origin : undefined;
+              if (typeof origin === 'string' && Object.hasOwn(byMarkerOrigin, origin)) byMarkerOrigin[origin as keyof typeof byMarkerOrigin] += 1;
+              else byMarkerOrigin.unknown += 1;
+              if (origin === 'native_attempt_recorded_unverified') nativeBound += 1;
             }
             evidence.writerReservations = {
               status: 'observed', scope: 'global_shared_index',
@@ -1496,10 +1518,22 @@ export class UpgradeRuntimeService {
               unreadable_reservations: admission.unreadable_reservations,
               exclusive_writer_blocked: admission.exclusive_writer_blocked,
               by_mutation_kind: byKind,
+              by_marker_origin: byMarkerOrigin,
               status_basis: 'held_reservations_not_process_liveness',
               terminal_proof: 'not_observed', recovery: 'no_automatic_reclamation',
             };
             reservationsObserved = true;
+            if (nativeBound > 0) {
+              const recovery = nativeWriterReservationRecovery(workspaceId, nativeBound);
+              supportedRecovery.push(recovery);
+              manualIssues.push({
+                provider: 'writer-reservations',
+                reason: 'Native-bound writer reservations remain held; diagnostics never prove them stale',
+                affectedReservations: nativeBound,
+                supportedRecoveryId: recovery.id,
+                action: 'After a full Windows restart newer than these reservations, acquire the workspace writer lease with recoverAbandoned and userConfirmed so the authenticated service can reconcile each exact attempt; unverifiable, active, or import-held records stay blocked',
+              });
+            }
           } else {
             evidence.writerReservations = { status: 'unknown', reason: 'admission-diagnostics-missing-or-invalid' };
           }
@@ -1524,6 +1558,7 @@ export class UpgradeRuntimeService {
       planId,
       mutationRequired: fixes.some((fix) => fix.requiresConfirmation),
       safeReversibleFixes: fixes,
+      supportedRecovery,
       manualIssues,
       observationState: indexObserved && tasksObserved && reservationsObserved ? 'complete' : 'partial',
       automaticDestructiveRetry: false,
@@ -3075,6 +3110,30 @@ function boundManagedTaskStatusOutput(value: Record<string, unknown>): Record<st
   }
   if (outputTruncated) bounded.status_output_truncated = true;
   return bounded;
+}
+
+function nativeWriterReservationRecovery(workspaceId: string | undefined, affected: number): SelfHealSupportedRecovery {
+  return {
+    id: 'reconcile-native-writer-reservations',
+    kind: 'authenticated_native_reconciliation',
+    applies_to: 'native_attempt_recorded_unverified',
+    affected_reservations: affected,
+    tool: 'workspace_writer_lease_acquire',
+    args: {
+      ...(workspaceId === undefined ? {} : { workspaceId }),
+      ttlSeconds: 600,
+      recoverAbandoned: true,
+      userConfirmed: true,
+    },
+    description: 'Acquire the workspace writer lease so the authenticated containment service can reconcile each native-bound reservation on a newer boot. It records interrupted/125 only when the exact attempt cannot still run; active, import-held, conflicting or unverifiable records remain blocked.',
+    preconditions: [
+      'A matching all-users installation with the LnwjudContainment service available',
+      'A full Windows restart newer than every affected reservation timestamp',
+      'The owning MCP client session and its registered workspace ID',
+    ],
+    automatic: false,
+    requiresConfirmation: true,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
