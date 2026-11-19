@@ -55,7 +55,7 @@ and returns the response without opening a public inbound port on the host.
 
 ## Current published version: v5.9.3
 
-## Current source version: v5.9.3
+## Current source version: v5.9.4
 
 ## Security model you should understand before using it
 
@@ -180,7 +180,7 @@ A few operating-system boundaries still apply:
 
 ### 2. Connect ChatGPT with Remote MCP + OAuth (recommended)
 
-For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** was established as the default/backward-compatible Remote MCP transport in v5.5.0 and remains the default in the current v5.9.3 source line. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
+For most ChatGPT web users, **start here**. Remote MCP via **ngrok + OAuth** was established as the default/backward-compatible Remote MCP transport in v5.5.0 and remains the default in the current v5.9.4 source line. It does **not** require an OpenAI Tunnel ID or Runtime API key. lnwjud keeps its real MCP server on loopback, places an OAuth-protected gateway in front of it, and exposes only that protected gateway through ngrok as an HTTPS URL ending in `/mcp`.
 
 1. Open **lnwjud → Settings → Remote MCP & Tunnel**.
 2. Check the ngrok status. If lnwjud shows **READY**, keep the detected installation. If it is not ready, lnwjud shows only the installation path supported by the current host: Windows may use Microsoft Store/WinGet, macOS may use Homebrew when available, and hosts without a verified automatic installer get the official ngrok download link instead. Runtime discovery itself is cross-platform and verifies `ngrok version` before use.
@@ -551,8 +551,8 @@ corepack pnpm@10.15.0 package:windows
 The Windows 10/11 x64 artifacts are written to:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.9.3.exe
-apps/desktop/dist/installers/lnwjud-Portable-5.9.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.4.exe
+apps/desktop/dist/installers/lnwjud-Portable-5.9.4.exe
 ```
 
 The installer is per-user by default. The portable executable needs no installation but uses the same per-user lnwjud data/settings location. A common installed executable path is:
@@ -881,7 +881,7 @@ This complete index is generated from `ToolRegistry.listAll()`, not copied from 
 | ---: | --- | --- | --- | --- | --- | --- |
 | 1 | `workspace_list` | READ | default | operational | service_dispatch | List registered project workspaces available to lnwjud. Legacy explicitly registered drive roots may also appear as kind=machine_root. |
 | 2 | `workspace_path_preflight` | READ | default | operational | service_dispatch | Read-only exact absolute-path preflight before workspace registration. Requires explicit authorization; probes only the nominated path and ancestors without directory listing, registration, indexing, shell, writes or lease. Windows effective ACL/reparse proof is reported UNVERIFIABLE where the runtime cannot prove it. Registration always revalidates independently. |
-| 3 | `workspace_writer_lease_acquire` | WRITE | default | operational | service_dispatch | Acquire a durable exclusive writer lease for one registered workspace. Explicit recoverAbandoned with user confirmation may fence an idle previous session of the same client after 60 seconds; unrelated clients and active/unknown writers remain blocked. |
+| 3 | `workspace_writer_lease_acquire` | WRITE | default | operational | service_dispatch | Acquire a durable exclusive writer lease for one registered workspace. The exclusive native-admission probe may reconcile an authenticated native-bound reservation only after a verified newer OS boot and an absent attempt Job; unprovable, active or import-held records stay blocked. Explicit recoverAbandoned with user confirmation may fence an idle previous session of the same client after 60 seconds; unrelated clients and active/unknown writers remain blocked. |
 | 4 | `workspace_writer_lease_status` | READ | default | operational | service_dispatch | Inspect a registered workspace writer lease without exposing its credential. |
 | 5 | `workspace_writer_lease_renew` | WRITE | default | operational | service_dispatch | Renew only the exact matching workspace writer lease for this caller session. |
 | 6 | `workspace_writer_lease_release` | WRITE | default | operational | service_dispatch | Release an owned workspace writer lease only when no fenced invocation is active. |

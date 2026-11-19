@@ -21,6 +21,18 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.9.4',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          { id: 'post-reboot-writer-recovery', titleKey: 'whatsNew.594.postRebootWriterRecovery.title', descriptionKey: 'whatsNew.594.postRebootWriterRecovery.description', badge: 'fixed', tags: ['writer reservations', 'Windows restart', 'recovery'] },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.9.3',
     categories: [
       {
