@@ -1395,7 +1395,10 @@ describe('MCP tool registry', () => {
       database.close();
       await rm(root, { recursive: true, force: true });
     }
-  });
+    // Real SQLite, workspace preparation and goal recovery share a loaded Windows
+    // runner; keep bounded headroom over Vitest's 5s default without weakening any
+    // assertion or verification boundary.
+  }, 20_000);
 
   it('does not reopen request admission when cancellation races validated dispatch', async () => {
     const cancellation = new GoalRequestCancellationService({ waitMs: 1 });
