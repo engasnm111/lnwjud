@@ -2,6 +2,12 @@
 
 Release history is maintained here for release authoring; the [README](README.md) contains installation and product documentation, while each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) provides the public Highlights, Features, Fixes and downloads.
 
+### What's new in v5.9.4
+
+- **Fixed: writer reservations stranded by a Windows restart.** A native-bound reservation recorded before the current OS boot can now be reconciled by the authenticated containment service even when the service had persisted its attempt as termination-unknown after its own restart. The service records an interrupted result with exit code 125 — never a successful exit — and only after verifying the exact owner, the original marker timestamp and the absent attempt-named Job. Active runs, import holds, conflicting identities and unprovable records stay blocked.
+- **A findable recovery path.** `self_heal_plan` and `recovery_status` now report reservation counts by marker origin and name the supported `workspace_writer_lease_acquire` recovery call (after a full Windows restart) instead of offering only an index rebuild. These diagnostics still never reclaim a reservation on their own.
+- **ไทย:** รุ่นนี้แก้ปัญหา writer reservation ค้างข้ามการรีสตาร์ท Windows บริการ containment ที่ยืนยันตัวตนแล้วจะปิดเฉพาะรายการที่พิสูจน์ได้ว่า Job เดิมจบไปแล้วเป็น interrupted/125 และคงรายการที่ยังทำงาน ติด import หรือพิสูจน์ไม่ได้ไว้ พร้อมให้ self_heal_plan และ recovery_status แนะนำขั้นตอนกู้คืนที่รองรับโดยตรง
+
 ### What's new in v5.9.3
 
 - **Fixed: the app could not open after a fresh v5.9.2 install.** The stable launcher required an enrolled native update baseline before starting anything, so a normal all-users installation stopped at `UPDATE_LAUNCH_UNVERIFIED`. The launcher now verifies the installed `slots/A` manifest and image hash and starts that slot when the update service has no baseline to launch from. The native update transaction itself stays fail-closed.

@@ -182,6 +182,24 @@ internal sealed class ServiceAttemptLedger
                     if (existing.ReservationHeld) _ = Release(identity, callerSid);
                     return Observe(existing);
                 }
+                // A persisted record that the service already downgraded to TerminationUnknown
+                // after its own restart can be finalized only through this new-boot request,
+                // which the caller has already bound to the original marker timestamp and an
+                // absent attempt-named Job. No process from before that boot can still run.
+                // Other live phases keep their runtime handle and stay refused. Import holds
+                // remain retained until service-owned publication evidence clears them.
+                if (existing.Phase == ServiceAttemptPhase.TerminationUnknown)
+                {
+                    if (existing.Request.HoldForImport) throw new IOException("SERVICE_RECOVERY_IMPORT_HOLD_UNVERIFIED");
+                    existing.Phase = ServiceAttemptPhase.TerminalVerified;
+                    existing.Outcome = ServiceProcessOutcome.Interrupted;
+                    existing.ExitCode = 125;
+                    existing.ActiveProcesses = 0;
+                    existing.Reason = null;
+                    existing.ReservationHeld = false;
+                    Persist();
+                    return Observe(existing);
+                }
                 throw new IOException("SERVICE_RECOVERY_EXISTING_ATTEMPT_UNVERIFIED");
             }
             var recovered = new Entry(request)

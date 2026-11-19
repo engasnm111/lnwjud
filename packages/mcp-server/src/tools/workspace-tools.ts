@@ -43,7 +43,7 @@ export function workspaceTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'workspace_writer_lease_acquire',
-      description: 'Acquire a durable exclusive writer lease for one registered workspace. Explicit recoverAbandoned with user confirmation may fence an idle previous session of the same client after 60 seconds; unrelated clients and active/unknown writers remain blocked.',
+      description: 'Acquire a durable exclusive writer lease for one registered workspace. The exclusive native-admission probe may reconcile an authenticated native-bound reservation only after a verified newer OS boot and an absent attempt Job; unprovable, active or import-held records stay blocked. Explicit recoverAbandoned with user confirmation may fence an idle previous session of the same client after 60 seconds; unrelated clients and active/unknown writers remain blocked.',
       permission: 'WRITE', annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: workspaceWriterLeaseAcquireSchema,
       handler: async (input) => context.services.workspaceWriterLease === undefined ? missingService()

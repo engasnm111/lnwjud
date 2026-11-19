@@ -20,8 +20,10 @@ interface MockAuthorityContext {
   readonly authority: WindowsNativeAuthority;
   readonly setPhase: (phase: number, details?: { outcome?: number; exitCode?: number; targetPid?: number; reason?: string }) => void;
   readonly setAttemptLost: (lost: boolean) => void;
+  readonly setRestartUnknown: (unknown: boolean) => void;
   readonly setRecoveryJobActive: (active: boolean) => void;
   readonly getCancelledAttempts: () => readonly string[];
+  readonly getRecoveryRecordedAt: () => string | undefined;
 }
 
 function createMockAuthority(root: string): MockAuthorityContext {
@@ -31,7 +33,9 @@ function createMockAuthority(root: string): MockAuthorityContext {
   let currentTargetPid = 12345;
   let currentReason: string | undefined;
   let attemptLost = false;
+  let restartUnknown = false;
   let recoveryJobActive = false;
+  let recoveryRecordedAt: string | undefined;
   const cancelled: string[] = [];
 
   const client: WindowsContainmentServiceClient = {
@@ -56,9 +60,11 @@ function createMockAuthority(root: string): MockAuthorityContext {
         return { identity: request.identity, phase: 2, reservationHeld: false } as T;
       }
       if (request.command === 'recover_after_reboot') {
-        if (!attemptLost || recoveryJobActive || !request.recordedAt.endsWith('Z'))
+        recoveryRecordedAt = request.recordedAt;
+        if ((!attemptLost && !restartUnknown) || recoveryJobActive || !request.recordedAt.endsWith('Z'))
           throw new Error('SERVICE_RECOVERY_JOB_UNVERIFIED');
         attemptLost = false;
+        restartUnknown = false;
         currentPhase = 4;
         currentOutcome = 3;
         currentExitCode = 125;
@@ -68,6 +74,10 @@ function createMockAuthority(root: string): MockAuthorityContext {
       if (request.command === 'inspect') {
         if (attemptLost) {
           throw new Error('SERVICE_OWNER_MISMATCH');
+        }
+        if (restartUnknown) {
+          currentPhase = 5;
+          currentReason = 'SERVICE_RESTART_LAUNCH_UNVERIFIED';
         }
         if (currentPhase === 0) {
           return { identity: request.identity, phase: 0, reservationHeld: true } as T;
@@ -108,10 +118,14 @@ function createMockAuthority(root: string): MockAuthorityContext {
     setAttemptLost: (lost: boolean): void => {
       attemptLost = lost;
     },
+    setRestartUnknown: (unknown: boolean): void => {
+      restartUnknown = unknown;
+    },
     setRecoveryJobActive: (active: boolean): void => {
       recoveryJobActive = active;
     },
     getCancelledAttempts: () => [...cancelled],
+    getRecoveryRecordedAt: () => recoveryRecordedAt,
   };
 }
 
@@ -954,5 +968,53 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
     if (!inspected.ok) return;
     expect(inspected.value.state).toBe('active');
     expect(inspected.value.generation).toBe(2);
+  }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
+
+  it('18. Persisted termination-unknown durable shell task reconciles only through verified new-boot proof', async () => {
+    const f = await fixture(10_000);
+    const workspaceId = 'workspace-1';
+    const clientId = 'client-1';
+    const sessionId = 'session-1';
+    const taskId = randomUUID();
+    const digest = createHash('sha256').update(taskId).digest('hex');
+    const binding = durableShellNativeBinding({
+      taskId,
+      executable: 'node.exe',
+      arguments: ['-e', '1'],
+      cwd: f.root,
+      timeoutSeconds: 30,
+      maxOutputBytes: 1024,
+      includeStdout: true,
+      includeStderr: true,
+      owner: { clientId, sessionId, workspaceId },
+    }, digest);
+    const taskDir = path.join(f.taskDirectory, taskId);
+    await mkdir(taskDir, { recursive: true });
+    const metadata = makeCanonicalMetadata({ taskId, clientId, sessionId, workspaceId, state: 'running', binding });
+    await writeFile(path.join(taskDir, 'task.json'), JSON.stringify(metadata));
+    await (f.store as unknown as { activeIndex: { reserve: (input: unknown) => Promise<unknown> } }).activeIndex.reserve({
+      taskId,
+      capacityClass: 'durable_shell',
+      requestDigest: digest,
+      mutationKind: 'opaque',
+      nativeBinding: binding,
+      nativeReceiptPath: path.join(taskDir, 'containment.receipt.json'),
+      ownerClientId: clientId,
+      ownerWorkspaceId: workspaceId,
+    });
+
+    // The service restarted, so it cannot prove whether the target was dispatched.
+    f.mock.setRestartUnknown(true);
+    await expect(f.store.inspectForWriterAdmission(taskId)).resolves.toBe('terminal');
+    await expect(f.store.snapshot(taskId)).resolves.toMatchObject({
+      ok: true, value: { state: 'failed', exit_code: 125 },
+    });
+    expect(f.mock.getRecoveryRecordedAt()).toBe(metadata.started_at);
+
+    // The reservation fence is released only after the same verified native proof.
+    const probe = await f.admission.holdExclusiveProbe(workspaceId);
+    expect(probe.ok).toBe(true);
+    if (!probe.ok) return;
+    await probe.value.releaseAfterVerifiedTermination();
   }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
 });

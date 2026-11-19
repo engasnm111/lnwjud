@@ -903,29 +903,35 @@ export class DurableShellTaskStore {
 
   private async reconcileNative(metadata: DurableTaskMetadata): Promise<DurableTaskMetadata> {
     const binding = metadata.containmentBinding;
+    const authority = this.windowsNativeAuthority;
     const unknown = (): DurableTaskMetadata => {
       const unresolved = { ...metadata, state: 'termination_unverified' as const, error: 'Authenticated native termination proof is unavailable' };
       delete unresolved.finished_at;
       return unresolved;
     };
-    if (this.windowsNativeAuthority === undefined || binding === undefined || !nativeBindingMatchesMetadata(metadata, binding)) return unknown();
-    let proof = await this.windowsNativeAuthority.inspect({ directory: this.taskDirectory(metadata.task_id), binding });
+    if (authority === undefined || binding === undefined || !nativeBindingMatchesMetadata(metadata, binding)) return unknown();
+    let proof = await authority.inspect({ directory: this.taskDirectory(metadata.task_id), binding });
+    let rebootRecovered = false;
     if (proof.state === 'running') return isTerminal(metadata.state) ? unknown() : { ...metadata, state: metadata.state === 'starting' ? 'running' : metadata.state };
     if (proof.state === 'termination_unknown') {
       const deadlinePassed = typeof metadata.deadline_at === 'string' && Date.now() > new Date(metadata.deadline_at).getTime();
       const isUnverifiedState = metadata.state === 'termination_unverified';
-      if (metadata.state !== 'starting' && (isUnverifiedState || deadlinePassed) && metadata.worker_pid !== undefined) {
-        const worker = await probeProcessIdentity(metadata.worker_pid, this.platform);
-        const workerDead = worker.state === 'gone' || (worker.state === 'live' && metadata.worker_started_at !== undefined && worker.processStartedAt !== metadata.worker_started_at);
-        let childDead = true;
-        if (metadata.child_pid !== undefined && workerDead) {
-          const child = await probeProcessIdentity(metadata.child_pid, this.platform);
-          childDead = child.state === 'gone' || (child.state === 'live' && metadata.child_started_at !== undefined && child.processStartedAt !== metadata.child_started_at);
+      if (metadata.state !== 'starting' && (isUnverifiedState || deadlinePassed) && await this.nativeOwnerProvenGone(metadata)) {
+        const abortProof = await authority.abortBeforeLaunch({ directory: this.taskDirectory(metadata.task_id), binding });
+        if (abortProof.state === 'launch_not_started' || abortProof.state === 'terminal_verified') {
+          proof = abortProof;
         }
-        if (workerDead && childDead) {
-          const abortProof = await this.windowsNativeAuthority.abortBeforeLaunch({ directory: this.taskDirectory(metadata.task_id), binding });
-          if (abortProof.state === 'launch_not_started' || abortProof.state === 'terminal_verified') {
-            proof = abortProof;
+        // A newer OS boot is independent proof that the original local worker and every
+        // pre-boot descendant are gone. The authenticated service still has to accept the
+        // exact attempt, marker timestamp, owner and absent attempt-named Job; a refusal
+        // stays fail-closed. This closes the persisted termination-unknown dead end.
+        if (proof.state === 'termination_unknown' && isIsoUtcTimestamp(metadata.started_at)) {
+          const recovered = await authority.recoverAfterReboot({
+            directory: this.taskDirectory(metadata.task_id), binding, recordedAt: metadata.started_at,
+          });
+          if (recovered.state === 'terminal_verified') {
+            proof = recovered;
+            rebootRecovered = true;
           }
         }
       }
@@ -934,12 +940,14 @@ export class DurableShellTaskStore {
     const expectedState = proof.state === 'launch_not_started' ? 'failed' : nativeOutcomeState(proof.outcome, proof.exitCode);
     const expectedExitCode = proof.state === 'launch_not_started' ? -1 : proof.exitCode;
     if (metadata.state === expectedState && metadata.exit_code === expectedExitCode && metadata.finished_at !== undefined) return metadata;
-    if (metadata.worker_pid !== undefined) {
-      const worker = await probeProcessIdentity(metadata.worker_pid, this.platform);
-      if (worker.state !== 'gone' && !(worker.state === 'live' && metadata.worker_started_at !== undefined
-        && worker.processStartedAt !== metadata.worker_started_at)) return metadata;
-    } else if (proof.state !== 'launch_not_started') {
-      return unknown();
+    if (!rebootRecovered) {
+      if (metadata.worker_pid !== undefined) {
+        const worker = await probeProcessIdentity(metadata.worker_pid, this.platform);
+        if (worker.state !== 'gone' && !(worker.state === 'live' && metadata.worker_started_at !== undefined
+          && worker.processStartedAt !== metadata.worker_started_at)) return metadata;
+      } else if (proof.state !== 'launch_not_started') {
+        return unknown();
+      }
     }
     const readback = await this.readMetadata(metadata.task_id);
     if (!readback.ok || readback.value.containmentBinding === undefined || !nativeBindingMatchesMetadata(readback.value, binding)) return unknown();
@@ -950,6 +958,15 @@ export class DurableShellTaskStore {
     delete finalized.error;
     await this.writeMetadata(finalized);
     return finalized;
+  }
+
+  private async nativeOwnerProvenGone(metadata: DurableTaskMetadata): Promise<boolean> {
+    if (metadata.worker_pid === undefined) return metadata.state === 'termination_unverified';
+    const worker = await probeProcessIdentity(metadata.worker_pid, this.platform);
+    const workerGone = worker.state === 'gone' || (worker.state === 'live' && metadata.worker_started_at !== undefined && worker.processStartedAt !== metadata.worker_started_at);
+    if (!workerGone || metadata.child_pid === undefined) return workerGone;
+    const child = await probeProcessIdentity(metadata.child_pid, this.platform);
+    return child.state === 'gone' || (child.state === 'live' && metadata.child_started_at !== undefined && child.processStartedAt !== metadata.child_started_at);
   }
 
   private authorityFor(metadata: DurableTaskMetadata): WindowsNativeAuthority | MacosNativeAuthority | undefined {
@@ -1208,6 +1225,10 @@ async function mapWithConcurrency<T, U>(
 
 function nativeOutcomeState(outcome: 'completed' | 'cancelled' | 'timed_out' | 'interrupted', exitCode: number): DurableShellTaskState {
   return outcome === 'interrupted' ? 'failed' : outcome === 'completed' ? (exitCode === 0 ? 'completed' : 'failed') : outcome;
+}
+
+function isIsoUtcTimestamp(value: string): boolean {
+  return value.endsWith('Z') && Number.isFinite(Date.parse(value));
 }
 
 function nativeBindingMatchesMetadata(metadata: DurableTaskMetadata, binding: NativeAttemptBinding): boolean {

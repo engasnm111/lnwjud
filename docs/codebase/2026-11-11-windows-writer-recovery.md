@@ -1,6 +1,6 @@
 # Recover held Windows writer reservations
 
-Use this procedure with the matching lnwjud 5.9.1 all-users installation. It covers native-bound reservations whose original attempt can be authenticated. Old unbound reservations remain held when their termination cannot be proved.
+Use this procedure with the matching lnwjud 5.9.4 or later all-users installation. It covers native-bound reservations whose original attempt can be authenticated, including attempts the containment service persisted as termination-unknown after a restart. Old unbound reservations remain held when their termination cannot be proved.
 
 ## Check the installation and inspect the hold
 
@@ -21,13 +21,13 @@ Use this procedure with the matching lnwjud 5.9.1 all-users installation. It cov
    workspace_writer_lease_status({"workspaceId":"<workspace-id>"})
    ```
 
-   Keep the aggregate reservation counts and symbolic failure codes. The shared index covers all workspaces. Zero visible tasks or process handles does not establish that a held reservation is terminal. These diagnostic calls do not reclaim reservations.
+   Keep the aggregate reservation counts and symbolic failure codes. The shared index covers all workspaces. Zero visible tasks or process handles does not establish that a held reservation is terminal. These diagnostic calls do not reclaim reservations. When native-bound holds exist, `self_heal_plan.supportedRecovery` and `recovery_status.recommendedActions` name the supported reconciliation call and its preconditions; they never pre-claim that it will succeed.
 
 ## Reconcile an authenticated native attempt
 
 Use the following acquisition only when you intend to take the workspace's exclusive writer lease. Stop or finish ordinary work through its supported owner controls first. An active or unknown writer must remain blocked.
 
-1. If the original service attempt is missing after an upgrade or interrupted installation, save work and perform an ordinary Windows restart when the machine is ready. Restarting only lnwjud or its service does not satisfy the newer-boot requirement.
+1. If the original service attempt is missing after an upgrade or interrupted installation, or the service persisted it as termination-unknown when it restarted, save work and perform an ordinary Windows restart when the machine is ready. Restarting only lnwjud or its service does not satisfy the newer-boot requirement.
 2. Reconnect the owning client to the matching installed application. Request the lease through MCP.
 
    ```text
@@ -39,9 +39,7 @@ Use the following acquisition only when you intend to take the workspace's exclu
    })
    ```
 
-   The acquisition runs the existing exclusive-admission probe. For each native-bound hold, it asks the authenticated service about the exact task, reservation, attempt, generation, original owner, workspace, and request digest. A missing attempt can be reconciled only when the original marker predates the current OS boot and the service independently observes that the attempt's named Job is absent. Existing nonterminal ledger entries, active Jobs, inaccessible Jobs, and conflicting identities remain held.
-
-   The service persists an `interrupted` terminal result with exit code `125`. This records an interrupted operation, not successful command completion. A verified never-dispatched attempt instead receives the service's abort-before-launch receipt. The index removes a marker only after its full record still matches the observed record.
+   The acquisition runs the existing exclusive-admission probe. For each native-bound hold, it asks the authenticated service about the exact task, reservation, attempt, generation, original owner, workspace, and request digest. A missing attempt, and a persisted `TerminationUnknown` record that the service downgraded during a restart, can be reconciled only when the original marker predates the current OS boot and the service independently observes that the attempt's named Job is absent. No process from an earlier boot can still run, so the service persists an `interrupted` terminal result with exit code 125. This records an interrupted operation, not successful command completion. A verified never-dispatched attempt instead receives the service's abort-before-launch receipt. Active or unknown Jobs, mismatched owners, conflicting identities, live `Prepared`/`DispatchCommitted`/`Running` records and import holds remain held. The index removes a marker only after its full record still matches the observed record.
 3. Keep the returned lease proof private and use it only in the owning client session. Release the acquired lease with `workspace_writer_lease_release`, supplying the returned `writerLease` fields. Do not publish or copy the lease token into a support report.
 4. Read `task_list`, `recovery_status`, and `workspace_writer_lease_status` again. Compare the admission counts and the specific task outcome where that task is visible. A failed acquisition may still have reconciled independently verified terminal holds before encountering another blocker. Inspect the new state before another action.
 
@@ -55,4 +53,4 @@ Send support only the application version, service availability, aggregate count
 
 The post-reboot route uses the owner's original marker timestamp. It does not authenticate that timestamp against a malicious same-user editor. Keep the original state intact. The protected native ledger and its refusal outcomes remain authoritative.
 
-For the diagnostic fields and migration limits, see [shared reservation diagnostics](2026-10-30-v5.9.1-writer-reservation-diagnostics.md). For service enrollment and native identity checks, see [Windows containment service](../../native/windows-containment-helper/README.md).
+For the diagnostic fields and migration limits, see [shared reservation diagnostics](2026-10-30-v5.9.1-writer-reservation-diagnostics.md). For the #260 post-reboot termination-unknown defect and its regression coverage, see [v5.9.4 post-reboot writer recovery](2026-11-20-v5.9.4-post-reboot-writer-recovery.md). For service enrollment and native identity checks, see [Windows containment service](../../native/windows-containment-helper/README.md).

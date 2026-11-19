@@ -127,7 +127,9 @@ async function syncAllVersions() {
   }
 
   const releaseReadme = await readFile(path.join(rootDir, 'README.md'), 'utf8');
-  const publishedVersion = releaseReadme.match(/Latest published release: \*\*v([0-9.]+)\*\*/)?.[1] ?? version;
+  const publishedVersion = releaseReadme.match(/^## Current published version: v([0-9.]+)$/m)?.[1]
+    ?? releaseReadme.match(/Latest published release: \*\*v([0-9.]+)\*\*/)?.[1]
+    ?? version;
 
   // 9. Update current-version Markdown references without rewriting release history.
   const markdownTargets = [
@@ -149,6 +151,9 @@ async function syncAllVersions() {
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Setup-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Setup-${version}.exe`)
       .replace(/apps\/desktop\/dist\/installers\/lnwjud-Portable-[0-9.]+\.exe/g, `apps/desktop/dist/installers/lnwjud-Portable-${version}.exe`)],
     ['docs/LNWJUD_CAPABILITIES.md', (content) => content.replace(/lnwjud v[0-9.]+/g, `lnwjud v${version}`).replace(/ความสามารถหลักใน v[0-9.]+(?= source\/runtime ปัจจุบัน คือ:| คือ:)/g, `ความสามารถหลักใน v${version}`)],
+    ['config/release-scope.json', (content) => content
+      .replace(/"version": "[0-9.]+"/, `"version": "${version}"`)
+      .replace(/No macOS v[0-9.]+ binaries\./, `No macOS v${version} binaries.`)],
     ['docs/architecture/MULTI_WORKSPACE_CONCURRENCY.md', (content) => content.replace(/current v[0-9.]+ runtime contract/g, `current v${version} runtime contract`)],
     ['docs/architecture/TOOL_CONTRACT.md', (content) => content.replace(/snapshot synchronized for `v[0-9.]+`/g, `snapshot synchronized for ` + '`v' + version + '`')],
     ['docs/architecture/UPGRADE_ARCHITECTURE.md', (content) => content.replace(/checkpoint synchronized for `v[0-9.]+`/g, `checkpoint synchronized for ` + '`v' + version + '`')],

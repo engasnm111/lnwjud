@@ -267,6 +267,7 @@ internal static class NativeTests
                 }
                 case "endpoint-exit259-tests": TestEndpointExit259(); return 0;
                 case "service-failure-reason-tests": TestServiceFailureReason(); Console.WriteLine("PASS safe service installer failure codes"); return 0;
+                case "post-reboot-recovery": TestPostRebootRecovery(); Console.WriteLine("PASS persisted termination-unknown records reconcile only after a verified new boot"); return 0;
                 case "service-restart-tests":
                     TestServiceRestartAndJobReconciliation();
                     Console.WriteLine("PASS isolated service restart reconciliation");
@@ -352,7 +353,7 @@ internal static class NativeTests
             TestTerminalReleaseRecovery();
             Console.WriteLine("PASS crash recovery keeps unknown reservations and persists terminal release");
             TestPostRebootRecovery();
-            Console.WriteLine("PASS missing attempt recovery requires new boot, absent Job, and exact owner");
+            Console.WriteLine("PASS post-reboot recovery requires new boot, absent Job, exact owner, and retains import holds");
             TestServiceRestartAndJobReconciliation();
             Console.WriteLine("PASS service restart reconciles dead jobs, preserves live descendants, and cancels cleanly");
             UpdaterCrashBoundaryFixture.RunSuite();
@@ -1228,6 +1229,43 @@ internal static class NativeTests
             persisted.TryCommitDispatch(running.Identity, running.AuthenticatedCallerSid, running.OperationDigest);
             ExpectFailure<IOException>(() => persisted.RecoverAfterReboot(running.Identity,
                 running.AuthenticatedCallerSid, reservedAt, bootTime, absentJob), "SERVICE_RECOVERY_EXISTING_ATTEMPT_UNVERIFIED");
+            // A service restart downgrades the persisted dispatch to TerminationUnknown. The
+            // new-boot request must be able to finalize exactly that record; otherwise a
+            // crash between dispatch commit and the target-PID marker is a permanent hold.
+            var restarted = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            var unknown = restarted.Inspect(running.Identity, running.AuthenticatedCallerSid);
+            if (unknown.Phase != ServiceAttemptPhase.TerminationUnknown || !unknown.ReservationHeld
+                || unknown.Reason != "SERVICE_RESTART_REQUIRES_RECONCILIATION")
+                throw new Exception("Dispatch state was not preserved as termination-unknown across restart");
+            ExpectFailure<UnauthorizedAccessException>(() => restarted.RecoverAfterReboot(running.Identity,
+                "S-1-5-21-2000", reservedAt, bootTime, absentJob), "ATTEMPT_OWNER_MISMATCH");
+            ExpectFailure<IOException>(() => restarted.RecoverAfterReboot(running.Identity,
+                running.AuthenticatedCallerSid, reservedAt, bootTime, activeJob), "SERVICE_RECOVERY_JOB_UNVERIFIED");
+            var recoveredUnknown = restarted.RecoverAfterReboot(running.Identity,
+                running.AuthenticatedCallerSid, reservedAt, bootTime, absentJob);
+            if (recoveredUnknown.Phase != ServiceAttemptPhase.TerminalVerified
+                || recoveredUnknown.Outcome != ServiceProcessOutcome.Interrupted
+                || recoveredUnknown.ExitCode != 125 || recoveredUnknown.ActiveProcesses != 0
+                || recoveredUnknown.ReservationHeld)
+                throw new Exception("Restarted termination-unknown record was not reconciled as interrupted");
+            var persistedUnknown = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            if (persistedUnknown.Inspect(running.Identity, running.AuthenticatedCallerSid) != recoveredUnknown
+                || persistedUnknown.RecoverAfterReboot(running.Identity, running.AuthenticatedCallerSid,
+                    reservedAt, bootTime, absentJob) != recoveredUnknown)
+                throw new Exception("Restarted termination-unknown reconciliation was not persisted or idempotent");
+            // An import hold must keep its writer fence until service-owned publication
+            // evidence clears it, even after a verified new boot.
+            var importHold = NewServiceAttemptRequest("reboot-import-hold-" + Guid.NewGuid().ToString("N"),
+                ServiceAttemptLedger.GlobalReservationKey) with { HoldForImport = true };
+            persistedUnknown.Prepare(importHold);
+            persistedUnknown.TryCommitDispatch(importHold.Identity, importHold.AuthenticatedCallerSid, importHold.OperationDigest);
+            var restartedImport = new ServiceAttemptLedger(new ServiceAttemptLedgerPersistence(store));
+            ExpectFailure<IOException>(() => restartedImport.RecoverAfterReboot(importHold.Identity,
+                importHold.AuthenticatedCallerSid, reservedAt, bootTime, absentJob), "SERVICE_RECOVERY_IMPORT_HOLD_UNVERIFIED");
+            var retainedImport = restartedImport.Inspect(importHold.Identity, importHold.AuthenticatedCallerSid);
+            if (retainedImport.Phase != ServiceAttemptPhase.TerminationUnknown || !retainedImport.ReservationHeld)
+                throw new Exception("Post-reboot recovery released an import hold without publication evidence");
+
         }
         finally { Directory.Delete(directory, recursive: true); }
     }

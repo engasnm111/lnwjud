@@ -41,11 +41,11 @@ For an installable **validation candidate only** when the currently installed Na
 
 The package script rebuilds the workspace, prepares the first-party Windows containment helper, pin module, manifest and runtime bundle, and updates the compiled integrity pins before the application build. It prepares the target-native stdio launcher, writes both Windows executables to `apps/desktop/dist/installers/`, writes update metadata for both distribution channels, and finishes by generating and verifying `SHA256SUMS.txt` plus `PROVENANCE.json`. Provenance records the exact Git commit, tracked-tree dirty state, release artifact hashes, and critical packaged runtime hashes without storing signing secrets.
 
-For Windows x64 Native Pin compilation, `pin/build.mjs` uses installed LLVM `clang-cl.exe` with `lld-link.exe` when both are present under `C:/Program Files/LLVM/bin`; otherwise it retains the MSVC compiler fallback. Both paths keep `/Brepro` and the pinned Node N-API headers, and the produced addon and helper are always SHA-256 bound in `manifest.json` and the generated TypeScript integrity constants. This is a build-tool choice, not an exception to native Job Object zero-active-process proof: MSVC 14.51 can leave a `vctip.exe` telemetry process active after linking even with `VSCMD_SKIP_SENDTELEMETRY=1`, so a `timed_out` native wrapper is not a passing build gate. On 2026-10-22, the LLVM path reproducibly produced Pin SHA-256 `2bce3428ad0e69b4fd28ff7c827ee45296f4ac7d5b520a7cc17ecb7da0d39e5c` in two builds; a separate process loaded its Node N-API export, and the scoped native wrapper completed with exit code zero. Hosted CI and official release evidence must still be established independently.
+For Windows x64 Native Pin compilation, `pin/build.mjs` uses installed LLVM `clang-cl.exe` with `lld-link.exe` when both are present under `C:/Program Files/LLVM/bin`; otherwise it retains the MSVC compiler fallback. Because a newer MSVC STL can reject an older installed clang-cl with `STL1000`, the generated batch tries the LLVM compiler and falls back to `cl.exe` in the same `vcvars64` environment when that attempt fails; a genuine source error still fails both attempts. Both paths keep `/Brepro` and the pinned Node N-API headers, and the produced addon and helper are always SHA-256 bound in `manifest.json` and the generated TypeScript integrity constants. This is a build-tool choice, not an exception to native Job Object zero-active-process proof: MSVC 14.51 can leave a `vctip.exe` telemetry process active after linking even with `VSCMD_SKIP_SENDTELEMETRY=1`, so a `timed_out` native wrapper is not a passing build gate. On 2026-10-22, the LLVM path reproducibly produced Pin SHA-256 `2bce3428ad0e69b4fd28ff7c827ee45296f4ac7d5b520a7cc17ecb7da0d39e5c` in two builds; a separate process loaded its Node N-API export, and the scoped native wrapper completed with exit code zero. Hosted CI and official release evidence must still be established independently.
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v5.9.3 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v5.9.4 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
@@ -96,12 +96,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v5.9.3:
+For v5.9.4:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.9.3.exe
-apps/desktop/dist/installers/lnwjud-Setup-5.9.3.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-5.9.3.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.4.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.4.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-5.9.4.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt
