@@ -53,7 +53,7 @@
 
 ## Current published version: v5.9.4
 
-## Current source version: v5.9.4
+## Current source version: v5.9.5
 
 The development source includes the [local Goal Event API](docs/development/GOAL_EVENT_API.md) for explicitly approved workspace companions.
 
