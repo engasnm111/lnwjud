@@ -1982,7 +1982,9 @@ async function restoreTunnelAfterUpdateFailure(): Promise<string | null> {
 }
 
 function updateInstallFailureDetail(error: unknown, recoveryError: string | null, fallback: string): string {
-  const detail = error instanceof Error ? error.message : fallback;
+  const detail = error instanceof Error && error.message === 'UPDATE_ACTIVITY_UNVERIFIABLE'
+    ? nativeMessages(desktopLocale).updaterInstallWaitUnverifiable
+    : error instanceof Error ? error.message : fallback;
   return recoveryError === null ? detail : `${detail}\n\nTunnel restart failed: ${recoveryError}`;
 }
 

@@ -22,6 +22,7 @@ export interface NativeMessages {
   readonly updaterInstallConfirm: string;
   readonly updaterInstallFailedTitle: string;
   readonly updaterInstallFailedMessage: string;
+  readonly updaterInstallWaitUnverifiable: string;
   readonly updaterTunnelStopFailedTitle: string;
   readonly updaterTunnelStopFailedMessage: string;
   readonly updaterAvailableTitle: string;
@@ -78,6 +79,7 @@ const th: NativeMessages = {
   updaterInstallConfirm: 'ติดตั้งและเปิดใหม่',
   updaterInstallFailedTitle: 'ติดตั้งอัปเดตไม่สำเร็จ',
   updaterInstallFailedMessage: 'lnwjud ยังเปิดอยู่ การติดตั้งอัปเดตไม่สำเร็จ คุณสามารถลองใหม่ได้จากป้ายเวอร์ชัน',
+  updaterInstallWaitUnverifiable: 'ยังติดตั้งไม่ได้ เพราะตรวจสอบไม่ได้ว่ามีงานอื่นของ lnwjud กำลังทำอยู่หรือไม่ ปิดหน้าต่างหรือโปรแกรมอื่นที่เชื่อมต่อ lnwjud แล้วกดติดตั้งอีกครั้ง',
   updaterTunnelStopFailedTitle: 'ยังหยุด Secure Tunnel ไม่สำเร็จ',
   updaterTunnelStopFailedMessage: 'ยังติดตั้งอัปเดตไม่ได้ เพราะไม่สามารถยืนยันได้ว่า Secure Tunnel หยุดทำงานแล้ว กรุณาลองอีกครั้ง',
   updaterAvailableTitle: 'พบอัปเดต - lnwjud',
@@ -134,6 +136,7 @@ const en: NativeMessages = {
   updaterInstallConfirm: 'Install and Reopen',
   updaterInstallFailedTitle: 'Update Installation Failed',
   updaterInstallFailedMessage: 'lnwjud is still open because the update could not be installed. Try again from the version badge.',
+  updaterInstallWaitUnverifiable: 'The update was not installed because lnwjud could not verify whether other lnwjud sessions are still working. Close other windows or programs connected to lnwjud, then install again.',
   updaterTunnelStopFailedTitle: 'Secure Tunnel Did Not Stop',
   updaterTunnelStopFailedMessage: 'The update cannot be installed yet because lnwjud could not confirm that Secure Tunnel stopped. Please try again.',
   updaterAvailableTitle: 'Update Available - lnwjud',
