@@ -2,6 +2,13 @@
 
 Release history is maintained here for release authoring; the [README](README.md) contains installation and product documentation, while each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) provides the public Highlights, Features, Fixes and downloads.
 
+### What's new in v5.9.5
+
+- **Fixed: the update install screen waited forever.** The pre-install gate treated "no shared activity publisher is running" as "cannot verify activity", so on a normal desktop-only setup (an empty `lnwjud.mcp.activity.v2` lease set) it polled every 250 ms indefinitely and never started the installer. No lease is published unless a STDIO client is running, and a running client publishes before its first tool call, so an empty lease set now counts as idle and the install proceeds.
+- **A dead end now reports itself.** When shared activity stays genuinely unverifiable (probe failure, invalid or stale-cleaning lease) for 30 seconds, the attempt ends with a message asking the user to close other programs connected to lnwjud and retry. The install is still refused in that case; it never assumes idle.
+- **One manual step for v5.9.3 and v5.9.4:** the defect lives in the app that is already running, so anyone stuck on that screen must install v5.9.5 once from `lnwjud-Setup-5.9.5.exe` (or the Linux package) before the in-app updater works again. Windows x64 and Linux x64/arm64 are published; macOS stays deferred at v5.8.7 for Issue #216 containment acceptance.
+- **ไทย:** lnwjud จะติดตั้งต่อเมื่อไม่มีงานอื่นค้างอยู่จริง และถ้าตรวจสอบไม่ได้ภายใน 30 วินาที จะแจ้งให้ปิดโปรแกรมอื่นที่เชื่อมต่อ lnwjud แล้วลองใหม่ แทนการค้างรอตลอดไป ผู้ใช้ v5.9.3 หรือ v5.9.4 ที่ติดค้างอยู่ต้องติดตั้ง v5.9.5 จากตัวติดตั้งหนึ่งครั้ง
+
 ### What's new in v5.9.4
 
 - **Fixed: writer reservations stranded by a Windows restart.** A native-bound reservation recorded before the current OS boot can now be reconciled by the authenticated containment service even when the service had persisted its attempt as termination-unknown after its own restart. The service records an interrupted result with exit code 125 — never a successful exit — and only after verifying the exact owner, the original marker timestamp and the absent attempt-named Job. Active runs, import holds, conflicting identities and unprovable records stay blocked.

@@ -21,6 +21,18 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.9.5',
+    categories: [
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          { id: 'update-install-wait', titleKey: 'whatsNew.595.updateInstallWait.title', descriptionKey: 'whatsNew.595.updateInstallWait.description', badge: 'fixed', tags: ['updates', 'install wait', 'shared activity'] },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.9.4',
     categories: [
       {

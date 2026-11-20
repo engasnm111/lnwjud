@@ -45,7 +45,7 @@ For Windows x64 Native Pin compilation, `pin/build.mjs` uses installed LLVM `cla
 
 ## Current electron-builder contract
 
-`apps/desktop/electron-builder.yml` is the source of truth. The current v5.9.4 packaging contract is:
+`apps/desktop/electron-builder.yml` is the source of truth. The current v5.9.5 packaging contract is:
 
 - `asar: true`.
 - Windows x64 targets: NSIS installer + portable executable.
@@ -96,12 +96,12 @@ The `makeappx.exe`/`signtool.exe` steps need the Windows SDK. No certificate or 
 
 ## Expected Windows outputs
 
-For v5.9.4:
+For v5.9.5:
 
 ```text
-apps/desktop/dist/installers/lnwjud-Setup-5.9.4.exe
-apps/desktop/dist/installers/lnwjud-Setup-5.9.4.exe.blockmap
-apps/desktop/dist/installers/lnwjud-Portable-5.9.4.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.5.exe
+apps/desktop/dist/installers/lnwjud-Setup-5.9.5.exe.blockmap
+apps/desktop/dist/installers/lnwjud-Portable-5.9.5.exe
 apps/desktop/dist/installers/latest.yml
 apps/desktop/dist/installers/portable.yml
 apps/desktop/dist/installers/SHA256SUMS.txt

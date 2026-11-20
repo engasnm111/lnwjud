@@ -377,7 +377,7 @@ describe('downloaded update installation', () => {
 
   it('fails closed while a running tunnel has no trustworthy shared STDIO activity snapshot', async () => {
     vi.useFakeTimers();
-    let shared: { state: 'missing' } | { state: 'available'; activeCallCount: number; revision: number } = { state: 'missing' };
+    let shared: { state: 'stale' } | { state: 'available'; activeCallCount: number; revision: number } = { state: 'stale' };
     const install = vi.fn();
     const coordinator = new UpdateInstallCoordinator({
       activeCallCount: (): number => 0,
@@ -477,7 +477,7 @@ describe('downloaded update installation', () => {
 
   it('waits for trustworthy shared activity while Secure Tunnel is active', async () => {
     vi.useFakeTimers();
-    let shared: UpdateSharedActivitySnapshot = { state: 'missing' };
+    let shared: UpdateSharedActivitySnapshot = { state: 'unverifiable', reason: 'probe_failed' };
     const install = vi.fn();
     const coordinator = new UpdateInstallCoordinator({
       activeCallCount: (): number => 0,
@@ -497,6 +497,50 @@ describe('downloaded update installation', () => {
     await vi.advanceTimersByTimeAsync(30);
     expect(install).toHaveBeenCalledOnce();
     expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('installs when no shared activity publisher is running', async () => {
+    vi.useFakeTimers();
+    const install = vi.fn();
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<boolean> => true,
+      sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => ({ state: 'missing' }),
+      install,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+    });
+
+    expect(coordinator.requestInstall(offer)).toBe(true);
+    await vi.advanceTimersByTimeAsync(19);
+    expect(install).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(11);
+    expect(install).toHaveBeenCalledExactlyOnceWith(offer);
+  });
+
+  it('ends an install that can never verify shared activity instead of waiting forever', async () => {
+    vi.useFakeTimers();
+    const install = vi.fn();
+    const onInstallError = vi.fn(async (): Promise<void> => undefined);
+    const coordinator = new UpdateInstallCoordinator({
+      activeCallCount: (): number => 0,
+      tunnelRunning: async (): Promise<'unverifiable'> => 'unverifiable',
+      sharedActivitySnapshot: async (): Promise<UpdateSharedActivitySnapshot> => ({ state: 'unverifiable', reason: 'probe_failed' }),
+      install,
+      onInstallError,
+      pollIntervalMs: 10,
+      quietPeriodMs: 20,
+      activityUnverifiableGraceMs: 50,
+    });
+
+    expect(coordinator.requestInstall(offer)).toBe(true);
+    await vi.advanceTimersByTimeAsync(49);
+    expect(onInstallError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(11);
+    expect(onInstallError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'UPDATE_ACTIVITY_UNVERIFIABLE' }));
+    expect(install).not.toHaveBeenCalled();
+    expect(coordinator.hasPendingInstall()).toBe(false);
+    expect(coordinator.requestInstall({ ...offer, generation: 2 })).toBe(true);
   });
 
   it('keeps the attempt pending until the installer handoff settles', async () => {

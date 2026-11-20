@@ -138,6 +138,7 @@ export interface UpdateInstallCoordinatorOptions {
   readonly onInstallError?: (error: unknown) => void | Promise<void>;
   readonly quietPeriodMs?: number;
   readonly pollIntervalMs?: number;
+  readonly activityUnverifiableGraceMs?: number;
 }
 
 export type UpdateSharedActivitySnapshot =
@@ -146,10 +147,13 @@ export type UpdateSharedActivitySnapshot =
 
 const DEFAULT_QUIET_PERIOD_MS = 1_500;
 const DEFAULT_POLL_INTERVAL_MS = 250;
+const DEFAULT_ACTIVITY_UNVERIFIABLE_GRACE_MS = 30_000;
 
 export class UpdateInstallCoordinator {
   private readonly quietPeriodMs: number;
   private readonly pollIntervalMs: number;
+  private readonly activityUnverifiableGraceMs: number;
+  private untrustedSince: number | null = null;
   private pending = false;
   private handoffPending = false;
   private offer: DownloadedUpdateOffer | null = null;
@@ -162,11 +166,13 @@ export class UpdateInstallCoordinator {
   public constructor(private readonly options: UpdateInstallCoordinatorOptions) {
     this.quietPeriodMs = options.quietPeriodMs ?? DEFAULT_QUIET_PERIOD_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.activityUnverifiableGraceMs = options.activityUnverifiableGraceMs ?? DEFAULT_ACTIVITY_UNVERIFIABLE_GRACE_MS;
   }
 
   public requestInstall(offer: DownloadedUpdateOffer): boolean {
     if (this.shutdown || this.pending || this.handoffPending) return false;
     this.pending = true;
+    this.untrustedSince = null;
     this.offer = offer;
     void this.evaluate();
     return true;
@@ -196,7 +202,14 @@ export class UpdateInstallCoordinator {
       this.evaluating = false;
     }
     if (!this.pending || this.shutdown) return;
-    if (!activity.trustworthy || activity.activeCount > 0) {
+    if (!activity.trustworthy) {
+      if (this.abandonIfActivityStaysUnverifiable()) return;
+      this.quietUntil = 0;
+      this.schedule(this.pollIntervalMs, () => { void this.evaluate(); });
+      return;
+    }
+    this.untrustedSince = null;
+    if (activity.activeCount > 0) {
       this.quietUntil = 0;
       this.schedule(this.pollIntervalMs, () => { void this.evaluate(); });
       return;
@@ -251,6 +264,33 @@ export class UpdateInstallCoordinator {
     this.schedule(Math.min(this.pollIntervalMs, remaining), () => { void this.waitForQuietPeriod(); });
   }
 
+  /** A probe that can never be read must end the attempt instead of holding the user.
+   * The install stays refused: this reports the dead end, it never implies idle.
+   */
+  private abandonIfActivityStaysUnverifiable(): boolean {
+    const now = Date.now();
+    if (this.untrustedSince === null) {
+      this.untrustedSince = now;
+      return false;
+    }
+    if (now - this.untrustedSince < this.activityUnverifiableGraceMs) return false;
+    this.pending = false;
+    this.offer = null;
+    this.untrustedSince = null;
+    this.clearTimer();
+    const handler = this.options.onInstallError;
+    if (handler !== undefined) {
+      void (async (): Promise<void> => {
+        try {
+          await handler(new Error('UPDATE_ACTIVITY_UNVERIFIABLE'));
+        } catch (handlerError: unknown) {
+          console.error(`Update installation error handler failed: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}`);
+        }
+      })();
+    }
+    return true;
+  }
+
   private async observeActivity(): Promise<{ readonly trustworthy: boolean; readonly activeCount: number; readonly revision: string }> {
     const initialLocal = this.sampleLocalActivity();
     let tunnelState: boolean | 'unverifiable' = false;
@@ -274,6 +314,13 @@ export class UpdateInstallCoordinator {
       const shared = await this.options.sharedActivitySnapshot();
       const afterShared = this.sampleLocalActivity();
       if (!sameLocalActivity(afterTunnel, afterShared)) return staleLocalActivity(afterShared);
+      if (shared.state === 'missing') {
+        // A STDIO client publishes its lease before its first tool call starts and
+        // refreshes it every second, so an empty lease set means no shared client is
+        // running: the desktop-only setup, not unverifiable work. Reading that as
+        // unknown stranded every install on exactly that setup.
+        return { trustworthy: true, activeCount: afterShared.activeCount, revision: `${localRevisionKey(afterShared)}:shared:none` };
+      }
       if (shared.state !== 'available') return { trustworthy: false, activeCount: afterShared.activeCount, revision: `${localRevisionKey(afterShared)}:shared:${shared.state}` };
       if (!Number.isSafeInteger(shared.activeCallCount) || shared.activeCallCount < 0
         || !Number.isSafeInteger(shared.revision) || shared.revision < 0
