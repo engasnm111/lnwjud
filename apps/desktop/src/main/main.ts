@@ -1,6 +1,6 @@
 import { isEngineeringWorkerTarget } from '@lnwjud/shared';
 import { assertHostWindowsUpdateStartup } from '@lnwjud/capabilities';
-import { app, BrowserWindow, clipboard, ClipboardItem, crashReporter, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
+import { app, autoUpdater as nativeElectronAutoUpdater, BrowserWindow, clipboard, ClipboardItem, crashReporter, desktopCapturer, dialog, ipcMain, Menu, nativeImage, net, Notification, safeStorage, screen, shell, Tray, type IpcMainInvokeEvent } from 'electron';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
@@ -1623,6 +1623,8 @@ let platformDownload: PlatformReleaseDownload | null = null;
 const platformCompatibility = platformCompatibilityProfile(process.platform, os.release(), process.arch);
 let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
 let pendingLinuxAppImageUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
+let linuxAppImageInstallerRunning = false;
+let linuxAppImageRelaunchPath: string | null = null;
 let downloadedUpdateGeneration = 0;
 let currentDownloadedUpdateOffer: DownloadedUpdateOffer | null = null;
 let crashDiagnostics: CrashDiagnosticsRecorder | null = null;
@@ -2274,16 +2276,27 @@ async function installDownloadedUpdate(runtime: DesktopRuntime, offer: Downloade
           }
           const { currentPath, backupPath } = await createLinuxAppImageRollback(installed, downloaded.downloadedFile);
           let installError = '';
+          let installedPath = currentPath;
           const onError = (error: Error): void => { installError = error.message; };
+          const onFilenameUpdated = (filename: string): void => { installedPath = filename; };
+          const onInstallAccepted = (): void => { linuxAppImageRelaunchPath = installedPath; };
           autoUpdater.on('error', onError);
+          autoUpdater.on('appimage-filename-updated', onFilenameUpdated);
+          nativeElectronAutoUpdater.once('before-quit-for-update', onInstallAccepted);
+          linuxAppImageInstallerRunning = true;
           try {
-            autoUpdater.quitAndInstall();
+            // Install without launching a second Desktop against the current
+            // instance lock. Schedule the new AppImage after runtime shutdown.
+            autoUpdater.quitAndInstall(true, false);
           } catch (error: unknown) {
             installError = error instanceof Error ? error.message : String(error);
           } finally {
+            linuxAppImageInstallerRunning = false;
             autoUpdater.off('error', onError);
+            autoUpdater.off('appimage-filename-updated', onFilenameUpdated);
           }
           if (installError) {
+            nativeElectronAutoUpdater.removeListener('before-quit-for-update', onInstallAccepted);
             try {
               await restoreLinuxAppImageIfMissing(currentPath, backupPath);
             } catch (restoreError: unknown) {
@@ -2598,6 +2611,7 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
     });
 
     autoUpdater.on('error', (err) => {
+      if (linuxAppImageInstallerRunning) return;
       const requestedByUser = pendingUpdateCheckSource === 'tray' || pendingUpdateCheckSource === 'renderer';
       pendingUpdateCheckSource = null;
       recordUpdaterEvent(`error:${err.message}`);
@@ -3238,6 +3252,7 @@ function handleDesktopBeforeQuit(event: Electron.Event): void {
     reason: `before-quit:${coordinator === null ? 'no-runtime' : coordinator.canQuit() ? 'ready' : 'coordinating'}`,
   });
   if (coordinator === null || coordinator.canQuit()) {
+    relaunchInstalledAppImage();
     quitRequested = true;
     updateInstallCoordinator?.cancel();
     updateCheckScheduler?.stop();
@@ -3248,11 +3263,18 @@ function handleDesktopBeforeQuit(event: Electron.Event): void {
   event.preventDefault();
   quitRequested = true;
   void coordinator.requestQuit(() => {
+    relaunchInstalledAppImage();
     desktopSessionDiagnostics?.markCleanExit();
     app.exit(0);
   }).then((result) => {
     if (result === 'deferred') quitRequested = false;
   });
+}
+
+function relaunchInstalledAppImage(): void {
+  const executable = linuxAppImageRelaunchPath;
+  linuxAppImageRelaunchPath = null;
+  if (executable !== null) app.relaunch({ execPath: executable });
 }
 
 function configureDesktopSessionDiagnostics(dataPath: string): void {

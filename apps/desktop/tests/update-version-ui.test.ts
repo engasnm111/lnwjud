@@ -15,6 +15,16 @@ describe('titlebar update notification', () => {
     }
   });
 
+  it('relaunches the installed AppImage after Desktop shutdown rather than starting it during package replacement', async () => {
+    const main = await readFile(path.resolve(import.meta.dirname, '../src/main/main.ts'), 'utf8');
+    const appImage = main.slice(main.indexOf("if (updaterDistribution === 'linux-appimage') {"), main.indexOf('if (desktopShutdownCoordinator === null)'));
+    const close = main.slice(main.indexOf('function handleDesktopBeforeQuit('), main.indexOf('function configureDesktopSessionDiagnostics('));
+    expect(appImage).toContain("nativeElectronAutoUpdater.once('before-quit-for-update', onInstallAccepted)");
+    expect(appImage).toContain('autoUpdater.quitAndInstall(true, false)');
+    expect(close).toMatch(/coordinator\.requestQuit\(\(\) => \{\s+relaunchInstalledAppImage\(\)/);
+    expect(close).toContain('app.relaunch({ execPath: executable })');
+  });
+
   it.each(['dmg', 'deb'] as const)('offers only a newer published official %s for the exact architecture', (extension) => {
     const name = `lnwjud-5.10.0-arm64.${extension}`;
     const url = `https://github.com/engasnm111/lnwjud/releases/download/v5.10.0/${name}`;
