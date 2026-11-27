@@ -2,8 +2,43 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OperatorUpdateIntent, UpdateStatusEventRevision } from '../src/renderer/operator-update-intent.js';
+import { findPlatformReleaseDownload } from '../src/main/platform-release-update.js';
 
 describe('titlebar update notification', () => {
+  it('keeps the Windows one-click chain out of standard platform updates', () => {
+    for (const mode of ['platform', 'download'] as const) {
+      const intent = new OperatorUpdateIntent();
+      expect(intent.start()).toBe(true);
+      expect(intent.onStatus({ phase: 'available', mode })).toBe('none');
+      expect(intent.onStatus({ phase: 'ready', canInstall: true, mode })).toBe('none');
+      expect(intent.start()).toBe(true);
+    }
+  });
+
+  it('relaunches the installed AppImage after Desktop shutdown rather than starting it during package replacement', async () => {
+    const main = await readFile(path.resolve(import.meta.dirname, '../src/main/main.ts'), 'utf8');
+    const appImage = main.slice(main.indexOf("if (updaterDistribution === 'linux-appimage') {"), main.indexOf('if (desktopShutdownCoordinator === null)'));
+    const close = main.slice(main.indexOf('function handleDesktopBeforeQuit('), main.indexOf('function configureDesktopSessionDiagnostics('));
+    expect(appImage).toContain("nativeElectronAutoUpdater.once('before-quit-for-update', onInstallAccepted)");
+    expect(appImage).toContain('autoUpdater.quitAndInstall(true, false)');
+    expect(close).toMatch(/coordinator\.requestQuit\(\(\) => \{\s+relaunchInstalledAppImage\(\)/);
+    expect(close).toContain('app.relaunch({ execPath: executable })');
+  });
+
+  it.each(['dmg', 'deb'] as const)('offers only a newer published official %s for the exact architecture', (extension) => {
+    const name = `lnwjud-5.10.0-arm64.${extension}`;
+    const url = `https://github.com/engasnm111/lnwjud/releases/download/v5.10.0/${name}`;
+    const asset = { name, browser_download_url: url, state: 'uploaded', size: 42 };
+    const release = { tag_name: 'v5.10.0', draft: false, prerelease: false, assets: [asset] };
+    expect(findPlatformReleaseDownload(release, '5.9.5', 'arm64', extension)).toEqual({ version: '5.10.0', url });
+    expect(findPlatformReleaseDownload(release, '5.10.0', 'arm64', extension)).toBeNull();
+    expect(findPlatformReleaseDownload(release, '5.11.0', 'arm64', extension)).toBeNull();
+    expect(findPlatformReleaseDownload(release, '5.9.5', 'x64', extension)).toBeNull();
+    expect(findPlatformReleaseDownload({ ...release, prerelease: true }, '5.9.5', 'arm64', extension)).toBeNull();
+    expect(findPlatformReleaseDownload({ ...release, assets: [{ ...asset, browser_download_url: 'https://example.invalid/update' }] },
+      '5.9.5', 'arm64', extension)).toBeNull();
+  });
+
   it('ignores a second titlebar click while update intent is pending and never installs from ordinary status events', () => {
     const intent = new OperatorUpdateIntent();
     expect(intent.onStatus({ phase: 'ready' })).toBe('none');
@@ -88,7 +123,7 @@ describe('titlebar update notification', () => {
     expect(downloadedHandler).toContain("phase: 'unavailable'");
     const initializer = main.slice(main.indexOf('async function initAutoUpdater('));
     const authority = initializer.indexOf('verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority)');
-    const configured = initializer.indexOf('configureUpdaterForDistribution(autoUpdater, windowsDistribution)');
+    const configured = initializer.indexOf('configureUpdaterForPlatform(autoUpdater, updaterDistribution)');
     expect(authority).toBeGreaterThan(0);
     expect(configured).toBeGreaterThan(authority);
     expect(initializer.slice(authority, configured)).not.toContain('return;');

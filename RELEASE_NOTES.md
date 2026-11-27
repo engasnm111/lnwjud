@@ -2,6 +2,14 @@
 
 Release history is maintained here for release authoring; the [README](README.md) contains installation and product documentation, while each [GitHub Release](https://github.com/engasnm111/lnwjud/releases) provides the public Highlights, Features, Fixes and downloads.
 
+### What's new in v5.9.6
+
+- **Writer recovery gives the exact blocker and next action.** Windows writer lease acquisition distinguishes an active native attempt from a reservation that needs trusted termination evidence. The host reconciles independently verified reservations even when another still blocks acquisition. An authorized session can read the terminal receipt for a shell task tracked by its Durable Goal. [#265](https://github.com/engasnm111/lnwjud/issues/265)
+- **Engineering worktrees use a single checkout identity.** Register a linked worktree at its root to align Git HEAD, the source manifest and shell working directory. The host rejects a parent-bound scope that enters a separate checkout and identifies the required registration. [#266](https://github.com/engasnm111/lnwjud/issues/266)
+- **Engineering handoff preserves the checkout and review history.** An exact-goal handoff can verify writer quiescence and bind the transfer to current source. A successor must acquire an authorized lease and revalidate changed evidence. [#267](https://github.com/engasnm111/lnwjud/issues/267)
+- **Current installers for Windows, macOS and Linux.** This release includes macOS DMG and ZIP plus Linux AppImage and DEB on x64 and arm64. Windows keeps its one-click flow. Linux AppImage uses separate download and install actions. Linux DEB and community macOS open the matching GitHub package for the platform installer.
+- **ไทย:** ระบบกู้ writer reservation แสดงรายการที่บล็อกและหลักฐานที่ต้องใช้ ตรวจผลจบงานของ Durable Goal ข้าม session ที่ได้รับอนุญาตได้ และใช้ Git HEAD กับไดเรกทอรีของ worktree ที่ลงทะเบียนตรงกัน รุ่นนี้มีแพ็กเกจล่าสุดสำหรับ macOS และ Linux ทั้ง x64 และ arm64 โดยอัปเดตตามวิธีติดตั้งของแต่ละระบบ
+
 ### What's new in v5.9.5
 
 - **Fixed: the update install screen waited forever.** The pre-install gate treated "no shared activity publisher is running" as "cannot verify activity", so on a normal desktop-only setup (an empty `lnwjud.mcp.activity.v2` lease set) it polled every 250 ms indefinitely and never started the installer. No lease is published unless a STDIO client is running, and a running client publishes before its first tool call, so an empty lease set now counts as idle and the install proceeds.

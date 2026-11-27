@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   publish-release:
-    name: Publish Verified Windows/Linux Release
+    name: Publish Verified Cross-Platform Release
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -112,6 +112,8 @@ jobs:
 
           declare -a targets=(
             "win32-x64|windows-release-$sha"
+            "darwin-arm64|native-darwin-arm64-$sha"
+            "darwin-x64|native-darwin-x64-$sha"
             "linux-x64|native-linux-x64-$sha"
             "linux-arm64|native-linux-arm64-$sha"
           )
@@ -143,6 +145,8 @@ jobs:
 
           declare -a targets=(
             "win32-x64|win32|x64"
+            "darwin-arm64|darwin|arm64"
+            "darwin-x64|darwin|x64"
             "linux-x64|linux|x64"
             "linux-arm64|linux|arm64"
           )

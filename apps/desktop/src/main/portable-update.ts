@@ -8,7 +8,7 @@ export const PORTABLE_UPDATE_FEED_URL = 'https://github.com/engasnm111/lnwjud/re
 export const PORTABLE_UPDATE_CHANNEL = 'portable';
 
 export type WindowsDistribution = 'installer' | 'portable';
-export type UpdaterDistribution = WindowsDistribution | 'macos' | 'linux-appimage' | 'unsupported';
+export type UpdaterDistribution = WindowsDistribution | 'macos' | 'linux-appimage' | 'linux-deb' | 'unsupported';
 
 export interface AutoUpdaterFeedAdapter {
   disableDifferentialDownload: boolean;
@@ -59,7 +59,7 @@ export function detectUpdaterDistribution(
   if (!isPackaged) return 'unsupported';
   if (platform === 'win32') return detectWindowsDistribution(true, environment, platform);
   if (platform === 'darwin') return 'macos';
-  if (platform === 'linux' && environment.APPIMAGE?.trim()) return 'linux-appimage';
+  if (platform === 'linux') return environment.APPIMAGE?.trim() ? 'linux-appimage' : 'linux-deb';
   return 'unsupported';
 }
 

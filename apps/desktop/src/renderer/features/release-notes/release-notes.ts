@@ -21,6 +21,26 @@ export interface ReleaseNote {
 
 const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
+    version: '5.9.6',
+    categories: [
+      {
+        id: 'safety',
+        titleKey: 'whatsNew.category.safety',
+        items: [
+          { id: 'writer-recovery', titleKey: 'whatsNew.596.writerRecovery.title', descriptionKey: 'whatsNew.596.writerRecovery.description', badge: 'fixed' },
+          { id: 'worktree-handoff', titleKey: 'whatsNew.596.worktreeHandoff.title', descriptionKey: 'whatsNew.596.worktreeHandoff.description', badge: 'improved' },
+        ],
+      },
+      {
+        id: 'experience',
+        titleKey: 'whatsNew.category.experience',
+        items: [
+          { id: 'platform-updates', titleKey: 'whatsNew.596.platformUpdates.title', descriptionKey: 'whatsNew.596.platformUpdates.description', badge: 'new' },
+        ],
+      },
+    ],
+  },
+  {
     version: '5.9.5',
     categories: [
       {

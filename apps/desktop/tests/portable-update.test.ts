@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm, unlink, writeFile, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -21,7 +21,7 @@ describe('Windows distribution-aware auto updater', () => {
   it('selects only updater formats with a platform-owned installation path', () => {
     expect(detectUpdaterDistribution(true, 'darwin', {})).toBe('macos');
     expect(detectUpdaterDistribution(true, 'linux', { APPIMAGE: '/tmp/lnwjud.AppImage' })).toBe('linux-appimage');
-    expect(detectUpdaterDistribution(true, 'linux', {})).toBe('unsupported');
+    expect(detectUpdaterDistribution(true, 'linux', {})).toBe('linux-deb');
     expect(detectUpdaterDistribution(true, 'freebsd', {})).toBe('unsupported');
     expect(detectUpdaterDistribution(false, 'darwin', {})).toBe('unsupported');
   });
@@ -94,7 +94,13 @@ describe('Windows distribution-aware auto updater', () => {
       const downloaded = path.join(root, 'update.AppImage');
       await writeFile(current, 'old');
       await expect(createLinuxAppImageRollback(current, downloaded)).rejects.toThrow();
-      await symlink(current, downloaded);
+      if (process.platform === 'win32') {
+        const target = path.join(root, 'target');
+        await mkdir(target);
+        await symlink(target, downloaded, 'junction');
+      } else {
+        await symlink(current, downloaded);
+      }
       await expect(createLinuxAppImageRollback(current, downloaded)).rejects.toThrow('regular files');
     } finally {
       await rm(root, { recursive: true, force: true });

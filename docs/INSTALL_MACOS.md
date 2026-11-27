@@ -1,8 +1,6 @@
 # Install lnwjud on macOS
 
-**v5.9.0 development status:** The published version remains v5.8.7. This guide describes a packaging target, not a released or accepted v5.9.0 build. Automatic updates are unavailable in the current source on every target, including macOS. The requested flow requires one confirmation of the exact version, then a safe work drain, Tunnel stop, silent installation without more installer clicks, relaunch, health verification, and trusted rollback. The native authority and signed end-to-end acceptance are incomplete; Developer ID signing alone does not prove them. New macOS durable shell and managed process writers are temporarily refused before spawn because Issue #216 still lacks accepted escaped-descendant containment. See the [acceptance ledger](codebase/2026-10-20-v5.9.0-issues-213-217-acceptance.md).
-
-This guide covers the v5.9.5 native macOS release target. macOS 13 or newer is
+This guide covers the v5.9.6 native macOS release target. macOS 13 or newer is
 supported on both Apple silicon (`arm64`) and Intel (`x64`). The package is
 built on macOS for the matching architecture; there is no universal build
 claim until every native helper and runtime has been verified as universal.
@@ -32,42 +30,25 @@ The app contains Electron, the target-native ripgrep binary, and the official
 OpenAI `tunnel-client` selected for the artifact architecture. A system Node.js
 installation is not required for the packaged Desktop app or `lnwjud-mcp-stdio`.
 
-## Updating from v5.8.0 / v5.8.1 on macOS
+## Updating macOS
 
-**Manual replacement is required for older ad-hoc-signed builds.** Their
-Squirrel.Mac designated requirement is tied to that build's CDHash; a newer
-package cannot satisfy it even when the download completes. A code-only change
-to v5.8.2 cannot alter the signature embedded in the already-installed app.
+Select the version badge to check for an update. Community builds display the
+available version and open the matching official DMG download when you select it
+again. Verify the DMG checksum, quit lnwjud, replace `/Applications/lnwjud.app`,
+and reopen it to keep using your existing settings and Keychain.
+Users on older ad-hoc builds can download the new DMG directly from the
+[release page](https://github.com/engasnm111/lnwjud/releases/latest).
 
-1. Quit lnwjud and stop its Secure Tunnel before replacing the application.
-2. Download the correct architecture's verified v5.8.2 DMG/ZIP from
-   [GitHub Releases](https://github.com/engasnm111/lnwjud/releases).
-3. Replace `/Applications/lnwjud.app` with the downloaded app. Do not delete
-   lnwjud's user data, settings or Keychain items.
-4. Open the new app. Older ad-hoc-signed builds require a manual first
-   migration because their Squirrel.Mac designated requirement is tied to the
-   old CDHash. Eligible consistently signed builds show the exact target
-   version and ask for confirmation once. The current v5.9.0 source does not
-   enable that update handoff. If it becomes available after native authority
-   and signed acceptance are complete, it must install without further
-   installer clicks, relaunch, verify health, and support trusted rollback.
-   OS security authorization remains in force.
+Consistently signed Developer ID builds use the macOS ZIP update feed. After
+the download, select the version again and confirm installation. macOS
+verifies the installed app and the update use the same designated signing
+requirement. A release using this route requires the repository signing
+credentials `MACOS_CSC_LINK` and `MACOS_CSC_KEY_PASSWORD` and verified
+notarization.
 
-Future in-place macOS updates require consistently signed **Developer ID
-Application** builds (same designated requirement across releases), plus
-matching Apple code signing and notarization credentials in protected CI.
-These signing prerequisites do not prove the update flow's transaction,
-maintenance, migration, health and trusted rollback requirements.
-A developer certificate cannot retroactively enable seamless updates from
-older ad-hoc builds; the first migration must still be manual.
-
-For future Developer ID CI builds, configure **both** repository Actions secrets
-`MACOS_CSC_LINK` (the base64-encoded signing identity/P12) and
-`MACOS_CSC_KEY_PASSWORD` (its password). The native macOS packaging job then
-requires certificate signing and fails instead of silently falling back to
-ad-hoc when only one secret exists. Notarization/stapling must also be set up
-and verified before treating a signed artifact as a seamless production upgrade.
-The community v5.8.2 artifact does not claim these credentials exist.
+macOS durable shell and managed process writers require an enrolled Endpoint
+Security owner that can verify all descendants. The community package retains
+that admission check for Issue #216.
 
 ## Permissions
 

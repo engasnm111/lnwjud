@@ -138,7 +138,7 @@ describe('Windows release trust evidence', () => {
     expect(evidenceVerifier).toContain('LNWJUD_REQUIRE_WINDOWS_AUTHENTICODE');
     expect(evidenceVerifier).toContain('options.required || options.signingCredentialConfigured');
     expect(evidenceVerifier).toContain('windowsAuthenticode');
-    expect(release).not.toContain('native-darwin-arm64-$sha');
+    expect(release).toContain('darwin-arm64|darwin|arm64');
     expect(release).toContain('native-linux-arm64-$sha');
     expect(release).toContain('collect-release-assets.mjs');
     expect(release).not.toContain('LNWJUD_REQUIRE_WINDOWS_AUTHENTICODE');

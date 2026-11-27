@@ -1,6 +1,6 @@
 import { err, ok, type InvocationAuthorization, type Result } from '@lnwjud/domain';
 import type { CheckedInvocationEnvelope, McpRegistryRuntimePort } from '../registry-runtime-port.js';
-import type { CapabilityService, EventLogBackendOptions, WorkspaceWriterLeasePort } from '@lnwjud/capabilities';
+import type { CapabilityService, EventLogBackendOptions, ShellCapabilityBackend, WorkspaceWriterLeasePort } from '@lnwjud/capabilities';
 import type { ExtensionsService } from '@lnwjud/extensions';
 import type {
   AgentSwarmService,
@@ -98,6 +98,7 @@ export interface McpApplicationServices {
   readonly eventLogRuntimeOptions?: EventLogBackendOptions;
   readonly localProviders?: () => { readonly pdfProvider?: string; readonly lspCommands?: Readonly<Record<string, string>> };
   readonly capabilities?: CapabilityService;
+  readonly goalShellTasks?: Pick<ShellCapabilityBackend, 'terminalReceiptForGoal'>;
   readonly debugSessions?: Pick<DapSessionService, 'attach' | 'request' | 'status' | 'disconnect'>;
   readonly extensions?: ExtensionsService;
   readonly workspaceInfo?: WorkspaceInfoPort;
@@ -133,7 +134,7 @@ export interface McpApplicationServices {
     | 'cancelGoal'
     | 'reconcileGoals'
     | 'listGoals'
-  > & Partial<Pick<GoalContinuationService, 'recoverBlockedGoal'>>;
+  > & Partial<Pick<GoalContinuationService, 'recoverBlockedGoal' | 'authorizeTrackedShellTask' | 'inspectEngineeringHandoff'>>;
   /** Runtime-shared cancellation registry for in-flight fenced MCP requests. */
   readonly goalRequestCancellation?: GoalRequestCancellationPort;
   readonly scheduledContinuations?: Pick<ScheduledContinuationService, 'prepareScheduledContinuation' | 'recordScheduledContinuationReceipt' | 'cancelScheduledContinuation' | 'claimScheduledContinuation' | 'getScheduledContinuation' | 'expediteScheduledContinuation'>;

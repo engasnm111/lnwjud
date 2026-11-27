@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ok } from '@lnwjud/domain';
+import { appError, err, ok } from '@lnwjud/domain';
 import type { FileActor } from '@lnwjud/application';
 import { UpgradeRuntimeService } from './upgrade-runtime.js';
 import { UPGRADE_TOOL_CATALOG } from './upgrade-catalog.js';
@@ -18,6 +18,31 @@ const fullBypassAuthorization = {
 } as const;
 
 describe('upgrade runtime', () => {
+  it('requests only an exact goal-tracked terminal receipt in a new session', async () => {
+    const services = {
+      goals: {
+        async authorizeTrackedShellTask(requestActor: FileActor, goalId: string, taskId: string) {
+          return requestActor.clientId === 'test' && goalId === 'goal-1' && taskId === 'task-1'
+            ? ok({ workspaceId: 'ws-1' }) : err(appError('PERMISSION_DENIED', 'Task is not tracked here'));
+        },
+      },
+      goalShellTasks: {
+        async terminalReceiptForGoal(clientId: string, workspaceId: string, taskId: string) {
+          expect([clientId, workspaceId, taskId]).toEqual(['test', 'ws-1', 'task-1']);
+          return ok({ task_id: taskId, state: 'completed', exit_code: 0, receipt_source: 'native_containment' });
+        },
+      },
+    } as unknown as McpApplicationServices;
+    const runtime = new UpgradeRuntimeService(services, { ...actor, sessionId: 'resumed-session' });
+    const input = { goalId: 'goal-1', workspaceId: 'ws-1', taskId: 'task-1' };
+    await expect(runtime.execute('task_result', input)).resolves.toEqual({
+      ok: true, value: { task_id: 'task-1', state: 'completed', exit_code: 0, receipt_source: 'native_containment' },
+    });
+    for (const denied of [{ ...input, workspaceId: 'foreign' }, { ...input, taskId: 'untracked' }]) {
+      await expect(runtime.execute('task_result', denied)).resolves.toMatchObject({ ok: false, error: { code: 'PERMISSION_DENIED' } });
+    }
+  });
+
   it('has deterministic coverage for the roadmap tool catalog', () => {
     expect(UPGRADE_TOOL_CATALOG.length).toBeGreaterThan(100);
     expect(new Set(UPGRADE_TOOL_CATALOG.map((entry) => entry.name)).size).toBe(UPGRADE_TOOL_CATALOG.length);

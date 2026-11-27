@@ -36,7 +36,12 @@ function updateFileNames(contents) {
     ? full : `lnwjud-${prefix}${version}${suffix}`);
 }
 function pinHeldMacDownloads(contents) {
-  if (macIncluded) return contents;
+  if (macIncluded) {
+    return contents.replace(
+      /https:\/\/github\.com\/engasnm111\/lnwjud\/releases\/download\/v\d+\.\d+\.\d+\/(lnwjud-\d+\.\d+\.\d+-(?:arm64|x64)\.dmg)/g,
+      (_url, filename) => `${repoUrl}/releases/latest/download/${filename}`,
+    );
+  }
   return contents.replace(
     /https:\/\/github\.com\/engasnm111\/lnwjud\/releases\/latest\/download\/(lnwjud-(\d+\.\d+\.\d+)-(?:arm64|x64)\.dmg)/g,
     (_url, filename, macVersion) => `${repoUrl}/releases/download/v${macVersion}/${filename}`,

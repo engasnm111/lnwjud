@@ -358,7 +358,7 @@ export function futureReleaseMetadata(commit, tag, releaseScope) {
     return labels[target];
   });
   const artifactSummary = platforms
-    ? `Release artifacts include target-native ${platforms.join(', ')} packages with \`RELEASE_MANIFEST.json\`, per-target provenance and aggregate SHA-256 evidence. ${currentScope.automaticUpdaterEnabled === false ? 'Automatic installation is disabled; packages require manual installation. ' : ''}${currentScope.deferredTargets?.length ? `Targets held from this release: ${currentScope.deferredTargets.join(', ')}. ` : ''}No package or build step runs in the tag workflow.`
+    ? `Release artifacts include target-native ${platforms.join(', ')} packages with \`RELEASE_MANIFEST.json\`, per-target provenance and aggregate SHA-256 evidence. ${currentScope.automaticUpdaterEnabled === false ? 'In-app installation requires user confirmation. macOS community DMGs and Linux DEBs use a download and platform installer. ' : ''}${currentScope.deferredTargets?.length ? `Targets held from this release: ${currentScope.deferredTargets.join(', ')}. ` : ''}No package or build step runs in the tag workflow.`
     : 'Release artifacts include target-native Windows, macOS (arm64/x64), and Linux (x64/arm64) packages with `RELEASE_MANIFEST.json`, per-target provenance, and aggregate SHA-256 evidence. No package or build step runs in the tag workflow.';
   return [`Published from the exact successful CI commit \`${commit}\`.`, artifactSummary];
 }

@@ -310,6 +310,7 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
       requestDigest: digest,
       mutationKind: 'opaque',
       nativeBinding: binding,
+      nativeReceiptPath: path.join(taskDir, 'containment.receipt.json'),
       ownerClientId: clientId,
       ownerWorkspaceId: workspaceId,
     });
@@ -320,7 +321,11 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
     expect(attempt.ok).toBe(false);
     if (!attempt.ok) {
       expect(attempt.error.code).toBe('CONFLICT');
-      expect(attempt.error.message).toContain('Repository import requires exclusive managed writer admission');
+      expect(attempt.error.message).toContain('Workspace writer lease is blocked by an observed active writer');
+      expect(attempt.error.details).toMatchObject({
+        reservation_id: createHash('sha256').update(taskId).digest('hex'),
+        scope: 'requested_workspace', blocker_state: 'active', marker_origin: 'native_attempt_recorded_unverified',
+      });
     }
   }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
 
@@ -874,7 +879,7 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
     const recovered = await f.lease.acquire(workspaceId, clientId, 'session-2', 60, true);
     expect(recovered.ok).toBe(false);
     if (recovered.ok) return;
-    expect(recovered.error.message).toMatch(/Unverified native process descendants block repository import/);
+    expect(recovered.error.details).toMatchObject({ blocker_state: 'unknown', terminal_proof: 'not_observed' });
   }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
 
   it('15b. Missing service ledger with active native Job never releases writer', async () => {
@@ -899,7 +904,9 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
     f.advanceTime(35_000);
     const recovered = await f.lease.acquire(workspaceId, clientId, 'session-2', 60, true);
     expect(recovered.ok).toBe(false);
-    if (!recovered.ok) expect(recovered.error.message).toMatch(/Unverified native process descendants/);
+    if (!recovered.ok) expect(recovered.error.details).toMatchObject({
+      blocker_state: 'unknown', native_reason: 'SERVICE_RECOVERY_JOB_UNVERIFIED',
+    });
   }, WINDOWS_WRITER_IO_TEST_TIMEOUT_MS);
 
   it('16. Crash After Dispatch + Terminal Reconciled: recovers cleanly once kernel confirms termination', async () => {
@@ -1008,6 +1015,13 @@ describe('Mandatory Regression Suite: Writer Admission & Task Recovery Lifecycle
     await expect(f.store.inspectForWriterAdmission(taskId)).resolves.toBe('terminal');
     await expect(f.store.snapshot(taskId)).resolves.toMatchObject({
       ok: true, value: { state: 'failed', exit_code: 125 },
+    });
+    const receipt = await f.store.terminalReceiptForGoal(clientId, workspaceId, taskId);
+    expect(receipt).toEqual({
+      ok: true, value: { task_id: taskId, state: 'failed', outcome: 'interrupted', receipt_source: 'native_containment' },
+    });
+    await expect(f.store.terminalReceiptForGoal('foreign', workspaceId, taskId)).resolves.toMatchObject({
+      ok: false, error: { code: 'PERMISSION_DENIED' },
     });
     expect(f.mock.getRecoveryRecordedAt()).toBe(metadata.started_at);
 

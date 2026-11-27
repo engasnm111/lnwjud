@@ -43,7 +43,7 @@ export function workspaceTools(context: McpToolContext): McpToolDefinition[] {
     }),
     defineTool({
       name: 'workspace_writer_lease_acquire',
-      description: 'Acquire a durable exclusive writer lease for one registered workspace. The exclusive native-admission probe may reconcile an authenticated native-bound reservation only after a verified newer OS boot and an absent attempt Job; unprovable, active or import-held records stay blocked. Explicit recoverAbandoned with user confirmation may fence an idle previous session of the same client after 60 seconds; unrelated clients and active/unknown writers remain blocked.',
+      description: 'Acquire an exclusive writer lease for one registered workspace. Reconciliation requires an authenticated terminal or never-launched receipt for the exact reservation. When the receipt was lost, the Windows service can recover only from a verified newer boot and proven absent attempt Job. A denied acquire returns the reservation fingerprint and required proof. Explicit recoverAbandoned with user confirmation may fence an idle previous session of the same client after the stale grace period.',
       permission: 'WRITE', annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: workspaceWriterLeaseAcquireSchema,
       handler: async (input) => context.services.workspaceWriterLease === undefined ? missingService()

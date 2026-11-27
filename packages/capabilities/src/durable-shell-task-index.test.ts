@@ -17,6 +17,29 @@ afterEach(async () => {
 });
 
 describe('DurableShellTaskIndex', () => {
+  it('reconciles verified markers even when a separate unbound reservation still denies acquisition', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-mixed-recovery-'));
+    temporaryRoots.push(root);
+    const [first, second] = ['prior-task-a', 'prior-task-b'].map((id) => ({
+      id, hash: createHash('sha256').update(id).digest('hex'),
+    })).sort((left, right) => left.hash.localeCompare(right.hash));
+    let terminal = false;
+    const index = new DurableShellTaskIndex(root, {
+      maxConcurrentTasks: 16,
+      inspectTask: async (id): Promise<'unknown' | 'terminal'> => terminal && id === second!.id ? 'terminal' : 'unknown',
+    });
+    for (const row of [first!, second!]) {
+      await expect(index.reserve({ taskId: row.id, requestDigest: row.hash, ownerClientId: 'owner' })).resolves.toMatchObject({ ok: true });
+    }
+    terminal = true;
+    await expect(index.reserve({
+      taskId: 'probe', requestDigest: 'f'.repeat(64), mutationKind: 'repository_import', ownerClientId: 'owner',
+    })).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    expect(await index.diagnostics()).toMatchObject({
+      unresolved_reservations: 1, blockers: [{ reservation_id: first!.hash }], exclusive_writer_blocked: true,
+    });
+  });
+
   it('preserves the safe index lock contention cause for the caller', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-index-contention-diagnostic-'));
     temporaryRoots.push(root);

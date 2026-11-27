@@ -50,6 +50,7 @@ export function createTrayMenuTemplate(actions: TrayMenuActions): MenuItemConstr
 export function createTrayUpdateLabel(status: UpdateStatus, locale: UiLocale): string {
   const messages = nativeMessages(locale);
   const version = status.availableVersion;
+  if (status.phase === 'available' && version !== null && status.mode !== undefined) return messages.trayDownloadPackage(version);
   if (status.phase === 'ready' && version !== null) return messages.trayInstall(version);
   if (status.phase === 'installing' && version !== null) return messages.trayPreparing(version);
   if (status.phase === 'downloading' && version !== null) return messages.trayDownloading(version, status.progressPercent);

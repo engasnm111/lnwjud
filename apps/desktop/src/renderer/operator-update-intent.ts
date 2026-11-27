@@ -30,8 +30,12 @@ export class OperatorUpdateIntent {
   currentAttempt(): number { return this.attempt; }
   isCurrentAttempt(attempt: number): boolean { return this.active && this.attempt === attempt; }
 
-  onStatus(status: Pick<UpdateStatus, 'phase'> & Partial<Pick<UpdateStatus, 'canInstall'>>): 'none' | 'request-download' | 'confirm-install' {
+  onStatus(status: Pick<UpdateStatus, 'phase' | 'mode'> & Partial<Pick<UpdateStatus, 'canInstall'>>): 'none' | 'request-download' | 'confirm-install' {
     if (!this.active) return 'none';
+    if (status.mode !== undefined) {
+      this.cancel();
+      return 'none';
+    }
     if (status.phase === 'available' && !this.requestedDownload) {
       this.requestedDownload = true;
       return 'request-download';

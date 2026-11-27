@@ -192,6 +192,11 @@ export class ShellCapabilityBackend implements CapabilityBackend {
     return this.durableStore?.isOwnedGoalTask(ownerClientId, workspaceId, taskId) ?? false;
   }
 
+  public async terminalReceiptForGoal(clientId: string, workspaceId: string, taskId: string): Promise<Result<Record<string, unknown>>> {
+    if (this.durableStore === undefined) return err(appError('PROCESS_NOT_FOUND', 'Durable shell task store is unavailable'));
+    return this.durableStore.terminalReceiptForGoal(clientId, workspaceId, taskId);
+  }
+
   /** Trusted read-only host probe scoped to the durable goal's workspace. */
   public async statusForGoalLiveness(workspaceId: string, taskId: string): Promise<Result<unknown>> {
     const record = this.tasks.get(taskId);

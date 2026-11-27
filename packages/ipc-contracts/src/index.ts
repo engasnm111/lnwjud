@@ -2,7 +2,7 @@ import type { WorkflowPrepareRequest, WorkflowTemplate, WorkflowDraft, CallHisto
 export type * from './workflow-contracts.js';
 
 export const APP_NAME = 'lnwjud';
-export const APP_VERSION = '5.9.5';
+export const APP_VERSION = '5.9.6';
 
 export interface WorkflowChoicesRequest {
   readonly workspaceId: string;
@@ -281,6 +281,7 @@ export type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'r
 
 export interface UpdateStatus {
   readonly phase: UpdatePhase;
+  readonly mode?: 'platform' | 'download';
   readonly currentVersion: string;
   readonly availableVersion: string | null;
   readonly progressPercent: number | null;

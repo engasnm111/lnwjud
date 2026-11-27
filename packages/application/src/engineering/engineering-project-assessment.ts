@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { open, realpath, stat } from 'node:fs/promises';
+import { lstat, open, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { ProjectDetector, type ProjectProfile } from '@lnwjud/project';
 import { normalizeProjectProfile } from '@lnwjud/shared';
@@ -126,6 +126,21 @@ export class EngineeringProjectAssessmentService {
     }
     const relativeDirectory = path.relative(rootPath, targetDirectory);
     if (relativeDirectory.length === 0) return candidates;
+
+    const realTargetDirectory = await realpath(targetDirectory);
+    if (!pathContains(realRoot, realTargetDirectory)) throw new Error('Scoped path escapes the project root through a symlink');
+    // Evidence, project commands and Git operations all use the registered root.
+    // A nested checkout must be registered as its own workspace to share that identity.
+    for (let directory = realTargetDirectory; path.relative(realRoot, directory) !== ''; directory = path.dirname(directory)) {
+      try {
+        await lstat(path.join(directory, '.git'));
+      } catch (error) {
+        if (isMissing(error)) continue;
+        throw error;
+      }
+      const relativeCheckout = relativeSlash(realRoot, directory);
+      throw new Error(`Scoped path enters a separate Git checkout (${relativeCheckout}). Register that checkout root as its own workspace and prepare the task with that workspaceId.`);
+    }
 
     let current = rootPath;
     for (const segment of relativeDirectory.split(path.sep).filter(Boolean).slice(0, MAX_AGENT_SCOPES - 1)) {

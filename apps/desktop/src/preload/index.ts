@@ -819,10 +819,13 @@ function updateStatus(value: unknown): UpdateStatus {
     && phase !== 'ready' && phase !== 'installing' && phase !== 'up-to-date' && phase !== 'error' && phase !== 'unavailable') {
     throw new Error('Invalid IPC response');
   }
+  const mode = value.mode;
+  if (mode !== undefined && mode !== 'platform' && mode !== 'download') throw new Error('Invalid IPC response');
   const progress = value.progressPercent;
   if (progress !== null && (typeof progress !== 'number' || !Number.isFinite(progress))) throw new Error('Invalid IPC response');
   return {
     phase,
+    ...(mode === undefined ? {} : { mode }),
     currentVersion: stringField(value, 'currentVersion'),
     availableVersion: nullableString(value.availableVersion),
     progressPercent: progress,

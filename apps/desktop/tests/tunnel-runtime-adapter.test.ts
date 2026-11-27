@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { lstat, mkdtemp, mkdir, open, readFile, readlink, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, open, readFile, readlink, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { WindowsNativeAuthority } from '@lnwjud/process';
@@ -228,12 +228,13 @@ describe('TunnelRuntimeAdapter', () => {
   it.runIf(process.platform === 'win32' && existsSync(nativeTestHelper)
     && existsSync(path.resolve('build/native-containment/lnwjud-containment-pin.node')))(
     'routes the pinned native authority stop protocol to one identity-matched isolated process', async () => {
+      const fixtureExecutable = await realpath(process.execPath);
       const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-native-owned-stop-integration-'));
       const stateDirectory = path.join(root, 'state');
       const profileDirectory = path.join(root, 'profile');
       await mkdir(stateDirectory);
       await mkdir(profileDirectory);
-      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true, stdio: 'ignore' });
+      const child = spawn(fixtureExecutable, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true, stdio: 'ignore' });
       let childExit: ReturnType<typeof once> | null = null;
       try {
         await once(child, 'spawn');
@@ -249,7 +250,7 @@ describe('TunnelRuntimeAdapter', () => {
         const aliasBytes = Buffer.from(JSON.stringify({ lnwjud: alias }));
         const processBytes = Buffer.from(JSON.stringify({ lnwjud: {
           ...alias, mode: 'process', pid: child.pid, pid_start_time: processStartTime,
-          pid_executable: process.execPath, session_name: '', tmux_socket: '',
+          pid_executable: fixtureExecutable, session_name: '', tmux_socket: '',
         } }));
         await writeFile(path.join(stateDirectory, 'aliases.yaml'), aliasBytes);
         await writeFile(path.join(stateDirectory, 'processes.yaml'), processBytes);
@@ -264,7 +265,7 @@ describe('TunnelRuntimeAdapter', () => {
           stateRoot: stateDirectory,
           alias: 'lnwjud',
           profileDirectory,
-          clientPath: process.execPath,
+          clientPath: fixtureExecutable,
           expectedTunnelId: tunnelId,
           expectedPid: child.pid,
           expectedAliasesSha256: createHash('sha256').update(aliasBytes).digest('hex'),

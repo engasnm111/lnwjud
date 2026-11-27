@@ -6,7 +6,7 @@ Primary invariant: **one lnwjud installation can serve many concurrent AI sessio
 
 The dated phase evidence below preserves the catalog counts that were measured
 at each historical checkpoint (including the earlier 214/208 baseline). The
-current v5.9.5 runtime contract is 286 total definitions, 274 advertised by
+current v5.9.6 runtime contract is 286 total definitions, 274 advertised by
 default, and all 286 when Codex delegation plus Agent Swarm is enabled; see the current catalog and
 release checklist for the authoritative release count.
 
@@ -571,3 +571,53 @@ When implementation starts, update this file in the same commit as each phase ch
 - repository-wide Full Verification completed after M7: frozen install, lint, typecheck, full monorepo tests, acceptance 16/16, integration 2/2, E2E 3/3, build, 214-tool catalog sync, packaging 4/4, release gate 6/6, Windows NSIS packaging, git diff --check, and public-repo hygiene 7/7 all passed.
 - the Full Verification run exposed one real runtime-state contention race; it was repaired in commit `6adcfc4` by serializing same-process writers, hardening cross-process locking/atomic I/O, failing closed on unreadable authoritative state, and making durable checkpoint persistence surface failure instead of silently succeeding.
 - post-repair evidence: MCP full package 169/169, targeted runtime-state/concurrency 7/7, stress 20/20 repeated runs, then the authoritative Full Verification completed cleanly.
+## Writer recovery and Engineering handoff
+
+Use `task_list` for reservation fingerprints and `recovery_status` for host
+readiness. The task list is session scoped. Writer reservation counts describe
+the shared index, so zero visible tasks provides no terminal proof.
+
+1. Call `workspace_writer_lease_acquire` for the registered workspace. With
+   approval, `recoverAbandoned: true` can recover an idle lease owned by the same
+   stable client. On conflict, use `reservation_id`, `blocker_state`, and
+   `native_reason` to distinguish active work from missing proof. Wait for the
+   owning task if it is active. If the service reports a package mismatch,
+   repair the matching all-users installation. Restart Windows only when the
+   authenticated service reports that lost-receipt recovery requires a newer boot.
+2. The containment service checks the full attempt binding and may reconcile
+   a terminal receipt, a verified never-started attempt, or a proven absent
+   Windows Job after a newer boot. A legacy unbound or unreadable reservation
+   stays held unless the host can independently authenticate its exact
+   termination. Retain workspace data and pass its reservation fingerprint to
+   the host operator. Concurrent lease probes can proceed for independently
+   resolved disjoint roots. Linked checkouts, opaque process work, and import
+   reservations keep global exclusion where shared resources are unproven.
+3. For a shell task tracked by a Durable Goal, call `task_result` with both
+   `goalId` and `taskId` from an authorized session of the same client. The receipt
+   contains the verified terminal state and observed exit code when available.
+   An interrupted attempt has no observed target exit code. Raw task output
+   still requires the original task session.
+
+For an authorized transfer, save the exact checkout, commands, validation,
+review findings, and pending work with `checkpoint_goal`. Stop or transfer any
+active work through the host, make scheduled continuation historical if
+configured, then release the goal lease with `releaseLease: true` and release the
+owned workspace writer lease. Use `session_handoff` with `workspaceId`, `goalId`,
+and `verifyTransfer: true`. The host checks tracked blocking jobs, fenced calls,
+the writer index, and the current HEAD and source digest. Transfer the resulting
+state only to the authorized executor. It must acquire its own writer lease
+and run the outstanding gates. Source changes require fresh evidence.
+
+Register a linked checkout at its exact root and activate it in Desktop
+Active Projects before running commands under standard permissions. If an
+existing goal points at the parent, keep its handoff and historical findings,
+release its writers, and prepare a successor for the exact linked workspace.
+Record both goal IDs in the successor checkpoint. An active, quiescent old goal
+can be retired through `reconcile_goals` with `reason: "superseded"` and
+`supersededByGoalId`. The worktree and its dirty changes stay in place.
+
+Record external Git, CI, test or review references in the checkpoint with the
+workspace, HEAD, source digest, and artifact or run ID. Treat those references
+as external attestations. Independent review and protected delivery gates
+require their normal host-verifiable receipts. Ordinary read-only diagnostics
+are available independently of Engineering Goal orchestration.

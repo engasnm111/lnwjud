@@ -5,6 +5,17 @@ import { parseNativeAttemptBinding, type NativeAttemptBinding } from '@lnwjud/pr
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 
 export type ActiveTaskInspection = 'active' | 'terminal' | 'missing' | 'unknown';
+export type NativeWriterInspection = { readonly state: 'active' | 'terminal' | 'unknown'; readonly reason?: string };
+export type IndexedTaskOwner = Pick<DurableTaskReservation, 'ownerWorkspaceId' | 'nativeBinding'> & {
+  readonly requestDigest: string | null;
+  readonly ownerClientId?: string;
+};
+
+export const workspaceProbeOwner = 'lnwjud-workspace-writer-fence';
+export function isWorkspaceWriterProbe(reservation: Pick<DurableTaskReservation, 'taskId' | 'mutationKind'> & { readonly ownerClientId?: string }): boolean {
+  return reservation.mutationKind === 'repository_import' && reservation.ownerClientId === workspaceProbeOwner
+    && /^workspace-writer-probe-[0-9a-f-]{36}$/.test(reservation.taskId);
+}
 
 export type DurableMutationKind = 'opaque' | 'repository_import' | 'synchronous_mutation' | 'opaque_uncontained' | 'opaque_contained_process';
 type ReservationCapacityClass = 'durable_shell' | 'managed_writer';
@@ -71,8 +82,10 @@ export interface DurableTaskLaunchPage {
 export interface DurableShellTaskIndexOptions {
   readonly maxConcurrentTasks: number;
   readonly capacityClass?: ReservationCapacityClass;
-  readonly inspectTask: (taskId: string) => Promise<ActiveTaskInspection>;
+  readonly inspectTask: (taskId: string, owner?: IndexedTaskOwner) => Promise<ActiveTaskInspection>;
   readonly verifyContainedTermination?: (reservation: DurableTaskReservation) => Promise<boolean>;
+  readonly inspectNativeWriter?: (reservation: DurableTaskReservation) => Promise<NativeWriterInspection>;
+  readonly areWorkspacesDisjoint?: (leftId: string, rightId: string) => Promise<boolean>;
   readonly loadLaunchRecord?: (taskId: string) => Promise<DurableTaskLaunchRecord | undefined>;
   readonly now?: () => Date;
   readonly removeFile?: typeof rm;
@@ -151,7 +164,7 @@ export class DurableShellTaskIndex {
       const skipObservation = input.mutationKind !== 'repository_import' && noImport && spareCapacity
         && ((input.mutationKind === 'synchronous_mutation' && capacityClass === 'managed_writer')
           || bulkNativeBacklog);
-      const observations = skipObservation ? null : await this.observeMarkersOutsideLock(input.taskId);
+      const observations = skipObservation ? null : await this.observeMarkersOutsideLock(input);
       return await this.withLock(async () => {
         await this.initializeUnlocked();
         await this.ensureJournalUnlocked();
@@ -159,6 +172,7 @@ export class DurableShellTaskIndex {
         let activeTasks = 0;
         let durableShellReservations = 0;
         let managedWriterReservations = 0;
+        let firstConflict: Result<never> | undefined;
         const capacityClass = input.capacityClass ?? this.options.capacityClass ?? 'durable_shell';
         const count = (marker: MarkerRecord): void => {
           const population = reservationCapacityClass(marker);
@@ -179,10 +193,13 @@ export class DurableShellTaskIndex {
             return ok({ activeTasks: activeTasks + 1, created: false, markerPath: marker.path });
           }
           if (marker.record === undefined) {
-            return err(appError('CONFLICT', 'A managed writer reservation is unreadable; resolve its state before launching another writer', true));
+            firstConflict ??= err({ ...appError('CONFLICT', 'A managed writer reservation is unreadable; inspect its recovery status before launching another writer', true),
+              details: { reservation_id: path.basename(marker.path, '.json'), blocker_state: 'unreadable', marker_origin: 'unreadable', recovery_requirement: 'manual_review' } });
+            continue;
           }
           const observed = observations?.get(marker.path);
           const unchanged = observed !== undefined && JSON.stringify(observed.record) === JSON.stringify(marker.record);
+          if (unchanged && observed.disjointWorkspaceProbe) continue;
           const nativeTerminated = unchanged && observed.nativeTerminated;
           if (marker.record.mutationKind === 'opaque_contained_process') {
             if (nativeTerminated) {
@@ -190,7 +207,7 @@ export class DurableShellTaskIndex {
               continue;
             }
             if (input.mutationKind === 'repository_import') {
-              return err({ ...appError('CONFLICT', 'Unverified native process descendants block repository import', true), details: { blocker_kind: marker.record.mutationKind, blocker_state: 'unverified', recovery_requirement: 'trusted_termination_evidence' } });
+              firstConflict ??= writerConflict(input, marker.record, unchanged ? observed.inspection : 'changed', unchanged ? observed.nativeReason : undefined);
             }
             count(marker.record);
             continue;
@@ -205,10 +222,11 @@ export class DurableShellTaskIndex {
             continue;
           }
           if (input.mutationKind === 'repository_import' || marker.record.mutationKind === 'repository_import') {
-            return err({ ...appError('CONFLICT', 'Repository import requires exclusive managed writer admission; a live or unresolved reservation holds it', true), details: { blocker_kind: marker.record.mutationKind, blocker_state: inspection, recovery_requirement: 'trusted_termination_evidence' } });
+            firstConflict ??= writerConflict(input, marker.record, unchanged ? inspection : 'changed', unchanged ? observed.nativeReason : undefined);
           }
           count(marker.record);
         }
+        if (firstConflict !== undefined) return firstConflict;
         if (activeTasks >= this.maxConcurrentTasks) {
           return err({ ...appError(
             'CONFLICT',
@@ -373,37 +391,52 @@ export class DurableShellTaskIndex {
     await mkdir(this.activeDirectory, { recursive: true });
   }
 
-  private async observeMarkersOutsideLock(excludedTaskId: string): Promise<Map<string, {
+  private async observeMarkersOutsideLock(input: DurableTaskReservation): Promise<Map<string, {
     record: MarkerRecord;
     nativeTerminated: boolean;
-    inspection: 'active' | 'terminal' | 'missing' | 'unknown';
+    inspection: ActiveTaskInspection;
+    nativeReason?: string;
+    disjointWorkspaceProbe: boolean;
   }>> {
     const observations = new Map<string, {
       record: MarkerRecord;
       nativeTerminated: boolean;
-      inspection: 'active' | 'terminal' | 'missing' | 'unknown';
+      inspection: ActiveTaskInspection;
+      nativeReason?: string;
+      disjointWorkspaceProbe: boolean;
     }>();
     const markers = await this.readMarkers();
     // Bound native-RPC fan-out, particularly when the Windows service is missing.
     for (let offset = 0; offset < markers.length; offset += 4) {
       await Promise.all(markers.slice(offset, offset + 4).map(async (marker) => {
         const record = marker.record;
-        if (record === undefined || record.taskId === excludedTaskId) return;
+        if (record === undefined || record.taskId === input.taskId) return;
+        const disjointWorkspaceProbe = isWorkspaceWriterProbe(input) && isWorkspaceWriterProbe(record)
+          && input.ownerWorkspaceId !== undefined && record.ownerWorkspaceId !== undefined
+          && input.ownerWorkspaceId !== record.ownerWorkspaceId
+          && await this.options.areWorkspacesDisjoint?.(input.ownerWorkspaceId, record.ownerWorkspaceId).catch(() => false) === true;
         const needsNativeProof = record.mutationKind === 'opaque_contained_process' || record.nativeBinding !== undefined;
-        const nativeTerminated = needsNativeProof ? await this.hasVerifiedNativeTermination(record) : false;
-        const inspection = record.mutationKind === 'opaque_contained_process' ? 'unknown' as const
-          : await this.options.inspectTask(record.taskId).catch(() => 'unknown' as const);
-        observations.set(marker.path, { record, nativeTerminated, inspection });
+        const native = needsNativeProof ? await this.observeNativeWriter(record) : undefined;
+        const inspection = native?.state === 'terminal' || native?.state === 'active' ? native.state
+          : record.mutationKind === 'opaque_contained_process' ? 'unknown' as const
+            : await this.options.inspectTask(record.taskId, record).catch(() => 'unknown' as const);
+        observations.set(marker.path, { record, nativeTerminated: native?.state === 'terminal', inspection, disjointWorkspaceProbe,
+          ...(native?.reason === undefined ? {} : { nativeReason: native.reason }) });
       }));
     }
     return observations;
   }
 
   private async hasVerifiedNativeTermination(marker: MarkerRecord): Promise<boolean> {
-    if (marker.requestDigest === null || marker.ownerClientId === undefined || marker.nativeReceiptPath === undefined || marker.nativeBinding === undefined
-      || this.options.verifyContainedTermination === undefined) return false;
+    return (await this.observeNativeWriter(marker)).state === 'terminal';
+  }
+
+  private async observeNativeWriter(marker: MarkerRecord): Promise<NativeWriterInspection> {
+    if (marker.requestDigest === null || marker.ownerClientId === undefined || marker.nativeReceiptPath === undefined || marker.nativeBinding === undefined) {
+      return { state: 'unknown', reason: 'NATIVE_RESERVATION_IDENTITY_UNAVAILABLE' };
+    }
     try {
-      return await this.options.verifyContainedTermination({
+      const reservation: DurableTaskReservation = {
         taskId: marker.taskId,
         requestDigest: marker.requestDigest,
         ownerClientId: marker.ownerClientId,
@@ -412,9 +445,12 @@ export class DurableShellTaskIndex {
         nativeReceiptPath: marker.nativeReceiptPath,
         ...(marker.nativeBinding === undefined ? {} : { nativeBinding: marker.nativeBinding }),
         ...(marker.reservedAt === undefined ? {} : { reservedAt: marker.reservedAt }),
-      });
+      };
+      if (this.options.inspectNativeWriter !== undefined) return await this.options.inspectNativeWriter(reservation);
+      const verified = await this.options.verifyContainedTermination?.(reservation);
+      return { state: verified === true ? 'terminal' : 'unknown' };
     } catch {
-      return false;
+      return { state: 'unknown', reason: 'NATIVE_WRITER_OBSERVATION_FAILED' };
     }
   }
 
@@ -462,7 +498,8 @@ export class DurableShellTaskIndex {
   private async reclaimTerminatedSynchronousMutationsUnlocked(): Promise<void> {
     for (const marker of await this.readMarkers()) {
       const record = marker.record;
-      if (record === undefined || record.legacy === true || record.mutationKind !== 'synchronous_mutation' || record.launcherPid === undefined) continue;
+      if (record === undefined || record.legacy === true || record.launcherPid === undefined || record.nativeBinding !== undefined
+        || (record.mutationKind !== 'synchronous_mutation' && !isWorkspaceWriterProbe(record))) continue;
       let ownerGone = false;
       try { ownerGone = this.processProvenGone(record.launcherPid); } catch { /* Unknown liveness retains the blocker. */ }
       if (ownerGone) await this.removeMarker(marker.path);
@@ -647,6 +684,32 @@ interface MarkerRecord {
 interface MarkerRead {
   readonly path: string;
   readonly record?: MarkerRecord;
+}
+
+function writerConflict(input: DurableTaskReservation, marker: MarkerRecord, state: ActiveTaskInspection | 'changed', nativeReason?: string): Result<never> {
+  const probe = isWorkspaceWriterProbe(input);
+  const operation = probe ? 'Workspace writer lease' : 'Repository import';
+  const active = state === 'active';
+  const nativeBound = marker.nativeBinding !== undefined;
+  const legacy = marker.legacy === true || marker.version === 1 || marker.requestDigest === null;
+  const markerOrigin = nativeBound ? 'native_attempt_recorded_unverified' : legacy ? 'legacy_unbound' : 'v2_unbound';
+  const nextAction = active ? 'Wait for the owning task, then retry.'
+    : state === 'changed' ? 'Recheck recovery_status, then retry once.'
+      : nativeReason === 'SERVICE_ENDPOINT_PACKAGE_MISMATCH' || nativeReason === 'SERVICE_ENDPOINT_NOT_INSTALLED'
+        ? 'Repair the matching all-users installation and check the containment service before retrying.'
+        : nativeBound ? 'Inspect the containment reason and use the authenticated recovery workflow.'
+          : 'Retain this reservation and seek independent termination evidence for the exact attempt.';
+  return err({
+    ...appError('CONFLICT', `${operation} is blocked by ${active ? 'an observed active writer' : 'a reservation without verified terminal proof'}. ${nextAction}`, true),
+    details: {
+      reservation_id: createHash('sha256').update(marker.taskId).digest('hex'),
+      scope: marker.ownerWorkspaceId === undefined ? 'workspace_unknown' : marker.ownerWorkspaceId === input.ownerWorkspaceId ? 'requested_workspace' : 'shared_global_index',
+      blocker_kind: marker.mutationKind, blocker_state: state, marker_origin: markerOrigin,
+      owner_binding: nativeBound ? 'native_attempt_recorded_unverified' : marker.ownerClientId !== undefined && marker.ownerWorkspaceId !== undefined ? 'owner_metadata_only' : 'missing',
+      terminal_proof: 'not_observed', recovery_requirement: 'trusted_termination_evidence', next_action: nextAction,
+      ...(nativeReason === undefined ? {} : { native_reason: nativeReason }),
+    },
+  });
 }
 
 const LOCK_RETRY_MS = 15;
