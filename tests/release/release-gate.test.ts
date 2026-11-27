@@ -244,8 +244,8 @@ describe('MVP release verification gate', () => {
     expect(release).not.toContain('find_ci_run workflow_dispatch');
     expect(release).toContain('gh run download');
     expect(release).toContain('windows-release-$sha');
-    expect(release).not.toContain('native-darwin-arm64-$sha');
-    expect(release).not.toContain('native-darwin-x64-$sha');
+    expect(release).toContain('darwin-arm64|native-darwin-arm64-$sha');
+    expect(release).toContain('darwin-x64|native-darwin-x64-$sha');
     expect(release).toContain('native-linux-x64-$sha');
     expect(release).toContain('native-linux-arm64-$sha');
     expect(release).toContain('ci_wait_deadline=$((SECONDS + 3600))');

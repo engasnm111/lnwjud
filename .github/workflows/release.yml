@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   publish-release:
-    name: Publish Verified Windows/Linux Release
+    name: Publish Verified Cross-Platform Release
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
