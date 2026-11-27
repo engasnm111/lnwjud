@@ -370,8 +370,8 @@ export class WindowsNativeAuthority {
       return toObservation(await this.client.request<unknown>({
         protocol: 3, command: 'recover_after_reboot', identity: input.binding, recordedAt: input.recordedAt,
       }), input.binding);
-    } catch {
-      return unknown(input.binding, 'NATIVE_RECOVERY_PROOF_UNAVAILABLE');
+    } catch (error) {
+      return unknown(input.binding, serviceFailureCode(error, 'NATIVE_RECOVERY_PROOF_UNAVAILABLE'));
     }
   }
 

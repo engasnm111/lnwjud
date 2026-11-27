@@ -5,12 +5,10 @@
   "automaticUpdaterEnabled": false,
   "targets": [
     "win32-x64",
+    "darwin-arm64",
+    "darwin-x64",
     "linux-x64",
     "linux-arm64"
   ],
-  "deferredTargets": [
-    "darwin-arm64",
-    "darwin-x64"
-  ],
-  "deferredReason": "Issue #216 macOS process containment and signed unattended update transaction remain unaccepted. No macOS v5.9.5 binaries."
+  "deferredTargets": []
 }

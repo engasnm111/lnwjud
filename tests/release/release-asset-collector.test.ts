@@ -62,6 +62,11 @@ describe('release asset collector', () => {
         `lnwjud-${version}-arm64.AppImage`,
         'latest-linux.yml',
         'latest-linux-arm64.yml',
+        'latest-mac.yml',
+        'latest-mac-arm64.yml',
+        'latest-mac-x64.yml',
+        `lnwjud-${version}-arm64.dmg`,
+        `lnwjud-${version}-x64.dmg`,
         'RELEASE_MANIFEST.json',
         'SHA256SUMS.txt',
         'SHA256SUMS-linux-arm64.txt',
@@ -72,7 +77,13 @@ describe('release asset collector', () => {
       ]) {
         expect(assetNames.has(name), name).toBe(true);
       }
-      expect(assetNames.has('latest-mac.yml')).toBe(false);
+      const macFeed = await readFile(path.join(assetsDirectory, 'latest-mac.yml'), 'utf8');
+      expect(macFeed.match(/\.zip$/gm)).toHaveLength(2);
+      for (const arch of ['arm64', 'x64']) {
+        const zip = `lnwjud-${version}-${arch}.zip`;
+        const hash = createHash('sha512').update(await readFile(path.join(assetsDirectory, zip))).digest('base64');
+        expect(macFeed).toContain(`url: ${zip}\n    sha512: ${hash}`);
+      }
       for (const name of assetNames) {
         if (!/^SHA256SUMS(?:-.+)?\.txt$/.test(name)) continue;
         const sums = await readFile(path.join(assetsDirectory, name), 'utf8');
@@ -90,8 +101,9 @@ describe('release asset collector', () => {
         assets?: Array<{ name: string; sizeBytes: number; sha256: string }>;
       };
       expect(releaseManifest.sourceCommit).toBe(commit);
-      expect(releaseManifest.targets).toHaveLength(3);
-      expect(releaseManifest.targets?.every((target) => target.platform !== 'darwin')).toBe(true);
+      expect(releaseManifest.targets).toHaveLength(5);
+      expect(releaseManifest.targets?.filter((target) => target.platform === 'darwin').map((target) => target.arch))
+        .toEqual(['arm64', 'x64']);
       expect(releaseManifest.targets?.find((target) => target.platform === 'win32')?.sourceArtifactNames)
         .toEqual(expect.arrayContaining(['INSTALL-LAYOUT.json', `lnwjud-Update-${version}-win32-x64.zip`]));
       for (const name of [...signedSidecarNames, 'RELEASE-win32-x64.json']) {
@@ -186,7 +198,7 @@ async function writeTargetFixture(
         `version: ${version}`,
         'files:',
         `  - url: lnwjud-${version}-${target.arch}.zip`,
-        '    sha512: YmFzZTY0',
+        `    sha512: ${createHash('sha512').update(`fixture ${target.key} lnwjud-${version}-${target.arch}.zip\n`).digest('base64')}`,
         "releaseDate: '2026-09-08T00:00:00.000Z'",
         '',
       ].join('\n')

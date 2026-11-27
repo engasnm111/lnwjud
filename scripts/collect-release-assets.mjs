@@ -32,17 +32,15 @@ const targetCatalog = [
 ];
 const releaseScope = JSON.parse(await readFile(path.join(repositoryRoot, 'config', 'release-scope.json'), 'utf8'));
 if (releaseScope.schemaVersion !== 1 || releaseScope.version !== version || releaseScope.installationMode !== 'in-app'
-  || releaseScope.automaticUpdaterEnabled !== false || !Array.isArray(releaseScope.targets)
-  || releaseScope.targets.length !== 3
-  || JSON.stringify(releaseScope.targets) !== JSON.stringify(['win32-x64', 'linux-x64', 'linux-arm64'])) {
-  throw new Error('Release target scope must be the explicit in-app Windows/Linux policy');
+  || releaseScope.automaticUpdaterEnabled !== false
+  || JSON.stringify(releaseScope.targets) !== JSON.stringify(targetCatalog.map((target) => target.key))) {
+  throw new Error('Release target scope must include all verified native targets');
 }
-const targets = targetCatalog.filter((target) => releaseScope.targets.includes(target.key));
 
 const targetEvidence = [];
 const macManifests = [];
 
-for (const target of targets) {
+for (const target of targetCatalog) {
   const targetDirectory = path.join(stagingDirectory, target.key);
   await assertRegularDirectory(targetDirectory, `Staged ${target.key} artifact`);
   const provenancePath = await findUniqueFile(targetDirectory, 'PROVENANCE.json');
@@ -107,7 +105,7 @@ for (const target of targets) {
   const copiedArtifacts = [];
   for (const artifact of sourceArtifacts) {
     if (target.platform === 'darwin' && artifact.name === 'latest-mac.yml') {
-      const manifest = parseMacUpdateManifest(await readFile(artifact.path, 'utf8'), artifact.name, target);
+      const manifest = await parseMacUpdateManifest(await readFile(artifact.path, 'utf8'), artifact.name, target, installerDirectory);
       macManifests.push({ target, manifest });
       // Retain the exact CI feed bytes referenced by the target provenance.
       // The merged public updater feed receives its own aggregate checksum.
@@ -132,7 +130,7 @@ for (const target of targets) {
   });
 }
 
-if (macManifests.length !== 0) throw new Error('Manual-only v5.9.0 release must not publish macOS update manifests or binaries');
+await writeFile(path.join(assetsDirectory, 'latest-mac.yml'), mergeMacUpdateManifests(macManifests, version), { flag: 'wx' });
 
 for (const sidecar of signedWindowsSidecars) {
   const destination = path.join(assetsDirectory, sidecar.name);
@@ -318,7 +316,7 @@ function parseSums(text) {
   return result;
 }
 
-function parseMacUpdateManifest(text, fileName, target) {
+async function parseMacUpdateManifest(text, fileName, target, installerDirectory) {
   const versionMatch = /^version:\s*(.+)$/m.exec(text);
   if (versionMatch === null || unquoteYamlScalar(versionMatch[1]) !== version) throw new Error(`${target.key} ${fileName} version is invalid`);
   const files = [];
@@ -335,9 +333,17 @@ function parseMacUpdateManifest(text, fileName, target) {
   }
   if (pending !== null) files.push(pending);
   const expectedZip = `lnwjud-${version}-${target.arch}.zip`;
-  const file = files.find((entry) => entry.url === expectedZip);
-  if (files.length === 0 || file === undefined || typeof file.sha512 !== 'string' || !/^[0-9a-z+/=]+$/i.test(file.sha512)) {
+  const expectedDmg = `lnwjud-${version}-${target.arch}.dmg`;
+  if (!files.some((entry) => entry.url === expectedZip)
+    || new Set(files.map((entry) => entry.url)).size !== files.length
+    || files.some(({ url, sha512 }) => (url !== expectedZip && url !== expectedDmg)
+      || typeof sha512 !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(sha512))) {
     throw new Error(`${target.key} ${fileName} does not contain a valid ${expectedZip} entry`);
+  }
+  for (const file of files) {
+    if (file.sha512 !== await hashFile(path.join(installerDirectory, file.url), 'sha512', 'base64')) {
+      throw new Error(`${target.key} ${fileName} SHA-512 mismatch for ${file.url}`);
+    }
   }
   const releaseDateMatch = /^releaseDate:\s*(.+)$/m.exec(text);
   return { files, releaseDate: releaseDateMatch ? unquoteYamlScalar(releaseDateMatch[1]) : new Date(0).toISOString() };
@@ -369,11 +375,15 @@ function escapeYamlSingleQuote(value) {
 }
 
 function sha256File(filePath) {
+  return hashFile(filePath, 'sha256', 'hex');
+}
+
+function hashFile(filePath, algorithm, encoding) {
   return new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
+    const hash = createHash(algorithm);
     const input = createReadStream(filePath);
     input.on('error', reject);
     input.on('data', (chunk) => hash.update(chunk));
-    input.on('end', () => resolve(hash.digest('hex')));
+    input.on('end', () => resolve(hash.digest(encoding)));
   });
 }

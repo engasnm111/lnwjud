@@ -59,7 +59,9 @@ export function AppShell(props: AppShellProps): ReactElement {
               title={props.updateStatus?.message ?? t('shell.checkUpdatesTitle')}
               aria-label={props.updateStatus?.canInstall === true
                 ? t('shell.installUpdate', { version: props.updateStatus.availableVersion ?? '' })
-                : t('shell.checkUpdates')}
+                : props.updateStatus?.phase === 'available' && props.updateStatus.mode !== undefined
+                  ? t('shell.downloadUpdate', { version: props.updateStatus.availableVersion ?? '' })
+                  : t('shell.checkUpdates')}
               aria-busy={props.updateStatus?.phase === 'checking' || props.updateStatus?.phase === 'downloading'}
             >
               {versionBadgeText(props.appVersion, props.updateStatus, t)}

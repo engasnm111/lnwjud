@@ -27,6 +27,7 @@ interface BackgroundTaskObservation {
   readonly receipts: readonly Record<string, unknown>[];
   readonly errors: readonly SourceIssue[];
   readonly omittedTasks: number;
+  readonly exclusiveWriterBlocked?: boolean;
 }
 
 const recordSchema = z.record(z.string(), z.unknown());
@@ -50,6 +51,7 @@ const goalHandoffSchema = z.object({
   terminalEvidence: z.array(recordSchema).optional(),
   terminalAt: z.string().optional(),
   currentContextCapsuleId: z.string().optional(),
+  engineering: recordSchema.optional(),
 });
 const capsuleHandoffSchema = z.object({
   id: z.string().min(1).max(128),
@@ -74,6 +76,8 @@ const taskSnapshotSchema = z.object({
 
 const sessionHandoffSchema = z.object({
   workspaceId: z.string().trim().min(1).max(128),
+  goalId: z.string().trim().min(1).max(128).optional(),
+  verifyTransfer: z.boolean().optional(),
   trackerPath: z.string().trim().min(1).max(4096).optional(),
   maxDiffBytes: z.number().int().min(1_000).max(100_000).optional(),
 }).strict();
@@ -87,7 +91,7 @@ export function sessionTools(context: McpToolContext, verifier: IncrementalVerif
   return [
     defineTool({
       name: 'session_handoff',
-      description: 'Create concise recovery state after a client/page interruption or missing assistant summary without rerunning completed work. Prefer the active Durable Goal; when none exists, recover the latest terminal Durable Goal and its terminal receipt. Also inspect recent durable shell tasks with bounded status/output tails so a terminal result can be summarized immediately instead of relaunched. Then include Git/workspace state and an optional legacy phase tracker fallback. This is task state, not persistent user/agent instructions. It never opens, clicks, types into, or creates a ChatGPT browser conversation; resume must happen through supported host-native turns/chats.',
+      description: 'Create recovery state for the selected durable goal or the most recent goal in this workspace, with bounded task and Git state. Pass goalId and verifyTransfer to require an exact source receipt, released goal and workspace writer leases, no live schedule or unknown blocking jobs, and clear native writer admission. The transfer receipt is read-only and grants no writer access. The next executor must acquire its own authorized lease and revalidate evidence.',
       permission: 'READ',
       annotations: { readOnlyHint: true, destructiveHint: false },
       inputSchema: sessionHandoffSchema,
@@ -114,21 +118,26 @@ export async function createSessionHandoff(
   const maxDiffBytes = input.maxDiffBytes ?? DEFAULT_MAX_DIFF_BYTES;
 
   const goals = context.services.goals;
+  if (input.verifyTransfer === true && input.goalId === undefined) return err(appError('INVALID_INPUT', 'Verified transfer requires an exact goalId.'));
   const goalListSchema = z.object({ goals: z.array(goalHandoffSchema.refine((goal) => goal.workspaceId === input.workspaceId)) });
-  const activeGoals = await observeSource('active_goals', goals === undefined ? undefined : (): Promise<Result<unknown>> => goals.listGoals(context.actor, {
+  const explicitGoal = input.goalId === undefined ? null : await observeSource('requested_goal', goals === undefined
+    ? undefined : (): Promise<Result<unknown>> => goals.getGoal(context.actor, { goalId: input.goalId! }),
+  goalHandoffSchema.refine((goal) => goal.workspaceId === input.workspaceId && goal.goalId === input.goalId));
+  if (explicitGoal !== null && explicitGoal.value === null) return err(appError('CONFLICT', 'The exact goal is unavailable in the requested workspace.'));
+  const activeGoals = explicitGoal === null ? await observeSource('active_goals', goals === undefined ? undefined : (): Promise<Result<unknown>> => goals.listGoals(context.actor, {
     workspaceId: input.workspaceId,
     status: 'active',
     limit: 5,
-  }), goalListSchema);
+  }), goalListSchema) : null;
   if (signal.aborted) return cancelledHandoff();
-  const activeGoal = activeGoals.value?.goals[0];
-  const latestGoals = activeGoal === undefined
+  const activeGoal = explicitGoal?.value ?? activeGoals?.value?.goals[0];
+  const latestGoals = activeGoal == null
     ? await observeSource('latest_goals', goals === undefined ? undefined : (): Promise<Result<unknown>> => goals.listGoals(context.actor, { workspaceId: input.workspaceId, limit: 1 }), goalListSchema)
     : null;
   const goalState = activeGoal ?? latestGoals?.value?.goals[0] ?? null;
-  const goalErrors = [...activeGoals.errors, ...(latestGoals?.errors ?? [])];
+  const goalErrors = [...(activeGoals?.errors ?? []), ...(latestGoals?.errors ?? [])];
   const goalObservation = {
-    status: goalErrors.length === 0 ? 'ready' : goalState === null ? (latestGoals?.status ?? activeGoals.status) : 'partial',
+    status: goalErrors.length === 0 ? 'ready' : goalState === null ? (latestGoals?.status ?? activeGoals?.status ?? 'unavailable') : 'partial',
     errors: goalErrors,
   };
   if (signal.aborted) return cancelledHandoff();
@@ -164,8 +173,24 @@ export async function createSessionHandoff(
   if (gitErrors.length === 0) gitState = 'ready';
   else if (gitErrors.length === 3) gitState = 'unavailable';
 
+  let transfer: Record<string, unknown> | undefined;
+  if (input.verifyTransfer === true && goalState !== null) {
+    if (goals?.inspectEngineeringHandoff === undefined || context.services.workspaceWriterLease === undefined || gitState !== 'ready') {
+      return err(appError('CONFLICT', 'The host cannot verify the checkout, goal and writer state for transfer.'));
+    }
+    const verified = await goals.inspectEngineeringHandoff(context.actor, input.workspaceId, goalState.goalId, goalState.revision);
+    if (!verified.ok) return verified;
+    transfer = { kind: 'host_observed', ...verified.value, goalRevision: goalState.revision, nextExecutorMustAcquireWriterLease: true };
+  }
   const backgroundTasks = await readBackgroundTasks(context, input.workspaceId, signal);
   if (signal.aborted) return cancelledHandoff();
+  if (transfer !== undefined) {
+    const writer = await context.services.workspaceWriterLease!.inspect(input.workspaceId);
+    if (!writer.ok) return writer;
+    if (writer.value.state !== 'unleased' || writer.value.activeCalls !== 0 || backgroundTasks.exclusiveWriterBlocked !== false) {
+      return err(appError('CONFLICT', 'Release the workspace writer lease and inspect recovery_status for active or unresolved reservations before transfer.', true));
+    }
+  }
   const changedFiles = status.ok ? [...new Set(status.value.entries.map((entry) => entry.path))].sort() : [];
   const diffSummary = compactDiff(unstaged.ok ? unstaged.value.patch : '', staged.ok ? staged.value.patch : '', maxDiffBytes);
   const hasCheckpointResumeContext = goalState !== null
@@ -191,6 +216,7 @@ export async function createSessionHandoff(
     recovery_format: 'task_state',
     recovery_receipt: recoveryReceipt,
     persistent_instructions: false,
+    ...(transfer === undefined ? {} : { transfer }),
     source_priority: goalState === null
       ? ['git_workspace', 'legacy_tracker']
       : hasCheckpointResumeContext
@@ -252,7 +278,10 @@ async function readBackgroundTasks(
     operation: 'list',
     workspaceId,
     limit: MAX_BACKGROUND_TASKS,
-  }, context.actor), signal), z.object({ tasks: z.array(z.unknown()) }));
+  }, context.actor), signal), z.object({
+    tasks: z.array(z.unknown()),
+    admission: z.object({ status_basis: z.literal('held_reservations_not_process_liveness'), exclusive_writer_blocked: z.boolean() }).optional(),
+  }));
   if (listed.value === null) return { status: listed.status, receipts: [], errors: listed.errors, omittedTasks: 0 };
   const selected: z.infer<typeof taskSnapshotSchema>[] = [];
   const errors: SourceIssue[] = [];
@@ -280,7 +309,9 @@ async function readBackgroundTasks(
     };
   }));
   errors.push(...receipts.flatMap((entry) => entry.errors));
-  return { status: errors.length === 0 && omittedTasks === 0 ? 'ready' : 'partial', receipts: receipts.map((entry) => entry.receipt), errors, omittedTasks };
+  const exclusiveWriterBlocked = listed.value.admission?.exclusive_writer_blocked;
+  return { status: errors.length === 0 && omittedTasks === 0 ? 'ready' : 'partial', receipts: receipts.map((entry) => entry.receipt), errors, omittedTasks,
+    ...(exclusiveWriterBlocked === undefined ? {} : { exclusiveWriterBlocked }) };
 }
 
 function taskReceipt(task: Record<string, unknown>): Record<string, unknown> {

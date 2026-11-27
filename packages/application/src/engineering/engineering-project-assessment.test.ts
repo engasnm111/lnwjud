@@ -1,7 +1,11 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { EngineeringHarnessSettings } from '@lnwjud/shared';
+import type { WorkspaceRepository } from '@lnwjud/workspace';
+import { EngineeringPreparationService } from './engineering-preparation-service.js';
 import { EngineeringProjectAssessmentService } from './engineering-project-assessment.js';
 
 const temporaryRoots: string[] = [];
@@ -11,6 +15,45 @@ afterEach(async () => {
 });
 
 describe('EngineeringProjectAssessmentService', () => {
+  it('requires a separate workspace for a linked checkout and observes its own HEAD and dirty source', async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-engineering-worktree-')));
+    temporaryRoots.push(root);
+    const linked = path.join(root, '.worktrees', 'candidate');
+    const git = (cwd: string, ...args: string[]): string => execFileSync('git', [
+      '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgSign=false', ...args,
+    ], { cwd, encoding: 'utf8' }).trim();
+    git(root, 'init', '-q');
+    await writeFile(path.join(root, 'package.json'), '{}');
+    await writeFile(path.join(root, '.gitignore'), '.worktrees/\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'parent');
+    git(root, 'worktree', 'add', '-q', '--detach', linked);
+    await writeFile(path.join(linked, 'package.json'), '{"name":"candidate"}');
+    git(linked, 'commit', '-qam', 'candidate');
+    const parentHead = git(root, 'rev-parse', 'HEAD');
+    const linkedHead = git(linked, 'rev-parse', 'HEAD');
+    expect(linkedHead).not.toBe(parentHead);
+    const workspaces = { async get(id: string): Promise<{ realRootPath: string }> {
+      return { realRootPath: id === 'candidate' ? linked : root };
+    } } as WorkspaceRepository;
+    const preparation = new EngineeringPreparationService(workspaces, {
+      globalSettingsProvider: (): EngineeringHarnessSettings => ({ schemaVersion: 1, enabled: true, profile: 'senior', applyTo: 'coding_projects', autoProjectAssessment: true }),
+    });
+    const prepare = (id: string, scope?: string): ReturnType<EngineeringPreparationService['prepare']> => preparation.prepare(id, 'Fix the TypeScript source file', scope);
+    await expect(prepare('parent', '.worktrees/candidate/src/new.ts')).resolves.toMatchObject({
+      ok: false, error: { code: 'INVALID_INPUT', message: expect.stringContaining('Register that checkout root') },
+    });
+    const parent = await prepare('parent');
+    const original = await prepare('candidate');
+    await writeFile(path.join(linked, 'package.json'), '{"name":"dirty-candidate"}');
+    const resumed = await prepare('candidate');
+    if (!parent.ok || !original.ok || !resumed.ok) throw new Error('Engineering preparation failed');
+    expect(parent.value.workflow.contract?.facts.git).toEqual({ state: 'present', value: { head: parentHead } });
+    expect(resumed.value.workflow.contract?.facts.git).toEqual({ state: 'present', value: { head: linkedHead } });
+    expect(resumed.value.workflow.contract?.facts.source.state).toBe('present');
+    expect(resumed.value.workflow.contract?.facts.source).not.toEqual(original.value.workflow.contract?.facts.source);
+  });
+
   it('selects CodeGraph only when an index directory exists inside the project', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-codegraph-assessment-'));
     const outside = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-codegraph-outside-'));

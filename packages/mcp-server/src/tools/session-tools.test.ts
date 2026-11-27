@@ -46,6 +46,35 @@ async function failedRead(mode: string): Promise<Result<unknown>> {
 }
 
 describe('session tools', () => {
+  it.each(['ready', 'native-blocker', 'lease-held', 'provider-missing'])('verifies an exact transfer with %s writer state', async (state) => {
+    const head = 'a'.repeat(40);
+    const context = supplementalFixture({
+      goals: {
+        async getGoal() { return ok({ ...recoveryGoal, engineering: { reviewFindings: [{ id: 'finding' }] } }); },
+        async listContextCapsules() { return ok([]); },
+        async inspectEngineeringHandoff() { return ok({ head, sourceDigest: 'b'.repeat(64), evidenceRevalidationRequired: true }); },
+      },
+      capabilities: { async execute() { return ok({
+        tasks: [],
+        ...(state === 'provider-missing' ? {} : {
+          admission: { status_basis: 'held_reservations_not_process_liveness', exclusive_writer_blocked: state === 'native-blocker' },
+        }),
+      }); } },
+      workspaceWriterLease: { async inspect() { return ok({ state: state === 'lease-held' ? 'active' : 'unleased', activeCalls: 0 }); } },
+    });
+    const response = await findTool(context, new IncrementalVerifier(), 'session_handoff').execute({
+      workspaceId: 'workspace-1', goalId: 'goal-recovery', verifyTransfer: true,
+    }, new AbortController().signal);
+    if (state === 'ready') {
+      expect(response).toMatchObject({ ok: true, value: {
+        goal_state: { engineering: { reviewFindings: [{ id: 'finding' }] } },
+        transfer: { kind: 'host_observed', head, goalRevision: 9, evidenceRevalidationRequired: true, nextExecutorMustAcquireWriterLease: true },
+      } });
+    } else {
+      expect(response).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    }
+  });
+
   it.each(['  ไทย 😀\nDONE  ', ' \t\r\n  ', ''])('preserves exact bounded task output %j during recovery', async (output) => {
     const context = supplementalFixture({ capabilities: { async execute(_tool: string, request: Record<string, unknown>) {
       return request.operation === 'list' ? ok({ tasks: [{ task_id: 'exact-output', state: 'completed', durable: true }] })

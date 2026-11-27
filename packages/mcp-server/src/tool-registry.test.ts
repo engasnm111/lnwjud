@@ -1047,6 +1047,44 @@ describe('MCP tool registry', () => {
     expect(calls).toEqual([]);
   });
 
+  it('routes default and explicit shell cwd to the registered linked checkout across authorization modes', async () => {
+    const root = path.join(tmpdir(), 'lnwjud-worktree-routing');
+    const linked = path.join(root, '.worktrees', 'candidate');
+    const fallback = path.join(tmpdir(), 'lnwjud-default-checkout');
+    const calls = vi.fn<NonNullable<McpApplicationServices['capabilities']>['execute']>(async () => ok({ task_id: 'task', state: 'running' }));
+    let active = false;
+    let bypass = false;
+    const registry = new ToolRegistry({
+      capabilities: { execute: calls },
+      workspaceInfo: { info: async () => ok({ id: 'candidate', realRootPath: linked }) } as never,
+    }, actor, {
+      profileProvider: (): PermissionProfile => permissionProfiles.full,
+      authorizationModeProvider: (): 'full_bypass' | 'standard' => bypass ? 'full_bypass' : 'standard',
+      activeWorkspaceScopesProvider: async (): Promise<WorkspaceScope[]> => [
+        { workspaceId: 'default', rootPath: fallback }, { workspaceId: 'parent', rootPath: root },
+        ...(active ? [{ workspaceId: 'candidate', rootPath: linked }] : []),
+      ],
+    });
+    const command = { workspaceId: 'candidate', operation: 'run', executable: 'git', arguments: ['rev-parse', 'HEAD'] };
+    await expect(registry.invoke('shell', command)).resolves.toMatchObject({
+      isError: true, structuredContent: { error: { message: expect.stringContaining('Activate this workspace') } },
+    });
+    await registry.invoke('shell', { ...command, dry_run: true });
+    expect(calls.mock.lastCall?.[1]).toMatchObject({ cwd: linked });
+    bypass = true;
+    for (const args of [command, { ...command, cwd: linked }]) {
+      await expect(registry.invoke('shell', args)).resolves.not.toMatchObject({ isError: true });
+      expect(calls.mock.lastCall?.[1]).toMatchObject({ workspaceId: 'candidate', cwd: linked });
+    }
+    active = true;
+    bypass = false;
+    await expect(registry.invoke('shell', command)).resolves.not.toMatchObject({ isError: true });
+    expect(calls.mock.lastCall?.[1]).toMatchObject({ workspaceId: 'candidate', cwd: linked });
+    await expect(registry.invoke('shell', { ...command, cwd: fallback })).resolves.toMatchObject({
+      isError: true, structuredContent: { error: { code: 'INVALID_INPUT' } },
+    });
+  });
+
   it('routes absolute file, database, and command targets to any matching member of the active workspace set', async () => {
     const rawRootA = await mkdtemp(path.join(tmpdir(), 'lnwjud-active-a-'));
     const rawRootB = await mkdtemp(path.join(tmpdir(), 'lnwjud-active-b-'));

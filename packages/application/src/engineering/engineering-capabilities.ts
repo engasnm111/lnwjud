@@ -47,6 +47,8 @@ export async function observeEngineeringCapabilities(rootPath: string): Promise<
   let remote: EngineeringCapabilityFacts['remote'] = { state: 'absent', reasonCode: 'NO_GIT' };
   if (gitMarker) {
     try {
+      const gitRoot = await realpath((await git(root, ['rev-parse', '--show-toplevel'])).trim());
+      if (path.relative(root, gitRoot) !== '') throw new Error('GIT_CHECKOUT_MISMATCH');
       const head = (await git(root, ['rev-parse', '--verify', 'HEAD'])).trim();
       gitFact = /^[0-9a-f]{40,64}$/i.test(head) ? { state: 'present', value: { head } } : { state: 'unknown', reasonCode: 'INVALID_HEAD' };
     } catch (error) { gitFact = failure(error); }
@@ -102,7 +104,13 @@ export async function observeEngineeringCapabilities(rootPath: string): Promise<
   if (role !== undefined) artifact = { state: 'present', value: role };
   const deployment: EngineeringCapabilityFacts['deployment'] = worker ? { state: 'present', value: 'cloudflare_worker' }
     : unknownWorker ? { state: 'unreadable', reasonCode: 'WORKER_CONFIG_UNREADABLE' } : { state: 'unknown', reasonCode: 'DEPLOYMENT_PROVIDER_NOT_DETECTED' };
-  const source = await observeSourceSnapshot(root, gitMarker);
+  let source = await observeSourceSnapshot(root, gitMarker);
+  if (gitMarker) {
+    const headAfter = await git(root, ['rev-parse', '--verify', 'HEAD']).then((head) => head.trim(), () => null);
+    if (gitFact.state !== 'present' || headAfter !== gitFact.value.head) {
+      source = { state: 'unreadable', reasonCode: 'GIT_SOURCE_IDENTITY_UNVERIFIED' };
+    }
+  }
   let workerTarget: EngineeringCapabilityFacts['workerTarget'];
   for (let index = 0; index < workerConfigs.length; index += 1) {
     const config = workerConfigs[index];

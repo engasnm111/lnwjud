@@ -110,7 +110,6 @@ import { createTrayMenuTemplate, createTrayToolTip, createTrayUpdateLabel, getTr
 import { fingerprintDownloadedUpdate, installAfterPreUpdateBackup, UpdateInstallConsentController, UpdateInstallCoordinator, UpdateTunnelRecovery, updateInstallNeedsTunnelStopConfirmation, type DownloadedUpdateOffer, type UpdateSharedActivitySnapshot } from './update-install.js';
 import { UpdateCheckInitializationQueue, UpdateCheckScheduler, type UpdateCheckSource } from './update-check-scheduler.js';
 import {
-  configureUpdaterForDistribution,
   configureUpdaterForPlatform,
   createLinuxAppImageRollback,
   restoreLinuxAppImageIfMissing,
@@ -141,6 +140,7 @@ import type { ElectronNativeCapabilityApi, NativeDesktopCaptureRequest, NativeDe
 import { configureLinuxAutostart } from './linux-autostart.js';
 import { InstallActivityCoordinator } from './install-activity.js';
 import { canInstallMacosUpdates } from './macos-update-trust.js';
+import { findPlatformReleaseDownload, LATEST_PLATFORM_RELEASE_API, type PlatformReleaseDownload, type PlatformReleaseExtension } from './platform-release-update.js';
 import { installWindowsUpdate } from './windows-update-install.js';
 import { createNativeUpdateBootstrapClient, hasVerifiedAutomaticUpdateAuthority, type NativeUpdateBootstrapClient } from './native-update-client.js';
 import { resolveDesktopNativeContainmentDirectory } from './native-containment-directory.js';
@@ -1618,6 +1618,8 @@ let updateCheckAttempt = 0;
 const initializationUpdateChecks = new UpdateCheckInitializationQueue();
 const windowsDistribution = detectWindowsDistribution(app.isPackaged);
 const updaterDistribution = detectUpdaterDistribution(app.isPackaged, process.platform, process.env);
+let platformDownloadExtension: PlatformReleaseExtension | null = null;
+let platformDownload: PlatformReleaseDownload | null = null;
 const platformCompatibility = platformCompatibilityProfile(process.platform, os.release(), process.arch);
 let pendingPortableUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
 let pendingLinuxAppImageUpdate: { readonly version: string; readonly downloadedFile: string } | null = null;
@@ -1839,6 +1841,18 @@ function requestUpdateCheck(source: UpdateCheckSource): UpdateStatus {
       : currentUpdateStatus;
   }
   if (currentUpdateStatus.phase === 'available') {
+    if (platformDownloadExtension !== null) {
+      if (source === 'automatic') return startUpdateCheck(source);
+      const download = platformDownload;
+      if (download !== null && currentUpdateStatus.availableVersion === download.version) {
+        void shell.openExternal(download.url).catch((error: unknown) => {
+          if (platformDownload !== download) return;
+          console.error('[AutoUpdater] Could not open release download:', error);
+          patchUpdateStatus({ phase: 'error', message: nativeMessages(desktopLocale).updaterDownloadOpenFailed });
+        });
+      }
+      return currentUpdateStatus;
+    }
     if (!operatorUpdateInstallAvailable()) {
       return patchUpdateStatus({ phase: 'unavailable', message: messages.updaterUnavailableTransactionAuthority, canInstall: false });
     }
@@ -1876,7 +1890,7 @@ function startUpdateCheck(source: UpdateCheckSource): UpdateStatus {
   pendingUpdateCheckSource = source;
   const attempt = ++updateCheckAttempt;
   const status = patchUpdateStatus({ phase: 'checking', progressPercent: null, message: messages.updaterChecking, canInstall: false });
-  void Promise.resolve().then(() => {
+  void Promise.resolve().then(async () => {
     if (quitRequested) {
       if (pendingUpdateCheckSource === source && updateCheckAttempt === attempt) {
         pendingUpdateCheckSource = null;
@@ -1884,7 +1898,34 @@ function startUpdateCheck(source: UpdateCheckSource): UpdateStatus {
       }
       return;
     }
-    return autoUpdater.checkForUpdates();
+    if (platformDownloadExtension !== null) {
+      const response = await net.fetch(LATEST_PLATFORM_RELEASE_API, {
+        headers: { Accept: 'application/vnd.github+json' },
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(nativeMessages(desktopLocale).updaterCheckFailed);
+      const release: unknown = await response.json();
+      if (quitRequested || updateCheckAttempt !== attempt || pendingUpdateCheckSource !== source) return;
+      platformDownload = findPlatformReleaseDownload(release, APP_VERSION, process.arch, platformDownloadExtension);
+      pendingUpdateCheckSource = null;
+      const currentMessages = nativeMessages(desktopLocale);
+      const version = platformDownload?.version ?? null;
+      patchUpdateStatus({
+        phase: version === null ? 'up-to-date' : 'available',
+        availableVersion: version, progressPercent: null, lastCheckedAt: new Date().toISOString(), canInstall: false,
+        message: version === null ? currentMessages.updateCurrentStatus(APP_VERSION) : currentMessages.updaterDownloadPackage(version),
+      });
+      if (source === 'tray' || (source === 'renderer' && version === null)) {
+        void dialog.showMessageBox({
+          type: 'info', title: currentMessages.updaterCheckTitle,
+          message: version === null ? currentMessages.updateCurrentDialog(APP_VERSION) : currentMessages.updaterDownloadPackage(version),
+          buttons: [currentMessages.ok],
+        });
+      }
+      return;
+    }
+    await autoUpdater.checkForUpdates();
   }).catch((error: unknown) => {
     if (pendingUpdateCheckSource !== source || updateCheckAttempt !== attempt) return;
     pendingUpdateCheckSource = null;
@@ -2166,7 +2207,9 @@ function applyDesktopUserSettings(settings: UserSettings): void {
     });
   }
   if (autoUpdaterInitialized) {
-    autoUpdater.autoDownload = operatorUpdateInstallAvailable() && settings.updateAutoDownload;
+    if (platformDownloadExtension === null) {
+      autoUpdater.autoDownload = operatorUpdateInstallAvailable() && settings.updateAutoDownload;
+    }
     configureUpdateCheckSchedule();
   }
 }
@@ -2288,7 +2331,7 @@ async function installDownloadedUpdate(runtime: DesktopRuntime, offer: Downloade
 function operatorUpdateInstallAvailable(): boolean {
   return app.isPackaged
     && updaterDistribution !== 'unsupported'
-    && (updaterDistribution !== 'macos' || canInstallMacosUpdates(process.execPath));
+    && platformDownloadExtension === null;
 }
 
 async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
@@ -2300,19 +2343,27 @@ async function initAutoUpdater(runtime: DesktopRuntime): Promise<void> {
     patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailablePlatform, canInstall: false });
     return;
   }
-  if (updaterDistribution === 'macos' && !canInstallMacosUpdates(process.execPath)) {
-    patchUpdateStatus({ phase: 'unavailable', message: nativeMessages(desktopLocale).updaterUnavailableMacosUnsigned, canInstall: false });
-    return;
-  }
   if (autoUpdaterInitialized || autoUpdaterInitializationPending) return;
   autoUpdaterInitializationPending = true;
   try {
-    const authority = await nativeUpdateBootstrapClient?.automaticCapability() ?? null;
-    verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority);
-    if (!verifiedAutomaticUpdateAuthority) {
-      console.warn(`[AutoUpdater] Read-only update checks enabled; installation unavailable (${authority?.kind === 'unavailable' ? authority.reason : 'AUTHORITY_MISSING'}).`);
+    if (updaterDistribution === 'linux-deb') platformDownloadExtension = 'deb';
+    if (updaterDistribution === 'macos' && !canInstallMacosUpdates(process.execPath)) platformDownloadExtension = 'dmg';
+    if (updaterDistribution === 'macos' || updaterDistribution === 'linux-appimage' || updaterDistribution === 'linux-deb') {
+      patchUpdateStatus({ mode: platformDownloadExtension === null ? 'platform' : 'download' });
     }
-    configureUpdaterForDistribution(autoUpdater, windowsDistribution);
+    if (platformDownloadExtension !== null) {
+      autoUpdaterInitialized = true;
+      configureUpdateCheckSchedule();
+      initializationUpdateChecks.finish(!quitRequested, startUpdateCheck);
+      return;
+    }
+    if (process.platform === 'win32') {
+      const authority = await nativeUpdateBootstrapClient?.automaticCapability() ?? null;
+      verifiedAutomaticUpdateAuthority = hasVerifiedAutomaticUpdateAuthority(authority);
+      if (!verifiedAutomaticUpdateAuthority) {
+        console.warn(`[AutoUpdater] Unattended Windows installation unavailable (${authority?.kind === 'unavailable' ? authority.reason : 'AUTHORITY_MISSING'}).`);
+      }
+    }
     configureUpdaterForPlatform(autoUpdater, updaterDistribution);
     autoUpdater.autoDownload = operatorUpdateInstallAvailable() && desktopUserSettings.updateAutoDownload;
     autoUpdater.autoInstallOnAppQuit = false;

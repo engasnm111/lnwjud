@@ -1,15 +1,12 @@
 # Install lnwjud on Linux
 
-The first Linux release target is x64 on Ubuntu 24.04 LTS. GNOME Wayland and
-X11 are acceptance sessions; KDE Wayland is a smoke target. Linux arm64 has a
-separate target-native artifact in the release matrix but remains preview until
-Electron, native host, ripgrep, tunnel-client, optional media dependencies,
-package smoke, and provenance all have matching production evidence.
+Ubuntu 24.04 LTS has target-native x64 and arm64 packages. GNOME Wayland and
+X11 are acceptance sessions. KDE Wayland is a smoke target.
 
 ## Install and verify
 
-1. Download the matching x64 AppImage or DEB from the project release page. For
-   Linux arm64 preview, choose the `arm64` artifact explicitly.
+1. Download the AppImage or DEB for your architecture (`x64` or `arm64`) from
+   the project release page.
 2. Verify `SHA256SUMS.txt` and the exact-commit provenance before running it.
    The bundled tunnel client is accepted by the build only after cryptographic
    Sigstore verification; a missing verifier fails the package build.
@@ -31,15 +28,17 @@ The package includes Electron, target-native ripgrep, the official OpenAI
 `tunnel-client`, and the bounded native-host protocol helper. System Node.js is
 not required for the packaged Desktop app or the packaged STDIO launcher.
 
-## AppImage update availability
+## Updating Linux
 
-Automatic updates are unavailable in the current v5.9.0 source build. The
-native transaction authority, package enrollment, post-relaunch health check,
-and trusted rollback have not passed signed acceptance. Use only a published
-release package and follow its checksum and provenance instructions when you
-replace an AppImage manually. Keep the existing application data. Package-
-manager-controlled DEB installs remain managed by the distribution package
-manager and do **not** self-update.
+Select the version badge to check for an update.
+
+- **AppImage.** Download the update and choose Install when the badge shows it
+  is ready. The app waits for active work, backs up application data and the
+  current AppImage, and hands the update to the AppImage updater. Use a
+  user-writable directory with hard-link support for the installed AppImage.
+- **DEB.** Select the available version to open the matching GitHub package.
+  Verify its SHA-256, quit lnwjud, and install the downloaded file with your
+  system package installer or `sudo apt install ./lnwjud-<version>-<arch>.deb`.
 
 ## Desktop session and permissions
 

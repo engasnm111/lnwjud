@@ -517,6 +517,66 @@ export class GoalContinuationService {
     } catch (error: unknown) { return this.mapError(error); }
   }
 
+  public async authorizeTrackedShellTask(actor: FileActor, goalId: string, taskId: string): Promise<Result<{ workspaceId: string }>> {
+    try {
+      const goal = await this.goals.getById(requiredBounded(goalId, 'goalId', 128));
+      if (goal === null || goal.ownerClientId !== stableOwnerClientId(actor)) {
+        return err(appError('PERMISSION_DENIED', 'The goal is unavailable to this client'));
+      }
+      const tracked = (tasks: readonly GoalTrackedTask[]): boolean => tasks.some((task) => task.taskId === taskId
+        && (task.provider === 'shell' || task.provider === 'legacy_auto'));
+      if (!tracked(goal.trackedTasks ?? legacyTrackedTasks(goal.activeTaskIds))
+        && !goal.checkpoints.some((checkpoint) => tracked(checkpoint.trackedTasks ?? legacyTrackedTasks(checkpoint.activeTaskIds)))) {
+        return err(appError('PERMISSION_DENIED', 'The exact shell task must be tracked by this goal'));
+      }
+      return ok({ workspaceId: goal.workspaceId });
+    } catch (error: unknown) {
+      return this.mapError(error);
+    }
+  }
+
+  public async inspectEngineeringHandoff(actor: FileActor, workspaceId: string, goalId: string, revision: number): Promise<Result<{ observedAt: string; head: string; sourceDigest: string; evidenceRevalidationRequired: boolean }>> {
+    try {
+      const goal = await this.goals.getById(requiredBounded(goalId, 'goalId', 128));
+      if (goal === null || goal.ownerClientId !== stableOwnerClientId(actor) || goal.workspaceId !== workspaceId) {
+        return err(appError('PERMISSION_DENIED', 'Engineering handoff requires the owning client and exact goal workspace'));
+      }
+      if (goal.revision !== revision) return err(appError('CONFLICT', 'The goal changed during handoff. Refresh its checkpoint and retry.', true));
+      if (goal.engineering === undefined || this.workerLiveness === undefined || this.scheduledContinuations === undefined || this.engineeringPreparation === undefined) {
+        return err(appError('CONFLICT', 'The host cannot verify engineering handoff for this goal'));
+      }
+      if (goal.leaseExpiresAt !== undefined || await this.scheduledContinuations.getLiveScheduledContinuation(goal.id) !== null) {
+        return err(appError('CONFLICT', 'Release the goal lease with checkpoint_goal and complete scheduled continuation cleanup before handoff.', true));
+      }
+      const prepared = await this.engineeringPreparation.prepare(workspaceId, goal.objective, goal.engineering.scopedPath);
+      if (!prepared.ok) return prepared;
+      const contract = prepared.value.workflow.contract;
+      if (contract?.facts.git.state !== 'present' || contract.sourceDigest === undefined) {
+        return err(appError('CONFLICT', 'Handoff requires a readable source manifest and Git HEAD in the registered checkout.'));
+      }
+      const currentTasks = goal.trackedTasks ?? legacyTrackedTasks(goal.activeTaskIds);
+      const historicalTasks = goal.checkpoints.flatMap((checkpoint) => checkpoint.trackedTasks ?? legacyTrackedTasks(checkpoint.activeTaskIds));
+      const tasks = [...new Map([...currentTasks, ...historicalTasks].filter((task) => task.role === 'blocking_job')
+        .map((task) => [`${task.provider}:${task.taskId}`, task])).values()];
+      const observation = await this.workerLiveness.observe(goal.id, tasks);
+      if (!observation.trustworthy || observation.leaseGeneration !== goal.leaseGeneration
+        || observation.leaseActivitySeq !== goal.leaseActivitySeq || observation.liveFencedCallCount !== 0
+        || tasks.some((task) => !observation.blockingTaskStates?.some((state) => state.taskId === task.taskId
+          && state.provider === task.provider && state.state === 'terminal'))) {
+        return err(appError('CONFLICT', 'A fenced call or tracked writer remains active or lacks a verified terminal observation.', true));
+      }
+      const latest = await this.goals.getById(goal.id);
+      if (latest?.revision !== revision || latest.leaseGeneration !== goal.leaseGeneration || latest.leaseExpiresAt !== undefined
+        || await this.scheduledContinuations.getLiveScheduledContinuation(goal.id) !== null) {
+        return err(appError('CONFLICT', 'The goal changed during handoff. Refresh its checkpoint and retry.', true));
+      }
+      return ok({ observedAt: observation.observedAt, head: contract.facts.git.value.head, sourceDigest: contract.sourceDigest,
+        evidenceRevalidationRequired: contract.digest !== goal.engineering.contract?.digest });
+    } catch (error: unknown) {
+      return this.mapError(error);
+    }
+  }
+
   public async getGoal(actor: FileActor, request: GetGoalRequest): Promise<Result<GoalSnapshot>> {
     try {
       const ownerClientId = stableOwnerClientId(actor);

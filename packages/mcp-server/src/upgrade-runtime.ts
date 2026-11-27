@@ -1094,9 +1094,24 @@ export class UpgradeRuntimeService {
     signal?: AbortSignal,
     authorization?: InvocationAuthorization,
   ): Promise<Result<unknown>> {
+    const goalId = readString(input, 'goalId')?.trim();
+    if (name === 'task_result' && goalId) {
+      const taskId = readString(input, 'taskId') ?? readString(input, 'task_id');
+      if (taskId === undefined) return err(appError('INVALID_INPUT', 'task_result requires taskId'));
+      const { goals, goalShellTasks } = this.services;
+      if (goals?.authorizeTrackedShellTask === undefined || goalShellTasks === undefined) {
+        return err(appError('CONFLICT', 'The host goal shell receipt provider is unavailable'));
+      }
+      const goal = await goals.authorizeTrackedShellTask(this.actor, goalId, taskId);
+      if (!goal.ok) return goal;
+      const workspaceId = readString(input, 'workspaceId');
+      if (workspaceId !== undefined && workspaceId !== goal.value.workspaceId) {
+        return err(appError('PERMISSION_DENIED', 'The exact shell task must be tracked by this goal in its registered workspace'));
+      }
+      return goalShellTasks.terminalReceiptForGoal(this.actor.clientId.trim(), goal.value.workspaceId, taskId);
+    }
     if (name === 'task_create') {
-      const goalId = readString(input, 'goalId')?.trim();
-      if (goalId !== undefined && goalId.length > 0) {
+      if (goalId) {
         const goals = this.services.goals;
         if (goals === undefined) {
           return err(appError('CONFLICT', 'task_create could not verify its durable goal binding', true));
@@ -1531,9 +1546,16 @@ export class UpgradeRuntimeService {
                 reason: 'Native-bound writer reservations remain held; diagnostics never prove them stale',
                 affectedReservations: nativeBound,
                 supportedRecoveryId: recovery.id,
-                action: 'After a full Windows restart newer than these reservations, acquire the workspace writer lease with recoverAbandoned and userConfirmed so the authenticated service can reconcile each exact attempt; unverifiable, active, or import-held records stay blocked',
+                action: 'Use workspace_writer_lease_acquire to check authenticated proof for each exact attempt. Follow the returned native_reason before retrying, including a full restart only when the service reports that a newer boot is required.',
               });
             }
+            const unbound = byMarkerOrigin.v2_unbound + byMarkerOrigin.legacy_unbound + byMarkerOrigin.unreadable;
+            if (unbound > 0) manualIssues.push({
+              provider: 'writer-reservations',
+              reason: 'Some held reservations lack an authenticated native identity or are unreadable',
+              affectedReservations: unbound,
+              action: 'Keep the stored state. Obtain independent termination evidence for each reservation or contact the host operator with the reservation fingerprints from task_list.',
+            });
           } else {
             evidence.writerReservations = { status: 'unknown', reason: 'admission-diagnostics-missing-or-invalid' };
           }
@@ -3125,11 +3147,11 @@ function nativeWriterReservationRecovery(workspaceId: string | undefined, affect
       recoverAbandoned: true,
       userConfirmed: true,
     },
-    description: 'Acquire the workspace writer lease so the authenticated containment service can reconcile each native-bound reservation on a newer boot. It records interrupted/125 only when the exact attempt cannot still run; active, import-held, conflicting or unverifiable records remain blocked.',
+    description: 'Acquire the workspace writer lease so the containment service can reconcile exact terminal or never-launched attempts. If the receipt was lost, newer-boot recovery requires a verified absent attempt Job. Inspect the returned native reason when proof is unavailable.',
     preconditions: [
       'A matching all-users installation with the LnwjudContainment service available',
-      'A full Windows restart newer than every affected reservation timestamp',
-      'The owning MCP client session and its registered workspace ID',
+      'A registered workspace and the owning client for any previous workspace lease',
+      'A verified newer Windows boot only when the service needs lost-receipt recovery',
     ],
     automatic: false,
     requiresConfirmation: true,

@@ -281,6 +281,7 @@ export type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'r
 
 export interface UpdateStatus {
   readonly phase: UpdatePhase;
+  readonly mode?: 'platform' | 'download';
   readonly currentVersion: string;
   readonly availableVersion: string | null;
   readonly progressPercent: number | null;

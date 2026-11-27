@@ -513,7 +513,8 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   });
   const workspaceService = new WorkspaceService(workspaceRepository);
   const nativeAuthority = createHostWindowsNativeAuthority(dataPath, options.nativeContainmentDirectory);
-  const writerAdmission = new SharedManagedWriterAdmission(path.join(dataPath, 'background-tasks'), nativeAuthority);
+  const writerAdmission = new SharedManagedWriterAdmission(path.join(dataPath, 'background-tasks'), nativeAuthority, process.platform, undefined,
+    async (workspaceId) => (await workspaceRepository.get(workspaceId))?.realRootPath);
   const gitService = new GitService(workspaceRepository, undefined, undefined, { writerAdmission, nativeContainmentRoot: path.join(dataPath, 'native-managed-git'), ...(nativeAuthority === undefined ? {} : { nativeAuthority }) });
   const codexDiscovery = new CodexDiscovery();
   const executableResolver = new PathExecutableResolver();
@@ -800,6 +801,7 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
       };
     },
     capabilities: capabilityRuntime.service,
+    goalShellTasks: capabilityRuntime.shell,
     debugSessions,
     extensions: extensionsService,
     workspaceInfo: workspaceInfoService,

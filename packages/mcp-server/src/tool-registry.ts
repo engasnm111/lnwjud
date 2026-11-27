@@ -1024,12 +1024,42 @@ export class ToolRegistry {
     profile: PermissionProfile,
     fullBypass: boolean,
   ): Promise<Result<InvocationPolicyAssessment>> {
-    const activeRoutedInput = await this.routeInputToActiveWorkspace(input);
     const requestedWorkspaceId = readExplicitWorkspaceId(input);
+    let activeRoutedInput = await this.routeInputToActiveWorkspace(input);
+    const commandWorkspace = isRecord(input) && WORKSPACE_COMMAND_TOOLS.has(tool.name)
+      && (readTrimmedString(input.operation) ?? 'run') === 'run' && requestedWorkspaceId !== undefined;
+    const activeCommandScope = commandWorkspace ? await this.resolveActiveWorkspaceScope(requestedWorkspaceId) : null;
+    if (commandWorkspace && isRecord(input)) {
+      const registered = activeCommandScope === null
+        ? await this.services.workspaceInfo?.info(this.actor, requestedWorkspaceId)
+        : undefined;
+      if (registered?.ok === false) return registered;
+      const registeredRoot = registered?.ok === true && isRecord(registered.value)
+        ? readTrimmedString(registered.value.realRootPath)
+        : undefined;
+      if (registered?.ok === true && (registeredRoot === undefined || !isAbsoluteActivityPath(registeredRoot))) {
+        return err(appError('INVALID_INPUT', 'The registered command workspace has no valid absolute root.'));
+      }
+      const root = activeCommandScope?.rootPath ?? registeredRoot;
+      const cwd = readTrimmedString(input.cwd);
+      if (registered?.ok === true && cwd !== undefined && isAbsoluteActivityPath(cwd) && root !== undefined
+        && normalizedActivityPath(cwd) === normalizedActivityPath(root)) {
+        // An active parent can include the exact root of an inactive linked checkout.
+        activeRoutedInput = input;
+      }
+      if (root !== undefined && (input.cwd === undefined || (cwd !== undefined && !isAbsoluteActivityPath(cwd)))
+        && readExplicitWorkspaceId(activeRoutedInput) === requestedWorkspaceId && isRecord(activeRoutedInput)) {
+        activeRoutedInput = { ...activeRoutedInput, cwd: workspacePathApi(root).resolve(root, cwd ?? '.') };
+      }
+    }
     if (requestedWorkspaceId !== undefined
       && requestedWorkspaceId !== readExplicitWorkspaceId(activeRoutedInput)
-      && ['shell', 'wsl_exec', 'task_create', 'process_start'].includes(tool.name)) {
+      && WORKSPACE_COMMAND_TOOLS.has(tool.name)) {
       return err(appError('INVALID_INPUT', 'The explicit command workspace conflicts with its working directory. Use the matching workspace or omit workspaceId to infer it.'));
+    }
+    if (commandWorkspace && isRecord(input) && activeCommandScope === null && this.services.workspaceInfo !== undefined
+      && this.enforceActiveWorkspaceScope && !fullBypass && input.dry_run !== true) {
+      return err(appError('PERMISSION_DENIED', 'The requested command workspace is registered but inactive. Activate this workspace in Desktop Active Projects and retry.'));
     }
     const prohibitedReason = fullBypass ? undefined : prohibitedInvocationReason(tool.name, activeRoutedInput);
     if (prohibitedReason !== undefined) return err(appError('PERMISSION_DENIED', prohibitedReason));
@@ -1038,7 +1068,7 @@ export class ToolRegistry {
     const mutationWorkspaceId = readExplicitWorkspaceId(activeRoutedInput);
     const nativePathScopeRequired = requiresNativePathScope(tool.name, activeRoutedInput);
     const activeWorkspaceScope = !this.enforceActiveWorkspaceScope || (mutationDecision.kind === 'read' && !nativePathScopeRequired)
-      ? null : await this.resolveActiveWorkspaceScope(mutationWorkspaceId);
+      ? null : commandWorkspace ? activeCommandScope : await this.resolveActiveWorkspaceScope(mutationWorkspaceId);
     if (!fullBypass && mutationDecision.kind === 'execute' && commandExecutionLeavesActiveWorkspace(tool.name, activeRoutedInput, activeWorkspaceScope)) {
       mutationDecision = { kind: 'opaque_mutation', reason: 'Command execution explicitly targets a working directory outside the host Active Project' };
     }
@@ -1150,7 +1180,8 @@ export class ToolRegistry {
         if (workspaceId === undefined) return scopes[0] ?? null;
         return scopes.find((scope) => scope.workspaceId === workspaceId) ?? null;
       }
-      return await this.activeWorkspaceScopeProvider();
+      const scope = await this.activeWorkspaceScopeProvider();
+      return workspaceId === undefined || scope?.workspaceId === workspaceId ? scope : null;
     } catch { return null; }
   }
 
@@ -1380,6 +1411,7 @@ function normalizeActiveWorkspaceScopesProvider(options: ActiveWorkspaceScopeOpt
 
 const NATIVE_ACTIVE_SCOPE_TOOLS = new Set(['dom_cdp', 'office', 'audio', 'screen_record', ...OFFICE_SEMANTIC_TOOL_NAMES]);
 const COMMAND_EXECUTION_TOOLS = new Set(['shell', 'wsl_exec', 'process_start']);
+const WORKSPACE_COMMAND_TOOLS = new Set([...COMMAND_EXECUTION_TOOLS, 'task_create']);
 export const SCHEDULED_CONTINUATION_FENCED_TOOLS = new Set([
   'engineering_build_artifact', 'engineering_complete_build', 'engineering_upload_worker',
   'workspace_register', 'write_file', 'apply_patch', 'edit_file', 'move_file', 'copy_file', 'delete_file',

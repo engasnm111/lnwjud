@@ -8,6 +8,9 @@ export interface NativeMessages {
   readonly updaterUnavailablePackagedOnly: string;
   readonly updaterUnavailablePlatform: string;
   readonly updaterUnavailableMacosUnsigned: string;
+  readonly updaterDownloadOpenFailed: string;
+  updaterDownloadPackage(version: string): string;
+  trayDownloadPackage(version: string): string;
   readonly updaterUnavailableTransactionAuthority: string;
   readonly updaterAuthorityChecking: string;
   readonly updaterCheckTitle: string;
@@ -65,6 +68,9 @@ const th: NativeMessages = {
   updaterUnavailablePackagedOnly: 'ระบบอัปเดตทำงานในแอปที่ติดตั้งจาก Release',
   updaterUnavailablePlatform: 'รูปแบบการติดตั้งนี้ให้ระบบปฏิบัติการจัดการอัปเดตเอง จึงปิดการอัปเดตอัตโนมัติของ lnwjud',
   updaterUnavailableMacosUnsigned: 'macOS เวอร์ชันนี้ใช้ลายเซ็น ad-hoc ที่อัปเดตข้ามเวอร์ชันไม่ได้ กรุณาดาวน์โหลดจาก GitHub Releases แล้วติดตั้งทับด้วยตนเอง (ข้อมูลเดิมไม่ถูกลบ)',
+  updaterDownloadOpenFailed: 'เปิดลิงก์ดาวน์โหลดจาก GitHub ไม่สำเร็จ กรุณาตรวจอัปเดตอีกครั้ง',
+  updaterDownloadPackage: (version) => `พบ v${version} กดอีกครั้งเพื่อดาวน์โหลดแพ็กเกจสำหรับเครื่องนี้จาก GitHub`,
+  trayDownloadPackage: (version) => `ดาวน์โหลดแพ็กเกจ v${version}`,
   updaterUnavailableTransactionAuthority: 'การอัปเดตอัตโนมัติยังใช้ไม่ได้ เพราะเครื่องนี้ยังไม่มีตัวติดตั้งที่ยืนยันแพ็กเกจ กู้คืนข้อมูล และเปิดแอปใหม่ได้อย่างปลอดภัย',
   updaterAuthorityChecking: 'กำลังตรวจสอบว่าระบบอัปเดตติดตั้งและกู้คืนได้อย่างปลอดภัยหรือไม่…',
   updaterCheckTitle: 'ตรวจอัปเดต - lnwjud',
@@ -122,6 +128,9 @@ const en: NativeMessages = {
   updaterUnavailablePackagedOnly: 'Updates are available in an installed Release build',
   updaterUnavailablePlatform: 'This installation format is updated by the operating system package manager; lnwjud automatic updates are disabled.',
   updaterUnavailableMacosUnsigned: 'This macOS build has an ad-hoc signature incompatible with in-place updates. Download from GitHub Releases and manually replace the app; your data is preserved.',
+  updaterDownloadOpenFailed: 'Could not open the GitHub download. Check for updates again.',
+  updaterDownloadPackage: (version) => `v${version} is available. Select the update again to download the package for this computer from GitHub.`,
+  trayDownloadPackage: (version) => `Download v${version} package`,
   updaterUnavailableTransactionAuthority: 'Automatic updates are unavailable because this installation does not have a verified installer that can authenticate the package, restore data, and relaunch safely.',
   updaterAuthorityChecking: 'Checking whether the update system can install and recover safely…',
   updaterCheckTitle: 'Check for Updates - lnwjud',
@@ -186,6 +195,7 @@ export function localizedUpdateStatusMessage(status: UpdateStatus, locale: UiLoc
       return messages.updaterUnavailablePackagedOnly;
     case 'checking': return messages.updaterChecking;
     case 'available':
+      if (status.mode === 'download' && version !== null) return messages.updaterDownloadPackage(version);
       if (status.message === th.updaterUnavailableTransactionAuthority || status.message === en.updaterUnavailableTransactionAuthority) return messages.updaterUnavailableTransactionAuthority;
       return version === null ? messages.updaterChecking : messages.updateAvailableStatus(version);
     case 'downloading': return messages.updateDownloadingStatus(version, status.progressPercent);

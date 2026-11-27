@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { appError, err, ok, type Result } from '@lnwjud/domain';
 import { parseNativeAttemptBinding, type NativeAttemptBinding, type WindowsNativeAuthority } from '@lnwjud/process';
-import { DurableShellTaskIndex, type DurableTaskReservation } from './durable-shell-task-index.js';
+import { DurableShellTaskIndex, workspaceProbeOwner, type DurableTaskReservation, type NativeWriterInspection } from './durable-shell-task-index.js';
 import { DurableShellTaskStore } from './durable-shell-task-store.js';
 
 export type WriterContainmentKind = 'synchronous_mutation' | 'uncontained_process' | 'contained_process';
@@ -24,15 +25,21 @@ export class SharedManagedWriterAdmission {
   private readonly index: DurableShellTaskIndex;
 
   constructor(taskDirectory: string, private readonly nativeAuthority?: WindowsNativeAuthority, private readonly platform: NodeJS.Platform = process.platform,
-    private readonly macosNativeAuthority?: import('@lnwjud/process').MacosNativeAuthority) {
+    private readonly macosNativeAuthority?: import('@lnwjud/process').MacosNativeAuthority,
+    workspaceRoot?: (workspaceId: string) => Promise<string | undefined>) {
     const store = new DurableShellTaskStore(taskDirectory, { ...(nativeAuthority === undefined ? {} : { windowsNativeAuthority: nativeAuthority }),
       ...(macosNativeAuthority === undefined ? {} : { macosNativeAuthority }) });
     this.index = new DurableShellTaskIndex(taskDirectory, {
       maxConcurrentTasks: 10000,
       capacityClass: 'managed_writer',
-      inspectTask: (taskId): ReturnType<DurableShellTaskStore['inspectForWriterAdmission']> =>
-        store.inspectForWriterAdmission(taskId),
-      verifyContainedTermination: (reservation): ReturnType<SharedManagedWriterAdmission['verifyNativeTermination']> => this.verifyNativeTermination(reservation),
+      inspectTask: (taskId, owner): ReturnType<DurableShellTaskStore['inspectForWriterAdmission']> =>
+        store.inspectForWriterAdmission(taskId, owner),
+      inspectNativeWriter: (reservation): Promise<NativeWriterInspection> => this.inspectNativeWriter(reservation),
+      ...(workspaceRoot === undefined ? {} : { areWorkspacesDisjoint: async (leftId, rightId): Promise<boolean> => {
+        const [left, right] = await Promise.all([workspaceRoot(leftId), workspaceRoot(rightId)]);
+        if (left === undefined || right === undefined) return false;
+        return disjointWorkspaceRoots(left, right);
+      } }),
     });
   }
 
@@ -46,14 +53,18 @@ export class SharedManagedWriterAdmission {
     if (!workspaceId) return err(appError('INVALID_INPUT', 'Workspace lease probe requires a workspace ID'));
     const id = 'workspace-writer-probe-' + randomUUID();
     const requestDigest = createHash('sha256').update(id + ':' + workspaceId).digest('hex');
-    const reserved = await this.index.reserve({
+    const probe: DurableTaskReservation = {
       taskId: id,
       capacityClass: 'managed_writer',
       requestDigest,
       mutationKind: 'repository_import',
-      ownerClientId: 'lnwjud-workspace-writer-fence',
+      ownerClientId: workspaceProbeOwner,
       ownerWorkspaceId: workspaceId,
-    });
+    };
+    let reserved = await this.index.reserve(probe);
+    if (!reserved.ok && reserved.error.details?.blocker_state === 'changed') {
+      reserved = await this.index.reserve(probe);
+    }
     if (!reserved.ok) return reserved;
     return ok({
       id,
@@ -140,23 +151,54 @@ export class SharedManagedWriterAdmission {
     });
   }
 
-  private async verifyNativeTermination(reservation: DurableTaskReservation): Promise<boolean> {
+  private async inspectNativeWriter(reservation: DurableTaskReservation): Promise<NativeWriterInspection> {
     const binding = reservation.nativeBinding;
     const authority = this.platform === 'darwin' ? this.macosNativeAuthority : this.nativeAuthority;
-    if (authority === undefined || binding === undefined || reservation.nativeReceiptPath === undefined
+    if (authority === undefined) return { state: 'unknown', reason: 'NATIVE_WRITER_AUTHORITY_UNAVAILABLE' };
+    if (binding === undefined || reservation.nativeReceiptPath === undefined
       || binding.reservationId !== reservation.taskId || binding.requestDigest !== reservation.requestDigest
       || binding.ownerClientId !== reservation.ownerClientId || binding.workspaceId !== reservation.ownerWorkspaceId
       || path.basename(reservation.nativeReceiptPath) !== 'containment.receipt.json'
-      || path.basename(path.dirname(reservation.nativeReceiptPath)) !== binding.taskId) return false;
+      || path.basename(path.dirname(reservation.nativeReceiptPath)) !== binding.taskId) {
+      return { state: 'unknown', reason: 'NATIVE_RESERVATION_IDENTITY_UNAVAILABLE' };
+    }
     let proof = await authority.inspect({ directory: path.dirname(reservation.nativeReceiptPath), binding });
+    // The service atomically checks dispatch state and writes an exact-attempt
+    // tombstone. A dispatched or unverifiable attempt cannot take this path.
     if (proof.state === 'termination_unknown' && proof.reason === 'NATIVE_SERVICE_ATTEMPT_NOT_DISPATCHED') {
       proof = await authority.abortBeforeLaunch({ directory: path.dirname(reservation.nativeReceiptPath), binding });
     }
-    if (proof.state === 'termination_unknown' && reservation.reservedAt !== undefined) {
+    if (proof.state === 'termination_unknown' && reservation.reservedAt !== undefined
+      && proof.reason !== 'SERVICE_ENDPOINT_PACKAGE_MISMATCH' && proof.reason !== 'SERVICE_ENDPOINT_NOT_INSTALLED') {
       proof = await authority.recoverAfterReboot({
         directory: path.dirname(reservation.nativeReceiptPath), binding, recordedAt: reservation.reservedAt,
       });
     }
-    return proof.state === 'terminal_verified' || proof.state === 'launch_not_started';
+    if (proof.state === 'running') return { state: 'active' };
+    if (proof.state === 'termination_unknown') {
+      return { state: 'unknown', reason: /^[A-Z][A-Z0-9_]{1,100}$/.test(proof.reason) ? proof.reason : 'NATIVE_WRITER_PROOF_UNAVAILABLE' };
+    }
+    return { state: 'terminal' };
   }
+}
+
+async function disjointWorkspaceRoots(left: string, right: string): Promise<boolean> {
+  const describe = async (root: string): Promise<{ canonical: string; dev: bigint; ino: bigint } | null> => {
+    const canonical = await realpath(root);
+    const identity = await stat(canonical, { bigint: true });
+    const marker = await lstat(path.join(canonical, '.git')).catch((error: unknown) => {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return null;
+      throw error;
+    });
+    // A linked checkout, junction or unresolved directory may share a resource.
+    if (!identity.isDirectory() || identity.ino === 0n || (marker !== null && !marker.isDirectory())) return null;
+    return { canonical, dev: identity.dev, ino: identity.ino };
+  };
+  const [a, b] = await Promise.all([describe(left), describe(right)]);
+  const outside = (root: string, candidate: string): boolean => {
+    const relative = path.relative(root, candidate);
+    return path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`);
+  };
+  return a !== null && b !== null && (a.dev !== b.dev || a.ino !== b.ino)
+    && outside(a.canonical, b.canonical) && outside(b.canonical, a.canonical);
 }

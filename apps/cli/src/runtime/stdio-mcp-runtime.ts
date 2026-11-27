@@ -161,7 +161,8 @@ export function createStdioMcpRuntime(
     workspaceOverrideProvider: (workspaceId): EngineeringHarnessWorkspaceOverride | undefined => parseEngineeringHarnessWorkspaceOverrides(settingsRepository.get(USER_SETTING_KEYS.engineeringHarnessWorkspaceOverrides))[workspaceId],
   });
   const nativeAuthority = createHostWindowsNativeAuthority(dataPath);
-  const writerAdmission = new SharedManagedWriterAdmission(path.join(dataPath, 'background-tasks'), nativeAuthority);
+  const writerAdmission = new SharedManagedWriterAdmission(path.join(dataPath, 'background-tasks'), nativeAuthority, process.platform, undefined,
+    async (workspaceId) => (await workspaceRepository.get(workspaceId))?.realRootPath);
   const workspaceWriterLease = new SqliteWorkspaceWriterLease(path.join(dataPath, 'workspace-writer-leases.sqlite'), Date.now, writerAdmission);
   const processService = new ProcessService(workspaceRepository, {
     writerAdmission,
@@ -322,6 +323,7 @@ export function createStdioMcpRuntime(
       lspCommands: parseStringRecordSetting(settingsRepository.get(USER_SETTING_KEYS.lspCommands)),
     }),
     capabilities: capabilityRuntime.service,
+    goalShellTasks: capabilityRuntime.shell,
     debugSessions,
     extensions,
     workspaceInfo: new WorkspaceInfoService(workspaceRepository, workspaceService, effectiveUnrestricted),

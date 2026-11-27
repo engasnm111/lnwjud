@@ -40,6 +40,31 @@ async function fixture(): Promise<{
 }
 
 describe('SharedManagedWriterAdmission authenticated release', () => {
+  it('separates simultaneous lease probes only for independently resolved project roots', async () => {
+    const { root, taskDirectory } = await fixture();
+    const first = path.join(root, 'first');
+    const second = path.join(root, 'second');
+    const nested = path.join(first, 'nested');
+    await Promise.all([mkdir(nested, { recursive: true }), mkdir(second)]);
+    const rootsById = new Map([['first', first], ['second', second], ['nested', nested]]);
+    const admission = new SharedManagedWriterAdmission(taskDirectory, undefined, process.platform, undefined,
+      async (workspaceId) => rootsById.get(workspaceId));
+    const one = await admission.holdExclusiveProbe('first');
+    if (!one.ok) throw new Error(one.error.message);
+    try {
+      const two = await admission.holdExclusiveProbe('second');
+      if (!two.ok) throw new Error(two.error.message);
+      await two.value.releaseAfterVerifiedTermination();
+      await expect(admission.holdExclusiveProbe('nested')).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+      await writeFile(path.join(second, '.git'), 'gitdir: registered shared checkout metadata');
+      await expect(admission.holdExclusiveProbe('second')).resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+      await expect(admission.enter({ actorClientId: 'client', workspaceId: 'second', kind: 'synchronous_mutation' }))
+        .resolves.toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+    } finally {
+      await one.value.releaseAfterVerifiedTermination();
+    }
+  });
+
   it.skipIf(process.platform === 'darwin')('persists distinct process and reservation identity and the actual owner session', async () => {
     const f = await fixture();
     const admitted = await f.admission.enter(f.input);

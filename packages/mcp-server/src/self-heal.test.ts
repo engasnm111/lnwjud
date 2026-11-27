@@ -88,7 +88,7 @@ describe('owned recovery plans', () => {
     expect(result).toMatchObject({ ok: true, value: {
       safeReversibleFixes: [],
       supportedRecovery: [{ id: 'reconcile-native-writer-reservations', affected_reservations: 2, automatic: false, requiresConfirmation: true,
-        preconditions: expect.arrayContaining([expect.stringContaining('full Windows restart')]) }],
+        preconditions: expect.arrayContaining([expect.stringContaining('newer Windows boot only when')]) }],
       manualIssues: [expect.objectContaining({ provider: 'writer-reservations', affectedReservations: 2 })],
       observationState: 'partial',
     } });

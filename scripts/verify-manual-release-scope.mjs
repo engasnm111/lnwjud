@@ -9,14 +9,14 @@ const [scope, packageJson, updateTrust] = await Promise.all([
   readJson('package.json'),
   readJson('config/update-release-policy.json'),
 ]);
-const expected = ['win32-x64', 'linux-x64', 'linux-arm64'];
+const expected = ['win32-x64', 'darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'];
 if (scope.schemaVersion !== 1
   || scope.version !== packageJson.version
   || scope.installationMode !== 'in-app'
   || scope.automaticUpdaterEnabled !== false
   || JSON.stringify(scope.targets) !== JSON.stringify(expected)
-  || JSON.stringify(scope.deferredTargets) !== JSON.stringify(['darwin-arm64', 'darwin-x64'])) {
-  throw new Error('RELEASE_SCOPE_INVALID: only explicit current-version in-app Windows/Linux scope is accepted');
+  || JSON.stringify(scope.deferredTargets) !== '[]') {
+  throw new Error('RELEASE_SCOPE_INVALID: current-version release must include every supported native target');
 }
 if (updateTrust.protocol !== 1
   || !Array.isArray(updateTrust.roots) || updateTrust.roots.length === 0
@@ -34,9 +34,11 @@ if (!main.includes('function operatorUpdateInstallAvailable(): boolean {')
   throw new Error('RELEASE_SCOPE_INVALID: Desktop must gate installation on a packaged operator confirmation and keep zero-click installation off');
 }
 const workflow = await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8');
-if (workflow.includes('signed-update-e2e-')
-  || workflow.includes('native-darwin-arm64-$sha')
-  || workflow.includes('native-darwin-x64-$sha')) {
+if (workflow.includes('signed-update-e2e-') || expected.some((target) => {
+  const [platform, arch] = target.split('-');
+  const artifact = platform === 'win32' ? 'windows-release' : `native-${target}`;
+  return !workflow.includes(`${target}|${artifact}-$sha`) || !workflow.includes(`${target}|${platform}|${arch}`);
+})) {
   throw new Error('RELEASE_SCOPE_INVALID: release workflow contradicts the supported target policy');
 }
-process.stdout.write(`RELEASE_SCOPE_VERIFIED v${packageJson.version} Windows x64 + Linux x64/arm64, operator-confirmed in-app install, zero-click disabled, macOS held\n`);
+process.stdout.write(`RELEASE_SCOPE_VERIFIED v${packageJson.version} Windows x64 + macOS and Linux x64/arm64, operator-confirmed platform updates\n`);

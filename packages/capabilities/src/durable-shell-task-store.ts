@@ -158,7 +158,7 @@ export class DurableShellTaskStore {
     this.posixProcessIdentityProbe = options.posixProcessIdentityProbe ?? ((pid): Promise<PortableProcessProbe> => probeProcessIdentity(pid, this.platform));
     this.activeIndex = new DurableShellTaskIndex(rootDirectory, {
       maxConcurrentTasks: this.maxConcurrentTasks,
-      inspectTask: async (taskId): Promise<ActiveTaskInspection> => this.inspectTaskForIndex(taskId),
+      inspectTask: async (taskId, owner): Promise<ActiveTaskInspection> => this.inspectTaskForIndex(taskId, owner),
       loadLaunchRecord: async (taskId): Promise<DurableTaskLaunchRecord | undefined> => this.loadLaunchRecord(taskId),
       verifyContainedTermination: (reservation): Promise<boolean> => this.verifyNativeReservation(reservation),
     });
@@ -447,6 +447,36 @@ export class DurableShellTaskStore {
     return owner.clientId === clientId && owner.workspaceId === workspaceId;
   }
 
+  /** Cross-session receipt for a host-verified goal member. Command and output stay session scoped. */
+  public async terminalReceiptForGoal(clientId: string, workspaceId: string, taskId: string): Promise<Result<Record<string, unknown>>> {
+    const stored = await this.readMetadata(taskId);
+    if (!stored.ok) return stored;
+    const owner = metadataOwner(stored.value);
+    if (owner.clientId !== clientId || owner.workspaceId !== workspaceId) {
+      return err(appError('PERMISSION_DENIED', 'The durable shell task belongs to another client or workspace'));
+    }
+    const metadata = await this.reconcile(stored.value);
+    const binding = metadata.containmentBinding;
+    if (binding !== undefined && nativeBindingMatchesMetadata(metadata, binding)) {
+      const proof = await this.authorityFor(metadata)?.inspect({ directory: this.taskDirectory(taskId), binding });
+      if (proof?.state === 'terminal_verified') {
+        return ok({
+          task_id: taskId, state: nativeOutcomeState(proof.outcome, proof.exitCode),
+          outcome: proof.outcome, receipt_source: 'native_containment',
+          ...(proof.outcome === 'interrupted' ? {} : { exit_code: proof.exitCode }),
+        });
+      }
+      if (proof?.state === 'launch_not_started') {
+        return ok({ task_id: taskId, state: 'failed', outcome: 'launch_not_started', receipt_source: 'native_containment' });
+      }
+    }
+    if (metadata.containment === 'posix_group_v1' && isTerminal(metadata.state) && typeof metadata.exit_code === 'number'
+      && await this.posixGroupIsEmpty(metadata)) {
+      return ok({ task_id: taskId, state: metadata.state, exit_code: metadata.exit_code, receipt_source: 'posix_process_group' });
+    }
+    return err(appError('CONFLICT', 'This task has no verified terminal receipt yet. Inspect task liveness or use authenticated containment recovery.', true));
+  }
+
   public async snapshotForGoalLiveness(taskId: string, workspaceId: string): Promise<Result<Record<string, unknown>>> {
     const metadata = await this.readMetadata(taskId);
     if (!metadata.ok) return metadata;
@@ -661,11 +691,11 @@ export class DurableShellTaskStore {
   }
 
   /** Shared writer admission inspects durable shell liveness without acquiring the index lock again. */
-  public async inspectForWriterAdmission(taskId: string): Promise<ActiveTaskInspection> {
-    return this.inspectTaskForIndex(taskId);
+  public async inspectForWriterAdmission(taskId: string, owner?: import('./durable-shell-task-index.js').IndexedTaskOwner): Promise<ActiveTaskInspection> {
+    return this.inspectTaskForIndex(taskId, owner);
   }
 
-  private async inspectTaskForIndex(taskId: string): Promise<ActiveTaskInspection> {
+  private async inspectTaskForIndex(taskId: string, owner?: import('./durable-shell-task-index.js').IndexedTaskOwner): Promise<ActiveTaskInspection> {
     const metadata = await this.readMetadata(taskId, false, 1);
     if (!metadata.ok) {
       try {
@@ -676,7 +706,11 @@ export class DurableShellTaskStore {
         return isFileNotFound(error) ? 'missing' : 'unknown';
       }
     }
-    if (metadata.value.containment === undefined) return 'unknown';
+    if (metadata.value.containment === undefined
+      || (owner?.requestDigest != null && metadata.value.request_digest !== owner.requestDigest)
+      || (owner?.ownerClientId !== undefined && metadata.value.owner_client_id !== owner.ownerClientId)
+      || (owner?.ownerWorkspaceId !== undefined && metadata.value.owner_workspace_id !== owner.ownerWorkspaceId)
+      || (owner?.nativeBinding !== undefined && !nativeBindingMatchesMetadata(metadata.value, owner.nativeBinding))) return 'unknown';
     const reconciled = await this.reconcile(metadata.value);
     if (isTerminal(reconciled.state)) {
       if (isNativeManagedContainment(reconciled) && !await this.verifyNativeReservation({
